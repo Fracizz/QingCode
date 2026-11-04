@@ -14,6 +14,7 @@ import {
   rememberProject,
   renameProfileKeys,
   sessionName,
+  sessionRunning,
   mergeSessionName,
   splitInput,
   terminalGridSize,
@@ -71,6 +72,10 @@ let page = 'home';
 let sessions = [];
 let selected = null;
 let renamingSession = null;
+let sessionDrawerEpoch = 0;
+let sessionRefreshTimer;
+let sessionRefreshing = false;
+let foreground = true;
 let viewEpoch = 0;
 let term;
 let fit;
@@ -109,6 +114,9 @@ const connectionLatency = createConnectionLatency({
   onChange: renderLatency,
 });
 window.qingVisibility = visible => {
+  foreground = visible === true;
+  clearTimeout(sessionRefreshTimer);
+  if (foreground) void refreshSessionDrawer();
   if (!visible) saveDraft();
   connectionLatency.setForeground(visible === true);
 };
@@ -1380,48 +1388,89 @@ function renderSessions() {
   get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
   get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
   const options = get('session-options');
-  options.replaceChildren();
+  const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
   get('end-session').disabled = !selected;
   get('end-all-sessions').disabled = !sessions.length;
   get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
   for (const [index, session] of sessions.entries()) {
     const label = sessionName(session, index + 1);
-    const row = document.createElement('div');
-    row.className = 'session-option';
-    row.dataset.id = session.id;
+    let row = existingRows.get(session.id);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'session-option';
+      row.dataset.id = session.id;
+      const option = button('row', () => {
+        const latest = sessions.find(item => item.id === session.id);
+        if (!busy && latest) selectSession(latest);
+      });
+      const text = rowText('', '');
+      const heading = text.querySelector('strong');
+      const name = document.createElement('span');
+      name.className = 'session-label';
+      heading.append(icon('loader-circle', 'session-spinner'), name);
+      option.append(text);
+      const rename = button('icon-button', () => {
+        const latest = sessions.find(item => item.id === session.id);
+        if (latest) openSessionRename(latest);
+      });
+      rename.append(icon('edit'));
+      row.append(option, rename);
+    }
+    existingRows.delete(session.id);
     row.dataset.current = String(session.id === selected);
-    const option = button('row', () => { if (!busy) selectSession(session); });
-    const status = session.exit ? '已结束' : session.id === selected ? '当前会话' : '可接入';
+    const running = sessionRunning(session);
+    row.dataset.running = String(running);
+    const option = row.querySelector('.row');
+    const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
     const identity = '终端 ' + (session.number ?? index + 1);
-    option.append(rowText(label, label === identity ? status : identity + ' · ' + status));
-    const rename = button('icon-button', () => openSessionRename(session));
+    row.querySelector('.session-label').textContent = label;
+    row.querySelector('small').textContent = label === identity ? status : identity + ' · ' + status;
+    const rename = row.querySelector('.icon-button');
     rename.setAttribute('aria-label', '重命名 ' + label);
     rename.disabled = !Number.isFinite(session.nameRevision) || busy;
-    rename.append(icon('edit'));
     if (session.id === selected) {
       option.setAttribute('aria-current', 'true');
-    }
-    row.append(option, rename);
-    options.append(row);
+    } else option.removeAttribute('aria-current');
+    if (options.children[index] !== row) options.insertBefore(row, options.children[index] ?? null);
   }
+  for (const row of existingRows.values()) row.remove();
 }
 
 async function openSessionDrawer() {
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
   renderSessions();
   if (!get('session-drawer').open) get('session-drawer').showModal();
   get('show-sessions').setAttribute('aria-expanded', 'true');
+  await refreshSessionDrawer();
+}
+
+async function refreshSessionDrawer() {
+  if (sessionRefreshing || !get('session-drawer').open || document.hidden || !foreground) return;
+  sessionRefreshing = true;
   const epoch = viewEpoch;
+  const drawerEpoch = sessionDrawerEpoch;
   try {
     const list = await remote('sessions', { project: project.id });
-    if (epoch !== viewEpoch || !get('session-drawer').open) return;
+    if (epoch !== viewEpoch || drawerEpoch !== sessionDrawerEpoch || !get('session-drawer').open) return;
     sessions = list.map(item => {
       const previous = sessions.find(saved => saved.id === item.id);
-      if (previous) mergeSessionName(item, previous);
+      if (previous) {
+        mergeSessionName(item, previous);
+        // An older list response cannot revive a terminal already seen exiting.
+        item.exit ??= previous.exit;
+      }
       return item;
     });
+    message('session-error', '');
     renderSessions();
   } catch (error) {
-    if (epoch === viewEpoch) message('session-error', error.message);
+    if (epoch === viewEpoch && drawerEpoch === sessionDrawerEpoch && get('session-drawer').open) message('session-error', error.message);
+  } finally {
+    sessionRefreshing = false;
+    if (get('session-drawer').open && !document.hidden && foreground) {
+      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
+    }
   }
 }
 
@@ -1537,8 +1586,8 @@ async function poll(session, epoch) {
       }
       if (epoch !== viewEpoch) return;
       if (data.exit) {
-        if (!session.exit) {
-          session.exit = data.exit;
+        if (current && !current.exit) {
+          current.exit = data.exit;
           renderSessions();
         }
         terminalState(data.exit.disconnected ? '电脑到远端的终端连接已中断' : '会话已结束 · 退出码 ' + data.exit.exitCode);
@@ -1635,7 +1684,15 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 get('back').addEventListener('click', () => returnToDashboard());
 get('show-sessions').addEventListener('click', () => { void openSessionDrawer(); });
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
-get('session-drawer').addEventListener('close', () => get('show-sessions').setAttribute('aria-expanded', 'false'));
+get('session-drawer').addEventListener('close', () => {
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
+  get('show-sessions').setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(sessionRefreshTimer);
+  if (!document.hidden) void refreshSessionDrawer();
+});
 get('session-drawer').addEventListener('toggle', () => get('show-sessions').setAttribute('aria-expanded', String(get('session-drawer').open)));
 get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); get('new-session-dialog').showModal(); } });
@@ -1797,7 +1854,16 @@ function pressKey(keyButton) {
     sendInput('\x03', { raw: true });
   } else if (key === 'clear-input') {
     clearModifiers();
-    sendInput(keySequence(key), { raw: true });
+    const buffer = term?.buffer.active;
+    let row = buffer ? buffer.baseY + buffer.cursorY : 0;
+    let line = buffer?.getLine(row);
+    let inputLine = line?.translateToString(true) ?? '';
+    // 宽度不足造成的视觉折行仍属于同一输入行；不扫描历史输出猜程序。
+    while (line?.isWrapped && row > 0) {
+      line = buffer.getLine(--row);
+      inputLine = (line?.translateToString(true) ?? '') + inputLine;
+    }
+    sendInput(keySequence(key, { inputLine: buffer?.type === 'alternate' ? '' : inputLine }), { raw: true });
   } else if (key === 'slash') {
     dispatchComposer('slash');
   } else if (key === 'reference') {

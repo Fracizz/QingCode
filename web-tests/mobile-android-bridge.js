@@ -25,6 +25,9 @@
     inputDelay: 0,
     inputError: null,
     polls: [],
+    sessionRequests: [],
+    sessionDelay: 0,
+    sessionError: null,
     historyRequests: [],
     pairs: [],
     clipboard: '',
@@ -79,6 +82,7 @@
   function sessionMetadata(session) {
     const basic = { id: session.id, number: session.number, exit: session.exit }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
+      programTitle: session.title ?? null,
       customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
   }
 
@@ -88,10 +92,15 @@
     if (state.hosts.get(saved.id) !== saved.fingerprint) return { ok: false, error: 'Windows 身份校验失败，请重新核对证书指纹。' }
     switch (request.op) {
       case 'projects': return { ok: true, data: state.projects }
-      case 'sessions': return {
-        ok: true,
-        data: [...state.sessions.values()].filter(item => item.project === request.project)
-          .map(sessionMetadata),
+      case 'sessions': {
+        state.sessionRequests.push({ project: request.project, at: Date.now() })
+        const data = [...state.sessions.values()].filter(item => item.project === request.project).map(sessionMetadata)
+        if (state.sessionDelay) await new Promise(resolve => setTimeout(resolve, state.sessionDelay))
+        if (state.sessionError) return { ok: false, error: state.sessionError }
+        return {
+          ok: true,
+          data,
+        }
       }
       case 'create': {
         const number = state.nextSession++

@@ -6,7 +6,9 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 # Web 测试页与浏览器验收
 
-`mobile-send-settings.ego.mjs` 同时覆盖「清除输入」在命令栏与实时输入模式下发送 Ctrl+E、Ctrl+U，保留手机草稿并释放修饰键；「清空草稿」仍只编辑本地，清除操作不提交命令或发送中断。
+手机会话运行状态：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-activity.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖两个会话同时转动、未选中会话完成、手动名称、退出、刷新失败恢复、迟到响应、320px 布局、减少动画和后台/关闭侧栏后暂停刷新。截图与 JSON 位于 `.dev/web-tests/mobile-session-activity/`；使用内存 RPC，不代替 Android 真机和实际 CLI 标题更新验收。
+
+`mobile-send-settings.ego.mjs` 同时覆盖「清除输入」在命令栏与实时输入模式下发送 Ctrl+E、Ctrl+U，以及识别 Windows PowerShell 提示行后改发 Ctrl+Home、Ctrl+End，保留手机草稿并释放修饰键；「清空草稿」仍只编辑本地，清除操作不提交命令或发送中断。
 
 手机快捷键与发送设置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-send-settings.ego.mjs').then(m=>m.run())"`（路径按检出目录调整）。覆盖 Ctrl+C 文字完整显示和真实中断序列、触摸选项分行显示及保存、发送设置即时生效和重载恢复、慢网络下收到文字回执后再单独发送 Enter、连续提交不插队、发送失败与离开会话取消补发，以及默认斜杠候选。截图和 JSON 位于 `.dev/web-tests/mobile-send-settings/`；使用真实 Web 资产和内存 RPC，Android WebView、输入法与真实 Claude / OpenCode 仍需真机验收。
 

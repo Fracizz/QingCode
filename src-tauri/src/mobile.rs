@@ -370,6 +370,7 @@ impl Session {
 
     fn metadata(&self, id: &str) -> Value {
         json!({ "id": id, "number": self.number, "exit": self.exit,
+            "programTitle": self.screen.title(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision })
     }
 
@@ -402,6 +403,7 @@ impl Session {
             "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
+            "programTitle": self.screen.title(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -416,6 +418,7 @@ impl Session {
             "more": false, "reset": false, "snapshot": true, "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
+            "programTitle": self.screen.title(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -1978,6 +1981,16 @@ mod tests {
         assert_eq!(session.latest()["name"], "修复登录");
         assert_eq!(session.read(session.next)["customName"], "修复登录");
         assert_eq!(session.metadata("mobile-7")["name"], "修复登录");
+        push_title(&mut session, "⠋ 正在构建");
+        for data in [
+            session.metadata("mobile-7"),
+            session.latest(),
+            session.read(session.next),
+        ] {
+            assert_eq!(data["programTitle"], "⠋ 正在构建");
+            assert_eq!(data["name"], "修复登录");
+        }
+        push_title(&mut session, "Claude");
         session.rename("").unwrap();
         assert_eq!(session.name(), "Claude");
         assert!(session.rename(&"中".repeat(81)).is_err());
