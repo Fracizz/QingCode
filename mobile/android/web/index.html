@@ -157,8 +157,8 @@
           <button type="button" id="more-keys" aria-haspopup="dialog" aria-controls="keys-dialog">更多</button>
         </div>
         <form id="compose-form">
-          <!-- 编辑目标与输入状态嵌在输入框上边框，不额外占行。右侧同一时间只显示一项：补全提示 > 图片 > 提交状态。 -->
-          <span id="input-mode" class="compose-tag">手机草稿</span>
+          <!-- 编辑目标由实时输入配色和占位文字表达；短状态在框内独立一行，避免压住边框或按钮。 -->
+          <span id="input-mode" class="sr-only">命令输入</span>
           <span class="compose-notes">
             <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
             <span id="image-state" class="compose-note" role="status" hidden></span>
@@ -166,7 +166,7 @@
           </span>
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
           <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿，可多选"><svg><use href="#i-image"/></svg></button>
-          <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令，空白发送回车"></textarea>
+          <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令…"></textarea>
           <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg><span id="send-label">发送</span></button>
         </form>
         <p id="input-hint" class="sr-only" aria-live="polite">命令栏可编辑中文 · 空白发送为回车</p>
@@ -237,6 +237,7 @@
       <button type="button" data-key="reference" aria-label="输入 @ 引用">@引用</button>
       <button type="button" data-key="delete-word">删词</button>
       <button type="button" data-key="delete-line-start">删至行首</button>
+      <button type="button" data-key="clear-input" aria-label="清除终端当前输入">清除输入</button>
       <button type="button" data-key="clear">清空草稿</button>
       <button type="button" data-key="home">Home</button>
       <button type="button" data-key="end">End</button>
@@ -249,7 +250,7 @@
       <button type="button" data-key="text" data-text="/">/</button>
       <button type="button" data-key="newline" aria-label="插入换行">换行</button>
     </div>
-    <p>Tab / ⇧Tab 由当前程序处理。Esc 取消或中断，不删除文字；Ctrl+C 也可能退出程序。</p>
+    <p>「清除输入」清除终端当前行尚未提交的文字；「清空草稿」只清手机命令栏。按键由当前程序处理。Esc 取消或中断，不删除文字；Ctrl+C 也可能退出程序。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="keys-dialog">返回</button></div>
   </dialog>
 
@@ -285,8 +286,11 @@
     <label for="terminal-columns">终端列宽</label>
     <select id="terminal-columns"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select>
     <p>固定列宽时可横向滚动，旋转和键盘弹出只改变可见高度。</p>
-    <label for="touch-mode">全屏程序中的触摸</label>
-    <select id="touch-mode" aria-describedby="touch-mode-hint"><option value="view" selected>只查看历史 · 防误触</option><option value="program">发给程序 · 滑动滚动、点按点击</option></select>
+    <fieldset id="touch-mode" class="setting-choices" aria-describedby="touch-mode-hint">
+      <legend>全屏程序中的触摸</legend>
+      <label><input type="radio" name="touch-mode" value="view" checked><span><strong>只查看历史</strong><small>防误触，不向程序发送点击</small></span></label>
+      <label><input type="radio" name="touch-mode" value="program"><span><strong>发给程序</strong><small>滑动滚动，点按点击</small></span></label>
+    </fieldset>
     <p id="touch-mode-hint">Codex、OpenCode 等会接管鼠标。默认手指滑动只打开手机端只读历史，点按不发点击；需要用手指滚动程序界面时再改为「发给程序」。实体鼠标不受影响。</p>
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <label for="image-compression">图片压缩</label>
@@ -299,7 +303,7 @@
     <select id="send-mode" aria-describedby="send-mode-hint">
       <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
     </select>
-    <p id="send-mode-hint">「发送并直接 Enter」在文字送达后单独补发回车，Claude / OpenCode 会直接执行，/命令也直接提交而不只停在输入框。</p>
+    <p id="send-mode-hint">「发送并直接 Enter」等待文字发送成功后再单独发送回车；/命令也会提交。是否执行由当前终端程序决定。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button></div>
   </dialog>
 

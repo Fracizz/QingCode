@@ -57,7 +57,7 @@ let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
 // 发送按键：default 保持原行为；enter 为文字送达后单独补发回车。
 let sendMode = localStorage.getItem(prefix + 'send-mode') === 'enter' ? 'enter' : 'default';
-const AUTO_ENTER_DELAY_MS = 120;
+const AUTO_ENTER_DELAY_MS = 250;
 let fullscreen = false;
 let fullscreenEpoch = 0;
 let requestId = 0;
@@ -784,10 +784,10 @@ function setRawKeyboard(enabled) {
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
   get('keyboard').setAttribute('aria-pressed', String(enabled));
   get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
-  get('input-hint').textContent = enabled ? '终端实时输入 · ⌫ 删除远端文字 · ↵ 确认' : '手机草稿 · ⌫ 编辑本地文字 · 斜杠命令先查看候选';
-  get('input-mode').textContent = enabled ? '终端实时输入' : '手机草稿';
+  get('input-hint').textContent = enabled ? '终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认' : '命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选';
+  get('input-mode').textContent = enabled ? '终端实时输入' : '命令输入';
   get('keys-target').textContent = '编辑目标：' + (enabled ? '终端实时输入' : '手机草稿');
-  compose.placeholder = enabled ? '实时输入中 · 按键直接发送' : '输入命令，空白发送回车';
+  compose.placeholder = enabled ? '实时输入中…' : '输入命令…';
   get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
   get('input-mode').dataset.mode = enabled ? 'raw' : 'compose';
   updateComposerActions();
@@ -857,7 +857,7 @@ function setImageNote(text, { state = 'busy', ttl = 0 } = {}) {
   renderComposeNotes();
 }
 
-/** 上边框右侧同一时间只显示一项：图片进度 > 待处理的提交状态 > 补全提示 > 已接收 ✓。 */
+/** 输入框内同一时间只显示一项：图片进度 > 待处理的提交状态 > 补全提示 > 已接收 ✓。 */
 function renderComposeNotes() {
   const raw = inputMode === 'raw';
   const chip = get('review-submission');
@@ -1023,9 +1023,9 @@ get('reader-copy').addEventListener('click', async () => {
   catch (error) { get('reader-status').textContent = error.message; }
 });
 get('terminal-columns').value = String(terminalColumns);
-get('touch-mode').value = touchMode;
-get('touch-mode').addEventListener('change', () => {
-  touchMode = get('touch-mode').value === 'program' ? 'program' : 'view';
+get('touch-mode').querySelector(`input[value="${touchMode}"]`).checked = true;
+get('touch-mode').addEventListener('change', event => {
+  touchMode = event.target.value === 'program' ? 'program' : 'view';
   localStorage.setItem('qingcode:mobile:touch-mode', touchMode);
 });
 get('terminal-columns').addEventListener('change', () => {
@@ -1036,7 +1036,7 @@ get('terminal-columns').addEventListener('change', () => {
 
 function updateComposerActions() {
   const raw = inputMode === 'raw';
-  const slash = !raw && isSlashDraft(compose.value);
+  const slash = !raw && sendMode !== 'enter' && isSlashDraft(compose.value);
   get('send').setAttribute('aria-label', raw ? '确认终端中的选择或命令' : slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : '发送回车');
   get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
   get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
@@ -1065,15 +1065,7 @@ function dispatchComposer(action) {
     workspace.settle(key, receipt, state);
     if (selected && draftKey(selected) === key) renderSubmissionState();
   } : undefined;
-  if (!plan || !sendInput(plan.data, { raw: plan.interactive, onComplete: plan.enter ? undefined : onComplete })) return false;
-  if (plan.enter) {
-    // 文字先送达，再单独补发回车；期间切换了会话则不再补发。
-    const target = selected;
-    setTimeout(() => {
-      if (selected === target && terminalReady) sendInput(plan.enter, { raw: true, onComplete });
-      else onComplete?.('unknown');
-    }, AUTO_ENTER_DELAY_MS);
-  }
+  if (!plan || !sendInput(plan.data, { raw: plan.interactive, enter: plan.enter, onComplete })) return false;
   if (text) receipt = workspace.submit(key, text);
   // 草稿已提交，图片提示随之结束，不再显示「已就绪」。
   if (text && imageNote) setImageNote('');
@@ -1581,7 +1573,7 @@ async function poll(session, epoch) {
   }
 }
 
-function flushInput() {
+function flushInput(enter = '') {
   inputTimer = null;
   const pending = inputQueue;
   inputQueue = '';
@@ -1591,11 +1583,22 @@ function flushInput() {
   const address = profile?.id;
   const epoch = viewEpoch;
   if (!id || !pending) { for (const complete of completions) complete('unknown'); return; }
-  queuedInput += pending.length;
+  const length = pending.length + enter.length;
+  queuedInput += length;
   inputChain = inputChain.then(async () => {
     try {
       for (const part of splitInput(pending)) {
         await remote('input', { id, data: part }, address);
+      }
+      if (enter) {
+        // 从文字确认送达后开始等待，避免慢网络下两次写入仍紧挨着，或失败后执行残留文字。
+        // 整组操作留在同一队列项，后续按键/提交不能插到文字与 Enter 之间。
+        await new Promise(resolve => setTimeout(resolve, AUTO_ENTER_DELAY_MS));
+        if (epoch !== viewEpoch || selected !== id || profile?.id !== address || !terminalReady) {
+          for (const complete of completions) complete('unknown');
+          return;
+        }
+        await remote('input', { id, data: enter }, address);
       }
       for (const complete of completions) complete('received');
     } catch (error) {
@@ -1605,24 +1608,27 @@ function flushInput() {
         else get('terminal-status').textContent = '输入提交结果未知，请检查终端输出。';
       }
     } finally {
-      queuedInput -= pending.length;
+      queuedInput -= length;
     }
   });
 }
 
-function sendInput(value, { raw = false, onComplete } = {}) {
+function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
   if (!terminalReady) return false;
   if (!raw && (modifiers.ctrl !== 'off' || modifiers.alt !== 'off')) {
     value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
     consumeModifiers();
   }
-  if (queuedInput + inputQueue.length + value.length > 32_768) {
+  if (queuedInput + inputQueue.length + value.length + enter.length > 32_768) {
     get('terminal-status').textContent = '输入过长，请分段粘贴。';
     return false;
   }
+  // 分开发送的提交必须有独立边界，不能被 22ms 的输入合并并回上一条输入。
+  if (enter && inputTimer !== null) { clearTimeout(inputTimer); flushInput(); }
   inputQueue += value;
   if (onComplete) inputCompletions.push(onComplete);
-  if (inputTimer === null) inputTimer = setTimeout(flushInput, 22);
+  if (enter) flushInput(enter);
+  else if (inputTimer === null) inputTimer = setTimeout(flushInput, 22);
   return true;
 }
 
@@ -1789,6 +1795,9 @@ function pressKey(keyButton) {
   } else if (key === 'interrupt') {
     consumeModifiers();
     sendInput('\x03', { raw: true });
+  } else if (key === 'clear-input') {
+    clearModifiers();
+    sendInput(keySequence(key), { raw: true });
   } else if (key === 'slash') {
     dispatchComposer('slash');
   } else if (key === 'reference') {
@@ -1899,6 +1908,7 @@ sendModeSelect.value = sendMode;
 sendModeSelect.addEventListener('change', () => {
   sendMode = sendModeSelect.value === 'enter' ? 'enter' : 'default';
   localStorage.setItem(prefix + 'send-mode', sendMode);
+  updateComposerActions();
 });
 const compression = get('image-compression');
 const savedCompression = localStorage.getItem(prefix + 'image-compression');

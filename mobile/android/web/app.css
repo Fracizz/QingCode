@@ -371,7 +371,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
-#special-keys > button { flex: 1 0 44px; }
+#special-keys > button { flex: 1 0 auto; white-space: nowrap; }
 #special-keys > #slash-command { flex-basis: 52px; }
 #special-keys > #more-keys { position: sticky; right: 0; z-index: 1; flex-basis: 48px; box-shadow: -4px 0 0 var(--paper); }
 #special-keys::-webkit-scrollbar { display: none; }
@@ -379,12 +379,13 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   position: relative;
   min-width: 0;
   min-height: 44px;
-  padding: 0 2px;
+  padding: 0 8px;
   border-radius: var(--control-radius);
   background: var(--surface);
   font: 13px var(--mono);
   color: var(--ink);
 }
+#special-keys > button { min-width: 44px; }
 :is(#special-keys, .extra-keys) button:active:not(:disabled), :is(#special-keys, .extra-keys) button:focus-visible { background: var(--raised); transform: scale(.96); }
 #special-keys [data-key="text"] { font-size: 16px; }
 #special-keys :is([data-key="up"], [data-key="down"], [data-key="left"], [data-key="right"]) { font-size: 16px; }
@@ -397,37 +398,35 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .session-tab[aria-current="true"]:is(:active, :focus-visible),
 .row[aria-current="true"]:is(:active, :focus-visible),
 :is(#special-keys, .extra-keys) button[aria-pressed="true"]:not([data-locked="true"]):is(:active, :focus-visible) { background: var(--accent-pressed); }
-#compose-form { position: relative; display: flex; align-items: end; gap: 2px; margin-top: 12px; padding: 2px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease; }
+#compose-form { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 48px; align-items: end; column-gap: 2px; row-gap: 4px; margin-top: 8px; padding: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease, background-color 120ms ease; }
 #compose-form:focus-within { border-color: var(--accent-border); }
 #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
-#compose { flex: 1; width: 0; min-height: 44px; resize: none; padding: 11px 4px; border: 0; border-radius: var(--control-radius); background: transparent; font-family: var(--mono); font-size: 15px; }
+#compose { width: 100%; min-height: 44px; resize: none; padding: 11px 6px; border: 0; border-radius: var(--control-radius); background: transparent; font: 15px/22px var(--mono); }
 #compose:focus-visible { outline: none; }
 #compose::placeholder { font-family: system-ui, sans-serif; font-size: 14px; }
-#compose-form .icon-button { color: var(--muted); }
+#compose-form .icon-button { width: 44px; height: 44px; color: var(--muted); }
+#compose-form :is(#keyboard, #attach-image) svg { width: 21px; height: 21px; stroke-width: 1.75; }
+#compose-form :is(#keyboard, #attach-image):is(:active, :focus-visible) { background: var(--raised); color: var(--ink); }
 #compose-form #send { background: var(--accent); color: var(--accent-ink); }
-#compose-form #send:is(:active, :focus-visible) { background: #96ebd9; }
+#compose-form #send:is(:active, :focus-visible) { background: var(--accent); filter: brightness(1.08); }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }
 #compose-form #keyboard[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-/* 编辑目标和短状态浮在输入框上边框（类似描边输入框的标题），不额外占行。 */
-.compose-tag, .compose-notes { position: absolute; top: 0; z-index: 1; transform: translateY(-50%); pointer-events: none; }
-.compose-tag { left: 10px; padding: 0 5px; border-radius: 4px; background: var(--paper); color: var(--muted); font: 11px/16px system-ui, sans-serif; }
-.compose-tag[data-mode="raw"] { color: var(--accent); }
-.compose-notes { right: 10px; display: flex; justify-content: flex-end; max-width: calc(100% - 120px); }
-.compose-note { min-width: 0; overflow: hidden; padding: 0 5px; border-radius: 4px; background: var(--paper); color: var(--muted); font: 11px/16px system-ui, sans-serif; white-space: nowrap; text-overflow: ellipsis; }
+/* 状态放在框内上方，不再使用截断边框的悬浮标签；无状态时不占高度。 */
+.compose-notes { grid-column: 1 / -1; display: flex; align-items: center; min-width: 0; padding: 0 6px; }
+.compose-notes:not(:has(> :not([hidden]))) { display: none; }
+.compose-note { min-width: 0; overflow: hidden; padding: 0; color: var(--muted); font: 11px/20px system-ui, sans-serif; white-space: nowrap; text-overflow: ellipsis; }
 #image-state[data-state="done"] { color: var(--accent); }
 #image-state[data-state="error"] { color: var(--error); }
 #submission-state { display: flex; min-width: 0; }
-/* 可点区域向上下各延伸，满足 24px 触摸高度而不撑高输入栏。 */
-.compose-chip { position: relative; min-height: 16px; border: 0; pointer-events: auto; color: var(--accent); }
-.compose-chip::before { content: ''; position: absolute; inset: -6px -4px; }
+.compose-chip { min-height: 24px; padding: 0 4px; border: 0; color: var(--accent); text-align: left; }
 .compose-chip[data-state="unknown"], .compose-chip[data-state="error"] { color: var(--error); }
 .compose-chip[data-state="sending"] { color: var(--muted); }
 #slash-command, #attach-image { color: var(--accent); }
 #more-keys { grid-column: span 2; }
 #special-keys .icon-button { width: auto; }
-#send { display: flex; flex-direction: column; justify-content: center; gap: 0; width: 52px; }
+#compose-form #send { display: flex; flex-direction: column; justify-content: center; gap: 1px; width: 48px; }
 #send svg { width: 18px; height: 18px; }
-#send-label { font: 10px/1.2 system-ui, sans-serif; }
+#send-label { font: 11px/1.2 system-ui, sans-serif; }
 .extra-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-block: 12px; }
 #keys-target { color: var(--muted); }
 .font-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--divider); }
@@ -545,7 +544,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #terminal-host { display: none; }
   .terminal-state { min-height: 18px; }
   #terminal-tools { padding-bottom: max(4px, var(--safe-bottom), var(--corner-bottom-inset)); }
-  #compose-form { margin-top: 10px; }
+  #compose-form { margin-top: 6px; }
   .page-heading { margin-bottom: 12px; }
   .page-heading h1 { font-size: 22px; }
   dialog { padding-block: 16px; }
@@ -570,7 +569,19 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #new-session-dialog .dialog-actions { margin-top: 12px; }
 #terminal-menu { flex: none; width: 36px; min-width: 36px; }
 #viewport[data-columns="fixed"] { overflow-x: auto; }
-#terminal-columns, #touch-mode, #send-mode { width: 100%; min-height: 44px; margin: 6px 0; padding: 6px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--control-radius); }
+#terminal-columns, #send-mode { width: 100%; min-height: 44px; margin: 6px 0; padding: 10px 12px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--control-radius); }
+.setting-choices { min-width: 0; margin: 14px 0 8px; padding: 0; border: 0; }
+.setting-choices legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 650; }
+.setting-choices label { display: flex; align-items: center; gap: 12px; min-height: 52px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--paper); font-weight: 400; cursor: pointer; }
+.setting-choices label + label { border-top: 0; }
+.setting-choices label:first-of-type { border-radius: var(--control-radius) var(--control-radius) 0 0; }
+.setting-choices label:last-of-type { border-radius: 0 0 var(--control-radius) var(--control-radius); }
+.setting-choices label:has(:checked) { background: var(--accent-surface); }
+.setting-choices input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
+.setting-choices span { min-width: 0; overflow-wrap: anywhere; }
+.setting-choices strong, .setting-choices small { display: block; }
+.setting-choices strong { font-size: 14px; font-weight: 600; }
+.setting-choices small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .terminal-actions { margin-top: 12px; }
 .terminal-actions button { display: block; width: 100%; text-align: left; padding: 8px 12px; border-radius: 0; border-bottom: 1px solid var(--divider); }
 dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px; width: min(900px, calc(100% - 16px)); max-width: none; height: calc(100% - 16px); max-height: none; padding: 12px; overflow: hidden; }

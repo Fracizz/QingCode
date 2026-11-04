@@ -198,6 +198,8 @@ export function keySequence(key, { applicationCursor = false } = {}) {
   if (key === 'backspace') return '\x7f';
   if (key === 'delete-word') return '\x17';
   if (key === 'delete-line-start') return '\x15';
+  // 先移到行尾再向前删除，光标在中间时也不会残留当前行的后半段。
+  if (key === 'clear-input') return '\x05\x15';
   if (key === 'newline') return '\n';
   if (key in TILDE_KEYS) return '\x1b[' + TILDE_KEYS[key];
   if (key in ARROWS) return (applicationCursor ? '\x1bO' : '\x1b[') + ARROWS[key];

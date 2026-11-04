@@ -189,6 +189,8 @@ describe('Android terminal protocol', () => {
     expect(keySequence('shift-tab')).toBe('\x1b[Z')
     expect(keySequence('delete-word')).toBe('\x17')
     expect(keySequence('delete-line-start')).toBe('\x15')
+    expect(keySequence('clear-input')).toBe('\x05\x15')
+    expect(keySequence('clear-input', { applicationCursor: true })).toBe('\x05\x15')
     expect(keySequence('newline')).toBe('\n')
     expect(() => keySequence('f1')).toThrow()
   })

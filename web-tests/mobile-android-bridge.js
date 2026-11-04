@@ -20,6 +20,10 @@
     ends: [],
     endErrors: new Set(),
     inputs: [],
+    inputEvents: [],
+    inputGate: null,
+    inputDelay: 0,
+    inputError: null,
     polls: [],
     historyRequests: [],
     pairs: [],
@@ -140,6 +144,12 @@
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
         state.inputs.push(request.data)
+        const inputEvent = { data: request.data, startedAt: performance.now() }
+        state.inputEvents.push(inputEvent)
+        if (state.inputGate) await state.inputGate
+        if (state.inputDelay) await new Promise(resolve => setTimeout(resolve, state.inputDelay))
+        if (state.inputError) return { ok: false, error: state.inputError }
+        inputEvent.receivedAt = performance.now()
         // Echo printable input; a submitted line prints a fake result and a new prompt.
         const echoed = request.data.replace(/\r/g, '\r\n')
         push(session, base64(echoed + (request.data.endsWith('\r') ? 'ok\r\nPS D:\\code\\qingcode> ' : '')))
