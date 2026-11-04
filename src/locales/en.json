@@ -940,6 +940,7 @@
     "依次切换：经典 → 编辑器+终端 → 编辑器+双终端。标题栏可直接选择。": "Cycle classic → editor+terminal → editor+dual. The title-bar button opens a picker.",
     "在终端中查找": "Find in Terminal",
     "清空终端": "Clear Terminal",
+    "重绘终端显示": "Redraw Terminal Display",
     "终端: 清空": "Terminal: Clear",
     "清空当前终端缓冲区（需焦点在终端内）。": "Clear the active terminal buffer (when the terminal is focused).",
     "显示或隐藏终端面板。": "Show or hide the terminal panel.",

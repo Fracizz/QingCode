@@ -77,6 +77,7 @@ import {
   releaseTerminalWebglSlot,
   touchTerminalWebglSlot,
 } from '@/lib/terminal/terminalWebglBudget'
+import { createGlyphAtlasRepairScheduler, type GlyphAtlasRepairScheduler } from '@/lib/terminal/terminalGlyphAtlasRepair'
 import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -248,6 +249,8 @@ export default function TerminalView({
   const revealTimerRef = useRef<number | null>(null)
   /** 申请或刷新 WebGL 渲染（预算见 terminalWebglBudget）；挂载时由主 effect 赋值。 */
   const ensureWebglRef = useRef<() => void>(() => {})
+  /** 清空 WebGL 字形图集并整屏重绘（右键「重绘终端显示」）；挂载时由主 effect 赋值。 */
+  const repaintTerminalRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -465,6 +468,11 @@ export default function TerminalView({
       label: translate('清空终端'),
       shortcut: 'Ctrl+Shift+K',
       action: clearBuffer,
+    },
+    {
+      // 兜底：字形显示错乱时手动清空字形图集并整屏重绘，不影响终端内容与进程。
+      label: translate('重绘终端显示'),
+      action: () => repaintTerminalRef.current(),
     },
     ...(isSshResource(
       useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? ''
@@ -721,6 +729,8 @@ export default function TerminalView({
     // 被回收或上下文丢失的终端在重新可见时再申请。
     let webglCancelled = false
     let webgl: { dispose(): void } | null = null
+    // 字形图集合并后的自愈（见 terminalGlyphAtlasRepair）；随 WebGL addon 一起创建与释放。
+    let atlasRepair: GlyphAtlasRepairScheduler | null = null
     let webglLoading = false
     let webglLosses = 0
     const webglSlotKey = `${terminalId}#${++terminalWebglMountSeq}`
@@ -733,6 +743,8 @@ export default function TerminalView({
     const releaseWebgl = () => {
       const addon = webgl
       webgl = null
+      atlasRepair?.dispose()
+      atlasRepair = null
       releaseTerminalWebglSlot(webglSlotKey)
       try {
         addon?.dispose()
@@ -766,6 +778,10 @@ export default function TerminalView({
             })
             term.loadAddon(addon)
             webgl = addon
+            const repair = createGlyphAtlasRepairScheduler(() => addon.clearTextureAtlas())
+            atlasRepair = repair
+            // 图集页被移除 = 发生了合并：本终端未变化单元格的纹理坐标已失效，重建图集与模型。
+            addon.onRemoveTextureAtlasCanvas(() => repair.schedule())
           } catch {
             // DOM renderer remains active.
             releaseTerminalWebglSlot(webglSlotKey)
@@ -777,6 +793,10 @@ export default function TerminalView({
         })
     }
     ensureWebglRef.current = ensureWebgl
+    repaintTerminalRef.current = () => {
+      if (atlasRepair) atlasRepair.repairNow()
+      else term.refresh(0, Math.max(0, term.rows - 1))
+    }
     ensureWebgl()
 
     xtermRef.current = term
@@ -1129,6 +1149,7 @@ export default function TerminalView({
     return () => {
       webglCancelled = true
       ensureWebglRef.current = () => {}
+      repaintTerminalRef.current = () => {}
       // addon 随 term.dispose() 一起释放，这里只归还预算槽位。
       releaseTerminalWebglSlot(webglSlotKey)
       window.clearTimeout(subscribeTimer)
