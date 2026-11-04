@@ -3,6 +3,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -13,6 +15,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use ring::pbkdf2;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -24,31 +27,112 @@ use tokio::sync::{oneshot, watch, Notify, Semaphore};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
-const PORT: u16 = 48764;
+const DEFAULT_PORT: u16 = 48764;
 const MAX_SESSIONS: usize = 16;
 const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
-const CODE_TTL: Duration = Duration::from_secs(300);
+const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
+const MAX_ATTEMPTS: usize = 5;
+const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 
 #[derive(Default)]
 pub struct MobileState {
     running: Mutex<Option<Arc<Gateway>>>,
+    lifecycle: tokio::sync::Mutex<()>,
     pending: Mutex<HashMap<Uuid, oneshot::Sender<Result<Value, String>>>>,
 }
 
 struct Gateway {
     address: SocketAddrV4,
     fingerprint: String,
+    code: CodeVerifier,
     stop: watch::Sender<bool>,
     inner: Mutex<GatewayState>,
 }
 
 #[derive(Default)]
 struct GatewayState {
-    code: Option<(String, Instant)>,
+    failures: VecDeque<Instant>,
     token: Option<String>,
     sessions: HashMap<String, Session>,
     next_number: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedSettings {
+    address: SocketAddrV4,
+    certificate: Vec<u8>,
+    private_key: Vec<u8>,
+    code: CodeVerifier,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CodeVerifier {
+    salt: [u8; 16],
+    digest: [u8; 32],
+}
+
+fn valid_code(code: &str) -> bool {
+    code.len() == 6
+        && code.bytes().all(|byte| byte.is_ascii_graphic())
+        && code.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && code.bytes().any(|byte| byte.is_ascii_digit())
+}
+
+impl CodeVerifier {
+    fn new(code: &str) -> Result<Self, String> {
+        if !valid_code(code) {
+            return Err("验证码须为 6 位，包含英文字母和数字，可使用符号。".into());
+        }
+        let salt = *Uuid::new_v4().as_bytes();
+        let mut digest = [0; 32];
+        pbkdf2::derive(
+            pbkdf2::PBKDF2_HMAC_SHA256,
+            CODE_ROUNDS,
+            &salt,
+            code.as_bytes(),
+            &mut digest,
+        );
+        Ok(Self { salt, digest })
+    }
+
+    fn matches(&self, code: &str) -> bool {
+        valid_code(code)
+            && pbkdf2::verify(
+                pbkdf2::PBKDF2_HMAC_SHA256,
+                CODE_ROUNDS,
+                &self.salt,
+                code.as_bytes(),
+                &self.digest,
+            )
+            .is_ok()
+    }
+}
+
+fn settings_path() -> PathBuf {
+    crate::app_paths::app_data_dir()
+        .join("mobile")
+        .join("settings.json")
+}
+
+fn load_settings() -> Result<Option<SavedSettings>, String> {
+    let path = settings_path();
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    }
+    let content = qingcode_server::direct::private_read(&path)?;
+    serde_json::from_slice(&content)
+        .map(Some)
+        .map_err(|error| format!("读取移动连接设置失败：{error}"))
+}
+
+fn save_settings(settings: &SavedSettings) -> Result<(), String> {
+    let path = settings_path();
+    qingcode_server::direct::protect_private_directory(path.parent().unwrap())?;
+    let content = serde_json::to_vec(settings).map_err(|error| error.to_string())?;
+    qingcode_server::direct::private_write(&path, &content)
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -216,29 +300,17 @@ enum Operation {
 pub struct Status {
     address: Option<String>,
     paired: bool,
+    fingerprint: Option<String>,
 }
 
 #[derive(Serialize)]
-pub struct Pairing {
-    address: String,
-    code: String,
+pub struct SettingsSummary {
+    address: Option<Ipv4Addr>,
+    port: u16,
+    configured: bool,
 }
 
 impl Gateway {
-    fn pairing(&self) -> Result<Pairing, String> {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.token.is_some() {
-            return Err("已有设备配对。请先停止移动连接再重新配对。".into());
-        }
-        let secret = Uuid::new_v4().simple().to_string();
-        inner.code = Some((secret.clone(), Instant::now() + CODE_TTL));
-        let address = self.address.to_string();
-        Ok(Pairing {
-            code: format!("QC1:{address}:{}:{secret}", self.fingerprint),
-            address,
-        })
-    }
-
     fn authenticate(&self, bearer: Option<&str>) -> Result<(), String> {
         let inner = self.inner.lock().unwrap();
         if !*self.stop.borrow()
@@ -254,17 +326,30 @@ impl Gateway {
         }
     }
 
-    fn consume_code(&self, secret: &str) -> Result<String, String> {
+    fn pair(&self, secret: &str) -> Result<String, String> {
         let mut inner = self.inner.lock().unwrap();
-        if *self.stop.borrow()
-            || !inner.code.as_ref().is_some_and(|(expected, expires)| {
-                Instant::now() < *expires
-                    && bool::from(expected.as_bytes().ct_eq(secret.as_bytes()))
-            })
-        {
-            return Err("验证码无效、已使用或已过期。".into());
+        if *self.stop.borrow() {
+            return Err("移动连接已停止。".into());
         }
-        inner.code = None;
+        if inner.token.is_some() {
+            return Err("已有设备配对。请在 Windows 停止连接并重新启用后再配对。".into());
+        }
+        let now = Instant::now();
+        while inner
+            .failures
+            .front()
+            .is_some_and(|time| now.duration_since(*time) >= ATTEMPT_WINDOW)
+        {
+            inner.failures.pop_front();
+        }
+        if inner.failures.len() >= MAX_ATTEMPTS {
+            return Err("验证码尝试过多，请在一分钟后重试。".into());
+        }
+        if !self.code.matches(secret) {
+            inner.failures.push_back(now);
+            return Err("验证码不正确。".into());
+        }
+        inner.failures.clear();
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         inner.token = Some(token.clone());
         Ok(token)
@@ -333,6 +418,7 @@ pub fn mobile_status(state: State<'_, MobileState>) -> Status {
     let running = state.running.lock().unwrap();
     Status {
         address: running.as_ref().map(|gateway| gateway.address.to_string()),
+        fingerprint: running.as_ref().map(|gateway| gateway.fingerprint.clone()),
         paired: running
             .as_ref()
             .is_some_and(|gateway| gateway.inner.lock().unwrap().token.is_some()),
@@ -347,13 +433,28 @@ pub fn mobile_suggest_address() -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn mobile_start(address: String, app: AppHandle) -> Result<Pairing, String> {
+pub fn mobile_saved_settings() -> Result<SettingsSummary, String> {
+    let saved = load_settings()?;
+    Ok(SettingsSummary {
+        address: saved.as_ref().map(|settings| *settings.address.ip()),
+        port: saved
+            .as_ref()
+            .map_or(DEFAULT_PORT, |settings| settings.address.port()),
+        configured: saved.is_some(),
+    })
+}
+
+#[tauri::command]
+pub async fn mobile_start(
+    address: String,
+    port: u16,
+    code: Option<String>,
+    app: AppHandle,
+) -> Result<Status, String> {
     let state = app.state::<MobileState>();
-    if let Some(gateway) = state.running.lock().unwrap().as_ref() {
-        if address != gateway.address.ip().to_string() {
-            return Err("更改监听地址前请先停止移动连接。".into());
-        }
-        return gateway.pairing();
+    let lifecycle = state.lifecycle.lock().await;
+    if state.running.lock().unwrap().is_some() {
+        return Err("更改设置前请先停止移动连接。".into());
     }
     let ip: Ipv4Addr = address
         .parse()
@@ -361,38 +462,51 @@ pub async fn mobile_start(address: String, app: AppHandle) -> Result<Pairing, St
     if ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast() {
         return Err("请选择具体的 Windows 网卡 IPv4 地址。".into());
     }
-    let address = SocketAddrV4::new(ip, PORT);
+    if port == 0 {
+        return Err("端口须在 1–65535 之间。".into());
+    }
+    let address = SocketAddrV4::new(ip, port);
     let listener = TcpListener::bind(address)
         .await
         .map_err(|error| format!("无法监听 {address}：{error}"))?;
-    let certificate =
-        rcgen::generate_simple_self_signed(vec![ip.to_string()]).map_err(|e| e.to_string())?;
-    let der = certificate.cert.der().clone();
-    let fingerprint = format!("{:x}", Sha256::digest(&der));
-    let key = PrivatePkcs8KeyDer::from(certificate.key_pair.serialize_der());
+    let mut settings = if let Some(mut saved) = load_settings()? {
+        if let Some(code) = code {
+            saved.code = CodeVerifier::new(&code)?;
+        }
+        saved
+    } else {
+        let code = CodeVerifier::new(code.as_deref().unwrap_or_default())?;
+        let certificate = rcgen::generate_simple_self_signed(vec!["qingcode.local".into()])
+            .map_err(|error| error.to_string())?;
+        SavedSettings {
+            address,
+            certificate: certificate.cert.der().to_vec(),
+            private_key: certificate.key_pair.serialize_der(),
+            code,
+        }
+    };
+    settings.address = address;
+    let fingerprint = format!("{:x}", Sha256::digest(&settings.certificate));
+    let key = PrivatePkcs8KeyDer::from(settings.private_key.clone());
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()
     .map_err(|e| e.to_string())?
     .with_no_client_auth()
-    .with_single_cert(vec![der], key.into())
+    .with_single_cert(vec![settings.certificate.clone().into()], key.into())
     .map_err(|e| e.to_string())?;
+    save_settings(&settings)?;
     let (stop, stop_rx) = watch::channel(false);
     let gateway = Arc::new(Gateway {
         address,
-        fingerprint,
+        fingerprint: fingerprint.clone(),
+        code: settings.code,
         stop,
         inner: Mutex::default(),
     });
-    let pairing = gateway.pairing()?;
-    {
-        let mut running = state.running.lock().unwrap();
-        if running.is_some() {
-            return Err("移动连接已经启动。".into());
-        }
-        *running = Some(gateway.clone());
-    }
+    *state.running.lock().unwrap() = Some(gateway.clone());
+    drop(lifecycle);
     tauri::async_runtime::spawn(serve(
         app,
         gateway,
@@ -400,12 +514,17 @@ pub async fn mobile_start(address: String, app: AppHandle) -> Result<Pairing, St
         TlsAcceptor::from(Arc::new(config)),
         stop_rx,
     ));
-    Ok(pairing)
+    Ok(Status {
+        address: Some(address.to_string()),
+        paired: false,
+        fingerprint: Some(fingerprint),
+    })
 }
 
 #[tauri::command]
 pub async fn mobile_stop(app: AppHandle) {
     let state = app.state::<MobileState>();
+    let _lifecycle = state.lifecycle.lock().await;
     let gateway = state.running.lock().unwrap().take();
     let Some(gateway) = gateway else { return };
     gateway.stop.send_replace(true);
@@ -523,12 +642,17 @@ async fn request_handler(
         .and_then(Result::ok)
         .and_then(|body| serde_json::from_slice::<Operation>(&body.to_bytes()).ok());
     let (status, result) = match request {
-        Some(Operation::Pair { secret }) => (
-            StatusCode::OK,
-            gateway
-                .consume_code(&secret)
-                .map(|token| json!({ "token": token })),
-        ),
+        Some(Operation::Pair { secret }) => {
+            let gateway = gateway.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || gateway.pair(&secret))
+                .await
+                .map_err(|_| "配对处理失败。".to_string())
+                .and_then(|result| result);
+            (
+                StatusCode::OK,
+                result.map(|token| json!({ "token": token })),
+            )
+        }
         Some(operation) => {
             let bearer = parts
                 .headers
@@ -750,5 +874,52 @@ async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), Strin
         })
         .await
         .map_err(|error| error.to_string())?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_code_requires_six_graphic_characters_with_letters_and_digits() {
+        for invalid in ["123456", "abcdef", "abc 12", "a1BCD", "a1BCDE3", "a1中BC"] {
+            assert!(!valid_code(invalid));
+        }
+        assert!(valid_code("a1B@3!"));
+    }
+
+    #[test]
+    fn saved_code_survives_reload_and_pairing_is_rate_limited() {
+        let code = "a1B@3!";
+        let settings = SavedSettings {
+            address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49123),
+            certificate: vec![],
+            private_key: vec![],
+            code: CodeVerifier::new(code).unwrap(),
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains(code));
+        let restored: SavedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.address.port(), 49123);
+        let (stop, _) = watch::channel(false);
+        let gateway = Gateway {
+            address: restored.address,
+            fingerprint: String::new(),
+            code: restored.code,
+            stop,
+            inner: Mutex::default(),
+        };
+        for _ in 0..MAX_ATTEMPTS {
+            assert_eq!(gateway.pair("wrong").unwrap_err(), "验证码不正确。");
+        }
+        assert!(gateway.pair(code).unwrap_err().contains("尝试过多"));
+        let aged = Instant::now() - ATTEMPT_WINDOW;
+        gateway.inner.lock().unwrap().failures = VecDeque::from([aged; MAX_ATTEMPTS]);
+        let token = gateway.pair(code).unwrap();
+        assert!(gateway.authenticate(Some(&token)).is_ok());
+        assert!(gateway.pair(code).is_err());
+        gateway.inner.lock().unwrap().token = None;
+        assert_ne!(gateway.pair(code).unwrap(), token);
     }
 }

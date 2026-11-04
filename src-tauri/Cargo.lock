@@ -4240,6 +4240,7 @@ dependencies = [
  "qingcode-contracts",
  "qingcode-server",
  "rcgen",
+ "ring",
  "rusqlite",
  "russh",
  "russh-sftp",

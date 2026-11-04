@@ -229,7 +229,7 @@ pub fn replace_private_file(source: &Path, destination: &Path) -> Result<(), Str
     std::fs::rename(source, destination).map_err(|error| format!("原子替换凭据文件失败: {error}"))
 }
 
-fn private_write(path: &Path, content: &[u8]) -> Result<(), String> {
+pub fn private_write(path: &Path, content: &[u8]) -> Result<(), String> {
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err("直连配置不能是符号链接".into());
     }
@@ -257,7 +257,7 @@ fn private_write(path: &Path, content: &[u8]) -> Result<(), String> {
     result
 }
 
-fn private_read(path: &Path) -> Result<Vec<u8>, String> {
+pub fn private_read(path: &Path) -> Result<Vec<u8>, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("读取直连配置失败: {e}"))?;
     if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 64 * 1024 {
         return Err("直连配置文件类型或大小无效".into());

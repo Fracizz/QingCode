@@ -35,11 +35,18 @@ $stage = Join-Path $work "stage-$([Guid]::NewGuid().ToString('N'))"
 $classes = Join-Path $stage 'classes'
 $assets = Join-Path $stage 'assets'
 $bytecode = Join-Path $stage 'dex'
-New-Item -ItemType Directory -Path $classes,$assets,$bytecode,(Split-Path -Parent $OutputApk) -Force | Out-Null
+$resources = Join-Path $stage 'res'
+$drawables = Join-Path $resources 'drawable-nodpi'
+New-Item -ItemType Directory -Path $classes,$assets,$bytecode,$drawables,(Split-Path -Parent $OutputApk) -Force | Out-Null
 try {
   foreach ($asset in @('index.html', 'app.css', 'app.js')) {
     Copy-Item -LiteralPath (Join-Path $source "web/$asset") -Destination $assets
   }
+  Copy-Item -LiteralPath (Join-Path $source 'res/values') -Destination $resources -Recurse
+  # The 256 px PNG matches the 256 px frame of the Windows installer ICO.
+  $icon = Join-Path $root 'src-tauri/icons/128x128@2x.png'
+  Copy-Item -LiteralPath $icon -Destination (Join-Path $drawables 'ic_qingcode.png')
+  Copy-Item -LiteralPath $icon -Destination (Join-Path $assets 'qingcode-icon.png')
   Copy-Item -LiteralPath (Join-Path $root 'node_modules/@xterm/xterm/lib/xterm.js') -Destination $assets
   Copy-Item -LiteralPath (Join-Path $root 'node_modules/@xterm/xterm/css/xterm.css') -Destination $assets
   Copy-Item -LiteralPath (Join-Path $root 'node_modules/@xterm/addon-fit/lib/addon-fit.js') -Destination (Join-Path $assets 'fit.js')
@@ -50,7 +57,7 @@ try {
   $unsigned = Join-Path $stage 'unsigned.apk'
   $aligned = Join-Path $stage 'aligned.apk'
   $signed = Join-Path $stage 'signed.apk'
-  Invoke-AndroidTool $aapt @('compile', '--dir', (Join-Path $source 'res'), '-o', $compiled)
+  Invoke-AndroidTool $aapt @('compile', '--dir', $resources, '-o', $compiled)
   Invoke-AndroidTool $aapt @('link', '-I', $androidJar, '--manifest', (Join-Path $source 'AndroidManifest.xml'), '-A', $assets, '-o', $unsigned, $compiled)
   Invoke-AndroidTool $java @('--release', '8', '-encoding', 'UTF-8', '-cp', $androidJar, '-d', $classes, (Join-Path $source 'MainActivity.java'))
   $classFiles = Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse | ForEach-Object FullName

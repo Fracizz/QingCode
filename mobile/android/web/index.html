@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>QingCode</title>
   <link rel="stylesheet" href="xterm.css">
@@ -12,68 +13,161 @@
   <script src="app.js" defer></script>
 </head>
 <body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 7 5 5-5 5m8 0h6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="i-host" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="3"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01m4 0h.01m4 0h.01m4 0h.01M6 13h.01m4 0h.01m4 0h.01m4 0h.01M8 16h8"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 0 0-2 2v13h16V7a2 2 0 0 0-2-2h-2"/><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 12h8m-8 4h6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+  </svg>
+
   <main>
-    <section id="pair-screen">
-      <header class="brand"><span class="logo" aria-hidden="true">›_</span>QingCode</header>
-      <form id="pair-form">
-        <h1>连接 Windows</h1>
-        <p>在 Windows QingCode 的「设置 → 功能 → Android 移动连接」生成验证码。</p>
-        <label for="pair-code">连接验证码</label>
-        <textarea id="pair-code" rows="3" maxlength="180" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴以 QC1: 开头的验证码" required></textarea>
-        <button class="primary" type="submit">连接</button>
-        <p id="pair-error" class="error" role="alert" hidden></p>
-      </form>
-    </section>
-    <section id="project-screen" hidden>
-      <header class="project-head">
-        <div><span class="eyebrow">QINGCODE</span><h1>项目</h1></div>
-        <details id="connection-menu">
-          <summary id="connection-label">Windows</summary>
-          <div class="popup">
-            <button id="refresh" type="button">刷新项目</button>
-            <button id="forget" type="button">清除本机配对</button>
-          </div>
-        </details>
+    <div id="dashboard" class="dashboard">
+      <header class="app-head">
+        <div class="brand"><img src="qingcode-icon.png" alt="" width="28" height="28">QingCode</div>
+        <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span></button>
       </header>
-      <nav id="hosts" aria-label="项目环境">
-        <button type="button" data-kind="local" aria-pressed="true">本机</button>
-        <button type="button" data-kind="wsl" aria-pressed="false">WSL</button>
-        <button type="button" data-kind="ssh" aria-pressed="false">远端</button>
+
+      <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
+        <header class="page-heading"><p class="eyebrow">远程工作台</p><h1 id="home-title">终端</h1><p>在手机上继续远端 Shell 会话。</p></header>
+        <button id="resume" class="resume-card" type="button" hidden>
+          <span class="tile"><svg><use href="#i-terminal"/></svg></span>
+          <span class="row-text"><small>继续终端</small><strong id="resume-name"></strong><small id="resume-host"></small></span>
+          <svg class="arrow"><use href="#i-chevron"/></svg>
+        </button>
+        <div id="home-empty" class="empty-card">
+          <span class="tile"><svg><use href="#i-terminal"/></svg></span>
+          <h2 id="home-empty-title">连接一台 QingCode</h2>
+          <p id="home-empty-text">配对电脑后，就能在这里打开远程终端。</p>
+          <button id="home-action" class="primary" type="button">添加连接</button>
+        </div>
+        <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
+      </section>
+
+      <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
+        <header class="page-heading with-action">
+          <div><p class="eyebrow">工作区</p><h1 id="project-title">项目</h1><p id="project-subtitle"></p></div>
+          <button id="refresh" class="secondary" type="button">刷新</button>
+        </header>
+        <div id="project-filters">
+          <input id="search" type="search" placeholder="搜索项目、路径或主机" aria-label="搜索项目" autocomplete="off">
+          <nav id="hosts" aria-label="项目环境">
+            <button type="button" data-kind="all" aria-pressed="true">全部</button>
+            <button type="button" data-kind="local" aria-pressed="false">本机</button>
+            <button type="button" data-kind="wsl" aria-pressed="false">WSL</button>
+            <button type="button" data-kind="ssh" aria-pressed="false">远端</button>
+          </nav>
+        </div>
+        <p id="project-error" class="error" role="alert" hidden></p>
+        <p id="list-label" class="list-label" role="status"></p>
+        <div id="project-list" class="rows"></div>
+      </section>
+
+      <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
+        <header class="page-heading with-action">
+          <div><p class="eyebrow">设备管理</p><h1 id="connection-title">连接</h1><p>选择要控制的 QingCode 电脑。</p></div>
+          <button id="add-host" class="primary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>
+        </header>
+        <p id="connection-error" class="error" role="alert" hidden></p>
+        <div id="connection-list" class="rows"></div>
+        <div id="connection-empty" class="empty-card" hidden>
+          <span class="tile"><svg><use href="#i-host"/></svg></span>
+          <h2>暂无已配对电脑</h2><p>从电脑端的 Android 移动连接设置获取地址和验证码。</p>
+        </div>
+      </section>
+
+      <nav id="dashboard-nav" aria-label="主导航">
+        <button type="button" data-page="home" aria-current="page"><svg><use href="#i-terminal"/></svg>终端</button>
+        <button type="button" data-page="project"><svg><use href="#i-folder"/></svg>项目</button>
+        <button type="button" data-page="connection"><svg><use href="#i-host"/></svg>连接</button>
       </nav>
-      <input id="search" type="search" placeholder="搜索项目" aria-label="搜索当前环境的项目" autocomplete="off">
-      <p id="project-error" class="error" role="alert" hidden></p>
-      <p id="list-label" role="status"></p>
-      <div id="project-list"></div>
-    </section>
-    <section id="terminal-screen" hidden>
+    </div>
+
+    <section id="terminal-screen" hidden aria-labelledby="terminal-name">
       <header class="terminal-head">
-        <button id="back" type="button" aria-label="返回项目">←</button>
-        <div><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
-        <details id="session-menu">
-          <summary id="session-count" aria-label="管理终端会话">终端</summary>
-          <div class="popup">
-            <div id="sessions"></div>
-            <button id="new-session" type="button">＋ 新建终端</button>
-            <button id="end-session" type="button" class="danger">结束当前会话</button>
-          </div>
-        </details>
+        <button id="back" class="icon-button" type="button" aria-label="返回工作台"><svg><use href="#i-back"/></svg></button>
+        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
+        <button id="manage-sessions" class="icon-button" type="button" aria-label="管理终端会话"><svg><use href="#i-more"/></svg></button>
       </header>
-      <p id="terminal-status" role="status"></p>
-      <div id="viewport"></div>
-      <div id="special-keys" aria-label="终端快捷键">
-        <button type="button" data-key="esc">Esc</button>
-        <button type="button" data-key="tab">Tab</button>
-        <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
-        <button type="button" data-key="up" aria-label="向上">↑</button>
-        <button type="button" data-key="down" aria-label="向下">↓</button>
-        <button type="button" data-key="enter" aria-label="回车">↵</button>
-        <button type="button" id="keyboard" aria-label="打开软键盘">⌨</button>
+      <div class="session-rail">
+        <div id="session-tabs" aria-label="终端会话"></div>
+        <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
       </div>
-      <form id="compose-form">
-        <input id="compose" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="输入终端文本" placeholder="输入命令或中文文本">
-        <button type="submit" aria-label="发送并回车">发送</button>
-      </form>
+      <div id="viewport" aria-label="终端输出"></div>
+      <div id="terminal-tools">
+        <div class="terminal-state"><span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p><button id="terminal-retry" class="text-button" type="button" hidden>重试</button></div>
+        <div id="special-keys" aria-label="终端快捷键">
+          <button type="button" data-key="esc">Esc</button>
+          <button type="button" data-key="tab">Tab</button>
+          <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
+          <button type="button" data-key="left" aria-label="向左">←</button>
+          <button type="button" data-key="down" aria-label="向下">↓</button>
+          <button type="button" data-key="up" aria-label="向上">↑</button>
+          <button type="button" data-key="right" aria-label="向右">→</button>
+        </div>
+        <form id="compose-form">
+          <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘"><svg><use href="#i-keyboard"/></svg></button>
+          <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" placeholder="输入命令…"></textarea>
+          <button type="button" id="paste" class="icon-button" aria-label="粘贴到命令栏"><svg><use href="#i-paste"/></svg></button>
+          <button id="send" class="icon-button" type="submit" aria-label="发送并回车"><svg><use href="#i-send"/></svg></button>
+        </form>
+      </div>
     </section>
   </main>
+
+  <dialog id="pair-dialog" aria-labelledby="pair-title">
+    <form id="pair-form">
+      <h2 id="pair-title">添加连接</h2>
+      <p>在电脑端「设置 → 功能 → Android 移动连接」中获取地址和验证码。</p>
+      <label for="pair-name">连接名称</label>
+      <input id="pair-name" maxlength="48" placeholder="例如 工作电脑" required>
+      <div class="pair-address">
+        <div><label for="pair-host">IPv4 地址</label><input id="pair-host" inputmode="decimal" autocomplete="off" placeholder="192.168.1.10" required></div>
+        <div><label for="pair-port">端口</label><input id="pair-port" type="number" inputmode="numeric" min="1" max="65535" value="48764" required></div>
+      </div>
+      <label for="pair-code">连接验证码</label>
+      <input id="pair-code" type="password" minlength="6" maxlength="6" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6 位验证码" required>
+      <p id="pair-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">核对并连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="pair-confirm" aria-labelledby="pair-confirm-title">
+    <form method="dialog">
+      <h2 id="pair-confirm-title">核对电脑身份</h2>
+      <p>请逐位核对电脑端显示的 SHA-256 指纹。</p>
+      <code id="pair-fingerprint"></code>
+      <div class="dialog-actions"><button class="secondary" value="cancel">取消</button><button class="primary" value="confirm">指纹一致</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="host-dialog" aria-labelledby="host-title">
+    <form id="host-form">
+      <h2 id="host-title">连接详情</h2><p id="host-address"></p>
+      <code id="host-fingerprint"></code>
+      <label for="host-name">连接名称</label><input id="host-name" maxlength="48" required>
+      <p id="host-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="host-dialog">取消</button><button class="primary" type="submit">保存名称</button></div>
+      <div class="dialog-links"><button type="button" id="repair-host" class="text-button">重新配对</button><button type="button" id="remove-host" class="text-button danger">移除连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="session-dialog" aria-labelledby="session-dialog-title">
+    <h2 id="session-dialog-title">终端会话</h2>
+    <div id="session-options" class="rows"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button></div>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2><p id="confirm-text"></p>
+      <div class="dialog-actions"><button class="secondary" value="cancel">取消</button><button id="confirm-action" class="destructive" value="confirm"></button></div>
+    </form>
+  </dialog>
 </body>
 </html>

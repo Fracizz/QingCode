@@ -1,6 +1,7 @@
 package com.qingcode.companion;
 
 import android.app.Activity;
+import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.graphics.Insets;
 import android.os.Build;
@@ -13,6 +14,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -21,40 +23,40 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.X509TrustManager;
 
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
+    private static final String PROFILE_PREFIX = "profile:";
     private final ExecutorService control = Executors.newSingleThreadExecutor();
     private final ExecutorService output = Executors.newSingleThreadExecutor();
+    private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private WebView view;
     private SharedPreferences preferences;
-    private volatile Connection connection;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         preferences = getSharedPreferences("pairing", MODE_PRIVATE);
-        String address = preferences.getString("address", "");
-        String pin = preferences.getString("pin", "");
-        String token = preferences.getString("token", "");
-        try {
-            if (!token.isEmpty()) connection = new Connection(address, pin, token);
-        } catch (Exception ignored) {
-            preferences.edit().clear().apply();
-        }
+        loadConnections();
 
         FrameLayout frame = new FrameLayout(this);
         view = new WebView(this);
+        view.setBackgroundColor(0xff111419);
         frame.addView(view, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 35) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -85,6 +87,7 @@ public final class MainActivity extends Activity {
                         case "index.html": type = "text/html"; break;
                         case "app.js": case "xterm.js": case "fit.js": type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
+                        case "qingcode-icon.png": type = "image/png"; break;
                         default: return denied();
                     }
                     try {
@@ -122,10 +125,6 @@ public final class MainActivity extends Activity {
     }
 
     public final class Bridge {
-        @JavascriptInterface public boolean paired() {
-            return connection != null;
-        }
-
         @JavascriptInterface public void request(int id, String payload) {
             if (payload == null || payload.length() > 32_000) {
                 reply(id, failure("请求过大。"));
@@ -138,7 +137,23 @@ public final class MainActivity extends Activity {
                 reply(id, failure("请求无效。"));
                 return;
             }
-            ExecutorService executor = "poll".equals(request.optString("op")) ? output : control;
+            String op = request.optString("op");
+            if ("clipboard".equals(op)) {
+                runOnUiThread(() -> {
+                    if (view == null) return;
+                    ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+                    android.content.ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+                    // Read plain text only. Clipboard URIs and intents never reach the bridge.
+                    CharSequence content = clip == null || clip.getItemCount() == 0 ? null : clip.getItemAt(0).getText();
+                    try {
+                        reply(id, success(content == null ? "" : content.toString()));
+                    } catch (Exception error) {
+                        reply(id, failure("无法读取剪贴板。"));
+                    }
+                });
+                return;
+            }
+            ExecutorService executor = "poll".equals(op) ? output : control;
             executor.execute(() -> {
                 try {
                     reply(id, perform(request));
@@ -146,7 +161,7 @@ public final class MainActivity extends Activity {
                     String reason = error instanceof java.net.SocketTimeoutException
                         ? "连接超时，请确认电脑在线并允许局域网访问。"
                         : error instanceof javax.net.ssl.SSLException
-                            ? "Windows 身份校验失败，请从电脑重新复制验证码。"
+                            ? "Windows 身份校验失败，请重新核对证书指纹。"
                             : error.getMessage();
                     reply(id, failure(reason == null ? "连接失败。" : reason));
                 }
@@ -154,33 +169,88 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void loadConnections() {
+        for (Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
+            if (!entry.getKey().startsWith(PROFILE_PREFIX) || !(entry.getValue() instanceof String)) continue;
+            try {
+                String address = entry.getKey().substring(PROFILE_PREFIX.length());
+                JSONObject saved = new JSONObject((String) entry.getValue());
+                connections.put(address, new Connection(address, saved.getString("pin"),
+                    saved.getString("token"), saved.getString("name")));
+            } catch (Exception ignored) {
+                // A damaged profile does not prevent loading the other hosts.
+            }
+        }
+        String address = preferences.getString("address", "");
+        String token = preferences.getString("token", "");
+        if (token.isEmpty()) return;
+        try {
+            if (!connections.containsKey(address)) {
+                save(new Connection(address, preferences.getString("pin", ""), token, "Windows"));
+            }
+            preferences.edit().remove("address").remove("pin").remove("token").apply();
+        } catch (Exception ignored) {
+            // Leave the original pairing available if migration fails.
+        }
+    }
+
+    private void save(Connection connection) throws Exception {
+        JSONObject saved = new JSONObject().put("name", connection.name)
+            .put("pin", connection.fingerprint).put("token", connection.token);
+        preferences.edit().putString(PROFILE_PREFIX + connection.address(), saved.toString()).apply();
+        connections.put(connection.address(), connection);
+    }
+
+    private static JSONObject success(Object data) throws Exception {
+        return new JSONObject().put("ok", true).put("data", data);
+    }
+
     private JSONObject perform(JSONObject request) throws Exception {
         String op = request.getString("op");
+        if ("profiles".equals(op)) {
+            JSONArray profiles = new JSONArray();
+            for (Connection item : connections.values()) profiles.put(item.summary());
+            return success(profiles);
+        }
+        if ("probe".equals(op)) {
+            String address = request.getString("host") + ":" + request.getInt("port");
+            return new JSONObject().put("ok", true).put("data", Connection.probe(address));
+        }
         if ("pair".equals(op)) {
-            String[] fields = request.getString("code").trim().split(":", -1);
-            if (fields.length != 5 || !"QC1".equals(fields[0])
-                || !"48764".equals(fields[2]) || !fields[4].matches("[0-9a-f]{32}")) {
-                return failure("请粘贴 Windows QingCode 显示的完整验证码。");
+            String address = request.getString("host") + ":" + request.getInt("port");
+            String pin = request.getString("fingerprint");
+            String code = request.getString("code");
+            if (!code.matches("(?=.*[A-Za-z])(?=.*[0-9])[!-~]{6}")) {
+                return failure("验证码须为 6 位，包含英文字母和数字。");
             }
-            String address = fields[1] + ":" + fields[2];
-            Connection candidate = new Connection(address, fields[3], "");
-            JSONObject result = candidate.call(new JSONObject().put("op", "pair").put("secret", fields[4]));
+            String name = request.getString("name").trim();
+            if (name.isEmpty() || name.length() > 48) return failure("连接名称须为 1–48 个字符。");
+            Connection candidate = new Connection(address, pin, "", name);
+            JSONObject result = candidate.call(new JSONObject().put("op", "pair").put("secret", code));
             if (result.optBoolean("ok")) {
                 String token = result.getJSONObject("data").getString("token");
-                connection = new Connection(address, fields[3], token);
-                preferences.edit().putString("address", address).putString("pin", fields[3])
-                    .putString("token", token).apply();
-                return new JSONObject().put("ok", true);
+                Connection paired = new Connection(address, pin, token, name);
+                save(paired);
+                return success(paired.summary());
             }
             return result;
         }
         if ("forget".equals(op)) {
-            connection = null;
-            preferences.edit().clear().apply();
-            return new JSONObject().put("ok", true);
+            String address = request.getString("profile");
+            preferences.edit().remove(PROFILE_PREFIX + address).apply();
+            connections.remove(address);
+            return success(JSONObject.NULL);
         }
-        Connection current = connection;
+        Connection current = connections.get(request.getString("profile"));
         if (current == null) return failure("请先完成验证码配对。");
+        if ("rename".equals(op)) {
+            String name = request.getString("name").trim();
+            if (name.isEmpty() || name.length() > 48) return failure("连接名称须为 1–48 个字符。");
+            Connection renamed = new Connection(current.address(), current.fingerprint, current.token, name);
+            save(renamed);
+            return success(renamed.summary());
+        }
+        request.remove("profile");
         switch (op) {
             case "projects": case "sessions": case "create": case "poll":
             case "input": case "resize": case "end":
@@ -208,15 +278,40 @@ public final class MainActivity extends Activity {
 
     private static final class Connection {
         final URI endpoint;
+        final String fingerprint;
         final String token;
+        final String name;
         final SSLContext tls;
 
-        Connection(String address, String fingerprint, String token) throws Exception {
+        Connection(String address, String fingerprint, String token, String name) throws Exception {
+            endpoint = endpoint(address);
+            this.fingerprint = fingerprint;
+            this.token = token;
+            this.name = name;
+            if (!fingerprint.matches("[0-9a-f]{64}")) throw new IOException("证书指纹格式无效。");
+            byte[] pin = new byte[32];
+            for (int index = 0; index < pin.length; index++) {
+                pin[index] = (byte) Integer.parseInt(fingerprint.substring(2 * index, 2 * index + 2), 16);
+            }
+            tls = tlsContext(pin);
+        }
+
+        String address() {
+            return endpoint.getAuthority();
+        }
+
+        JSONObject summary() throws Exception {
+            return new JSONObject().put("id", address()).put("name", name)
+                .put("host", endpoint.getHost()).put("port", endpoint.getPort())
+                .put("fingerprint", fingerprint);
+        }
+
+        private static URI endpoint(String address) throws Exception {
             String[] fields = address.split(":", -1);
-            if (fields.length != 2 || !"48764".equals(fields[1])
-                || !fields[0].matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")
-                || !fingerprint.matches("[0-9a-f]{64}")) {
-                throw new IOException("Windows 地址或验证码格式无效。");
+            if (fields.length != 2 || !fields[1].matches("[1-9][0-9]{0,4}")
+                || Integer.parseInt(fields[1]) > 65535
+                || !fields[0].matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
+                throw new IOException("请输入有效的 Windows IPv4 地址和端口。");
             }
             for (String octet : fields[0].split("\\.")) {
                 int value = Integer.parseInt(octet);
@@ -224,13 +319,33 @@ public final class MainActivity extends Activity {
                     throw new IOException("Windows IPv4 地址无效。");
                 }
             }
-            endpoint = new URI("https://" + address + "/v1/rpc");
-            this.token = token;
-            byte[] pin = new byte[32];
-            for (int index = 0; index < pin.length; index++) {
-                pin[index] = (byte) Integer.parseInt(fingerprint.substring(2 * index, 2 * index + 2), 16);
+            return new URI("https://" + address + "/v1/rpc");
+        }
+
+        // The discovery connection stops after the handshake. A different,
+        // pinned connection carries the code only after the user compares it.
+        static String probe(String address) throws Exception {
+            URI endpoint = endpoint(address);
+            try (Socket transport = new Socket(java.net.Proxy.NO_PROXY)) {
+                transport.connect(new InetSocketAddress(endpoint.getHost(), endpoint.getPort()), 5000);
+                transport.setSoTimeout(5000);
+                try (SSLSocket socket = (SSLSocket) tlsContext(null).getSocketFactory()
+                        .createSocket(transport, endpoint.getHost(), endpoint.getPort(), true)) {
+                    socket.startHandshake();
+                    byte[] digest = MessageDigest.getInstance("SHA-256")
+                        .digest(socket.getSession().getPeerCertificates()[0].getEncoded());
+                    StringBuilder fingerprint = new StringBuilder(64);
+                    for (byte value : digest) {
+                        fingerprint.append(Character.forDigit((value & 255) >> 4, 16));
+                        fingerprint.append(Character.forDigit(value & 15, 16));
+                    }
+                    return fingerprint.toString();
+                }
             }
-            tls = SSLContext.getInstance("TLS");
+        }
+
+        private static SSLContext tlsContext(byte[] pin) throws Exception {
+            SSLContext tls = SSLContext.getInstance("TLS");
             tls.init(null, new X509TrustManager[] { new X509TrustManager() {
                 @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
                 @Override public void checkClientTrusted(X509Certificate[] chain, String type) throws CertificateException {
@@ -241,12 +356,13 @@ public final class MainActivity extends Activity {
                     chain[0].checkValidity();
                     try {
                         byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getEncoded());
-                        if (!MessageDigest.isEqual(pin, actual)) throw new CertificateException("Certificate pin mismatch");
+                        if (pin != null && !MessageDigest.isEqual(pin, actual)) throw new CertificateException("Certificate pin mismatch");
                     } catch (java.security.NoSuchAlgorithmException error) {
                         throw new CertificateException(error);
                     }
                 }
             } }, new SecureRandom());
+            return tls;
         }
 
         JSONObject call(JSONObject request) throws Exception {
