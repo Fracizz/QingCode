@@ -133,6 +133,27 @@ describe('Android bottom sheet drag', () => {
 })
 
 describe('Android key auto-repeat', () => {
+  it('cancels a held key when its owner changes, the window blurs, or the button is disabled', () => {
+    vi.useFakeTimers()
+    const button = document.createElement('button')
+    document.body.append(button)
+    const fire = vi.fn()
+    const dispose = attachKeyRepeat(button, fire)
+    disposers.push(dispose)
+    pointer(button, 'pointerdown', 0)
+    dispose.cancel()
+    vi.advanceTimersByTime(1000)
+    expect(fire).not.toHaveBeenCalled()
+    pointer(button, 'pointerdown', 0)
+    window.dispatchEvent(new Event('blur'))
+    vi.advanceTimersByTime(1000)
+    expect(fire).not.toHaveBeenCalled()
+    pointer(button, 'pointerdown', 0)
+    button.disabled = true
+    vi.advanceTimersByTime(1000)
+    expect(fire).not.toHaveBeenCalled()
+  })
+
   it('repeats while held, then swallows the release click', () => {
     vi.useFakeTimers()
     const button = document.createElement('button')

@@ -137,6 +137,7 @@ export function attachKeyRepeat(button, fire, { delay = 420, interval = 70 } = {
     stop();
     repeated = false;
     timer = setTimeout(() => {
+      if (button.disabled) { stop(); return; }
       repeated = true;
       fire();
       timer = setInterval(() => {
@@ -156,10 +157,16 @@ export function attachKeyRepeat(button, fire, { delay = 420, interval = 70 } = {
   button.addEventListener('pointerdown', down);
   for (const type of ['pointerup', 'pointercancel', 'pointerleave']) button.addEventListener(type, stop);
   button.addEventListener('click', click, true);
-  return () => {
+  window.addEventListener('blur', stop);
+  document.addEventListener('visibilitychange', stop);
+  const dispose = () => {
     stop();
     button.removeEventListener('pointerdown', down);
     for (const type of ['pointerup', 'pointercancel', 'pointerleave']) button.removeEventListener(type, stop);
     button.removeEventListener('click', click, true);
+    window.removeEventListener('blur', stop);
+    document.removeEventListener('visibilitychange', stop);
   };
+  dispose.cancel = stop;
+  return dispose;
 }

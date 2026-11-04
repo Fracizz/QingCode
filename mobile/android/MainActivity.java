@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Insets;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.util.Base64;
@@ -35,6 +36,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -89,6 +91,7 @@ public final class MainActivity extends Activity {
     private boolean pageReady;
     private boolean foreground;
     private boolean immersive;
+    private float cornerBottomInset;
     private Integer imageReply;
     private String imageCompression;
 
@@ -114,10 +117,12 @@ public final class MainActivity extends Activity {
                     corner = Math.max(cornerRadius(insets, RoundedCorner.POSITION_BOTTOM_LEFT),
                         cornerRadius(insets, RoundedCorner.POSITION_BOTTOM_RIGHT));
                 }
-                // System bars/IME resize the WebView once. Rounded corners only
-                // inset bottom controls horizontally, leaving their background full bleed.
+                // System bars/IME resize the WebView once. Keep terminal controls wide;
+                // only add the corner clearance still needed above that resized bottom.
                 element.setPadding(padding.left, padding.top, padding.right, padding.bottom);
-                final float cornerDp = corner / getResources().getDisplayMetrics().density;
+                final float density = getResources().getDisplayMetrics().density;
+                final float cornerDp = corner / density;
+                cornerBottomInset = terminalCornerBottomInset(cornerDp, padding.bottom / density);
                 view.setTag(cornerDp);
                 applyCornerInset();
                 return WindowInsets.CONSUMED;
@@ -178,6 +183,7 @@ public final class MainActivity extends Activity {
             @Override public void onPageFinished(WebView webView, String url) {
                 pageReady = true;
                 notifyForeground();
+                notifyOrientation();
                 applyCornerInset();
             }
 
@@ -189,7 +195,7 @@ public final class MainActivity extends Activity {
                     switch (asset) {
                         case "index.html": type = "text/html"; break;
                         case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
-                        case "composer.js": case "terminalHistory.js": case "terminalSelection.js": case "connectionLatency.js":
+                        case "composer.js": case "terminalHistory.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
@@ -211,6 +217,13 @@ public final class MainActivity extends Activity {
     private static int cornerRadius(WindowInsets insets, int position) {
         RoundedCorner corner = insets.getRoundedCorner(position);
         return corner == null ? 0 : corner.getRadius();
+    }
+
+    private static float terminalCornerBottomInset(float radius, float bottomInset) {
+        // At the terminal's 8 CSS px side margin, the circular screen edge needs
+        // r - sqrt(r² - (r - 8)²) bottom clearance. System bars/IME already provide some.
+        if (radius <= 8f) return 0f;
+        return Math.max(0f, radius - (float) Math.sqrt(8f * (2f * radius - 8f)) - bottomInset);
     }
 
     private void applyFullscreen() {
@@ -247,12 +260,21 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration configuration) {
         super.onConfigurationChanged(configuration);
         applyFullscreen();
+        notifyOrientation();
+    }
+
+    private void notifyOrientation() {
+        if (pageReady && view != null) {
+            boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+            view.evaluateJavascript("window.qingOrientation?.(" + landscape + ")", null);
+        }
     }
 
     private void applyCornerInset() {
         if (pageReady && view != null && view.getTag() instanceof Float) {
             view.evaluateJavascript("document.documentElement.style.setProperty('--corner-inset','"
-                + view.getTag() + "px')", null);
+                + view.getTag() + "px');document.documentElement.style.setProperty('--corner-bottom-inset','"
+                + cornerBottomInset + "px')", null);
         }
     }
 
@@ -280,63 +302,98 @@ public final class MainActivity extends Activity {
     }
 
     private byte[] readImage(Uri uri, String compression) throws IOException {
-        if ("original".equals(compression)) {
-            try (InputStream input = getContentResolver().openInputStream(uri)) {
-                if (input == null) throw new IOException("无法读取图片");
-                ByteArrayOutputStream data = new ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) != -1) {
-                    if (data.size() + count > MAX_IMAGE) throw new IOException("图片不能超过 8 MB");
-                    data.write(buffer, 0, count);
+        final boolean original = "original".equals(compression);
+        if (original) {
+            InputStream source = getContentResolver().openInputStream(uri);
+            if (source == null) throw new IOException("无法读取图片");
+            try (BufferedInputStream input = new BufferedInputStream(source)) {
+                input.mark(16);
+                byte[] header = new byte[8];
+                int size = 0;
+                for (int count; size < header.length && (count = input.read(header, size, header.length - size)) != -1;) size += count;
+                input.reset();
+                boolean png = size >= 8 && header[0] == (byte) 137 && header[1] == 80 && header[2] == 78 && header[3] == 71;
+                boolean jpeg = size >= 3 && header[0] == (byte) 255 && header[1] == (byte) 216 && header[2] == (byte) 255;
+                if (png || jpeg) {
+                    ByteArrayOutputStream data = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        if (data.size() + count > MAX_IMAGE) throw new IOException("图片不能超过 8 MB");
+                        data.write(buffer, 0, count);
+                    }
+                    byte[] bytes = data.toByteArray();
+                    return bytes;
                 }
-                byte[] bytes = data.toByteArray();
-                boolean png = bytes.length >= 8 && bytes[0] == (byte) 137 && bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71;
-                boolean jpeg = bytes.length >= 3 && bytes[0] == (byte) 255 && bytes[1] == (byte) 216 && bytes[2] == (byte) 255;
-                if (!png && !jpeg) throw new IOException("原图仅支持 PNG / JPEG，请选择压缩后发送");
-                return bytes;
             }
         }
         int edge = "low".equals(compression) ? 3072 : "high".equals(compression) ? 1280 : 2048;
-        int quality = "low".equals(compression) ? 92 : "high".equals(compression) ? 60 : 80;
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inJustDecodeBounds = true;
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            BitmapFactory.decodeStream(input, null, options);
-        }
-        if (options.outWidth <= 0 || options.outHeight <= 0) throw new IOException("图片格式不受支持");
-        options.inSampleSize = 1;
-        while (Math.max(options.outWidth, options.outHeight) / options.inSampleSize > edge) options.inSampleSize *= 2;
-        options.inJustDecodeBounds = false;
+        int quality = original || "low".equals(compression) ? 92 : "high".equals(compression) ? 60 : 80;
         Bitmap bitmap;
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            bitmap = BitmapFactory.decodeStream(input, null, options);
+        if (Build.VERSION.SDK_INT >= 28) {
+            // ImageDecoder applies HEIF container / EXIF orientation itself.
+            try {
+                bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(getContentResolver(), uri), (decoder, info, source) -> {
+                    int width = info.getSize().getWidth();
+                    int height = info.getSize().getHeight();
+                    if (original && (long) width * height > 32_000_000) {
+                        throw new IllegalArgumentException("图片分辨率过大，请在会话与设置中启用图片压缩。");
+                    }
+                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                    if (!original) {
+                        double scale = Math.min(1.0, (double) edge / Math.max(width, height));
+                        decoder.setTargetSize(Math.max(1, (int) (width * scale)), Math.max(1, (int) (height * scale)));
+                    }
+                });
+            } catch (ImageDecoder.DecodeException error) {
+                throw new IOException("系统无法解码此图片；HEIC / HEIF 需要手机支持，请先转换为 JPEG 后重试。", error);
+            } catch (IllegalArgumentException error) {
+                throw new IOException(error.getMessage(), error);
+            }
+        } else {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                BitmapFactory.decodeStream(input, null, options);
+            }
+            if (options.outWidth <= 0 || options.outHeight <= 0) throw new IOException("系统无法解码此图片；HEIC / HEIF 需要手机支持，请先转换为 JPEG 后重试。");
+            if (original && (long) options.outWidth * options.outHeight > 32_000_000) {
+                throw new IOException("图片分辨率过大，请在会话与设置中启用图片压缩。");
+            }
+            options.inSampleSize = 1;
+            while (!original && Math.max(options.outWidth, options.outHeight) / options.inSampleSize > edge) options.inSampleSize *= 2;
+            options.inJustDecodeBounds = false;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                bitmap = BitmapFactory.decodeStream(input, null, options);
+            }
         }
         if (bitmap == null) throw new IOException("图片解码失败");
         try {
             // Compression strips EXIF; apply the camera's orientation to the pixels first.
-            try (InputStream input = getContentResolver().openInputStream(uri)) {
-                int orientation = new ExifInterface(input).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1);
-                Matrix matrix = new Matrix();
-                switch (orientation) {
-                    case 2: matrix.setScale(-1, 1); break;
-                    case 3: matrix.setRotate(180); break;
-                    case 4: matrix.setScale(1, -1); break;
-                    case 5: matrix.setRotate(90); matrix.postScale(-1, 1); break;
-                    case 6: matrix.setRotate(90); break;
-                    case 7: matrix.setRotate(270); matrix.postScale(-1, 1); break;
-                    case 8: matrix.setRotate(270); break;
-                    default: break;
-                }
-                if (!matrix.isIdentity()) {
-                    Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                    if (rotated != bitmap) { bitmap.recycle(); bitmap = rotated; }
-                }
-            } catch (IOException ignored) { /* Formats without EXIF retain their pixel orientation. */ }
+            if (Build.VERSION.SDK_INT < 28) {
+                try (InputStream input = getContentResolver().openInputStream(uri)) {
+                    int orientation = new ExifInterface(input).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1);
+                    Matrix matrix = new Matrix();
+                    switch (orientation) {
+                        case 2: matrix.setScale(-1, 1); break;
+                        case 3: matrix.setRotate(180); break;
+                        case 4: matrix.setScale(1, -1); break;
+                        case 5: matrix.setRotate(90); matrix.postScale(-1, 1); break;
+                        case 6: matrix.setRotate(90); break;
+                        case 7: matrix.setRotate(270); matrix.postScale(-1, 1); break;
+                        case 8: matrix.setRotate(270); break;
+                        default: break;
+                    }
+                    if (!matrix.isIdentity()) {
+                        Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                        if (rotated != bitmap) { bitmap.recycle(); bitmap = rotated; }
+                    }
+                } catch (IOException ignored) { /* Formats without EXIF retain their pixel orientation. */ }
+            }
             ByteArrayOutputStream data = new ByteArrayOutputStream();
             Bitmap.CompressFormat format = bitmap.hasAlpha() ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG;
             if (!bitmap.compress(format, quality, data) || data.size() > MAX_IMAGE) {
-                throw new IOException("压缩后图片仍过大");
+                throw new IOException("转换后的图片超过 8 MB，请在会话与设置中提高图片压缩等级。");
             }
             return data.toByteArray();
         } finally {
@@ -441,6 +498,24 @@ public final class MainActivity extends Activity {
             String op = request.optString("op");
             if (!"image".equals(op) && payload.length() > ("copy".equals(op) ? 1_048_576 : 32_000)) {
                 reply(id, failure("请求过大。"));
+                return;
+            }
+            if ("open_link".equals(op)) {
+                String url = request.optString("url");
+                Uri uri = Uri.parse(url);
+                if (url.length() > 4096 || !("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))
+                    || uri.getHost() == null || uri.getUserInfo() != null) {
+                    reply(id, failure("仅支持打开 HTTP / HTTPS 网页链接。"));
+                    return;
+                }
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE));
+                        replySafely(id, true);
+                    } catch (Exception error) {
+                        reply(id, failure("无法打开链接，请复制后在浏览器中访问。"));
+                    }
+                });
                 return;
             }
             if ("fullscreen".equals(op)) {
@@ -816,6 +891,9 @@ public final class MainActivity extends Activity {
                 final double milliseconds = (android.os.SystemClock.elapsedRealtimeNanos() - began) / 1_000_000.0;
                 JSONObject result = new JSONObject(response.toString("UTF-8"));
                 if (status == 401) result.put("revoked", true);
+                if ("image".equals(op) && status == 400 && "请求格式无效。".equals(result.optString("error"))) {
+                    return failure("电脑端无法识别图片上传请求，请更新并重启电脑端 QingCode 后重试；仅更新 Android APK 不够。");
+                }
                 if ("ping".equals(op)) {
                     // Older desktop builds reject the unknown operation. Preserve their
                     // other working features and stop periodic unsupported probes.

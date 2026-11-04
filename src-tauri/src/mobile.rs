@@ -1143,19 +1143,15 @@ async fn request_handler(
         .get(hyper::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let limit = if app.state::<MobileState>().hub.authenticate(bearer).is_ok() {
-        12 * 1024 * 1024
+    let (limit, timeout) = if app.state::<MobileState>().hub.authenticate(bearer).is_ok() {
+        // Base64 images can take longer than small terminal RPCs over a mobile uplink.
+        (12 * 1024 * 1024, Duration::from_secs(60))
     } else {
-        128 * 1024
+        (128 * 1024, Duration::from_secs(15))
     };
-    let body =
-        tokio::time::timeout(Duration::from_secs(15), Limited::new(body, limit).collect()).await;
-    let request = body
-        .ok()
-        .and_then(Result::ok)
-        .and_then(|body| serde_json::from_slice::<Operation>(&body.to_bytes()).ok());
+    let request = read_operation(body, limit, timeout).await;
     let (status, result) = match request {
-        Some(Operation::Pair { secret, device }) => {
+        Ok(Operation::Pair { secret, device }) => {
             let app = app.clone();
             let result = tauri::async_runtime::spawn_blocking(move || {
                 app.state::<MobileState>()
@@ -1175,7 +1171,7 @@ async fn request_handler(
                 result.map(|token| json!({ "token": token })),
             )
         }
-        Some(operation) => {
+        Ok(operation) => {
             let bearer = parts
                 .headers
                 .get(hyper::header::AUTHORIZATION)
@@ -1195,7 +1191,7 @@ async fn request_handler(
                 Err((status, error)) => (status, Err(error)),
             }
         }
-        None => (StatusCode::BAD_REQUEST, Err("请求格式无效。".into())),
+        Err((status, error)) => (status, Err(error)),
     };
     let response = match result {
         Ok(data) => json!({ "ok": true, "data": data }),
@@ -1207,6 +1203,40 @@ async fn request_handler(
         .header("cache-control", "no-store")
         .body(Full::new(Bytes::from(response.to_string())))
         .unwrap())
+}
+
+async fn read_operation<B>(
+    body: B,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Operation, (StatusCode, String)>
+where
+    B: hyper::body::Body,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    let body = tokio::time::timeout(timeout, Limited::new(body, limit).collect())
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::REQUEST_TIMEOUT,
+                "读取上传请求超时，请检查手机到电脑的网络后重试。".into(),
+            )
+        })?
+        .map_err(|error| {
+            if error.is::<http_body_util::LengthLimitError>() {
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "请求过大，请提高图片压缩等级后重试。".into(),
+                )
+            } else {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "请求传输中断，请检查网络后重试。".into(),
+                )
+            }
+        })?;
+    serde_json::from_slice::<Operation>(&body.to_bytes())
+        .map_err(|_| (StatusCode::BAD_REQUEST, "请求格式无效。".into()))
 }
 
 async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<Value, String> {
@@ -1588,6 +1618,73 @@ mod tests {
         assert!(decode_image("not base64!").is_err());
         assert!(decode_image(&encode(b"<script>code</script>")).is_err());
         assert!(decode_image(&"A".repeat(MAX_IMAGE.div_ceil(3) * 4 + 1)).is_err());
+    }
+
+    #[tokio::test]
+    async fn image_request_accepts_eight_mb_after_base64_and_json_framing() {
+        let mut image = vec![0; MAX_IMAGE];
+        image[..3].copy_from_slice(b"\xff\xd8\xff");
+        let data = base64::engine::general_purpose::STANDARD.encode(&image);
+        let request = json!({ "op": "image", "id": "mobile-test", "data": data }).to_string();
+        assert!(request.len() > 128 * 1024);
+        let operation = read_operation(
+            Full::new(Bytes::from(request)),
+            12 * 1024 * 1024,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("image request rejected: {error:?}"));
+        match operation {
+            Operation::Image { id, data } => {
+                assert_eq!(id, "mobile-test");
+                assert_eq!(decode_image(&data).unwrap(), image);
+            }
+            _ => panic!("expected image upload"),
+        }
+    }
+
+    #[tokio::test]
+    async fn image_request_distinguishes_size_limit_from_invalid_json() {
+        let request = json!({ "op": "image", "id": "mobile-test", "data": "A".repeat(128 * 1024) });
+        let result = read_operation(
+            Full::new(Bytes::from(request.to_string())),
+            128 * 1024,
+            Duration::from_secs(15),
+        )
+        .await;
+        assert!(matches!(result, Err((StatusCode::PAYLOAD_TOO_LARGE, _))));
+        let result = read_operation(
+            Full::new(Bytes::from_static(b"{broken")),
+            128 * 1024,
+            Duration::from_secs(15),
+        )
+        .await;
+        assert!(matches!(result, Err((StatusCode::BAD_REQUEST, _))));
+    }
+
+    #[tokio::test]
+    async fn image_request_reports_timeout_and_interrupted_body_separately() {
+        let pending =
+            futures_util::stream::pending::<Result<hyper::body::Frame<Bytes>, std::io::Error>>();
+        let result = read_operation(
+            http_body_util::StreamBody::new(pending),
+            1024,
+            Duration::from_millis(5),
+        )
+        .await;
+        assert!(matches!(result, Err((StatusCode::REQUEST_TIMEOUT, _))));
+        let interrupted = futures_util::stream::once(async {
+            Err::<hyper::body::Frame<Bytes>, _>(std::io::Error::other("disconnected"))
+        });
+        let result = read_operation(
+            http_body_util::StreamBody::new(interrupted),
+            1024,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert!(
+            matches!(result, Err((StatusCode::BAD_REQUEST, message)) if message.contains("传输中断"))
+        );
     }
 
     #[test]

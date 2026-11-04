@@ -60,6 +60,20 @@ try {
   evaluate(`window.__resumed.truncated=true; document.querySelector('#history-scroll').scrollTop=0`)
   check('oldest retained page explains cache eviction and stops pagination', String.raw`${historyText}.startsWith('history line 0\n') && document.querySelector('#history-more').hidden && document.querySelector('#history-status').textContent.includes('超出电脑端缓存')`)
   check('history browsing sends no terminal input', `window.__mobileFixture.state.inputs.length===window.__inputsBeforeHistory`)
+  evaluate(`window.__historyTopLine=()=>{
+    const bounds=document.querySelector('#history-scroll').getBoundingClientRect();
+    const range=document.caretRangeFromPoint(bounds.left+18,bounds.top+20);
+    if(!range || !document.querySelector('#history-content').contains(range.startContainer)) return null;
+    const text=range.startContainer.textContent, offset=range.startOffset;
+    const start=text.lastIndexOf(String.fromCharCode(10),offset-1)+1, end=text.indexOf(String.fromCharCode(10),offset);
+    return text.slice(start,end<0?text.length:end);
+  };document.querySelector('#history-scroll').scrollTop=600`)
+  check('history reading has a visible text anchor', `window.__historyTopLine()?.startsWith('history line ')`)
+  evaluate('window.__historyAnchor=window.__historyTopLine()')
+  run('set', 'viewport', '844', '390')
+  check('rotation keeps the same text at the top of the history viewport', `window.__mobileFixture.state.fullscreen && window.__historyTopLine()===window.__historyAnchor`)
+  run('set', 'viewport', '390', '844')
+  check('returning to portrait preserves the history anchor', `!window.__mobileFixture.state.fullscreen && window.__historyTopLine()===window.__historyAnchor`)
   evaluate(`const scroller=document.querySelector('#history-scroll'); scroller.scrollTop=scroller.scrollHeight; scroller.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:80}))`)
   check('scrolling forward to the bottom returns to live output without a button', `document.querySelector('#terminal-history').hidden && window.__mobileFixture.terminalText().includes('LIVE WHILE READING')`)
   openHistory()
@@ -96,14 +110,14 @@ try {
   run('set', 'viewport', '844', '390')
   check('landscape controls settle after rotation', `document.querySelector('#special-keys').hidden && document.querySelector('#terminal-screen').dataset.keysCollapsed==='true'`)
   evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
-  run('click', '#toggle-fullscreen')
-  check('native fullscreen is active before opening history', `window.__mobileFixture.state.fullscreen && document.querySelector('#toggle-fullscreen').getAttribute('aria-pressed')==='true'`)
+  check('landscape automatically enters native fullscreen before opening history', `window.__mobileFixture.state.fullscreen && document.querySelector('#terminal-screen').dataset.fullscreen==='true'`)
   openHistory()
   check('read-only history fits landscape fullscreen', `${historyOpen} && document.querySelector('#terminal-history').getBoundingClientRect().bottom <= innerHeight && document.querySelector('#scroll-bottom').getBoundingClientRect().right <= innerWidth`)
   capture('03-landscape-history')
   evaluate('window.qingBack()')
-  check('Back closes history before exiting fullscreen', `document.querySelector('#terminal-history').hidden && document.querySelector('#toggle-fullscreen').getAttribute('aria-pressed')==='true'`)
-  evaluate('window.qingBack()')
+  check('Back closes history while landscape remains immersive', `document.querySelector('#terminal-history').hidden && document.querySelector('#terminal-screen').dataset.fullscreen==='true'`)
+  run('set', 'viewport', '390', '844')
+  check('portrait restores normal mode after closing history', `!window.__mobileFixture.state.fullscreen && !document.querySelector('#terminal-screen').hidden`)
 
   evaluate(`window.__mobileFixture.state.historyDelay=800`)
   openHistory()

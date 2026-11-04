@@ -110,6 +110,11 @@ describe('Android terminal protocol', () => {
     expect(keySequence('pgup')).toBe('\x1b[5~')
     expect(keySequence('pgdn', { applicationCursor: true })).toBe('\x1b[6~')
     expect(keySequence('esc')).toBe('\x1b')
+    expect(keySequence('backspace')).toBe('\x7f')
+    expect(keySequence('shift-tab')).toBe('\x1b[Z')
+    expect(keySequence('delete-word')).toBe('\x17')
+    expect(keySequence('delete-line-start')).toBe('\x15')
+    expect(keySequence('newline')).toBe('\n')
     expect(() => keySequence('f1')).toThrow()
   })
 

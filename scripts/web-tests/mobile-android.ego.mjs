@@ -20,8 +20,11 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
   const inputs = () => page.evaluate(() => window.__mobileFixture.state.inputs)
   // The key bar scrolls horizontally on phones; bring a key into view before tapping it.
   const tapKey = async key => {
-    await page.evaluate(name => document.querySelector(`#special-keys [data-key="${name}"]`).scrollIntoView({ inline: 'center', block: 'nearest' }), key)
-    await page.click(`#special-keys [data-key="${key}"]`, { label: `tap ${key} key` })
+    const advanced = ['alt', 'ctrl', 'home', 'end', 'pgup', 'pgdn', 'interrupt'].includes(key)
+    if (advanced && !await page.evaluate(() => document.querySelector('#keys-dialog').open)) await page.click('#more-keys')
+    if (!advanced && await page.evaluate(() => document.querySelector('#keys-dialog').open)) await page.evaluate(() => window.qingBack())
+    await page.evaluate(name => document.querySelector(`[data-key="${name}"]`).scrollIntoView({ inline: 'center', block: 'nearest' }), key)
+    await page.click(`[data-key="${key}"]`, { label: `tap ${key} key` })
   }
   const text = selector => page.evaluate(target => document.querySelector(target)?.textContent ?? '', selector)
   try {
@@ -106,14 +109,15 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
 
     await step('Alt, Home and PgUp keys send terminal sequences', async () => {
       await tapKey('alt')
-      assert.equal(await page.evaluate(() => document.querySelector('#special-keys [data-key="alt"]').getAttribute('aria-pressed')), 'true')
+      assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed')), 'true')
       await tapKey('left')
       await tapKey('home')
       await tapKey('pgup')
+      await page.evaluate(() => window.qingBack())
       await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('').includes('\x1b[5~'))
       const sent = (await inputs()).join('')
       assert.ok(sent.includes('\x1b\x1b[D\x1b[H\x1b[5~'), JSON.stringify(sent))
-      assert.equal(await page.evaluate(() => document.querySelector('#special-keys [data-key="alt"]').getAttribute('aria-pressed')), 'false')
+      assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed')), 'false')
     })
 
     await step('changing the port keeps the pairing and moves per-connection records', async () => {

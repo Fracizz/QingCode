@@ -126,6 +126,11 @@ const TILDE_KEYS = { pgup: '5~', pgdn: '6~' };
 export function keySequence(key, { applicationCursor = false } = {}) {
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';
+  if (key === 'shift-tab') return '\x1b[Z';
+  if (key === 'backspace') return '\x7f';
+  if (key === 'delete-word') return '\x17';
+  if (key === 'delete-line-start') return '\x15';
+  if (key === 'newline') return '\n';
   if (key in TILDE_KEYS) return '\x1b[' + TILDE_KEYS[key];
   if (key in ARROWS) return (applicationCursor ? '\x1bO' : '\x1b[') + ARROWS[key];
   throw new Error('unknown key ' + key);

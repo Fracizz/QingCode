@@ -20,6 +20,31 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
   let motionFrame = null;
   let motion = 0;
   let touchY = null;
+  let anchor = null;
+  let restoringAnchor = false;
+  let anchorFrame = null;
+
+  function rememberAnchor() {
+    if (panel.hidden) { anchor = null; return; }
+    const bounds = scroll.getBoundingClientRect();
+    const doc = panel.ownerDocument;
+    const range = doc.caretRangeFromPoint?.(bounds.left + 18, bounds.top + Math.min(20, bounds.height / 2));
+    if (!range || !content.contains(range.startContainer)) { anchor = null; return; }
+    if (range.startContainer.nodeType === 3 && range.startOffset < range.startContainer.textContent.length) {
+      range.setEnd(range.startContainer, range.startOffset + 1);
+    }
+    anchor = { range, top: range.getBoundingClientRect().top - bounds.top };
+  }
+  const resizeObserver = new view.ResizeObserver(() => {
+    if (panel.hidden || !anchor || !content.contains(anchor.range.startContainer) || selecting()) return;
+    const delta = anchor.range.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) < 1) return;
+    restoringAnchor = true;
+    scroll.scrollTop += delta;
+    if (anchorFrame !== null) view.cancelAnimationFrame(anchorFrame);
+    anchorFrame = view.requestAnimationFrame(() => { anchorFrame = null; restoringAnchor = false; rememberAnchor(); });
+  });
+  resizeObserver.observe(scroll);
 
   function atBottom() { return scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 2; }
   function selecting() {
@@ -39,6 +64,8 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
     onClose();
     term.scrollToBottom();
     latestButton.hidden = true;
+    latestButton.querySelector('span').textContent = '回到最新';
+    anchor = null;
     return true;
   }
 
@@ -81,6 +108,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
       moreButton.hidden = !more;
       status.textContent = more ? '继续向上翻看历史' : page.truncated ? '更早输出已超出电脑端缓存' : '已到保留历史起点';
       scroll.scrollTop = top + scroll.scrollHeight - height;
+      rememberAnchor();
       if (motion && motionFrame === null) motionFrame = view.requestAnimationFrame(applyMotion);
     } catch (error) {
       if (!active || attempt !== generation) return;
@@ -125,6 +153,8 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
   }
 
   function onScroll() {
+    if (restoringAnchor) return;
+    rememberAnchor();
     if (selecting()) return;
     const distance = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
     if (distance > 32) departedBottom = true;
@@ -178,6 +208,8 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
     update(before, hasHistory) { latest = before ?? 0; available = hasHistory === true; },
     dispose() {
       active = false;
+      resizeObserver.disconnect();
+      if (anchorFrame !== null) view.cancelAnimationFrame(anchorFrame);
       close();
       content.textContent = '';
       moreButton.removeEventListener('click', older);

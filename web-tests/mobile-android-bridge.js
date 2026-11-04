@@ -19,6 +19,7 @@
     historyRequests: [],
     pairs: [],
     clipboard: '',
+    openedLinks: [],
     latency: 32.4,
     latencySupported: true,
     latencyRequests: [],
@@ -141,6 +142,12 @@
         if (state.latencyDelay) await new Promise(resolve => setTimeout(resolve, state.latencyDelay))
         if (error) return { ok: false, error }
         return { ok: true, data: { supported, milliseconds: value } }
+      }
+      case 'open_link': {
+        const url = new URL(request.url)
+        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return { ok: false, error: '无效网页链接' }
+        state.openedLinks.push(request.url)
+        return { ok: true, data: true }
       }
       case 'copy':
         if (state.copyError) return { ok: false, error: state.copyError }

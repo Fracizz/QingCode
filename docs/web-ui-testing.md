@@ -87,9 +87,11 @@ Windows / macOS 可运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`
 
 ## 启动
 
+手机编辑、阅读与恢复专项：运行 `node scripts/web-tests/mobile-workspace.agent-browser.mjs`，覆盖横屏操作菜单、展开编辑与中文组词、草稿持久化、接收回执、未知结果原文恢复、新草稿不被旧回执清空、真实终端固定列宽、只读搜索、diff 文本安全渲染、阅读期间接收新输出、网页链接点击、手机重载后原会话丢失的草稿恢复，以及 320px / 横屏键盘压缩布局。截图、JSON 和中文 HTML 报告位于 `.dev/web-tests/mobile-workspace/`。原生请求通过内存 fixture 模拟，真机系统浏览器、输入法、存储失败及后台杀进程仍需集成验收；`mobileAndroidWorkspace.test.ts` 另行验证持久化失败、跨电脑隔离及迟到回执。
+
 手机快速接回与历史分页：运行 `node scripts/web-tests/mobile-history.agent-browser.mjs`。以 1000 个旧输出块验证最新快照接回及后续序号，不预取历史；覆盖 120 行分页、前插锚点、阅读期间接收新输出、缓存边界、无图标的滚轮与触摸入口、滑回底部返回实时、只读操作不发按键、失败重试、重连接回、TUI 滚轮、全屏返回顺序和切换会话时的迟到响应。报告位于 `.dev/web-tests/mobile-history/`。Rust 的 `mobile_screen::tests` 与 `mobile::tests` 验证解析器、快照、分页游标和旧客户端兼容；触摸单测 `mobileAndroidTerminalTouch.test.ts` 验证逐帧合并、减速惯性、新触摸中止、TUI 禁止惯性和销毁取消。浏览器采用内存 RPC，Windows / SSH / WSL 与真机链路仍需集成验收。
 
-手机横屏与全屏专项：运行 `node scripts/web-tests/mobile-landscape.agent-browser.mjs`，覆盖横屏默认收起、展开后并排布局、旋转与重载后的偏好、收起时保留草稿和实时键盘、释放隐藏修饰键、全屏进入与退出、Android 返回顺序、失败恢复、迟到回复及横屏键盘高度。截图和报告位于 `.dev/web-tests/mobile-landscape/`。原生桥由内存 fixture 模拟；Android 系统栏隐藏、挖孔及软键盘避让仍需真机验收。
+手机横屏与全屏专项：运行 `node scripts/web-tests/mobile-landscape.agent-browser.mjs`，覆盖横屏默认收起、展开后并排布局、旋转与重载后的偏好、收起时保留草稿和实时键盘、释放隐藏修饰键、横屏自动沉浸与竖屏恢复、离开终端恢复系统栏、Android 返回顺序、失败恢复、迟到回复及横屏键盘高度。通过原生方向回调模拟窄屏横屏和竖屏键盘缩小，确认方向判断不依赖键盘后的视口比例。截图和报告位于 `.dev/web-tests/mobile-landscape/`。原生桥由内存 fixture 模拟；Android 系统栏隐藏、挖孔及软键盘避让仍需真机验收。
 
 手机斜杠命令与技能输入专项：运行 `node scripts/web-tests/mobile-completion.agent-browser.mjs`，覆盖斜杠草稿先预览再确认、草稿与实时输入的 Tab 补全、方向键与确认保留键盘焦点、中文组词保护及多行草稿保留，并检查窄屏、软键盘高度和横屏。截图、JSON 和 HTML 报告位于 `.dev/web-tests/mobile-completion/`；此验收只覆盖真实 Web 资产、xterm 和内存 RPC，仍需真机验证输入法及实际 Claude / OpenCode 候选。
 
@@ -255,3 +257,5 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 以及「管理设置」中的用户 JSON 和项目默认模板入口。仅在测试会话内模拟 Windows 来源与移动状态；
 不验证真实文件、Windows 原生缩放、SSH 或手机连接。
 截图、JSON 与 HTML 报告位于 `.dev/web-tests/settings-categories/`。
+
+AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-browser.mjs`，验证两排六列、单行输入候选、明确的手机草稿与实时输入目标、中文与 emoji 退格、选区删除、换行、删词、删至行首、只清空本地、键盘收起后远端删除、保留另一份草稿、Tab / Shift+Tab 的原始序列、长按松手停止和跨会话取消。覆盖 320px / 390px、软键盘高度和横屏，截图与业务结果位于 `.dev/web-tests/mobile-ai-keys/`。内存桥只证明输入序列与页面行为，真实 Claude / OpenCode 的候选、定制快捷键及手机 IME 仍需真机与 PTY 验收。

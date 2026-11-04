@@ -18,10 +18,11 @@ import {
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { attachTerminalTouchScroll } from './terminalTouch.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
-import { composerInput, isSlashDraft } from './composer.js';
+import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
 import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
+import { createWorkspaceState, terminalText, searchOffsets } from './workspaceState.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -30,9 +31,16 @@ const terminalScreen = get('terminal-screen');
 const compose = get('compose');
 const requests = new Map();
 const health = new Map();
-const drafts = new Map();
+let persistenceFailed = false;
+const workspace = createWorkspaceState({ storage: localStorage, onError: () => { persistenceFailed = true; } });
+const drafts = workspace.drafts;
+const inputModes = new Map();
+let inputMode = 'compose';
+const keyRepeats = [];
 const prefix = 'qingcode:mobile:';
 const landscape = window.matchMedia('(orientation: landscape) and (min-width: 600px)');
+let deviceLandscape = landscape.matches;
+let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
 let fullscreen = false;
 let fullscreenEpoch = 0;
@@ -58,12 +66,20 @@ const modifiers = { ctrl: 'off', alt: 'off' };
 const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
 let inputQueue = '';
+let inputCompletions = [];
 let inputTimer = null;
 let inputChain = Promise.resolve();
 let queuedInput = 0;
 let resizing = null;
 let editing = null;
 let composing = false;
+let editorComposing = false;
+let readerText = '';
+let readerMatches = [];
+let readerIndex = 0;
+const savedColumns = localStorage.getItem('qingcode:mobile:columns');
+let terminalColumns = ['80', '100'].includes(savedColumns) ? Number(savedColumns) : 0;
+let fitting = null;
 // Fingerprint from a scanned or pasted pairing link; skips manual comparison when it matches.
 let expectedFingerprint = null;
 let scanStream = null;
@@ -75,7 +91,10 @@ const connectionLatency = createConnectionLatency({
   measure: address => rpc('latency', { profile: address }),
   onChange: renderLatency,
 });
-window.qingVisibility = visible => connectionLatency.setForeground(visible === true);
+window.qingVisibility = visible => {
+  if (!visible) saveDraft();
+  connectionLatency.setForeground(visible === true);
+};
 
 function syncLatency() {
   connectionLatency.setTarget(profile && hostState(profile) === 'online' ? profile : null,
@@ -156,7 +175,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'session-dialog', 'new-session-dialog', 'image-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -165,10 +184,6 @@ window.qingBack = () => {
   if (!terminalScreen.hidden) {
     if (terminalSelection?.close()) return true;
     if (terminalHistory?.close()) return true;
-    if (fullscreen) {
-      void setTerminalFullscreen(false);
-      return true;
-    }
     returnToDashboard();
     return true;
   }
@@ -641,14 +656,13 @@ get('remove-host').addEventListener('click', async () => {
   if (!await confirmAction('移除 ' + item.name + '？', '此操作会删除手机上保存的配对。要撤销电脑端授权，请在电脑端停止移动连接。', '移除')) return;
   try {
     await rpc('forget', { profile: item.id });
+    if (profile?.id === item.id) leaveTerminal();
     profiles = profiles.filter(saved => saved.id !== item.id);
     health.delete(item.id);
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(prefix + 'session:' + item.id + ':')) localStorage.removeItem(key);
     }
-    for (const key of drafts.keys()) {
-      if (key.startsWith(item.id + '/')) drafts.delete(key);
-    }
+    workspace.removeHost(item.id);
     localStorage.removeItem(prefix + 'project:' + item.id);
     get('host-dialog').close();
     if (profile?.id === item.id) {
@@ -674,12 +688,6 @@ function moveProfile(from, to) {
     localStorage.setItem(next, localStorage.getItem(old));
     localStorage.removeItem(old);
   }
-  for (const [key, value] of [...drafts]) {
-    if (key.startsWith(from.id + '/')) {
-      drafts.delete(key);
-      drafts.set(to.id + key.slice(from.id.length), value);
-    }
-  }
   if (health.has(from.id)) {
     health.set(to.id, health.get(from.id));
     health.delete(from.id);
@@ -691,6 +699,7 @@ function moveProfile(from, to) {
     localStorage.setItem(prefix + 'active', to.id);
     if (localStorage.getItem(prefix + 'open') === from.id) localStorage.setItem(prefix + 'open', to.id);
   }
+  workspace.renameHost(from.id, to.id);
 }
 
 get('active-host').addEventListener('click', () => showPage('connection'));
@@ -722,7 +731,7 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
 }
 function setModifier(name, state) {
   modifiers[name] = state;
-  const key = get('special-keys').querySelector('[data-key="' + name + '"]');
+  const key = get('keys-dialog').querySelector('[data-key="' + name + '"]');
   key.setAttribute('aria-pressed', String(state !== 'off'));
   key.dataset.locked = String(state === 'lock');
 }
@@ -739,10 +748,16 @@ function consumeModifiers() {
 }
 
 function setRawKeyboard(enabled) {
+  const nextMode = enabled ? 'raw' : 'compose';
+  if (inputMode !== nextMode) cancelKeyRepeats();
+  inputMode = nextMode;
+  if (selected) inputModes.set(draftKey(selected), nextMode);
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
   get('keyboard').setAttribute('aria-pressed', String(enabled));
   get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
-  get('input-hint').textContent = enabled ? '实时输入 · ↑↓ 选择候选 · Tab 补全 · 回车确认' : '命令栏可编辑中文 · 斜杠命令先查看候选，再回车确认';
+  get('input-hint').textContent = enabled ? '终端实时输入 · ⌫ 删除远端文字 · ↵ 确认' : '手机草稿 · ⌫ 编辑本地文字 · 斜杠命令先查看候选';
+  get('input-mode').textContent = enabled ? '终端实时输入' : '手机草稿';
+  get('keys-target').textContent = '编辑目标：' + (enabled ? '终端实时输入' : '手机草稿');
   compose.placeholder = enabled ? '实时输入中 · 按键直接发送' : '输入命令，空白发送回车';
   get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
   updateComposerActions();
@@ -764,37 +779,236 @@ function resizeComposer() {
   compose.style.height = '44px';
   compose.style.height = Math.min(compose.scrollHeight, 98) + 'px';
   updateComposerActions();
+  saveDraft();
+  if (get('expanded-dialog').open && document.activeElement !== get('expanded-compose')) get('expanded-compose').value = compose.value;
 }
 
+function saveDraft() {
+  if (!selected || !profile) return;
+  const key = draftKey(selected);
+  if (compose.value) drafts.set(key, compose.value);
+  else drafts.delete(key);
+  if (persistenceFailed) {
+    get('expanded-save-status').textContent = '手机保存失败，请复制并保留原文。';
+    get('expanded-save-status').dataset.error = 'true';
+    renderSubmissionState();
+  }
+}
+
+function renderSubmissionState() {
+  const latest = selected ? workspace.recent(draftKey(selected))[0] : null;
+  const target = get('submission-state');
+  target.hidden = !latest && !persistenceFailed;
+  get('submission-status').textContent = persistenceFailed ? '手机保存失败，请保留原文'
+    : latest?.state === 'sending' ? '正在发送…' : latest?.state === 'received' ? '电脑已接收 · 可查看原文' : '提交结果未知 · 原文已保留';
+}
+
+function openEditor() {
+  term?.textarea?.blur();
+  setRawKeyboard(false);
+  get('expanded-context').textContent = profile.name + ' / ' + project.name;
+  get('expanded-compose').value = compose.value;
+  get('expanded-send').disabled = !terminalReady;
+  get('expanded-dialog').showModal();
+  get('expanded-compose').focus();
+}
+
+function showSubmissions() {
+  const list = get('submission-list');
+  list.replaceChildren();
+  get('submission-preview').value = '';
+  get('submission-feedback').textContent = '';
+  const add = (label, text) => {
+    const item = button('', () => { get('submission-preview').value = text; });
+    item.textContent = label + ' · ' + text.slice(0, 60).replace(/\s+/g, ' ');
+    list.append(item);
+    if (!get('submission-preview').value) get('submission-preview').value = text;
+  };
+  const key = selected && draftKey(selected);
+  for (const receipt of workspace.recent(key)) {
+    const state = { sending: '发送中', received: '电脑已接收', unknown: '提交结果未知' }[receipt.state];
+    add(state + ' ' + new Date(receipt.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), receipt.text);
+  }
+  for (const room of workspace.recoverable(profile.id, project.id, key)) {
+    if (room.draft) add('本项目其他会话草稿', room.draft);
+    for (const receipt of [...room.receipts].reverse()) add('本项目其他会话提交 · ' + ({ sending: '发送中', received: '电脑已接收', unknown: '结果未知' }[receipt.state]), receipt.text);
+  }
+  get('submissions-dialog').showModal();
+}
+
+function refreshReader() {
+  readerText = get('reader-source').value === 'history' ? get('history-content').textContent.slice(-600_000) : term ? terminalText(term) : '';
+  get('reader-refresh').textContent = '刷新内容';
+  renderReader();
+  get('reader-scroll').scrollTop = 0;
+}
+
+function renderReader() {
+  readerMatches = searchOffsets(readerText, get('reader-query').value);
+  readerIndex = 0;
+  const content = get('reader-content');
+  const fragment = document.createDocumentFragment();
+  let offset = 0;
+  let matchIndex = 0;
+  for (const line of readerText.split('\n')) {
+    const span = document.createElement('span');
+    if (line.startsWith('+')) span.className = 'diff-added';
+    if (line.startsWith('-')) span.className = 'diff-removed';
+    let position = 0;
+    while (matchIndex < readerMatches.length && readerMatches[matchIndex].start < offset + line.length) {
+      const match = readerMatches[matchIndex];
+      appendReaderText(span, line.slice(position, Math.max(0, match.start - offset)));
+      const mark = document.createElement('mark');
+      mark.dataset.match = String(matchIndex);
+      mark.textContent = line.slice(Math.max(0, match.start - offset), match.end - offset);
+      span.append(mark);
+      position = Math.min(line.length, match.end - offset);
+      if (match.end > offset + line.length) break;
+      matchIndex += 1;
+    }
+    appendReaderText(span, line.slice(position) + '\n');
+    fragment.append(span);
+    offset += line.length + 1;
+  }
+  content.replaceChildren(fragment);
+  updateReaderMatch(false);
+}
+
+function appendReaderText(parent, text) {
+  let position = 0;
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+    const url = match[0].replace(/[.,;，。；）)]+$/u, '');
+    parent.append(document.createTextNode(text.slice(position, match.index)));
+    const link = button('reader-link', async () => {
+      try { await rpc('open_link', { url }); }
+      catch (error) { get('reader-status').textContent = error.message; }
+    });
+    link.textContent = url;
+    link.setAttribute('role', 'link');
+    parent.append(link);
+    position = match.index + url.length;
+  }
+  parent.append(document.createTextNode(text.slice(position)));
+}
+
+function updateReaderMatch(scroll = true) {
+  for (const mark of get('reader-content').querySelectorAll('mark')) mark.dataset.active = String(Number(mark.dataset.match) === readerIndex);
+  get('reader-status').textContent = get('reader-query').value
+    ? readerMatches.length ? (readerIndex + 1) + ' / ' + readerMatches.length + (readerMatches.length === 500 ? '（最多 500 处）' : '') : '未找到'
+    : readerText ? '只读快照' : '此范围暂无输出';
+  if (scroll) get('reader-content').querySelector('mark[data-active="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' });
+}
+
+get('terminal-menu').addEventListener('click', () => {
+  get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
+  get('terminal-menu-dialog').showModal();
+});
+for (const [id, action] of Object.entries({
+  'menu-edit': openEditor,
+  'menu-submissions': showSubmissions,
+  'menu-read': () => {
+    get('reader-source').value = terminalHistory?.isOpen() ? 'history' : 'terminal';
+    refreshReader();
+    get('reader-dialog').showModal();
+  },
+  'menu-sessions': () => get('session-dialog').showModal(),
+  'menu-new': () => { if (!busy) get('new-session-dialog').showModal(); },
+  'menu-dashboard': () => returnToDashboard('project'),
+})) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
+get('review-submission').addEventListener('click', showSubmissions);
+get('expanded-compose').addEventListener('input', () => { compose.value = get('expanded-compose').value; resizeComposer(); });
+get('expanded-compose').addEventListener('compositionstart', () => { editorComposing = true; cancelKeyRepeats(); updateComposerActions(); });
+get('expanded-compose').addEventListener('compositionend', () => { editorComposing = false; updateComposerActions(); });
+get('expanded-dialog').addEventListener('close', () => { editorComposing = false; updateComposerActions(); });
+get('expanded-send').addEventListener('click', () => {
+  if (editorComposing || !terminalReady) return;
+  compose.value = get('expanded-compose').value;
+  get('expanded-dialog').close();
+  dispatchComposer('submit');
+});
+get('restore-submission').addEventListener('click', () => {
+  const text = get('submission-preview').value;
+  if (!text) return;
+  compose.value += (compose.value ? '\n\n' : '') + text;
+  resizeComposer();
+  get('submissions-dialog').close();
+  openEditor();
+});
+get('copy-submission').addEventListener('click', async () => {
+  if (!get('submission-preview').value) return;
+  try { await rpc('copy', { text: get('submission-preview').value }); get('submission-feedback').textContent = '原文已复制'; }
+  catch (error) { get('submission-feedback').textContent = error.message; }
+});
+get('reader-refresh').addEventListener('click', refreshReader);
+get('reader-source').addEventListener('change', refreshReader);
+get('reader-query').addEventListener('input', () => { renderReader(); updateReaderMatch(); });
+for (const [id, delta] of [['reader-previous', -1], ['reader-next', 1]]) get(id).addEventListener('click', () => {
+  if (!readerMatches.length) return;
+  readerIndex = (readerIndex + delta + readerMatches.length) % readerMatches.length;
+  updateReaderMatch();
+});
+get('reader-wrap').addEventListener('change', () => { get('reader-content').dataset.wrap = String(get('reader-wrap').checked); });
+get('reader-copy').addEventListener('click', async () => {
+  try { await rpc('copy', { text: readerText }); get('reader-status').textContent = '输出已复制'; }
+  catch (error) { get('reader-status').textContent = error.message; }
+});
+get('terminal-columns').value = String(terminalColumns);
+get('terminal-columns').addEventListener('change', () => {
+  terminalColumns = Number(get('terminal-columns').value);
+  localStorage.setItem('qingcode:mobile:columns', String(terminalColumns));
+  fitTerminal();
+});
+
 function updateComposerActions() {
-  const slash = isSlashDraft(compose.value);
-  const raw = get('keyboard').getAttribute('aria-pressed') === 'true';
-  get('send').setAttribute('aria-label', slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : raw ? '确认终端中的选择或命令' : '发送回车');
-  get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : compose.value ? '#i-send' : '#i-return');
+  const raw = inputMode === 'raw';
+  const slash = !raw && isSlashDraft(compose.value);
+  get('send').setAttribute('aria-label', raw ? '确认终端中的选择或命令' : slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : '发送回车');
+  get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
+  get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
   get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
-  for (const id of ['slash-command', 'complete-input']) {
-    get(id).disabled = !terminalReady || composing || /[\r\n]/.test(compose.value);
+  for (const button of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send')) {
+    button.disabled = !terminalReady || composing || editorComposing || (button.id === 'attach-image' && sendingImage)
+      || (button.dataset.key === 'clear' && (raw || !compose.value))
+      || (!raw && /[\r\n]/.test(compose.value) && ['slash', 'tab', 'reference'].includes(button.dataset.key));
   }
 }
 
 function dispatchComposer(action) {
-  if (composing || !terminalReady) return;
-  const plan = composerInput(compose.value, action, term?.modes.bracketedPasteMode);
-  if (!plan || !sendInput(plan.data, { raw: plan.interactive })) return;
-  compose.value = '';
-  if (selected) drafts.delete(draftKey(selected));
+  if (composing || editorComposing || !terminalReady) return false;
+  const raw = inputMode === 'raw';
+  let value = raw ? '' : compose.value;
+  if (action === 'reference') {
+    value = raw ? '@' : editDraft(value, compose.selectionStart, compose.selectionEnd, 'text', '@').value;
+    action = 'preview';
+  }
+  const plan = composerInput(value, action, term?.modes.bracketedPasteMode);
+  const key = selected && draftKey(selected);
+  const text = raw ? '' : compose.value;
+  let receipt;
+  const onComplete = text ? state => {
+    workspace.settle(key, receipt, state);
+    if (selected && draftKey(selected) === key) renderSubmissionState();
+  } : undefined;
+  if (!plan || !sendInput(plan.data, { raw: plan.interactive, onComplete })) return false;
+  if (text) receipt = workspace.submit(key, text);
+  if (!raw) {
+    compose.value = '';
+    if (selected) drafts.delete(draftKey(selected));
+  }
   if (plan.interactive) {
     clearModifiers();
     focusRawKeyboard();
     term?.scrollToBottom();
   }
   resizeComposer();
+  renderSubmissionState();
+  return true;
 }
 
 function renderShortcutVisibility() {
-  const collapsed = keysPreference === null ? landscape.matches : keysPreference === 'true';
+  const collapsed = keysPreference === null ? deviceLandscape : keysPreference === 'true';
+  cancelKeyRepeats();
   get('special-keys').hidden = collapsed;
-  get('completion-tools').hidden = collapsed;
   get('toggle-keys').setAttribute('aria-expanded', String(!collapsed));
   get('toggle-keys').querySelector('span').textContent = collapsed ? '展开按键' : '收起按键';
   terminalScreen.dataset.keysCollapsed = String(collapsed);
@@ -804,14 +1018,10 @@ function renderShortcutVisibility() {
 function renderFullscreen(enabled) {
   fullscreen = enabled;
   terminalScreen.dataset.fullscreen = String(enabled);
-  get('toggle-fullscreen').setAttribute('aria-pressed', String(enabled));
-  get('toggle-fullscreen').setAttribute('aria-label', enabled ? '退出全屏' : '进入全屏');
-  get('toggle-fullscreen').querySelector('use').setAttribute('href', enabled ? '#i-shrink' : '#i-expand');
 }
 
 async function setTerminalFullscreen(enabled) {
   if (fullscreen === enabled) return;
-  const previous = fullscreen;
   const epoch = ++fullscreenEpoch;
   renderFullscreen(enabled);
   try {
@@ -819,22 +1029,38 @@ async function setTerminalFullscreen(enabled) {
     if (epoch === fullscreenEpoch) renderFullscreen(actual === true);
   } catch (error) {
     if (epoch !== fullscreenEpoch) return;
-    renderFullscreen(!terminalScreen.hidden && previous);
+    renderFullscreen(false);
     get('terminal-status').textContent = error.message;
   }
 }
 
-landscape.addEventListener('change', renderShortcutVisibility);
+function syncTerminalFullscreen() {
+  return setTerminalFullscreen(!terminalScreen.hidden && deviceLandscape);
+}
+
+window.qingOrientation = isLandscape => {
+  // Native configuration describes device rotation; IME resizing is not a rotation.
+  nativeOrientation = true;
+  deviceLandscape = isLandscape === true;
+  renderShortcutVisibility();
+  void syncTerminalFullscreen();
+};
+landscape.addEventListener('change', () => {
+  if (!nativeOrientation) deviceLandscape = landscape.matches;
+  renderShortcutVisibility();
+  void syncTerminalFullscreen();
+});
 get('toggle-keys').addEventListener('click', () => {
   keysPreference = String(get('toggle-keys').getAttribute('aria-expanded') === 'true');
   localStorage.setItem(prefix + 'keys-collapsed', keysPreference);
   renderShortcutVisibility();
 });
-get('toggle-fullscreen').addEventListener('click', () => { void setTerminalFullscreen(!fullscreen); });
 renderShortcutVisibility();
 
-function leaveTerminal() {
-  void setTerminalFullscreen(false);
+function leaveTerminal({ preserveFullscreen = false } = {}) {
+  cancelKeyRepeats();
+  if (get('keys-dialog').open) get('keys-dialog').close();
+  if (!preserveFullscreen) void setTerminalFullscreen(false);
   terminalSelection?.dispose();
   terminalSelection = undefined;
   terminalHistory?.dispose();
@@ -848,10 +1074,14 @@ function leaveTerminal() {
   else if (selected) drafts.delete(draftKey(selected));
   viewEpoch += 1;
   clearTimeout(resizing);
+  clearTimeout(fitting);
+  fitting = null;
+  for (const id of ['terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) get(id).close();
   selected = null;
   composing = false;
   clearModifiers();
   setRawKeyboard(false);
+  get('submission-state').hidden = true;
   get('scroll-bottom').hidden = true;
   disposeTouchScroll?.();
   disposeTouchScroll = undefined;
@@ -916,11 +1146,10 @@ function makeTerminal() {
     onLongPress: point => terminalSelection?.start(point),
     canInertia: () => terminalHistory?.isOpen() || (term?.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none'),
   });
-  setRawKeyboard(false);
-  term.textarea.addEventListener('blur', () => setRawKeyboard(false));
-  term.textarea.addEventListener('compositionstart', () => { composing = true; updateComposerActions(); });
+  setRawKeyboard(!!selected && inputModes.get(draftKey(selected)) === 'raw');
+  term.textarea.addEventListener('compositionstart', () => { composing = true; cancelKeyRepeats(); updateComposerActions(); });
   term.textarea.addEventListener('compositionend', () => { composing = false; updateComposerActions(); });
-  fit.fit();
+  fitTerminal();
   updateTerminalSize();
   term.onData(data => { sendInput(data); });
   term.onResize(() => {
@@ -939,6 +1168,18 @@ function updateTerminalSize() {
   get('terminal-size').textContent = term ? term.cols + ' × ' + term.rows : '';
 }
 
+function fitTerminal() {
+  if (!term || !fit || terminalScreen.hidden) return;
+  const screen = term.element.querySelector('.xterm-screen');
+  const cellWidth = screen?.getBoundingClientRect().width / term.cols;
+  get('viewport').dataset.columns = terminalColumns ? 'fixed' : 'fit';
+  term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth) + 'px' : '100%';
+  const size = fit.proposeDimensions();
+  if (!size) return;
+  const cols = terminalColumns || size.cols;
+  if (cols !== term.cols || size.rows !== term.rows) term.resize(cols, size.rows);
+}
+
 function renderFontSize() {
   get('font-size').textContent = terminalFontSize + 'px';
   get('font-smaller').disabled = terminalFontSize <= 11;
@@ -951,7 +1192,7 @@ for (const [id, delta] of [['font-smaller', -1], ['font-larger', 1]]) {
     localStorage.setItem(prefix + 'font-size', String(terminalFontSize));
     if (term) {
       term.options.fontSize = terminalFontSize;
-      fit.fit();
+      fitTerminal();
     }
     renderFontSize();
   });
@@ -960,7 +1201,8 @@ renderFontSize();
 get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });
 
 new ResizeObserver(() => {
-  if (term && !terminalScreen.hidden) fit.fit();
+  clearTimeout(fitting);
+  fitting = setTimeout(() => { fitting = null; fitTerminal(); }, 80);
 }).observe(get('viewport'));
 
 function dimensions() {
@@ -976,11 +1218,12 @@ function sendSize() {
 
 function terminalState(text, state = 'idle', retry = false) {
   terminalReady = state === 'online';
+  get('expanded-send').disabled = !terminalReady;
   get('terminal-status').textContent = text;
   get('terminal-dot').dataset.state = state;
   get('terminal-retry').hidden = !retry;
-  for (const control of document.querySelectorAll('#special-keys button, #keyboard, #send, #attach-image')) {
-    control.disabled = !terminalReady;
+  for (const control of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send')) {
+    control.disabled = !terminalReady || (control.id === 'attach-image' && sendingImage);
   }
   updateComposerActions();
   syncLatency();
@@ -1008,6 +1251,7 @@ async function openProject(item, resumeOnly = false) {
   get('terminal-host').textContent = profile.name + ' / ' + projectSourceLabel(item);
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
+  void syncTerminalFullscreen();
   makeTerminal();
   renderSessions();
   terminalState('正在连接终端…');
@@ -1074,8 +1318,9 @@ async function createSession(epoch, launch = 'shell') {
 function selectSession(session) {
   get('session-dialog').close();
   if (selected === session.id) return;
-  leaveTerminal();
+  leaveTerminal({ preserveFullscreen: true });
   selected = session.id;
+  workspace.context(draftKey(selected), project.id, project.name);
   compose.value = drafts.get(draftKey(selected)) ?? '';
   resizeComposer();
   localStorage.setItem(sessionKey(project.id), session.id);
@@ -1085,6 +1330,7 @@ function selectSession(session) {
   makeTerminal();
   renderSessions();
   terminalState('正在接入终端…');
+  renderSubmissionState();
   void poll(session, viewEpoch);
 }
 
@@ -1100,6 +1346,7 @@ async function poll(session, epoch) {
     try {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
+      if (data.chunks.length && get('reader-dialog').open) get('reader-refresh').textContent = '刷新内容（有新输出）';
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);
       next = data.next;
@@ -1121,7 +1368,10 @@ async function poll(session, epoch) {
           const fallback = setTimeout(resolve, 250);
           view.write(chunk.data, () => { clearTimeout(fallback); resolve(); });
         });
-        if (chunk.screen && epoch === viewEpoch) fit.fit();
+        if (chunk.screen && epoch === viewEpoch) fitTerminal();
+      }
+      if (data.chunks.length && (terminalHistory?.isOpen() || term.buffer.active.viewportY < term.buffer.active.baseY)) {
+        get('scroll-bottom').querySelector('span').textContent = '有新输出 · 回到最新';
       }
       if (epoch !== viewEpoch) return;
       if (data.exit) {
@@ -1146,10 +1396,10 @@ async function poll(session, epoch) {
         return;
       }
       if (error.message === '终端不存在。') {
+        saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
-        selected = null;
         renderSessions();
-        terminalState('会话已在远端关闭，可新建终端', 'offline');
+        terminalState('原会话已不存在 · 草稿保留，可新建终端恢复', 'offline');
         return;
       }
       terminalState('连接中断，正在接回会话…', 'offline');
@@ -1165,17 +1415,21 @@ function flushInput() {
   inputTimer = null;
   const pending = inputQueue;
   inputQueue = '';
+  const completions = inputCompletions;
+  inputCompletions = [];
   const id = selected;
   const address = profile?.id;
   const epoch = viewEpoch;
-  if (!id || !pending) return;
+  if (!id || !pending) { for (const complete of completions) complete('unknown'); return; }
   queuedInput += pending.length;
   inputChain = inputChain.then(async () => {
     try {
       for (const part of splitInput(pending)) {
         await remote('input', { id, data: part }, address);
       }
+      for (const complete of completions) complete('received');
     } catch (error) {
+      for (const complete of completions) complete('unknown');
       if (epoch === viewEpoch) {
         if (error.revoked) handleTerminalError(error);
         else get('terminal-status').textContent = '输入提交结果未知，请检查终端输出。';
@@ -1186,7 +1440,7 @@ function flushInput() {
   });
 }
 
-function sendInput(value, { raw = false } = {}) {
+function sendInput(value, { raw = false, onComplete } = {}) {
   if (!terminalReady) return false;
   if (!raw && (modifiers.ctrl !== 'off' || modifiers.alt !== 'off')) {
     value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
@@ -1197,6 +1451,7 @@ function sendInput(value, { raw = false } = {}) {
     return false;
   }
   inputQueue += value;
+  if (onComplete) inputCompletions.push(onComplete);
   if (inputTimer === null) inputTimer = setTimeout(flushInput, 22);
   return true;
 }
@@ -1259,50 +1514,72 @@ get('end-session').addEventListener('click', async () => {
   }
 });
 
-for (const keyButton of get('special-keys').querySelectorAll('[data-key]')) {
+function cancelKeyRepeats() {
+  for (const repeat of keyRepeats) repeat.cancel();
+}
+
+function editCompose(action, text) {
+  const result = editDraft(compose.value, compose.selectionStart, compose.selectionEnd, action, text);
+  compose.value = result.value;
+  compose.setSelectionRange(result.start, result.end);
+  resizeComposer();
+}
+
+for (const keyButton of document.querySelectorAll('#special-keys [data-key], #keys-dialog [data-key]')) {
   keyButton.addEventListener('pointerdown', event => {
     if (document.activeElement === compose || document.activeElement === term?.textarea) event.preventDefault();
   });
-  keyButton.addEventListener('click', () => pressKey(keyButton));
-  if (keyButton.hasAttribute('data-repeat')) attachKeyRepeat(keyButton, () => pressKey(keyButton));
+  keyButton.addEventListener('click', () => {
+    pressKey(keyButton);
+    if (get('keys-dialog').contains(keyButton) && !['ctrl', 'alt'].includes(keyButton.dataset.key) && !keyButton.hasAttribute('data-repeat')) get('keys-dialog').close();
+  });
+  if (keyButton.hasAttribute('data-repeat')) keyRepeats.push(attachKeyRepeat(keyButton, () => pressKey(keyButton)));
 }
 
 function pressKey(keyButton) {
-  if (composing) return;
+  if (keyButton.disabled || composing || editorComposing || !terminalReady) return;
   const key = keyButton.dataset.key;
+  const modified = modifiers.ctrl !== 'off' || modifiers.alt !== 'off';
   if (key === 'ctrl' || key === 'alt') {
     const previous = modifiers[key];
     const next = nextModifierState(previous, performance.now(), lastTap[key]);
     lastTap[key] = next.at;
     setModifier(key, next.state);
-    if (previous === 'off') focusRawKeyboard();
+    if (previous === 'off') {
+      setRawKeyboard(true);
+      if (!get('keys-dialog').open) focusRawKeyboard();
+    }
   } else if (key === 'interrupt') {
-    // Dedicated interruption always sends Ctrl+C, independent of pending modifiers.
-    if (!terminalReady) return;
     consumeModifiers();
     sendInput('\x03', { raw: true });
-  } else if (key === 'text') {
-    if (modifiers.ctrl === 'off' && modifiers.alt === 'off'
-      && get('keyboard').getAttribute('aria-pressed') !== 'true') {
-      if (keyButton.dataset.text === '/' && !compose.value) {
-        dispatchComposer('slash');
-        return;
-      }
-      if (document.activeElement === compose) {
-        compose.setRangeText(keyButton.dataset.text, compose.selectionStart, compose.selectionEnd, 'end');
-        resizeComposer();
-        return;
-      }
-    }
-    // Symbols that soft keyboards hide behind extra layers; pending Ctrl/Alt still apply.
-    sendInput(keyButton.dataset.text);
-  } else if (key === 'tab' && modifiers.ctrl === 'off' && modifiers.alt === 'off') {
+  } else if (key === 'slash') {
+    dispatchComposer('slash');
+  } else if (key === 'reference') {
+    dispatchComposer('reference');
+  } else if (key === 'tab' && !modified) {
     dispatchComposer('complete');
-  } else {
-    // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
-    sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
+  } else if (inputMode === 'compose' && !modified && ['text', 'backspace', 'left', 'right', 'home', 'end', 'newline', 'delete-word', 'delete-line-start', 'clear'].includes(key)) {
+    editCompose(key, keyButton.dataset.text);
+  } else if (key === 'text') {
+    sendInput(keyButton.dataset.text);
+  } else if (key !== 'clear') {
+    // Semantic editing keys are literal terminal actions; Ctrl+D is never a backspace.
+    const literal = ['backspace', 'delete-word', 'delete-line-start', 'newline'].includes(key);
+    if (literal) clearModifiers();
+    sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }), { raw: literal });
   }
 }
+get('more-keys').addEventListener('click', () => {
+  cancelKeyRepeats();
+  updateComposerActions();
+  get('keys-dialog').showModal();
+});
+get('keys-dialog').addEventListener('close', () => {
+  cancelKeyRepeats();
+  if (terminalScreen.hidden || !selected) return;
+  if (inputMode === 'raw') term?.focus();
+  else compose.focus();
+});
 get('keyboard').addEventListener('pointerdown', event => {
   if (document.activeElement === term?.textarea) event.preventDefault();
 });
@@ -1313,15 +1590,14 @@ get('keyboard').addEventListener('click', () => {
     compose.focus();
   } else focusRawKeyboard();
 });
-for (const id of ['send', 'slash-command', 'complete-input', 'toggle-keys', 'toggle-fullscreen']) {
+for (const id of ['send', 'toggle-keys']) {
   get(id).addEventListener('pointerdown', event => {
     if ((document.activeElement === compose || document.activeElement === term?.textarea) && !composing) event.preventDefault();
   });
 }
-get('slash-command').addEventListener('click', () => dispatchComposer('slash'));
-get('complete-input').addEventListener('click', () => dispatchComposer('complete'));
+compose.addEventListener('focus', () => setRawKeyboard(false));
 compose.addEventListener('input', resizeComposer);
-compose.addEventListener('compositionstart', () => { composing = true; updateComposerActions(); });
+compose.addEventListener('compositionstart', () => { composing = true; cancelKeyRepeats(); updateComposerActions(); });
 compose.addEventListener('compositionend', () => { composing = false; updateComposerActions(); });
 get('compose-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -1385,42 +1661,51 @@ const compression = get('image-compression');
 const savedCompression = localStorage.getItem(prefix + 'image-compression');
 if (['original', 'low', 'medium', 'high'].includes(savedCompression)) compression.value = savedCompression;
 compression.addEventListener('change', () => localStorage.setItem(prefix + 'image-compression', compression.value));
-get('attach-image').addEventListener('click', () => {
-  message('image-error', '');
-  get('image-dialog').showModal();
-});
 let sendingImage = false;
 let imageEpoch = 0;
 get('image-dialog').addEventListener('close', () => { imageEpoch += 1; });
-get('choose-image').addEventListener('click', async () => {
+async function sendImage() {
   if (sendingImage || !terminalReady || !selected) return;
   const id = selected;
   const epoch = viewEpoch;
   const address = profile.id;
   const attempt = ++imageEpoch;
   sendingImage = true;
+  get('attach-image').disabled = true;
+  get('attach-image').setAttribute('aria-busy', 'true');
   get('choose-image').disabled = true;
   message('image-error', '');
   try {
     const image = await rpc('pick_image', { compression: compression.value });
     if (!image || epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
     get('choose-image').textContent = '正在上传…';
+    get('terminal-status').textContent = '正在上传图片…';
     const result = await remote('image', { id, data: image.data }, address);
     if (epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
     compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
     drafts.set(draftKey(id), compose.value);
     resizeComposer();
-    get('image-dialog').close();
+    if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
+    if (get('image-dialog').open) get('image-dialog').close();
     get('terminal-status').textContent = '图片已就绪，可补充说明后发送';
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
-      else message('image-error', error.message);
+      else {
+        get('terminal-status').textContent = '图片上传失败，可重新选择';
+        message('image-error', error.message);
+        if (!get('image-dialog').open) get('image-dialog').showModal();
+      }
     }
   } finally {
     sendingImage = false;
+    get('attach-image').disabled = !terminalReady;
+    get('attach-image').removeAttribute('aria-busy');
     get('choose-image').disabled = false;
     get('choose-image').textContent = '选择图片';
   }
-});
+}
+get('attach-image').addEventListener('click', sendImage);
+get('expanded-attach').addEventListener('click', sendImage);
+get('choose-image').addEventListener('click', sendImage);

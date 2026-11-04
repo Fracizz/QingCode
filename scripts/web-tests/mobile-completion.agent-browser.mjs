@@ -69,10 +69,12 @@ try {
   run('click', '#keyboard')
   resetInputs()
   run('fill', '#compose', 'cd tmp')
-  run('click', '#special-keys [data-text="/"]')
+  run('click', '#more-keys')
+  run('wait', '300')
+  run('click', '#keys-dialog [data-text="/"]')
   check('slash inside a command edits the local draft at its caret', `document.querySelector('#compose').value === 'cd tmp/' && ${inputs} === ''`)
   run('fill', '#compose', '')
-  run('click', '#special-keys [data-text="/"]')
+  run('click', '#slash-command')
   check('empty-draft slash shortcut also opens interactive skill input', `${inputs} === '/' && ${rawFocused}`)
 
   run('click', '#keyboard')
@@ -102,9 +104,11 @@ try {
     run('set', 'viewport', String(width), String(height))
     evaluate(`if (document.querySelector('#special-keys').hidden) document.querySelector('#toggle-keys').click()`)
     check(`${name}: completion and send controls fit with useful terminal space`, `(() => {
-      const controls = [...document.querySelectorAll('#completion-tools button, #send')].map(el => el.getBoundingClientRect());
+      const controls = [...document.querySelectorAll('#special-keys button, #send')].map(el => el.getBoundingClientRect());
       const output = document.querySelector('#viewport').getBoundingClientRect();
-      return output.height >= 100 && controls.every(r => r.width >= 44 && r.height >= 44 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight) && document.documentElement.scrollWidth <= innerWidth;
+      const keys = document.querySelector('#special-keys').getBoundingClientRect();
+      const send = document.querySelector('#send').getBoundingClientRect();
+      return output.height >= 100 && controls.every(r => r.width >= 44 && r.height >= 44 && r.bottom <= innerHeight) && keys.left >= 0 && keys.right <= innerWidth && send.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
     })()`)
     capture(`02-${name}`)
   }
