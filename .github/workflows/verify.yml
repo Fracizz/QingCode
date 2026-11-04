@@ -29,4 +29,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+        env:
+          # Windows clipboard tests share process-wide native state.
+          RUST_TEST_THREADS: '1'
       - run: pnpm build

@@ -102,7 +102,8 @@ describe('remote connection compatibility settings', () => {
     const projects = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, name: `app-${i}`, path: `ssh://c1/home/app-${i}`, hidden: 1, created_at: 1, last_opened_at: i }))
     useProjectStore.setState({ sshConnections: [connection('server'), other], projects })
     useUIStore.setState({ remoteConnectionsCreating: false })
-    render(<RemoteConnectionsManager />)
+    // Drain initial selection effects before clicking; they reset the expanded project list.
+    await act(async () => { render(<RemoteConnectionsManager />) })
     await screen.findByRole('button', { name: '编辑连接' })
     expect(screen.queryByLabelText('主机')).toBeNull()
     expect(screen.queryByRole('button', { name: '保存' })).toBeNull()
