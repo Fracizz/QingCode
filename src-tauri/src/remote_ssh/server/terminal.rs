@@ -727,7 +727,17 @@ enum ReconnectEnd {
     Exited(u32),
     Terminated(String),
     Retry(String),
+    /// 握手成功但 attach 请求或增量补发失败；连续多次后改要屏幕快照。
+    AttachRetry(String),
     Closed,
+}
+
+/// 增量补发连续失败这么多次后，改要屏幕快照接回。断线越久待补发越多，
+/// 一直坚持补发可能永远接不回；快照只丢断线期间的滚动历史，当前屏幕完整。
+const ATTACH_FAILURES_BEFORE_SCREEN: u32 = 2;
+
+fn attach_should_prefer_screen(consecutive_attach_failures: u32) -> bool {
+    consecutive_attach_failures >= ATTACH_FAILURES_BEFORE_SCREEN
 }
 
 pub(crate) async fn list_detached_terminals(
@@ -1423,6 +1433,7 @@ async fn run_persistent_terminal_inner(
                 active.transport.release();
                 let mut kill_acks = Vec::new();
                 let mut attempt = 0u32;
+                let mut attach_failures = 0u32;
                 loop {
                     attempt = attempt.saturating_add(1);
                     emit_connection(
@@ -1466,7 +1477,9 @@ async fn run_persistent_terminal_inner(
                         kill_acks.extend(drain_kill_acks(&mut command_rx));
                         break;
                     }
-                    match reconnect_terminal(&terminal, &root, &app, &manager).await {
+                    let prefer_screen = attach_should_prefer_screen(attach_failures);
+                    match reconnect_terminal(&terminal, &root, &app, &manager, prefer_screen).await
+                    {
                         ReconnectEnd::Connected(connected) => {
                             *active = connected;
                             break;
@@ -1490,6 +1503,15 @@ async fn run_persistent_terminal_inner(
                             return;
                         }
                         ReconnectEnd::Retry(error) => {
+                            reason = error;
+                            if terminal.closed.load(Ordering::Acquire) {
+                                kill_acks.extend(drain_kill_acks(&mut command_rx));
+                                break;
+                            }
+                            continue;
+                        }
+                        ReconnectEnd::AttachRetry(error) => {
+                            attach_failures = attach_failures.saturating_add(1);
                             reason = error;
                             if terminal.closed.load(Ordering::Acquire) {
                                 kill_acks.extend(drain_kill_acks(&mut command_rx));
@@ -1642,6 +1664,7 @@ async fn reconnect_terminal(
     root: &RegisteredRoot,
     app: &AppHandle,
     manager: &SshManager,
+    prefer_screen: bool,
 ) -> ReconnectEnd {
     let parsed = match parse_remote_uri(&root.uri) {
         Ok(parsed) => parsed,
@@ -1692,9 +1715,15 @@ async fn reconnect_terminal(
         presized_size,
     )
     .await;
+    if prefer_screen {
+        eprintln!(
+            "[WARN] persistent terminal {} replay kept failing, requesting screen snapshot",
+            terminal.id
+        );
+    }
     let attach = match active
         .session
-        .attach(&terminal.pty_id, from_seq, false)
+        .attach_with_screen(&terminal.pty_id, from_seq, false, prefer_screen)
         .await
     {
         Ok(attach) => attach,
@@ -1706,7 +1735,7 @@ async fn reconnect_terminal(
         Err(error) => {
             active.session.shutdown();
             active.transport.release();
-            return ReconnectEnd::Retry(error);
+            return ReconnectEnd::AttachRetry(error);
         }
     };
     let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
@@ -1719,7 +1748,7 @@ async fn reconnect_terminal(
                 "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
                 terminal.id
             );
-            return ReconnectEnd::Retry(error);
+            return ReconnectEnd::AttachRetry(error);
         }
     };
     match prepare_reconnected_terminal(exited, async {
@@ -2064,6 +2093,15 @@ mod tests {
             .map(|attempt| reconnect_delay_schedule(attempt).as_secs())
             .collect::<Vec<_>>();
         assert_eq!(delays, vec![0, 5, 5, 10, 10, 10, 10, 10, 30, 30]);
+    }
+
+    #[test]
+    fn attach_falls_back_to_screen_after_repeated_replay_failures() {
+        // 首次与第二次仍尝试增量补发，保留滚动历史；之后改要快照，避免无限重连。
+        assert!(!attach_should_prefer_screen(0));
+        assert!(!attach_should_prefer_screen(1));
+        assert!(attach_should_prefer_screen(2));
+        assert!(attach_should_prefer_screen(10));
     }
 
     #[test]

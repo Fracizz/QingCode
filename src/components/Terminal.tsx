@@ -1,4 +1,5 @@
 import TerminalExitNotice from './TerminalExitNotice'
+import TerminalConnectionNotice from './TerminalConnectionNotice'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -1399,6 +1400,7 @@ export default function TerminalView({
           />
         ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
+        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} />
       </div>
       {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && (
         <TerminalExitNotice

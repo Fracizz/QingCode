@@ -71,6 +71,7 @@ import {
   type TerminalShellId,
 } from '@/lib/terminal/terminalShell'
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
+import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 import { decodeTerminalEventData } from '../utils/terminalIpc'
@@ -463,11 +464,25 @@ async function enterShellAfterTask(id: string): Promise<void> {
   }
 }
 
+/**
+ * 写进终端缓冲的提示：只用于进程已结束等不会再有 TUI 重绘的场景，
+ * 同时作为输出证据随滚动历史保留。
+ */
 function publishTerminalNotice(id: string, text: string) {
+  clearTerminalOverlayNotice(id)
   publishTerminalOutput(id, new TextEncoder().encode(`\r\n\x1b[90m[${text}]\x1b[0m\r\n`))
 }
 
+/**
+ * 断线/重连/已接回等连接提示：前台程序可能仍在运行（常是全屏或行内 TUI），
+ * 写进缓冲会盖住并打乱其画面，改由终端视图以浮层显示。
+ */
+function publishTerminalConnectionNotice(id: string, text: string, sticky: boolean) {
+  publishTerminalOverlayNotice(id, text, { sticky })
+}
+
 function markDisconnectedExit(id: string) {
+  clearTerminalOverlayNotice(id)
   disconnectNoticeShown.add(id)
   useTerminalStore.setState(s => ({
     terminals: s.terminals.map(terminal =>
@@ -496,7 +511,7 @@ async function cancelTerminalReconnect(id: string): Promise<void> {
   const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
   if (!tab) return
   reconnectCancelInFlight.add(id)
-  publishTerminalNotice(id, translate('已取消重新连接，正在结束终端…'))
+  publishTerminalConnectionNotice(id, translate('已取消重新连接，正在结束终端…'), true)
   try {
     if (tab.status === 'reconnecting') {
       try {
@@ -2417,7 +2432,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           ),
         }))
         if (plan.notice) {
-          publishTerminalNotice(id, translate(plan.notice.key, plan.notice.values))
+          publishTerminalConnectionNotice(
+            id,
+            translate(plan.notice.key, plan.notice.values),
+            plan.status === 'reconnecting',
+          )
+        } else if (plan.status === 'running' && activeTerminalOverlayNotice(id)?.sticky) {
+          // 已在运行时再收到 attached（无提示）：收起可能残留的常驻重连浮层，
+          // 不打断刚显示的「已重新连接」。
+          clearTerminalOverlayNotice(id)
         }
       }),
       listen('terminal-screen', event => {

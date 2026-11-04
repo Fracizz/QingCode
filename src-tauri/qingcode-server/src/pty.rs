@@ -140,6 +140,18 @@ pub struct PtyInfo {
     pub detached: bool,
 }
 
+/// attach 何时改给屏幕快照（缓冲已淘汰或序号超前时无论如何都给快照）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttachScreenPolicy {
+    /// 缓冲覆盖 `from_seq` 就补发增量。
+    #[default]
+    Replay,
+    /// 停在全屏 TUI 时给快照（应用重启后的接回用）。
+    OnAlternate,
+    /// 总给快照：客户端增量补发反复失败时的兜底，避免越积越多、永远接不回。
+    Always,
+}
+
 /// `pty.attach` 的结果：两条互斥路径二选一。
 ///
 /// - `screen = None, replay = 缺失块`：`from_seq` 仍被缓冲覆盖，客户端无缝接上；
@@ -782,18 +794,18 @@ impl PtyHost {
     /// 无论哪条路径都会把终端标记为已接入（`detached = false`）。
     #[cfg(test)]
     pub fn attach(&self, id: &str, from_seq: u64, client_id: &str) -> Result<AttachResult, String> {
-        self.attach_with(id, from_seq, client_id, false)
+        self.attach_with(id, from_seq, client_id, AttachScreenPolicy::Replay)
     }
 
-    /// 同 [`Self::attach`]；`screen_on_alternate` 为真且终端停在全屏 TUI 时总给快照。
-    /// 应用重启后客户端网格与断线期间的 PTY 尺寸不一定相同，原样补发 TUI 的增量
-    /// 输出会错位；普通 Shell 的增量按行排版，照常补发。
+    /// 同 [`Self::attach`]，按 `screen` 决定是否改给快照。
+    /// `OnAlternate`：应用重启后客户端网格与断线期间的 PTY 尺寸不一定相同，原样补发
+    /// TUI 的增量输出会错位；普通 Shell 的增量按行排版，照常补发。
     pub fn attach_with(
         &self,
         id: &str,
         from_seq: u64,
         client_id: &str,
-        screen_on_alternate: bool,
+        screen: AttachScreenPolicy,
     ) -> Result<AttachResult, String> {
         let term = self.term(id)?;
         let mut state = lock(&term.state);
@@ -808,7 +820,11 @@ impl PtyHost {
         state.detached_at = None;
         state.owner = Some(client_id.to_string());
         let seq_end = state.ring.seq_end();
-        let force_screen = screen_on_alternate && state.parser.alternate_screen();
+        let force_screen = match screen {
+            AttachScreenPolicy::Replay => false,
+            AttachScreenPolicy::OnAlternate => state.parser.alternate_screen(),
+            AttachScreenPolicy::Always => true,
+        };
         let (screen, replay) = if !force_screen && state.ring.can_replay(from_seq) {
             (None, state.ring.replay(from_seq))
         } else {
@@ -2325,10 +2341,18 @@ mod tests {
 
         // 普通 Shell 不在备用屏幕：要求「全屏时给快照」也照常补发增量。
         let normal = host
-            .attach_with(&info.id, 0, "client-a", true)
+            .attach_with(&info.id, 0, "client-a", AttachScreenPolicy::OnAlternate)
             .expect("attach 失败");
         assert!(normal.screen.is_none());
         assert!(!normal.replay.is_empty());
+
+        // 客户端补发反复失败后要求总给快照：即使缓冲仍覆盖也不补发增量。
+        let fallback = host
+            .attach_with(&info.id, 0, "client-a", AttachScreenPolicy::Always)
+            .expect("attach 失败");
+        assert!(fallback.screen.is_some());
+        assert!(fallback.replay.is_empty());
+        assert_eq!(fallback.seq_end, replay_all.seq_end);
 
         // 序号超前（例如 daemon 重启后序号错乱）：退化为屏幕快照。
         let ahead = host

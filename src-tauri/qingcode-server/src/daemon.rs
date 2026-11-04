@@ -578,6 +578,24 @@ struct Outbound {
     frame: Frame,
 }
 
+/// 流数据发送失败的原因；写进 STREAM_END.error，客户端据此给出具体提示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkSendError {
+    Cancelled,
+    WindowClosed,
+    Closed,
+}
+
+impl ChunkSendError {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Cancelled => "流已被取消",
+            Self::WindowClosed => "流控窗口已关闭",
+            Self::Closed => "daemon 连接正在关闭",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct OutboundSender {
     control: mpsc::Sender<Outbound>,
@@ -627,6 +645,41 @@ impl OutboundSender {
             &self.data
         };
         tx.send(Outbound { priority, frame }).await.is_ok()
+    }
+
+    /// 同 [`Self::send_async`]，但等待期间每 200ms 复查取消标记与连接收尾：
+    /// 写端被慢 SSH 管道卡住时，流数据（attach 补发、搜索结果）必须等队列腾出
+    /// 容量，而不是 try_send 一满就把整条连接断掉。
+    async fn send_cancellable(
+        &self,
+        priority: Priority,
+        frame: Frame,
+        cancel: &AtomicBool,
+    ) -> Result<(), ChunkSendError> {
+        let tx = if priority == Priority::Control {
+            &self.control
+        } else {
+            &self.data
+        };
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(ChunkSendError::Cancelled);
+            }
+            if self.closing.load(Ordering::SeqCst) {
+                return Err(ChunkSendError::Closed);
+            }
+            tokio::select! {
+                // reserve 可安全取消：丢弃等待不会丢帧，帧仍在本函数手里。
+                permit = tx.reserve() => {
+                    let Ok(permit) = permit else {
+                        return Err(ChunkSendError::Closed);
+                    };
+                    permit.send(Outbound { priority, frame });
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+            }
+        }
     }
 
     fn abort(&self) {
@@ -1192,6 +1245,13 @@ impl ConnCtx {
         self.send(priority, frame);
     }
 
+    /// 等队列腾出容量再发 STREAM_END：它排在大量流数据之后，try_send 可能恰好
+    /// 撞上满队列而丢掉收尾帧（并断开连接），客户端就只能等到超时。
+    async fn stream_end_async(&self, priority: Priority, id: u32, body: StreamEnd) -> bool {
+        let frame = Frame::new(Kind::StreamEnd, id, encode(&body).unwrap_or_default());
+        self.send_async(priority, frame).await
+    }
+
     /// 为流登记取消标记，返回共享句柄（`CANCEL` 帧会置位）。
     fn cancel_flag(&self, id: u32) -> Arc<AtomicBool> {
         // dispatch 任务可能晚于连接收尾才开始；这种订阅一开始就必须取消。
@@ -1208,7 +1268,10 @@ impl ConnCtx {
     ///
     /// 只看信用窗口是不够的：客户端可能活着、还在发 PING，却迟迟不消费，
     /// 这时 `window.acquire` 会永久阻塞，`CANCEL` 也永远读不到效果。
-    /// 返回 false 表示流被取消或窗口已关闭。
+    ///
+    /// 拿到信用后同样要等发送队列腾出容量：信用窗口按字节计，而队列按帧计；
+    /// 补发由大量几字节的小块组成时，256KB 信用远超 64 帧的队列深度，
+    /// try_send 会在慢 SSH 链路上瞬间写满并断开连接，导致接回永远失败。
     async fn send_chunk(
         &self,
         priority: Priority,
@@ -1216,21 +1279,24 @@ impl ConnCtx {
         window: &SenderWindow,
         cancel: &AtomicBool,
         payload: Vec<u8>,
-    ) -> bool {
+    ) -> Result<(), ChunkSendError> {
         loop {
             if cancel.load(Ordering::SeqCst) {
-                return false;
+                return Err(ChunkSendError::Cancelled);
             }
             tokio::select! {
                 result = window.acquire(payload.len()) => {
                     if result.is_err() {
-                        return false;
+                        return Err(ChunkSendError::WindowClosed);
                     }
-                    return self.send(priority, Frame::new(Kind::StreamData, id, payload));
+                    break;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {}
             }
         }
+        self.outbound
+            .send_cancellable(priority, Frame::new(Kind::StreamData, id, payload), cancel)
+            .await
     }
 
     fn clear_cancel(&self, id: u32) {
@@ -1847,9 +1913,10 @@ async fn search_content(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             let Ok(payload) = encode(&chunk) else {
                 continue;
             };
-            if !conn
+            if conn
                 .send_chunk(Priority::Bulk, id, &window, &cancel, payload)
                 .await
+                .is_err()
             {
                 aborted = true;
                 break;
@@ -2133,18 +2200,25 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 /// 停在全屏 TUI 时改给屏幕快照（应用重启后的接回用）。旧客户端不传，行为不变。
                 #[serde(default)]
                 screen_on_alternate: bool,
+                /// 总给屏幕快照：客户端增量补发反复失败时的兜底。旧客户端不传，行为不变。
+                #[serde(default)]
+                prefer_screen: bool,
             }
             let Ok(params) = params::<AttachParams>(&request) else {
                 conn.fail(id, "badRequest", "pty.attach 参数错误");
                 return;
             };
+            let screen_policy = if params.prefer_screen {
+                crate::pty::AttachScreenPolicy::Always
+            } else if params.screen_on_alternate {
+                crate::pty::AttachScreenPolicy::OnAlternate
+            } else {
+                crate::pty::AttachScreenPolicy::Replay
+            };
             let attach = match daemon.install_attach_route(&params.id, conn.conn_id, || {
-                daemon.pty.attach_with(
-                    &params.id,
-                    params.from_seq,
-                    &conn.client_id,
-                    params.screen_on_alternate,
-                )
+                daemon
+                    .pty
+                    .attach_with(&params.id, params.from_seq, &conn.client_id, screen_policy)
             }) {
                 Ok(attach) => attach,
                 Err(message) => {
@@ -2163,38 +2237,47 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     "seqEnd": attach.seq_end,
                 }),
             );
-            // 补发缺失输出：每段按 64KB 分片，窗口满时在这里等客户端回 WINDOW，
+            // 补发缺失输出：每段按 64KB 分片，窗口满或发送队列满时在这里等待，
             // 期间每 200ms 复查 CANCEL（慢客户端不能把这条连接挂死）。
             let window = conn.window(id);
             let cancel = conn.cancel_flag(id);
-            let mut ok = true;
-            for (seq, data) in attach.replay {
+            let mut failure = None;
+            'replay: for (seq, data) in attach.replay {
                 for chunk in proto::split_chunks(&data, Some(seq)) {
                     let Ok(payload) = encode(&chunk) else {
                         continue;
                     };
-                    if !conn
+                    if let Err(error) = conn
                         .send_chunk(Priority::Terminal, id, &window, &cancel, payload)
                         .await
                     {
-                        ok = false;
-                        break;
+                        failure = Some(error);
+                        break 'replay;
                     }
-                }
-                if !ok {
-                    break;
                 }
             }
             conn.clear_cancel(id);
-            conn.stream_end(
-                Priority::Terminal,
-                id,
-                StreamEnd {
-                    ok,
-                    summary: json!({ "seqEnd": attach.seq_end, "exited": attach.exited }),
-                    error: None,
-                },
-            );
+            if let Some(error) = failure {
+                daemon.log.warn(&format!(
+                    "连接 {} 接回终端 {} 补发中断：{}",
+                    conn.conn_id,
+                    params.id,
+                    error.message()
+                ));
+            }
+            let delivered = conn
+                .stream_end_async(
+                    Priority::Terminal,
+                    id,
+                    StreamEnd {
+                        ok: failure.is_none(),
+                        summary: json!({ "seqEnd": attach.seq_end, "exited": attach.exited }),
+                        error: failure
+                            .map(|error| format!("pty.attach 补发中断：{}", error.message())),
+                    },
+                )
+                .await;
+            let ok = failure.is_none() && delivered;
             if ok {
                 daemon.finish_attach_replay(&params.id, conn.conn_id).await;
             } else {
@@ -2655,6 +2738,99 @@ mod tests {
             Some(RoutePhase::Live)
         );
         let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    fn stream_test_conn(data_depth: usize) -> (ConnCtx, mpsc::Receiver<Outbound>) {
+        let (control, _control_rx) = mpsc::channel(8);
+        let (data, data_rx) = mpsc::channel(data_depth);
+        let ctx = ConnCtx {
+            conn_id: 1,
+            client_id: "stream-test".into(),
+            outbound: OutboundSender::new(control, data, Arc::new(Notify::new())),
+            cancels: Arc::new(Mutex::new(HashMap::new())),
+            windows: Arc::new(Mutex::new(HashMap::new())),
+            inputs: Arc::new(InputQueues::default()),
+        };
+        (ctx, data_rx)
+    }
+
+    /// 断线期间 Claude Code 之类的 TUI 每次只写几字节，补发由大量小块组成：
+    /// 字节信用远够用，帧数却远超发送队列深度。写端慢时必须等队列腾出容量，
+    /// 不能一满就断开整条连接（否则每次接回都失败，重连无限循环）。
+    #[tokio::test]
+    async fn stream_chunks_wait_for_queue_capacity_instead_of_disconnecting() {
+        let (conn, mut data_rx) = stream_test_conn(8);
+        let window = conn.window(7);
+        let cancel = conn.cancel_flag(7);
+        let total = 200usize;
+        let reader = tokio::spawn(async move {
+            let mut received = 0usize;
+            while received < total {
+                // 模拟慢 SSH 管道：写端偶尔被卡住。
+                if received % 16 == 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                let out = data_rx.recv().await.expect("连接队列被提前关闭");
+                assert_eq!(out.frame.kind, Kind::StreamData);
+                received += 1;
+            }
+            data_rx
+        });
+        for index in 0..total {
+            let payload = format!("tick-{index}").into_bytes();
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                conn.send_chunk(Priority::Terminal, 7, &window, &cancel, payload),
+            )
+            .await
+            .expect("等待发送队列卡住")
+            .expect("小块补发不应因队列满而失败");
+        }
+        let mut data_rx = reader.await.unwrap();
+        assert!(
+            !conn.outbound.closing.load(Ordering::SeqCst),
+            "补发不应断开连接"
+        );
+        assert!(
+            conn.stream_end_async(
+                Priority::Terminal,
+                7,
+                StreamEnd {
+                    ok: true,
+                    summary: json!({}),
+                    error: None,
+                },
+            )
+            .await
+        );
+        assert_eq!(data_rx.recv().await.unwrap().frame.kind, Kind::StreamEnd);
+    }
+
+    /// 队列一直满时，CANCEL 仍要能在有限时间内结束等待，并给出具体原因。
+    #[tokio::test]
+    async fn stream_chunk_waiting_on_full_queue_honors_cancel() {
+        let (conn, _data_rx) = stream_test_conn(1);
+        let window = conn.window(9);
+        let cancel = conn.cancel_flag(9);
+        conn.send_chunk(Priority::Terminal, 9, &window, &cancel, b"a".to_vec())
+            .await
+            .unwrap();
+        let canceller = {
+            let cancel = Arc::clone(&cancel);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                cancel.store(true, Ordering::SeqCst);
+            })
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            conn.send_chunk(Priority::Terminal, 9, &window, &cancel, b"b".to_vec()),
+        )
+        .await
+        .expect("取消后仍卡在满队列上");
+        canceller.await.unwrap();
+        assert_eq!(result, Err(ChunkSendError::Cancelled));
+        assert!(!conn.outbound.closing.load(Ordering::SeqCst));
     }
 
     /// 等就绪标记与 token 出现（daemon 的启动是异步的）。

@@ -717,12 +717,26 @@ impl DaemonSession {
         from_seq: u64,
         screen_on_alternate: bool,
     ) -> Result<DaemonAttachResult, String> {
+        self.attach_with_screen(pty_id, from_seq, screen_on_alternate, false)
+            .await
+    }
+
+    /// `prefer_screen`：增量补发反复失败时要求 daemon 总给屏幕快照，避免断线越久
+    /// 待补发越多、永远接不回（旧 daemon 忽略该字段，照常补发）。
+    pub(super) async fn attach_with_screen(
+        &self,
+        pty_id: &str,
+        from_seq: u64,
+        screen_on_alternate: bool,
+        prefer_screen: bool,
+    ) -> Result<DaemonAttachResult, String> {
         let (stream_id, mut replies) = self.begin_stream_request(
             "pty.attach",
             &serde_json::json!({
                 "id": pty_id,
                 "fromSeq": from_seq,
                 "screenOnAlternate": screen_on_alternate,
+                "preferScreen": prefer_screen,
             }),
         )?;
         let deadline = tokio::time::Instant::now() + DAEMON_SESSION_REQUEST_TIMEOUT;
