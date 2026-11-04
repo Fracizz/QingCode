@@ -9,8 +9,20 @@ const results = []
 const run = (...args) => execFileSync('agent-browser', ['--session', session, ...args], { encoding: 'utf8', timeout: 30000 })
 const click = name => run('find', 'role', 'button', 'click', '--name', name, '--exact')
 const check = (name, expression) => { run('wait', '--fn', expression); results.push({ name, passed: true }) }
-const capture = name => run('screenshot', resolve(directory, `${name}.png`))
+const capture = name => run('screenshot', '.mobile-connection-settings', resolve(directory, `${name}.png`))
 const field = `document.querySelector('#mobile-connection-password')`
+const pairingLayout = `(() => {
+  const body = document.querySelector('.mobile-connection-body').getBoundingClientRect();
+  const cards = [...document.querySelector('.mobile-connection-body').children].map(node => node.getBoundingClientRect());
+  const pairing = document.querySelector('.mobile-connection-pairing');
+  const text = pairing.querySelector('ol').getBoundingClientRect();
+  const select = pairing.querySelector('select').getBoundingClientRect();
+  const content = document.querySelector('.mobile-connection-settings .settings-item-control').getBoundingClientRect();
+  return cards.length === 2 && body.width >= content.width - 1 &&
+    cards.every(card => card.left >= body.left && card.right <= body.right + 1) &&
+    text.width >= Math.min(200, body.width - 50) && select.right <= cards[1].right &&
+    document.documentElement.scrollWidth <= innerWidth;
+})()`
 const aligned = `(() => {
   const port = document.querySelector('#mobile-connection-port').getBoundingClientRect();
   const password = ${field}.getBoundingClientRect();
@@ -31,6 +43,26 @@ try {
   capture('settings-dark')
   click('保存并启用')
   check('simple numeric password is saved and still visible while active', `${field}.disabled && ${field}.value === '123456' && document.body.textContent.includes('已保存并启用')`)
+  check('wide settings use the full content width and readable pairing steps', `document.querySelector('[aria-label="Android 配对二维码"]') && ${pairingLayout}`)
+  capture('pairing-wide-dark')
+  run('select', '[aria-label="配对使用的电脑地址"]', '10.0.0.5')
+  check('address selection still updates the pairing link', `document.querySelector('[aria-label="配对使用的电脑地址"]').value === '10.0.0.5'`)
+  run('click', '.mobile-connection-pairing summary')
+  check('certificate details remain available on demand', `document.querySelector('.mobile-connection-pairing details').open`)
+  run('eval', `document.querySelector('.settings-shell').style.maxWidth = '560px'`)
+  check('split editor follows its own width inside a wide window', `${pairingLayout} && (() => {
+    const cards = document.querySelector('.mobile-connection-body').children;
+    return cards[1].getBoundingClientRect().top >= cards[0].getBoundingClientRect().bottom;
+  })()`)
+  capture('pairing-split-dark')
+  run('eval', `document.querySelector('.settings-shell').style.maxWidth = ''`)
+  run('set', 'viewport', '800', '1000')
+  check('medium settings stack the form above pairing', `${pairingLayout} && (() => {
+    const cards = document.querySelector('.mobile-connection-body').children;
+    return cards[1].getBoundingClientRect().top >= cards[0].getBoundingClientRect().bottom;
+  })()`)
+  capture('pairing-medium-dark')
+  run('set', 'viewport', '1100', '800')
   click('重新打开设置')
   check('reopening restores the password masked by default', `${field}.disabled && ${field}.value === '123456' && ${field}.type === 'password'`)
   click('显示密码')
@@ -52,6 +84,12 @@ try {
   click('放大字号')
   check('large interface font preserves alignment', aligned)
   capture('settings-large-font')
+  click('保存并启用')
+  check('large font narrow pairing keeps text and address within the card', `document.querySelector('[aria-label="Android 配对二维码"]') && ${pairingLayout}`)
+  capture('pairing-narrow-large-font')
+  run('set', 'viewport', '1100', '1000')
+  check('large font wide settings avoid squeezing pairing steps', pairingLayout)
+  capture('pairing-wide-large-font')
 } catch (error) {
   results.push({ name: String(error), passed: false })
   capture('failure')

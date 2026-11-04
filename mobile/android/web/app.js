@@ -2,13 +2,17 @@ import {
   DEFAULT_PORT,
   applyModifiers,
   keySequence,
+  matchesProject,
   outputChunk,
   parsePairingLink,
+  projectSourceLabel,
   renameProfileKeys,
   splitInput,
   validIpv4,
   validPort,
 } from './protocol.js';
+import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
+import { attachTerminalTouchScroll } from './terminalTouch.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -33,6 +37,7 @@ let selected = null;
 let viewEpoch = 0;
 let term;
 let fit;
+let disposeTouchScroll;
 let terminalReady = false;
 const modifiers = { ctrl: false, alt: false };
 let busy = false;
@@ -47,6 +52,9 @@ let composing = false;
 let expectedFingerprint = null;
 let scanStream = null;
 let scanTimer = null;
+let scanEpoch = 0;
+const savedFontSize = Number(localStorage.getItem(prefix + 'font-size'));
+let terminalFontSize = Number.isInteger(savedFontSize) && savedFontSize >= 11 && savedFontSize <= 20 ? savedFontSize : 13;
 
 function rpc(op, args = {}) {
   return new Promise((resolve, reject) => {
@@ -121,6 +129,20 @@ window.qingBack = () => {
 
 for (const button of document.querySelectorAll('[data-close]')) {
   button.addEventListener('click', () => get(button.dataset.close).close('cancel'));
+}
+
+// A backdrop tap cancels only when both ends of the gesture are outside the panel.
+for (const dialog of document.querySelectorAll('dialog')) {
+  let backdropDown = false;
+  const outside = event => {
+    const bounds = dialog.getBoundingClientRect();
+    return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+  };
+  dialog.addEventListener('pointerdown', event => { backdropDown = outside(event); });
+  dialog.addEventListener('pointerup', event => {
+    if (backdropDown && outside(event) && (dialog.id !== 'pair-dialog' || !get('pair-submit').disabled)) dialog.close('cancel');
+    backdropDown = false;
+  });
 }
 
 function ask(dialog) {
@@ -199,7 +221,12 @@ function renderConnections() {
     detail.append(icon('more'));
     const dot = document.createElement('span');
     dot.className = 'dot';
-    select.append(tile('host'), rowText(item.name, item.id + ' · ' + labels[state] + (current ? ' · 当前' : '')), dot);
+    const text = rowText(item.name, item.id);
+    const status = document.createElement('small');
+    status.className = 'connection-state';
+    status.textContent = labels[state] + (current ? ' · 当前电脑' : '');
+    text.append(status);
+    select.append(tile('host'), text, dot);
     card.append(select, detail);
     list.append(card);
   }
@@ -218,18 +245,29 @@ function lastProject() {
   return projects.find(item => item.id === id);
 }
 
-const kindLabels = { local: '本机', wsl: 'WSL', ssh: '远端' };
-
 function renderHome() {
   const recent = lastProject();
-  get('resume').hidden = !recent;
-  get('browse-projects').hidden = !recent;
-  get('home-empty').hidden = !!recent;
   const state = hostState(profile);
-  if (recent) {
+  const canResume = !!recent && state === 'online';
+  get('resume').hidden = !canResume;
+  get('browse-projects').hidden = !canResume;
+  get('home-empty').hidden = canResume;
+  get('home-guide').hidden = profiles.length > 0;
+  get('home-context').hidden = !profile;
+  get('home-context').dataset.state = state === 'expired' ? 'offline' : state;
+  get('home-context-name').textContent = profile?.name ?? '';
+  get('home-context-state').textContent = {
+    online: projects.length + ' 个已信任项目 · 可以打开终端',
+    checking: '正在读取项目…', offline: '电脑暂时不可达', expired: '配对已失效', saved: '等待连接',
+  }[state];
+  get('home-reconnect').hidden = state !== 'offline';
+  if (canResume) {
     get('resume-name').textContent = recent.name;
-    get('resume-host').textContent = profile.name + ' / ' + recent.host;
+    get('resume-host').textContent = profile.name + ' / ' + projectSourceLabel(recent);
   }
+  const quickProjects = projects.filter(item => item.id !== (canResume ? recent.id : null)).slice(0, 3);
+  get('home-projects').hidden = state !== 'online' || !quickProjects.length;
+  get('home-project-list').replaceChildren(...quickProjects.map(projectRow));
   const homeStates = {
     checking: ['正在连接电脑', '正在读取已信任的项目。', '查看连接'],
     offline: ['电脑暂时不可达', '检查手机和电脑的网络后重试。', '重新连接'],
@@ -245,24 +283,44 @@ function renderHome() {
   get('home-action').textContent = action;
 }
 
+function projectRow(item) {
+  const path = item.kind === 'ssh' ? item.path.replace(/^ssh:\/\/[^/]+/, '') : item.path;
+  const row = button('row', () => { void openProject(item); });
+  const text = rowText(item.name, projectSourceLabel(item));
+  text.lastElementChild.className = 'project-source';
+  const location = document.createElement('small');
+  location.className = 'project-path';
+  location.textContent = path;
+  text.append(location);
+  row.dataset.kind = item.kind;
+  row.append(tile(item.kind === 'ssh' ? 'host' : 'folder'), text, icon('chevron', 'arrow'));
+  return row;
+}
+
 function renderProjects() {
   const query = get('search').value.trim().toLowerCase();
-  const matching = projects.filter(item =>
-    (kind === 'all' || item.kind === kind) && [item.name, item.path, item.host].some(value => value.toLowerCase().includes(query)));
+  const matching = projects.filter(item => matchesProject(item, kind, query));
   const list = get('project-list');
-  list.replaceChildren();
-  for (const item of matching) {
-    const path = item.kind === 'ssh' ? item.path.replace(/^ssh:\/\/[^/]+/, '') : item.path;
-    const row = button('row', () => { void openProject(item); });
-    row.append(tile('folder'), rowText(item.name, kindLabels[item.kind] + ' · ' + path), icon('chevron', 'arrow'));
-    list.append(row);
-  }
-  get('refresh').disabled = !profile || hostState(profile) === 'checking';
+  list.replaceChildren(...matching.map(projectRow));
+  const checking = hostState(profile) === 'checking';
+  list.setAttribute('aria-busy', String(checking));
+  get('refresh').disabled = !profile || checking;
+  get('refresh').textContent = checking ? '读取中…' : '刷新';
   get('project-filters').hidden = !profile;
   get('project-subtitle').textContent = profile ? profile.name + ' · 已信任项目' : '请先在「连接」中配对电脑。';
   get('list-label').textContent = matching.length ? matching.length + ' 个项目'
-    : loaded ? (query ? '没有匹配的项目' : '当前环境没有已信任的项目')
+    : loaded ? (query ? '没有匹配的项目' : kind === 'wsl'
+      ? '本机 WSL 没有已信任的项目；通过远端连接访问的 WSL 项目请在「远端」中查看。'
+      : '当前环境没有已信任的项目')
       : hostState(profile) === 'checking' ? '正在读取项目…' : '';
+  const empty = !matching.length && !checking;
+  get('project-empty').hidden = !empty;
+  const filtered = !!query || kind !== 'all';
+  get('project-empty-title').textContent = !profile ? '先连接一台电脑' : filtered ? '没有匹配的项目' : '暂无可用项目';
+  get('project-empty-text').textContent = !profile ? '配对后即可查看电脑上的已信任项目。'
+    : filtered ? '试试其他关键词，或清除筛选查看全部项目。'
+    : loaded ? '在电脑端添加并信任项目，再回到这里刷新。' : '检查电脑连接后重新读取项目。';
+  get('project-empty-action').textContent = !profile ? '前往连接' : filtered ? '清除筛选' : '重新读取';
 }
 
 function updateHost(state) {
@@ -362,6 +420,7 @@ get('pair-paste').addEventListener('click', async () => {
 });
 
 function stopScan() {
+  scanEpoch += 1;
   clearTimeout(scanTimer);
   scanTimer = null;
   for (const track of scanStream?.getTracks() ?? []) track.stop();
@@ -372,42 +431,54 @@ function stopScan() {
 get('scan-dialog').addEventListener('close', stopScan);
 
 get('pair-scan').addEventListener('click', async () => {
+  stopScan();
+  const epoch = scanEpoch;
+  const dialog = get('scan-dialog');
+  const video = get('scan-video');
   message('pair-error', '');
+  message('scan-error', '');
+  dialog.showModal();
   try {
     if (!await rpc('camera')) throw new Error('需要相机权限才能扫码。也可以粘贴电脑端复制的配对链接。');
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    if (epoch !== scanEpoch || !dialog.open) return;
+    const stream = await requestScannerCamera(navigator.mediaDevices);
+    if (epoch !== scanEpoch || !dialog.open) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    scanStream = stream;
+    void focusScannerCamera(stream);
+    video.srcObject = stream;
+    await video.play();
   } catch (error) {
+    if (epoch !== scanEpoch) return;
     stopScan();
-    message('pair-error', error.name === 'NotAllowedError' ? '需要相机权限才能扫码。' : error.message || '无法打开相机。');
+    message('scan-error', error.name === 'NotAllowedError' ? '需要相机权限才能扫码。也可以取消后粘贴配对链接。' : error.message || '无法打开相机。');
     return;
   }
-  const video = get('scan-video');
+  if (epoch !== scanEpoch || !dialog.open) return;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  video.srcObject = scanStream;
-  message('scan-error', '');
-  get('scan-dialog').showModal();
-  await video.play().catch(() => {});
+  if (!context || typeof window.jsQR !== 'function') {
+    stopScan();
+    message('scan-error', '无法加载扫码组件，请取消后重试，或粘贴电脑端复制的配对链接。');
+    return;
+  }
   const tick = () => {
-    if (!scanStream) return;
-    if (video.videoWidth) {
-      // Downscale large camera frames; QR modules stay well above one pixel.
-      const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-      const found = window.jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'dontInvert' });
-      if (found?.data) {
-        try {
-          const target = parsePairingLink(found.data);
-          get('scan-dialog').close();
+    if (!scanStream || epoch !== scanEpoch || !dialog.open) return;
+    try {
+      if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+        const text = decodeScannerFrame(video, canvas, context, window.jsQR);
+        if (text) {
+          const target = parsePairingLink(text);
+          dialog.close();
+          stopScan();
           openPairTarget(target);
           return;
-        } catch (error) {
-          message('scan-error', error.message);
         }
       }
+    } catch (error) {
+      message('scan-error', error.message || '暂时无法识别，请调整距离和光线后重试。');
     }
     scanTimer = setTimeout(tick, 180);
   };
@@ -444,9 +515,8 @@ get('pair-form').addEventListener('submit', async event => {
       if (expectedFingerprint !== fingerprint) {
         throw new Error('电脑证书与二维码中的指纹不一致，已停止配对。请确认地址，或在电脑端重新生成二维码。');
       }
-    } else if (saved?.fingerprint !== fingerprint) {
-      get('pair-fingerprint').textContent = fingerprint.match(/.{1,4}/g).join(' ');
-      if (!await ask(get('pair-confirm'))) return;
+    } else if (saved && saved.fingerprint !== fingerprint) {
+      throw new Error('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。');
     }
     const paired = await rpc('pair', { name, host, port, code, fingerprint });
     field.value = '';
@@ -573,6 +643,15 @@ get('refresh').addEventListener('click', () => { void refreshProjects(); });
 get('search').addEventListener('input', renderProjects);
 get('resume').addEventListener('click', () => { void openProject(lastProject()); });
 get('browse-projects').addEventListener('click', () => showPage('project'));
+get('home-all-projects').addEventListener('click', () => showPage('project'));
+get('home-reconnect').addEventListener('click', () => { void refreshProjects(); });
+get('project-empty-action').addEventListener('click', () => {
+  if (!profile) showPage('connection');
+  else if (get('search').value.trim() || kind !== 'all') {
+    setKind('all');
+    renderProjects();
+  } else void refreshProjects();
+});
 get('home-action').addEventListener('click', () => {
   const state = hostState(profile);
   if (!profile) {
@@ -604,6 +683,9 @@ function clearModifiers() {
 
 function setRawKeyboard(enabled) {
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
+  get('keyboard').setAttribute('aria-pressed', String(enabled));
+  get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
+  get('input-hint').textContent = enabled ? '实时输入 · 按键直接发送到终端' : '命令栏可编辑中文 · 空白发送为回车';
 }
 
 function focusRawKeyboard() {
@@ -621,6 +703,8 @@ function draftKey(id) {
 function resizeComposer() {
   compose.style.height = '44px';
   compose.style.height = Math.min(compose.scrollHeight, 98) + 'px';
+  get('send').setAttribute('aria-label', compose.value ? '发送并回车' : '发送回车');
+  get('send').querySelector('use').setAttribute('href', compose.value ? '#i-send' : '#i-return');
 }
 
 function leaveTerminal() {
@@ -636,6 +720,10 @@ function leaveTerminal() {
   selected = null;
   composing = false;
   clearModifiers();
+  setRawKeyboard(false);
+  get('scroll-bottom').hidden = true;
+  disposeTouchScroll?.();
+  disposeTouchScroll = undefined;
   term?.dispose();
   term = undefined;
   fit = undefined;
@@ -644,7 +732,8 @@ function leaveTerminal() {
 function makeTerminal() {
   term = new window.Terminal({
     allowProposedApi: false,
-    fontSize: 13,
+    fontSize: terminalFontSize,
+    lineHeight: 1.2,
     fontFamily: 'monospace',
     scrollback: 2500,
     cursorBlink: true,
@@ -676,15 +765,46 @@ function makeTerminal() {
   fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(get('viewport'));
+  disposeTouchScroll = attachTerminalTouchScroll(term.element);
   setRawKeyboard(false);
   term.textarea.addEventListener('blur', () => setRawKeyboard(false));
   fit.fit();
+  updateTerminalSize();
   term.onData(data => sendInput(data));
   term.onResize(() => {
+    updateTerminalSize();
     clearTimeout(resizing);
     resizing = setTimeout(sendSize, 120);
   });
+  term.onScroll(() => {
+    const buffer = term.buffer.active;
+    get('scroll-bottom').hidden = buffer.viewportY >= buffer.baseY;
+  });
 }
+
+function updateTerminalSize() {
+  get('terminal-size').textContent = term ? term.cols + ' × ' + term.rows : '';
+}
+
+function renderFontSize() {
+  get('font-size').textContent = terminalFontSize + 'px';
+  get('font-smaller').disabled = terminalFontSize <= 11;
+  get('font-larger').disabled = terminalFontSize >= 20;
+}
+
+for (const [id, delta] of [['font-smaller', -1], ['font-larger', 1]]) {
+  get(id).addEventListener('click', () => {
+    terminalFontSize = Math.max(11, Math.min(20, terminalFontSize + delta));
+    localStorage.setItem(prefix + 'font-size', String(terminalFontSize));
+    if (term) {
+      term.options.fontSize = terminalFontSize;
+      fit.fit();
+    }
+    renderFontSize();
+  });
+}
+renderFontSize();
+get('scroll-bottom').addEventListener('click', () => { term?.scrollToBottom(); });
 
 new ResizeObserver(() => {
   if (term && !terminalScreen.hidden) fit.fit();
@@ -730,7 +850,7 @@ async function openProject(item, resumeOnly = false) {
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
-  get('terminal-host').textContent = profile.name + ' / ' + (item.host || kindLabels[item.kind]);
+  get('terminal-host').textContent = profile.name + ' / ' + projectSourceLabel(item);
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
   makeTerminal();
@@ -977,13 +1097,26 @@ for (const keyButton of get('special-keys').querySelectorAll('[data-key]')) {
     if (key === 'ctrl' || key === 'alt') {
       setModifier(key, !modifiers[key]);
       if (modifiers[key]) focusRawKeyboard();
+    } else if (key === 'interrupt') {
+      // Dedicated interruption always sends Ctrl+C, independent of pending modifiers.
+      clearModifiers();
+      sendInput('\x03');
     } else {
       // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
       sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
     }
   });
 }
-get('keyboard').addEventListener('click', focusRawKeyboard);
+get('keyboard').addEventListener('pointerdown', event => {
+  if (document.activeElement === term?.textarea) event.preventDefault();
+});
+get('keyboard').addEventListener('click', () => {
+  if (get('keyboard').getAttribute('aria-pressed') === 'true') {
+    term?.textarea?.blur();
+    setRawKeyboard(false);
+    compose.focus();
+  } else focusRawKeyboard();
+});
 for (const id of ['paste', 'send']) {
   get(id).addEventListener('pointerdown', event => {
     if (document.activeElement === compose && !composing) event.preventDefault();

@@ -4,13 +4,44 @@ import { buildPairingLink, formatFingerprint } from './mobilePairing'
 import {
   applyModifiers,
   keySequence,
+  matchesProject,
   outputChunk,
   parsePairingLink,
+  projectSourceLabel,
   renameProfileKeys,
   splitInput,
 } from '../../mobile/android/web/protocol.js'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
+
+describe('Android project sources', () => {
+  const wslRemote = {
+    name: 'django', kind: 'ssh', path: 'ssh://wsl-connection/home/code/django',
+    host: 'localhost', connectionName: 'WSL',
+  }
+
+  it('distinguishes remote projects by connection name and host', () => {
+    expect(projectSourceLabel(wslRemote)).toBe('远端 · WSL · localhost')
+    expect(projectSourceLabel({ ...wslRemote, connectionName: 'WinDev', host: '192.168.252.107' }))
+      .toBe('远端 · WinDev · 192.168.252.107')
+    expect(projectSourceLabel({ kind: 'wsl', host: 'Ubuntu' })).toBe('WSL · Ubuntu')
+    expect(projectSourceLabel({ kind: 'local', host: 'Windows' })).toBe('本机')
+  })
+
+  it('supports an older desktop without connection names', () => {
+    expect(projectSourceLabel({ kind: 'ssh', host: '192.168.252.107' })).toBe('远端 · 192.168.252.107')
+    expect(matchesProject({ name: 'app', kind: 'ssh' }, 'all', 'app')).toBe(true)
+  })
+
+  it('searches connection names, addresses and paths without changing the transport category', () => {
+    for (const query of [' wSl ', 'LOCALHOST', '/home/code/django', 'django']) {
+      expect(matchesProject(wslRemote, 'ssh', query)).toBe(true)
+    }
+    expect(matchesProject(wslRemote, 'wsl', 'WSL')).toBe(false)
+    expect(matchesProject(wslRemote, 'all', 'WinDev')).toBe(false)
+    expect(matchesProject({ ...wslRemote, host: '192.168.252.107' }, 'all', '252.107')).toBe(true)
+  })
+})
 
 describe('Android pairing link', () => {
   it('round-trips the desktop link including unicode computer names', () => {

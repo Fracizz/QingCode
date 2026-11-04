@@ -79,6 +79,8 @@ describe('Android mobile connection settings', () => {
     }))
     fireEvent.click(screen.getByRole('button', { name: '复制配对链接' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('host=10.0.0.5&port=48764')))
+    expect(screen.getByText(/abab abab/)).not.toBeVisible()
+    fireEvent.click(screen.getByText('手动核对证书指纹'))
     expect(screen.getByText(/abab abab/)).toBeVisible()
     // The password never goes into the QR code or the pairing link.
     expect(writeText).not.toHaveBeenCalledWith(expect.stringContaining('abcdef'))

@@ -1,10 +1,25 @@
 # Web 测试页与浏览器验收
 
+Android 项目来源场景使用 `/mobile-android/`，运行 `node scripts/web-tests/mobile-project-sources.agent-browser.mjs`。
+验证同名项目的连接名称与 IP 分行显示、WSL / 地址搜索、旧版电脑端兼容、首页与终端来源一致、
+WSL 空分类说明，以及 320px 窄屏的长连接名换行；截图与结果位于 `.dev/web-tests/mobile-project-sources/`。
+
+Android 扫码识别使用 `node scripts/web-tests/mobile-scanner.agent-browser.mjs`（先启动 `pnpm test:web`）。
+复用 `/mobile-android/` 的真实页面、jsQR 与扫码模块，通过 Canvas MediaStream 提供 1920×1080 模拟相机画面，
+验证高清后摄与对焦请求、完整预览、真实配对二维码识别、临时帧异常恢复、权限拒绝、识别与取消后释放相机，
+以及采集完成晚于取消的处理。固定二维码由桌面同款 qrcode 0.14.1 / M 级纠错生成，位于
+`web-tests/fixtures/mobile-pairing-qr.json`，不包含密码；同时复现旧 720px 采样无法识别、中央高清采样可识别的场景。
+截图、结果和浏览器异常保存在 `.dev/web-tests/mobile-scanner/`；模拟帧不能证明真机镜头的清晰度与对焦效果。
+
 Android 移动连接设置场景位于 `/web-tests/mobile-connection.html`，运行 `pnpm test:web` 和
 `node scripts/web-tests/mobile-connection.agent-browser.mjs`。复用真实设置组件，通过内存 IPC 检查
 设置标题与输入控件对齐、简单密码与 20 位边界、密码自动保存与重新打开后恢复、显示/隐藏、停止后修改，
 以及浅色窄窗和大字号布局。截图与结果位于 `.dev/web-tests/mobile-connection/`。
 该场景不启动监听端口，不替代 Windows 重启恢复及 Android 真机配对验收。
+
+移动连接使用真实设置页的容器断点：整组占满内容列，连接设置与扫码配对在宽列并排，
+窄列和大字号时上下排列。该脚本还检查宽窗内的分屏、二维码说明的可读宽度、地址选择不溢出、
+按需展开证书指纹，以及配对设备操作保持可用；配对二维码使用固定内存矩阵，不用于实际扫码。
 
 Linux（含 WSL）默认使用 `agent-browser`，Windows/macOS 默认使用 `ego-browser`。
 以执行任务的操作系统为准；WSL 即使能调用 Windows Ego，也不会自动改选 Ego。
@@ -45,7 +60,11 @@ agent-browser --session qingcode-ui-review close
 
 终端退出提示条场景为 `/web-tests/terminal-exit.html`，运行 `scripts/web-tests/terminal-exit.ego.mjs` 的 `run()`。覆盖异常退出保持现场、显式打开普通 shell、导出不触发重启、未知退出码、中英文与窄屏浅色布局。该页面只复用提示条组件，进程和 SSH 生命周期由原生集成测试验证；`screenshots: false` 只代表 DOM 验收。
 
-QingCode Android 场景位于 `/mobile-android/`（`pnpm test:web`），运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`。
+QingCode Android 场景位于 `/mobile-android/`（`pnpm test:web`）。Linux / WSL 运行
+`node scripts/web-tests/mobile-layout.agent-browser.mjs`，覆盖首次使用引导、快捷项目、搜索清空、吸顶筛选、长名称、
+中文组词保护、命令发送、实时键盘切换、Ctrl+C、字号上下限、历史回看、会话草稿、离线重连、居中弹窗与返回操作。
+在 320px 窄屏、390px 常规屏、键盘压缩视口和横屏保存截图，结果位于 `.dev/web-tests/mobile-layout/`。
+Windows / macOS 可运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`。
 页面直接加载 `mobile/android/web/` 的真实 `index.html`、`app.js`、`protocol.js` 与 xterm，`web-tests/mobile-android-bridge.js`
 在内存中替代 `MainActivity` 的 JS 桥和 Windows RPC。覆盖粘贴配对链接后自动核对指纹、证书与二维码不一致时不发送密码、
 深链预填、打开项目与命令栏提交、Server 屏幕快照重绘后继续轮询、Alt / Home / PgUp 按键序列、修改端口保留配对并迁移本地记录、

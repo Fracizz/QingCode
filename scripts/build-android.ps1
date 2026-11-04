@@ -102,7 +102,7 @@ $resources = Join-Path $stage 'res'
 $drawables = Join-Path $resources 'drawable-nodpi'
 New-Item -ItemType Directory -Path $classes,$assets,$bytecode,$drawables,(Split-Path -Parent $OutputApk) -Force | Out-Null
 try {
-  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js')) {
+  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js')) {
     Copy-Item -LiteralPath (Join-Path $source "web/$asset") -Destination $assets
   }
   Copy-Item -LiteralPath (Join-Path $source 'res/values') -Destination $resources -Recurse
@@ -118,6 +118,7 @@ try {
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/xterm/LICENSE') -Destination (Join-Path $assets 'xterm-LICENSE.txt')
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-fit/LICENSE') -Destination (Join-Path $assets 'fit-LICENSE.txt')
   Copy-Item -LiteralPath (Join-Path $modules 'jsqr/LICENSE') -Destination (Join-Path $assets 'jsqr-LICENSE.txt')
+  Copy-Item -LiteralPath (Join-Path $modules 'lucide-react/LICENSE') -Destination (Join-Path $assets 'lucide-LICENSE.txt')
 
   $compiled = Join-Path $stage 'resources.zip'
   $unsigned = Join-Path $stage 'unsigned.apk'

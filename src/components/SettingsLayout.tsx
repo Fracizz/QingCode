@@ -65,6 +65,7 @@ export function SettingItem({
   modified,
   locked,
   lockHint,
+  layout = 'responsive',
   children,
 }: {
   title: string
@@ -72,13 +73,14 @@ export function SettingItem({
   modified?: boolean
   locked?: boolean
   lockHint?: string
+  layout?: 'responsive' | 'stacked'
   children: ReactNode
 }) {
   return (
     <div
       className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'}`}
     >
-      <div className="settings-item-row flex flex-col gap-2">
+      <div className={`settings-item-row flex flex-col gap-2${layout === 'stacked' ? ' settings-item-stacked' : ''}`}>
         <div className="settings-item-copy min-w-0 flex-1">
           <div className="text-ui font-medium text-fg">{title}</div>
           <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted break-words">{description}</p>

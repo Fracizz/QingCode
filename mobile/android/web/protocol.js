@@ -5,6 +5,19 @@ export const PAIRING_PREFIX = 'qingcode://pair?';
 export const DEFAULT_PORT = 48764;
 export const INPUT_SLICE = 2048;
 
+/** 保留连接名称和实际主机；连接名为 WSL 的 SSH 项目仍使用远端通道。 */
+export function projectSourceLabel(project) {
+  const kind = { local: '本机', wsl: 'WSL', ssh: '远端' }[project.kind] || '项目';
+  const parts = project.kind === 'local' ? [kind] : [kind, project.connectionName, project.host];
+  return [...new Set(parts.filter(Boolean))].join(' · ');
+}
+
+export function matchesProject(project, kind, query) {
+  const search = query.trim().toLowerCase();
+  return (kind === 'all' || project.kind === kind)
+    && [project.name, project.path, projectSourceLabel(project)].some(value => String(value ?? '').toLowerCase().includes(search));
+}
+
 export function validIpv4(host) {
   const octets = String(host).split('.');
   return octets.length === 4 && octets.every(octet => /^(0|[1-9][0-9]{0,2})$/.test(octet) && Number(octet) <= 255);

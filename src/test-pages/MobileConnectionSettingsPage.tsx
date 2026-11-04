@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { mockIPC } from '@tauri-apps/api/mocks'
+import { interfaceMetrics } from '../lib/interfaceMetrics'
 import MobileConnectionSettings from '../components/settings/MobileConnectionSettings'
 import { SettingItem } from '../components/SettingsLayout'
 import ChoiceDialog from '../components/ChoiceDialog'
@@ -31,11 +32,18 @@ export default function Page() {
     <div className="mb-4 flex flex-wrap gap-3">
       <button onClick={() => setRevision(value => value + 1)}>重新打开设置</button>
       <button onClick={() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' }}>切换主题</button>
-      <button onClick={() => { document.documentElement.style.setProperty('--ui-font-size', '20px'); document.documentElement.style.setProperty('--ui-font-size-sm', '19px') }}>放大字号</button>
+      <button onClick={() => {
+        const metrics = interfaceMetrics(20)
+        document.documentElement.style.setProperty('--ui-font-size', `${metrics.fontSize}px`)
+        document.documentElement.style.setProperty('--ui-font-size-sm', `${metrics.smallFontSize}px`)
+        document.documentElement.style.setProperty('--ui-control-height', `${metrics.controlHeight}px`)
+      }}>放大字号</button>
     </div>
+    <div className="settings-shell">
     <div className="flex flex-col gap-5">
       <SettingItem title="远程连接" description="集中管理 SSH 主机与远端服务。"><button className="setting-control">管理远程连接…</button></SettingItem>
       <MobileConnectionSettings key={revision} />
+    </div>
     </div>
     <ChoiceDialog />
   </main>

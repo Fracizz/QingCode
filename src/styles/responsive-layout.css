@@ -31,6 +31,11 @@
   .settings-item-control { width: auto; max-width: 320px; flex-shrink: 0; }
 }
 
+/* Multi-part settings need the full content column, including on wide screens. */
+.settings-item-row.settings-item-stacked { flex-direction: column; align-items: stretch; gap: 12px; }
+.settings-item-stacked > .settings-item-copy { min-width: 0; flex: none; }
+.settings-item-stacked > .settings-item-control { width: 100%; max-width: none; }
+
 @container settings (max-width: 680px) {
   .settings-search-spacer { display: none; }
   /* Keep categories vertical when terminal splits narrow the settings column. */

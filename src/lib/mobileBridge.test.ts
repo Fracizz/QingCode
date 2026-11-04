@@ -1,0 +1,120 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Project } from '../types'
+
+const mocks = vi.hoisted(() => ({
+  listen: vi.fn(),
+  invoke: vi.fn<(action: string, command: string, args?: unknown) => Promise<unknown>>(async () => undefined),
+  listProjects: vi.fn<() => Promise<Project[]>>(),
+  currentProjects: [] as Project[],
+  connect: vi.fn(async () => undefined),
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
+vi.mock('@tauri-apps/api/webviewWindow', () => ({
+  getCurrentWebviewWindow: () => ({ label: 'main' }),
+}))
+vi.mock('../store/projectStore', () => ({
+  useProjectStore: { getState: () => ({ projects: mocks.currentProjects }) },
+}))
+vi.mock('./tauri', () => ({
+  isTauri: () => true,
+  isSshResource: (path: string) => path.startsWith('ssh://'),
+  safeInvoke: mocks.invoke,
+}))
+vi.mock('./projectRepository', () => ({
+  withDb: async (_action: string, read: (db: unknown) => unknown) => read({}),
+  listProjects: mocks.listProjects,
+  listSshConnections: async () => [
+    { id: 'ssh-wsl', name: 'WSL', host: 'localhost' },
+    { id: 'win-dev', name: 'WinDev', host: '192.168.252.107' },
+  ],
+}))
+vi.mock('./sshWorkspace', async importOriginal => ({
+  ...await importOriginal<typeof import('./sshWorkspace')>(),
+  ensureSshWorkspaceConnected: mocks.connect,
+}))
+
+import { listenForMobileRequests } from './mobileBridge'
+import { restrictProject, trustProject } from './workspaceTrust'
+
+const wsl: Project = {
+  id: 'wsl', name: 'WSL app', path: String.raw`\\wsl.localhost\Ubuntu\home\code\app`,
+  kind: 'wsl', created_at: 1, last_opened_at: 1,
+}
+const local: Project = { ...wsl, id: 'local', name: 'Local app', path: 'D:/app', kind: 'local' }
+
+async function request(project: string | null = null) {
+  await listenForMobileRequests()
+  const handler = mocks.listen.mock.lastCall![1]
+  await handler({ payload: { id: 'request', project } })
+  return mocks.invoke.mock.calls.filter(call => call[1] === 'mobile_bridge_reply').at(-1)?.[2]
+}
+
+describe('mobile project bridge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    mocks.currentProjects = [local]
+    mocks.listProjects.mockResolvedValue([local, wsl])
+    trustProject(local)
+    trustProject(wsl)
+  })
+
+  it('refreshes saved WSL projects added outside the main window', async () => {
+    expect(await request()).toEqual({ id: 'request', data: [
+      { id: 'local', name: 'Local app', path: 'D:/app', kind: 'local', host: 'Windows' },
+      { id: 'wsl', name: 'WSL app', path: wsl.path, kind: 'wsl', host: 'Ubuntu' },
+    ] })
+  })
+
+  it('checks the saved project list again when opening a WSL terminal', async () => {
+    const scratch = { ...local, id: 'scratch', path: 'D:/scratch', ephemeral: true }
+    mocks.currentProjects = [local, scratch]
+    expect(await request(wsl.id)).toMatchObject({ data: { id: wsl.id, kind: 'wsl' } })
+    expect(mocks.invoke).toHaveBeenCalledWith('同步项目根目录', 'sync_project_roots', {
+      roots: [local.path, wsl.path, scratch.path],
+    })
+  })
+
+  it('excludes restricted and undecided projects and rejects opening them', async () => {
+    restrictProject(wsl)
+    const undecided = { ...wsl, id: 'undecided', path: 'wsl://Debian/home/app' }
+    mocks.listProjects.mockResolvedValue([local, wsl, undecided])
+    expect(await request()).toMatchObject({ data: [{ id: local.id }] })
+    expect(await request(wsl.id)).toMatchObject({ error: expect.stringContaining('信任') })
+    expect(mocks.connect).not.toHaveBeenCalled()
+  })
+
+  it('does not reopen a project removed in another window', async () => {
+    mocks.currentProjects = [local, wsl]
+    mocks.listProjects.mockResolvedValue([local])
+    expect(await request(wsl.id)).toMatchObject({ error: expect.stringContaining('信任') })
+    expect(mocks.connect).not.toHaveBeenCalled()
+  })
+
+  it('keeps a remote connection named WSL on the SSH transport', async () => {
+    const remote: Project = {
+      ...wsl, id: 'remote', kind: 'ssh', path: 'ssh://ssh-wsl/home/code/app', connection_id: 'ssh-wsl',
+    }
+    trustProject(remote)
+    mocks.listProjects.mockResolvedValue([remote])
+    expect(await request()).toMatchObject({
+      data: [{ id: remote.id, path: remote.path, kind: 'ssh', host: 'localhost', connectionName: 'WSL' }],
+    })
+    expect(await request(remote.id)).toMatchObject({
+      data: { id: remote.id, kind: 'ssh', host: 'localhost', connectionName: 'WSL' },
+    })
+  })
+
+  it('sends the connection name and address for other remote projects', async () => {
+    const remote: Project = {
+      ...local, id: 'win', kind: 'ssh', path: 'ssh://win-dev/D:/code/app', connection_id: 'win-dev',
+    }
+    trustProject(remote)
+    mocks.listProjects.mockResolvedValue([remote])
+    expect(await request()).toMatchObject({
+      data: [{ id: remote.id, kind: 'ssh', host: '192.168.252.107', connectionName: 'WinDev' }],
+    })
+  })
+})

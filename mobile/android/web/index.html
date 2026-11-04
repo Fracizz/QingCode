@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>QingCode</title>
@@ -14,29 +14,38 @@
   <script src="app.js" type="module"></script>
 </head>
 <body>
+  <!-- Same Lucide paths as the EXE: Terminal, Folders (projects), Cloud (connections). -->
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 7 5 5-5 5m8 0h6"/></symbol>
-    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
-    <symbol id="i-host" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></symbol>
-    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
-    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
-    <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="3"/></symbol>
-    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01m4 0h.01m4 0h.01m4 0h.01M6 13h.01m4 0h.01m4 0h.01m4 0h.01M8 16h8"/></symbol>
-    <symbol id="i-paste" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 0 0-2 2v13h16V7a2 2 0 0 0-2-2h-2"/><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 12h8m-8 4h6"/></symbol>
-    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3M8 12h8"/></symbol>
-    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M12 19h8"></path><path d="m4 17 6-6-6-6"></path></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></symbol>
+    <symbol id="i-project" viewBox="0 0 24 24"><path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"></path><path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"></path></symbol>
+    <symbol id="i-host" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><path d="M11 14h10"></path><path d="M16 4h2a2 2 0 0 1 2 2v1.344"></path><path d="m17 18 4-4-4-4"></path><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"></path><rect x="8" y="2" width="8" height="4" rx="1"></rect></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></symbol>
+    <symbol id="i-return" viewBox="0 0 24 24"><path d="M9 10 4 15l5 5"></path><path d="M20 4v7a4 4 0 0 1-4 4H4"></path></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></symbol>
   </svg>
 
   <main>
     <div id="dashboard" class="dashboard">
       <header class="app-head">
         <div class="brand"><img src="qingcode-icon.png" alt="" width="28" height="28">QingCode</div>
-        <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span></button>
+        <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><svg><use href="#i-chevron"/></svg></button>
       </header>
 
       <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
-        <header class="page-heading"><p class="eyebrow">远程工作台</p><h1 id="home-title">终端</h1><p>在手机上继续远端 Shell 会话。</p></header>
+        <header class="page-heading"><p class="eyebrow">远程工作台</p><h1 id="home-title">终端</h1><p>接回会话，继续手边的工作。</p></header>
+        <div id="home-context" class="context-card" hidden>
+          <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small id="home-context-state" role="status"></small></div>
+          <button id="home-reconnect" class="text-button" type="button" hidden>重连</button>
+        </div>
         <button id="resume" class="resume-card" type="button" hidden>
           <span class="tile"><svg><use href="#i-terminal"/></svg></span>
           <span class="row-text"><small>继续终端</small><strong id="resume-name"></strong><small id="resume-host"></small></span>
@@ -49,6 +58,15 @@
           <button id="home-action" class="primary" type="button">添加连接</button>
         </div>
         <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
+        <section id="home-projects" class="home-projects" hidden aria-labelledby="home-projects-title">
+          <div class="section-heading"><h2 id="home-projects-title">快速打开</h2><button id="home-all-projects" class="text-button" type="button">全部项目 <svg><use href="#i-chevron"/></svg></button></div>
+          <div id="home-project-list" class="rows"></div>
+        </section>
+        <ol id="home-guide" class="setup-guide">
+          <li><span>1</span><div><strong>开启电脑连接</strong><p>电脑端设置 → 功能 → Android 移动连接</p></div></li>
+          <li><span>2</span><div><strong>扫码配对</strong><p>扫描电脑上的二维码，输入连接密码。</p></div></li>
+          <li><span>3</span><div><strong>继续工作</strong><p>选择项目，接回终端或新建会话。</p></div></li>
+        </ol>
       </section>
 
       <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
@@ -57,7 +75,7 @@
           <button id="refresh" class="secondary" type="button">刷新</button>
         </header>
         <div id="project-filters">
-          <input id="search" type="search" placeholder="搜索项目、路径或主机" aria-label="搜索项目" autocomplete="off">
+          <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索项目、连接或路径" aria-label="搜索项目" autocomplete="off" enterkeyhint="search"></div>
           <nav id="hosts" aria-label="项目环境">
             <button type="button" data-kind="all" aria-pressed="true">全部</button>
             <button type="button" data-kind="local" aria-pressed="false">本机</button>
@@ -68,6 +86,11 @@
         <p id="project-error" class="error" role="alert" hidden></p>
         <p id="list-label" class="list-label" role="status"></p>
         <div id="project-list" class="rows"></div>
+        <div id="project-empty" class="empty-card" hidden>
+          <span class="tile"><svg><use href="#i-folder"/></svg></span>
+          <h2 id="project-empty-title"></h2><p id="project-empty-text"></p>
+          <button id="project-empty-action" class="secondary" type="button"></button>
+        </div>
       </section>
 
       <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
@@ -85,7 +108,7 @@
 
       <nav id="dashboard-nav" aria-label="主导航">
         <button type="button" data-page="home" aria-current="page"><svg><use href="#i-terminal"/></svg>终端</button>
-        <button type="button" data-page="project"><svg><use href="#i-folder"/></svg>项目</button>
+        <button type="button" data-page="project"><svg><use href="#i-project"/></svg>项目</button>
         <button type="button" data-page="connection"><svg><use href="#i-host"/></svg>连接</button>
       </nav>
     </div>
@@ -100,14 +123,18 @@
         <div id="session-tabs" aria-label="终端会话"></div>
         <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
       </div>
-      <div id="viewport" aria-label="终端输出"></div>
+      <div class="terminal-body">
+        <div id="viewport" aria-label="终端输出"></div>
+        <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg> 回到最新</button>
+      </div>
       <div id="terminal-tools">
-        <div class="terminal-state"><span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p><button id="terminal-retry" class="text-button" type="button" hidden>重试</button></div>
+        <div class="terminal-state"><span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p><button id="terminal-retry" class="text-button" type="button" hidden>重试</button><span id="terminal-size" aria-label="终端列数和行数"></span></div>
         <div id="special-keys" aria-label="终端快捷键">
           <button type="button" data-key="esc">Esc</button>
           <button type="button" data-key="tab">Tab</button>
           <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
           <button type="button" data-key="alt" aria-pressed="false">Alt</button>
+          <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C 中断">^C</button>
           <button type="button" data-key="left" aria-label="向左">←</button>
           <button type="button" data-key="down" aria-label="向下">↓</button>
           <button type="button" data-key="up" aria-label="向上">↑</button>
@@ -118,11 +145,12 @@
           <button type="button" data-key="pgdn" aria-label="向下翻页">PgDn</button>
         </div>
         <form id="compose-form">
-          <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘"><svg><use href="#i-keyboard"/></svg></button>
+          <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
           <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" placeholder="输入命令…"></textarea>
           <button type="button" id="paste" class="icon-button" aria-label="粘贴到命令栏"><svg><use href="#i-paste"/></svg></button>
-          <button id="send" class="icon-button" type="submit" aria-label="发送并回车"><svg><use href="#i-send"/></svg></button>
+          <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg></button>
         </form>
+        <p id="input-hint">命令栏可编辑中文 · 空白发送为回车</p>
       </div>
     </section>
   </main>
@@ -130,7 +158,7 @@
   <dialog id="pair-dialog" aria-labelledby="pair-title">
     <form id="pair-form">
       <h2 id="pair-title">添加连接</h2>
-      <p>在电脑端「设置 → 功能 → Android 移动连接」中扫描二维码，或粘贴复制的配对链接。</p>
+      <p>打开电脑端「设置 → 功能 → Android 移动连接」，用手机扫描其中的二维码。</p>
       <div id="pair-link-tools" class="pair-tools">
         <button type="button" id="pair-scan" class="secondary"><svg><use href="#i-scan"/></svg> 扫码添加</button>
         <button type="button" id="pair-paste" class="secondary"><svg><use href="#i-paste"/></svg> 粘贴配对链接</button>
@@ -145,7 +173,7 @@
       <label for="pair-code">连接密码</label>
       <input id="pair-code" type="password" minlength="6" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6–20 位密码" required>
       <p id="pair-error" class="error" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">核对并连接</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">连接</button></div>
     </form>
   </dialog>
 
@@ -173,7 +201,7 @@
 
   <dialog id="scan-dialog" aria-labelledby="scan-title">
     <h2 id="scan-title">扫描配对二维码</h2>
-    <p>对准电脑端「Android 移动连接」中显示的二维码。</p>
+    <p>将电脑端二维码完整放在画面中央，稍等相机对焦；若模糊，请稍微拉远手机。</p>
     <video id="scan-video" playsinline muted aria-label="相机预览"></video>
     <p id="scan-error" class="error" role="alert" hidden></p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="scan-dialog">取消</button></div>
@@ -182,6 +210,7 @@
   <dialog id="session-dialog" aria-labelledby="session-dialog-title">
     <h2 id="session-dialog-title">终端会话</h2>
     <div id="session-options" class="rows"></div>
+    <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button></div>
   </dialog>
 

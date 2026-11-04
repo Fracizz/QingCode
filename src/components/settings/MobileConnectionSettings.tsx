@@ -171,7 +171,7 @@ export default function MobileConnectionSettings() {
         else if (savedPassword) setCode(savedPassword)
       }
       setFeedback({ text: activePort === null
-        ? `已保存并启用移动连接，TCP ${nextPort} 正在监听。之后启动 QingCode 时会自动启用。`
+        ? `已保存并启用移动连接，之后启动 QingCode 时会自动启用。`
         : `已切换到 TCP ${nextPort}，旧端口 TCP ${activePort} 已关闭。` })
     } catch (error) {
       setFeedback({ text: activePort === null ? String(error) : `${String(error)} 当前连接仍使用 TCP ${activePort}。`, error: true })
@@ -231,114 +231,253 @@ export default function MobileConnectionSettings() {
   const busyText = busy === 'save' ? '正在保存并检查端口…' : busy === 'stop' ? '正在关闭监听…' : '正在移除设备…'
 
   return (
-    <SettingItem title="Android 移动连接" description="手机与电脑连接同一局域网（也支持 Tailscale 等 100.64.0.0/10 地址）。启用后随 QingCode 启动自动恢复；用手机扫描下方二维码并输入密码即可配对，已配对的手机无需再次输入密码。密码支持 6–20 位数字、英文字母或符号，无需组合，默认记住。">
-      <div className="grid max-w-lg grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
-        <label htmlFor="mobile-connection-port" className="text-ui-sm text-fg">端口</label>
-        <div>
-          <input id="mobile-connection-port" type="number" min={1} max={65535} aria-label="移动连接端口" className={control + ' w-32'}
-            value={port} onChange={event => { setPort(event.target.value); setFeedback(null) }}
-            disabled={!loaded || busy !== null} />
-        </div>
-        <label htmlFor="mobile-connection-password" className="text-ui-sm text-fg">密码</label>
-        <div className="relative w-full max-w-80">
-          <input id="mobile-connection-password" type={showPassword ? 'text' : 'password'} minLength={6} maxLength={20} autoComplete="new-password" spellCheck={false}
-            aria-label="移动连接密码" placeholder={configured ? '留空沿用已保存密码' : '设置 6–20 位密码'}
-            className="setting-input h-[var(--ui-control-height)] w-full min-w-0 px-2.5 pr-10 text-ui disabled:opacity-50" value={code} onChange={event => { setCode(event.target.value); setFeedback(null) }} disabled={!loaded || busy !== null || activePort !== null} />
-          <Tooltip label={showPassword ? '隐藏密码' : '显示密码'} wrapperClassName="absolute inset-y-0 right-1 flex items-center">
-            <button type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} aria-pressed={showPassword} disabled={!loaded || busy !== null}
-              onClick={() => setShowPassword(value => !value)} className="inline-flex h-full w-8 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50">
-              {showPassword ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
-            </button>
-          </Tooltip>
-        </div>
-        {configured && <p className="col-start-2 text-ui-sm text-fg-muted">{savedPassword ? '密码已记住，停止连接后可修改；修改密码不影响已配对的手机。' : '已保存密码可留空沿用；重新设置后可查看密码。'}</p>}
-        <div className="col-start-2 flex flex-wrap items-center gap-2">
-          <button type="button" className={control} disabled={!loaded || busy !== null || activePort === nextPort}
-            onClick={() => { void save() }}>
-            {busy === 'save' ? '正在保存…' : activePort === null ? '保存并启用' : '切换端口'}
-          </button>
-          {activePort !== null && (
-            <>
-              <button type="button" className={control} disabled={busy !== null} onClick={() => { void stop() }}>
-                {busy === 'stop' ? '正在停止…' : '停止连接'}
-              </button>
-              <span className="text-ui-sm text-ok">
-                已启用 · TCP {activePort}{online > 0 ? ` · ${online} 台手机在线` : ''}
+    <div className="mobile-connection-settings">
+      <SettingItem
+        layout="stacked"
+        title="Android 移动连接"
+        description="通过局域网或 Tailscale 连接手机。启用后随 QingCode 自动恢复，已配对手机可直接重连。"
+      >
+        <div className="mobile-connection-body">
+          <div className="min-w-0 rounded-lg border border-border p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-ui-sm">
+              <span className="font-medium text-fg">连接设置</span>
+              <span className={activePort !== null ? 'text-ok' : 'text-fg-muted'}>
+                {activePort !== null
+                  ? `已启用 · TCP ${activePort}${online > 0 ? ` · ${online} 台手机在线` : ''}`
+                  : '未启用'}
               </span>
-            </>
+            </div>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+              <label htmlFor="mobile-connection-port" className="text-ui-sm text-fg">
+                端口
+              </label>
+              <div>
+                <input
+                  id="mobile-connection-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  aria-label="移动连接端口"
+                  className={control + ' w-32'}
+                  value={port}
+                  onChange={event => {
+                    setPort(event.target.value)
+                    setFeedback(null)
+                  }}
+                  disabled={!loaded || busy !== null}
+                />
+              </div>
+              <label htmlFor="mobile-connection-password" className="text-ui-sm text-fg">
+                密码
+              </label>
+              <div className="relative w-full max-w-80">
+                <input
+                  id="mobile-connection-password"
+                  type={showPassword ? 'text' : 'password'}
+                  minLength={6}
+                  maxLength={20}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  aria-label="移动连接密码"
+                  placeholder={configured ? '留空沿用已保存密码' : '设置 6–20 位密码'}
+                  className="setting-input h-[var(--ui-control-height)] w-full min-w-0 px-2.5 pr-10 text-ui disabled:opacity-50"
+                  value={code}
+                  onChange={event => {
+                    setCode(event.target.value)
+                    setFeedback(null)
+                  }}
+                  disabled={!loaded || busy !== null || activePort !== null}
+                />
+                <Tooltip
+                  label={showPassword ? '隐藏密码' : '显示密码'}
+                  wrapperClassName="absolute inset-y-0 right-1 flex items-center"
+                >
+                  <button
+                    type="button"
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    aria-pressed={showPassword}
+                    disabled={!loaded || busy !== null}
+                    onClick={() => setShowPassword(value => !value)}
+                    className="inline-flex h-full w-8 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+                  >
+                    {showPassword ? (
+                      <EyeOff size={16} aria-hidden />
+                    ) : (
+                      <Eye size={16} aria-hidden />
+                    )}
+                  </button>
+                </Tooltip>
+              </div>
+              <p className="col-start-2 text-ui-sm leading-relaxed text-fg-muted">
+                6–20 位数字、英文字母或符号，无需组合，默认记住。
+              </p>
+              {configured && (
+                <p className="col-start-2 text-ui-sm text-fg-muted">
+                  {savedPassword
+                    ? '已记住密码，停止连接后可修改。已配对手机不受影响。'
+                    : '已保存密码可留空沿用；重新设置后可查看密码。'}
+                </p>
+              )}
+              <div className="col-start-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={control}
+                  disabled={!loaded || busy !== null || activePort === nextPort}
+                  onClick={() => {
+                    void save()
+                  }}
+                >
+                  {busy === 'save' ? '正在保存…' : activePort === null ? '保存并启用' : '切换端口'}
+                </button>
+                {activePort !== null && (
+                  <button
+                    type="button"
+                    className={control}
+                    disabled={busy !== null}
+                    onClick={() => {
+                      void stop()
+                    }}
+                  >
+                    {busy === 'stop' ? '正在停止…' : '停止连接'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {status.error && !busy && !feedback && (
+              <div
+                role="alert"
+                className="mt-2 flex items-start gap-2 rounded border border-danger/40 px-3 py-2 text-ui-sm text-danger"
+              >
+                <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                {status.error}
+              </div>
+            )}
+            {(busy || feedback) && (
+              <div
+                role={feedback?.error && !busy ? 'alert' : 'status'}
+                className={`mt-3 flex items-start gap-2 text-ui-sm leading-relaxed ${feedback?.error && !busy ? 'rounded border border-danger/40 px-3 py-2 text-danger' : busy ? 'text-fg' : 'text-ok'}`}
+              >
+                {busy ? (
+                  <LoaderCircle
+                    size={16}
+                    className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : feedback?.error ? (
+                  <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <CircleCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                )}
+                {busy ? busyText : feedback?.text}
+              </div>
+            )}
+          </div>
+          {activePort !== null && status.fingerprint && (
+            <div className="mobile-connection-pairing-container">
+              <div className="mobile-connection-pairing rounded-lg border border-border p-4">
+                <div className="mobile-connection-qr">
+                  {qr && qr.link === link ? (
+                    <QrCode matrix={qr.matrix} />
+                  ) : (
+                    <div className="h-40 w-40 rounded border border-border" aria-hidden="true" />
+                  )}
+                </div>
+                <div className="min-w-0 space-y-3 text-ui-sm leading-relaxed">
+                  <div className="font-medium text-fg">配对新手机</div>
+                  <ol className="list-decimal space-y-1 pl-5 text-fg-muted">
+                    <li>在手机「连接」中点「扫码添加」。</li>
+                    <li>扫描二维码，输入上方密码即可配对。</li>
+                  </ol>
+                  {status.addresses.length > 1 && (
+                    <label className="mobile-connection-field">
+                      <span className="whitespace-nowrap text-fg-muted">电脑地址</span>
+                      <select
+                        aria-label="配对使用的电脑地址"
+                        className={control + ' min-w-0 w-full'}
+                        value={host ?? ''}
+                        onChange={event => setAddress(event.target.value)}
+                      >
+                        {status.addresses.map(item => (
+                          <option key={item} value={item}>
+                            {item}:{activePort}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {status.addresses.length === 0 && (
+                    <div className="text-danger">
+                      未找到可用的局域网 IPv4 地址，请检查网络连接。
+                    </div>
+                  )}
+                  {status.addresses.length === 1 && host && (
+                    <div className="break-words text-fg-muted">
+                      电脑地址{' '}
+                      <code>
+                        {host}:{activePort}
+                      </code>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={control + ' inline-flex items-center gap-1.5'}
+                    disabled={!link}
+                    onClick={() => {
+                      void copyLink()
+                    }}
+                  >
+                    <Copy size={14} aria-hidden="true" />
+                    复制配对链接
+                  </button>
+                </div>
+                <details className="col-span-full min-w-0 border-t border-border pt-3 text-ui-sm text-fg-muted">
+                  <summary className="cursor-pointer hover:text-fg">手动核对证书指纹</summary>
+                  <code className="mt-2 block break-all select-text">
+                    {formatFingerprint(status.fingerprint)}
+                  </code>
+                  <p className="mt-1 leading-relaxed">扫码时手机会自动核对证书指纹。</p>
+                </details>
+              </div>
+            </div>
           )}
         </div>
-      </div>
-      {status.error && !busy && !feedback && (
-        <div role="alert" className="mt-2 flex items-start gap-2 rounded border border-danger/40 px-3 py-2 text-ui-sm text-danger">
-          <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-          {status.error}
-        </div>
-      )}
-      {(busy || feedback) && (
-        <div role={feedback?.error && !busy ? 'alert' : 'status'} className={`mt-2 flex items-start gap-2 rounded border px-3 py-2 text-ui-sm ${busy ? 'border-accent/40 text-fg' : feedback?.error ? 'border-danger/40 text-danger' : 'border-ok/40 text-ok'}`}>
-          {busy
-            ? <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-            : feedback?.error
-              ? <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-              : <CircleCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />}
-          {busy ? busyText : feedback?.text}
-        </div>
-      )}
-      {activePort !== null && status.fingerprint && (
-        <div className="mt-2 flex max-w-2xl flex-wrap items-start gap-4 rounded border border-border px-3 py-3">
-          {qr && qr.link === link
-            ? <QrCode matrix={qr.matrix} />
-            : <div className="h-40 w-40 shrink-0 rounded border border-border" aria-hidden="true" />}
-          <div className="min-w-0 flex-1 space-y-2 text-ui-sm">
-            <div className="font-medium">配对新手机</div>
-            <ol className="list-decimal space-y-1 pl-5 text-fg-muted">
-              <li>在 QingCode Android 的「连接」中点「扫码添加」，扫描左侧二维码。</li>
-              <li>输入上面设置的密码。二维码已包含证书指纹，手机会自动核对。</li>
-            </ol>
-            {status.addresses.length > 1 && (
-              <label className="flex items-center gap-2">
-                电脑地址
-                <select aria-label="配对使用的电脑地址" className={control} value={host ?? ''}
-                  onChange={event => setAddress(event.target.value)}>
-                  {status.addresses.map(item => <option key={item} value={item}>{item}</option>)}
-                </select>
-              </label>
-            )}
-            {status.addresses.length === 0 && (
-              <div className="text-danger">未找到可用的局域网 IPv4 地址，请检查网络连接。</div>
-            )}
-            {host && <div>地址 <code>{host}:{activePort}</code></div>}
-            <button type="button" className={control + ' inline-flex items-center gap-1.5'} disabled={!link}
-              onClick={() => { void copyLink() }}>
-              <Copy size={14} aria-hidden="true" />复制配对链接
-            </button>
-            <div className="text-fg-muted">
-              证书指纹 <code className="break-all">{formatFingerprint(status.fingerprint)}</code>
+        {status.devices.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <div className="text-ui-sm font-medium">
+              已配对的手机（{status.devices.length}/{MAX_DEVICES}）
             </div>
+            <ul
+              className="divide-y divide-border rounded border border-border"
+              aria-label="已配对的手机"
+            >
+              {status.devices.map(device => (
+                <li key={device.id} className="mobile-connection-device px-3 py-2 text-ui-sm">
+                  <Smartphone size={16} className="shrink-0 text-fg-muted" aria-hidden="true" />
+                  <Tooltip label={device.name} onlyWhenOverflow wrapperClassName="min-w-0">
+                    <span className="block truncate">{device.name}</span>
+                  </Tooltip>
+                  <span
+                    className={`mobile-connection-device-status ${device.online ? 'text-ok' : 'text-fg-muted'}`}
+                  >
+                    {device.online ? '在线' : `配对于 ${pairedDate(device.pairedAt)}`}
+                  </span>
+                  <button
+                    type="button"
+                    className={control + ' mobile-connection-device-remove'}
+                    disabled={busy !== null}
+                    aria-label={`移除 ${device.name}`}
+                    onClick={() => {
+                      void revoke(device)
+                    }}
+                  >
+                    移除
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
-        </div>
-      )}
-      {status.devices.length > 0 && (
-        <div className="mt-2 max-w-2xl space-y-1">
-          <div className="text-ui-sm font-medium">已配对的手机（{status.devices.length}/{MAX_DEVICES}）</div>
-          <ul className="divide-y divide-border rounded border border-border" aria-label="已配对的手机">
-            {status.devices.map(device => (
-              <li key={device.id} className="flex items-center gap-2 px-3 py-2 text-ui-sm">
-                <Smartphone size={16} className="shrink-0 text-fg-muted" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate">{device.name}</span>
-                <span className={device.online ? 'text-ok' : 'text-fg-muted'}>
-                  {device.online ? '在线' : `配对于 ${pairedDate(device.pairedAt)}`}
-                </span>
-                <button type="button" className={control} disabled={busy !== null}
-                  aria-label={`移除 ${device.name}`} onClick={() => { void revoke(device) }}>
-                  移除
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </SettingItem>
+        )}
+      </SettingItem>
+    </div>
   )
 }

@@ -10,6 +10,7 @@ import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.RoundedCorner;
 import android.view.WindowInsets;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -81,18 +82,31 @@ public final class MainActivity extends Activity {
         pendingLink = pairingLink(getIntent());
 
         FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(0xff111419);
         view = new WebView(this);
         view.setBackgroundColor(0xff111419);
         frame.addView(view, new FrameLayout.LayoutParams(-1, -1));
-        if (Build.VERSION.SDK_INT >= 35) {
+        if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
             frame.setOnApplyWindowInsetsListener((element, insets) -> {
-                Insets padding = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-                element.setPadding(padding.left, padding.top, padding.right, padding.bottom);
+                Insets padding = insets.getInsets(WindowInsets.Type.systemBars()
+                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                int top = padding.top;
+                int bottom = padding.bottom;
+                if (Build.VERSION.SDK_INT >= 31) {
+                    // Keep the entire WebView above/below the curved screen edges.
+                    // Use max: system bars and the IME already occupy this space.
+                    top = Math.max(top, Math.max(cornerRadius(insets, RoundedCorner.POSITION_TOP_LEFT),
+                        cornerRadius(insets, RoundedCorner.POSITION_TOP_RIGHT)));
+                    bottom = Math.max(bottom, Math.max(cornerRadius(insets, RoundedCorner.POSITION_BOTTOM_LEFT),
+                        cornerRadius(insets, RoundedCorner.POSITION_BOTTOM_RIGHT)));
+                }
+                element.setPadding(padding.left, top, padding.right, bottom);
                 return WindowInsets.CONSUMED;
             });
         }
         setContentView(frame);
+        frame.requestApplyInsets();
         view.getSettings().setJavaScriptEnabled(true);
         view.getSettings().setDomStorageEnabled(true);
         view.getSettings().setAllowFileAccess(false);
@@ -131,7 +145,8 @@ public final class MainActivity extends Activity {
                     String type;
                     switch (asset) {
                         case "index.html": type = "text/html"; break;
-                        case "app.js": case "protocol.js": case "xterm.js": case "fit.js": case "jsqr.js":
+                        case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js":
+                        case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
                         case "qingcode-icon.png": type = "image/png"; break;
@@ -147,6 +162,11 @@ public final class MainActivity extends Activity {
             }
         });
         view.loadUrl(ORIGIN + "/index.html");
+    }
+
+    private static int cornerRadius(WindowInsets insets, int position) {
+        RoundedCorner corner = insets.getRoundedCorner(position);
+        return corner == null ? 0 : corner.getRadius();
     }
 
     /** Accepts only qingcode://pair links; the web layer validates the fields. */

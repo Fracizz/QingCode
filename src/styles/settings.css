@@ -162,6 +162,29 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
   color: var(--color-fg);
 }
 
+/* Mobile connection uses its own width and font size, including in split editors. */
+.mobile-connection-settings { container: mobile-connection / inline-size; }
+.mobile-connection-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.mobile-connection-pairing-container { min-width: 0; container: mobile-pairing / inline-size; }
+.mobile-connection-pairing { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.mobile-connection-qr { justify-self: center; }
+.mobile-connection-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.mobile-connection-device { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.mobile-connection-device-status { grid-column: 2; grid-row: 2; }
+.mobile-connection-device-remove { grid-column: 3; grid-row: 1 / span 2; }
+@container mobile-connection (min-width: 40em) {
+  .mobile-connection-device { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .mobile-connection-device-status { grid-column: 3; grid-row: 1; }
+  .mobile-connection-device-remove { grid-column: 4; grid-row: 1; }
+}
+@container mobile-connection (min-width: 64em) {
+  .mobile-connection-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+@container mobile-pairing (min-width: 34em) {
+  .mobile-connection-pairing { grid-template-columns: 160px minmax(0, 1fr); }
+  .mobile-connection-qr { justify-self: start; }
+}
+
 /* Terminal profiles respond to the settings column, including side-terminal layouts. */
 .terminal-profiles {
   container-type: inline-size;

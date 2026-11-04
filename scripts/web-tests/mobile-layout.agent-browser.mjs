@@ -1,0 +1,161 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+// Real APK web assets and xterm, with the existing in-memory native/RPC fixture.
+const session = `mobile-layout-${process.pid}`
+const directory = resolve('.dev/web-tests/mobile-layout')
+mkdirSync(directory, { recursive: true })
+const results = []
+const run = (...args) => execFileSync('agent-browser', ['--session', session, ...args], { encoding: 'utf8', timeout: 30000 })
+const evaluate = expression => run('eval', expression)
+const check = (name, expression) => {
+  run('wait', '--fn', expression)
+  results.push({ name, passed: true })
+}
+const capture = name => run('screenshot', resolve(directory, `${name}.png`))
+const fits = `document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight`
+const terminalFits = `(() => {
+  const viewport = document.querySelector('#viewport').getBoundingClientRect();
+  const composer = document.querySelector('#compose-form').getBoundingClientRect();
+  return viewport.height >= 100 && composer.bottom <= innerHeight && viewport.bottom <= composer.top && ${fits};
+})()`
+const captureTerminal = `window.Terminal = class extends window.Terminal {
+  constructor(...args) { super(...args); window.__layoutTerm = this; }
+}`
+
+try {
+  run('set', 'viewport', '390', '844')
+  run('open', 'http://127.0.0.1:38439/mobile-android/')
+  evaluate('localStorage.clear(); location.reload()')
+  check('first launch offers pairing and a short setup guide', `typeof window.qingLink === 'function' && !document.querySelector('#home-guide').hidden && !document.querySelector('#home-empty').hidden`)
+  capture('01-first-launch')
+  run('click', '#dashboard-nav [data-page="project"]')
+  check('unpaired project list has a working connection action', `!document.querySelector('#project-empty').hidden && document.querySelector('#project-empty-action').textContent === '前往连接'`)
+  run('click', '#project-empty-action')
+  check('connection action opens the connection page', `!document.querySelector('#connection-screen').hidden`)
+  evaluate(`window.__mobileFixture.state.projects = [
+    { id: 'local', name: 'QingCode', kind: 'local', host: 'Windows', path: 'D:/code/QingCode' },
+    { id: 'ssh', name: '用于验证手机小屏的很长的服务端项目名称', kind: 'ssh', connectionName: '远程开发工作站', host: '192.168.252.107', path: 'ssh://dev/home/development/projects/a-very-long-project-directory' },
+    { id: 'wsl', name: 'django', kind: 'wsl', host: 'Ubuntu', path: '/home/code/django' },
+    ...Array.from({length:12}, (_,i) => ({id:'p'+i, name:'项目 '+i, kind:'local', host:'Windows', path:'D:/code/project-'+i}))
+  ]; window.qingLink(window.__mobileFixture.link('192.168.1.8', 48764, undefined, '用于验证小屏的很长的电脑连接名称'))`)
+  run('fill', '#pair-code', 'A8z2D3')
+  check('pairing modal is centered and fits the phone', `(() => { const r = document.querySelector('#pair-dialog').getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - innerHeight / 2) < 2 && r.left >= 12 && r.right <= innerWidth - 11 && ${fits}; })()`)
+  capture('02-pairing')
+  run('click', '#pair-submit')
+  check('pairing connects successfully', `document.querySelector('#active-host').dataset.state === 'online'`)
+  run('click', '#dashboard-nav [data-page="home"]')
+  check('home shows current computer and three quick project entries', `!document.querySelector('#home-context').hidden && document.querySelector('#home-context-state').textContent.includes('15 个') && document.querySelectorAll('#home-project-list .row').length === 3 && document.querySelector('#home-guide').hidden && ${fits}`)
+  capture('03-home-connected')
+  run('click', '#home-all-projects')
+  run('fill', '#search', '找不到的项目')
+  check('unsuccessful search has an actionable empty state', `!document.querySelector('#project-empty').hidden && document.querySelector('#project-empty-action').textContent === '清除筛选'`)
+  capture('04-search-empty')
+  run('click', '#project-empty-action')
+  check('clearing filters restores the project list', `document.querySelector('#search').value === '' && document.querySelectorAll('#project-list .row').length === 15`)
+  evaluate(`document.querySelector('#project-screen').scrollTop = 400`)
+  check('project search remains reachable while the list scrolls', `document.querySelector('#search').getBoundingClientRect().top >= document.querySelector('.app-head').getBoundingClientRect().bottom - 1`)
+  evaluate(`document.querySelector('#project-screen').scrollTop = 0`)
+  run('set', 'viewport', '320', '740')
+  check('long host and project names stay inside a 320px phone', `${fits} && document.querySelector('#active-host').getBoundingClientRect().right <= innerWidth`)
+  capture('05-projects-320')
+  run('set', 'viewport', '390', '844')
+  evaluate(captureTerminal)
+  run('click', '#project-list .row:first-child')
+  check('terminal opens with a useful viewport and dimensions', `document.querySelector('#terminal-status').textContent === '会话中' && window.__layoutTerm.rows > 20 && document.querySelector('#terminal-size').textContent.includes('×') && ${terminalFits}`)
+  check('empty command bar clearly sends Enter', `document.querySelector('#send').getAttribute('aria-label') === '发送回车'`)
+  run('fill', '#compose', 'echo 中文')
+  run('click', '#send')
+  check('Chinese command is sent once with Enter', `window.__mobileFixture.state.inputs.filter(s => s === 'echo 中文' + String.fromCharCode(13)).length === 1 && document.querySelector('#compose').value === ''`)
+  run('click', '#send')
+  check('empty command sends a single Enter', `window.__mobileFixture.state.inputs.at(-1) === String.fromCharCode(13)`)
+  run('fill', '#compose', '尚在输入')
+  evaluate(`document.querySelector('#compose').dispatchEvent(new CompositionEvent('compositionstart')); document.querySelector('#compose-form').requestSubmit()`)
+  check('IME composition is not submitted prematurely', `document.querySelector('#compose').value === '尚在输入' && !window.__mobileFixture.state.inputs.some(s => s.includes('尚在输入'))`)
+  evaluate(`document.querySelector('#compose').dispatchEvent(new CompositionEvent('compositionend'))`)
+  run('fill', '#compose', '')
+  run('click', '#keyboard')
+  check('real-time input has an explicit active state', `document.querySelector('#keyboard').getAttribute('aria-pressed') === 'true' && document.activeElement === window.__layoutTerm.textarea && document.querySelector('#input-hint').textContent.includes('实时输入')`)
+  run('click', '#keyboard')
+  check('keyboard button returns to the editable command bar', `document.activeElement === document.querySelector('#compose') && document.querySelector('#keyboard').getAttribute('aria-pressed') === 'false'`)
+  run('click', '#special-keys [data-key="alt"]')
+  run('click', '#special-keys [data-key="interrupt"]')
+  check('dedicated Ctrl+C interrupts without an accidental Alt prefix', `window.__mobileFixture.state.inputs.at(-1) === String.fromCharCode(3) && document.querySelector('#special-keys [data-key="alt"]').getAttribute('aria-pressed') === 'false'`)
+  capture('06-terminal')
+  run('click', '#manage-sessions')
+  run('click', '#font-larger')
+  check('font setting updates the real terminal and is remembered', `window.__layoutTerm.options.fontSize === 14 && localStorage.getItem('qingcode:mobile:font-size') === '14'`)
+  evaluate(`for(let i=0;i<12;i++) document.querySelector('#font-larger').click()`)
+  check('font upper limit prevents unreadable or overflowing controls', `window.__layoutTerm.options.fontSize === 20 && document.querySelector('#font-larger').disabled`)
+  evaluate(`for(let i=0;i<12;i++) document.querySelector('#font-smaller').click()`)
+  check('font lower limit stays at 11px', `window.__layoutTerm.options.fontSize === 11 && document.querySelector('#font-smaller').disabled`)
+  run('click', '#font-larger')
+  run('click', '#font-larger')
+  capture('07-terminal-settings')
+  run('click', '#session-dialog [data-close]')
+  evaluate(`const s = [...window.__mobileFixture.state.sessions.values()][0];
+    s.output.push(btoa(Array.from({length:120},(_,i)=>'history line '+i+String.fromCharCode(13,10)).join(''))); s.next++;
+    for(const wake of s.waiters.splice(0)) wake()`)
+  check('terminal history arrives through the output polling path', `window.__mobileFixture.terminalText().includes('history line 119') && window.__layoutTerm.buffer.active.baseY > 0`)
+  evaluate('window.__layoutTerm.scrollToTop()')
+  check('reading history reveals the return-to-latest action', `!document.querySelector('#scroll-bottom').hidden`)
+  capture('08-terminal-history')
+  run('click', '#scroll-bottom')
+  check('return-to-latest really scrolls the terminal to its current output', `document.querySelector('#scroll-bottom').hidden && window.__layoutTerm.buffer.active.viewportY === window.__layoutTerm.buffer.active.baseY`)
+  run('set', 'viewport', '390', '460')
+  check('keyboard-height viewport keeps command input and terminal usable', terminalFits)
+  capture('09-keyboard-height')
+  run('set', 'viewport', '844', '390')
+  check('landscape keeps output and 44px touch targets', `${terminalFits} && document.querySelector('#send').getBoundingClientRect().height >= 44`)
+  capture('10-landscape')
+  run('set', 'viewport', '320', '640')
+  run('click', '#manage-sessions')
+  check('session and font controls fit a narrow phone', `(() => { const r = document.querySelector('.font-stepper').getBoundingClientRect(); return r.right <= innerWidth - 12 && ${fits}; })()`)
+  run('click', '#session-dialog [data-close]')
+  run('fill', '#compose', '未发送的草稿')
+  run('click', '#new-session')
+  check('new session starts with its own command draft', `document.querySelectorAll('#session-tabs button').length === 2 && document.querySelector('#compose').value === '' && document.querySelector('#terminal-status').textContent === '会话中'`)
+  run('click', '#session-tabs button:first-child')
+  check('switching sessions restores the unsent draft', `document.querySelector('#compose').value === '未发送的草稿' && document.querySelector('#send').getAttribute('aria-label') === '发送并回车'`)
+  run('click', '#back')
+  run('click', '#dashboard-nav [data-page="home"]')
+  check('home resumes the most recent project', `!document.querySelector('#resume').hidden && document.querySelector('#resume-name').textContent === 'QingCode'`)
+  capture('11-resume-narrow')
+  run('click', '#dashboard-nav [data-page="connection"]')
+  check('connection status has readable text alongside its indicator', `document.querySelector('#connection-list .connection-state').textContent.includes('已连接')`)
+  run('click', '#add-host')
+  run('set', 'viewport', '320', '460')
+  check('pairing remains scrollable above a small keyboard viewport', `(() => { const r = document.querySelector('#pair-dialog').getBoundingClientRect(); return r.top >= 11 && r.bottom <= innerHeight - 11 && r.width <= innerWidth - 24 && ${fits}; })()`)
+  evaluate(`document.querySelector('#pair-dialog').scrollTop = 10000`)
+  check('pair submit remains reachable after scrolling', `document.querySelector('#pair-submit').getBoundingClientRect().bottom <= innerHeight - 11`)
+  capture('12-pair-keyboard-height')
+  evaluate('window.qingBack()')
+  check('Android back cancels the active dialog', `!document.querySelector('#pair-dialog').open`)
+  run('set', 'viewport', '390', '844')
+  run('click', '#add-host')
+  evaluate(`document.querySelector('#pair-dialog').dispatchEvent(new PointerEvent('pointerdown', {clientX: 1, clientY: 1})); document.querySelector('#pair-dialog').dispatchEvent(new PointerEvent('pointerup', {clientX: 1, clientY: 1}))`)
+  check('backdrop tap cancels pairing', `!document.querySelector('#pair-dialog').open`)
+  evaluate(`window.__mobileFixture.state.hosts.delete('192.168.1.8:48764')`)
+  run('click', '#dashboard-nav [data-page="project"]')
+  run('click', '#refresh')
+  check('unreachable computer displays a failed connection state', `document.querySelector('#active-host').dataset.state === 'offline'`)
+  run('click', '#dashboard-nav [data-page="home"]')
+  check('offline home offers reconnection and hides the stale resume action', `document.querySelector('#resume').hidden && !document.querySelector('#home-reconnect').hidden && document.querySelector('#home-projects').hidden`)
+  capture('13-offline')
+  evaluate(`window.__mobileFixture.state.hosts.set('192.168.1.8:48764', window.__mobileFixture.fingerprint)`)
+  run('click', '#home-reconnect')
+  check('reconnection restores the existing resume entry', `document.querySelector('#active-host').dataset.state === 'online' && !document.querySelector('#resume').hidden`)
+  const errors = JSON.parse(run('errors', '--json'))
+  writeFileSync(resolve(directory, 'browser-errors.json'), JSON.stringify(errors, null, 2))
+  if (errors.data?.errors?.length) throw new Error('Browser reported JavaScript errors: ' + JSON.stringify(errors.data.errors))
+} catch (error) {
+  results.push({ name: String(error), passed: false })
+  try { capture('failure') } catch { /* Preserve the original failure. */ }
+  process.exitCode = 1
+} finally {
+  writeFileSync(resolve(directory, 'results.json'), JSON.stringify({ engine: 'agent-browser', nativeIntegration: false, results }, null, 2))
+  if (results.length && results.every(result => result.passed)) rmSync(resolve(directory, 'failure.png'), { force: true })
+  try { run('close') } catch { /* Browser may have exited already. */ }
+}
+console.log(`${results.filter(result => result.passed).length}/${results.length} browser checks passed. ${directory}`)
