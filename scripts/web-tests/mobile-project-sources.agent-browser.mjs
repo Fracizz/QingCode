@@ -35,16 +35,13 @@ try {
   check('all sources have their own line above the path', `document.querySelectorAll('#project-list .row').length === 5 &&
     ${sources}.includes('远端 · WSL · localhost') && ${sources}.includes('远端 · WinDev · 192.168.252.107') &&
     document.querySelector('#project-list .project-path').textContent === '/home/code/django'`)
-  run('click', '#hosts [data-kind="ssh"]')
-  check('remote projects remain on the remote transport category', `document.querySelectorAll('#project-list .row').length === 3 &&
-    document.querySelector('#hosts [data-kind="ssh"]').getAttribute('aria-pressed') === 'true' &&
-    document.querySelectorAll('#hosts [aria-pressed="true"]').length === 1`)
+  check('project list uses search without environment categories', `!document.querySelector('#hosts')`)
   run('wait', '100')
   run('screenshot', resolve(directory, 'remote-sources.png'))
   run('fill', '#search', 'wSl')
-  check('connection name search identifies WSL remote projects', `document.querySelectorAll('#project-list .row').length === 1 &&
+  check('connection name search identifies WSL remote projects', `document.querySelectorAll('#project-list .row').length === 2 &&
     ${sources}[0] === '远端 · WSL · localhost'`)
-  run('click', '#project-list .row')
+  run('click', '#project-list .row:first-child')
   check('terminal header keeps source and address', `document.getElementById('terminal-status').textContent === '会话中' &&
     document.getElementById('terminal-host').textContent === 'DEVBOX / 远端 · WSL · localhost'`)
   run('click', '#back')
@@ -57,13 +54,12 @@ try {
   run('fill', '#search', 'build.example')
   check('older desktops still show the host without a connection name', `${sources}[0] === '远端 · build.example'`)
   run('fill', '#search', '')
-  run('click', '#hosts [data-kind="wsl"]')
-  check('native WSL projects show their distribution', `document.querySelectorAll('#project-list .row').length === 1 && ${sources}[0] === 'WSL · Ubuntu'`)
-  run('eval', `window.__mobileFixture.state.projects = window.__mobileFixture.state.projects.filter(item => item.kind !== 'wsl')`)
-  run('click', '#refresh')
-  check('empty WSL category explains where remote WSL projects are', `document.getElementById('list-label').textContent.includes('请在「远端」中查看')`)
+  run('fill', '#search', 'Ubuntu')
+  check('native WSL can be found by distribution', `document.querySelectorAll('#project-list .row').length === 1 && ${sources}[0] === 'WSL · Ubuntu'`)
+  run('fill', '#search', '/home/code/django')
+  check('path search includes remote WSL projects', `document.querySelectorAll('#project-list .row').length === 1 && ${sources}[0] === '远端 · WSL · localhost'`)
+  run('fill', '#search', '')
   run('eval', `window.__mobileFixture.state.projects[0].connectionName = '用于多个项目的很长的 WSL 连接名称'`)
-  run('click', '#hosts [data-kind="ssh"]')
   run('click', '#refresh')
   run('set', 'viewport', '320', '780')
   check('long source names wrap without hiding the address or causing horizontal scroll', `(() => {

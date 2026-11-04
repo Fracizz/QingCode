@@ -33,6 +33,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
 mod mobile;
+mod mobile_screen;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 

@@ -15,8 +15,22 @@
     ],
     sessions: new Map(),
     inputs: [],
+    polls: [],
+    historyRequests: [],
     pairs: [],
     clipboard: '',
+    latency: 32.4,
+    latencySupported: true,
+    latencyRequests: [],
+    latencyError: null,
+    latencyDelay: 0,
+    fullscreen: false,
+    fullscreenRequests: [],
+    image: { data: btoa(String.fromCharCode(255,216,255,0)) },
+    images: [],
+    imageError: null,
+    imageDelay: 0,
+    imageCompression: null,
     pendingLink: null,
     cameraGranted: false,
     nextSession: 1,
@@ -34,7 +48,18 @@
     const start = reset ? 0 : from - base
     const chunks = session.output.slice(start, start + 4)
     const next = base + start + chunks.length
-    return { chunks, next, more: next < session.next, reset, exit: session.exit }
+    return { chunks, next, more: next < session.next, reset, exit: session.exit,
+      historyBefore: session.history?.length ?? 0, historyAvailable: !!session.history?.length }
+  }
+
+  function latest(session) {
+    // A controlled screen stand-in; native parser correctness is covered by Rust tests.
+    const decoder = new TextDecoder()
+    const text = session.output.map(chunk => typeof chunk === 'string'
+      ? decoder.decode(Uint8Array.from(atob(chunk), ch => ch.charCodeAt(0))) : chunk.data).join('')
+    const screen = session.snapshot ?? { data: text.split('\n').slice(-12).join('\r\n'), cols: 80, rows: 24 }
+    return { chunks: [screen], next: session.next, more: false, reset: false, snapshot: true, exit: session.exit,
+      historyBefore: session.history?.length ?? 0, historyAvailable: !!session.history?.length }
   }
 
   async function remote(profile, request) {
@@ -58,6 +83,11 @@
       case 'poll': {
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
+        state.polls.push({ id: request.id, from: request.from, latest: request.latest, tail: request.tail })
+        if (state.pollErrors > 0) { state.pollErrors--; return { ok: false, error: '模拟网络断开' } }
+        if (request.latest || (request.tail && request.from < session.next - session.output.length)) {
+          return { ok: true, data: latest(session) }
+        }
         if (request.from === session.next && !session.exit) {
           await new Promise(resolve => {
             session.waiters.push(resolve)
@@ -65,6 +95,17 @@
           })
         }
         return { ok: true, data: read(session, request.from) }
+      }
+      case 'history': {
+        const session = state.sessions.get(request.id)
+        if (!session) return { ok: false, error: '终端不存在。' }
+        state.historyRequests.push({ id: request.id, before: request.before })
+        if (state.historyDelay) await new Promise(resolve => setTimeout(resolve, state.historyDelay))
+        if (state.historyError) return { ok: false, error: state.historyError }
+        const end = Math.min(request.before, session.history?.length ?? 0)
+        const start = Math.max(0, end - 120)
+        return { ok: true, data: { lines: (session.history ?? []).slice(start, end), before: start,
+          more: start > 0, truncated: !!session.truncated && start === 0 } }
       }
       case 'input': {
         const session = state.sessions.get(request.id)
@@ -74,6 +115,13 @@
         const echoed = request.data.replace(/\r/g, '\r\n')
         push(session, base64(echoed + (request.data.endsWith('\r') ? 'ok\r\nPS D:\\code\\qingcode> ' : '')))
         return { ok: true, data: null }
+      }
+      case 'image': {
+        if (state.imageDelay) await new Promise(resolve => setTimeout(resolve, state.imageDelay))
+        if (state.imageError) return { ok: false, error: state.imageError }
+        if (!state.sessions.has(request.id)) return { ok: false, error: '终端不存在。' }
+        state.images.push(request)
+        return { ok: true, data: { path: "'/tmp/mobile-image.jpg'" } }
       }
       case 'resize': return { ok: true, data: null }
       case 'end': state.sessions.delete(request.id); return { ok: true, data: null }
@@ -85,11 +133,31 @@
     switch (request.op) {
       case 'profiles': return { ok: true, data: [...state.profiles.values()].map(summary) }
       case 'clipboard': return { ok: true, data: state.clipboard }
+      case 'latency': {
+        const value = state.latency
+        const supported = state.latencySupported
+        const error = state.latencyError
+        state.latencyRequests.push({ profile: request.profile, at: Date.now() })
+        if (state.latencyDelay) await new Promise(resolve => setTimeout(resolve, state.latencyDelay))
+        if (error) return { ok: false, error }
+        return { ok: true, data: { supported, milliseconds: value } }
+      }
+      case 'copy':
+        if (state.copyError) return { ok: false, error: state.copyError }
+        state.clipboard = request.text
+        return { ok: true, data: true }
+      case 'fullscreen': {
+        if (state.fullscreenError) return { ok: false, error: state.fullscreenError };
+        state.fullscreenRequests.push(request.enabled);
+        state.fullscreen = request.enabled === true;
+        return { ok: true, data: state.fullscreen };
+      }
       case 'pendingLink': {
         const link = state.pendingLink
         state.pendingLink = null
         return { ok: true, data: link }
       }
+      case 'pick_image': state.imageCompression = request.compression; return { ok: true, data: state.image }
       case 'camera': return { ok: true, data: state.cameraGranted }
       case 'probe': {
         const fingerprint = state.hosts.get(request.host + ':' + request.port)

@@ -12,10 +12,9 @@ export function projectSourceLabel(project) {
   return [...new Set(parts.filter(Boolean))].join(' · ');
 }
 
-export function matchesProject(project, kind, query) {
+export function matchesProject(project, query) {
   const search = query.trim().toLowerCase();
-  return (kind === 'all' || project.kind === kind)
-    && [project.name, project.path, projectSourceLabel(project)].some(value => String(value ?? '').toLowerCase().includes(search));
+  return [project.name, project.path, projectSourceLabel(project)].some(value => String(value ?? '').toLowerCase().includes(search));
 }
 
 export function validIpv4(host) {
@@ -142,4 +141,10 @@ export function renameProfileKeys(keys, prefix, from, to) {
     }
   }
   return moves;
+}
+
+/** Fixed launch commands only; project paths and user text never enter this command. */
+export function launchCommand(launch) {
+  if (launch === 'claude' || launch === 'opencode') return launch + '\r';
+  throw new Error('不支持的快捷命令');
 }

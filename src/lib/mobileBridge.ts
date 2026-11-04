@@ -7,10 +7,12 @@ import { ensureSshWorkspaceConnected, isSshProject, sshConnectionIdFromUri } fro
 import { isTauri, safeInvoke } from './tauri'
 import { isWslProject, wslDistroNameFromPath } from './wslWorkspace'
 import { isProjectTrusted, pushTrustedRootsToNative } from './workspaceTrust'
+import { uploadLocalFilesForSshTerminal } from './sshTerminalPaste'
 
 interface Request {
   id: string
   project: string | null
+  attachment?: string | null
 }
 
 function mobileProject(project: Project, connections: Map<string, Pick<SshConnection, 'name' | 'host'>>) {
@@ -23,7 +25,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
   return { id: project.id, name: project.name, path: project.path, kind, host, connectionName: remote?.name }
 }
 
-async function respond(projectId: string | null) {
+async function respond(projectId: string | null, attachment?: string | null) {
   // The main window can lag behind projects added/removed in another window or
   // through the CLI. Mobile refresh and terminal creation both need saved state.
   const projects = await withDb('加载移动端项目列表', listProjects)
@@ -34,6 +36,10 @@ async function respond(projectId: string | null) {
     const ephemeral = useProjectStore.getState().projects.filter(project => project.ephemeral)
     await pushTrustedRootsToNative([...projects, ...ephemeral])
     await ensureSshWorkspaceConnected(project)
+    if (attachment) {
+      if (!isSshProject(project)) throw new Error('附件上传需要远端项目。')
+      return { path: await uploadLocalFilesForSshTerminal(project.path, [attachment]) }
+    }
     const connections = await listSshConnections()
     return mobileProject(project, new Map(connections.map(connection => [connection.id, connection])))
   }
@@ -45,7 +51,7 @@ async function respond(projectId: string | null) {
 export async function listenForMobileRequests(): Promise<() => void> {
   if (!isTauri() || getCurrentWebviewWindow().label !== 'main') return () => {}
   return listen<Request>('mobile-request', async ({ payload }) => {
-    const result = await respond(payload.project).then(
+    const result = await respond(payload.project, payload.attachment).then(
       data => ({ data }),
       error => ({ error: error instanceof Error ? error.message : String(error) }),
     )

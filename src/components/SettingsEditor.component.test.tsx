@@ -1,29 +1,13 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsEditor from './SettingsEditor'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { useShortcutStore } from '../store/shortcutStore'
 import { DEFAULT_SHORTCUTS } from '../lib/shortcuts'
-
-// SettingsLayout uses IntersectionObserver for scroll-spy; jsdom does not ship it.
-beforeAll(() => {
-  if (typeof IntersectionObserver === 'undefined') {
-    class IntersectionObserverStub {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-      takeRecords() {
-        return []
-      }
-    }
-    ;(globalThis as unknown as { IntersectionObserver: typeof IntersectionObserverStub }).IntersectionObserver =
-      IntersectionObserverStub
-  }
-})
 
 // Spies we assert on must live in vi.hoisted so the vi.mock factories can reference them.
 const mocks = vi.hoisted(() => ({
@@ -213,18 +197,28 @@ describe('SettingsEditor', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     useProjectStore.setState(initialProjectState, true)
     useEditorStore.setState(initialEditorState, true)
     useUIStore.setState(initialUiState, true)
     useShortcutStore.setState(initialShortcutState, true)
   })
 
-  it('renders the settings category navigation', () => {
+  it('shows one category at a time and opens mobile settings independently', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Windows')
     render(<SettingsEditor />)
-    expect(screen.getByRole('button', { name: '常用设置' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '文本编辑器' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '终端' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '打开设置 JSON' })).toBeInTheDocument()
+    for (const name of ['外观与语言', '编辑器与文件', '终端', '项目与会话', '远程连接', '移动连接', '工具与集成', '快捷键', '更新与关于']) {
+      expect(screen.getByRole('button', { name, exact: true })).toBeInTheDocument()
+    }
+    expect(screen.queryByRole('button', { name: '打开设置 JSON' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('region')).toHaveLength(1)
+    expect(screen.getByRole('region', { name: '外观与语言' })).toHaveTextContent('界面字体')
+    expect(screen.queryByLabelText('编辑器: 小地图')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '移动连接', exact: true }))
+    expect(screen.getByRole('region', { name: '移动连接' })).toHaveTextContent('Android 移动连接')
+    expect(screen.getAllByRole('region')).toHaveLength(1)
+    fireEvent.change(screen.getByPlaceholderText('搜索设置'), { target: { value: 'Android' } })
+    expect(screen.getByText('Android 移动连接')).toBeInTheDocument()
   })
 
   it('saves an independent terminal font and restores the terminal system default', () => {
@@ -243,13 +237,15 @@ describe('SettingsEditor', () => {
     }))
   })
 
-  it('disables the terminal font setting in workspace scope', () => {
+  it('hides user-only terminal controls in project scope', () => {
     useProjectStore.setState({ currentProject: {
       id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1,
     } })
     render(<SettingsEditor />)
     fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
-    expect(screen.getByLabelText('终端 › 集成: 字体族')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '终端', exact: true }))
+    expect(screen.queryByLabelText('终端 › 集成: 字体族')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('终端 › 集成: SSH 粘贴上传')).toBeInTheDocument()
   })
 
   it('restores user defaults after confirming the scope and preserves project records', async () => {
@@ -313,6 +309,54 @@ describe('SettingsEditor', () => {
     expect(useProjectStore.getState().pushToast).toHaveBeenCalledWith('info', '配置已导入，1 个项目路径不可用', 'D:/missing')
   })
 
+  it('opens settings JSON from management in the selected scope', async () => {
+    mocks.tauri = true
+    useProjectStore.setState({ currentProject: { id: 'p', name: 'Demo', path: '/demo', created_at: 1, last_opened_at: 1 } })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开设置 JSON' }))
+    await waitFor(() => expect(useEditorStore.getState().openFile).toHaveBeenCalledWith('D:/settings.json'))
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开设置 JSON' }))
+    await waitFor(() => expect(useEditorStore.getState().openFile).toHaveBeenCalledWith('D:/proj-settings.json'))
+  })
+
+  it('searches across categories, filters rows, and returns to a selected category', () => {
+    render(<SettingsEditor />)
+    fireEvent.change(screen.getByPlaceholderText('搜索设置'), { target: { value: '字体' } })
+    expect(screen.getByRole('region', { name: '外观与语言' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '编辑器与文件' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '终端' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('编辑器: 小地图')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('终端 › 集成: SSH 粘贴上传')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '终端', exact: true }))
+    expect(screen.getByPlaceholderText('搜索设置')).toHaveValue('')
+    expect(screen.getAllByRole('region')).toHaveLength(1)
+    expect(screen.getByLabelText('终端 › 集成: SSH 粘贴上传')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('搜索设置'), { target: { value: 'Ctrl+Shift+G' } })
+    expect(screen.getByLabelText('切换小地图')).toBeInTheDocument()
+    expect(screen.queryByLabelText('打开命令面板')).not.toBeInTheDocument()
+  })
+
+  it('restores a hidden category after returning to user scope', () => {
+    useProjectStore.setState({ currentProject: { id: 'p', name: 'Demo', path: '/demo', created_at: 1, last_opened_at: 1 } })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '工具与集成' }))
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
+    expect(screen.getByRole('region', { name: '编辑器与文件' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '用户' }))
+    expect(screen.getByRole('region', { name: '工具与集成' })).toBeInTheDocument()
+  })
+
+  it('keeps terminal configuration deep links working', async () => {
+    useUIStore.setState({ settingsFocusQuery: '终端配置', settingsFocusSignal: 12345 })
+    render(<SettingsEditor />)
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索设置')).toHaveValue('终端配置'))
+    expect(screen.getByRole('region', { name: '终端' })).toBeInTheDocument()
+    expect(screen.getByLabelText('终端配置')).toBeInTheDocument()
+  })
+
   it('cancelling the import dialog leaves settings untouched', async () => {
     mocks.tauri = true
     mocks.openDialog.mockResolvedValue(null)
@@ -327,6 +371,7 @@ describe('SettingsEditor', () => {
     render(<SettingsEditor />)
     // Default scope is 'user' → settings scope 'global'; project is null but
     // the global branch does not require a project.
+    fireEvent.click(screen.getByRole('button', { name: '编辑器与文件' }))
     const minimapSelect = screen.getByLabelText('编辑器: 小地图') as HTMLSelectElement
     fireEvent.change(minimapSelect, { target: { value: 'off' } })
 
@@ -336,6 +381,7 @@ describe('SettingsEditor', () => {
   })
   it('offers automatic and custom project-session LRU settings', async () => {
     render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '项目与会话' }))
     const mode = screen.getByLabelText('项目会话 LRU 个数') as HTMLSelectElement
     await waitFor(() => expect(mode).toBeEnabled())
     expect(mode.value).toBe('auto')
@@ -351,6 +397,7 @@ describe('SettingsEditor', () => {
 
   it('defaults randomized Git polling to a 5-minute start and saves whole minutes', async () => {
     render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '项目与会话' }))
     const interval = screen.getByLabelText(
       'Git 随机刷新周期起始值（分钟）',
     ) as HTMLInputElement
@@ -366,23 +413,30 @@ describe('SettingsEditor', () => {
   })
   it('finds configuration keys and clears an empty search back into the focused input', () => {
     render(<SettingsEditor />)
+    expect(screen.queryByRole('button', { name: '移动连接', exact: true })).toBeNull()
     const search = screen.getByPlaceholderText('搜索设置')
     fireEvent.change(search, { target: { value: 'editor.minimap.enabled' } })
     expect(screen.getByLabelText('编辑器: 小地图')).toBeVisible()
-    expect(screen.getByRole('button', { name: '文本编辑器' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '编辑器与文件' })).toBeVisible()
     fireEvent.change(search, { target: { value: 'no-such-setting' } })
     expect(screen.getByRole('status')).toHaveTextContent('没有匹配的设置')
     fireEvent.click(screen.getAllByRole('button', { name: '清除搜索' })[0])
     expect(search).toHaveFocus()
-    expect(screen.getByLabelText('编辑器: 小地图')).toBeVisible()
+    expect(screen.getByRole('region', { name: '外观与语言' })).toBeVisible()
   })
 
   it('keeps the project scope navigation consistent with the rendered sections', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Windows')
     useProjectStore.setState({ currentProject: { id: 'p', name: 'Demo', path: '/demo', created_at: 1, last_opened_at: 1 } })
     render(<SettingsEditor />)
     fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
-    expect(screen.queryByRole('button', { name: 'AI', exact: true })).toBeNull()
-    expect(screen.queryByRole('button', { name: '关于', exact: true })).toBeNull()
+    expect(screen.queryByRole('button', { name: '工具与集成', exact: true })).toBeNull()
+    expect(screen.queryByRole('button', { name: '更新与关于', exact: true })).toBeNull()
+    expect(screen.queryByRole('button', { name: '移动连接', exact: true })).toBeNull()
+    expect(screen.queryByRole('button', { name: '外观与语言' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '项目与会话' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '快捷键', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '编辑器与文件' })).toBeInTheDocument()
     expect(screen.getByText('当前项目：Demo')).toBeVisible()
   })
 

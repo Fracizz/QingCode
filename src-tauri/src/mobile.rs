@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::mobile_screen::MobileScreen;
+use base64::Engine;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
@@ -38,6 +40,7 @@ const MAX_SESSIONS: usize = 16;
 const MAX_DEVICES: usize = 8;
 const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
+const MAX_IMAGE: usize = 8 * 1024 * 1024;
 /// Upper bound for one poll response body before JSON framing.
 const MAX_POLL_BYTES: usize = 192 * 1024;
 const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
@@ -281,6 +284,7 @@ struct Session {
     output_size: usize,
     next: u64,
     changed: Arc<Notify>,
+    screen: MobileScreen,
 }
 
 impl Session {
@@ -296,10 +300,19 @@ impl Session {
             output_size: 0,
             next: 0,
             changed: Arc::new(Notify::new()),
+            screen: MobileScreen::new(),
         }
     }
 
     fn push(&mut self, chunk: OutputChunk) {
+        match &chunk {
+            OutputChunk::Bytes(data) => {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                    self.screen.process(&bytes);
+                }
+            }
+            OutputChunk::Screen { data, cols, rows } => self.screen.replace(data, *cols, *rows),
+        }
         if matches!(chunk, OutputChunk::Screen { .. }) {
             self.output.clear();
             self.output_size = 0;
@@ -348,6 +361,21 @@ impl Session {
             "more": next < self.next,
             "reset": reset,
             "exit": exit,
+            "historyBefore": self.screen.history_before(),
+            "historyAvailable": self.screen.has_history(),
+        })
+    }
+
+    fn latest(&self) -> Value {
+        let exit = self
+            .exit
+            .as_ref()
+            .filter(|_| self.drain_until.is_none_or(|until| Instant::now() >= until));
+        json!({
+            "chunks": [self.screen.snapshot()], "next": self.next,
+            "more": false, "reset": false, "snapshot": true, "exit": exit,
+            "historyBefore": self.screen.history_before(),
+            "historyAvailable": self.screen.has_history(),
         })
     }
 }
@@ -392,6 +420,7 @@ enum Operation {
         #[serde(default)]
         device: Option<String>,
     },
+    Ping,
     Projects,
     Sessions {
         project: String,
@@ -404,8 +433,20 @@ enum Operation {
     Poll {
         id: String,
         from: u64,
+        #[serde(default)]
+        latest: bool,
+        #[serde(default)]
+        tail: bool,
+    },
+    History {
+        id: String,
+        before: u64,
     },
     Input {
+        id: String,
+        data: String,
+    },
+    Image {
         id: String,
         data: String,
     },
@@ -633,6 +674,7 @@ impl Hub {
         }
     }
 
+    #[cfg(test)]
     fn holds(&self, id: &str) -> bool {
         self.inner.lock().unwrap().sessions.contains_key(id)
     }
@@ -640,13 +682,6 @@ impl Hub {
 
 pub(crate) fn is_mobile_terminal(id: &str) -> bool {
     id.starts_with(TERMINAL_PREFIX)
-}
-
-/// Whether the companion endpoint still owns this terminal. Desktop restore must not
-/// adopt PTYs that a phone is attached to.
-pub(crate) fn owns_terminal(app: &AppHandle, id: &str) -> bool {
-    app.try_state::<MobileState>()
-        .is_some_and(|state| state.hub.holds(id))
 }
 
 /// Base64 PTY output for a `mobile-*` terminal.
@@ -1005,6 +1040,14 @@ pub fn mobile_bridge_reply(
 }
 
 async fn desktop(app: &AppHandle, project: Option<&str>) -> Result<Value, String> {
+    desktop_request(app, project, None).await
+}
+
+async fn desktop_request(
+    app: &AppHandle,
+    project: Option<&str>,
+    attachment: Option<&str>,
+) -> Result<Value, String> {
     let state = app.state::<MobileState>();
     let id = Uuid::new_v4();
     let (sender, receiver) = oneshot::channel();
@@ -1017,7 +1060,7 @@ async fn desktop(app: &AppHandle, project: Option<&str>) -> Result<Value, String
     let result = match app.emit_to(
         "main",
         "mobile-request",
-        json!({ "id": id, "project": project }),
+        json!({ "id": id, "project": project, "attachment": attachment }),
     ) {
         Ok(()) => match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(result)) => result,
@@ -1095,11 +1138,18 @@ async fn request_handler(
             .unwrap());
     }
     let (parts, body) = request.into_parts();
-    let body = tokio::time::timeout(
-        Duration::from_secs(5),
-        Limited::new(body, 128 * 1024).collect(),
-    )
-    .await;
+    let bearer = parts
+        .headers
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let limit = if app.state::<MobileState>().hub.authenticate(bearer).is_ok() {
+        12 * 1024 * 1024
+    } else {
+        128 * 1024
+    };
+    let body =
+        tokio::time::timeout(Duration::from_secs(15), Limited::new(body, limit).collect()).await;
     let request = body
         .ok()
         .and_then(Result::ok)
@@ -1163,6 +1213,9 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
     let hub = &app.state::<MobileState>().inner().hub;
     match operation {
         Operation::Pair { .. } => unreachable!(),
+        // Authentication is checked by request_handler before any operation runs.
+        // Never wait for terminal output or the desktop WebView bridge here.
+        Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Projects => desktop(app, None).await,
         Operation::Sessions { project } => {
             let inner = hub.inner.lock().unwrap();
@@ -1184,10 +1237,24 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             cols,
             rows,
         } => create(app, device, &project, cols, rows).await,
-        Operation::Poll { id, from } => {
+        Operation::History { id, before } => {
+            let inner = hub.inner.lock().unwrap();
+            let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+            Ok(session.screen.history(before))
+        }
+        Operation::Poll {
+            id,
+            from,
+            latest,
+            tail,
+        } => {
             let wait = {
                 let inner = hub.inner.lock().unwrap();
                 let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+                let base = session.next - session.output.len() as u64;
+                if latest || (tail && (from < base || from > session.next)) {
+                    return Ok(session.latest());
+                }
                 if from != session.next
                     || session
                         .drain_until
@@ -1199,7 +1266,13 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             };
             let _ = tokio::time::timeout(Duration::from_millis(900), wait).await;
             let inner = hub.inner.lock().unwrap();
-            Ok(inner.sessions.get(&id).ok_or("终端不存在。")?.read(from))
+            let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+            let base = session.next - session.output.len() as u64;
+            Ok(if tail && from < base {
+                session.latest()
+            } else {
+                session.read(from)
+            })
         }
         Operation::Input { id, data } => {
             if data.len() > MAX_INPUT {
@@ -1217,14 +1290,56 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             }
             Ok(Value::Null)
         }
+        Operation::Image { id, data } => {
+            let project = {
+                let inner = hub.inner.lock().unwrap();
+                image_project(&inner, &id, device)?
+            };
+            // Re-read saved trust and connection state before materializing an attachment.
+            let current: Project = serde_json::from_value(desktop(app, Some(&project.id)).await?)
+                .map_err(|error| error.to_string())?;
+            if current.path != project.path || current.kind != project.kind {
+                return Err("项目位置已变化，请重新打开终端后发送图片。".into());
+            }
+            let bytes = decode_image(&data)?;
+            let extension = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                "png"
+            } else {
+                "jpg"
+            };
+            let path = tauri::async_runtime::spawn_blocking(move || {
+                crate::clipboard_files::store_attachment(
+                    &format!("mobile-image.{extension}"),
+                    &bytes,
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            let result = if project.kind == ProjectKind::Ssh {
+                desktop_request(app, Some(&project.id), Some(&path)).await
+            } else {
+                local_image_path(&project, &path)
+                    .await
+                    .map(|path| json!({ "path": path }))
+            };
+            // SSH has its own uploaded copy. Failed local/WSL preparations do not retain a file.
+            if project.kind == ProjectKind::Ssh || result.is_err() {
+                let _ = std::fs::remove_file(&path);
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    let _ = std::fs::remove_dir(parent);
+                }
+            }
+            result
+        }
         Operation::Resize { id, cols, rows } => {
             let (cols, rows) = size(cols, rows);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
-                crate::remote_ssh::ssh_resize_terminal(id, cols, rows, app.state()).await?;
+                crate::remote_ssh::ssh_resize_terminal(id.clone(), cols, rows, app.state()).await?;
             } else {
                 app.state::<crate::TerminalManager>()
                     .resize(&id, cols, rows)?;
             }
+            hub.with_session(&id, |session| session.screen.resize(cols, rows));
             Ok(Value::Null)
         }
         Operation::End { id } => {
@@ -1252,6 +1367,66 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             Ok(Value::Null)
         }
     }
+}
+
+fn image_project(inner: &HubState, id: &str, device: &str) -> Result<Project, String> {
+    let session = inner.sessions.get(id).ok_or("终端不存在。")?;
+    if !inner.accepting || !session.ready || session.exit.is_some() || session.owner != device {
+        return Err("当前设备没有可用的终端会话。".into());
+    }
+    Ok(session.project.clone())
+}
+
+fn decode_image(data: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    if data.len() > MAX_IMAGE.div_ceil(3) * 4 {
+        return Err("图片不能超过 8 MB。".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|_| "图片编码无效。")?;
+    if bytes.len() > MAX_IMAGE {
+        return Err("图片不能超过 8 MB。".into());
+    }
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") && !bytes.starts_with(b"\xff\xd8\xff") {
+        return Err("仅支持 PNG / JPEG 图片；其他格式请选择压缩后发送。".into());
+    }
+    Ok(bytes)
+}
+
+async fn local_image_path(project: &Project, path: &str) -> Result<String, String> {
+    if project.kind == ProjectKind::Wsl {
+        let distro = crate::run_environment::parse_wsl_path(&project.path)
+            .ok_or("无法识别 WSL 发行版。")?
+            .distro;
+        let mut command = tokio::process::Command::new("wsl.exe");
+        command.args([
+            "--distribution",
+            &distro,
+            "--exec",
+            "wslpath",
+            "-a",
+            "-u",
+            path,
+        ]);
+        command.kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+            .await
+            .map_err(|_| "WSL 图片路径转换超时。")?
+            .map_err(|error| error.to_string())?;
+        let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let path = path.trim();
+        if !output.status.success() || !path.starts_with('/') || path.contains(['\r', '\n']) {
+            return Err("无法把图片路径转换为 WSL 路径。".into());
+        }
+        return Ok(format!("'{}'", path.replace('\'', "'\\''")));
+    }
+    #[cfg(windows)]
+    return Ok(format!("'{}'", path.replace('\'', "''")));
+    #[cfg(not(windows))]
+    Ok(format!("'{}'", path.replace('\'', "'\\''")))
 }
 
 fn size(cols: u16, rows: u16) -> (u16, u16) {
@@ -1286,6 +1461,7 @@ async fn create(
         number
     };
     let (cols, rows) = size(cols, rows);
+    hub.with_session(&id, |session| session.screen.resize(cols, rows));
     let result = if project.kind == ProjectKind::Ssh {
         crate::remote_ssh::ssh_create_terminal(
             id.clone(),
@@ -1381,6 +1557,37 @@ mod tests {
             kind: ProjectKind::Local,
             host: "Windows".into(),
         }
+    }
+
+    #[test]
+    fn image_upload_requires_a_live_session_owned_by_the_device() {
+        let mut inner = HubState {
+            accepting: true,
+            ..HubState::default()
+        };
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.ready = true;
+        inner.sessions.insert("mobile-test".into(), session);
+        assert!(image_project(&inner, "mobile-test", "phone").is_ok());
+        assert!(image_project(&inner, "mobile-test", "other-phone").is_err());
+        assert!(image_project(&inner, "missing", "phone").is_err());
+        inner.sessions.get_mut("mobile-test").unwrap().ready = false;
+        assert!(image_project(&inner, "mobile-test", "phone").is_err());
+        inner.sessions.get_mut("mobile-test").unwrap().ready = true;
+        inner.accepting = false;
+        assert!(image_project(&inner, "mobile-test", "phone").is_err());
+    }
+
+    #[test]
+    fn image_upload_rejects_invalid_encoding_formats_and_oversized_payloads() {
+        use base64::Engine;
+        let encode = |bytes| base64::engine::general_purpose::STANDARD.encode(bytes);
+        for bytes in [b"\x89PNG\r\n\x1a\n".as_slice(), b"\xff\xd8\xff"] {
+            assert_eq!(decode_image(&encode(bytes)).unwrap(), bytes);
+        }
+        assert!(decode_image("not base64!").is_err());
+        assert!(decode_image(&encode(b"<script>code</script>")).is_err());
+        assert!(decode_image(&"A".repeat(MAX_IMAGE.div_ceil(3) * 4 + 1)).is_err());
     }
 
     #[test]
@@ -1528,6 +1735,51 @@ mod tests {
             .contains("尝试过多"));
         hub.inner.lock().unwrap().total_attempts.clear();
         assert!(hub.pair(PEER, CODE, None, |_| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn latest_attach_skips_replay_and_subsequent_poll_only_returns_new_output() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.screen.resize(40, 4);
+        for index in 0..1000 {
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!("record {index}\r\n")),
+            ));
+        }
+        let attach = session.latest();
+        assert_eq!(attach["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(attach["next"], 1000);
+        assert_eq!(attach["more"], false);
+        assert_eq!(attach["snapshot"], true);
+        assert_eq!(attach["historyAvailable"], true);
+        let screen = attach["chunks"][0]["data"].as_str().unwrap();
+        assert!(screen.contains("record 999"));
+        assert!(!screen.contains("record 0"));
+        assert!(screen.len() < 1024);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode(b"live prompt"),
+        ));
+        let follow = session.read(1000);
+        assert_eq!(follow["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(follow["next"], 1001);
+        assert_eq!(follow["reset"], false);
+    }
+
+    #[test]
+    fn older_phone_poll_requests_keep_the_replay_contract() {
+        let operation: Operation =
+            serde_json::from_value(json!({"op":"poll", "id":"mobile-1", "from":0})).unwrap();
+        assert!(matches!(
+            operation,
+            Operation::Poll {
+                latest: false,
+                tail: false,
+                ..
+            }
+        ));
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(OutputChunk::Bytes("aGk=".into()));
+        assert_eq!(session.read(0)["chunks"], json!(["aGk="]));
     }
 
     #[test]

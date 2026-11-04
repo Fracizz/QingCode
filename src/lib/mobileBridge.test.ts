@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(action: string, command: string, args?: unknown) => Promise<unknown>>(async () => undefined),
   listProjects: vi.fn<() => Promise<Project[]>>(),
   currentProjects: [] as Project[],
+  upload: vi.fn(async () => "'/home/app/mobile.jpg'"),
   connect: vi.fn(async () => undefined),
 }))
 
@@ -17,6 +18,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
 vi.mock('../store/projectStore', () => ({
   useProjectStore: { getState: () => ({ projects: mocks.currentProjects }) },
 }))
+vi.mock('./sshTerminalPaste', () => ({ uploadLocalFilesForSshTerminal: mocks.upload }))
 vi.mock('./tauri', () => ({
   isTauri: () => true,
   isSshResource: (path: string) => path.startsWith('ssh://'),
@@ -44,10 +46,10 @@ const wsl: Project = {
 }
 const local: Project = { ...wsl, id: 'local', name: 'Local app', path: 'D:/app', kind: 'local' }
 
-async function request(project: string | null = null) {
+async function request(project: string | null = null, attachment?: string) {
   await listenForMobileRequests()
   const handler = mocks.listen.mock.lastCall![1]
-  await handler({ payload: { id: 'request', project } })
+  await handler({ payload: { id: 'request', project, attachment } })
   return mocks.invoke.mock.calls.filter(call => call[1] === 'mobile_bridge_reply').at(-1)?.[2]
 }
 
@@ -84,6 +86,8 @@ describe('mobile project bridge', () => {
     expect(await request()).toMatchObject({ data: [{ id: local.id }] })
     expect(await request(wsl.id)).toMatchObject({ error: expect.stringContaining('信任') })
     expect(mocks.connect).not.toHaveBeenCalled()
+    expect(await request(wsl.id, 'C:/tmp/mobile.jpg')).toMatchObject({ error: expect.stringContaining('信任') })
+    expect(mocks.upload).not.toHaveBeenCalled()
   })
 
   it('does not reopen a project removed in another window', async () => {
@@ -105,6 +109,8 @@ describe('mobile project bridge', () => {
     expect(await request(remote.id)).toMatchObject({
       data: { id: remote.id, kind: 'ssh', host: 'localhost', connectionName: 'WSL' },
     })
+    expect(await request(remote.id, 'C:/tmp/mobile.jpg')).toMatchObject({ data: { path: expect.stringContaining('/home/app/mobile.jpg') } })
+    expect(mocks.upload).toHaveBeenCalledWith(remote.path, ['C:/tmp/mobile.jpg'])
   })
 
   it('sends the connection name and address for other remote projects', async () => {

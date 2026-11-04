@@ -1,5 +1,6 @@
 import {
   DEFAULT_PORT,
+  launchCommand,
   applyModifiers,
   avatarFor,
   consumeModifier,
@@ -17,6 +18,10 @@ import {
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { attachTerminalTouchScroll } from './terminalTouch.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
+import { composerInput, isSlashDraft } from './composer.js';
+import { attachTerminalHistory } from './terminalHistory.js';
+import { attachTerminalSelection } from './terminalSelection.js';
+import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -27,6 +32,10 @@ const requests = new Map();
 const health = new Map();
 const drafts = new Map();
 const prefix = 'qingcode:mobile:';
+const landscape = window.matchMedia('(orientation: landscape) and (min-width: 600px)');
+let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
+let fullscreen = false;
+let fullscreenEpoch = 0;
 let requestId = 0;
 let profiles = [];
 let profile = null;
@@ -35,13 +44,14 @@ let projects = [];
 let loaded = false;
 let profileEpoch = 0;
 let page = 'home';
-let kind = 'all';
 let sessions = [];
 let selected = null;
 let viewEpoch = 0;
 let term;
 let fit;
 let disposeTouchScroll;
+let terminalHistory;
+let terminalSelection;
 let terminalReady = false;
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
 const modifiers = { ctrl: 'off', alt: 'off' };
@@ -61,6 +71,35 @@ let scanTimer = null;
 let scanEpoch = 0;
 const savedFontSize = Number(localStorage.getItem(prefix + 'font-size'));
 let terminalFontSize = Number.isInteger(savedFontSize) && savedFontSize >= 11 && savedFontSize <= 20 ? savedFontSize : 13;
+const connectionLatency = createConnectionLatency({
+  measure: address => rpc('latency', { profile: address }),
+  onChange: renderLatency,
+});
+window.qingVisibility = visible => connectionLatency.setForeground(visible === true);
+
+function syncLatency() {
+  connectionLatency.setTarget(profile && hostState(profile) === 'online' ? profile : null,
+    terminalScreen.hidden ? HOME_LATENCY_INTERVAL : TERMINAL_LATENCY_INTERVAL);
+  renderLatency();
+}
+
+function renderLatency() {
+  const snapshot = connectionLatency.getSnapshot();
+  const value = latencyText(snapshot);
+  get('terminal-latency').textContent = '电脑 ' + value;
+  get('terminal-latency').setAttribute('aria-label', '手机到电脑往返延迟 ' + value);
+  get('home-latency').textContent = profile && hostState(profile) === 'online' ? ' · 电脑 ' + value : '';
+  if (!editing || editing.id !== profile?.id) {
+    get('host-latency').textContent = '延迟仅检测当前连接的电脑。';
+    return;
+  }
+  const state = {
+    idle: '尚未测量。', failed: '本次检测未获得结果。', stale: '结果已过期，等待更新。',
+    unsupported: '当前电脑端不支持延迟检测，请更新电脑端 QingCode。', ready: '',
+  }[snapshot.state];
+  const time = snapshot.checkedAt === null ? '' : '最近测量 ' + new Date(snapshot.checkedAt).toLocaleTimeString('zh-CN', { hour12: false }) + '。';
+  get('host-latency').textContent = '手机到电脑往返延迟：' + value + '。' + time + state + '不包含电脑到远端及终端程序处理耗时。';
+}
 
 function rpc(op, args = {}) {
   return new Promise((resolve, reject) => {
@@ -107,6 +146,7 @@ function showPage(next) {
     if (button.dataset.page === next) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
+  syncLatency();
 }
 
 function returnToDashboard(next = page) {
@@ -116,13 +156,19 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'session-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'session-dialog', 'new-session-dialog', 'image-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
     return true;
   }
   if (!terminalScreen.hidden) {
+    if (terminalSelection?.close()) return true;
+    if (terminalHistory?.close()) return true;
+    if (fullscreen) {
+      void setTerminalFullscreen(false);
+      return true;
+    }
     returnToDashboard();
     return true;
   }
@@ -250,6 +296,7 @@ function renderConnections() {
   const state = hostState(profile);
   get('active-host').dataset.state = state === 'expired' ? 'offline' : state;
   get('active-host').setAttribute('aria-label', profile ? '切换连接，当前为 ' + profile.name : '管理连接');
+  syncLatency();
 }
 
 function sessionKey(projectId) {
@@ -315,7 +362,7 @@ function projectRow(item) {
 
 function renderProjects() {
   const query = get('search').value.trim().toLowerCase();
-  const matching = projects.filter(item => matchesProject(item, kind, query));
+  const matching = projects.filter(item => matchesProject(item, query));
   const list = get('project-list');
   list.replaceChildren(...matching.map(projectRow));
   const checking = hostState(profile) === 'checking';
@@ -326,18 +373,16 @@ function renderProjects() {
   get('project-filters').hidden = !profile;
   get('project-subtitle').textContent = profile ? profile.name + ' · 已信任项目' : '请先在「连接」中配对电脑。';
   get('list-label').textContent = matching.length ? matching.length + ' 个项目'
-    : loaded ? (query ? '没有匹配的项目' : kind === 'wsl'
-      ? '本机 WSL 没有已信任的项目；通过远端连接访问的 WSL 项目请在「远端」中查看。'
-      : '当前环境没有已信任的项目')
+    : loaded ? (query ? '没有匹配的项目' : '没有已信任的项目')
       : hostState(profile) === 'checking' ? '正在读取项目…' : '';
   const empty = !matching.length && !checking;
   get('project-empty').hidden = !empty;
-  const filtered = !!query || kind !== 'all';
+  const filtered = !!query;
   get('project-empty-title').textContent = !profile ? '先连接一台电脑' : filtered ? '没有匹配的项目' : '暂无可用项目';
   get('project-empty-text').textContent = !profile ? '配对后即可查看电脑上的已信任项目。'
-    : filtered ? '试试其他关键词，或清除筛选查看全部项目。'
+    : filtered ? '试试其他关键词，或清除搜索查看全部项目。'
     : loaded ? '在电脑端添加并信任项目，再回到这里刷新。' : '检查电脑连接后重新读取项目。';
-  get('project-empty-action').textContent = !profile ? '前往连接' : filtered ? '清除筛选' : '重新读取';
+  get('project-empty-action').textContent = !profile ? '前往连接' : filtered ? '清除搜索' : '重新读取';
 }
 
 function updateHost(state) {
@@ -378,7 +423,7 @@ async function activate(item, next = 'home') {
     }
     projects = [];
     loaded = false;
-    setKind('all');
+    get('search').value = '';
   }
   profile = item;
   localStorage.setItem(prefix + 'active', item.id);
@@ -536,6 +581,7 @@ get('pair-form').addEventListener('submit', async event => {
       throw new Error('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。');
     }
     const paired = await rpc('pair', { name, host, port, code, fingerprint });
+    connectionLatency.invalidate(paired.id);
     field.value = '';
     putProfile(paired);
     get('pair-dialog').close();
@@ -554,6 +600,7 @@ function openHost(item) {
   get('host-name').value = item.name;
   get('host-port').value = item.port;
   message('host-error', '');
+  renderLatency();
   get('host-dialog').showModal();
 }
 
@@ -646,14 +693,6 @@ function moveProfile(from, to) {
   }
 }
 
-function setKind(next) {
-  kind = next;
-  for (const item of get('hosts').querySelectorAll('button')) {
-    item.setAttribute('aria-pressed', String(item.dataset.kind === next));
-  }
-  get('search').value = '';
-}
-
 get('active-host').addEventListener('click', () => showPage('connection'));
 get('add-host').addEventListener('click', () => openPair());
 get('refresh').addEventListener('click', () => { void refreshProjects(); });
@@ -664,8 +703,8 @@ get('home-all-projects').addEventListener('click', () => showPage('project'));
 get('home-reconnect').addEventListener('click', () => { void refreshProjects(); });
 get('project-empty-action').addEventListener('click', () => {
   if (!profile) showPage('connection');
-  else if (get('search').value.trim() || kind !== 'all') {
-    setKind('all');
+  else if (get('search').value.trim()) {
+    get('search').value = '';
     renderProjects();
   } else void refreshProjects();
 });
@@ -681,13 +720,6 @@ get('home-action').addEventListener('click', () => {
 for (const item of get('dashboard-nav').querySelectorAll('button')) {
   item.addEventListener('click', () => showPage(item.dataset.page));
 }
-for (const item of get('hosts').querySelectorAll('button')) {
-  item.addEventListener('click', () => {
-    setKind(item.dataset.kind);
-    renderProjects();
-  });
-}
-
 function setModifier(name, state) {
   modifiers[name] = state;
   const key = get('special-keys').querySelector('[data-key="' + name + '"]');
@@ -710,9 +742,10 @@ function setRawKeyboard(enabled) {
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
   get('keyboard').setAttribute('aria-pressed', String(enabled));
   get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
-  get('input-hint').textContent = enabled ? '实时输入 · 按键直接发送到终端' : '命令栏可编辑中文 · 空白发送为回车';
+  get('input-hint').textContent = enabled ? '实时输入 · ↑↓ 选择候选 · Tab 补全 · 回车确认' : '命令栏可编辑中文 · 斜杠命令先查看候选，再回车确认';
   compose.placeholder = enabled ? '实时输入中 · 按键直接发送' : '输入命令，空白发送回车';
   get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
+  updateComposerActions();
 }
 
 function focusRawKeyboard() {
@@ -730,11 +763,82 @@ function draftKey(id) {
 function resizeComposer() {
   compose.style.height = '44px';
   compose.style.height = Math.min(compose.scrollHeight, 98) + 'px';
-  get('send').setAttribute('aria-label', compose.value ? '发送并回车' : '发送回车');
-  get('send').querySelector('use').setAttribute('href', compose.value ? '#i-send' : '#i-return');
+  updateComposerActions();
 }
 
+function updateComposerActions() {
+  const slash = isSlashDraft(compose.value);
+  const raw = get('keyboard').getAttribute('aria-pressed') === 'true';
+  get('send').setAttribute('aria-label', slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : raw ? '确认终端中的选择或命令' : '发送回车');
+  get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : compose.value ? '#i-send' : '#i-return');
+  get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
+  for (const id of ['slash-command', 'complete-input']) {
+    get(id).disabled = !terminalReady || composing || /[\r\n]/.test(compose.value);
+  }
+}
+
+function dispatchComposer(action) {
+  if (composing || !terminalReady) return;
+  const plan = composerInput(compose.value, action, term?.modes.bracketedPasteMode);
+  if (!plan || !sendInput(plan.data, { raw: plan.interactive })) return;
+  compose.value = '';
+  if (selected) drafts.delete(draftKey(selected));
+  if (plan.interactive) {
+    clearModifiers();
+    focusRawKeyboard();
+    term?.scrollToBottom();
+  }
+  resizeComposer();
+}
+
+function renderShortcutVisibility() {
+  const collapsed = keysPreference === null ? landscape.matches : keysPreference === 'true';
+  get('special-keys').hidden = collapsed;
+  get('completion-tools').hidden = collapsed;
+  get('toggle-keys').setAttribute('aria-expanded', String(!collapsed));
+  get('toggle-keys').querySelector('span').textContent = collapsed ? '展开按键' : '收起按键';
+  terminalScreen.dataset.keysCollapsed = String(collapsed);
+  if (collapsed) clearModifiers();
+}
+
+function renderFullscreen(enabled) {
+  fullscreen = enabled;
+  terminalScreen.dataset.fullscreen = String(enabled);
+  get('toggle-fullscreen').setAttribute('aria-pressed', String(enabled));
+  get('toggle-fullscreen').setAttribute('aria-label', enabled ? '退出全屏' : '进入全屏');
+  get('toggle-fullscreen').querySelector('use').setAttribute('href', enabled ? '#i-shrink' : '#i-expand');
+}
+
+async function setTerminalFullscreen(enabled) {
+  if (fullscreen === enabled) return;
+  const previous = fullscreen;
+  const epoch = ++fullscreenEpoch;
+  renderFullscreen(enabled);
+  try {
+    const actual = await rpc('fullscreen', { enabled });
+    if (epoch === fullscreenEpoch) renderFullscreen(actual === true);
+  } catch (error) {
+    if (epoch !== fullscreenEpoch) return;
+    renderFullscreen(!terminalScreen.hidden && previous);
+    get('terminal-status').textContent = error.message;
+  }
+}
+
+landscape.addEventListener('change', renderShortcutVisibility);
+get('toggle-keys').addEventListener('click', () => {
+  keysPreference = String(get('toggle-keys').getAttribute('aria-expanded') === 'true');
+  localStorage.setItem(prefix + 'keys-collapsed', keysPreference);
+  renderShortcutVisibility();
+});
+get('toggle-fullscreen').addEventListener('click', () => { void setTerminalFullscreen(!fullscreen); });
+renderShortcutVisibility();
+
 function leaveTerminal() {
+  void setTerminalFullscreen(false);
+  terminalSelection?.dispose();
+  terminalSelection = undefined;
+  terminalHistory?.dispose();
+  terminalHistory = undefined;
   terminalReady = false;
   if (inputTimer !== null) {
     clearTimeout(inputTimer);
@@ -792,9 +896,30 @@ function makeTerminal() {
   fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(get('viewport'));
-  disposeTouchScroll = attachTerminalTouchScroll(term.element);
+  const historyEpoch = viewEpoch;
+  const historySession = selected;
+  terminalHistory = attachTerminalHistory({
+    term, get,
+    onClose: () => disposeTouchScroll?.cancel?.(),
+    loadPage: async before => {
+      const data = await remote('history', { id: historySession, before });
+      if (historyEpoch !== viewEpoch) throw new Error('会话已切换');
+      return data;
+    },
+  });
+  terminalSelection = attachTerminalSelection({
+    term, container: get('viewport').parentElement,
+    copyText: text => rpc('copy', { text }),
+    onStart: () => disposeTouchScroll?.cancel?.(),
+  });
+  disposeTouchScroll = attachTerminalTouchScroll(term.element, {
+    onLongPress: point => terminalSelection?.start(point),
+    canInertia: () => terminalHistory?.isOpen() || (term?.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none'),
+  });
   setRawKeyboard(false);
   term.textarea.addEventListener('blur', () => setRawKeyboard(false));
+  term.textarea.addEventListener('compositionstart', () => { composing = true; updateComposerActions(); });
+  term.textarea.addEventListener('compositionend', () => { composing = false; updateComposerActions(); });
   fit.fit();
   updateTerminalSize();
   term.onData(data => { sendInput(data); });
@@ -804,6 +929,7 @@ function makeTerminal() {
     resizing = setTimeout(sendSize, 120);
   });
   term.onScroll(() => {
+    if (terminalHistory?.isOpen()) return;
     const buffer = term.buffer.active;
     get('scroll-bottom').hidden = buffer.viewportY >= buffer.baseY;
   });
@@ -831,7 +957,7 @@ for (const [id, delta] of [['font-smaller', -1], ['font-larger', 1]]) {
   });
 }
 renderFontSize();
-get('scroll-bottom').addEventListener('click', () => { term?.scrollToBottom(); });
+get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });
 
 new ResizeObserver(() => {
   if (term && !terminalScreen.hidden) fit.fit();
@@ -853,9 +979,11 @@ function terminalState(text, state = 'idle', retry = false) {
   get('terminal-status').textContent = text;
   get('terminal-dot').dataset.state = state;
   get('terminal-retry').hidden = !retry;
-  for (const control of document.querySelectorAll('#special-keys button, #keyboard, #send')) {
+  for (const control of document.querySelectorAll('#special-keys button, #keyboard, #send, #attach-image')) {
     control.disabled = !terminalReady;
   }
+  updateComposerActions();
+  syncLatency();
 }
 
 function handleTerminalError(error, retry = true) {
@@ -927,11 +1055,20 @@ function renderSessions() {
   tabs.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-async function createSession(epoch) {
+async function createSession(epoch, launch = 'shell') {
   const session = await remote('create', { project: project.id, ...dimensions() });
   if (epoch !== viewEpoch) return;
   sessions.push(session);
   selectSession(session);
+  if (launch !== 'shell') {
+    // Send exactly once to the newly created session. Never use a current tab's id
+    // after an await, and never retry a launch whose delivery is uncertain.
+    try {
+      await remote('input', { id: session.id, data: launchCommand(launch) });
+    } catch (error) {
+      if (selected === session.id) get('terminal-status').textContent = '启动结果未知，请检查终端输出。' + error.message;
+    }
+  }
 }
 
 function selectSession(session) {
@@ -953,6 +1090,7 @@ function selectSession(session) {
 
 async function poll(session, epoch) {
   let next = 0;
+  let latest = true;
   let backoff = 350;
   while (epoch === viewEpoch) {
     if (document.hidden) {
@@ -960,8 +1098,10 @@ async function poll(session, epoch) {
       continue;
     }
     try {
-      const data = await remote('poll', { id: session.id, from: next });
+      const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
+      latest = false;
+      terminalHistory?.update(data.historyBefore, data.historyAvailable);
       next = data.next;
       if (data.reset) {
         term.reset();
@@ -1013,6 +1153,7 @@ async function poll(session, epoch) {
         return;
       }
       terminalState('连接中断，正在接回会话…', 'offline');
+      latest = true;
       if (hostState(profile) !== 'offline') updateHost('offline');
       await new Promise(resolve => setTimeout(resolve, backoff));
       backoff = Math.min(backoff * 2, 3000);
@@ -1063,7 +1204,8 @@ function sendInput(value, { raw = false } = {}) {
 get('back').addEventListener('click', () => returnToDashboard());
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
-get('new-session').addEventListener('click', async () => {
+get('new-session').addEventListener('click', () => { if (!busy) get('new-session-dialog').showModal(); });
+async function newSession(launch) {
   if (busy) return;
   busy = true;
   const epoch = viewEpoch;
@@ -1075,7 +1217,8 @@ get('new-session').addEventListener('click', async () => {
     if (epoch !== viewEpoch) return;
     sessions = list;
     renderSessions();
-    await createSession(epoch);
+    get('new-session-dialog').close();
+    await createSession(epoch, launch);
   } catch (error) {
     if (epoch === viewEpoch) {
       if (wasReady && !error.revoked) get('terminal-status').textContent = error.message;
@@ -1084,7 +1227,7 @@ get('new-session').addEventListener('click', async () => {
   } finally {
     busy = false;
   }
-});
+}
 get('end-session').addEventListener('click', async () => {
   if (busy || !selected) return;
   const id = selected;
@@ -1125,6 +1268,7 @@ for (const keyButton of get('special-keys').querySelectorAll('[data-key]')) {
 }
 
 function pressKey(keyButton) {
+  if (composing) return;
   const key = keyButton.dataset.key;
   if (key === 'ctrl' || key === 'alt') {
     const previous = modifiers[key];
@@ -1138,8 +1282,22 @@ function pressKey(keyButton) {
     consumeModifiers();
     sendInput('\x03', { raw: true });
   } else if (key === 'text') {
+    if (modifiers.ctrl === 'off' && modifiers.alt === 'off'
+      && get('keyboard').getAttribute('aria-pressed') !== 'true') {
+      if (keyButton.dataset.text === '/' && !compose.value) {
+        dispatchComposer('slash');
+        return;
+      }
+      if (document.activeElement === compose) {
+        compose.setRangeText(keyButton.dataset.text, compose.selectionStart, compose.selectionEnd, 'end');
+        resizeComposer();
+        return;
+      }
+    }
     // Symbols that soft keyboards hide behind extra layers; pending Ctrl/Alt still apply.
     sendInput(keyButton.dataset.text);
+  } else if (key === 'tab' && modifiers.ctrl === 'off' && modifiers.alt === 'off') {
+    dispatchComposer('complete');
   } else {
     // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
     sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
@@ -1155,35 +1313,19 @@ get('keyboard').addEventListener('click', () => {
     compose.focus();
   } else focusRawKeyboard();
 });
-for (const id of ['paste', 'send']) {
+for (const id of ['send', 'slash-command', 'complete-input', 'toggle-keys', 'toggle-fullscreen']) {
   get(id).addEventListener('pointerdown', event => {
-    if (document.activeElement === compose && !composing) event.preventDefault();
+    if ((document.activeElement === compose || document.activeElement === term?.textarea) && !composing) event.preventDefault();
   });
 }
-get('paste').addEventListener('click', async () => {
-  const epoch = viewEpoch;
-  try {
-    const value = await rpc('clipboard');
-    if (epoch !== viewEpoch || !value) return;
-    compose.setRangeText(value, compose.selectionStart, compose.selectionEnd, 'end');
-    resizeComposer();
-  } catch (error) {
-    if (epoch === viewEpoch) get('terminal-status').textContent = error.message;
-  }
-});
+get('slash-command').addEventListener('click', () => dispatchComposer('slash'));
+get('complete-input').addEventListener('click', () => dispatchComposer('complete'));
 compose.addEventListener('input', resizeComposer);
-compose.addEventListener('compositionstart', () => { composing = true; });
-compose.addEventListener('compositionend', () => { composing = false; });
+compose.addEventListener('compositionstart', () => { composing = true; updateComposerActions(); });
+compose.addEventListener('compositionend', () => { composing = false; updateComposerActions(); });
 get('compose-form').addEventListener('submit', event => {
   event.preventDefault();
-  if (composing) return;
-  const value = compose.value.replace(/\r?\n/g, '\r');
-  const payload = value.includes('\r') && term?.modes.bracketedPasteMode
-    ? '\x1b[200~' + value + '\x1b[201~' : value;
-  if (sendInput(payload + '\r')) {
-    compose.value = '';
-    resizeComposer();
-  }
+  dispatchComposer('submit');
 });
 
 // 首页与项目页下拉刷新：重新读取项目，离线时等同重连。
@@ -1235,3 +1377,50 @@ async function initialize() {
 }
 
 void initialize();
+
+for (const button of document.querySelectorAll('[data-launch]')) {
+  button.addEventListener('click', () => { void newSession(button.dataset.launch); });
+}
+const compression = get('image-compression');
+const savedCompression = localStorage.getItem(prefix + 'image-compression');
+if (['original', 'low', 'medium', 'high'].includes(savedCompression)) compression.value = savedCompression;
+compression.addEventListener('change', () => localStorage.setItem(prefix + 'image-compression', compression.value));
+get('attach-image').addEventListener('click', () => {
+  message('image-error', '');
+  get('image-dialog').showModal();
+});
+let sendingImage = false;
+let imageEpoch = 0;
+get('image-dialog').addEventListener('close', () => { imageEpoch += 1; });
+get('choose-image').addEventListener('click', async () => {
+  if (sendingImage || !terminalReady || !selected) return;
+  const id = selected;
+  const epoch = viewEpoch;
+  const address = profile.id;
+  const attempt = ++imageEpoch;
+  sendingImage = true;
+  get('choose-image').disabled = true;
+  message('image-error', '');
+  try {
+    const image = await rpc('pick_image', { compression: compression.value });
+    if (!image || epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
+    get('choose-image').textContent = '正在上传…';
+    const result = await remote('image', { id, data: image.data }, address);
+    if (epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
+    compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
+    drafts.set(draftKey(id), compose.value);
+    resizeComposer();
+    get('image-dialog').close();
+    get('terminal-status').textContent = '图片已就绪，可补充说明后发送';
+    compose.focus();
+  } catch (error) {
+    if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
+      if (error.revoked) handleTerminalError(error);
+      else message('image-error', error.message);
+    }
+  } finally {
+    sendingImage = false;
+    get('choose-image').disabled = false;
+    get('choose-image').textContent = '选择图片';
+  }
+});

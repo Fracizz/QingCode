@@ -52,7 +52,7 @@ import HelpDialog from './HelpDialog'
 import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import ContextMenu from './ContextMenu'
-import { matchesSettingsCategory, matchesSettingsTerms } from '../lib/settingsSearch'
+import { SETTINGS_CATEGORIES, matchesSettingsCategory, matchesSettingsTerms } from '../lib/settingsSearch'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
@@ -153,17 +153,6 @@ type SettingsScope = 'user' | 'workspace'
 /** Survives Strict Mode remounts so a stale deep-link is not reapplied. */
 let appliedSettingsFocusSignal = 0
 
-const CATEGORIES: { id: CategoryId; label: string }[] = [
-  { id: 'common', label: '常用设置' },
-  { id: 'editor', label: '文本编辑器' },
-  { id: 'terminal', label: '终端' },
-  { id: 'ai', label: 'AI' },
-  { id: 'features', label: '功能' },
-  { id: 'language', label: '语言' },
-  { id: 'json', label: '打开设置 JSON' },
-  { id: 'about', label: '关于' },
-]
-
 /** Dual-remote git sources shown in 设置 → 关于. Mirrors AGENTS.md. */
 const ABOUT_REMOTES: { id: string; label: string; cloneUrl: string; pageUrl: string }[] = [
   {
@@ -205,7 +194,7 @@ export default function SettingsEditor() {
 
   const [scope, setScope] = useState<SettingsScope>('user')
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState<CategoryId>('common')
+  const [category, setCategory] = useState<CategoryId>('appearance')
   const [helpOpen, setHelpOpen] = useState(false)
   const [theme, setThemeState] = useState<AppTheme>(loadTheme)
   const [fonts, setFonts] = useState<FontSettings>(loadFontSettings)
@@ -250,6 +239,8 @@ export default function SettingsEditor() {
   const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const terminalProfilesRef = useRef<HTMLDivElement>(null)
+  const categoryNavRef = useRef<HTMLElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
   const onSectionRef = useCallback((id: CategoryId, node: HTMLElement | null) => {
     sectionRefs.current[id] = node
@@ -362,12 +353,31 @@ export default function SettingsEditor() {
 
   const workspaceLocked = scope === 'workspace'
   const q = query.trim().toLowerCase()
+  const isWindows = /Windows/i.test(navigator.userAgent)
 
   const match = useCallback(
-    (...texts: string[]) => matchesSettingsTerms(q, texts, workspaceLocked, t),
-    [q, workspaceLocked, t],
+    (...texts: string[]) => matchesSettingsTerms(q, texts, workspaceLocked, t, isWindows),
+    [q, workspaceLocked, t, isWindows],
   )
-  const categoryMatches = (id: CategoryId) => matchesSettingsCategory(id, q, workspaceLocked, t)
+  const availableCategories = SETTINGS_CATEGORIES.filter(cat =>
+    matchesSettingsCategory(cat.id, '', workspaceLocked, t, isWindows),
+  )
+  const activeCategory = availableCategories.some(cat => cat.id === category)
+    ? category : availableCategories[0]?.id
+  const categoryMatches = (id: CategoryId) =>
+    matchesSettingsCategory(id, q, workspaceLocked, t, isWindows) ||
+    (id === 'shortcuts' && !workspaceLocked && Boolean(q) && Object.values(shortcuts).some(value => value.toLowerCase().includes(q)))
+  const sectionVisible = (id: CategoryId) =>
+    categoryMatches(id) && (Boolean(q) || activeCategory === id)
+
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0
+  }, [activeCategory, q, scope])
+
+  useEffect(() => {
+    categoryNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeCategory, q, language, fonts.interfaceFontSize])
 
   const updateTheme = (value: AppTheme) => {
     setThemeState(value)
@@ -465,9 +475,9 @@ export default function SettingsEditor() {
     }
   }
 
-  const scrollTo = (id: CategoryId) => {
+  const selectCategory = (id: CategoryId) => {
+    setQuery('')
     setCategory(id)
-    sectionRefs.current[id]?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
   }
 
   const openSettingsJson = async (writeDefaults = false) => {
@@ -601,7 +611,7 @@ export default function SettingsEditor() {
     }
   }
 
-  const visibleCategories = CATEGORIES.filter(cat => categoryMatches(cat.id))
+  const visibleCategories = SETTINGS_CATEGORIES.filter(cat => categoryMatches(cat.id))
 
   return (
     <div className="settings-shell ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
@@ -688,21 +698,16 @@ export default function SettingsEditor() {
       </div>
 
       <div className="settings-body flex flex-1 min-h-0">
-        {/* TOC */}
-        <nav className="settings-nav w-[200px] flex-shrink-0 border-r border-border overflow-auto py-2 bg-bg">
+        {/* Categories */}
+        <nav ref={categoryNavRef} aria-label={t('设置分类')} className="settings-nav w-[200px] flex-shrink-0 border-r border-border overflow-auto py-2 bg-bg">
           {visibleCategories.map(cat => (
             <button
               key={cat.id}
               type="button"
-              onClick={() => {
-                if (cat.id === 'json') {
-                  void openSettingsJson(false)
-                  return
-                }
-                scrollTo(cat.id)
-              }}
-              className={`block w-full border-l-2 px-4 py-1.5 text-left text-ui truncate transition-colors ${
-                category === cat.id
+              onClick={() => selectCategory(cat.id)}
+              aria-current={!q && activeCategory === cat.id ? 'page' : undefined}
+              className={`block w-full border-l-2 px-4 py-1.5 text-left text-ui break-words whitespace-normal transition-colors ${
+                !q && activeCategory === cat.id
                   ? 'border-brand bg-bg-active text-fg'
                   : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
               }`}
@@ -713,20 +718,15 @@ export default function SettingsEditor() {
         </nav>
 
         {/* Content */}
-        <div className="settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
+        <div ref={contentRef} className="settings-content settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
             {visibleCategories.length === 0 && <div role="status" className="py-8 text-ui text-fg-muted">
               <p>{t('没有匹配的设置：{query}', { query })}</p>
               <button type="button" className="mt-3 rounded px-2 py-1 text-accent hover:bg-bg-hover" onClick={() => { setQuery(''); searchRef.current?.focus() }}>{t('清除搜索')}</button>
             </div>}
 
-            {categoryMatches('common') && (
-              <Section
-                id="common"
-                title={t('常用设置')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
+            {sectionVisible('appearance') && (
+              <Section id="appearance" title={t('外观与语言')} onSectionRef={onSectionRef}>
                 {match('颜色主题', '外观', '深色', '浅色') && (
                   <SettingItem
                     title={t('颜色主题')}
@@ -747,7 +747,7 @@ export default function SettingsEditor() {
                     />
                   </SettingItem>
                 )}
-                {match('界面字号', '字体') && (
+                {match('界面字号') && (
                   <SettingItem
                     title={t('界面字号')}
                     description={t('控制菜单、标题栏、侧栏、标签和状态栏的字号（像素）。')}
@@ -767,25 +767,110 @@ export default function SettingsEditor() {
                     />
                   </SettingItem>
                 )}
+                {match('界面字体') && (
+                  <SettingItem
+                    title={t('界面字体')}
+                    description={t('用于菜单、标题栏、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
+                    modified={fonts.interfaceFont !== DEFAULT_FONT_SETTINGS.interfaceFont}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <FontFamilySelect
+                      value={fonts.interfaceFont}
+                      presets={INTERFACE_FONT_OPTIONS}
+                      kind="sans"
+                      disabled={workspaceLocked}
+                      aria-label={t('界面字体')}
+                      onChange={value => updateFonts('interfaceFont', value)}
+                    />
+                  </SettingItem>
+                )}
+                {match('显示语言', '语言') && (
+                  <SettingItem
+                    title={t('显示语言')}
+                    description={t(
+                      '选择界面显示语言。更改后立即生效。也可从用户语言包目录加载自定义 JSON。',
+                    )}
+                    modified={language !== 'zh-CN'}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <select
+                      value={language}
+                      disabled={workspaceLocked}
+                      onChange={e => setLanguage(e.target.value)}
+                      className="setting-control setting-control-wide setting-select"
+                    >
+                      {localeOptions.map(option => (
+                        <option key={option.locale} value={option.locale}>
+                          {option.builtin ? t(option.label) : option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </SettingItem>
+                )}
+                {match('自定义语言包', '语言包') && (
+                  <SettingItem
+                    title={t('自定义语言包')}
+                    description={t(
+                      '将 JSON 语言包放入应用数据目录的 locales 文件夹（可参考其中的 _example.json）。修改后点击刷新即可出现在上方列表。',
+                    )}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={workspaceLocked || !isTauri()}
+                        className="setting-control px-2.5 py-1 text-ui-sm"
+                        onClick={() => {
+                          void (async () => {
+                            try {
+                              const result = await reloadUserLocales()
+                              pushToast(
+                                'info',
+                                t('已刷新语言包（{count} 个用户包）', {
+                                  count: result.loaded,
+                                }),
+                              )
+                            } catch (error) {
+                              pushToast('error', error instanceof Error ? error.message : String(error))
+                            }
+                          })()
+                        }}
+                      >
+                        {t('刷新语言包')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={workspaceLocked || !isTauri()}
+                        className="setting-control px-2.5 py-1 text-ui-sm"
+                        onClick={() => {
+                          void (async () => {
+                            try {
+                              const dir = await safeInvoke<string>('读取语言包目录', 'user_locales_dir')
+                              await revealItemInDir(dir)
+                            } catch (error) {
+                              pushToast('error', error instanceof Error ? error.message : String(error))
+                            }
+                          })()
+                        }}
+                      >
+                        {t('打开语言包目录')}
+                      </button>
+                    </div>
+                  </SettingItem>
+                )}
               </Section>
             )}
 
-            {categoryMatches('editor') && (
-              <Section
-                id="editor"
-                title={t('文本编辑器')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
+            {sectionVisible('editor') && (
+              <Section id="editor" title={t('编辑器与文件')} onSectionRef={onSectionRef}>
                 {match('参考线', '缩进线', '括号线', 'editor.guides.enabled') && (
                   <SettingItem
                     title={t('编辑器: 参考线')}
-                    description={t(
-                      '控制普通缩进线、活动高亮线和括号参考线。关闭后这些线全部隐藏。',
-                    )}
-                    modified={
-                      editorGuidesEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled']
-                    }
+                    description={t('控制普通缩进线、活动高亮线和括号参考线。关闭后这些线全部隐藏。')}
+                    modified={editorGuidesEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled']}
                     locked={scope === 'workspace' && !currentProject}
                     lockHint={t('请先选择项目，再配置工作区编辑器参考线。')}
                   >
@@ -804,9 +889,7 @@ export default function SettingsEditor() {
                 {match('小地图', 'minimap', 'editor.minimap.enabled') && (
                   <SettingItem
                     title={t('编辑器: 小地图')}
-                    description={t(
-                      '在编辑区右侧显示代码缩略图，便于快速跳转。大于 5MB 的文件会自动隐藏。',
-                    )}
+                    description={t('在编辑区右侧显示代码缩略图，便于快速跳转。大于 5MB 的文件会自动隐藏。')}
                     modified={minimapEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.minimap.enabled']}
                     locked={scope === 'workspace' && !currentProject}
                     lockHint={t('请先选择项目，再配置工作区小地图。')}
@@ -859,9 +942,7 @@ export default function SettingsEditor() {
                         <select
                           value={autoSaveDelay}
                           disabled={scope === 'workspace' && !currentProject}
-                          onChange={e =>
-                            void updateAutoSave(autoSaveMode, Number(e.target.value))
-                          }
+                          onChange={e => void updateAutoSave(autoSaveMode, Number(e.target.value))}
                           className="setting-control setting-select"
                         >
                           {AUTO_SAVE_DELAY_OPTIONS.map(delay => (
@@ -874,264 +955,196 @@ export default function SettingsEditor() {
                     )}
                   </>
                 )}
-                {match('界面字体', '代码字体', '编辑器字号') && (
-                <>
-                <SettingItem
-                  title={t('界面字体')}
-                  description={t('用于菜单、标题栏、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
-                  modified={fonts.interfaceFont !== DEFAULT_FONT_SETTINGS.interfaceFont}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <FontFamilySelect
-                    value={fonts.interfaceFont}
-                    presets={INTERFACE_FONT_OPTIONS}
-                    kind="sans"
-                    disabled={workspaceLocked}
-                    aria-label={t('界面字体')}
-                    onChange={value => updateFonts('interfaceFont', value)}
-                  />
-                </SettingItem>
-                <SettingItem
-                  title={t('编辑器: 字体族')}
-                  description={t('控制编辑器字体族。可选择本机已安装字体。')}
-                  modified={fonts.monoFont !== DEFAULT_FONT_SETTINGS.monoFont}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <FontFamilySelect
-                    value={fonts.monoFont}
-                    presets={MONO_FONT_OPTIONS}
-                    kind="mono"
-                    disabled={workspaceLocked}
-                    aria-label={t('编辑器: 字体族')}
-                    onChange={value => updateFonts('monoFont', value)}
-                  />
-                </SettingItem>
-                <SettingItem
-                  title={t('编辑器: 字号')}
-                  description={t('控制编辑器中的字号（像素），对应用户设置 editor.fontSize。')}
-                  modified={fonts.editorFontSize !== DEFAULT_FONT_SETTINGS.editorFontSize}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <select
-                    value={fonts.editorFontSize}
-                    disabled={workspaceLocked}
-                    onChange={e => updateFonts('editorFontSize', Number(e.target.value))}
-                    className="setting-control setting-select"
+                {!workspaceLocked && match('代码字体', '编辑器字号') && (
+                  <>
+                    <SettingItem
+                      title={t('编辑器: 字体族')}
+                      description={t('控制编辑器字体族。可选择本机已安装字体。')}
+                      modified={fonts.monoFont !== DEFAULT_FONT_SETTINGS.monoFont}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <FontFamilySelect
+                        value={fonts.monoFont}
+                        presets={MONO_FONT_OPTIONS}
+                        kind="mono"
+                        disabled={workspaceLocked}
+                        aria-label={t('编辑器: 字体族')}
+                        onChange={value => updateFonts('monoFont', value)}
+                      />
+                    </SettingItem>
+                    <SettingItem
+                      title={t('编辑器: 字号')}
+                      description={t('控制编辑器中的字号（像素），对应用户设置 editor.fontSize。')}
+                      modified={fonts.editorFontSize !== DEFAULT_FONT_SETTINGS.editorFontSize}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <select
+                        value={fonts.editorFontSize}
+                        disabled={workspaceLocked}
+                        onChange={e => updateFonts('editorFontSize', Number(e.target.value))}
+                        className="setting-control setting-select"
+                      >
+                        {FONT_SIZE_OPTIONS.map(size => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
+                    </SettingItem>
+                  </>
+                )}
+                {match(
+                  '打开设置 JSON',
+                  'JSON5',
+                  'files.exclude',
+                  'search.exclude',
+                  'files.encoding',
+                  'files.eol',
+                  'editor.tabSize',
+                  'editor.wordWrap',
+                  '不计划',
+                ) && (
+                  <SettingItem
+                    title={t('JSON 键生效说明')}
+                    description={t(
+                      'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking / sshUploadOnPaste 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
+                    )}
                   >
-                    {FONT_SIZE_OPTIONS.map(size => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </select>
-                </SettingItem>
-                </>
+                    <span className="text-ui-sm text-fg-dim">{t('管理设置 → 打开设置 JSON')}</span>
+                  </SettingItem>
                 )}
               </Section>
             )}
 
-            {categoryMatches('terminal') && (
-              <Section
-                id="terminal"
-                title={t('终端')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={t('终端 › 集成: 字体族')}
-                  description={t('独立设置终端字体族，默认使用系统等宽字体。可选择本机全部已安装字体，修改后立即生效。')}
-                  modified={fonts.terminalFont !== DEFAULT_FONT_SETTINGS.terminalFont}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <FontFamilySelect
-                    value={fonts.terminalFont}
-                    presets={TERMINAL_FONT_OPTIONS}
-                    kind="terminal"
-                    disabled={workspaceLocked}
-                    aria-label={t('终端 › 集成: 字体族')}
-                    onChange={value => updateFonts('terminalFont', value)}
-                  />
-                </SettingItem>
-                <SettingItem
-                  title={t('终端 › 集成: 字号')}
-                  description={t('控制终端的字号（像素）。')}
-                  modified={fonts.terminalFontSize !== DEFAULT_FONT_SETTINGS.terminalFontSize}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <select
-                    value={fonts.terminalFontSize}
-                    disabled={workspaceLocked}
-                    onChange={e => updateFonts('terminalFontSize', Number(e.target.value))}
-                    className="setting-control setting-select"
+            {sectionVisible('terminal') && (
+              <Section id="terminal" title={t('终端')} onSectionRef={onSectionRef}>
+                {!workspaceLocked && match('终端字体', 'terminal.integrated.fontFamily') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 字体族')}
+                    description={t(
+                      '独立设置终端字体族，默认使用系统等宽字体。可选择本机全部已安装字体，修改后立即生效。',
+                    )}
+                    modified={fonts.terminalFont !== DEFAULT_FONT_SETTINGS.terminalFont}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
                   >
-                    {FONT_SIZE_OPTIONS.map(size => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </select>
-                </SettingItem>
-                <SettingItem
-                  title={t('终端 › 集成: 默认 Shell')}
-                  description={t(
-                    '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认自动选择 PowerShell 7、Windows PowerShell 或 CMD；macOS/Linux 默认 Zsh。自定义配置可单独指定 Shell。',
-                  )}
-                  modified={terminal.defaultShell !== defaultTerminalShell()}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <SettingSelect
-                    value={terminal.defaultShell}
-                    disabled={workspaceLocked}
-                    className="setting-control-wide"
-                    aria-label={t('终端 › 集成: 默认 Shell')}
-                    onChange={next =>
-                      updateTerminal({
-                        ...terminal,
-                        defaultShell: next as TerminalShellId,
-                      })
-                    }
-                    options={availableTerminalShells().map(id => ({
-                      value: id,
-                      label: t(terminalShellLabelKey(id)),
-                    }))}
-                  />
-                </SettingItem>
-                {!workspaceLocked && (
+                    <FontFamilySelect
+                      value={fonts.terminalFont}
+                      presets={TERMINAL_FONT_OPTIONS}
+                      kind="terminal"
+                      disabled={workspaceLocked}
+                      aria-label={t('终端 › 集成: 字体族')}
+                      onChange={value => updateFonts('terminalFont', value)}
+                    />
+                  </SettingItem>
+                )}
+                {!workspaceLocked && match('终端字号', 'terminal.integrated.fontSize') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 字号')}
+                    description={t('控制终端的字号（像素）。')}
+                    modified={fonts.terminalFontSize !== DEFAULT_FONT_SETTINGS.terminalFontSize}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <select
+                      value={fonts.terminalFontSize}
+                      disabled={workspaceLocked}
+                      onChange={e => updateFonts('terminalFontSize', Number(e.target.value))}
+                      className="setting-control setting-select"
+                    >
+                      {FONT_SIZE_OPTIONS.map(size => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </SettingItem>
+                )}
+                {!workspaceLocked && match('默认 Shell', 'pwsh', 'WSL', 'Zsh') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 默认 Shell')}
+                    description={t(
+                      '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认自动选择 PowerShell 7、Windows PowerShell 或 CMD；macOS/Linux 默认 Zsh。自定义配置可单独指定 Shell。',
+                    )}
+                    modified={terminal.defaultShell !== defaultTerminalShell()}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <SettingSelect
+                      value={terminal.defaultShell}
+                      disabled={workspaceLocked}
+                      className="setting-control-wide"
+                      aria-label={t('终端 › 集成: 默认 Shell')}
+                      onChange={next =>
+                        updateTerminal({
+                          ...terminal,
+                          defaultShell: next as TerminalShellId,
+                        })
+                      }
+                      options={availableTerminalShells().map(id => ({
+                        value: id,
+                        label: t(terminalShellLabelKey(id)),
+                      }))}
+                    />
+                  </SettingItem>
+                )}
+                {!workspaceLocked && match('终端配置', '默认启动配置') && (
                   <div ref={terminalProfilesRef} className="scroll-mt-4 pl-3 border-l-2 border-transparent">
                     <TerminalProfilesInline settings={terminal} onChange={updateTerminal} />
                   </div>
                 )}
-                <SettingItem
-                  title={t('终端 › 集成: SSH 粘贴上传')}
-                  description={t(
-                    '在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认开启。超过 100MB 的文件或文件夹会被拒绝。',
-                  )}
-                  modified={
-                    sshUploadOnPaste !==
-                    DEFAULT_GLOBAL_SETTINGS['terminal.integrated.sshUploadOnPaste']
-                  }
-                >
-                  <select
-                    value={sshUploadOnPaste ? 'on' : 'off'}
-                    onChange={e => void updateSshUploadOnPaste(e.target.value === 'on')}
-                    className="setting-control setting-select"
-                    aria-label={t('终端 › 集成: SSH 粘贴上传')}
-                  >
-                    <option value="off">{t('关闭')}</option>
-                    <option value="on">{t('开启')}</option>
-                  </select>
-                </SettingItem>
-                <SettingItem
-                  title={t('清理远程粘贴文件')}
-                  description={t(
-                    '删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。',
-                  )}
-                >
-                  <button
-                    type="button"
-                    disabled={
-                      pasteCleanupBusy || !currentProject || !isSshProject(currentProject)
-                    }
-                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
-                    aria-label={t('清理远程粘贴文件')}
-                    onClick={() => {
-                      if (!currentProject || !isSshProject(currentProject)) return
-                      setPasteCleanupBusy(true)
-                      void confirmClearSshTerminalPasteUploads(currentProject.path).finally(
-                        () => setPasteCleanupBusy(false),
-                      )
-                    }}
-                  >
-                    {t('清理')}
-                  </button>
-                </SettingItem>
-              </Section>
-            )}
-
-            {categoryMatches('ai') && (
-              <Section
-                id="ai"
-                title={t('AI')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={t('AI CLI skills')}
-                  description={t(
-                    '复制 QingCode CLI 的 skills 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 skills.md），QingCode 不会自动适配或注册任何 Agent。',
-                  )}
-                  modified={false}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <button
-                    type="button"
-                    disabled={cliSkillBusy || workspaceLocked}
-                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
-                    onClick={() => {
-                      setCliSkillBusy(true)
-                      void (async () => {
-                        try {
-                          let exe =
-                            openWith?.exe_path?.trim() ||
-                            (isTauri()
-                              ? await safeInvoke<string>('获取程序路径', 'app_exe_path')
-                              : '')
-                          if (!exe.trim()) exe = 'QingCode.exe'
-                          await copyToClipboard(buildQingcodeCliSkillMarkdown(exe, language))
-                          pushToast('success', t('已复制 CLI skills，请粘贴到你的 AI Agent 中安装。'))
-                        } catch (error) {
-                          pushToast(
-                            'error',
-                            t('复制失败: {error}', { error: String(error) }),
-                          )
-                        } finally {
-                          setCliSkillBusy(false)
-                        }
-                      })()
-                    }}
-                  >
-                    {cliSkillBusy ? t('正在复制…') : t('复制 skills 文本')}
-                  </button>
-                </SettingItem>
-              </Section>
-            )}
-
-            {categoryMatches('features') && (
-              <Section
-                id="features"
-                title={t('功能')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                {match('远程连接', 'SSH 连接') && (
+                {match('SSH', '粘贴', '上传', 'sshUploadOnPaste') && (
                   <SettingItem
-                    title={t('远程连接')}
-                    description={t('集中管理 SSH 主机：新建、编辑、测试连接、断开，并查看挂在主机下的远程项目与远端服务。')}
+                    title={t('终端 › 集成: SSH 粘贴上传')}
+                    description={t(
+                      '在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认开启。超过 100MB 的文件或文件夹会被拒绝。',
+                    )}
+                    modified={
+                      sshUploadOnPaste !== DEFAULT_GLOBAL_SETTINGS['terminal.integrated.sshUploadOnPaste']
+                    }
+                  >
+                    <select
+                      value={sshUploadOnPaste ? 'on' : 'off'}
+                      onChange={e => void updateSshUploadOnPaste(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('终端 › 集成: SSH 粘贴上传')}
+                    >
+                      <option value="off">{t('关闭')}</option>
+                      <option value="on">{t('开启')}</option>
+                    </select>
+                  </SettingItem>
+                )}
+                {match('清理远程粘贴文件', 'terminal-paste') && (
+                  <SettingItem
+                    title={t('清理远程粘贴文件')}
+                    description={t(
+                      '删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。',
+                    )}
                   >
                     <button
                       type="button"
-                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
-                      onClick={() => useUIStore.getState().openRemoteConnections()}
+                      disabled={pasteCleanupBusy || !currentProject || !isSshProject(currentProject)}
+                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                      aria-label={t('清理远程粘贴文件')}
+                      onClick={() => {
+                        if (!currentProject || !isSshProject(currentProject)) return
+                        setPasteCleanupBusy(true)
+                        void confirmClearSshTerminalPasteUploads(currentProject.path).finally(() =>
+                          setPasteCleanupBusy(false),
+                        )
+                      }}
                     >
-                      {t('管理远程连接…')}
+                      {t('清理')}
                     </button>
                   </SettingItem>
                 )}
-                {match(...SSH_SERVER_SEARCH_TERMS) && (
-                  <SshServerSettingsSection
-                    scope={scope}
-                    project={currentProject}
-                    settingsRevision={settingsRevision}
-                  />
-                )}
-                {!workspaceLocked && /Windows/i.test(navigator.userAgent) && match('Android', '安卓', '移动连接', '密码', '验证码') && (
-                  <MobileConnectionSettings />
-                )}
-                {!workspaceLocked && (
-                <>
+              </Section>
+            )}
+
+            {sectionVisible('projects') && (
+              <Section id="projects" title={t('项目与会话')} onSectionRef={onSectionRef}>
                 {match('会话状态', '会话状态保存', '会话') && (
                   <SettingItem
                     title={t('会话状态保存')}
@@ -1149,10 +1162,7 @@ export default function SettingsEditor() {
                         const enabled = e.target.value === 'on'
                         setSessionPersist(enabled)
                         void saveSessionPersistEnabled(enabled).catch(error =>
-                          pushToast(
-                            'error',
-                            t('保存会话设置失败: {error}', { error: String(error) }),
-                          ),
+                          pushToast('error', t('保存会话设置失败: {error}', { error: String(error) })),
                         )
                       }}
                       className="setting-control setting-select"
@@ -1193,14 +1203,13 @@ export default function SettingsEditor() {
                           }
                           setEditorStateCacheSize(DEFAULT_EDITOR_STATE_CACHE_SIZE)
                           setEditorStateCacheSizeDraft(String(DEFAULT_EDITOR_STATE_CACHE_SIZE))
-                          void saveEditorStateCacheSize(DEFAULT_EDITOR_STATE_CACHE_SIZE).catch(
-                            error =>
-                              pushToast(
-                                'error',
-                                t('保存项目会话 LRU 设置失败: {error}', {
-                                  error: String(error),
-                                }),
-                              ),
+                          void saveEditorStateCacheSize(DEFAULT_EDITOR_STATE_CACHE_SIZE).catch(error =>
+                            pushToast(
+                              'error',
+                              t('保存项目会话 LRU 设置失败: {error}', {
+                                error: String(error),
+                              }),
+                            ),
                           )
                         }}
                         className="setting-control setting-select"
@@ -1216,13 +1225,10 @@ export default function SettingsEditor() {
                     {editorStateCacheSize !== 'auto' && (
                       <SettingItem
                         title={t('项目会话 LRU 自定义个数')}
-                        description={t(
-                          '可设为 {min}–{max} 个；失去焦点或按 Enter 后保存。',
-                          {
-                            min: MIN_EDITOR_STATE_CACHE_SIZE,
-                            max: MAX_EDITOR_STATE_CACHE_SIZE,
-                          },
-                        )}
+                        description={t('可设为 {min}–{max} 个；失去焦点或按 Enter 后保存。', {
+                          min: MIN_EDITOR_STATE_CACHE_SIZE,
+                          max: MAX_EDITOR_STATE_CACHE_SIZE,
+                        })}
                         modified
                         locked={workspaceLocked}
                         lockHint={t('此设置仅在用户作用域中可用')}
@@ -1236,9 +1242,7 @@ export default function SettingsEditor() {
                           value={editorStateCacheSizeDraft}
                           disabled={workspaceLocked}
                           onChange={e => setEditorStateCacheSizeDraft(e.target.value)}
-                          onBlur={() =>
-                            void persistEditorStateCacheSize(editorStateCacheSizeDraft)
-                          }
+                          onBlur={() => void persistEditorStateCacheSize(editorStateCacheSizeDraft)}
                           onKeyDown={e => {
                             if (e.key !== 'Enter') return
                             e.currentTarget.blur()
@@ -1266,10 +1270,7 @@ export default function SettingsEditor() {
                         const enabled = e.target.value === 'on'
                         setProjectIndicatorsEnabled(enabled)
                         void saveProjectIndicatorsEnabled(enabled).catch(error =>
-                          pushToast(
-                            'error',
-                            t('保存项目角标设置失败: {error}', { error: String(error) }),
-                          ),
+                          pushToast('error', t('保存项目角标设置失败: {error}', { error: String(error) })),
                         )
                       }}
                       className="setting-control setting-select"
@@ -1279,22 +1280,13 @@ export default function SettingsEditor() {
                     </select>
                   </SettingItem>
                 )}
-                {match(
-                  'Git 随机刷新周期起始值',
-                  'Git 刷新周期起始值',
-                  'Git',
-                  '刷新',
-                  '分钟',
-                ) && (
+                {match('Git 随机刷新周期起始值', 'Git 刷新周期起始值', 'Git', '刷新', '分钟') && (
                   <SettingItem
                     title={t('Git 随机刷新周期起始值（分钟）')}
                     description={t(
                       '设置每个项目随机 Git 轮询周期的起始值。最小值和默认值均为 5 分钟；实际周期在起始值至其 1.5 倍（向上取整）之间随机选择整分钟。顶栏多项目刷新按随机顺序逐个执行，不会同时并发刷新全部项目；即时刷新不受影响。',
                     )}
-                    modified={
-                      gitRefreshIntervalStartMinutes !==
-                      DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES
-                    }
+                    modified={gitRefreshIntervalStartMinutes !== DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES}
                     locked={workspaceLocked}
                     lockHint={t('此设置仅在用户作用域中可用')}
                   >
@@ -1312,9 +1304,7 @@ export default function SettingsEditor() {
                         disabled={workspaceLocked}
                         onChange={e => setGitRefreshIntervalStartDraft(e.target.value)}
                         onBlur={() =>
-                          void persistGitRefreshIntervalStartMinutes(
-                            gitRefreshIntervalStartDraft,
-                          )
+                          void persistGitRefreshIntervalStartMinutes(gitRefreshIntervalStartDraft)
                         }
                         onKeyDown={e => {
                           if (e.key !== 'Enter') return
@@ -1322,84 +1312,86 @@ export default function SettingsEditor() {
                         }}
                         className="setting-number-with-unit-input"
                       />
-                      <span className="shrink-0 text-ui-sm text-fg-muted">
-                        {t('分钟')}
-                      </span>
+                      <span className="shrink-0 text-ui-sm text-fg-muted">{t('分钟')}</span>
                     </label>
                   </SettingItem>
                 )}
-                {match('检查更新', '自动检查更新', '更新') && (
-                  <>
-                    <SettingItem
-                      title={t('启动时自动检查更新')}
-                      description={t(
-                        '正式构建启动后约 3 秒静默查询 GitHub / Gitee Release。关闭后仍可手动检查。',
-                      )}
-                      modified={checkOnStartup !== DEFAULT_UPDATE_SETTINGS.checkOnStartup}
-                      locked={workspaceLocked}
-                      lockHint={t('此设置仅在用户作用域中可用')}
+              </Section>
+            )}
+
+            {sectionVisible('remote') && (
+              <Section id="remote" title={t('远程连接')} onSectionRef={onSectionRef}>
+                {!workspaceLocked && match('远程连接', 'SSH 连接') && (
+                  <SettingItem
+                    title={t('远程连接')}
+                    description={t(
+                      '集中管理 SSH 主机：新建、编辑、测试连接、断开，并查看挂在主机下的远程项目与远端服务。',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
+                      onClick={() => useUIStore.getState().openRemoteConnections()}
                     >
-                      <select
-                        value={checkOnStartup ? 'on' : 'off'}
-                        disabled={workspaceLocked}
-                        onChange={e => {
-                          const enabled = e.target.value === 'on'
-                          setCheckOnStartup(enabled)
-                          void saveCheckOnStartup(enabled).catch(error =>
-                            pushToast(
-                              'error',
-                              t('保存更新设置失败: {error}', { error: String(error) }),
-                            ),
-                          )
-                        }}
-                        className="setting-control setting-select"
-                      >
-                        <option value="on">{t('开启')}</option>
-                        <option value="off">{t('关闭')}</option>
-                      </select>
-                    </SettingItem>
-                    <SettingItem
-                      title={t('检查更新')}
-                      description={t(
-                        '查询远端最新安装包；发现新版本时可下载安装包，不会自动安装。',
-                      )}
-                      modified={false}
-                      locked={workspaceLocked}
-                      lockHint={t('此设置仅在用户作用域中可用')}
-                    >
-                      <button
-                        type="button"
-                        disabled={updateCheckBusy || !isTauri() || workspaceLocked}
-                        className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
-                        onClick={() => {
-                          if (!isTauri()) {
-                            pushToast('error', t('检查更新需要 Tauri 桌面环境'))
-                            return
-                          }
-                          setUpdateCheckBusy(true)
-                          void checkForAppUpdate({ ignoreSkip: true, prompt: false })
-                            .then(async info => {
-                              if (!info) {
-                                pushToast('success', t('当前已是最新版本'))
-                                return
-                              }
-                              await promptAppUpdate(info)
-                            })
-                            .catch(error =>
-                              pushToast(
-                                'error',
-                                t('检查更新失败: {error}', { error: String(error) }),
-                              ),
-                            )
-                            .finally(() => setUpdateCheckBusy(false))
-                        }}
-                      >
-                        {updateCheckBusy ? t('正在检查…') : t('检查更新')}
-                      </button>
-                    </SettingItem>
-                  </>
+                      {t('管理远程连接…')}
+                    </button>
+                  </SettingItem>
                 )}
-                {match('打开方式', 'Open with', 'Windows') && (
+                {match(...SSH_SERVER_SEARCH_TERMS) && (
+                  <SshServerSettingsSection
+                    scope={scope}
+                    project={currentProject}
+                    settingsRevision={settingsRevision}
+                  />
+                )}
+              </Section>
+            )}
+
+            {sectionVisible('mobile') && (
+              <Section id="mobile" title={t('移动连接')} onSectionRef={onSectionRef}>
+                <MobileConnectionSettings />
+              </Section>
+            )}
+
+            {sectionVisible('tools') && (
+              <Section id="tools" title={t('工具与集成')} onSectionRef={onSectionRef}>
+                {match('AI CLI skills', 'AI', 'CLI', 'skills', 'Agent', 'qingcode-cli') && (
+                  <SettingItem
+                    title={t('AI CLI skills')}
+                    description={t(
+                      '复制 QingCode CLI 的 skills 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 skills.md），QingCode 不会自动适配或注册任何 Agent。',
+                    )}
+                    modified={false}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <button
+                      type="button"
+                      disabled={cliSkillBusy || workspaceLocked}
+                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                      onClick={() => {
+                        setCliSkillBusy(true)
+                        void (async () => {
+                          try {
+                            let exe =
+                              openWith?.exe_path?.trim() ||
+                              (isTauri() ? await safeInvoke<string>('获取程序路径', 'app_exe_path') : '')
+                            if (!exe.trim()) exe = 'QingCode.exe'
+                            await copyToClipboard(buildQingcodeCliSkillMarkdown(exe, language))
+                            pushToast('success', t('已复制 CLI skills，请粘贴到你的 AI Agent 中安装。'))
+                          } catch (error) {
+                            pushToast('error', t('复制失败: {error}', { error: String(error) }))
+                          } finally {
+                            setCliSkillBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      {cliSkillBusy ? t('正在复制…') : t('复制 skills 文本')}
+                    </button>
+                  </SettingItem>
+                )}
+                {isWindows && match('打开方式', 'Open with', 'Windows') && (
                   <SettingItem
                     title={t('Windows 打开方式')}
                     description={t(
@@ -1409,9 +1401,7 @@ export default function SettingsEditor() {
                   >
                     <div className="flex flex-col items-end gap-2 max-w-md">
                       {!isTauri() || openWith?.supported === false ? (
-                        <span className="text-ui-sm text-fg-dim">
-                          {t('仅 Windows 桌面版支持此功能。')}
-                        </span>
+                        <span className="text-ui-sm text-fg-dim">{t('仅 Windows 桌面版支持此功能。')}</span>
                       ) : (
                         <>
                           <span className="text-ui-sm text-right text-fg-muted">
@@ -1444,16 +1434,11 @@ export default function SettingsEditor() {
                                     setOpenWith(status)
                                     pushToast(
                                       'success',
-                                      t(
-                                        '注册成功。可在资源管理器中右键文件 → 打开方式 → QingCode。',
-                                      ),
+                                      t('注册成功。可在资源管理器中右键文件 → 打开方式 → QingCode。'),
                                     )
                                   })
                                   .catch(error =>
-                                    pushToast(
-                                      'error',
-                                      t('注册失败: {error}', { error: String(error) }),
-                                    ),
+                                    pushToast('error', t('注册失败: {error}', { error: String(error) })),
                                   )
                                   .finally(() => setOpenWithBusy(false))
                               }}
@@ -1488,280 +1473,192 @@ export default function SettingsEditor() {
                     </div>
                   </SettingItem>
                 )}
-                {match('快捷键', '键盘') && (
+              </Section>
+            )}
+
+            {sectionVisible('shortcuts') && (
+              <Section id="shortcuts" title={t('快捷键')} onSectionRef={onSectionRef}>
+                <SettingItem
+                  title={t('键盘快捷方式')}
+                  description={t('自定义常用操作的按键组合。')}
+                  modified={Object.keys(DEFAULT_SHORTCUTS).some(
+                    key => shortcuts[key as ShortcutCommand] !== DEFAULT_SHORTCUTS[key as ShortcutCommand],
+                  )}
+                >
+                  <span className="text-ui-sm text-fg-dim">{t('见下方列表')}</span>
+                </SettingItem>
+                <div className="pl-3">
+                  <ShortcutSettings query={q} />
+                </div>
+              </Section>
+            )}
+
+            {sectionVisible('about') && (
+              <Section id="about" title={t('更新与关于')} onSectionRef={onSectionRef}>
+                {match('检查更新', '自动检查更新', '更新') && (
                   <>
                     <SettingItem
-                      title={t('键盘快捷方式')}
-                      description={t('自定义常用操作的按键组合。')}
-                      modified={Object.keys(DEFAULT_SHORTCUTS).some(
-                        key =>
-                          shortcuts[key as ShortcutCommand] !==
-                          DEFAULT_SHORTCUTS[key as ShortcutCommand],
+                      title={t('启动时自动检查更新')}
+                      description={t(
+                        '正式构建启动后约 3 秒静默查询 GitHub / Gitee Release。关闭后仍可手动检查。',
                       )}
+                      modified={checkOnStartup !== DEFAULT_UPDATE_SETTINGS.checkOnStartup}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
                     >
-                      <span className="text-ui-sm text-fg-dim">{t('见下方列表')}</span>
+                      <select
+                        value={checkOnStartup ? 'on' : 'off'}
+                        disabled={workspaceLocked}
+                        onChange={e => {
+                          const enabled = e.target.value === 'on'
+                          setCheckOnStartup(enabled)
+                          void saveCheckOnStartup(enabled).catch(error =>
+                            pushToast('error', t('保存更新设置失败: {error}', { error: String(error) })),
+                          )
+                        }}
+                        className="setting-control setting-select"
+                      >
+                        <option value="on">{t('开启')}</option>
+                        <option value="off">{t('关闭')}</option>
+                      </select>
                     </SettingItem>
-                    <div className="pl-3">
-                      <ShortcutSettings />
-                    </div>
+                    <SettingItem
+                      title={t('检查更新')}
+                      description={t('查询远端最新安装包；发现新版本时可下载安装包，不会自动安装。')}
+                      modified={false}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <button
+                        type="button"
+                        disabled={updateCheckBusy || !isTauri() || workspaceLocked}
+                        className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                        onClick={() => {
+                          if (!isTauri()) {
+                            pushToast('error', t('检查更新需要 Tauri 桌面环境'))
+                            return
+                          }
+                          setUpdateCheckBusy(true)
+                          void checkForAppUpdate({ ignoreSkip: true, prompt: false })
+                            .then(async info => {
+                              if (!info) {
+                                pushToast('success', t('当前已是最新版本'))
+                                return
+                              }
+                              await promptAppUpdate(info)
+                            })
+                            .catch(error =>
+                              pushToast('error', t('检查更新失败: {error}', { error: String(error) })),
+                            )
+                            .finally(() => setUpdateCheckBusy(false))
+                        }}
+                      >
+                        {updateCheckBusy ? t('正在检查…') : t('检查更新')}
+                      </button>
+                    </SettingItem>
                   </>
                 )}
-                </>
-                )}
-              </Section>
-            )}
-
-            {categoryMatches('language') && (
-              <Section
-                id="language"
-                title={t('语言')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={t('显示语言')}
-                  description={t('选择界面显示语言。更改后立即生效。也可从用户语言包目录加载自定义 JSON。')}
-                  modified={language !== 'zh-CN'}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <select
-                    value={language}
-                    disabled={workspaceLocked}
-                    onChange={e => setLanguage(e.target.value)}
-                    className="setting-control setting-control-wide setting-select"
+                {match('关于', '版本', 'QingCode') && (
+                  <SettingItem
+                    title={t('QingCode')}
+                    description={t(
+                      '轻量级多项目代码编辑器，Tauri 2 + React 19 + Rust。采用 MIT 开源协议。',
+                    )}
+                    modified={false}
                   >
-                    {localeOptions.map(option => (
-                      <option key={option.locale} value={option.locale}>
-                        {option.builtin ? t(option.label) : option.label}
-                      </option>
-                    ))}
-                  </select>
-                </SettingItem>
-                <SettingItem
-                  title={t('自定义语言包')}
-                  description={t(
-                    '将 JSON 语言包放入应用数据目录的 locales 文件夹（可参考其中的 _example.json）。修改后点击刷新即可出现在上方列表。',
-                  )}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={workspaceLocked || !isTauri()}
-                      className="setting-control px-2.5 py-1 text-ui-sm"
-                      onClick={() => {
-                        void (async () => {
-                          try {
-                            const result = await reloadUserLocales()
-                            pushToast(
-                              'info',
-                              t('已刷新语言包（{count} 个用户包）', {
-                                count: result.loaded,
-                              }),
-                            )
-                          } catch (error) {
-                            pushToast(
-                              'error',
-                              error instanceof Error ? error.message : String(error),
-                            )
-                          }
-                        })()
-                      }}
-                    >
-                      {t('刷新语言包')}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={workspaceLocked || !isTauri()}
-                      className="setting-control px-2.5 py-1 text-ui-sm"
-                      onClick={() => {
-                        void (async () => {
-                          try {
-                            const dir = await safeInvoke<string>(
-                              '读取语言包目录',
-                              'user_locales_dir',
-                            )
-                            await revealItemInDir(dir)
-                          } catch (error) {
-                            pushToast(
-                              'error',
-                              error instanceof Error ? error.message : String(error),
-                            )
-                          }
-                        })()
-                      }}
-                    >
-                      {t('打开语言包目录')}
-                    </button>
-                  </div>
-                </SettingItem>
-              </Section>
-            )}
-
-            {categoryMatches('about') && (
-              <Section
-                id="about"
-                title={t('关于')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={t('QingCode')}
-                  description={t(
-                    '轻量级多项目代码编辑器，Tauri 2 + React 19 + Rust。采用 MIT 开源协议。',
-                  )}
-                  modified={false}
-                >
-                  <div className="text-right">
-                    <span className="text-ui-sm text-fg-muted">
-                      {appVersion ? `v${appVersion}` : t('版本未知')}
-                    </span>
-                  </div>
-                </SettingItem>
-                <SettingItem
-                  title={t('源代码仓库')}
-                  description={t(
-                    'QingCode 在 Gitee 与 GitHub 双端镜像维护。点击打开远端页面，或复制克隆地址。',
-                  )}
-                  modified={false}
-                >
-                  <div className="flex flex-col items-stretch gap-2 w-full">
-                    {ABOUT_REMOTES.map(remote => (
-                      <div
-                        key={remote.id}
-                        className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
-                      >
-                        <span className="text-ui-sm font-medium text-fg flex-shrink-0 w-14">
-                          {remote.label}
-                        </span>
-                        <code className="flex-1 min-w-0 truncate font-mono text-ui-sm text-fg-muted">
-                          {remote.cloneUrl}
-                        </code>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <Tooltip label={t('复制克隆地址')} side="top">
-                            <button
-                              type="button"
-                              disabled={aboutCopyBusy === remote.id}
-                              onClick={() => {
-                                setAboutCopyBusy(remote.id)
-                                void copyToClipboard(remote.cloneUrl)
-                                  .then(() =>
-                                    pushToast(
-                                      'success',
-                                      t('已复制 {label} 克隆地址', { label: remote.label }),
-                                    ),
-                                  )
-                                  .catch(error =>
+                    <div className="text-right">
+                      <span className="text-ui-sm text-fg-muted">
+                        {appVersion ? `v${appVersion}` : t('版本未知')}
+                      </span>
+                    </div>
+                  </SettingItem>
+                )}
+                {match('源代码仓库', '仓库', 'Gitee', 'GitHub', 'git') && (
+                  <SettingItem
+                    title={t('源代码仓库')}
+                    description={t(
+                      'QingCode 在 Gitee 与 GitHub 双端镜像维护。点击打开远端页面，或复制克隆地址。',
+                    )}
+                    modified={false}
+                  >
+                    <div className="flex flex-col items-stretch gap-2 w-full">
+                      {ABOUT_REMOTES.map(remote => (
+                        <div
+                          key={remote.id}
+                          className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
+                        >
+                          <span className="text-ui-sm font-medium text-fg flex-shrink-0 w-14">
+                            {remote.label}
+                          </span>
+                          <code className="flex-1 min-w-0 truncate font-mono text-ui-sm text-fg-muted">
+                            {remote.cloneUrl}
+                          </code>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <Tooltip label={t('复制克隆地址')} side="top">
+                              <button
+                                type="button"
+                                disabled={aboutCopyBusy === remote.id}
+                                onClick={() => {
+                                  setAboutCopyBusy(remote.id)
+                                  void copyToClipboard(remote.cloneUrl)
+                                    .then(() =>
+                                      pushToast(
+                                        'success',
+                                        t('已复制 {label} 克隆地址', { label: remote.label }),
+                                      ),
+                                    )
+                                    .catch(error =>
+                                      pushToast('error', t('复制失败: {error}', { error: String(error) })),
+                                    )
+                                    .finally(() => setAboutCopyBusy(null))
+                                }}
+                                className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                                aria-label={t('复制克隆地址')}
+                              >
+                                {aboutCopyBusy === remote.id ? '…' : t('复制')}
+                              </button>
+                            </Tooltip>
+                            <Tooltip label={t('打开 {label} 页面', { label: remote.label })} side="top">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void openUrl(remote.pageUrl).catch(error =>
                                     pushToast(
                                       'error',
-                                      t('复制失败: {error}', { error: String(error) }),
+                                      t('打开链接失败: {error}', { error: String(error) }),
                                     ),
                                   )
-                                  .finally(() => setAboutCopyBusy(null))
-                              }}
-                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
-                              aria-label={t('复制克隆地址')}
-                            >
-                              {aboutCopyBusy === remote.id ? '…' : t('复制')}
-                            </button>
-                          </Tooltip>
-                          <Tooltip label={t('打开 {label} 页面', { label: remote.label })} side="top">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void openUrl(remote.pageUrl).catch(error =>
-                                  pushToast(
-                                    'error',
-                                    t('打开链接失败: {error}', { error: String(error) }),
-                                  ),
-                                )
-                              }}
-                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
-                            >
-                              {t('打开')}
-                            </button>
-                          </Tooltip>
+                                }}
+                                className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              >
+                                {t('打开')}
+                              </button>
+                            </Tooltip>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </SettingItem>
-                <SettingItem
-                  title={t('协议')}
-                  description={t('MIT License — 自由使用、修改与分发，需保留版权声明。')}
-                  modified={false}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void openUrl('https://github.com/Fracizz/QingCode/blob/master/LICENSE').catch(
-                        error =>
-                          pushToast(
-                            'error',
-                            t('打开链接失败: {error}', { error: String(error) }),
-                          ),
-                      )
-                    }}
-                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
+                      ))}
+                    </div>
+                  </SettingItem>
+                )}
+                {match('协议', 'License', 'MIT', '开源') && (
+                  <SettingItem
+                    title={t('协议')}
+                    description={t('MIT License — 自由使用、修改与分发，需保留版权声明。')}
+                    modified={false}
                   >
-                    {t('查看 LICENSE')}
-                  </button>
-                </SettingItem>
-              </Section>
-            )}
-
-            {categoryMatches('json') && (
-              <Section
-                id="json"
-                title={t('打开设置 JSON')}
-                onSectionRef={onSectionRef}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={
-                    scope === 'user'
-                      ? t('打开用户设置 (JSON)')
-                      : t('打开工作区设置 (JSON)')
-                  }
-                  description={
-                    scope === 'user'
-                      ? t(
-                          '在编辑器中打开全局 default-settings.json（JSON5，可写注释）。可用 qingcode.projects 配置项目列表，启动时按 qingcode.projects.syncOnStartup 同步。',
-                        )
-                      : t(
-                          '在编辑器中打开当前项目的 .qingcode/project-settings.json（JSON5，可写注释）。',
-                        )
-                  }
-                >
-                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={openingJson || transferBusy || (scope === 'workspace' && !currentProject)}
-                      onClick={() => void openSettingsJson(false)}
-                      className="rounded bg-action px-3 py-1.5 text-ui-sm text-on-action hover:bg-action/90 disabled:opacity-50"
+                      onClick={() => {
+                        void openUrl('https://github.com/Fracizz/QingCode/blob/master/LICENSE').catch(
+                          error => pushToast('error', t('打开链接失败: {error}', { error: String(error) })),
+                        )
+                      }}
+                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
                     >
-                      {t('在编辑器中打开')}
+                      {t('查看 LICENSE')}
                     </button>
-                    <button
-                      type="button"
-                      disabled={openingJson || transferBusy || (scope === 'workspace' && !currentProject)}
-                      onClick={() => void openSettingsJson(true)}
-                      className="rounded border border-border-strong px-3 py-1.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
-                    >
-                      {t('写入默认模板并打开')}
-                    </button>
-                  </div>
-                </SettingItem>
-                <SettingItem
-                  title={t('JSON 键生效说明')}
-                  description={t(
-                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking / sshUploadOnPaste 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
-                  )}
-                >
-                  <span className="text-ui-sm text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>
-                </SettingItem>
+                  </SettingItem>
+                )}
               </Section>
             )}
           </div>
@@ -1769,7 +1666,9 @@ export default function SettingsEditor() {
       </div>
 
       {managementMenu && <ContextMenu x={managementMenu.x} y={managementMenu.y} onClose={() => setManagementMenu(null)} items={[
-        { label: t('导入配置 JSON'), action: () => transferSettings('import') },
+        { label: t('打开设置 JSON'), disabled: openingJson || transferBusy, action: () => openSettingsJson(false) },
+        { label: t('写入默认模板并打开'), disabled: openingJson || transferBusy, action: () => openSettingsJson(true) },
+        { label: t('导入配置 JSON'), separatorBefore: true, action: () => transferSettings('import') },
         { label: t('导出配置 JSON'), action: () => transferSettings('export') },
         { label: t('恢复默认设置'), separatorBefore: true, action: restoreDefaults },
       ]} />}

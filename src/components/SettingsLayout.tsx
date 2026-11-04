@@ -1,57 +1,25 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
-
-export type SettingsCategoryId =
-  | 'common'
-  | 'editor'
-  | 'terminal'
-  | 'ai'
-  | 'features'
-  | 'language'
-  | 'json'
-  | 'about'
+import { useCallback, type ReactNode } from 'react'
+import type { SettingsCategoryId } from '../lib/settingsSearch'
+export type { SettingsCategoryId } from '../lib/settingsSearch'
 
 export function SettingsSection({
   id,
   title,
   children,
   onSectionRef,
-  onVisible,
 }: {
   id: SettingsCategoryId
   title: string
   children: ReactNode
   onSectionRef: (id: SettingsCategoryId, node: HTMLElement | null) => void
-  onVisible: (id: SettingsCategoryId) => void
 }) {
-  const localRef = useRef<HTMLElement | null>(null)
-
-  useEffect(() => {
-    const el = localRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries.some(entry => entry.isIntersecting)) onVisible(id)
-      },
-      { rootMargin: '-20% 0px -60% 0px', threshold: 0 },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [id, onVisible])
-
   const setSectionRef = useCallback(
-    (node: HTMLElement | null) => {
-      localRef.current = node
-      onSectionRef(id, node)
-    },
+    (node: HTMLElement | null) => onSectionRef(id, node),
     [id, onSectionRef],
   )
-
   return (
-    <section
-      ref={setSectionRef}
-      className="scroll-mt-4"
-    >
-      <h2 className="text-ui-heading font-semibold text-fg mb-3 pb-2 border-b border-border">
+    <section ref={setSectionRef} aria-labelledby={`settings-heading-${id}`} className="scroll-mt-4">
+      <h2 id={`settings-heading-${id}`} className="text-ui-heading font-semibold text-fg mb-3 pb-2 border-b border-border">
         {title}
       </h2>
       <div className="flex flex-col gap-5">{children}</div>

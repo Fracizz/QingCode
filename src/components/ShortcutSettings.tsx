@@ -2,7 +2,6 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { RotateCcw } from 'lucide-react'
 import {
   canonicalizeShortcut,
-  COPY_RELATIVE_PATH_SHORTCUT,
   isReservedShortcut,
   isShortcutBound,
   isShortcutInputTarget,
@@ -12,125 +11,22 @@ import {
 import { useShortcutStore } from '../store/shortcutStore'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
+import { SHORTCUT_COMMANDS as COMMANDS, FIXED_SHORTCUTS } from '../lib/shortcutSettings'
 
-const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = [
-  {
-    id: 'openCommandPalette',
-    label: '打开命令面板',
-    description: '打开命令面板，搜索并运行编辑器命令。',
-  },
-  {
-    id: 'quickOpen',
-    label: '快速打开文件',
-    description: '按文件名模糊搜索并打开项目中的文件。',
-  },
-  {
-    id: 'openFile',
-    label: '打开文件',
-    description: '从系统文件选择器中选择并打开单个文件。',
-  },
-  {
-    id: 'goToSymbolInEditor',
-    label: '转到编辑器中的符号',
-    description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',
-  },
-  {
-    id: 'searchAllProjects',
-    label: '打开搜索',
-    description: '打开搜索面板；若编辑器有选中文本（如双击单词），会自动填入搜索框。',
-  },
-  {
-    id: 'toggleTerminal',
-    label: '显示或隐藏终端',
-    description: '显示或隐藏终端面板。',
-  },
-  {
-    id: 'openSettings',
-    label: '打开设置',
-    description: '打开设置面板。',
-  },
-  {
-    id: 'goToLine',
-    label: '转到行',
-    description: '跳转到当前文件中的指定行号。',
-  },
-  {
-    id: 'navigateBack',
-    label: '后退',
-    description: '返回上一次编辑位置（打开文件、转到行、搜索跳转等）。',
-  },
-  {
-    id: 'navigateForward',
-    label: '前进',
-    description: '前进到下一次编辑位置。',
-  },
-  {
-    id: 'toggleMinimap',
-    label: '切换小地图',
-    description: '显示或隐藏编辑区右侧的代码小地图。',
-  },
-  {
-    id: 'togglePanelLayout',
-    label: '切换面板布局',
-    description: '依次切换：经典 → 编辑器+终端 → 编辑器+双终端。标题栏可直接选择。',
-  },
-  {
-    id: 'renameInExplorer',
-    label: '资源管理器: 重命名',
-    description: '在文件树中行内重命名当前选中的文件或文件夹。',
-  },
-  {
-    id: 'findInTerminal',
-    label: '查找（编辑器 / 终端）',
-    description:
-      '编辑器内：打开查找并填入选中文本（如双击单词）。终端内：在终端输出中查找。',
-  },
-  {
-    id: 'clearTerminal',
-    label: '终端: 清空',
-    description: '清空当前终端缓冲区（需焦点在终端内）。',
-  },
-]
-
-/** Editor-bound shortcuts shown as read-only (not remappable here). */
-const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[] = [
-  {
-    shortcut: 'Ctrl+F',
-    label: '查找',
-    description: '编辑器内打开查找并填入选中文本（如双击单词）；终端内查找终端输出。',
-  },
-  {
-    shortcut: 'Ctrl+S',
-    label: '保存文件',
-    description: '保存当前编辑器中的文件。',
-  },
-  {
-    shortcut: 'Ctrl+Shift+C',
-    label: '复制路径',
-    description: '复制当前文件或选中项的完整路径。',
-  },
-  {
-    shortcut: COPY_RELATIVE_PATH_SHORTCUT,
-    label: '复制相对路径',
-    description: '复制当前文件相对项目根目录的路径（POSIX 斜杠）。',
-  },
-  {
-    shortcut: 'Alt+C',
-    label: '复制为文件引用',
-    description: '复制当前文件的引用（含行号范围），便于粘贴到对话或文档。',
-  },
-  {
-    shortcut: 'Shift+Alt+F',
-    label: '格式化文档',
-    description: '使用 Prettier、rustfmt、shfmt、ruff/black 或 gofmt 格式化当前文件（需本机已安装对应工具）。',
-  },
-]
-
-export default function ShortcutSettings() {
+export default function ShortcutSettings({ query = '' }: { query?: string }) {
   const { t } = useI18n()
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const setShortcut = useShortcutStore(s => s.setShortcut)
   const resetShortcuts = useShortcutStore(s => s.resetShortcuts)
+  const q = query.trim().toLowerCase()
+  const all = !q || ['快捷键', '键盘', '键盘快捷方式', 'shortcuts', 'keyboard'].some(term =>
+    term.toLowerCase().includes(q) || t(term).toLowerCase().includes(q),
+  )
+  const matches = (...terms: string[]) => all || terms.some(term =>
+    term.toLowerCase().includes(q) || t(term).toLowerCase().includes(q),
+  )
+  const commands = COMMANDS.filter(command => matches(command.label, command.description, shortcuts[command.id]))
+  const fixedShortcuts = FIXED_SHORTCUTS.filter(item => matches(item.label, item.description, item.shortcut))
   const [capturing, setCapturing] = useState<ShortcutCommand | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -182,14 +78,14 @@ export default function ShortcutSettings() {
       <p className="text-ui-sm text-fg-muted">
         {t('点击输入框后按新的组合键。按 Backspace 或 Delete 可清空（未绑定）。')}
       </p>
-      {COMMANDS.map(command => {
+      {commands.map(command => {
         const bound = isShortcutBound(shortcuts[command.id])
         return (
           <label
             key={command.id}
-            className="flex items-center gap-3 rounded border border-border bg-bg/40 px-3 py-2"
+            className="shortcut-setting-row flex min-w-0 flex-wrap items-center gap-3 rounded border border-border bg-bg/40 px-3 py-2"
           >
-            <span className="min-w-0 flex-1">
+            <span className="min-w-0 flex-1 basis-56">
               <span className="block text-ui text-fg">{t(command.label)}</span>
               <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(command.description)}</span>
             </span>
@@ -204,7 +100,7 @@ export default function ShortcutSettings() {
               onBlur={() => setCapturing(current => (current === command.id ? null : current))}
               onKeyDown={event => captureShortcut(event, command.id)}
               aria-label={t(command.label)}
-              className={`w-36 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-ui-sm outline-none placeholder:text-fg-dim ${
+              className={`w-[12em] max-w-full min-w-0 shrink-0 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-ui-sm outline-none placeholder:text-fg-dim ${
                 capturing === command.id
                   ? 'border-accent text-fg'
                   : bound
@@ -216,18 +112,18 @@ export default function ShortcutSettings() {
         )
       })}
 
-      <p className="pt-1 text-ui-sm text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>
-      {FIXED_SHORTCUTS.map(item => (
+      {fixedShortcuts.length > 0 && <p className="pt-1 text-ui-sm text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>}
+      {fixedShortcuts.map(item => (
         <div
           key={item.shortcut}
-          className="flex items-center gap-3 rounded border border-border/80 bg-bg/20 px-3 py-2"
+          className="shortcut-setting-row flex min-w-0 flex-wrap items-center gap-3 rounded border border-border/80 bg-bg/20 px-3 py-2"
         >
-          <span className="min-w-0 flex-1">
+          <span className="min-w-0 flex-1 basis-56">
             <span className="block text-ui text-fg">{t(item.label)}</span>
             <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(item.description)}</span>
           </span>
-          <Tooltip label={t('不可修改')} side="left">
-            <span className="inline-flex h-[30px] w-36 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-ui-sm text-fg-dim">
+          <Tooltip label={t('不可修改')} side="left" wrapperClassName="min-w-0 max-w-full">
+            <span className="inline-flex min-h-[30px] w-[12em] max-w-full items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-ui-sm text-fg-dim break-words">
               {item.shortcut}
             </span>
           </Tooltip>

@@ -4221,6 +4221,7 @@ name = "qingcode"
 version = "0.1.14-beta.24"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "bytes",
  "dirs",
  "encoding_rs",

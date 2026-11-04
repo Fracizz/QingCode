@@ -318,7 +318,7 @@ ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   //
   // qingcode.update.checkOnStartup
   //   true  = 正式构建启动约 3 秒后自动检查 GitHub/Gitee Release
-  //   false = 仅通过设置 → 功能 →「检查更新」手动检查
+  //   false = 仅通过设置 → 更新与关于 →「检查更新」手动检查
   "qingcode.update.checkOnStartup": true,
   //
   // qingcode.update.skippedVersion

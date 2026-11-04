@@ -32,6 +32,10 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8" cy="8" r="1"></circle><path d="m21 15-5-5L5 21"></path></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5"></path></symbol>
+    <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M3 8h5V3M21 8h-5V3M16 21v-5h5M8 21v-5H3"></path></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
   </svg>
 
   <main>
@@ -45,7 +49,7 @@
         <div id="home-pull" class="pull-indicator" aria-hidden="true"><svg><use href="#i-refresh"/></svg></div>
         <header class="page-heading"><h1 id="home-title">终端</h1><p>接回会话，继续手边的工作。</p></header>
         <div id="home-context" class="context-card" hidden>
-          <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small id="home-context-state" role="status"></small></div>
+          <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span><span id="home-latency"></span></small></div>
           <button id="home-reconnect" class="text-button" type="button" hidden>重连</button>
         </div>
         <button id="resume" class="resume-card" type="button" hidden>
@@ -78,13 +82,7 @@
           <button id="refresh" class="icon-button tonal" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
         </header>
         <div id="project-filters">
-          <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索项目、连接或路径" aria-label="搜索项目" autocomplete="off" enterkeyhint="search"></div>
-          <nav id="hosts" aria-label="项目环境">
-            <button type="button" data-kind="all" aria-pressed="true">全部</button>
-            <button type="button" data-kind="local" aria-pressed="false">本机</button>
-            <button type="button" data-kind="wsl" aria-pressed="false">WSL</button>
-            <button type="button" data-kind="ssh" aria-pressed="false">远端</button>
-          </nav>
+          <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索 IP、项目名或路径" aria-label="搜索 IP、项目名或路径" autocomplete="off" enterkeyhint="search"></div>
         </div>
         <p id="project-error" class="error" role="alert" hidden></p>
         <p id="list-label" class="list-label" role="status"></p>
@@ -129,10 +127,24 @@
       </div>
       <div class="terminal-body">
         <div id="viewport" aria-label="终端输出"></div>
+        <section id="terminal-history" aria-label="历史输出（只读）" hidden>
+          <div id="history-scroll" tabindex="0" aria-label="向上滚动加载更早输出">
+            <button id="history-more" type="button">加载更早输出</button>
+            <p id="history-status" role="status"></p>
+            <pre id="history-content"></pre>
+          </div>
+        </section>
         <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg> 回到最新</button>
       </div>
       <div id="terminal-tools">
-        <div class="terminal-state"><span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p><button id="terminal-retry" class="text-button" type="button" hidden>重试</button><span id="terminal-size" aria-label="终端列数和行数"></span></div>
+        <div class="terminal-state">
+          <span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p>
+          <button id="terminal-retry" class="text-button" type="button" hidden>重试</button>
+          <span id="terminal-latency" aria-label="手机到电脑往返延迟">电脑 --</span>
+          <span id="terminal-size" aria-label="终端列数和行数"></span>
+          <button id="toggle-keys" type="button" aria-expanded="true" aria-controls="special-keys completion-tools"><span>收起按键</span><svg><use href="#i-chevron"/></svg></button>
+          <button id="toggle-fullscreen" class="icon-button" type="button" aria-label="进入全屏" aria-pressed="false"><svg><use href="#i-expand"/></svg></button>
+        </div>
         <!-- 参考 Termux extra-keys：竖屏两排，方向键呈倒 T；横屏或矮屏收为一排并横向滚动。
              Ctrl / Alt 单击一次性生效，双击锁定；方向键与翻页长按连发。 -->
         <div id="special-keys" aria-label="终端快捷键">
@@ -153,10 +165,15 @@
           <button type="button" data-key="right" data-repeat aria-label="向右">→</button>
           <button type="button" data-key="pgdn" data-repeat aria-label="向下翻页">PgDn</button>
         </div>
+        <div id="completion-tools" role="group" aria-label="命令与技能补全">
+          <button type="button" id="slash-command" aria-label="输入斜杠命令或技能">/ 技能</button>
+          <button type="button" id="complete-input" aria-label="将草稿发到终端并按 Tab 补全">Tab 补全</button>
+          <button type="button" id="attach-image" class="icon-button" aria-label="发送图片"><svg><use href="#i-image"/></svg></button>
+          <span id="completion-help">↑↓ 选择 · ↵ 确认</span>
+        </div>
         <form id="compose-form">
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
           <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令，空白发送回车"></textarea>
-          <button type="button" id="paste" class="icon-button" aria-label="粘贴到命令栏"><svg><use href="#i-paste"/></svg></button>
           <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg></button>
         </form>
         <p id="input-hint" class="sr-only" aria-live="polite">命令栏可编辑中文 · 空白发送为回车</p>
@@ -200,6 +217,7 @@
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <form id="host-form">
       <h2 id="host-title">连接详情</h2><p id="host-address"></p>
+      <p id="host-latency" class="hint"></p>
       <code id="host-fingerprint"></code>
       <label for="host-name">连接名称</label><input id="host-name" maxlength="48" required>
       <label for="host-port">端口</label><input id="host-port" type="number" inputmode="numeric" min="1" max="65535" required>
@@ -224,6 +242,29 @@
     <div id="session-options" class="rows"></div>
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button></div>
+  </dialog>
+
+  <dialog id="new-session-dialog" aria-labelledby="new-session-title">
+    <h2 id="new-session-title">新建会话</h2>
+    <div class="rows session-shortcuts">
+      <button type="button" class="secondary" data-launch="shell">新建终端</button>
+      <button type="button" class="secondary" data-launch="claude">新建 Claude</button>
+      <button type="button" class="secondary" data-launch="opencode">新建 OpenCode</button>
+    </div>
+    <p>在当前项目中新建会话；Claude / OpenCode 需已在目标环境安装。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="new-session-dialog">取消</button></div>
+  </dialog>
+
+  <dialog id="image-dialog" aria-labelledby="image-title">
+    <h2 id="image-title">发送图片</h2>
+    <label for="image-compression">压缩等级</label>
+    <select id="image-compression">
+      <option value="original">原图</option><option value="low">低压缩 · 更清晰</option>
+      <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
+    </select>
+    <p>选择后上传到当前终端环境，图片路径放入命令栏，可补充说明再发送。单张最大 8 MB。</p>
+    <p id="image-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="image-dialog">取消</button><button type="button" id="choose-image" class="primary">选择图片</button></div>
   </dialog>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title">

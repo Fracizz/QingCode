@@ -1,6 +1,6 @@
 # Windows「打开方式」
 
-设置 → 功能 → Windows 打开方式，以及 `pnpm register:open-with` / `pnpm unregister:open-with` 使用相同的注册规则：
+设置 → 工具与集成 → Windows 打开方式，以及 `pnpm register:open-with` / `pnpm unregister:open-with` 使用相同的注册规则：
 
 - 只增加 QingCode 的推荐入口，保留已有默认程序、其他应用的推荐项和文件类型信息。
 - `.bat`、`.cmd` 保留 Windows 的执行关联，不注册为 QingCode 的文档类型。它们仍可通过应用内「打开文件」选择并编辑。

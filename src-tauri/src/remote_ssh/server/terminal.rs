@@ -381,6 +381,14 @@ struct PtyInfoWire {
     detached: bool,
 }
 
+impl PtyInfoWire {
+    fn is_mobile(&self) -> bool {
+        self.name
+            .as_deref()
+            .is_some_and(crate::mobile::is_mobile_terminal)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PtyListResponse {
@@ -472,6 +480,11 @@ fn detached_terminal_from_info(
     connection_id: &str,
     roots: &[RegisteredRoot],
 ) -> Option<DetachedTerminal> {
+    // The daemon marker survives app restarts; the in-memory phone session may not.
+    // Companion PTYs must never become desktop orphan tabs.
+    if info.is_mobile() {
+        return None;
+    }
     let cwd = info.cwd.as_deref()?;
     trusted_root_for_daemon_path(roots, cwd)?;
     Some(DetachedTerminal {
@@ -480,17 +493,7 @@ fn detached_terminal_from_info(
         cwd: daemon_path_to_uri(connection_id, cwd)?,
         cols: info.cols,
         rows: info.rows,
-        name: info
-            .name
-            .filter(|name| !name.trim().is_empty())
-            // A companion terminal left behind by a desktop restart gets a readable tab name.
-            .map(|name| {
-                if crate::mobile::is_mobile_terminal(&name) {
-                    "Android 终端".to_string()
-                } else {
-                    name
-                }
-            }),
+        name: info.name.filter(|name| !name.trim().is_empty()),
     })
 }
 
@@ -801,13 +804,6 @@ pub(crate) async fn list_detached_terminals(
         let ptys = request_owned_detached_ptys(&session, &client_id).await?;
         Ok(ptys
             .into_iter()
-            // A phone may still own a briefly detached terminal while it reconnects.
-            .filter(|info| {
-                !info.name.as_deref().is_some_and(|name| {
-                    crate::mobile::is_mobile_terminal(name)
-                        && crate::mobile::owns_terminal(app, name)
-                })
-            })
             .filter_map(|info| detached_terminal_from_info(info, connection_id, &roots))
             .collect())
     }
@@ -894,6 +890,9 @@ fn validate_detached_terminal_for_kill(
     client_id: &str,
     root: &RegisteredRoot,
 ) -> Result<(), String> {
+    if info.is_mobile() {
+        return Err("移动端终端不能按桌面遗留终端结束".into());
+    }
     if !info.detached {
         return Err("PTY 已被接回，无法按遗留终端结束".to_string());
     }
@@ -1040,6 +1039,10 @@ fn select_restore_candidate(
         .into_iter()
         .find(|info| info.id == pty_id)
         .ok_or_else(|| format!("QC_PTY_GONE: PTY 不存在或已回收：{pty_id}"))?;
+    // Recheck full daemon metadata for stale orphan lists and persisted desktop tabs.
+    if info.is_mobile() {
+        return Err("移动端终端不能接回桌面".into());
+    }
     if info.exited.is_some() {
         return Err(format!("QC_PTY_GONE: PTY 已退出：{pty_id}"));
     }
@@ -2551,6 +2554,58 @@ mod tests {
             &untrusted,
         )
         .is_none());
+    }
+
+    #[test]
+    fn mobile_terminal_is_never_offered_as_a_desktop_orphan_after_restart() {
+        let root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        let desktop = pty_info("desktop-pty", Some(client_id), "/home/dev/app");
+
+        // Both share the installation owner. No MobileState/Hub is available
+        // after restart, so the persisted daemon name must be sufficient.
+        let owned = owned_detached_ptys(vec![mobile, desktop], client_id);
+        assert_eq!(owned.len(), 2);
+        let orphans: Vec<_> = owned
+            .into_iter()
+            .filter_map(|info| {
+                detached_terminal_from_info(info, "remote-a", std::slice::from_ref(&root))
+            })
+            .collect();
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].pty_id, "desktop-pty");
+    }
+
+    #[test]
+    fn mobile_terminal_cannot_be_restored_from_a_stale_desktop_tab() {
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        let error = select_restore_candidate(vec![mobile], "phone-pty", client_id).unwrap_err();
+        assert!(error.contains("移动端终端不能接回桌面"));
+        // It is still alive; never classify rejection as a missing PTY.
+        assert!(!error.contains("QC_PTY_GONE:"));
+    }
+
+    #[test]
+    fn stale_desktop_orphan_actions_cannot_kill_mobile_terminals() {
+        let root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        assert!(validate_detached_terminal_for_kill(&mobile, client_id, &root).is_err());
+        // Explicit connection/project cleanup still owns this terminal.
+        assert!(validate_terminal_for_exit(&mobile, client_id, &root).is_ok());
     }
 
     #[test]

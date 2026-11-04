@@ -1,8 +1,17 @@
+Android 图片与快捷会话场景运行 `node scripts/web-tests/mobile-images.agent-browser.mjs`。
+覆盖默认中压缩、保存偏好、取消选择、上传失败保留草稿、迟到上传不串会话、Claude / OpenCode 各启动一次、
+紧凑底栏与模拟圆角内边距，截图和结果位于 `.dev/web-tests/mobile-images/`。
+此页面使用内存图片选择与 RPC，不替代 Android 相册、照片压缩、Windows / WSL 路径和远端上传的真机验收。
+
 # Web 测试页与浏览器验收
+
+Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
+
+Android 终端长按选字运行 `node scripts/web-tests/mobile-selection.agent-browser.mjs`，复用真实 xterm、触摸手势与页面。覆盖中文宽字符长按、双端手柄跨行拖动、全选、手机剪贴板桥、失败重试、鼠标上报 TUI 不发输入、返回取消、旋转清理及会话切换；截图与结果在 `.dev/web-tests/mobile-selection/`。剪贴板写入由内存桥模拟，Android 原生剪贴板和真实触屏手感仍需真机验收。
 
 Android 项目来源场景使用 `/mobile-android/`，运行 `node scripts/web-tests/mobile-project-sources.agent-browser.mjs`。
 验证同名项目的连接名称与 IP 分行显示、WSL / 地址搜索、旧版电脑端兼容、首页与终端来源一致、
-WSL 空分类说明，以及 320px 窄屏的长连接名换行；截图与结果位于 `.dev/web-tests/mobile-project-sources/`。
+取消环境分类后的统一列表、WSL 路径查询，以及 320px 窄屏的长连接名换行；截图与结果位于 `.dev/web-tests/mobile-project-sources/`。
 
 Android 扫码识别使用 `node scripts/web-tests/mobile-scanner.agent-browser.mjs`（先启动 `pnpm test:web`）。
 复用 `/mobile-android/` 的真实页面、jsQR 与扫码模块，通过 Canvas MediaStream 提供 1920×1080 模拟相机画面，
@@ -61,7 +70,7 @@ agent-browser --session qingcode-ui-review close
 终端退出提示条场景为 `/web-tests/terminal-exit.html`，运行 `scripts/web-tests/terminal-exit.ego.mjs` 的 `run()`。覆盖异常退出保持现场、显式打开普通 shell、导出不触发重启、未知退出码、中英文与窄屏浅色布局。该页面只复用提示条组件，进程和 SSH 生命周期由原生集成测试验证；`screenshots: false` 只代表 DOM 验收。
 
 QingCode Android 场景位于 `/mobile-android/`（`pnpm test:web`）。Linux / WSL 运行
-`node scripts/web-tests/mobile-layout.agent-browser.mjs`，覆盖首次使用引导、快捷项目、搜索清空、吸顶筛选、长名称、
+`node scripts/web-tests/mobile-layout.agent-browser.mjs`，覆盖首次使用引导、快捷项目、搜索清空、吸顶搜索、长名称、
 中文组词保护、命令发送、实时键盘切换、Ctrl+C、两排快捷键与符号键、Alt 双击锁定与释放、单会话隐藏标签栏、
 竖屏会话底部弹层、连接头像、字号上下限、历史回看、会话草稿、离线重连、居中弹窗与返回操作。
 下拉刷新、弹层下滑关闭和长按连发的触摸手势由 `src/lib/mobileAndroidGestures.test.ts` 覆盖。
@@ -77,6 +86,12 @@ Windows / macOS 可运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`
 不启动 `App.tsx`，不加载真实项目数据库、恢复会话或建立 SSH 连接。
 
 ## 启动
+
+手机快速接回与历史分页：运行 `node scripts/web-tests/mobile-history.agent-browser.mjs`。以 1000 个旧输出块验证最新快照接回及后续序号，不预取历史；覆盖 120 行分页、前插锚点、阅读期间接收新输出、缓存边界、无图标的滚轮与触摸入口、滑回底部返回实时、只读操作不发按键、失败重试、重连接回、TUI 滚轮、全屏返回顺序和切换会话时的迟到响应。报告位于 `.dev/web-tests/mobile-history/`。Rust 的 `mobile_screen::tests` 与 `mobile::tests` 验证解析器、快照、分页游标和旧客户端兼容；触摸单测 `mobileAndroidTerminalTouch.test.ts` 验证逐帧合并、减速惯性、新触摸中止、TUI 禁止惯性和销毁取消。浏览器采用内存 RPC，Windows / SSH / WSL 与真机链路仍需集成验收。
+
+手机横屏与全屏专项：运行 `node scripts/web-tests/mobile-landscape.agent-browser.mjs`，覆盖横屏默认收起、展开后并排布局、旋转与重载后的偏好、收起时保留草稿和实时键盘、释放隐藏修饰键、全屏进入与退出、Android 返回顺序、失败恢复、迟到回复及横屏键盘高度。截图和报告位于 `.dev/web-tests/mobile-landscape/`。原生桥由内存 fixture 模拟；Android 系统栏隐藏、挖孔及软键盘避让仍需真机验收。
+
+手机斜杠命令与技能输入专项：运行 `node scripts/web-tests/mobile-completion.agent-browser.mjs`，覆盖斜杠草稿先预览再确认、草稿与实时输入的 Tab 补全、方向键与确认保留键盘焦点、中文组词保护及多行草稿保留，并检查窄屏、软键盘高度和横屏。截图、JSON 和 HTML 报告位于 `.dev/web-tests/mobile-completion/`；此验收只覆盖真实 Web 资产、xterm 和内存 RPC，仍需真机验证输入法及实际 Claude / OpenCode 候选。
 
 ```powershell
 pnpm test:web
@@ -232,3 +247,11 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 脚本在新的内存会话中添加项目，验证保存失败保留文件、保存后关闭、运行配置与远程连接的离开保护、
 设置键搜索与空结果、当前项目分类、分屏无横向溢出、菜单键盘及焦点返回，以及三种主题和英文窄窗的项目行操作。
 结果、浏览器异常、PNG 截图与 HTML 报告在 `.dev/web-tests/ui-interactions/`；不建立真实远程连接或执行项目命令。
+
+设置分类验收运行 `node scripts/web-tests/settings-categories.agent-browser.mjs`，使用
+`pnpm dev:web-test`（38419）和独立 Linux agent-browser 会话。复用真实设置页与内存后端，
+覆盖单分类显示、跨分类搜索、配置键和自定义快捷键搜索、用户/当前项目范围切换、
+空结果与焦点恢复、终端配置快捷跳转、窄窗大字号及英文浅色界面，
+以及「管理设置」中的用户 JSON 和项目默认模板入口。仅在测试会话内模拟 Windows 来源与移动状态；
+不验证真实文件、Windows 原生缩放、SSH 或手机连接。
+截图、JSON 与 HTML 报告位于 `.dev/web-tests/settings-categories/`。

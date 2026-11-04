@@ -10,6 +10,7 @@ import {
   consumeModifier,
   keySequence,
   matchesProject,
+  launchCommand,
   nextModifierState,
   outputChunk,
   parsePairingLink,
@@ -37,16 +38,15 @@ describe('Android project sources', () => {
 
   it('supports an older desktop without connection names', () => {
     expect(projectSourceLabel({ kind: 'ssh', host: '192.168.252.107' })).toBe('远端 · 192.168.252.107')
-    expect(matchesProject({ name: 'app', kind: 'ssh' }, 'all', 'app')).toBe(true)
+    expect(matchesProject({ name: 'app', kind: 'ssh' }, 'app')).toBe(true)
   })
 
-  it('searches connection names, addresses and paths without changing the transport category', () => {
+  it('searches connection names, addresses and paths in a single project list', () => {
     for (const query of [' wSl ', 'LOCALHOST', '/home/code/django', 'django']) {
-      expect(matchesProject(wslRemote, 'ssh', query)).toBe(true)
+      expect(matchesProject(wslRemote, query)).toBe(true)
     }
-    expect(matchesProject(wslRemote, 'wsl', 'WSL')).toBe(false)
-    expect(matchesProject(wslRemote, 'all', 'WinDev')).toBe(false)
-    expect(matchesProject({ ...wslRemote, host: '192.168.252.107' }, 'all', '252.107')).toBe(true)
+    expect(matchesProject(wslRemote, 'WinDev')).toBe(false)
+    expect(matchesProject({ ...wslRemote, host: '192.168.252.107' }, '252.107')).toBe(true)
   })
 })
 
@@ -178,5 +178,12 @@ describe('Android connection avatars', () => {
       const { hue } = avatarFor(name)
       expect(Number.isInteger(hue) && hue >= 0 && hue < 6).toBe(true)
     }
+  })
+})
+describe('mobile quick launch', () => {
+  it('only allows the two fixed commands', () => {
+    expect(launchCommand('claude')).toBe('claude\r')
+    expect(launchCommand('opencode')).toBe('opencode\r')
+    expect(() => launchCommand('claude; rm -rf /')).toThrow()
   })
 })

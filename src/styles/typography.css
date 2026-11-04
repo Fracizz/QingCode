@@ -36,6 +36,10 @@
 .project-source-badge {
   font-size: min(var(--ui-font-size-sm), max(12px, calc(var(--ui-font-size) * 0.8)));
   line-height: 1.25;
+  /* Short connection names keep their natural width; long sources remain
+     bounded, and very narrow parents can still constrain the entire badge. */
+  flex-shrink: 0;
+  max-width: min(100%, clamp(6em, 45%, 12em));
 }
 
 @utility text-ui-lg {

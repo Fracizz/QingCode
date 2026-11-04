@@ -1,6 +1,6 @@
 # SSH 工作区
 
-Android 移动连接的远端项目和终端由配对的 Windows QingCode 转发，沿用桌面已有的 SSH 或 Server 连接、工作区信任和路径校验。手机端提供项目选择和手机会话管理，操作范围见 [QingCode Android](../mobile/README.md)。
+Android 移动连接的远端项目和终端由配对的 Windows QingCode 转发，沿用桌面已有的 SSH 或 Server 连接、工作区信任和路径校验。手机端提供项目选择和手机会话管理，操作范围见 [QingCode Android](../mobile/README.md)。带移动端标识的远端 PTY 始终排除在桌面遗留终端列表之外，桌面重启或手机会话记录丢失也不会接管；旧标签接回和遗留终端结束请求同样会在后端拒绝。
 
 独立端口模式见 [Server 端口直连](direct-agent.md)：在「远程连接」中新建 Server 连接，或为已有 SSH 连接启用直连。HTTPS 文件操作与 WSS 终端共用默认 TCP 48763，可修改并保留历史端口提示；日常通信不经过 SSH。以下 SSH 说明只适用于 SSH 连接类型。
 
@@ -18,7 +18,7 @@ QingCode 的远程工作区通过 SSH 连接主机，新建连接统一使用 Se
 
 ## 使用方式
 
-SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项目选择器底部、设置 → 功能或命令面板「远程连接管理」）。新建项目时点击 `+` →「新建项目」，在「源文件夹」的位置下拉中选择已保存主机，按需输入本次会话密码或私钥口令，从主目录浏览并选定项目根目录后创建。下拉里的「添加远程主机」会打开管理页的新建表单：填写主机、端口、用户名和认证方式后「测试连接」，首次连接会展示服务端 SHA-256 主机指纹，确认后保存即自动回到创建对话框并选中该主机。同一主机可以继续创建多个远程项目。
+SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项目选择器底部、设置 → 远程连接或命令面板「远程连接管理」）。新建项目时点击 `+` →「新建项目」，在「源文件夹」的位置下拉中选择已保存主机，按需输入本次会话密码或私钥口令，从主目录浏览并选定项目根目录后创建。下拉里的「添加远程主机」会打开管理页的新建表单：填写主机、端口、用户名和认证方式后「测试连接」，首次连接会展示服务端 SHA-256 主机指纹，确认后保存即自动回到创建对话框并选中该主机。同一主机可以继续创建多个远程项目。
 
 远程连接页默认展示概览：连接方式与地址、最近使用的 5 个项目（包含顶栏隐藏项目）、信任与项目根、远端服务及日志入口。可展开全部项目；「添加项目」打开创建对话框后仍需选择源主机。搜索同时匹配连接名、主机、端口、账号及关联项目名和路径，多个关键词需同时匹配；「需要处理」筛选状态检查失败或服务异常的连接。尚未完成状态检查、未连接、检查失败和服务就绪分别显示。首次读取后订阅全部连接的服务状态事件，手动刷新重新读取，不为每个连接持续轮询。
 
@@ -122,7 +122,7 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
   - Windows 使用当前安装账户的计划任务，开机延迟 15 秒、S4U 无密码登录、Limited 权限、无运行时长限制；创建开机任务需要管理员 SSH 账户，权限不足会明确失败，不退化成登录后启动。S4U 的 Windows 限制包括不能访问网络共享及 EFS 加密文件（[Microsoft 说明](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask)）。关闭只删除匹配账户 SID 和状态目录的 QingCode 任务。Linux 使用 systemd：root 使用系统单元，普通用户使用用户单元并开启 linger（需要系统许可和可用的用户 manager）。macOS 使用 launchd：root 注册 LaunchDaemon，普通用户注册下次登录时启动的 LaunchAgent；SSH 环境缺少可用 launchd 域时明确报错。关闭仅取消后续启动，不结束当前服务；Linux 不撤销用户已有的 linger。
   - 手动管理：`qingcode-server direct --port 48763 --detach`，再执行 `qingcode-server startup enable` / `disable` / `status`；自定义运行目录时两条命令均传 `--state-dir <绝对目录>`。启动注册沿用当前证书、token、监听地址及端口。客户端仅在远端配置成功后记录自启状态；该记录是最近一次操作结果，不代替实时任务检查。已开启自启的直连服务通过 SSH 更新时同步刷新启动程序路径。
   - **直连 Server 的 SSH 更新包来源**：更新弹窗可选择「自动获取（默认）」或「使用本机离线包」，两种方式都由客户端通过 SSH 上传，远端无需访问互联网。先「检查并准备服务包」，按远端系统/架构校验版本、manifest、大小及 SHA-256，展示需要的版本、包版本和本机来源，再允许更新。自动获取是本次操作的明确联网授权：本机包缺失或不匹配时在客户端联网下载；不修改全局或项目下载设置。离线方式只读取所选本机目录（也接受包含 `servers` 子目录的父目录），缺包、旧版本或校验失败直接报错，不回退其他目录或在线下载。实际更新前再次校验已准备的目录，准备/上传/远端自检完成前不停止旧服务；进度区分本机下载、包校验、SSH 上传、重启、配对身份验证和失败后的恢复尝试。已有后台更新入口仍遵守保存的自动下载策略。原生文件选择、真实断网主机及 Windows/SSH 更新需单独验收。
-  - **发行渠道**：Windows 安装包和便携版都不内置服务二进制，统一使用独立离线服务包或在线下载。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到安装目录或 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
+  - **发行渠道**：Windows 安装包和便携版都不内置服务二进制，统一使用独立离线服务包或在线下载。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 远程连接里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到安装目录或 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
 
