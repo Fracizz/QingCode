@@ -4,6 +4,30 @@
 export const PAIRING_PREFIX = 'qingcode://pair?';
 export const DEFAULT_PORT = 48764;
 export const INPUT_SLICE = 2048;
+
+/** Dimensions are the viewport's content box, with padding already deducted. */
+export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColumns = 0) {
+  if (![width, height, cellWidth, cellHeight].every(value => Number.isFinite(value) && value > 0)) return null;
+  return {
+    cols: Math.max(2, Math.min(300, fixedColumns || Math.floor(width / cellWidth))),
+    rows: Math.max(2, Math.min(150, Math.floor(height / cellHeight))),
+  };
+}
+
+export function sessionName(session, fallback = 1) {
+  return typeof session?.name === 'string' && session.name.trim()
+    ? session.name.trim() : '终端 ' + (session?.number ?? fallback);
+}
+
+/** Late poll responses must not undo a newer manual rename. */
+export function mergeSessionName(session, incoming) {
+  if (!Number.isFinite(incoming?.nameRevision) || incoming.nameRevision < (session.nameRevision ?? -1)) return false;
+  const changed = session.name !== incoming.name || session.customName !== incoming.customName;
+  session.name = incoming.name;
+  session.customName = incoming.customName;
+  session.nameRevision = incoming.nameRevision;
+  return changed;
+}
 export const RECENT_PROJECT_LIMIT = 10;
 
 export function rememberProject(history, id, openedAt = Date.now()) {

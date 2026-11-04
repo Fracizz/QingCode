@@ -332,22 +332,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .terminal-heading h1 { font-size: 16px; font-weight: 650; }
 #terminal-host { margin-top: 1px; font-size: 12px; color: var(--muted); }
 #new-session { color: var(--accent); }
-/* 会话标签嵌在标题下方，替代来源行；来源完整信息见「会话与设置」。 */
-.session-rail { display: flex; margin-top: 2px; min-width: 0; }
-#session-tabs { display: flex; flex: 1; min-width: 0; gap: 5px; overflow-x: auto; scrollbar-width: none; }
-#session-tabs::-webkit-scrollbar { display: none; }
-.session-tab {
-  flex: none;
-  min-height: 30px;
-  line-height: 28px;
-  border: 1px solid var(--line);
-  border-radius: var(--control-radius);
-  color: var(--muted);
-  padding: 0 10px;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.session-tab[aria-current="true"], .row[aria-current="true"] { color: var(--accent); border-color: var(--accent-border); background: var(--accent-surface); }
+.row[aria-current="true"] { color: var(--accent); border-color: var(--accent-border); background: var(--accent-surface); }
 .terminal-body { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
 .terminal-selection-layer { position: absolute; z-index: 3; touch-action: none; }
 .terminal-selection-tools { position: absolute; z-index: 4; top: 6px; right: max(8px, var(--corner-inset)); display: flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: calc(100% - 16px); padding: 2px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); box-shadow: 0 4px 16px #0006; }
@@ -364,7 +349,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
 #history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
-#viewport { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px 8px 0; touch-action: pinch-zoom; overscroll-behavior: contain; }
+#viewport { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
 #scroll-bottom { position: absolute; right: 14px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
 #scroll-bottom svg { width: 16px; height: 16px; }
 #terminal-tools { flex: none; padding: 0 8px max(8px, var(--safe-bottom), var(--corner-bottom-inset)); border-top: 1px solid var(--divider); background: var(--paper); }
@@ -484,9 +469,35 @@ dialog p.hint { font-size: 12px; margin-top: 4px; }
 .dialog-actions, .dialog-links { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .dialog-actions { position: sticky; bottom: -22px; padding-block: 10px 4px; background: var(--surface); }
 .dialog-actions > button { flex: 1; }
-#end-all-sessions { flex-basis: 100%; }
 .dialog-links { margin-top: 4px; }
-#session-options { max-height: 45vh; overflow-y: auto; background: var(--paper); }
+dialog.session-drawer {
+  inset: 0 auto 0 0;
+  margin: 0;
+  width: min(360px, calc(100% - 44px - var(--safe-right)));
+  height: 100%;
+  max-height: 100%;
+  padding: max(12px, var(--safe-top)) 12px max(12px, var(--safe-bottom)) max(12px, var(--safe-left));
+  border-width: 0 1px 0 0;
+  border-radius: 0 var(--group-radius) var(--group-radius) 0;
+}
+dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-in 180ms var(--ease); }
+@keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+.drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.drawer-heading h2 { margin: 0; }
+#session-context { font-size: 13px; overflow-wrap: anywhere; }
+#session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: var(--paper); }
+.session-option { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; }
+.session-option .row { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+.session-option strong { white-space: normal; overflow-wrap: anywhere; }
+.session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
+.session-option .icon-button { color: var(--muted); }
+.drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; }
+.drawer-actions .wide { grid-column: 1 / -1; }
+.drawer-actions button { padding-inline: 8px; font-size: 13px; }
+@media (max-height: 450px) {
+  dialog.session-drawer[open] { overflow-y: auto; }
+  #session-options { flex: none; max-height: 45vh; }
+}
 .sheet-handle { display: none; }
 
 /* 竖屏手机：会话菜单、连接详情改为贴底弹层，单手可达，可拖动条下滑关闭。 */

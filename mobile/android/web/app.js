@@ -13,7 +13,10 @@ import {
   recentProjects,
   rememberProject,
   renameProfileKeys,
+  sessionName,
+  mergeSessionName,
   splitInput,
+  terminalGridSize,
   validIpv4,
   validPort,
 } from './protocol.js';
@@ -67,6 +70,7 @@ let profileEpoch = 0;
 let page = 'home';
 let sessions = [];
 let selected = null;
+let renamingSession = null;
 let viewEpoch = 0;
 let term;
 let fit;
@@ -188,7 +192,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -977,7 +981,7 @@ for (const [id, action] of Object.entries({
     refreshReader();
     get('reader-dialog').showModal();
   },
-  'menu-sessions': () => get('session-dialog').showModal(),
+  'menu-sessions': () => { void openSessionDrawer(); },
   'menu-new': () => { if (!busy) get('new-session-dialog').showModal(); },
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
@@ -1038,8 +1042,8 @@ function updateComposerActions() {
   get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
   get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
   renderComposeNotes();
-  for (const button of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send')) {
-    button.disabled = !terminalReady || composing || editorComposing || (button.id === 'attach-image' && sendingImage)
+  for (const button of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach')) {
+    button.disabled = !terminalReady || composing || editorComposing || (['attach-image', 'expanded-attach'].includes(button.id) && sendingImage)
       || (button.dataset.key === 'clear' && (raw || !compose.value))
       || (!raw && /[\r\n]/.test(compose.value) && ['slash', 'tab', 'reference'].includes(button.dataset.key));
   }
@@ -1140,6 +1144,8 @@ get('toggle-keys').addEventListener('click', () => {
 renderShortcutVisibility();
 
 function leaveTerminal({ preserveFullscreen = false } = {}) {
+  get('session-drawer').close();
+  get('rename-session-dialog').close();
   cancelKeyRepeats();
   if (get('keys-dialog').open) get('keys-dialog').close();
   if (!preserveFullscreen) void setTerminalFullscreen(false);
@@ -1263,11 +1269,21 @@ function fitTerminal() {
   if (!term || !fit || terminalScreen.hidden) return;
   const screen = term.element.querySelector('.xterm-screen');
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;
+  const cellHeight = screen?.getBoundingClientRect().height / term.rows;
+  const scrollbar = term.options.scrollback === 0 ? 0 : term.options.overviewRuler?.width || 14;
   get('viewport').dataset.columns = terminalColumns ? 'fixed' : 'fit';
-  term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth) + 'px' : '100%';
-  const size = fit.proposeDimensions();
+  term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth + scrollbar) + 'px' : '100%';
+  // FitAddon uses the parent's border-box size. Our padded viewport must use its
+  // content box, otherwise a last row/column can be hidden behind the tools.
+  const viewport = get('viewport');
+  const padding = getComputedStyle(viewport);
+  const size = terminalGridSize(
+    viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - scrollbar,
+    viewport.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom),
+    cellWidth, cellHeight, terminalColumns,
+  );
   if (!size) return;
-  const cols = terminalColumns || size.cols;
+  const cols = size.cols;
   if (cols !== term.cols || size.rows !== term.rows) term.resize(cols, size.rows);
 }
 
@@ -1313,8 +1329,8 @@ function terminalState(text, state = 'idle', retry = false) {
   get('terminal-status').textContent = text;
   get('terminal-dot').dataset.state = state;
   get('terminal-retry').hidden = !retry;
-  for (const control of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send')) {
-    control.disabled = !terminalReady || (control.id === 'attach-image' && sendingImage);
+  for (const control of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach')) {
+    control.disabled = !terminalReady || (['attach-image', 'expanded-attach'].includes(control.id) && sendingImage);
   }
   updateComposerActions();
   syncLatency();
@@ -1366,33 +1382,86 @@ async function openProject(item, resumeOnly = false) {
 }
 
 function renderSessions() {
-  const tabs = get('session-tabs');
-  get('session-rail').hidden = sessions.length < 2;
-  // 多会话时标签占用来源行，头部保持单行高度。
-  get('terminal-host').hidden = sessions.length >= 2;
+  const current = sessions.find(item => item.id === selected);
+  get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? '终端';
+  get('terminal-host').textContent = project ? project.name + ' · ' + projectSourceLabel({ ...project, host: '' }) : '';
+  get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
+  get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
   const options = get('session-options');
-  const scroll = tabs.scrollLeft;
-  tabs.replaceChildren();
   options.replaceChildren();
   get('end-session').disabled = !selected;
   get('end-all-sessions').disabled = !sessions.length;
   get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
   for (const [index, session] of sessions.entries()) {
-    const label = '终端 ' + (session.number ?? index + 1);
-    const tab = button('session-tab', () => { if (!busy) selectSession(session); });
-    tab.textContent = label + (session.exit ? ' · 已结束' : '');
+    const label = sessionName(session, index + 1);
+    const row = document.createElement('div');
+    row.className = 'session-option';
+    row.dataset.id = session.id;
+    row.dataset.current = String(session.id === selected);
     const option = button('row', () => { if (!busy) selectSession(session); });
-    option.append(tile('terminal'), rowText(label, session.exit ? '已结束' : '可接入'), icon('chevron', 'arrow'));
+    const status = session.exit ? '已结束' : session.id === selected ? '当前会话' : '可接入';
+    const identity = '终端 ' + (session.number ?? index + 1);
+    option.append(rowText(label, label === identity ? status : identity + ' · ' + status));
+    const rename = button('icon-button', () => openSessionRename(session));
+    rename.setAttribute('aria-label', '重命名 ' + label);
+    rename.disabled = !Number.isFinite(session.nameRevision) || busy;
+    rename.append(icon('edit'));
     if (session.id === selected) {
-      tab.setAttribute('aria-current', 'true');
       option.setAttribute('aria-current', 'true');
     }
-    tabs.append(tab);
-    options.append(option);
+    row.append(option, rename);
+    options.append(row);
   }
-  tabs.scrollLeft = scroll;
-  tabs.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
+
+async function openSessionDrawer() {
+  renderSessions();
+  if (!get('session-drawer').open) get('session-drawer').showModal();
+  get('show-sessions').setAttribute('aria-expanded', 'true');
+  const epoch = viewEpoch;
+  try {
+    const list = await remote('sessions', { project: project.id });
+    if (epoch !== viewEpoch || !get('session-drawer').open) return;
+    sessions = list.map(item => {
+      const previous = sessions.find(saved => saved.id === item.id);
+      if (previous) mergeSessionName(item, previous);
+      return item;
+    });
+    renderSessions();
+  } catch (error) {
+    if (epoch === viewEpoch) message('session-error', error.message);
+  }
+}
+
+function openSessionRename(session) {
+  if (busy) return;
+  renamingSession = { id: session.id, address: profile.id, epoch: viewEpoch };
+  get('save-session-name').disabled = false;
+  get('session-name-input').value = session.customName ?? sessionName(session);
+  message('rename-session-error', '');
+  get('rename-session-dialog').showModal();
+  get('session-name-input').select();
+}
+
+get('rename-session-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!renamingSession || get('save-session-name').disabled) return;
+  const target = renamingSession;
+  get('save-session-name').disabled = true;
+  try {
+    const result = await remote('rename_session', { id: target.id, name: get('session-name-input').value.trim() }, target.address);
+    if (target.epoch !== viewEpoch || profile.id !== target.address) return;
+    const session = sessions.find(item => item.id === target.id);
+    if (session) mergeSessionName(session, result);
+    renderSessions();
+    if (renamingSession === target) get('rename-session-dialog').close();
+  } catch (error) {
+    if (target.epoch === viewEpoch && renamingSession === target) message('rename-session-error', error.message);
+  } finally {
+    if (renamingSession === target) get('save-session-name').disabled = false;
+  }
+});
+get('rename-session-dialog').addEventListener('close', () => { renamingSession = null; });
 
 async function createSession(epoch, launch = 'shell') {
   const session = await remote('create', { project: project.id, ...dimensions() });
@@ -1412,6 +1481,7 @@ async function createSession(epoch, launch = 'shell') {
 
 function selectSession(session) {
   get('session-dialog').close();
+  get('session-drawer').close();
   if (selected === session.id) return;
   leaveTerminal({ preserveFullscreen: true });
   selected = session.id;
@@ -1445,6 +1515,8 @@ async function poll(session, epoch) {
     try {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
+      const current = sessions.find(item => item.id === session.id);
+      if (current && mergeSessionName(current, data)) renderSessions();
       if (data.chunks.length && get('reader-dialog').open) get('reader-refresh').textContent = '刷新内容（有新输出）';
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);
@@ -1555,7 +1627,12 @@ function sendInput(value, { raw = false, onComplete } = {}) {
 }
 
 get('back').addEventListener('click', () => returnToDashboard());
+get('show-sessions').addEventListener('click', () => { void openSessionDrawer(); });
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
+get('session-drawer').addEventListener('close', () => get('show-sessions').setAttribute('aria-expanded', 'false'));
+get('session-drawer').addEventListener('toggle', () => get('show-sessions').setAttribute('aria-expanded', String(get('session-drawer').open)));
+get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
+get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); get('new-session-dialog').showModal(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) get('new-session-dialog').showModal(); });
 async function newSession(launch) {
@@ -1590,7 +1667,7 @@ get('end-session').addEventListener('click', async () => {
     ended ? '此会话的输出将从列表中移除。' : '该会话中的 Shell 和前台任务将被关闭。', ended ? '移除' : '结束')) return;
   if (busy || epoch !== viewEpoch) return;
   busy = true;
-  get('session-dialog').close();
+  get('session-drawer').close();
   try {
     await remote('end', { id });
     if (epoch !== viewEpoch) return;
@@ -1627,7 +1704,7 @@ get('end-all-sessions').addEventListener('click', async () => {
     sessions = targets;
     renderSessions();
     if (!targets.length) {
-      get('session-dialog').close();
+      get('session-drawer').close();
       localStorage.removeItem(sessionKey(projectId));
       returnToDashboard('home');
       return;
@@ -1635,7 +1712,7 @@ get('end-all-sessions').addEventListener('click', async () => {
     if (!await confirmAction('结束全部会话？',
       `将结束「${profile.name} / ${project.name}」的全部 ${targets.length} 个手机会话，关闭其中的 Shell 和前台任务，并移除会话输出。其他项目和桌面终端不受影响。`, '结束全部')) return;
     if (epoch !== viewEpoch) return;
-    get('session-dialog').close();
+    get('session-drawer').close();
     // Pause polling and input while the confirmed terminals are being closed.
     leaveTerminal({ preserveFullscreen: true });
     epoch = viewEpoch;
@@ -1660,7 +1737,8 @@ get('end-all-sessions').addEventListener('click', async () => {
     } else {
       selectSession(sessions.find(item => item.id === previous) ?? sessions.find(item => !item.exit) ?? sessions[0]);
       message('session-error', `已结束 ${ended.size} 个会话，${failed.length} 个未确认结束，请核对后重试。`);
-      get('session-dialog').showModal();
+      get('session-drawer').showModal();
+      get('show-sessions').setAttribute('aria-expanded', 'true');
     }
   } catch (error) {
     if (epoch === viewEpoch) {
@@ -1838,39 +1916,58 @@ async function sendImage() {
   sendingImage = true;
   get('attach-image').disabled = true;
   get('attach-image').setAttribute('aria-busy', 'true');
+  get('expanded-attach').disabled = true;
   get('choose-image').disabled = true;
   message('image-error', '');
+  let selection;
+  let inserted = 0;
+  let count = 0;
+  const current = () => epoch === viewEpoch && selected === id && attempt === imageEpoch;
   try {
-    const image = await rpc('pick_image', { compression: compression.value });
-    if (!image || epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
-    // 选完立即在输入框边框上显示进度，上传完成后路径已写入草稿。
+    const picked = await rpc('pick_image', { compression: compression.value });
+    selection = picked?.selection;
+    if (!picked || !current()) return;
+    // Older native bridges return a single image directly. New bridges keep only
+    // URI handles and decode each photo immediately before its upload.
+    count = selection ? picked.count : 1;
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error('图片选择已失效，请重新选择。');
     get('choose-image').textContent = '正在上传…';
-    setImageNote('图片上传中…');
-    const result = await remote('image', { id, data: image.data }, address);
-    if (epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
-    compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
-    drafts.set(draftKey(id), compose.value);
-    resizeComposer();
-    if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
+    for (let index = 0; index < count; index++) {
+      if (!current()) return;
+      setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index + 1}/${count}`);
+      const image = selection ? await rpc('read_image', { selection, index }) : picked;
+      if (!current()) return;
+      const result = await remote('image', { id, data: image.data }, address);
+      if (!current()) return;
+      compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
+      drafts.set(draftKey(id), compose.value);
+      resizeComposer();
+      if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
+      inserted += 1;
+    }
     if (get('image-dialog').open) get('image-dialog').close();
-    setImageNote('✓ 图片已插入', { state: 'done', ttl: 2500 });
+    setImageNote(count === 1 ? '✓ 图片已插入' : `✓ 已插入 ${inserted} 张图片`, { state: 'done', ttl: 2500 });
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
       else {
         setImageNote('⚠ 图片上传失败', { state: 'error', ttl: 6000 });
-        message('image-error', error.message);
+        message('image-error', count > 1
+          ? `已插入 ${inserted}/${count} 张图片。${error.message} 请重新选择剩余未上传的图片。`
+          : error.message);
         if (!get('image-dialog').open) get('image-dialog').showModal();
       }
     }
   } finally {
+    if (selection) void rpc('release_images', { selection }).catch(() => {});
     if (imageNote?.state === 'busy' && attempt === imageEpoch) setImageNote('');
     sendingImage = false;
     get('attach-image').disabled = !terminalReady;
     get('attach-image').removeAttribute('aria-busy');
     get('choose-image').disabled = false;
     get('choose-image').textContent = '选择图片';
+    updateComposerActions();
   }
 }
 get('attach-image').addEventListener('click', sendImage);

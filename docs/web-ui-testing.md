@@ -6,6 +6,10 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 # Web 测试页与浏览器验收
 
+安卓折叠底行与图片多选：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-multi-images.ego.mjs').then(m=>m.run())"`。覆盖折叠/展开后的完整底行、320px 窄屏、键盘高度及横屏、输入框常驻图片入口、多图原图逐张读取与上传、部分失败保留草稿、取消、切换会话停止批次和单图桥兼容。截图与 JSON 在 `.dev/web-tests/mobile-multi-images/`；内存桥不替代 Android 系统多选、解码与真实网络验收。
+
+手机会话侧栏与命名：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-sidebar.ego.mjs').then(m=>m.run())"`，复用 `pnpm test:web` 的 Android 页面。验证左侧抽屉、程序标题、手动名称优先级、清空恢复自动命名、失败保留原名、草稿隔离、重连接回、320px 窄屏、横屏菜单与旧电脑兼容，并在同一浏览器空间回归最近项目和结束全部会话。截图及 JSON 位于 `.dev/web-tests/mobile-sidebar/`。Rust `mobile` / `mobile_screen` 测试验证真实 OSC 分片解析、标题过滤、名称长度校验、手动名称优先及快照/轮询元数据；浏览器使用内存 RPC，不能代替 Android 真机与本机/WSL/SSH 进程验收。
+
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。

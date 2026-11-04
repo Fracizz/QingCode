@@ -15,6 +15,10 @@ const menu = action => {
   run('click', '#terminal-menu')
   run('wait', '--fn', `document.querySelector('#terminal-menu-dialog').open && !document.querySelector('#terminal-menu-dialog').getAnimations().some(animation=>animation.playState==='running')`)
   run('click', '#menu-' + action)
+  if (action === 'sessions') {
+    run('wait', '--fn', `document.querySelector('#session-drawer').open`)
+    run('click', '#drawer-settings')
+  }
   const target = { edit: 'expanded-dialog', submissions: 'submissions-dialog', read: 'reader-dialog', sessions: 'session-dialog', new: 'new-session-dialog' }[action]
   if (target) run('wait', '--fn', `document.querySelector('#${target}').open && !document.querySelector('#${target}').getAnimations().some(animation=>animation.playState==='running')`)
 }

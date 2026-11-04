@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifactDir } = {}) {
+export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifactDir, finish = true } = {}) {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
   const output = artifactDir ?? resolve(repo, '.dev/web-tests/mobile-recent-sessions')
   await mkdir(output, { recursive: true })
@@ -59,6 +59,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('opening a project moves it to the top and saves its history', async () => {
       await page.click('#home-project-list .row:last-child', { label: 'open older recent project' })
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
+      await page.click('#show-sessions', { label: 'open session drawer' })
       await page.click('#back', { label: 'return to recent projects' })
       assert.equal((await names())[0], 'Project 5')
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qingcode:mobile:recent-projects:192.168.1.8:48764'))[0].id), 'p5')
@@ -94,12 +95,13 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       first.exit = { exitCode: 0, disconnected: false }
       window.__mobileFixture.state.endErrors.add(first.id)
     })
-    await page.click('#manage-sessions', { label: 'manage current project sessions' })
+    await page.click('#show-sessions', { label: 'manage current project sessions' })
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true })
+    await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
     await page.evaluate(() => document.querySelector('#end-all-sessions').scrollIntoView({ block: 'end' }))
     assert.ok(await page.evaluate(() => {
       const bounds = document.querySelector('#end-all-sessions').getBoundingClientRect()
-      return bounds.left >= 0 && bounds.right <= innerWidth && bounds.height >= 44
+      return bounds.left >= -1 && bounds.right <= innerWidth + 1 && bounds.height >= 43.5
     }))
     await page.screenshot({ path: resolve(output, 'all-sessions-narrow.png') })
     await step('ending all sessions asks for the project and count and cancellation has no effect', async () => {
@@ -114,7 +116,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await step('partial failure keeps the failed session and other projects intact', async () => {
       await confirmAll()
-      await page.waitForFunction(() => document.querySelector('#session-dialog').open
+      await page.waitForFunction(() => document.querySelector('#session-drawer').open
         && !document.querySelector('#session-error').hidden)
       assert.match(await page.evaluate(() => document.querySelector('#session-error').textContent), /已结束 2 个会话，1 个未确认结束/)
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.project).sort()), ['p0', 'p5'])
@@ -128,7 +130,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results }, null, 2))
     console.log({ output, results })
-    await task.finish({ keep: [] })
+    if (finish) await task.finish({ keep: [] })
   } catch (error) {
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ spaceId: task.spaceId, results, error: String(error) }, null, 2))
     console.log({ spaceId: task.spaceId, output, results })

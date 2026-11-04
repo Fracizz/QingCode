@@ -14,6 +14,9 @@
       { id: 'p-ssh', name: 'api-server', path: 'ssh://conn-1/srv/api', kind: 'ssh', host: 'build.example' },
     ],
     sessions: new Map(),
+    sessionNames: true,
+    renameError: null,
+    renameDelay: 0,
     ends: [],
     endErrors: new Set(),
     inputs: [],
@@ -34,6 +37,10 @@
     imageError: null,
     imageDelay: 0,
     imageCompression: null,
+    imageSelections: new Map(),
+    imageReads: [],
+    imageReleases: [],
+    resizes: [],
     pendingLink: null,
     cameraGranted: false,
     nextSession: 1,
@@ -51,7 +58,7 @@
     const start = reset ? 0 : from - base
     const chunks = session.output.slice(start, start + 4)
     const next = base + start + chunks.length
-    return { chunks, next, more: next < session.next, reset, exit: session.exit,
+    return { ...sessionMetadata(session), chunks, next, more: next < session.next, reset, exit: session.exit,
       historyBefore: session.history?.length ?? 0, historyAvailable: !!session.history?.length }
   }
 
@@ -61,8 +68,14 @@
     const text = session.output.map(chunk => typeof chunk === 'string'
       ? decoder.decode(Uint8Array.from(atob(chunk), ch => ch.charCodeAt(0))) : chunk.data).join('')
     const screen = session.snapshot ?? { data: text.split('\n').slice(-12).join('\r\n'), cols: 80, rows: 24 }
-    return { chunks: [screen], next: session.next, more: false, reset: false, snapshot: true, exit: session.exit,
+    return { ...sessionMetadata(session), chunks: [screen], next: session.next, more: false, reset: false, snapshot: true, exit: session.exit,
       historyBefore: session.history?.length ?? 0, historyAvailable: !!session.history?.length }
+  }
+
+  function sessionMetadata(session) {
+    const basic = { id: session.id, number: session.number, exit: session.exit }
+    return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
+      customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
   }
 
   async function remote(profile, request) {
@@ -74,14 +87,27 @@
       case 'sessions': return {
         ok: true,
         data: [...state.sessions.values()].filter(item => item.project === request.project)
-          .map(item => ({ id: item.id, number: item.number, exit: item.exit })),
+          .map(sessionMetadata),
       }
       case 'create': {
         const number = state.nextSession++
         const session = { id: 'mobile-' + number, number, project: request.project, output: [], next: 0, waiters: [], exit: null }
         state.sessions.set(session.id, session)
         push(session, base64('PS D:\\code\\qingcode> '))
-        return { ok: true, data: { id: session.id, number } }
+        return { ok: true, data: sessionMetadata(session) }
+      }
+      case 'rename_session': {
+        if (state.renameDelay) await new Promise(resolve => setTimeout(resolve, state.renameDelay))
+        if (state.renameError) return { ok: false, error: state.renameError }
+        if (!state.sessionNames) return { ok: false, error: '请更新电脑端' }
+        const session = state.sessions.get(request.id)
+        if (!session) return { ok: false, error: '终端不存在。' }
+        const name = request.name.trim()
+        if ([...name].length > 80 || /[\x00-\x1f\x7f]/.test(name)) return { ok: false, error: '会话名称无效' }
+        session.customName = name || null
+        session.nameRevision = (session.nameRevision ?? 0) + 1
+        for (const wake of session.waiters.splice(0)) wake()
+        return { ok: true, data: sessionMetadata(session) }
       }
       case 'poll': {
         const session = state.sessions.get(request.id)
@@ -120,13 +146,14 @@
         return { ok: true, data: null }
       }
       case 'image': {
+        if (state.imageGate) await state.imageGate
         if (state.imageDelay) await new Promise(resolve => setTimeout(resolve, state.imageDelay))
         if (state.imageError) return { ok: false, error: state.imageError }
         if (!state.sessions.has(request.id)) return { ok: false, error: '终端不存在。' }
         state.images.push(request)
-        return { ok: true, data: { path: "'/tmp/mobile-image.jpg'" } }
+        return { ok: true, data: { path: state.imagePaths?.[state.images.length - 1] ?? "'/tmp/mobile-image.jpg'" } }
       }
-      case 'resize': return { ok: true, data: null }
+      case 'resize': state.resizes.push(request); return { ok: true, data: null }
       case 'end': {
         state.ends.push(request.id)
         if (state.endErrors.has(request.id)) return { ok: false, error: '模拟结束失败' }
@@ -171,7 +198,25 @@
         state.pendingLink = null
         return { ok: true, data: link }
       }
-      case 'pick_image': state.imageCompression = request.compression; return { ok: true, data: state.image }
+      case 'pick_image': {
+        state.imageCompression = request.compression
+        if (!Array.isArray(state.image)) return { ok: true, data: state.image }
+        if (!state.image.length) return { ok: true, data: null }
+        const selection = 'fixture-selection-' + Date.now()
+        state.imageSelections.set(selection, state.image.slice())
+        return { ok: true, data: { selection, count: state.image.length } }
+      }
+      case 'read_image': {
+        state.imageReads.push(request.index)
+        const image = state.imageSelections.get(request.selection)?.[request.index]
+        if (!image) return { ok: false, error: '图片选择已失效，请重新选择。' }
+        if (image.error) return { ok: false, error: image.error }
+        return { ok: true, data: image }
+      }
+      case 'release_images':
+        state.imageReleases.push(request.selection)
+        state.imageSelections.delete(request.selection)
+        return { ok: true, data: true }
       case 'camera': return { ok: true, data: state.cameraGranted }
       case 'probe': {
         const fingerprint = state.hosts.get(request.host + ':' + request.port)
@@ -238,6 +283,10 @@
 
   window.__mobileFixture = {
     state,
+    terminalSize() {
+      const term = terminals.at(-1)
+      return term ? { cols: term.cols, rows: term.rows } : null
+    },
     terminalText() {
       const term = terminals.at(-1)
       if (!term) return ''
@@ -248,6 +297,12 @@
     },
     fingerprint: FINGERPRINT,
     code: CODE,
+    setTitle(id, title) {
+      const session = state.sessions.get(id)
+      session.title = title
+      session.nameRevision = (session.nameRevision ?? 0) + 1
+      for (const wake of session.waiters.splice(0)) wake()
+    },
     pushScreen(id, text, cols = 80, rows = 24) {
       push(state.sessions.get(id), { data: text, cols, rows })
     },

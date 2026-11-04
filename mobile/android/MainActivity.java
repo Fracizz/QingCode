@@ -94,6 +94,16 @@ public final class MainActivity extends Activity {
     private float cornerBottomInset;
     private Integer imageReply;
     private String imageCompression;
+    private final Map<String, ImageSelection> imageSelections = new ConcurrentHashMap<>();
+
+    private static final class ImageSelection {
+        final List<Uri> uris;
+        final String compression;
+        ImageSelection(List<Uri> uris, String compression) {
+            this.uris = uris;
+            this.compression = compression;
+        }
+    }
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -284,21 +294,31 @@ public final class MainActivity extends Activity {
         final int id = imageReply;
         final String compression = imageCompression;
         imageReply = null;
-        if (result != RESULT_OK || intent == null || intent.getData() == null) {
+        if (result != RESULT_OK || intent == null) {
             replySafely(id, JSONObject.NULL);
             return;
         }
-        final Uri uri = intent.getData();
-        control.execute(() -> {
-            try {
-                byte[] image = readImage(uri, compression);
-                replySafely(id, new JSONObject().put("data", Base64.encodeToString(image, Base64.NO_WRAP)));
-            } catch (IOException error) {
-                reply(id, failure(error.getMessage()));
-            } catch (Exception | OutOfMemoryError error) {
-                reply(id, failure("读取图片失败，请选择较小的图片或提高压缩等级。"));
+        // Keep only URI handles here. Decode one image at a time when the web layer
+        // is ready to upload it, rather than holding every full-size photo in memory.
+        final List<Uri> uris = new ArrayList<>();
+        if (intent.getClipData() != null) {
+            for (int index = 0; index < intent.getClipData().getItemCount(); index++) {
+                Uri uri = intent.getClipData().getItemAt(index).getUri();
+                if (uri != null && !uris.contains(uri)) uris.add(uri);
             }
-        });
+        } else if (intent.getData() != null) {
+            uris.add(intent.getData());
+        }
+        if (uris.isEmpty()) { replySafely(id, JSONObject.NULL); return; }
+        final String selection = java.util.UUID.randomUUID().toString();
+        imageSelections.clear();
+        imageSelections.put(selection, new ImageSelection(uris, compression));
+        try {
+            replySafely(id, new JSONObject().put("selection", selection).put("count", uris.size()));
+        } catch (Exception error) {
+            imageSelections.remove(selection);
+            reply(id, failure("读取图片选择失败。"));
+        }
     }
 
     private byte[] readImage(Uri uri, String compression) throws IOException {
@@ -463,6 +483,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        imageSelections.clear();
         control.shutdownNow();
         output.shutdownNow();
         latency.shutdownNow();
@@ -533,13 +554,37 @@ public final class MainActivity extends Activity {
                     imageCompression = request.optString("compression", "medium");
                     try {
                         Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*")
-                            .addCategory(Intent.CATEGORY_OPENABLE);
+                            .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                         startActivityForResult(picker, IMAGE_REQUEST);
                     } catch (Exception error) {
                         imageReply = null;
                         reply(id, failure("无法打开系统图片选择器。"));
                     }
                 });
+                return;
+            }
+            if ("read_image".equals(op)) {
+                final ImageSelection selection = imageSelections.get(request.optString("selection"));
+                final int index = request.optInt("index", -1);
+                if (selection == null || index < 0 || index >= selection.uris.size()) {
+                    reply(id, failure("图片选择已失效，请重新选择。"));
+                    return;
+                }
+                control.execute(() -> {
+                    try {
+                        byte[] image = readImage(selection.uris.get(index), selection.compression);
+                        replySafely(id, new JSONObject().put("data", Base64.encodeToString(image, Base64.NO_WRAP)));
+                    } catch (IOException error) {
+                        reply(id, failure(error.getMessage()));
+                    } catch (Exception | OutOfMemoryError error) {
+                        reply(id, failure("读取图片失败，请选择较小的图片或提高压缩等级。"));
+                    }
+                });
+                return;
+            }
+            if ("release_images".equals(op)) {
+                imageSelections.remove(request.optString("selection"));
+                replySafely(id, true);
                 return;
             }
             if ("copy".equals(op)) {
@@ -716,7 +761,7 @@ public final class MainActivity extends Activity {
         request.remove("profile");
         switch (op) {
             case "projects": case "sessions": case "create": case "poll": case "history":
-            case "input": case "resize": case "end": case "image":
+            case "input": case "resize": case "end": case "image": case "rename_session":
                 return current.call(request);
             default:
                 return failure("未知操作。");

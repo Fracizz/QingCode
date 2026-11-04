@@ -121,6 +121,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
     })
 
     await step('changing the port keeps the pairing and moves per-connection records', async () => {
+      await page.click('#show-sessions', { label: 'open session drawer' })
       await page.click('#back', { label: 'return to dashboard' })
       await page.click('loc=role:button[name="连接"]', { label: 'open connections page' })
       await page.click('loc=role:button[name="管理连接 DEVBOX"]', { label: 'manage DEVBOX connection' })

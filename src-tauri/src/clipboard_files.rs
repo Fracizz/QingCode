@@ -96,6 +96,67 @@ pub(crate) fn store_attachment(name: &str, bytes: &[u8]) -> Result<String, Strin
     Ok(normalize_path(&path))
 }
 
+/// Mobile uploads live beside desktop SSH paste uploads, inside the selected
+/// trusted project. Never follow a managed attachment directory outside that root.
+pub(crate) fn store_project_attachment(
+    root: &str,
+    name: &str,
+    bytes: &[u8],
+    allowlist: &crate::path_guard::PathAllowlist,
+) -> Result<String, String> {
+    crate::path_guard::validate_entry_name(name)?;
+    if name
+        .chars()
+        .any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
+    {
+        return Err("附件文件名无效".into());
+    }
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err("附件不能超过 100MB".into());
+    }
+    allowlist.ensure_executable(root)?;
+    let canonical_root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+    let mut directory = PathBuf::from(root);
+    for part in [".qingcode", "terminal-paste"] {
+        directory.push(part);
+        allowlist.ensure_writable(&normalize_path(&directory))?;
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        let resolved = std::fs::canonicalize(&directory).map_err(|error| error.to_string())?;
+        if !resolved.starts_with(&canonical_root) || !resolved.is_dir() {
+            return Err("附件目录不在当前项目内".into());
+        }
+    }
+    // Unique directories and create_new prevent overwriting existing attachments.
+    let directory = directory.join(uuid::Uuid::new_v4().to_string());
+    allowlist.ensure_writable(&normalize_path(&directory))?;
+    std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join(name);
+    let result = (|| {
+        use std::io::Write;
+        let resolved = std::fs::canonicalize(&directory).map_err(|error| error.to_string())?;
+        if !resolved.starts_with(&canonical_root) {
+            return Err("附件目录不在当前项目内".into());
+        }
+        allowlist.ensure_writable(&normalize_path(&path))?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(bytes).map_err(|error| error.to_string())
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&directory);
+        return Err(error);
+    }
+    Ok(normalize_path(&path))
+}
+
 fn normalize_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
     paths
         .into_iter()
@@ -570,6 +631,119 @@ mod tests {
 #[cfg(test)]
 mod attachment_tests {
     use super::*;
+
+    fn trusted_project(root: &Path) -> crate::path_guard::PathAllowlist {
+        let allowlist = crate::path_guard::PathAllowlist::new();
+        let root = normalize_path(root);
+        allowlist.sync_project_roots(vec![root.clone()]);
+        allowlist.sync_trusted_roots(vec![root]);
+        allowlist
+    }
+
+    fn project_roundtrip(parent: &Path) {
+        let root = parent.join(format!(
+            "qingcode-mobile-image-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let allowlist = trusted_project(&root);
+        let first = store_project_attachment(
+            &normalize_path(&root),
+            "mobile-image.jpg",
+            b"first",
+            &allowlist,
+        )
+        .unwrap();
+        let second = store_project_attachment(
+            &normalize_path(&root),
+            "mobile-image.jpg",
+            b"second",
+            &allowlist,
+        )
+        .unwrap();
+        assert_ne!(first, second);
+        assert!(Path::new(&first).starts_with(root.join(".qingcode/terminal-paste")));
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_attachment_roundtrip_uses_repository_and_preserves_existing_images() {
+        project_roundtrip(&std::env::temp_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn project_attachment_wsl_roundtrip_when_configured() {
+        if let Some(parent) = std::env::var_os("QC_MOBILE_WSL_ATTACHMENT_TEST_ROOT") {
+            project_roundtrip(Path::new(&parent));
+        }
+    }
+
+    #[test]
+    fn project_attachment_rejects_untrusted_roots_and_invalid_names_before_writing() {
+        let root =
+            std::env::temp_dir().join(format!("qingcode-mobile-denied-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let allowlist = crate::path_guard::PathAllowlist::new();
+        let raw = normalize_path(&root);
+        allowlist.sync_project_roots(vec![raw.clone()]);
+        assert!(store_project_attachment(&raw, "mobile-image.jpg", b"data", &allowlist).is_err());
+        assert!(!root.join(".qingcode").exists());
+        allowlist.sync_trusted_roots(vec![raw.clone()]);
+        assert!(store_project_attachment(&raw, "../escape.jpg", b"data", &allowlist).is_err());
+        assert!(!root.join(".qingcode").exists());
+        std::fs::write(root.join(".qingcode"), b"keep").unwrap();
+        assert!(store_project_attachment(&raw, "mobile-image.jpg", b"data", &allowlist).is_err());
+        assert_eq!(std::fs::read(root.join(".qingcode")).unwrap(), b"keep");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_attachment_rejects_escape_even_to_another_trusted_project() {
+        let base =
+            std::env::temp_dir().join(format!("qingcode-mobile-escape-{}", uuid::Uuid::new_v4()));
+        let root = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let link = root.join(".qingcode");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        {
+            // Directory junctions do not require Developer Mode or symlink privileges.
+            let output = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(&link)
+                .arg(&outside)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let allowlist = crate::path_guard::PathAllowlist::new();
+        let roots = vec![normalize_path(&root), normalize_path(&outside)];
+        allowlist.sync_project_roots(roots.clone());
+        allowlist.sync_trusted_roots(roots);
+        assert!(store_project_attachment(
+            &normalize_path(&root),
+            "mobile-image.jpg",
+            b"data",
+            &allowlist
+        )
+        .is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        #[cfg(windows)]
+        std::fs::remove_dir(&link).unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(&link).unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
 
     #[cfg(not(windows))]
     #[test]

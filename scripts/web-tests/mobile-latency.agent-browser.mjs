@@ -63,6 +63,7 @@ try {
   evaluate('window.__unsupportedCount=window.__mobileFixture.state.latencyRequests.length')
   run('wait', '10600')
   check('unsupported desktop is not probed repeatedly', `window.__mobileFixture.state.latencyRequests.length===window.__unsupportedCount`)
+  run('click', '#show-sessions')
   run('click', '#back')
   run('click', '#dashboard-nav [data-page="connection"]')
   run('click', '.connection-card .icon-button')

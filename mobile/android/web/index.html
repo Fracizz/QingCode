@@ -24,6 +24,8 @@
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6Z"></path><path d="m14 5 5 5"></path></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
     <symbol id="i-paste" viewBox="0 0 24 24"><path d="M11 14h10"></path><path d="M16 4h2a2 2 0 0 1 2 2v1.344"></path><path d="m17 18 4-4-4-4"></path><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"></path><rect x="8" y="2" width="8" height="4" rx="1"></rect></symbol>
     <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></symbol>
@@ -115,13 +117,10 @@
 
     <section id="terminal-screen" hidden aria-labelledby="terminal-name">
       <header class="terminal-head">
-        <button id="back" class="icon-button" type="button" aria-label="返回工作台"><svg><use href="#i-back"/></svg></button>
-        <!-- 头部只占一行：单会话显示来源，多会话时第二行换成会话标签，不再单独占一栏。 -->
-        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p>
-          <div id="session-rail" class="session-rail" hidden><div id="session-tabs" aria-label="终端会话"></div></div>
-        </div>
+        <button id="show-sessions" class="icon-button" type="button" aria-label="打开会话侧栏" aria-controls="session-drawer" aria-expanded="false"><svg><use href="#i-sidebar"/></svg></button>
+        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
         <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
-        <button id="manage-sessions" class="icon-button" type="button" aria-label="会话与设置"><svg><use href="#i-more"/></svg></button>
+        <button id="manage-sessions" class="icon-button" type="button" aria-label="终端设置"><svg><use href="#i-more"/></svg></button>
       </header>
       <div class="terminal-body">
         <div id="viewport" aria-label="终端输出"></div>
@@ -166,7 +165,7 @@
             <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
           </span>
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
-          <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿"><svg><use href="#i-image"/></svg></button>
+          <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿，可多选"><svg><use href="#i-image"/></svg></button>
           <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令，空白发送回车"></textarea>
           <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg><span id="send-label">发送</span></button>
         </form>
@@ -254,12 +253,35 @@
     <div class="dialog-actions"><button type="button" class="secondary" data-close="keys-dialog">返回</button></div>
   </dialog>
 
+  <dialog id="session-drawer" class="session-drawer" aria-labelledby="session-drawer-title">
+    <header class="drawer-heading"><h2 id="session-drawer-title">会话</h2><button class="icon-button" type="button" data-close="session-drawer" aria-label="关闭会话侧栏"><svg><use href="#i-back"/></svg></button></header>
+    <p id="session-context"></p>
+    <div id="session-options" class="rows" aria-label="项目会话"></div>
+    <p id="session-error" class="error" role="alert" hidden></p>
+    <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
+    <div class="drawer-actions">
+      <button id="drawer-new-session" class="secondary wide" type="button">新建终端</button>
+      <button id="back" class="secondary" type="button">返回工作台</button>
+      <button id="drawer-settings" class="secondary" type="button">终端设置</button>
+      <button id="end-session" class="secondary danger wide" type="button">结束当前会话</button>
+      <button id="end-all-sessions" class="secondary danger wide" type="button">结束全部会话</button>
+    </div>
+  </dialog>
+
+  <dialog id="rename-session-dialog" aria-labelledby="rename-session-title">
+    <form id="rename-session-form">
+      <h2 id="rename-session-title">重命名会话</h2>
+      <label for="session-name-input">会话名称</label>
+      <input id="session-name-input" maxlength="80" autocomplete="off">
+      <p>手动名称优先。留空保存后恢复跟随程序标题。</p>
+      <p id="rename-session-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="rename-session-dialog">取消</button><button id="save-session-name" type="submit" class="primary">保存</button></div>
+    </form>
+  </dialog>
+
   <dialog id="session-dialog" class="sheet" aria-labelledby="session-dialog-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="session-dialog-title">会话与设置</h2>
-    <div id="session-options" class="rows"></div>
-    <p id="session-error" class="error" role="alert" hidden></p>
-    <h3>终端设置</h3>
+    <h2 id="session-dialog-title">终端设置</h2>
     <label for="terminal-columns">终端列宽</label>
     <select id="terminal-columns"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select>
     <p>固定列宽时可横向滚动，旋转和键盘弹出只改变可见高度。</p>
@@ -278,7 +300,7 @@
       <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
     </select>
     <p id="send-mode-hint">「发送并直接 Enter」在文字送达后单独补发回车，Claude / OpenCode 会直接执行，/命令也直接提交而不只停在输入框。</p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button><button type="button" id="end-all-sessions" class="secondary danger">结束全部会话</button></div>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button></div>
   </dialog>
 
   <dialog id="new-session-dialog" aria-labelledby="new-session-title">
@@ -294,7 +316,7 @@
 
   <dialog id="image-dialog" aria-labelledby="image-title">
     <h2 id="image-title">图片未能上传</h2>
-    <p>可重新选择图片；压缩等级在右上角「会话与设置」中调整。</p>
+    <p>可重新选择未上传的图片；压缩等级在终端设置中调整。已插入的图片会保留在草稿中。</p>
     <p id="image-error" class="error" role="alert" hidden></p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="image-dialog">取消</button><button type="button" id="choose-image" class="primary">选择图片</button></div>
   </dialog>
@@ -306,7 +328,7 @@
       <button id="menu-edit" type="button">展开编辑指令</button>
       <button id="menu-submissions" type="button">最近提交与项目草稿</button>
       <button id="menu-read" type="button">阅读与搜索输出</button>
-      <button id="menu-sessions" type="button">会话与设置</button>
+      <button id="menu-sessions" type="button">会话列表</button>
       <button id="menu-new" type="button">新建终端</button>
       <button id="menu-dashboard" type="button">返回项目列表</button>
     </div>

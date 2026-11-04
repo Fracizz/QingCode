@@ -20,10 +20,45 @@ import {
   rememberProject,
   pullOffset,
   renameProfileKeys,
+  sessionName,
+  mergeSessionName,
   splitInput,
+  terminalGridSize,
 } from '../../mobile/android/web/protocol.js'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
+
+describe('Android terminal content-box sizing', () => {
+  it('keeps complete rows within the space left after viewport padding', () => {
+    expect(terminalGridSize(360, 510.5, 7.8, 15.6)).toEqual({ cols: 46, rows: 32 })
+    expect(terminalGridSize(360, 614.5, 7.8, 15.6)).toEqual({ cols: 46, rows: 39 })
+  })
+
+  it('keeps fixed columns, matches native limits and skips hidden measurements', () => {
+    expect(terminalGridSize(280, 300, 8, 16, 100)).toEqual({ cols: 100, rows: 18 })
+    expect(terminalGridSize(9000, 9000, 1, 1)).toEqual({ cols: 300, rows: 150 })
+    expect(terminalGridSize(0, 300, 8, 16)).toBeNull()
+    expect(terminalGridSize(280, 300, NaN, 16)).toBeNull()
+  })
+})
+
+describe('Android session names', () => {
+  it('uses server names and falls back to numbered sessions for older desktops', () => {
+    expect(sessionName({ name: '修复登录', number: 3 })).toBe('修复登录')
+    expect(sessionName({ number: 3 })).toBe('终端 3')
+    expect(sessionName({}, 4)).toBe('终端 4')
+  })
+
+  it('keeps manual names when an older poll arrives after rename', () => {
+    const session = { name: 'OpenCode', customName: null, nameRevision: 1 }
+    expect(mergeSessionName(session, { name: '登录', customName: '登录', nameRevision: 3 })).toBe(true)
+    expect(mergeSessionName(session, { name: 'Claude', customName: null, nameRevision: 2 })).toBe(false)
+    expect(session.name).toBe('登录')
+    expect(mergeSessionName(session, {})).toBe(false)
+    expect(mergeSessionName(session, { name: 'Claude', customName: null, nameRevision: 4 })).toBe(true)
+    expect(session.name).toBe('Claude')
+  })
+})
 
 describe('Android recent projects', () => {
   it('orders phone and desktop opens by time and caps the result at ten', () => {

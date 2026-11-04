@@ -16,9 +16,18 @@ struct History {
     bytes: usize,
     next: u64,
     truncated: bool,
+    title: Option<String>,
 }
 
 impl vt100::Callbacks for History {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.update_title(title);
+    }
+
+    fn set_window_icon_name(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.update_title(title);
+    }
+
     fn on_scroll(&mut self, row: RowContents<'_>, alternate: bool) {
         if alternate {
             return;
@@ -39,6 +48,46 @@ impl vt100::Callbacks for History {
     }
 }
 
+impl History {
+    fn update_title(&mut self, title: &[u8]) {
+        let title: String = String::from_utf8_lossy(title)
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(120)
+            .collect();
+        let title = title.trim();
+        let lower = title.to_lowercase().replace('\\', "/");
+        let lower = lower.trim_start_matches("administrator: ");
+        let file = lower
+            .rsplit('/')
+            .next()
+            .unwrap_or(lower)
+            .trim_end_matches(".exe");
+        if title.is_empty()
+            || matches!(
+                file,
+                "powershell"
+                    | "powershell 7"
+                    | "pwsh"
+                    | "cmd"
+                    | "bash"
+                    | "wsl"
+                    | "sh"
+                    | "zsh"
+                    | "fish"
+                    | "conhost"
+                    | "openconsole"
+                    | "winpty-agent"
+                    | "命令提示符"
+            )
+            || lower.starts_with("windows powershell")
+        {
+            return;
+        }
+        self.title = Some(title.to_string());
+    }
+}
+
 pub(super) struct MobileScreen {
     parser: vt100::Parser<History>,
 }
@@ -48,6 +97,10 @@ fn nonzero(value: u16) -> NonZeroU16 {
 }
 
 impl MobileScreen {
+    pub(super) fn title(&self) -> Option<&str> {
+        self.parser.callbacks().title.as_deref()
+    }
+
     pub(super) fn new() -> Self {
         Self {
             parser: vt100::Parser::new_with_callbacks(
@@ -131,6 +184,23 @@ impl MobileScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_title_handles_split_osc_and_survives_screen_replacement() {
+        let mut screen = MobileScreen::new();
+        screen.process(b"\x1b]2;Open");
+        assert_eq!(screen.title(), None);
+        screen.process(b"Code\x1b\\");
+        assert_eq!(screen.title(), Some("OpenCode"));
+        screen.process(b"\x1b]0;powershell.exe\x07");
+        assert_eq!(screen.title(), Some("OpenCode"));
+        screen.replace("new screen", 80, 24);
+        assert_eq!(screen.title(), Some("OpenCode"));
+        screen.process("\x1b]1;修复登录\x07".as_bytes());
+        assert_eq!(screen.title(), Some("修复登录"));
+        screen.process(format!("\x1b]2;{}\x07", "中".repeat(200)).as_bytes());
+        assert_eq!(screen.title().unwrap().chars().count(), 120);
+    }
 
     #[test]
     fn latest_screen_restores_unicode_cursor_and_terminal_modes() {

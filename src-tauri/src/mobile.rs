@@ -280,6 +280,8 @@ struct Session {
     project: Project,
     owner: String,
     number: u64,
+    custom_name: Option<String>,
+    name_revision: u64,
     ready: bool,
     exit: Option<Exit>,
     drain_until: Option<Instant>,
@@ -296,6 +298,8 @@ impl Session {
             project,
             owner,
             number,
+            custom_name: None,
+            name_revision: 0,
             ready: false,
             exit: None,
             drain_until: None,
@@ -308,6 +312,7 @@ impl Session {
     }
 
     fn push(&mut self, chunk: OutputChunk) {
+        let previous_title = self.screen.title().map(str::to_owned);
         match &chunk {
             OutputChunk::Bytes(data) => {
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
@@ -315,6 +320,9 @@ impl Session {
                 }
             }
             OutputChunk::Screen { data, cols, rows } => self.screen.replace(data, *cols, *rows),
+        }
+        if previous_title.as_deref() != self.screen.title() {
+            self.name_revision += 1;
         }
         if matches!(chunk, OutputChunk::Screen { .. }) {
             self.output.clear();
@@ -335,6 +343,34 @@ impl Session {
         self.exit = Some(exit);
         self.drain_until = Some(Instant::now() + Duration::from_millis(150));
         self.changed.notify_waiters();
+    }
+
+    fn name(&self) -> String {
+        self.custom_name
+            .as_deref()
+            .or_else(|| self.screen.title())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("终端 {}", self.number))
+    }
+
+    fn rename(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.chars().count() > 80 || name.chars().any(char::is_control) {
+            return Err("会话名称最多 80 个字符，不能包含控制字符。".into());
+        }
+        self.custom_name = if name.is_empty() {
+            None
+        } else {
+            Some(name.into())
+        };
+        self.name_revision += 1;
+        self.changed.notify_waiters();
+        Ok(())
+    }
+
+    fn metadata(&self, id: &str) -> Value {
+        json!({ "id": id, "number": self.number, "exit": self.exit,
+            "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision })
     }
 
     fn read(&self, from: u64) -> Value {
@@ -366,6 +402,7 @@ impl Session {
             "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
+            "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
 
@@ -379,6 +416,7 @@ impl Session {
             "more": false, "reset": false, "snapshot": true, "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
+            "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
 }
@@ -460,6 +498,10 @@ enum Operation {
     },
     End {
         id: String,
+    },
+    RenameSession {
+        id: String,
+        name: String,
     },
 }
 
@@ -1260,9 +1302,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             sessions.sort_by_key(|(_, session)| session.number);
             Ok(json!(sessions
                 .into_iter()
-                .map(|(id, session)| json!({
-                    "id": id, "number": session.number, "exit": session.exit
-                }))
+                .map(|(id, session)| session.metadata(id))
                 .collect::<Vec<_>>()))
         }
         Operation::Create {
@@ -1345,20 +1385,28 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             } else {
                 "jpg"
             };
+            let storage_project = project.clone();
+            let storage_app = app.clone();
             let path = tauri::async_runtime::spawn_blocking(move || {
-                crate::clipboard_files::store_attachment(
-                    &format!("mobile-image.{extension}"),
-                    &bytes,
-                )
+                let name = format!("mobile-image.{extension}");
+                if storage_project.kind == ProjectKind::Ssh {
+                    // Only the SSH transfer needs a temporary local source.
+                    crate::clipboard_files::store_attachment(&name, &bytes)
+                } else {
+                    crate::clipboard_files::store_project_attachment(
+                        &crate::run_environment::to_host_path(&storage_project.path),
+                        &name,
+                        &bytes,
+                        &storage_app.state::<crate::PathAllowlist>(),
+                    )
+                }
             })
             .await
             .map_err(|error| error.to_string())??;
             let result = if project.kind == ProjectKind::Ssh {
                 desktop_request(app, Some(&project.id), Some(&path)).await
             } else {
-                local_image_path(&project, &path)
-                    .await
-                    .map(|path| json!({ "path": path }))
+                local_image_path(&project, &path).map(|path| json!({ "path": path }))
             };
             // SSH has its own uploaded copy. Failed local/WSL preparations do not retain a file.
             if project.kind == ProjectKind::Ssh || result.is_err() {
@@ -1379,6 +1427,15 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             }
             hub.with_session(&id, |session| session.screen.resize(cols, rows));
             Ok(Value::Null)
+        }
+        Operation::RenameSession { id, name } => {
+            let mut inner = hub.inner.lock().unwrap();
+            let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
+            if !session.ready {
+                return Err("终端正在启动或关闭。".into());
+            }
+            session.rename(&name)?;
+            Ok(session.metadata(&id))
         }
         Operation::End { id } => {
             let kind = {
@@ -1432,33 +1489,25 @@ fn decode_image(data: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-async fn local_image_path(project: &Project, path: &str) -> Result<String, String> {
+fn local_image_path(project: &Project, path: &str) -> Result<String, String> {
     if project.kind == ProjectKind::Wsl {
-        let distro = crate::run_environment::parse_wsl_path(&project.path)
-            .ok_or("无法识别 WSL 发行版。")?
-            .distro;
-        let mut command = tokio::process::Command::new("wsl.exe");
-        command.args([
-            "--distribution",
-            &distro,
-            "--exec",
-            "wslpath",
-            "-a",
-            "-u",
-            path,
-        ]);
-        command.kill_on_drop(true);
-        #[cfg(windows)]
-        command.creation_flags(0x08000000);
-        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-            .await
-            .map_err(|_| "WSL 图片路径转换超时。")?
-            .map_err(|error| error.to_string())?;
-        let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
-        let path = path.trim();
-        if !output.status.success() || !path.starts_with('/') || path.contains(['\r', '\n']) {
-            return Err("无法把图片路径转换为 WSL 路径。".into());
+        let wsl =
+            crate::run_environment::parse_wsl_path(&project.path).ok_or("无法识别 WSL 发行版。")?;
+        let root = crate::run_environment::to_host_path(&project.path);
+        let relative = std::path::Path::new(path)
+            .strip_prefix(&root)
+            .map_err(|_| "附件不在当前 WSL 项目内。")?;
+        if relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err("附件不在当前 WSL 项目内。".into());
         }
+        let path = format!(
+            "{}/{}",
+            wsl.path.trim_end_matches('/'),
+            relative.to_string_lossy().replace('\\', "/")
+        );
         return Ok(format!("'{}'", path.replace('\'', "'\\''")));
     }
     #[cfg(windows)]
@@ -1482,7 +1531,7 @@ async fn create(
     let project: Project = serde_json::from_value(desktop(app, Some(project_id)).await?)
         .map_err(|error| error.to_string())?;
     let id = format!("{TERMINAL_PREFIX}{}", Uuid::new_v4().simple());
-    let number = {
+    {
         let mut inner = hub.inner.lock().unwrap();
         if !inner.accepting {
             return Err("移动连接已停止。".into());
@@ -1496,8 +1545,7 @@ async fn create(
             id.clone(),
             Session::new(project.clone(), device.to_string(), number),
         );
-        number
-    };
+    }
     let (cols, rows) = size(cols, rows);
     hub.with_session(&id, |session| session.screen.resize(cols, rows));
     let result = if project.kind == ProjectKind::Ssh {
@@ -1545,7 +1593,9 @@ async fn create(
         let _ = end(app, id, project.kind).await;
         return Err("移动连接已停止或设备已移除。".into());
     }
-    Ok(json!({ "id": id, "number": number }))
+    let inner = hub.inner.lock().unwrap();
+    let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+    Ok(session.metadata(&id))
 }
 
 async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), String> {
@@ -1595,6 +1645,28 @@ mod tests {
             kind: ProjectKind::Local,
             host: "Windows".into(),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_image_path_uses_wsl_repository_instead_of_windows_cache() {
+        let mut project = project();
+        project.kind = ProjectKind::Wsl;
+        project.path = "wsl://Ubuntu/home/owner/app's workspace".into();
+        let root = crate::run_environment::to_host_path(&project.path);
+        let path =
+            std::path::Path::new(&root).join(".qingcode/terminal-paste/batch/mobile-image.jpg");
+        assert_eq!(
+            local_image_path(&project, &path.to_string_lossy()).unwrap(),
+            "'/home/owner/app'\\''s workspace/.qingcode/terminal-paste/batch/mobile-image.jpg'"
+        );
+        assert!(local_image_path(
+            &project,
+            r"C:\Users\owner\AppData\Local\Temp\mobile-image.jpg"
+        )
+        .is_err());
+        let escape = std::path::Path::new(&root).join("../outside.jpg");
+        assert!(local_image_path(&project, &escape.to_string_lossy()).is_err());
     }
 
     #[test]
@@ -1885,6 +1957,32 @@ mod tests {
         let mut session = Session::new(project(), "phone".into(), 1);
         session.push(OutputChunk::Bytes("aGk=".into()));
         assert_eq!(session.read(0)["chunks"], json!(["aGk="]));
+    }
+
+    #[test]
+    fn session_names_follow_program_titles_and_manual_names_survive_reconnect() {
+        let mut session = Session::new(project(), "phone".into(), 7);
+        assert_eq!(session.name(), "终端 7");
+        let push_title = |session: &mut Session, title: &str| {
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!("\x1b]2;{title}\x07")),
+            ));
+        };
+        push_title(&mut session, "OpenCode");
+        assert_eq!(session.name(), "OpenCode");
+        session.rename("  修复登录  ").unwrap();
+        let revision = session.name_revision;
+        push_title(&mut session, "Claude");
+        assert_eq!(session.name(), "修复登录");
+        assert!(session.name_revision > revision);
+        assert_eq!(session.latest()["name"], "修复登录");
+        assert_eq!(session.read(session.next)["customName"], "修复登录");
+        assert_eq!(session.metadata("mobile-7")["name"], "修复登录");
+        session.rename("").unwrap();
+        assert_eq!(session.name(), "Claude");
+        assert!(session.rename(&"中".repeat(81)).is_err());
+        assert!(session.rename("bad\nname").is_err());
+        assert_eq!(session.name(), "Claude");
     }
 
     #[test]

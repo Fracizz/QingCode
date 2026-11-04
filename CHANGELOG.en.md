@@ -6,6 +6,23 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-04
+
+### Added
+
+- Android supports selecting multiple images, uploading them sequentially into the draft and retaining successful attachments after a partial failure.
+- The Android session drawer supports program titles, manual names, recent projects and ending all project sessions.
+
+### Changed
+
+- Mobile images are stored in the corresponding local, WSL or SSH project's `.qingcode/terminal-paste/` directory, with Linux paths for WSL.
+- The image button stays inside the input bar, with clearer original-image, upload and submission states.
+
+### Fixed
+
+- Terminal dimensions use the available content area so collapsing shortcuts does not obscure the final row.
+- Switching sessions stops the remaining image batch and prevents late results from changing another draft.
+
 ## [0.1.14-beta.24] - 2026-11-03
 
 ### Added
