@@ -39,6 +39,8 @@ vi.mock('./sshWorkspace', async importOriginal => ({
 
 import { listenForMobileRequests } from './mobileBridge'
 import { restrictProject, trustProject } from './workspaceTrust'
+import { TERMINAL_PROFILES_KEY } from './terminal/terminalProfiles'
+import { trustTerminalProfile } from './terminal/terminalProfileTrust'
 
 const wsl: Project = {
   id: 'wsl', name: 'WSL app', path: String.raw`\\wsl.localhost\Ubuntu\home\code\app`,
@@ -46,11 +48,15 @@ const wsl: Project = {
 }
 const local: Project = { ...wsl, id: 'local', name: 'Local app', path: 'D:/app', kind: 'local' }
 
-async function request(project: string | null = null, attachment?: string) {
+async function send(payload: Record<string, unknown>) {
   await listenForMobileRequests()
   const handler = mocks.listen.mock.lastCall![1]
-  await handler({ payload: { id: 'request', project, attachment } })
+  await handler({ payload: { id: 'request', ...payload } })
   return mocks.invoke.mock.calls.filter(call => call[1] === 'mobile_bridge_reply').at(-1)?.[2]
+}
+
+function request(project: string | null = null, attachment?: string) {
+  return send({ project, attachment })
 }
 
 describe('mobile project bridge', () => {
@@ -122,5 +128,40 @@ describe('mobile project bridge', () => {
     expect(await request()).toMatchObject({
       data: [{ id: remote.id, kind: 'ssh', host: '192.168.252.107', connectionName: 'WinDev' }],
     })
+  })
+
+  it('lists saved terminal profiles without their commands', async () => {
+    localStorage.setItem(TERMINAL_PROFILES_KEY, JSON.stringify({
+      defaultShell: 'pwsh',
+      profiles: [
+        { id: 'claude', name: 'Claude', command: 'claude', shell: 'auto' },
+        { id: 'ops', name: '  ', command: 'deploy\n--dry-run', shell: 'cmd' },
+      ],
+    }))
+    trustTerminalProfile({ id: 'claude', command: 'claude' })
+    const reply = await send({ project: null, profiles: true })
+    expect(reply).toEqual({ id: 'request', data: [
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: 'Claude', trusted: true },
+      { id: 'ops', name: '未命名配置', trusted: false },
+    ] })
+    expect(JSON.stringify(reply)).not.toContain('deploy')
+    expect(mocks.listProjects).not.toHaveBeenCalled()
+  })
+
+  it('resolves a trusted profile with the desktop shell rules and rejects untrusted ones', async () => {
+    localStorage.setItem(TERMINAL_PROFILES_KEY, JSON.stringify({
+      defaultShell: 'pwsh',
+      profiles: [{ id: 'ops', name: 'Ops', command: 'deploy\n  --dry-run', shell: 'pwsh' }],
+    }))
+    expect(await send({ profile: 'default' })).toEqual({ id: 'request', data: {
+      id: 'default', name: '普通终端', command: '', shell: 'pwsh',
+    } })
+    expect(await send({ profile: 'ops' })).toMatchObject({ error: expect.stringContaining('信任此配置') })
+    trustTerminalProfile({ id: 'ops', command: 'deploy\n  --dry-run' })
+    expect(await send({ profile: 'ops' })).toEqual({ id: 'request', data: {
+      id: 'ops', name: 'Ops', command: 'deploy; --dry-run', shell: 'pwsh',
+    } })
+    expect(await send({ profile: 'missing' })).toMatchObject({ error: expect.stringContaining('不存在') })
   })
 })

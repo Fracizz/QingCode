@@ -103,7 +103,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     for (let i = 0; i < 2; i++) {
       await page.click('#new-session', { label: 'add a project session' })
-      await page.click('[data-launch="shell"]', { label: 'create shell terminal' })
+      await page.click('[data-profile="default"]', { label: 'create shell terminal' })
       await page.waitForFunction(count => [...window.__mobileFixture.state.sessions.values()].filter(item => item.project === 'p0').length === count
         && document.querySelector('#terminal-status').textContent === '会话中', i + 2)
     }

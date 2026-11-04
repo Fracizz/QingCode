@@ -1,6 +1,5 @@
 import {
   DEFAULT_PORT,
-  launchCommand,
   applyModifiers,
   avatarFor,
   consumeModifier,
@@ -14,9 +13,11 @@ import {
   rememberProject,
   renameProfileKeys,
   sessionName,
+  sessionRunning,
   mergeSessionName,
   splitInput,
   terminalGridSize,
+  terminalProfileChoices,
   validIpv4,
   validPort,
 } from './protocol.js';
@@ -74,6 +75,13 @@ let chat = null;
 let sessions = [];
 let selected = null;
 let renamingSession = null;
+let sessionDrawerEpoch = 0;
+let sessionRefreshTimer;
+let sessionRefreshing = false;
+let foreground = true;
+// 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
+const terminalProfiles = new Map();
+let terminalProfilesRequest = 0;
 let viewEpoch = 0;
 let term;
 let fit;
@@ -112,6 +120,9 @@ const connectionLatency = createConnectionLatency({
   onChange: renderLatency,
 });
 window.qingVisibility = visible => {
+  foreground = visible === true;
+  clearTimeout(sessionRefreshTimer);
+  if (foreground) void refreshSessionDrawer();
   if (!visible) saveDraft();
   chat?.setForeground(visible === true);
   connectionLatency.setForeground(visible === true);
@@ -1001,7 +1012,7 @@ for (const [id, action] of Object.entries({
     get('reader-dialog').showModal();
   },
   'menu-sessions': () => { void openSessionDrawer(); },
-  'menu-new': () => { if (!busy) get('new-session-dialog').showModal(); },
+  'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
 get('review-submission').addEventListener('click', showSubmissions);
@@ -1384,7 +1395,7 @@ async function openProject(item, resumeOnly = false) {
       ?? sessions[0];
     if (existing) selectSession(existing);
     else if (resumeOnly) returnToDashboard('home');
-    else await createSession(epoch);
+    else await createSession(epoch, 'default');
   } catch (error) {
     if (epoch === viewEpoch) handleTerminalError(error);
   } finally {
@@ -1399,48 +1410,89 @@ function renderSessions() {
   get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
   get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
   const options = get('session-options');
-  options.replaceChildren();
+  const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
   get('end-session').disabled = !selected;
   get('end-all-sessions').disabled = !sessions.length;
   get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
   for (const [index, session] of sessions.entries()) {
     const label = sessionName(session, index + 1);
-    const row = document.createElement('div');
-    row.className = 'session-option';
-    row.dataset.id = session.id;
+    let row = existingRows.get(session.id);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'session-option';
+      row.dataset.id = session.id;
+      const option = button('row', () => {
+        const latest = sessions.find(item => item.id === session.id);
+        if (!busy && latest) selectSession(latest);
+      });
+      const text = rowText('', '');
+      const heading = text.querySelector('strong');
+      const name = document.createElement('span');
+      name.className = 'session-label';
+      heading.append(icon('loader-circle', 'session-spinner'), name);
+      option.append(text);
+      const rename = button('icon-button', () => {
+        const latest = sessions.find(item => item.id === session.id);
+        if (latest) openSessionRename(latest);
+      });
+      rename.append(icon('edit'));
+      row.append(option, rename);
+    }
+    existingRows.delete(session.id);
     row.dataset.current = String(session.id === selected);
-    const option = button('row', () => { if (!busy) selectSession(session); });
-    const status = session.exit ? '已结束' : session.id === selected ? '当前会话' : '可接入';
+    const running = sessionRunning(session);
+    row.dataset.running = String(running);
+    const option = row.querySelector('.row');
+    const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
     const identity = '终端 ' + (session.number ?? index + 1);
-    option.append(rowText(label, label === identity ? status : identity + ' · ' + status));
-    const rename = button('icon-button', () => openSessionRename(session));
+    row.querySelector('.session-label').textContent = label;
+    row.querySelector('small').textContent = label === identity ? status : identity + ' · ' + status;
+    const rename = row.querySelector('.icon-button');
     rename.setAttribute('aria-label', '重命名 ' + label);
     rename.disabled = !Number.isFinite(session.nameRevision) || busy;
-    rename.append(icon('edit'));
     if (session.id === selected) {
       option.setAttribute('aria-current', 'true');
-    }
-    row.append(option, rename);
-    options.append(row);
+    } else option.removeAttribute('aria-current');
+    if (options.children[index] !== row) options.insertBefore(row, options.children[index] ?? null);
   }
+  for (const row of existingRows.values()) row.remove();
 }
 
 async function openSessionDrawer() {
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
   renderSessions();
   if (!get('session-drawer').open) get('session-drawer').showModal();
   get('show-sessions').setAttribute('aria-expanded', 'true');
+  await refreshSessionDrawer();
+}
+
+async function refreshSessionDrawer() {
+  if (sessionRefreshing || !get('session-drawer').open || document.hidden || !foreground) return;
+  sessionRefreshing = true;
   const epoch = viewEpoch;
+  const drawerEpoch = sessionDrawerEpoch;
   try {
     const list = await remote('sessions', { project: project.id });
-    if (epoch !== viewEpoch || !get('session-drawer').open) return;
+    if (epoch !== viewEpoch || drawerEpoch !== sessionDrawerEpoch || !get('session-drawer').open) return;
     sessions = list.map(item => {
       const previous = sessions.find(saved => saved.id === item.id);
-      if (previous) mergeSessionName(item, previous);
+      if (previous) {
+        mergeSessionName(item, previous);
+        // An older list response cannot revive a terminal already seen exiting.
+        item.exit ??= previous.exit;
+      }
       return item;
     });
+    message('session-error', '');
     renderSessions();
   } catch (error) {
-    if (epoch === viewEpoch) message('session-error', error.message);
+    if (epoch === viewEpoch && drawerEpoch === sessionDrawerEpoch && get('session-drawer').open) message('session-error', error.message);
+  } finally {
+    sessionRefreshing = false;
+    if (get('session-drawer').open && !document.hidden && foreground) {
+      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
+    }
   }
 }
 
@@ -1474,19 +1526,55 @@ get('rename-session-form').addEventListener('submit', async event => {
 });
 get('rename-session-dialog').addEventListener('close', () => { renamingSession = null; });
 
-async function createSession(epoch, launch = 'shell') {
-  const session = await remote('create', { project: project.id, ...dimensions() });
+async function createSession(epoch, terminalProfile = null) {
+  // 启动命令由电脑端按配置 id 解析并在新会话启动时执行，手机不再向终端输入命令。
+  const args = { project: project.id, ...dimensions() };
+  if (terminalProfile) args.terminal_profile = terminalProfile;
+  const session = await remote('create', args);
   if (epoch !== viewEpoch) return;
   sessions.push(session);
   selectSession(session);
-  if (launch !== 'shell') {
-    // Send exactly once to the newly created session. Never use a current tab's id
-    // after an await, and never retry a launch whose delivery is uncertain.
-    try {
-      await remote('input', { id: session.id, data: launchCommand(launch) });
-    } catch (error) {
-      if (selected === session.id) get('terminal-status').textContent = '启动结果未知，请检查终端输出。' + error.message;
+}
+
+function renderTerminalProfiles(choices, state = '') {
+  const list = get('terminal-profiles');
+  list.replaceChildren(...choices.map(choice => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary';
+    if (choice.id) button.dataset.profile = choice.id;
+    const name = document.createElement('span');
+    name.textContent = choice.name;
+    button.append(name);
+    if (!choice.trusted) {
+      const hint = document.createElement('small');
+      hint.textContent = '需先在电脑上信任';
+      button.append(hint);
     }
+    button.addEventListener('click', () => {
+      // 电脑端创建时仍会校验信任；这里提前提示，避免关闭弹窗后才报错。
+      if (!choice.trusted) message('terminal-profiles-error', `请先在电脑上新建一次「${choice.name}」终端并选择「信任此配置」。`);
+      else void newSession(choice.id);
+    });
+    return button;
+  }));
+  list.setAttribute('aria-busy', String(state === 'loading'));
+  message('terminal-profiles-error', state === 'error' ? '无法读取电脑端终端配置，已仅显示普通终端。' : '');
+}
+
+async function openNewSessionDialog() {
+  const address = profile?.id;
+  const cached = terminalProfiles.get(address);
+  renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
+  get('new-session-dialog').showModal();
+  const request = ++terminalProfilesRequest;
+  try {
+    const choices = terminalProfileChoices(await remote('terminal_profiles', {}, address));
+    terminalProfiles.set(address, choices);
+    if (request === terminalProfilesRequest && profile?.id === address) renderTerminalProfiles(choices);
+  } catch {
+    // 旧版电脑端不认识该请求：保留缓存或普通终端。
+    if (request === terminalProfilesRequest && profile?.id === address) renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'error');
   }
 }
 
@@ -1556,8 +1644,8 @@ async function poll(session, epoch) {
       }
       if (epoch !== viewEpoch) return;
       if (data.exit) {
-        if (!session.exit) {
-          session.exit = data.exit;
+        if (current && !current.exit) {
+          current.exit = data.exit;
           renderSessions();
         }
         terminalState(data.exit.disconnected ? '电脑到远端的终端连接已中断' : '会话已结束 · 退出码 ' + data.exit.exitCode);
@@ -1654,13 +1742,21 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 get('back').addEventListener('click', () => returnToDashboard());
 get('show-sessions').addEventListener('click', () => { void openSessionDrawer(); });
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
-get('session-drawer').addEventListener('close', () => get('show-sessions').setAttribute('aria-expanded', 'false'));
+get('session-drawer').addEventListener('close', () => {
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
+  get('show-sessions').setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(sessionRefreshTimer);
+  if (!document.hidden) void refreshSessionDrawer();
+});
 get('session-drawer').addEventListener('toggle', () => get('show-sessions').setAttribute('aria-expanded', String(get('session-drawer').open)));
 get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
-get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); get('new-session-dialog').showModal(); } });
+get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
-get('new-session').addEventListener('click', () => { if (!busy) get('new-session-dialog').showModal(); });
-async function newSession(launch) {
+get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
+async function newSession(terminalProfile) {
   if (busy) return;
   busy = true;
   const epoch = viewEpoch;
@@ -1673,7 +1769,7 @@ async function newSession(launch) {
     sessions = list;
     renderSessions();
     get('new-session-dialog').close();
-    await createSession(epoch, launch);
+    await createSession(epoch, terminalProfile);
   } catch (error) {
     if (epoch === viewEpoch) {
       if (wasReady && !error.revoked) get('terminal-status').textContent = error.message;
@@ -1816,7 +1912,16 @@ function pressKey(keyButton) {
     sendInput('\x03', { raw: true });
   } else if (key === 'clear-input') {
     clearModifiers();
-    sendInput(keySequence(key), { raw: true });
+    const buffer = term?.buffer.active;
+    let row = buffer ? buffer.baseY + buffer.cursorY : 0;
+    let line = buffer?.getLine(row);
+    let inputLine = line?.translateToString(true) ?? '';
+    // 宽度不足造成的视觉折行仍属于同一输入行；不扫描历史输出猜程序。
+    while (line?.isWrapped && row > 0) {
+      line = buffer.getLine(--row);
+      inputLine = (line?.translateToString(true) ?? '') + inputLine;
+    }
+    sendInput(keySequence(key, { inputLine: buffer?.type === 'alternate' ? '' : inputLine }), { raw: true });
   } else if (key === 'slash') {
     dispatchComposer('slash');
   } else if (key === 'reference') {
@@ -1939,9 +2044,6 @@ chat = createChat({
 
 void initialize();
 
-for (const button of document.querySelectorAll('[data-launch]')) {
-  button.addEventListener('click', () => { void newSession(button.dataset.launch); });
-}
 const sendModeSelect = get('send-mode');
 sendModeSelect.value = sendMode;
 sendModeSelect.addEventListener('change', () => {

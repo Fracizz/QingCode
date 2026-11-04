@@ -15,16 +15,26 @@ export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColu
 }
 
 export function sessionName(session, fallback = 1) {
-  return typeof session?.name === 'string' && session.name.trim()
-    ? session.name.trim() : '终端 ' + (session?.number ?? fallback);
+  const name = typeof session?.name === 'string' ? session.name.trim() : '';
+  // CLI title animations belong in a status icon, never in the session name.
+  return (session?.customName ? name : name.replace(/^[\u2801-\u28ff]\s*/, ''))
+    || '终端 ' + (session?.number ?? fallback);
+}
+
+/** A live PTY alone does not imply that its CLI is working. */
+export function sessionRunning(session) {
+  const title = session?.programTitle ?? (session?.customName ? '' : session?.name);
+  return !session?.exit && /^[\u2801-\u28ff]/u.test(String(title ?? '').trim());
 }
 
 /** Late poll responses must not undo a newer manual rename. */
 export function mergeSessionName(session, incoming) {
   if (!Number.isFinite(incoming?.nameRevision) || incoming.nameRevision < (session.nameRevision ?? -1)) return false;
-  const changed = session.name !== incoming.name || session.customName !== incoming.customName;
+  const changed = session.name !== incoming.name || session.customName !== incoming.customName
+    || session.programTitle !== incoming.programTitle;
   session.name = incoming.name;
   session.customName = incoming.customName;
+  session.programTitle = incoming.programTitle;
   session.nameRevision = incoming.nameRevision;
   return changed;
 }
@@ -191,15 +201,17 @@ export function avatarFor(name) {
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F' };
 const TILDE_KEYS = { pgup: '5~', pgdn: '6~' };
 
-export function keySequence(key, { applicationCursor = false } = {}) {
+export function keySequence(key, { applicationCursor = false, inputLine = '' } = {}) {
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';
   if (key === 'shift-tab') return '\x1b[Z';
   if (key === 'backspace') return '\x7f';
   if (key === 'delete-word') return '\x17';
   if (key === 'delete-line-start') return '\x15';
-  // 先移到行尾再向前删除，光标在中间时也不会残留当前行的后半段。
-  if (key === 'clear-input') return '\x05\x15';
+  // Windows PSReadLine 默认不绑定 Ctrl+E / Ctrl+U。只在当前输入行明确是
+  // PowerShell 提示符时使用其 Ctrl+Home / Ctrl+End，不能按项目来源猜前台程序。
+  if (key === 'clear-input') return /^PS (?:[a-z]:[\\/]|\\\\)[^\r\n]*>/i.test(inputLine)
+    ? '\x1b[1;5H\x1b[1;5F' : '\x05\x15';
   if (key === 'newline') return '\n';
   if (key in TILDE_KEYS) return '\x1b[' + TILDE_KEYS[key];
   if (key in ARROWS) return (applicationCursor ? '\x1bO' : '\x1b[') + ARROWS[key];
@@ -218,8 +230,18 @@ export function renameProfileKeys(keys, prefix, from, to) {
   return moves;
 }
 
-/** Fixed launch commands only; project paths and user text never enter this command. */
-export function launchCommand(launch) {
-  if (launch === 'claude' || launch === 'opencode') return launch + '\r';
-  throw new Error('不支持的快捷命令');
+/**
+ * 电脑端「终端配置」→ 新建会话选项。手机只拿到 id 与名称，命令由电脑端按 id 解析，
+ * 用户文字不会进入启动命令。旧版电脑端不支持时返回 null，只保留普通终端（id 为 null）。
+ */
+export function terminalProfileChoices(list) {
+  const choices = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!item || typeof item.id !== 'string' || !item.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : '未命名配置';
+    choices.push({ id: item.id, name, trusted: item.trusted !== false });
+  }
+  return choices.length ? choices : [{ id: null, name: '新建终端', trusted: true }];
 }

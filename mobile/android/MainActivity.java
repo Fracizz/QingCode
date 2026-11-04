@@ -763,6 +763,7 @@ public final class MainActivity extends Activity {
         switch (op) {
             case "projects": case "sessions": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
+            case "terminal_profiles":
             case "agent_catalog": case "agent_defaults": case "agent_threads": case "agent_create": case "agent_send":
             case "agent_image": case "agent_poll": case "agent_history": case "agent_respond": case "agent_interrupt":
             case "agent_configure": case "agent_rename": case "agent_close": case "agent_delete": case "agent_usage":
@@ -885,7 +886,8 @@ public final class MainActivity extends Activity {
         /** Requests that can be resent when a pooled connection turns out to be stale. */
         private static boolean idempotent(String op) {
             switch (op) {
-                case "projects": case "sessions": case "poll": case "history": case "resize": return true;
+                case "projects": case "sessions": case "poll": case "history": case "resize":
+                case "terminal_profiles": return true;
                 case "agent_catalog": case "agent_threads": case "agent_poll": case "agent_history": case "agent_usage": return true;
                 default: return false;
             }

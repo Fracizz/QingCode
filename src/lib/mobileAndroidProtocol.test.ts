@@ -10,7 +10,6 @@ import {
   consumeModifier,
   keySequence,
   matchesProject,
-  launchCommand,
   nextModifierState,
   outputBatches,
   outputChunk,
@@ -21,8 +20,10 @@ import {
   pullOffset,
   renameProfileKeys,
   sessionName,
+  sessionRunning,
   mergeSessionName,
   splitInput,
+  terminalProfileChoices,
   terminalGridSize,
 } from '../../mobile/android/web/protocol.js'
 
@@ -43,6 +44,29 @@ describe('Android terminal content-box sizing', () => {
 })
 
 describe('Android session names', () => {
+  it('replaces CLI title frames with independent running indicators for every session', () => {
+    for (const frame of ['⠋', '⠙', '⠇', '⠿']) {
+      const session = { name: frame + ' 优化输入框 | QingCode' }
+      expect(sessionRunning(session)).toBe(true)
+      expect(sessionName(session)).toBe('优化输入框 | QingCode')
+    }
+    expect(sessionRunning({ name: '等待输入' })).toBe(false)
+    expect(sessionRunning({ name: '⠋ 构建', exit: { exitCode: 0 } })).toBe(false)
+    expect(sessionRunning({ name: '自定名称', customName: '自定名称', programTitle: '⠋ 构建' })).toBe(true)
+    expect(sessionName({ name: '⠋ 我的名字', customName: '⠋ 我的名字' })).toBe('⠋ 我的名字')
+    expect(sessionRunning({ name: '⠋ 我的名字', customName: '⠋ 我的名字' })).toBe(false)
+    expect(sessionRunning({})).toBe(false)
+    expect(sessionName({ name: '⠋', number: 2 })).toBe('终端 2')
+  })
+
+  it('updates activity behind a manual name without accepting an older title', () => {
+    const session = { name: '构建', customName: '构建', nameRevision: 3, programTitle: '⠋ 工作' }
+    expect(mergeSessionName(session, { ...session, programTitle: '完成', nameRevision: 4 })).toBe(true)
+    expect(sessionRunning(session)).toBe(false)
+    expect(mergeSessionName(session, { ...session, programTitle: '⠙ 旧状态', nameRevision: 3 })).toBe(false)
+    expect(session.programTitle).toBe('完成')
+  })
+
   it('uses server names and falls back to numbered sessions for older desktops', () => {
     expect(sessionName({ name: '修复登录', number: 3 })).toBe('修复登录')
     expect(sessionName({ number: 3 })).toBe('终端 3')
@@ -195,6 +219,15 @@ describe('Android terminal protocol', () => {
     expect(() => keySequence('f1')).toThrow()
   })
 
+  it('clears a detected Windows PowerShell input using its default PSReadLine bindings', () => {
+    for (const inputLine of ['PS D:\\Code\\QingCode> long command', 'PS \\\\host\\share> command']) {
+      expect(keySequence('clear-input', { inputLine })).toBe('\x1b[1;5H\x1b[1;5F')
+    }
+    for (const inputLine of ['$ command', 'PS /home/user> command', 'text with PS D:\\Code> inside', '╭─ Codex']) {
+      expect(keySequence('clear-input', { inputLine })).toBe('\x05\x15')
+    }
+  })
+
   it('moves per-connection records when the address changes', () => {
     const prefix = 'qingcode:mobile:'
     const keys = [
@@ -264,10 +297,25 @@ describe('Android connection avatars', () => {
     }
   })
 })
-describe('mobile quick launch', () => {
-  it('only allows the two fixed commands', () => {
-    expect(launchCommand('claude')).toBe('claude\r')
-    expect(launchCommand('opencode')).toBe('opencode\r')
-    expect(() => launchCommand('claude; rm -rf /')).toThrow()
+describe('mobile terminal profiles', () => {
+  it('keeps desktop profile ids and names only, in order and without duplicates', () => {
+    expect(terminalProfileChoices([
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: ' Claude ', trusted: true, command: 'claude' },
+      { id: 'claude', name: 'dup' },
+      { id: 'ops', name: '  ', trusted: false },
+      { id: '', name: 'bad' }, null, { name: 'no id' },
+    ])).toEqual([
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: 'Claude', trusted: true },
+      { id: 'ops', name: '未命名配置', trusted: false },
+    ])
+  })
+
+  it('falls back to a plain terminal when the desktop has no profile list', () => {
+    const plain = [{ id: null, name: '新建终端', trusted: true }]
+    expect(terminalProfileChoices(null)).toEqual(plain)
+    expect(terminalProfileChoices([])).toEqual(plain)
+    expect(terminalProfileChoices({ error: 'old' })).toEqual(plain)
   })
 })

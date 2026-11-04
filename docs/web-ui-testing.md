@@ -6,7 +6,9 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 # Web 测试页与浏览器验收
 
-`mobile-send-settings.ego.mjs` 同时覆盖「清除输入」在命令栏与实时输入模式下发送 Ctrl+E、Ctrl+U，保留手机草稿并释放修饰键；「清空草稿」仍只编辑本地，清除操作不提交命令或发送中断。
+手机会话运行状态：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-activity.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖两个会话同时转动、未选中会话完成、手动名称、退出、刷新失败恢复、迟到响应、320px 布局、减少动画和后台/关闭侧栏后暂停刷新。截图与 JSON 位于 `.dev/web-tests/mobile-session-activity/`；使用内存 RPC，不代替 Android 真机和实际 CLI 标题更新验收。
+
+`mobile-send-settings.ego.mjs` 同时覆盖「清除输入」在命令栏与实时输入模式下发送 Ctrl+E、Ctrl+U，以及识别 Windows PowerShell 提示行后改发 Ctrl+Home、Ctrl+End，保留手机草稿并释放修饰键；「清空草稿」仍只编辑本地，清除操作不提交命令或发送中断。
 
 手机快捷键与发送设置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-send-settings.ego.mjs').then(m=>m.run())"`（路径按检出目录调整）。覆盖 Ctrl+C 文字完整显示和真实中断序列、触摸选项分行显示及保存、发送设置即时生效和重载恢复、慢网络下收到文字回执后再单独发送 Enter、连续提交不插队、发送失败与离开会话取消补发，以及默认斜杠候选。截图和 JSON 位于 `.dev/web-tests/mobile-send-settings/`；使用真实 Web 资产和内存 RPC，Android WebView、输入法与真实 Claude / OpenCode 仍需真机验收。
 
@@ -17,6 +19,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 手机对话（Claude / Codex / OpenCode）：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-chat.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`，端口被占用时给 `run({ baseUrl })` 传入实际地址）。覆盖默认对话页与未配对引导、新建对话（三家 Agent、本机与 Linux 远端项目、默认安全选项与完全访问提示）、流式 Markdown / 代码块 / 工具卡片 / diff、编辑审批与允许后完成、计划与用量、完全访问确认及免审批、320px 窄屏、默认安全选项保存、额度弹层、项目行对话入口与 Windows 远端限制、打开对话的本地记录与草稿，以及旧电脑端的更新提示。截图与 JSON 位于 `.dev/web-tests/mobile-chat/`；内存桥模拟 Agent 回复，真实 CLI 协议由 `src-tauri/src/agent/` 的单元测试与默认忽略的 `agent::e2e` 真实用例覆盖。
 
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
+
+手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。
 
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
 

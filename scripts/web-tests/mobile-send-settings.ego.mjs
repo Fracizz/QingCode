@@ -182,6 +182,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
     }
     await step('clear terminal input sends line-end and delete while keeping the phone draft', async () => {
       await resetInputs()
+      await page.evaluate(() => window.__mobileFixture.pushScreen('mobile-1', '\x1b[2J\x1b[H$ typed-input', 80, 24))
+      await page.waitForFunction(() => window.__mobileFixture.terminalText().includes('$ typed-input'))
       await page.fill('#compose', '保留手机草稿')
       await moreKey('clear-input')
       await page.waitForFunction(() => window.__mobileFixture.state.inputs.includes('\x05\x15'))
@@ -203,6 +205,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed')), 'false')
       await metrics(390, 844)
       await page.screenshot({ path: resolve(output, 'clear-input.png') })
+    })
+    await step('Windows PowerShell input uses Ctrl+Home and Ctrl+End instead of unbound Ctrl+U', async () => {
+      await page.cdp('Emulation.clearDeviceMetricsOverride')
+      await resetInputs()
+      await page.evaluate(() => window.__mobileFixture.pushScreen('mobile-1', '\x1b[2J\x1b[HPS D:\\Code\\QingCode> pending text\x1b[5D', 80, 24))
+      await page.waitForFunction(() => window.__mobileFixture.terminalText().includes('pending text'))
+      await moreKey('clear-input')
+      await page.waitForFunction(() => window.__mobileFixture.state.inputs.includes('\x1b[1;5H\x1b[1;5F'))
+      assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.inputs), ['\x1b[1;5H\x1b[1;5F'])
     })
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ results }, null, 2))
     console.log({ output, results })

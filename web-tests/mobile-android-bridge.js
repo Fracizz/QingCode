@@ -14,6 +14,15 @@
       { id: 'p-ssh', name: 'api-server', path: 'ssh://conn-1/srv/api', kind: 'ssh', host: 'build.example' },
     ],
     sessions: new Map(),
+    // 电脑端「终端配置」；null 模拟不支持 terminal_profiles 的旧版电脑端。
+    terminalProfiles: [
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: 'Claude', trusted: true },
+      { id: 'opencode', name: 'OpenCode', trusted: true },
+      { id: 'deploy', name: '部署', trusted: false },
+    ],
+    creates: [],
+    terminalProfileRequests: 0,
     sessionNames: true,
     renameError: null,
     renameDelay: 0,
@@ -25,6 +34,9 @@
     inputDelay: 0,
     inputError: null,
     polls: [],
+    sessionRequests: [],
+    sessionDelay: 0,
+    sessionError: null,
     historyRequests: [],
     pairs: [],
     clipboard: '',
@@ -79,6 +91,7 @@
   function sessionMetadata(session) {
     const basic = { id: session.id, number: session.number, exit: session.exit }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
+      programTitle: session.title ?? null,
       customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
   }
 
@@ -275,12 +288,24 @@
     if (request.op.startsWith('agent_')) return agent(request)
     switch (request.op) {
       case 'projects': return { ok: true, data: state.projects }
-      case 'sessions': return {
-        ok: true,
-        data: [...state.sessions.values()].filter(item => item.project === request.project)
-          .map(sessionMetadata),
+      case 'sessions': {
+        state.sessionRequests.push({ project: request.project, at: Date.now() })
+        const data = [...state.sessions.values()].filter(item => item.project === request.project).map(sessionMetadata)
+        if (state.sessionDelay) await new Promise(resolve => setTimeout(resolve, state.sessionDelay))
+        if (state.sessionError) return { ok: false, error: state.sessionError }
+        return {
+          ok: true,
+          data,
+        }
       }
+      case 'terminal_profiles':
+        state.terminalProfileRequests += 1
+        return state.terminalProfiles ? { ok: true, data: state.terminalProfiles } : { ok: false, error: '请求格式无效。' }
       case 'create': {
+        const chosen = request.terminal_profile && state.terminalProfiles?.find(item => item.id === request.terminal_profile)
+        if (request.terminal_profile && state.terminalProfiles && !chosen) return { ok: false, error: '终端配置不存在或已删除，请刷新后重试。' }
+        if (chosen && !chosen.trusted) return { ok: false, error: `请先在电脑上新建一次「${chosen.name}」终端并选择「信任此配置」，再从手机启动。` }
+        state.creates.push({ project: request.project, terminalProfile: request.terminal_profile ?? null })
         const number = state.nextSession++
         const session = { id: 'mobile-' + number, number, project: request.project, output: [], next: 0, waiters: [], exit: null }
         state.sessions.set(session.id, session)

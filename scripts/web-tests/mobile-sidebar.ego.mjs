@@ -87,7 +87,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.fill('#compose', '第一会话的草稿')
       await drawer()
       await page.click('#drawer-new-session', { label: 'add named session' })
-      await page.click('[data-launch="shell"]', { label: 'start second shell' })
+      await page.click('[data-profile="default"]', { label: 'start second shell' })
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中'
         && window.__mobileFixture.state.sessions.size === 2)
       assert.equal(await page.evaluate(() => document.querySelector('.terminal-head').getBoundingClientRect().height), headHeight)

@@ -106,7 +106,7 @@ try {
   reset()
   hold()
   run('click', '#new-session')
-  run('click', '#new-session-dialog [data-launch="shell"]')
+  run('click', '#new-session-dialog [data-profile="default"]')
   check('新会话使用独立的手机草稿输入位置', `document.querySelectorAll('#session-options .session-option').length === 2 && ${mode} === '命令输入'`)
   evaluate(`window.__switchedCount = window.__mobileFixture.state.inputs.join('').length; window.__switchedAt = performance.now()`)
   check('切换会话取消旧会话的长按计时器', `performance.now() - window.__switchedAt > 600 && ${inputs}.length === window.__switchedCount`)

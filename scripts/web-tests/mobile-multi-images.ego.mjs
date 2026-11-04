@@ -132,7 +132,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await step('switching sessions stops the remaining batch and ignores the late result', async () => {
       await page.click('#new-session', { label: 'add another terminal session' })
-      await page.click('[data-launch="shell"]', { label: 'create a shell session' })
+      await page.click('[data-profile="default"]', { label: 'create a shell session' })
       await page.waitForFunction(() => window.__mobileFixture.state.sessions.size === 2
         && document.querySelector('#terminal-status').textContent === '会话中')
       await page.fill('#compose', '另一会话草稿 ')

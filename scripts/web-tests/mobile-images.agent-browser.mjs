@@ -12,11 +12,15 @@ const check = (name, expression) => {
   results.push({ name, passed: true })
 }
 const openSettings = () => { run('click', '#manage-sessions'); run('wait', '300') }
-const newSession = launch => {
+const openNewSession = () => {
   run('click', '#new-session')
   run('wait', '300')
-  run('click', `[data-launch="${launch}"]`)
 }
+const newSession = id => {
+  openNewSession()
+  run('click', `#new-session-dialog [data-profile="${id}"]`)
+}
+const creates = profileId => `window.__mobileFixture.state.creates.filter(item => item.terminalProfile === '${profileId}').length`
 
 try {
   run('set', 'viewport', '390', '844')
@@ -32,10 +36,20 @@ try {
   run('click', '#project-list .row:first-child')
   check('terminal ready', `document.querySelector('#terminal-status').textContent === '会话中'`)
   run('eval', `window.__imageTest = { original: document.querySelector('#terminal-name').textContent, inputCount: window.__mobileFixture.state.inputs.length }`)
-  newSession('claude')
-  check('Claude starts once in a separate session', `window.__mobileFixture.state.sessions.size === 2 && window.__mobileFixture.state.inputs.filter(value => value === 'claude' + String.fromCharCode(13)).length === 1`)
+  check('first terminal uses the desktop default profile', `${creates('default')} === 1`)
+  openNewSession()
+  check('new-session choices come from the desktop terminal profiles', `[...document.querySelectorAll('#terminal-profiles button')].map(b => b.dataset.profile).join() === 'default,claude,opencode,deploy' && document.querySelector('#terminal-profiles [data-profile="deploy"] small')?.textContent.includes('信任')`)
+  run('screenshot', resolve(directory, 'terminal-profiles.png'))
+  run('click', '#new-session-dialog [data-profile="claude"]')
+  check('Claude profile starts once in a separate session without typed input', `window.__mobileFixture.state.sessions.size === 2 && ${creates('claude')} === 1 && window.__mobileFixture.state.inputs.length === window.__imageTest.inputCount`)
   newSession('opencode')
-  check('OpenCode starts once and keeps existing sessions', `window.__mobileFixture.state.sessions.size === 3 && window.__mobileFixture.state.inputs.filter(value => value === 'opencode' + String.fromCharCode(13)).length === 1`)
+  check('OpenCode profile starts once and keeps existing sessions', `window.__mobileFixture.state.sessions.size === 3 && ${creates('opencode')} === 1`)
+  newSession('deploy')
+  check('untrusted profile stays in the dialog with the desktop trust hint', `document.querySelector('#new-session-dialog').open && window.__mobileFixture.state.sessions.size === 3 && document.querySelector('#terminal-profiles-error').textContent.includes('信任此配置')`)
+  run('click', '#new-session-dialog [data-close="new-session-dialog"]')
+  run('eval', `window.__mobileFixture.state.terminalProfiles = [{ id: 'build', name: '构建', trusted: true }]`)
+  newSession('build')
+  check('profile list refreshes from the desktop on every open', `window.__mobileFixture.state.sessions.size === 4 && ${creates('build')} === 1`)
   check('new terminal accepts input', `!document.querySelector('#attach-image').disabled`)
   openSettings()
   check('compression lives in settings and defaults to medium', `document.querySelector('#session-dialog #image-compression').value === 'medium' && !document.querySelector('#image-dialog #image-compression')`)

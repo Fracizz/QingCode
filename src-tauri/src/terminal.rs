@@ -254,10 +254,13 @@ impl TerminalManager {
         Ok(resolved.spawn_result())
     }
 
+    /// 手机端 WSL 终端：进入发行版的登录 shell。`startup` 为终端配置的启动命令，
+    /// 在交互登录 shell 中执行（加载 rc 中的 PATH，如 nvm），结束后保留登录 shell。
     pub(crate) fn spawn_mobile_wsl(
         &self,
         id: String,
         cwd: &str,
+        startup: Option<&str>,
         cols: u16,
         rows: u16,
         app: AppHandle,
@@ -265,16 +268,7 @@ impl TerminalManager {
         let path = crate::run_environment::parse_wsl_path(cwd).ok_or("无效的 WSL 项目目录")?;
         let program = locate_program("wsl.exe").ok_or("未找到 wsl.exe，请启用 WSL")?;
         let mut command = CommandBuilder::new(&program);
-        command.args([
-            "--distribution",
-            &path.distro,
-            "--cd",
-            &path.path,
-            "--exec",
-            "/bin/sh",
-            "-c",
-            r#"exec "${SHELL:-/bin/sh}" -l"#,
-        ]);
+        command.args(mobile_wsl_args(&path.distro, &path.path, startup));
         self.spawn_with(id, command, &program, cols, rows, app, None)?;
         Ok(ResolvedHostShell {
             id: "wsl".into(),
@@ -1004,6 +998,30 @@ fn shell_working_directory(cwd: &str) -> Cow<'_, str> {
     }
 }
 
+/// 命令通过位置参数 `$1` 传入，不拼进脚本文本，避免二次 shell 解析。
+fn mobile_wsl_args(distro: &str, cwd: &str, startup: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--distribution",
+        distro,
+        "--cd",
+        cwd,
+        "--exec",
+        "/bin/sh",
+        "-c",
+    ]
+    .map(String::from)
+    .to_vec();
+    match startup.map(str::trim).filter(|command| !command.is_empty()) {
+        Some(command) => args.extend([
+            r#""${SHELL:-/bin/sh}" -lic "$1"; exec "${SHELL:-/bin/sh}" -l"#.into(),
+            "sh".into(),
+            command.into(),
+        ]),
+        None => args.push(r#"exec "${SHELL:-/bin/sh}" -l"#.into()),
+    }
+    args
+}
+
 fn build_host_shell_command(
     shell: Option<&str>,
     cwd: &str,
@@ -1331,6 +1349,28 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mobile_wsl_args_pass_profile_command_as_positional_argument() {
+        let plain = super::mobile_wsl_args("Ubuntu", "/home/app", None);
+        assert_eq!(plain.last().unwrap(), r#"exec "${SHELL:-/bin/sh}" -l"#);
+        assert_eq!(
+            super::mobile_wsl_args("Ubuntu", "/home/app", Some("  ")),
+            plain
+        );
+
+        let command = r#"claude --resume "$(cat id)""#;
+        let args = super::mobile_wsl_args("Ubuntu", "/home/app", Some(command));
+        assert_eq!(&args[..7], &plain[..7]);
+        assert_eq!(
+            &args[7..],
+            [
+                r#""${SHELL:-/bin/sh}" -lic "$1"; exec "${SHELL:-/bin/sh}" -l"#,
+                "sh",
+                command,
+            ]
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_pty_killer_reports_success_for_terminated_child() {

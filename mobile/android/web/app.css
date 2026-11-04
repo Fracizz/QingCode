@@ -487,7 +487,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: var(--paper); }
 .session-option { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; }
 .session-option .row { grid-template-columns: minmax(0, 1fr); padding: 12px; }
-.session-option strong { white-space: normal; overflow-wrap: anywhere; }
+.session-option strong { display: flex; align-items: flex-start; gap: 8px; white-space: normal; overflow-wrap: anywhere; }
+.session-label { min-width: 0; }
+.session-spinner { display: none; flex: none; width: 20px; height: 20px; margin-top: 3px; color: var(--accent); animation: spin 1s linear infinite; }
+.session-option[data-running="true"] .session-spinner { display: block; }
 .session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
 .session-option .icon-button { color: var(--muted); }
 .drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; }
@@ -559,12 +562,16 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 @media (prefers-reduced-motion: reduce) {
   button, .pull-indicator, .nav-icon { transition: none; }
   dialog[open], dialog.sheet[open], [data-state="checking"] .dot { animation: none; }
+  .session-spinner { animation: none; }
 }
 
 /* 新建会话：独立卡片按钮，留出间距，避免边框挤在一起。 */
 .session-shortcuts { gap: 10px; margin: 18px 0 14px; overflow: visible; border-radius: 0; background: transparent; }
 .session-shortcuts > * + * { border-top: 1px solid var(--line); }
 .session-shortcuts > button { min-height: 52px; font-size: 16px; }
+.session-shortcuts > button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.session-shortcuts > button small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.session-shortcuts[aria-busy="true"] { opacity: .72; }
 #new-session-dialog > p { line-height: 1.55; }
 #new-session-dialog .dialog-actions { margin-top: 12px; }
 #terminal-menu { flex: none; width: 36px; min-width: 36px; }
