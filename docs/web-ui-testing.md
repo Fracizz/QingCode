@@ -45,6 +45,13 @@ agent-browser --session qingcode-ui-review close
 
 终端退出提示条场景为 `/web-tests/terminal-exit.html`，运行 `scripts/web-tests/terminal-exit.ego.mjs` 的 `run()`。覆盖异常退出保持现场、显式打开普通 shell、导出不触发重启、未知退出码、中英文与窄屏浅色布局。该页面只复用提示条组件，进程和 SSH 生命周期由原生集成测试验证；`screenshots: false` 只代表 DOM 验收。
 
+QingCode Android 场景位于 `/mobile-android/`（`pnpm test:web`），运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`。
+页面直接加载 `mobile/android/web/` 的真实 `index.html`、`app.js`、`protocol.js` 与 xterm，`web-tests/mobile-android-bridge.js`
+在内存中替代 `MainActivity` 的 JS 桥和 Windows RPC。覆盖粘贴配对链接后自动核对指纹、证书与二维码不一致时不发送密码、
+深链预填、打开项目与命令栏提交、Server 屏幕快照重绘后继续轮询、Alt / Home / PgUp 按键序列、修改端口保留配对并迁移本地记录、
+从首页接回原会话。断言读取 xterm 缓冲区而非渲染行，后台窗口不重绘时也能执行；截图在无交互桌面会超时，可传 `screenshots: false`。
+该页面不替代真机 WebView、相机扫码、深链、TLS 证书固定与局域网连接验收。
+
 项目管理提供独立的浏览器验收入口，复用 `src/components/ProjectManager.tsx` 及生产样式。
 不启动 `App.tsx`，不加载真实项目数据库、恢复会话或建立 SSH 连接。
 

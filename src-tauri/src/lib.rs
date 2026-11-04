@@ -771,7 +771,7 @@ pub fn run() {
         .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
-            mobile::listen(app.handle());
+            mobile::initialize(app.handle());
             configure_ssh_server_binary_dirs(app.handle());
             configure_ssh_client_id(app.handle());
             if let Err(error) = remote_ssh::configure_direct_connections(app.handle()) {
@@ -820,6 +820,8 @@ pub fn run() {
             mobile::mobile_saved_settings,
             mobile::mobile_start,
             mobile::mobile_stop,
+            mobile::mobile_revoke_device,
+            mobile::mobile_pairing_qr,
             mobile::mobile_bridge_reply,
             commands::scan_directory,
             commands::validate_directory,

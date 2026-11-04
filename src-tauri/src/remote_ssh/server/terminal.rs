@@ -480,7 +480,17 @@ fn detached_terminal_from_info(
         cwd: daemon_path_to_uri(connection_id, cwd)?,
         cols: info.cols,
         rows: info.rows,
-        name: info.name.filter(|name| !name.trim().is_empty()),
+        name: info
+            .name
+            .filter(|name| !name.trim().is_empty())
+            // A companion terminal left behind by a desktop restart gets a readable tab name.
+            .map(|name| {
+                if crate::mobile::is_mobile_terminal(&name) {
+                    "Android 终端".to_string()
+                } else {
+                    name
+                }
+            }),
     })
 }
 
@@ -497,6 +507,10 @@ async fn request_owned_detached_ptys(
 }
 
 fn emit_screen(app: &AppHandle, id: &str, screen: &str, (cols, rows): (u16, u16), next_seq: u64) {
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_screen(app, id, screen.to_string(), cols.max(1), rows.max(1));
+        return;
+    }
     let _ = app.emit(
         "terminal-screen",
         TerminalScreenPayload {
@@ -510,6 +524,10 @@ fn emit_screen(app: &AppHandle, id: &str, screen: &str, (cols, rows): (u16, u16)
 }
 
 fn emit_data(app: &AppHandle, id: &str, data: &[u8], next_seq: u64) {
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_data(app, id, encode_terminal_data(data));
+        return;
+    }
     let _ = app.emit(
         "terminal-data",
         PersistentTerminalDataPayload {
@@ -563,6 +581,10 @@ fn emit_exit(
         true,
         disconnected || exit_code != 0,
     );
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_exit(app, id, exit_code, disconnected);
+        return;
+    }
     let _ = app.emit(
         "terminal-exit",
         TerminalExitPayload {
@@ -779,6 +801,13 @@ pub(crate) async fn list_detached_terminals(
         let ptys = request_owned_detached_ptys(&session, &client_id).await?;
         Ok(ptys
             .into_iter()
+            // A phone may still own a briefly detached terminal while it reconnects.
+            .filter(|info| {
+                !info.name.as_deref().is_some_and(|name| {
+                    crate::mobile::is_mobile_terminal(name)
+                        && crate::mobile::owns_terminal(app, name)
+                })
+            })
             .filter_map(|info| detached_terminal_from_info(info, connection_id, &roots))
             .collect())
     }

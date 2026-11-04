@@ -65,5 +65,19 @@ export default tseslint.config(
     settings: {
       react: { version: 'detect' },
     },
+  },
+  {
+    // QingCode Android WebView assets: plain browser modules bundled into the APK.
+    extends: [js.configs.recommended],
+    files: ['mobile/android/web/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.browser },
+    },
+    rules: {
+      'no-control-regex': 'off',
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
   }
 )

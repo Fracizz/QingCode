@@ -6030,23 +6030,10 @@ async fn spawn_ssh_terminal(
                             .position(|window| window == clear_sequence)
                         {
                             filtering_clone.store(false, Ordering::Relaxed);
-                            let clean_data = &data[pos..];
-                            let _ = app_clone.emit(
-                                "terminal-data",
-                                TerminalDataPayload {
-                                    id: terminal_id.clone(),
-                                    data: encode_terminal_data(clean_data),
-                                },
-                            );
+                            emit_direct_terminal_data(&app_clone, &terminal_id, &data[pos..]);
                         }
                     } else {
-                        let _ = app_clone.emit(
-                            "terminal-data",
-                            TerminalDataPayload {
-                                id: terminal_id.clone(),
-                                data: encode_terminal_data(&data),
-                            },
-                        );
+                        emit_direct_terminal_data(&app_clone, &terminal_id, &data);
                     }
                 }
                 ChannelMsg::ExitStatus { exit_status } => exit_code = exit_status,
@@ -6080,15 +6067,19 @@ async fn spawn_ssh_terminal(
                 true,
                 true,
             );
-            let _ = app_clone.emit(
-                "terminal-exit",
-                TerminalExitPayload {
-                    id: terminal_id,
-                    exit_code,
-                    disconnected,
-                    reason,
-                },
-            );
+            if crate::mobile::is_mobile_terminal(&terminal_id) {
+                crate::mobile::deliver_exit(&app_clone, &terminal_id, exit_code, disconnected);
+            } else {
+                let _ = app_clone.emit(
+                    "terminal-exit",
+                    TerminalExitPayload {
+                        id: terminal_id,
+                        exit_code,
+                        disconnected,
+                        reason,
+                    },
+                );
+            }
         }
     });
 
@@ -6146,6 +6137,21 @@ async fn start_terminal_channel(
         .await
         .map_err(|error| format!("启动远程 Shell 失败：{error}"))?;
     Ok(channel)
+}
+
+/// Companion terminals go to the mobile buffer instead of every webview.
+fn emit_direct_terminal_data(app: &AppHandle, id: &str, data: &[u8]) {
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_data(app, id, encode_terminal_data(data));
+    } else {
+        let _ = app.emit(
+            "terminal-data",
+            TerminalDataPayload {
+                id: id.to_string(),
+                data: encode_terminal_data(data),
+            },
+        );
+    }
 }
 
 fn persistent_shell_launch(
@@ -6316,7 +6322,11 @@ pub async fn ssh_create_terminal(
     let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
     // Server 模式只走 daemon，SSH 模式只走直连，两者不再互相回退。
     if manager.server_mode(&parsed.connection_id) {
-        let launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
+        let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
+        if crate::mobile::is_mobile_terminal(&id) {
+            // The daemon name lets desktop restore recognize companion terminals.
+            launch.name = Some(id.clone());
+        }
         return server::spawn_persistent_terminal(
             id,
             root,

@@ -199,8 +199,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 #terminal-tools { flex: none; padding: 0 6px 5px; border-top: 1px solid var(--line); background: var(--paper); }
 .terminal-state { display: flex; align-items: center; gap: 7px; min-height: 23px; padding: 0 4px; }
 #terminal-status { flex: 1; min-width: 0; padding: 2px 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-#special-keys { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
-#special-keys button { padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: 13px monospace; }
+#special-keys { display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+#special-keys::-webkit-scrollbar { display: none; }
+#special-keys button { flex: 1 0 44px; padding: 0 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: 13px monospace; }
 #special-keys button:active:not(:disabled) { background: var(--raised); }
 #special-keys button[aria-pressed="true"] { background: var(--accent); color: #0c2923; }
 #compose-form { display: flex; align-items: end; gap: 2px; margin-top: 5px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
@@ -225,6 +226,12 @@ dialog p { font-size: 14px; color: var(--muted); }
 dialog code { display: block; margin: 10px 0; padding: 10px; border-radius: 10px; background: var(--paper); overflow-wrap: anywhere; font-size: 13px; }
 dialog label { display: block; margin: 9px 0 5px; font-size: 13px; font-weight: 650; }
 .pair-address { display: grid; grid-template-columns: minmax(0, 1fr) 94px; gap: 8px; }
+.pair-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.pair-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.pair-tools svg { width: 18px; height: 18px; }
+dialog p.ok { color: var(--accent); font-size: 13px; margin-top: 8px; }
+dialog p.hint { font-size: 12px; margin-top: 4px; }
+#scan-video { display: block; width: 100%; aspect-ratio: 1; margin-top: 10px; border-radius: 14px; background: #000; object-fit: cover; }
 .dialog-actions, .dialog-links { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .dialog-links { margin-top: 4px; }
 #session-options { max-height: 45vh; overflow-y: auto; }

@@ -123,6 +123,8 @@ fn take_coalesced_terminal_output(
 
 fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::SyncSender<Vec<u8>> {
     let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(TERMINAL_EMIT_CHANNEL);
+    // Companion terminals bypass webview broadcast; the desktop UI never shows them.
+    let mobile = crate::mobile::is_mobile_terminal(&id);
     std::thread::spawn(move || {
         while let Ok(first) = receiver.recv() {
             let data = take_coalesced_terminal_output(
@@ -130,6 +132,10 @@ fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::S
                 || receiver.try_recv().ok(),
                 TERMINAL_EMIT_COALESCE_MAX,
             );
+            if mobile {
+                crate::mobile::deliver_data(&app, &id, encode_terminal_data(&data));
+                continue;
+            }
             let _ = app.emit(
                 "terminal-data",
                 TerminalDataPayload {
@@ -472,6 +478,10 @@ impl TerminalManager {
             };
             if is_current {
                 let exit_code = resolve_exit_code(status.map(|status| status.exit_code()).ok());
+                if crate::mobile::is_mobile_terminal(&id) {
+                    crate::mobile::deliver_exit(&app, &id, exit_code, false);
+                    return;
+                }
                 let _ = app.emit(
                     "terminal-exit",
                     TerminalExitPayload {

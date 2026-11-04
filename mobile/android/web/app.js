@@ -1,4 +1,14 @@
-'use strict';
+import {
+  DEFAULT_PORT,
+  applyModifiers,
+  keySequence,
+  outputChunk,
+  parsePairingLink,
+  renameProfileKeys,
+  splitInput,
+  validIpv4,
+  validPort,
+} from './protocol.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -24,7 +34,7 @@ let viewEpoch = 0;
 let term;
 let fit;
 let terminalReady = false;
-let ctrl = false;
+const modifiers = { ctrl: false, alt: false };
 let busy = false;
 let inputQueue = '';
 let inputTimer = null;
@@ -33,6 +43,10 @@ let queuedInput = 0;
 let resizing = null;
 let editing = null;
 let composing = false;
+// Fingerprint from a scanned or pasted pairing link; skips manual comparison when it matches.
+let expectedFingerprint = null;
+let scanStream = null;
+let scanTimer = null;
 
 function rpc(op, args = {}) {
   return new Promise((resolve, reject) => {
@@ -88,7 +102,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'session-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'session-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -302,19 +316,103 @@ function putProfile(item) {
   if (profile?.id === item.id) profile = item;
 }
 
-function openPair(item) {
+function openPair(item, target = null) {
   const dialog = get('pair-dialog');
   get('host-dialog').close();
+  expectedFingerprint = target?.fingerprint ?? null;
   get('pair-title').textContent = item ? '重新配对' : '添加连接';
-  get('pair-name').value = item?.name ?? '';
-  get('pair-host').value = item?.host ?? '';
-  get('pair-port').value = item?.port ?? '48764';
+  get('pair-name').value = item?.name ?? target?.name ?? '';
+  get('pair-host').value = item?.host ?? target?.host ?? '';
+  get('pair-port').value = item?.port ?? target?.port ?? String(DEFAULT_PORT);
   get('pair-code').value = '';
   get('pair-host').readOnly = !!item;
   get('pair-port').readOnly = !!item;
+  get('pair-link-state').hidden = !expectedFingerprint;
+  get('pair-link-tools').hidden = !!item;
   message('pair-error', '');
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
+  if (target) get('pair-code').focus();
 }
+
+function openPairTarget(target) {
+  const saved = profiles.find(item => item.id === target.host + ':' + target.port);
+  openPair(saved && saved.fingerprint === target.fingerprint ? saved : null, target);
+}
+
+window.qingLink = text => {
+  try {
+    const target = parsePairingLink(text);
+    if (!terminalScreen.hidden) returnToDashboard('connection');
+    else showPage('connection');
+    openPairTarget(target);
+  } catch (error) {
+    if (!terminalScreen.hidden) returnToDashboard('connection');
+    else showPage('connection');
+    message('connection-error', error.message);
+  }
+};
+
+get('pair-paste').addEventListener('click', async () => {
+  message('pair-error', '');
+  try {
+    openPairTarget(parsePairingLink(await rpc('clipboard')));
+  } catch (error) {
+    message('pair-error', error.message === '这不是 QingCode 配对链接。' ? '剪贴板中没有 QingCode 配对链接。' : error.message);
+  }
+});
+
+function stopScan() {
+  clearTimeout(scanTimer);
+  scanTimer = null;
+  for (const track of scanStream?.getTracks() ?? []) track.stop();
+  scanStream = null;
+  get('scan-video').srcObject = null;
+}
+
+get('scan-dialog').addEventListener('close', stopScan);
+
+get('pair-scan').addEventListener('click', async () => {
+  message('pair-error', '');
+  try {
+    if (!await rpc('camera')) throw new Error('需要相机权限才能扫码。也可以粘贴电脑端复制的配对链接。');
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch (error) {
+    stopScan();
+    message('pair-error', error.name === 'NotAllowedError' ? '需要相机权限才能扫码。' : error.message || '无法打开相机。');
+    return;
+  }
+  const video = get('scan-video');
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  video.srcObject = scanStream;
+  message('scan-error', '');
+  get('scan-dialog').showModal();
+  await video.play().catch(() => {});
+  const tick = () => {
+    if (!scanStream) return;
+    if (video.videoWidth) {
+      // Downscale large camera frames; QR modules stay well above one pixel.
+      const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+      const found = window.jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'dontInvert' });
+      if (found?.data) {
+        try {
+          const target = parsePairingLink(found.data);
+          get('scan-dialog').close();
+          openPairTarget(target);
+          return;
+        } catch (error) {
+          message('scan-error', error.message);
+        }
+      }
+    }
+    scanTimer = setTimeout(tick, 180);
+  };
+  tick();
+});
 
 get('pair-dialog').addEventListener('cancel', event => {
   if (get('pair-submit').disabled) event.preventDefault();
@@ -334,14 +432,20 @@ get('pair-form').addEventListener('submit', async event => {
   message('pair-error', '');
   try {
     if (!name) throw new Error('请输入连接名称。');
+    if (!validIpv4(host) || !validPort(port)) throw new Error('请输入有效的电脑 IPv4 地址和端口。');
     if (!/^[!-~]{6,20}$/.test(code)) {
       throw new Error('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。');
     }
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const fingerprint = await rpc('probe', { host, port });
     const saved = profiles.find(item => item.id === host + ':' + port);
-    if (saved?.fingerprint !== fingerprint) {
-      get('pair-fingerprint').textContent = fingerprint;
+    if (expectedFingerprint) {
+      // The link came from the desktop screen, so a mismatch means a different or intercepted host.
+      if (expectedFingerprint !== fingerprint) {
+        throw new Error('电脑证书与二维码中的指纹不一致，已停止配对。请确认地址，或在电脑端重新生成二维码。');
+      }
+    } else if (saved?.fingerprint !== fingerprint) {
+      get('pair-fingerprint').textContent = fingerprint.match(/.{1,4}/g).join(' ');
       if (!await ask(get('pair-confirm'))) return;
     }
     const paired = await rpc('pair', { name, host, port, code, fingerprint });
@@ -361,6 +465,7 @@ function openHost(item) {
   get('host-address').textContent = item.id;
   get('host-fingerprint').textContent = item.fingerprint;
   get('host-name').value = item.name;
+  get('host-port').value = item.port;
   message('host-error', '');
   get('host-dialog').showModal();
 }
@@ -373,13 +478,24 @@ get('host-form').addEventListener('submit', async event => {
   submit.disabled = true;
   try {
     const name = get('host-name').value.trim();
-    putProfile(await rpc('rename', { profile: item.id, name }));
+    const port = Number(get('host-port').value);
+    if (!validPort(port)) throw new Error('端口须为 1–65535 之间的整数。');
+    let updated = item;
+    if (port !== item.port) {
+      // The desktop keeps pairings across port switches; only the address changes here.
+      updated = await rpc('readdress', { profile: item.id, port });
+      moveProfile(item, updated);
+    }
+    if (name !== updated.name) updated = await rpc('rename', { profile: updated.id, name });
+    putProfile(updated);
+    editing = updated;
+    if (profile?.id === updated.id && port !== item.port) void refreshProjects();
     renderConnections();
     renderHome();
     renderProjects();
-    if (editing?.id === item.id) get('host-dialog').close();
+    get('host-dialog').close();
   } catch (error) {
-    if (editing?.id === item.id) message('host-error', error.message);
+    message('host-error', error.message);
   } finally {
     submit.disabled = false;
   }
@@ -419,6 +535,30 @@ get('remove-host').addEventListener('click', async () => {
   }
 });
 
+function moveProfile(from, to) {
+  for (const [old, next] of renameProfileKeys(Object.keys(localStorage), prefix, from.id, to.id)) {
+    localStorage.setItem(next, localStorage.getItem(old));
+    localStorage.removeItem(old);
+  }
+  for (const [key, value] of [...drafts]) {
+    if (key.startsWith(from.id + '/')) {
+      drafts.delete(key);
+      drafts.set(to.id + key.slice(from.id.length), value);
+    }
+  }
+  if (health.has(from.id)) {
+    health.set(to.id, health.get(from.id));
+    health.delete(from.id);
+  }
+  profiles = profiles.filter(saved => saved.id !== from.id);
+  if (profile?.id === from.id) {
+    leaveTerminal();
+    profile = to;
+    localStorage.setItem(prefix + 'active', to.id);
+    if (localStorage.getItem(prefix + 'open') === from.id) localStorage.setItem(prefix + 'open', to.id);
+  }
+}
+
 function setKind(next) {
   kind = next;
   for (const item of get('hosts').querySelectorAll('button')) {
@@ -452,9 +592,14 @@ for (const item of get('hosts').querySelectorAll('button')) {
   });
 }
 
-function setCtrl(value) {
-  ctrl = value;
-  get('special-keys').querySelector('[data-key="ctrl"]').setAttribute('aria-pressed', String(value));
+function setModifier(name, value) {
+  modifiers[name] = value;
+  get('special-keys').querySelector('[data-key="' + name + '"]').setAttribute('aria-pressed', String(value));
+}
+
+function clearModifiers() {
+  setModifier('ctrl', false);
+  setModifier('alt', false);
 }
 
 function setRawKeyboard(enabled) {
@@ -490,7 +635,7 @@ function leaveTerminal() {
   clearTimeout(resizing);
   selected = null;
   composing = false;
-  setCtrl(false);
+  clearModifiers();
   term?.dispose();
   term = undefined;
   fit = undefined;
@@ -658,10 +803,6 @@ function selectSession(session) {
   void poll(session, viewEpoch);
 }
 
-function decode(chunk) {
-  return Uint8Array.from(atob(chunk), character => character.charCodeAt(0));
-}
-
 async function poll(session, epoch) {
   let next = 0;
   let backoff = 350;
@@ -678,20 +819,21 @@ async function poll(session, epoch) {
         term.reset();
         term.writeln('[较早的输出已超出电脑端缓存]');
       }
-      for (const chunk of data.chunks) {
+      for (const raw of data.chunks) {
         if (epoch !== viewEpoch) return;
         const view = term;
-        const screen = typeof chunk !== 'string';
-        if (screen) {
+        // Screen snapshots are terminal text; only byte chunks are base64.
+        const chunk = outputChunk(raw);
+        if (chunk.screen) {
           view.reset();
           view.resize(chunk.cols, chunk.rows);
         }
         await new Promise(resolve => {
           // Disposing the renderer can drop its pending write callback.
           const fallback = setTimeout(resolve, 250);
-          view.write(decode(screen ? chunk.data : chunk), () => { clearTimeout(fallback); resolve(); });
+          view.write(chunk.data, () => { clearTimeout(fallback); resolve(); });
         });
-        if (screen && epoch === viewEpoch) fit.fit();
+        if (chunk.screen && epoch === viewEpoch) fit.fit();
       }
       if (epoch !== viewEpoch) return;
       if (data.exit) {
@@ -741,11 +883,8 @@ function flushInput() {
   queuedInput += pending.length;
   inputChain = inputChain.then(async () => {
     try {
-      for (let offset = 0; offset < pending.length;) {
-        let end = Math.min(offset + 2048, pending.length);
-        if (end < pending.length && /[\uD800-\uDBFF]/.test(pending[end - 1])) end -= 1;
-        await remote('input', { id, data: pending.slice(offset, end) }, address);
-        offset = end;
+      for (const part of splitInput(pending)) {
+        await remote('input', { id, data: part }, address);
       }
     } catch (error) {
       if (epoch === viewEpoch) {
@@ -760,9 +899,9 @@ function flushInput() {
 
 function sendInput(value) {
   if (!terminalReady) return false;
-  if (ctrl) {
-    if (/^[a-z]$/i.test(value)) value = String.fromCharCode(value.toUpperCase().charCodeAt(0) & 31);
-    setCtrl(false);
+  if (modifiers.ctrl || modifiers.alt) {
+    value = applyModifiers(value, modifiers);
+    clearModifiers();
   }
   if (queuedInput + inputQueue.length + value.length > 32_768) {
     get('terminal-status').textContent = '输入过长，请分段粘贴。';
@@ -829,20 +968,18 @@ get('end-session').addEventListener('click', async () => {
   }
 });
 
-const arrows = { up: 'A', down: 'B', right: 'C', left: 'D' };
 for (const keyButton of get('special-keys').querySelectorAll('[data-key]')) {
   keyButton.addEventListener('pointerdown', event => {
     if (document.activeElement === compose || document.activeElement === term?.textarea) event.preventDefault();
   });
   keyButton.addEventListener('click', () => {
     const key = keyButton.dataset.key;
-    if (key === 'ctrl') {
-      setCtrl(!ctrl);
-      if (ctrl) focusRawKeyboard();
-    } else if (key === 'esc' || key === 'tab') {
-      sendInput(key === 'esc' ? '\x1b' : '\t');
+    if (key === 'ctrl' || key === 'alt') {
+      setModifier(key, !modifiers[key]);
+      if (modifiers[key]) focusRawKeyboard();
     } else {
-      sendInput((term?.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b[') + arrows[key]);
+      // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
+      sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
     }
   });
 }
@@ -897,6 +1034,12 @@ async function initialize() {
     renderConnections();
     renderHome();
     renderProjects();
+    const link = await rpc('pendingLink');
+    if (link) {
+      if (item) await activate(item, 'connection');
+      window.qingLink(link);
+      return;
+    }
     if (!item) return;
     const resume = localStorage.getItem(prefix + 'open') === item.id;
     if (await activate(item) && resume && profile?.id === item.id && page === 'home') {

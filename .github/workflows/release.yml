@@ -296,8 +296,92 @@ jobs:
           path: dist-release/*
           if-no-files-found: error
 
+  build-android:
+    needs: [meta, check]
+    runs-on: windows-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      QINGCODE_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      QINGCODE_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      QINGCODE_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - name: Check release keystore
+        id: keystore
+        shell: pwsh
+        run: |
+          # The APK must keep one signing key across releases or phones cannot upgrade in place.
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:QINGCODE_ANDROID_KEYSTORE_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:QINGCODE_ANDROID_KEY_ALIAS)) {
+            Write-Host '::warning::ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS are not set; skipping the Android APK for this release.'
+            "ready=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Checkout
+        if: steps.keystore.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: steps.keystore.outputs.ready == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          # Match package.json "packageManager" (do not pin a different major here).
+          version: 11.0.8
+
+      - name: Setup Node.js
+        if: steps.keystore.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup JDK 17
+        if: steps.keystore.outputs.ready == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install frontend dependencies
+        if: steps.keystore.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Android SDK packages
+        if: steps.keystore.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
+          & $sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed with exit code $LASTEXITCODE" }
+
+      - name: Build signed APK
+        if: steps.keystore.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          $ver = '${{ needs.meta.outputs.version }}'
+          $keystore = Join-Path $env:RUNNER_TEMP 'qingcode-release.jks'
+          [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+          try {
+            ./scripts/build-android.ps1 -Release -Keystore $keystore `
+              -SdkPlatform (Join-Path $env:ANDROID_HOME 'platforms/android-35') `
+              -BuildTools (Join-Path $env:ANDROID_HOME 'build-tools/35.0.1') `
+              -OutputApk "dist-release/QingCode_$ver-android.apk"
+          } finally {
+            Remove-Item -LiteralPath $keystore -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload artifacts
+        if: steps.keystore.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist-release/*
+          if-no-files-found: error
+
   publish:
-    needs: [meta, build-windows-x64, build-windows-arm64, build-macos-arm64]
+    needs: [meta, build-windows-x64, build-windows-arm64, build-macos-arm64, build-android]
     runs-on: windows-latest
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
@@ -340,6 +424,7 @@ jobs:
           | Windows ARM64 便携 | ``QingCode_${ver}-windows-arm64.exe`` |
           | Windows ARM64 安装包 | ``QingCode_${ver}-windows-arm64-setup.exe`` |
           | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
+          | Android 8.0+（配套远程终端） | ``QingCode_${ver}-android.apk`` |
 
           完整说明见 [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md)。
 
@@ -355,6 +440,7 @@ jobs:
           | Windows ARM64 portable | ``QingCode_${ver}-windows-arm64.exe`` |
           | Windows ARM64 installer | ``QingCode_${ver}-windows-arm64-setup.exe`` |
           | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
+          | Android 8.0+ (companion remote terminal) | ``QingCode_${ver}-android.apk`` |
 
           Full notes: [CHANGELOG.en.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.en.md).
 
@@ -372,7 +458,7 @@ jobs:
           . ./scripts/canonical-release-assets.ps1
           $ver = '${{ needs.meta.outputs.version }}'
           $tag = '${{ needs.meta.outputs.tag }}'
-          $keep = Get-CanonicalReleaseAssetNames -Version $ver
+          $keep = @(Get-CanonicalReleaseAssetNames -Version $ver) + @(Get-OptionalReleaseAssetNames -Version $ver)
           # Native `gh` exit codes are not PowerShell exceptions — check LASTEXITCODE.
           $viewJson = gh release view $tag --json assets 2>$null
           if ($LASTEXITCODE -ne 0) {

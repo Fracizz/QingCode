@@ -23,6 +23,21 @@ function Get-CanonicalReleaseAssetNames {
   )
 }
 
+# Assets published only when their build prerequisites exist (Android needs the release keystore).
+function Get-OptionalReleaseAssetNames {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Version
+  )
+  if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw 'Version is required'
+  }
+  if ($Version.StartsWith('v')) {
+    $Version = $Version.Substring(1)
+  }
+  @("QingCode_${Version}-android.apk")
+}
+
 function Select-CanonicalReleaseFiles {
   param(
     [Parameter(Mandatory = $true)]
@@ -50,6 +65,11 @@ function Select-CanonicalReleaseFiles {
   }
   if ($missing.Count -gt 0) {
     throw ("Missing canonical release asset(s): {0}" -f ($missing -join ', '))
+  }
+  foreach ($name in (Get-OptionalReleaseAssetNames -Version $Version)) {
+    if ($byName.ContainsKey($name)) {
+      $selected.Add([string]$byName[$name]) | Out-Null
+    }
   }
   return $selected.ToArray()
 }

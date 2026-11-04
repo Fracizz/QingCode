@@ -1,12 +1,16 @@
 //! LAN companion endpoint. Only projects selected by the desktop bridge and
-//! terminals allocated by this endpoint are addressable by the paired device.
+//! terminals allocated by this endpoint are addressable by paired devices.
+//!
+//! Pairings are persisted as SHA-256 token digests so a phone stays paired across
+//! desktop restarts. Terminal output for `mobile-*` sessions is delivered here
+//! directly by the PTY / SSH emitters instead of being broadcast to webviews.
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
@@ -21,72 +25,93 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch, Notify, Semaphore};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
+/// Terminal ids owned by the companion endpoint. Emitters route these ids here.
+pub(crate) const TERMINAL_PREFIX: &str = "mobile-";
 const DEFAULT_PORT: u16 = 48764;
 const MAX_SESSIONS: usize = 16;
+const MAX_DEVICES: usize = 8;
 const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
+/// Upper bound for one poll response body before JSON framing.
+const MAX_POLL_BYTES: usize = 192 * 1024;
 const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
-const MAX_ATTEMPTS: usize = 5;
+const MAX_PEER_ATTEMPTS: usize = 5;
+/// Bounds PBKDF2 work across all sources; per-source limits stop lockouts by one host.
+const MAX_TOTAL_ATTEMPTS: usize = 20;
+const ONLINE_WINDOW: Duration = Duration::from_secs(15);
+const PROJECTS_TIMEOUT: Duration = Duration::from_secs(20);
+/// Opening a project may wait for a desktop prompt such as host-key confirmation.
+const CREATE_TIMEOUT: Duration = Duration::from_secs(90);
+#[cfg(not(test))]
 const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
+// Unoptimized test builds would spend seconds per derivation.
+#[cfg(test)]
+const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(1_000).unwrap();
+const MAX_DEVICE_NAME: usize = 48;
+
+/// Serializes read-modify-write cycles of the settings file.
+static SETTINGS_FILE: Mutex<()> = Mutex::new(());
 
 #[derive(Default)]
 pub struct MobileState {
-    running: Mutex<Option<RunningGateway>>,
+    hub: Hub,
+    running: Mutex<Option<RunningListener>>,
     lifecycle: tokio::sync::Mutex<()>,
     pending: Mutex<HashMap<Uuid, oneshot::Sender<Result<Value, String>>>>,
+    last_error: Mutex<Option<String>>,
 }
 
-impl MobileState {
-    fn current(&self) -> Option<Arc<Gateway>> {
-        self.running
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|running| running.gateway.clone())
-    }
-}
-
-struct RunningGateway {
-    gateway: Arc<Gateway>,
-    listener: tauri::async_runtime::JoinHandle<()>,
-}
-
-impl RunningGateway {
-    async fn stop_accepting(&mut self) {
-        self.gateway.stop.send_replace(true);
-        let _ = (&mut self.listener).await;
-    }
-
-    async fn finish(self, app: &AppHandle) {
-        let sessions = std::mem::take(&mut self.gateway.inner.lock().unwrap().sessions);
-        for (id, session) in sessions {
-            if session.ready && session.exit.is_none() {
-                let _ = end(app, id, session.project.kind).await;
-            }
-        }
-    }
-}
-
-struct Gateway {
+struct RunningListener {
     port: u16,
-    fingerprint: String,
-    code: CodeVerifier,
     stop: watch::Sender<bool>,
-    inner: Mutex<GatewayState>,
+    task: tauri::async_runtime::JoinHandle<()>,
+}
+
+impl RunningListener {
+    async fn shutdown(mut self) {
+        self.stop.send_replace(true);
+        let _ = (&mut self.task).await;
+    }
 }
 
 #[derive(Default)]
-struct GatewayState {
-    failures: VecDeque<Instant>,
-    token: Option<String>,
+struct Hub {
+    inner: Mutex<HubState>,
+}
+
+#[derive(Default)]
+struct HubState {
+    accepting: bool,
+    configured: bool,
+    enabled: bool,
+    saved_port: Option<u16>,
+    fingerprint: Option<String>,
+    code: Option<CodeVerifier>,
+    devices: Vec<DeviceEntry>,
+    attempts: HashMap<IpAddr, VecDeque<Instant>>,
+    total_attempts: VecDeque<Instant>,
     sessions: HashMap<String, Session>,
     next_number: u64,
+}
+
+struct DeviceEntry {
+    saved: Device,
+    last_seen: Option<Instant>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Device {
+    id: String,
+    name: String,
+    token_digest: [u8; 32],
+    paired_at: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,10 +121,15 @@ struct SavedSettings {
     certificate: Vec<u8>,
     private_key: Vec<u8>,
     code: CodeVerifier,
-    // Kept with the certificate key in the owner-only settings file so the
-    // desktop can restore and reveal it. Legacy verifier-only files still load.
+    /// Kept with the certificate key in the owner-only settings file so the desktop can
+    /// restore and reveal it. Legacy verifier-only files still load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     password: Option<String>,
+    /// Restart the listener automatically when the desktop starts.
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    devices: Vec<Device>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -184,6 +214,44 @@ fn save_settings(settings: &SavedSettings) -> Result<(), String> {
     qingcode_server::direct::private_write(&path, &content)
 }
 
+fn update_settings(change: impl FnOnce(&mut SavedSettings)) -> Result<(), String> {
+    let _guard = SETTINGS_FILE.lock().unwrap();
+    let Some(mut settings) = load_settings()? else {
+        return Ok(());
+    };
+    change(&mut settings);
+    save_settings(&settings)
+}
+
+fn fingerprint(certificate: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(certificate))
+}
+
+fn token_digest(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+fn device_name(name: Option<&str>) -> String {
+    let name: String = name
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_DEVICE_NAME)
+        .collect();
+    let name = name.trim();
+    if name.is_empty() {
+        "Android 设备".into()
+    } else {
+        name.into()
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Project {
@@ -194,7 +262,7 @@ struct Project {
     host: String,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum ProjectKind {
     Local,
@@ -204,6 +272,7 @@ enum ProjectKind {
 
 struct Session {
     project: Project,
+    owner: String,
     number: u64,
     ready: bool,
     exit: Option<Exit>,
@@ -215,9 +284,10 @@ struct Session {
 }
 
 impl Session {
-    fn new(project: Project, number: u64) -> Self {
+    fn new(project: Project, owner: String, number: u64) -> Self {
         Self {
             project,
+            owner,
             number,
             ready: false,
             exit: None,
@@ -245,12 +315,28 @@ impl Session {
         self.changed.notify_waiters();
     }
 
+    fn finish(&mut self, exit: Exit) {
+        self.exit = Some(exit);
+        self.drain_until = Some(Instant::now() + Duration::from_millis(150));
+        self.changed.notify_waiters();
+    }
+
     fn read(&self, from: u64) -> Value {
         let base = self.next - self.output.len() as u64;
         let reset = from < base || from > self.next;
         let start = if reset { 0 } else { (from - base) as usize };
         // Bound each HTTP response independently of the retained history.
-        let chunks: Vec<&OutputChunk> = self.output.iter().skip(start).take(4).collect();
+        let mut budget = 0;
+        let chunks: Vec<&OutputChunk> = self
+            .output
+            .iter()
+            .skip(start)
+            .take_while(|chunk| {
+                let first = budget == 0;
+                budget += chunk.encoded_len();
+                first || budget <= MAX_POLL_BYTES
+            })
+            .collect();
         let next = base + (start + chunks.len()) as u64;
         let exit = self
             .exit
@@ -266,6 +352,8 @@ impl Session {
     }
 }
 
+/// `Bytes` carries base64 PTY output. `Screen` carries a daemon screen snapshot as
+/// plain terminal text that replaces the visible screen.
 #[derive(Serialize)]
 #[serde(untagged)]
 enum OutputChunk {
@@ -279,36 +367,21 @@ impl OutputChunk {
             Self::Bytes(data) | Self::Screen { data, .. } => data.len(),
         }
     }
+
+    /// Escape sequences in snapshots expand to `\u001b` inside JSON.
+    fn encoded_len(&self) -> usize {
+        match self {
+            Self::Bytes(data) => data.len(),
+            Self::Screen { data, .. } => data.len() * 3,
+        }
+    }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Exit {
-    #[serde(alias = "exit_code")]
     exit_code: u32,
-    #[serde(default)]
     disconnected: bool,
-}
-
-#[derive(Deserialize)]
-struct DataEvent {
-    id: String,
-    data: String,
-}
-
-#[derive(Deserialize)]
-struct ScreenEvent {
-    id: String,
-    data: String,
-    cols: u16,
-    rows: u16,
-}
-
-#[derive(Deserialize)]
-struct ExitEvent {
-    id: String,
-    #[serde(flatten)]
-    exit: Exit,
 }
 
 #[derive(Deserialize)]
@@ -316,6 +389,8 @@ struct ExitEvent {
 enum Operation {
     Pair {
         secret: String,
+        #[serde(default)]
+        device: Option<String>,
     },
     Projects,
     Sessions {
@@ -348,8 +423,395 @@ enum Operation {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     port: Option<u16>,
-    paired: bool,
+    saved_port: u16,
+    configured: bool,
+    enabled: bool,
     fingerprint: Option<String>,
+    devices: Vec<DeviceStatus>,
+    addresses: Vec<String>,
+    computer: String,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceStatus {
+    id: String,
+    name: String,
+    paired_at: u64,
+    online: bool,
+}
+
+#[derive(Serialize)]
+pub struct QrMatrix {
+    size: usize,
+    /// Row-major modules, `1` for dark.
+    modules: String,
+}
+
+fn prune(attempts: &mut VecDeque<Instant>, now: Instant) {
+    while attempts
+        .front()
+        .is_some_and(|time| now.duration_since(*time) >= ATTEMPT_WINDOW)
+    {
+        attempts.pop_front();
+    }
+}
+
+fn remove_attempt(attempts: &mut VecDeque<Instant>, time: Instant) {
+    if let Some(index) = attempts.iter().position(|item| *item == time) {
+        attempts.remove(index);
+    }
+}
+
+impl Hub {
+    fn load(&self, settings: &SavedSettings) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.configured = true;
+        inner.enabled = settings.enabled;
+        inner.saved_port = Some(settings.endpoint.port());
+        inner.fingerprint = Some(fingerprint(&settings.certificate));
+        inner.code = Some(settings.code.clone());
+        let previous: HashMap<String, Option<Instant>> = inner
+            .devices
+            .drain(..)
+            .map(|entry| (entry.saved.id, entry.last_seen))
+            .collect();
+        inner.devices = settings
+            .devices
+            .iter()
+            .map(|device| DeviceEntry {
+                saved: device.clone(),
+                last_seen: previous.get(&device.id).copied().flatten(),
+            })
+            .collect();
+    }
+
+    /// Reserves a pairing attempt before the expensive code check runs unlocked.
+    fn begin_pair(&self, peer: IpAddr, now: Instant) -> Result<CodeVerifier, String> {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.accepting {
+            return Err("移动连接已停止。".into());
+        }
+        if inner.devices.len() >= MAX_DEVICES {
+            return Err("已配对设备已达上限，请先在 Windows 端移除不用的设备。".into());
+        }
+        let code = inner.code.clone().ok_or("移动连接尚未设置密码。")?;
+        prune(&mut inner.total_attempts, now);
+        inner.attempts.retain(|_, attempts| {
+            prune(attempts, now);
+            !attempts.is_empty()
+        });
+        let peer_attempts = inner.attempts.get(&peer).map_or(0, VecDeque::len);
+        if peer_attempts >= MAX_PEER_ATTEMPTS || inner.total_attempts.len() >= MAX_TOTAL_ATTEMPTS {
+            return Err("密码尝试过多，请在一分钟后重试。".into());
+        }
+        inner.attempts.entry(peer).or_default().push_back(now);
+        inner.total_attempts.push_back(now);
+        Ok(code)
+    }
+
+    fn finish_pair(
+        &self,
+        peer: IpAddr,
+        started: Instant,
+        name: Option<&str>,
+    ) -> Result<(String, Device), String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.attempts.remove(&peer);
+        remove_attempt(&mut inner.total_attempts, started);
+        if !inner.accepting {
+            return Err("移动连接已停止。".into());
+        }
+        if inner.devices.len() >= MAX_DEVICES {
+            return Err("已配对设备已达上限，请先在 Windows 端移除不用的设备。".into());
+        }
+        let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let device = Device {
+            id: Uuid::new_v4().to_string(),
+            name: device_name(name),
+            token_digest: token_digest(&token),
+            paired_at: unix_now(),
+        };
+        inner.devices.push(DeviceEntry {
+            saved: device.clone(),
+            last_seen: Some(Instant::now()),
+        });
+        Ok((token, device))
+    }
+
+    fn pair(
+        &self,
+        peer: IpAddr,
+        secret: &str,
+        name: Option<&str>,
+        persist: impl FnOnce(&Device) -> Result<(), String>,
+    ) -> Result<String, String> {
+        let started = Instant::now();
+        let code = self.begin_pair(peer, started)?;
+        if !code.matches(secret) {
+            return Err("密码不正确。".into());
+        }
+        let (token, device) = self.finish_pair(peer, started, name)?;
+        if let Err(error) = persist(&device) {
+            self.forget_device(&device.id);
+            return Err(format!("保存配对失败：{error}"));
+        }
+        Ok(token)
+    }
+
+    /// Removes a device and returns the live sessions it created.
+    fn forget_device(&self, id: &str) -> Vec<(String, ProjectKind)> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.devices.retain(|entry| entry.saved.id != id);
+        let owned: Vec<String> = inner
+            .sessions
+            .iter()
+            .filter(|(_, session)| session.owner == id && session.ready)
+            .map(|(session_id, _)| session_id.clone())
+            .collect();
+        owned
+            .into_iter()
+            .filter_map(|session_id| {
+                let session = inner.sessions.remove(&session_id)?;
+                session
+                    .exit
+                    .is_none()
+                    .then_some((session_id, session.project.kind))
+            })
+            .collect()
+    }
+
+    /// Returns the device id. A stopped endpoint answers 503 so phones keep their
+    /// pairing; only an unknown token is reported as revoked (401).
+    fn authenticate(&self, bearer: Option<&str>) -> Result<String, (StatusCode, String)> {
+        let digest = bearer.map(token_digest);
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.accepting {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Windows 端已停止移动连接。".into(),
+            ));
+        }
+        if let Some(digest) = digest {
+            let mut found = None;
+            // Compare every digest so timing does not reveal the matching slot.
+            for entry in &mut inner.devices {
+                if bool::from(entry.saved.token_digest.ct_eq(&digest)) {
+                    entry.last_seen = Some(Instant::now());
+                    found = Some(entry.saved.id.clone());
+                }
+            }
+            if let Some(id) = found {
+                return Ok(id);
+            }
+        }
+        Err((StatusCode::UNAUTHORIZED, "配对已失效，请重新配对。".into()))
+    }
+
+    fn session_kind(&self, id: &str) -> Result<ProjectKind, String> {
+        let inner = self.inner.lock().unwrap();
+        let session = inner.sessions.get(id).ok_or("终端不存在。")?;
+        if !session.ready || session.exit.is_some() || !inner.accepting {
+            return Err("终端已结束或正在启动。".into());
+        }
+        Ok(session.project.kind)
+    }
+
+    fn take_live_sessions(&self) -> Vec<(String, ProjectKind)> {
+        let sessions = std::mem::take(&mut self.inner.lock().unwrap().sessions);
+        sessions
+            .into_iter()
+            .filter(|(_, session)| session.ready && session.exit.is_none())
+            .map(|(id, session)| (id, session.project.kind))
+            .collect()
+    }
+
+    fn with_session(&self, id: &str, update: impl FnOnce(&mut Session)) {
+        if let Some(session) = self.inner.lock().unwrap().sessions.get_mut(id) {
+            update(session);
+        }
+    }
+
+    fn holds(&self, id: &str) -> bool {
+        self.inner.lock().unwrap().sessions.contains_key(id)
+    }
+}
+
+pub(crate) fn is_mobile_terminal(id: &str) -> bool {
+    id.starts_with(TERMINAL_PREFIX)
+}
+
+/// Whether the companion endpoint still owns this terminal. Desktop restore must not
+/// adopt PTYs that a phone is attached to.
+pub(crate) fn owns_terminal(app: &AppHandle, id: &str) -> bool {
+    app.try_state::<MobileState>()
+        .is_some_and(|state| state.hub.holds(id))
+}
+
+/// Base64 PTY output for a `mobile-*` terminal.
+pub(crate) fn deliver_data(app: &AppHandle, id: &str, data: String) {
+    if let Some(state) = app.try_state::<MobileState>() {
+        state
+            .hub
+            .with_session(id, |session| session.push(OutputChunk::Bytes(data)));
+    }
+}
+
+/// Plain-text screen snapshot for a reattached `mobile-*` daemon terminal.
+pub(crate) fn deliver_screen(app: &AppHandle, id: &str, data: String, cols: u16, rows: u16) {
+    if let Some(state) = app.try_state::<MobileState>() {
+        state.hub.with_session(id, |session| {
+            session.push(OutputChunk::Screen { data, cols, rows })
+        });
+    }
+}
+
+pub(crate) fn deliver_exit(app: &AppHandle, id: &str, exit_code: u32, disconnected: bool) {
+    if let Some(state) = app.try_state::<MobileState>() {
+        state.hub.with_session(id, |session| {
+            session.finish(Exit {
+                exit_code,
+                disconnected,
+            })
+        });
+    }
+}
+
+fn lan_ipv4(ip: Ipv4Addr) -> bool {
+    let [first, second, ..] = ip.octets();
+    // 100.64.0.0/10 is shared address space used by Tailscale and carrier NAT.
+    ip.is_private() || ip.is_link_local() || (first == 100 && second & 0xc0 == 64)
+}
+
+fn lan_peer(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(ip) => ip.is_loopback() || lan_ipv4(ip),
+        IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .is_some_and(|ip| ip.is_loopback() || lan_ipv4(ip)),
+    }
+}
+
+/// Pairable IPv4 addresses of this computer, the default-route address first.
+fn lan_addresses() -> Vec<Ipv4Addr> {
+    let primary = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .and_then(|socket| {
+            // UDP connect selects a route without sending packets.
+            socket.connect((Ipv4Addr::new(8, 8, 8, 8), 53))?;
+            socket.local_addr()
+        })
+        .ok()
+        .and_then(|address| match address.ip() {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(_) => None,
+        });
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let mut addresses: Vec<Ipv4Addr> = networks
+        .values()
+        .flat_map(|data| data.ip_networks().iter().map(|network| network.addr))
+        .filter_map(|address| match address {
+            IpAddr::V4(ip) if lan_ipv4(ip) && !ip.is_link_local() => Some(ip),
+            _ => None,
+        })
+        .collect();
+    addresses.sort();
+    addresses.dedup();
+    if let Some(primary) = primary.filter(|ip| addresses.contains(ip)) {
+        addresses.retain(|ip| *ip != primary);
+        addresses.insert(0, primary);
+    }
+    addresses
+}
+
+fn computer_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Windows".into())
+}
+
+fn status(state: &MobileState) -> Status {
+    let port = state
+        .running
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|running| running.port);
+    let error = state.last_error.lock().unwrap().clone();
+    let now = Instant::now();
+    let (saved_port, configured, enabled, fingerprint, mut devices) = {
+        let inner = state.hub.inner.lock().unwrap();
+        let devices: Vec<DeviceStatus> = inner
+            .devices
+            .iter()
+            .map(|entry| DeviceStatus {
+                id: entry.saved.id.clone(),
+                name: entry.saved.name.clone(),
+                paired_at: entry.saved.paired_at,
+                online: port.is_some()
+                    && entry
+                        .last_seen
+                        .is_some_and(|seen| now.duration_since(seen) < ONLINE_WINDOW),
+            })
+            .collect();
+        (
+            inner.saved_port.unwrap_or(DEFAULT_PORT),
+            inner.configured,
+            inner.enabled,
+            inner.fingerprint.clone(),
+            devices,
+        )
+    };
+    devices.sort_by_key(|device| std::cmp::Reverse(device.paired_at));
+    let addresses = if port.is_some() {
+        lan_addresses().iter().map(ToString::to_string).collect()
+    } else {
+        Vec::new()
+    };
+    Status {
+        port,
+        saved_port,
+        configured,
+        enabled,
+        fingerprint,
+        devices,
+        addresses,
+        computer: computer_name(),
+        error,
+    }
+}
+
+/// Loads persisted pairings and restarts the listener if it was enabled.
+pub fn initialize(app: &AppHandle) {
+    let state = app.state::<MobileState>();
+    let settings = match load_settings() {
+        Ok(Some(settings)) => settings,
+        Ok(None) => return,
+        Err(error) => {
+            *state.last_error.lock().unwrap() = Some(error);
+            return;
+        }
+    };
+    state.hub.load(&settings);
+    if !settings.enabled {
+        return;
+    }
+    let port = settings.endpoint.port();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<MobileState>();
+        let _lifecycle = state.lifecycle.lock().await;
+        if state.running.lock().unwrap().is_some() {
+            return;
+        }
+        if let Err(error) = start_locked(&app, port, None).await {
+            eprintln!("[WARN] mobile connection did not start: {error}");
+            *state.last_error.lock().unwrap() = Some(format!("自动启用失败：{error}"));
+        }
+    });
 }
 
 #[derive(Serialize)]
@@ -359,129 +821,7 @@ pub struct SettingsSummary {
     password: Option<String>,
 }
 
-impl Gateway {
-    fn status(&self) -> Status {
-        Status {
-            port: Some(self.port),
-            paired: self.inner.lock().unwrap().token.is_some(),
-            fingerprint: Some(self.fingerprint.clone()),
-        }
-    }
-
-    fn authenticate(&self, bearer: Option<&str>) -> Result<(), String> {
-        let inner = self.inner.lock().unwrap();
-        if !*self.stop.borrow()
-            && inner
-                .token
-                .as_deref()
-                .zip(bearer)
-                .is_some_and(|(token, value)| bool::from(token.as_bytes().ct_eq(value.as_bytes())))
-        {
-            Ok(())
-        } else {
-            Err("配对已失效，请重新配对。".into())
-        }
-    }
-
-    fn pair(&self, secret: &str) -> Result<String, String> {
-        let mut inner = self.inner.lock().unwrap();
-        if *self.stop.borrow() {
-            return Err("移动连接已停止。".into());
-        }
-        if inner.token.is_some() {
-            return Err("已有设备配对。请在 Windows 停止连接并重新启用后再配对。".into());
-        }
-        let now = Instant::now();
-        while inner
-            .failures
-            .front()
-            .is_some_and(|time| now.duration_since(*time) >= ATTEMPT_WINDOW)
-        {
-            inner.failures.pop_front();
-        }
-        if inner.failures.len() >= MAX_ATTEMPTS {
-            return Err("密码尝试过多，请在一分钟后重试。".into());
-        }
-        if !self.code.matches(secret) {
-            inner.failures.push_back(now);
-            return Err("密码不正确。".into());
-        }
-        inner.failures.clear();
-        let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-        inner.token = Some(token.clone());
-        Ok(token)
-    }
-
-    fn session_kind(&self, id: &str) -> Result<ProjectKind, String> {
-        let inner = self.inner.lock().unwrap();
-        let session = inner.sessions.get(id).ok_or("终端不存在。")?;
-        if !session.ready || session.exit.is_some() || *self.stop.borrow() {
-            return Err("终端已结束或正在启动。".into());
-        }
-        Ok(session.project.kind)
-    }
-}
-
-pub fn listen(app: &AppHandle) {
-    let output_app = app.clone();
-    app.listen("terminal-data", move |event| {
-        let state = output_app.state::<MobileState>();
-        let Some(gateway) = state.current() else {
-            return;
-        };
-        let Ok(data) = serde_json::from_str::<DataEvent>(event.payload()) else {
-            return;
-        };
-        if let Some(session) = gateway.inner.lock().unwrap().sessions.get_mut(&data.id) {
-            session.push(OutputChunk::Bytes(data.data));
-        };
-    });
-    let screen_app = app.clone();
-    app.listen("terminal-screen", move |event| {
-        let state = screen_app.state::<MobileState>();
-        let Some(gateway) = state.current() else {
-            return;
-        };
-        let Ok(screen) = serde_json::from_str::<ScreenEvent>(event.payload()) else {
-            return;
-        };
-        if let Some(session) = gateway.inner.lock().unwrap().sessions.get_mut(&screen.id) {
-            session.push(OutputChunk::Screen {
-                data: screen.data,
-                cols: screen.cols,
-                rows: screen.rows,
-            });
-        };
-    });
-    let exit_app = app.clone();
-    app.listen("terminal-exit", move |event| {
-        let state = exit_app.state::<MobileState>();
-        let Some(gateway) = state.current() else {
-            return;
-        };
-        let Ok(exit) = serde_json::from_str::<ExitEvent>(event.payload()) else {
-            return;
-        };
-        if let Some(session) = gateway.inner.lock().unwrap().sessions.get_mut(&exit.id) {
-            session.exit = Some(exit.exit);
-            session.drain_until = Some(Instant::now() + Duration::from_millis(150));
-            session.changed.notify_waiters();
-        };
-    });
-}
-
-#[tauri::command]
-pub fn mobile_status(state: State<'_, MobileState>) -> Status {
-    state.current().map_or(
-        Status {
-            port: None,
-            paired: false,
-            fingerprint: None,
-        },
-        |gateway| gateway.status(),
-    )
-}
-
+/// Saved port and remembered password for the settings form; read once when it opens.
 #[tauri::command]
 pub fn mobile_saved_settings() -> Result<SettingsSummary, String> {
     let saved = load_settings()?;
@@ -495,6 +835,11 @@ pub fn mobile_saved_settings() -> Result<SettingsSummary, String> {
 }
 
 #[tauri::command]
+pub fn mobile_status(state: State<'_, MobileState>) -> Status {
+    status(&state)
+}
+
+#[tauri::command]
 pub async fn mobile_start(
     port: u16,
     code: Option<String>,
@@ -502,90 +847,146 @@ pub async fn mobile_start(
 ) -> Result<Status, String> {
     let state = app.state::<MobileState>();
     let _lifecycle = state.lifecycle.lock().await;
-    if port == 0 {
-        return Err("端口须在 1–65535 之间。".into());
-    }
-    if let Some(current) = state.current() {
-        if code.is_some() {
-            return Err("更换密码前请先停止移动连接。".into());
-        }
-        if port == current.port {
-            return Ok(current.status());
-        }
-    }
-    // Reserve the new port before changing settings or revoking the old device.
-    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))
-        .await
-        .map_err(|error| format!("无法监听端口 {port}：{error}"))?;
-    let mut settings = if let Some(mut saved) = load_settings()? {
-        if let Some(code) = code {
-            saved.code = CodeVerifier::new(&code)?;
-            saved.password = Some(code);
-        }
-        saved
-    } else {
-        let password = code.ok_or("请设置 6–20 位密码。")?;
-        let code = CodeVerifier::new(&password)?;
-        let certificate = rcgen::generate_simple_self_signed(vec!["qingcode.local".into()])
-            .map_err(|error| error.to_string())?;
-        SavedSettings {
-            endpoint: SavedEndpoint::Port { port },
-            certificate: certificate.cert.der().to_vec(),
-            private_key: certificate.key_pair.serialize_der(),
-            code,
-            password: Some(password),
-        }
-    };
-    settings.endpoint = SavedEndpoint::Port { port };
-    let fingerprint = format!("{:x}", Sha256::digest(&settings.certificate));
+    start_locked(&app, port, code).await?;
+    Ok(status(&state))
+}
+
+fn tls_acceptor(settings: &SavedSettings) -> Result<TlsAcceptor, String> {
     let key = PrivatePkcs8KeyDer::from(settings.private_key.clone());
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()
-    .map_err(|e| e.to_string())?
+    .map_err(|error| error.to_string())?
     .with_no_client_auth()
     .with_single_cert(vec![settings.certificate.clone().into()], key.into())
-    .map_err(|e| e.to_string())?;
-    save_settings(&settings)?;
-    let (stop, stop_rx) = watch::channel(false);
-    let gateway = Arc::new(Gateway {
-        port,
-        fingerprint,
-        code: settings.code,
-        stop,
-        inner: Mutex::default(),
-    });
-    let mut previous = state.running.lock().unwrap().take();
-    if let Some(previous) = previous.as_mut() {
-        previous.stop_accepting().await;
+    .map_err(|error| error.to_string())?;
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+async fn start_locked(app: &AppHandle, port: u16, code: Option<String>) -> Result<(), String> {
+    let state = app.state::<MobileState>();
+    if port == 0 {
+        return Err("端口须在 1–65535 之间。".into());
     }
-    let listener = tauri::async_runtime::spawn(serve(
-        app.clone(),
-        gateway.clone(),
-        listener,
-        TlsAcceptor::from(Arc::new(config)),
-        stop_rx,
-    ));
-    *state.running.lock().unwrap() = Some(RunningGateway {
-        gateway: gateway.clone(),
-        listener,
-    });
+    let current = state
+        .running
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|running| running.port);
+    if current.is_some() && code.is_some() {
+        return Err("更换密码前请先停止移动连接。".into());
+    }
+    if current == Some(port) {
+        return Ok(());
+    }
+    let password = code;
+    let code = password.as_deref().map(CodeVerifier::new).transpose()?;
+    // Reserve the new port before changing settings or closing the old one.
+    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))
+        .await
+        .map_err(|error| format!("无法监听端口 {port}：{error}"))?;
+    let (settings, acceptor) = {
+        let _guard = SETTINGS_FILE.lock().unwrap();
+        let mut settings = match load_settings()? {
+            Some(mut saved) => {
+                if let Some(code) = code {
+                    saved.code = code;
+                    saved.password = password;
+                }
+                saved
+            }
+            None => {
+                let code = code.ok_or("请设置 6–20 位密码。")?;
+                let certificate = rcgen::generate_simple_self_signed(vec!["qingcode.local".into()])
+                    .map_err(|error| error.to_string())?;
+                SavedSettings {
+                    endpoint: SavedEndpoint::Port { port },
+                    certificate: certificate.cert.der().to_vec(),
+                    private_key: certificate.key_pair.serialize_der(),
+                    code,
+                    password,
+                    enabled: true,
+                    devices: Vec::new(),
+                }
+            }
+        };
+        settings.endpoint = SavedEndpoint::Port { port };
+        settings.enabled = true;
+        let acceptor = tls_acceptor(&settings)?;
+        save_settings(&settings)?;
+        (settings, acceptor)
+    };
+    let previous = state.running.lock().unwrap().take();
     if let Some(previous) = previous {
-        previous.finish(&app).await;
+        // Paired devices and terminals survive a port switch; only the socket moves.
+        previous.shutdown().await;
     }
-    Ok(gateway.status())
+    state.hub.load(&settings);
+    state.hub.inner.lock().unwrap().accepting = true;
+    let (stop, stop_rx) = watch::channel(false);
+    let task = tauri::async_runtime::spawn(serve(app.clone(), listener, acceptor, stop_rx));
+    *state.running.lock().unwrap() = Some(RunningListener { port, stop, task });
+    *state.last_error.lock().unwrap() = None;
+    Ok(())
+}
+
+/// Stops listening and ends phone terminals. `disable` keeps it off on next launch;
+/// closing the app passes `false` so the listener returns with the desktop.
+#[tauri::command]
+pub async fn mobile_stop(disable: Option<bool>, app: AppHandle) -> Result<Status, String> {
+    let state = app.state::<MobileState>();
+    let _lifecycle = state.lifecycle.lock().await;
+    let disable = disable.unwrap_or(true);
+    if disable {
+        update_settings(|settings| settings.enabled = false)?;
+        state.hub.inner.lock().unwrap().enabled = false;
+    }
+    let running = state.running.lock().unwrap().take();
+    state.hub.inner.lock().unwrap().accepting = false;
+    if let Some(running) = running {
+        running.shutdown().await;
+    }
+    for (id, kind) in state.hub.take_live_sessions() {
+        let _ = end(&app, id, kind).await;
+    }
+    Ok(status(&state))
 }
 
 #[tauri::command]
-pub async fn mobile_stop(app: AppHandle) {
+pub async fn mobile_revoke_device(id: String, app: AppHandle) -> Result<Status, String> {
     let state = app.state::<MobileState>();
     let _lifecycle = state.lifecycle.lock().await;
-    let running = state.running.lock().unwrap().take();
-    if let Some(mut running) = running {
-        running.stop_accepting().await;
-        running.finish(&app).await;
+    update_settings(|settings| settings.devices.retain(|device| device.id != id))?;
+    for (session, kind) in state.hub.forget_device(&id) {
+        let _ = end(&app, session, kind).await;
     }
+    Ok(status(&state))
+}
+
+#[tauri::command]
+pub fn mobile_pairing_qr(text: String) -> Result<QrMatrix, String> {
+    if text.len() > 512 || !text.starts_with("qingcode://pair?") {
+        return Err("配对链接无效。".into());
+    }
+    let code = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::M)
+        .map_err(|error| error.to_string())?;
+    let modules = code
+        .to_colors()
+        .into_iter()
+        .map(|color| {
+            if color == qrcode::Color::Dark {
+                '1'
+            } else {
+                '0'
+            }
+        })
+        .collect();
+    Ok(QrMatrix {
+        size: code.width(),
+        modules,
+    })
 }
 
 #[tauri::command]
@@ -608,13 +1009,22 @@ async fn desktop(app: &AppHandle, project: Option<&str>) -> Result<Value, String
     let id = Uuid::new_v4();
     let (sender, receiver) = oneshot::channel();
     state.pending.lock().unwrap().insert(id, sender);
+    let timeout = if project.is_some() {
+        CREATE_TIMEOUT
+    } else {
+        PROJECTS_TIMEOUT
+    };
     let result = match app.emit_to(
         "main",
         "mobile-request",
         json!({ "id": id, "project": project }),
     ) {
-        Ok(()) => match tokio::time::timeout(Duration::from_secs(20), receiver).await {
+        Ok(()) => match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(result)) => result,
+            _ if project.is_some() => Err(
+                "Windows QingCode 未及时响应。若电脑上弹出确认（如远端主机指纹），请在电脑上处理后重试。"
+                    .into(),
+            ),
             _ => Err("Windows QingCode 未及时响应，请确认主窗口和远程连接可用。".into()),
         },
         Err(error) => Err(error.to_string()),
@@ -625,18 +1035,17 @@ async fn desktop(app: &AppHandle, project: Option<&str>) -> Result<Value, String
 
 async fn serve(
     app: AppHandle,
-    gateway: Arc<Gateway>,
     listener: TcpListener,
     acceptor: TlsAcceptor,
     mut stop: watch::Receiver<bool>,
 ) {
     let capacity = Arc::new(Semaphore::new(16));
     loop {
-        let stream = tokio::select! {
+        let (stream, peer) = tokio::select! {
             biased;
             _ = stop.changed() => break,
             result = listener.accept() => match result {
-                Ok((stream, peer)) if lan_peer(peer.ip()) => stream,
+                Ok((stream, peer)) if lan_peer(peer.ip()) => (stream, peer.ip()),
                 Ok(_) => continue,
                 Err(_) => break,
             },
@@ -646,7 +1055,6 @@ async fn serve(
         };
         let acceptor = acceptor.clone();
         let app = app.clone();
-        let gateway = gateway.clone();
         let mut stopped = stop.clone();
         tauri::async_runtime::spawn(async move {
             let _permit = permit;
@@ -655,8 +1063,9 @@ async fn serve(
             else {
                 return;
             };
-            let service = service_fn(|request| request_handler(&app, &gateway, request));
+            let service = service_fn(|request| request_handler(&app, peer, request));
             let mut builder = http1::Builder::new();
+            // Idle keep-alive connections close after this; phones expire theirs sooner.
             builder
                 .timer(TokioTimer::new())
                 .header_read_timeout(Duration::from_secs(15));
@@ -674,13 +1083,9 @@ async fn serve(
     }
 }
 
-fn lan_peer(address: IpAddr) -> bool {
-    matches!(address, IpAddr::V4(ip) if ip.is_private() || ip.is_link_local() || ip.is_loopback())
-}
-
 async fn request_handler(
     app: &AppHandle,
-    gateway: &Arc<Gateway>,
+    peer: IpAddr,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     if request.method() != Method::POST || request.uri().path() != "/v1/rpc" {
@@ -700,12 +1105,21 @@ async fn request_handler(
         .and_then(Result::ok)
         .and_then(|body| serde_json::from_slice::<Operation>(&body.to_bytes()).ok());
     let (status, result) = match request {
-        Some(Operation::Pair { secret }) => {
-            let gateway = gateway.clone();
-            let result = tauri::async_runtime::spawn_blocking(move || gateway.pair(&secret))
-                .await
-                .map_err(|_| "配对处理失败。".to_string())
-                .and_then(|result| result);
+        Some(Operation::Pair { secret, device }) => {
+            let app = app.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                app.state::<MobileState>()
+                    .hub
+                    .pair(peer, &secret, device.as_deref(), |device| {
+                        update_settings(|settings| {
+                            settings.devices.retain(|saved| saved.id != device.id);
+                            settings.devices.push(device.clone());
+                        })
+                    })
+            })
+            .await
+            .map_err(|_| "配对处理失败。".to_string())
+            .and_then(|result| result);
             (
                 StatusCode::OK,
                 result.map(|token| json!({ "token": token })),
@@ -717,19 +1131,18 @@ async fn request_handler(
                 .get(hyper::header::AUTHORIZATION)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.strip_prefix("Bearer "));
-            match gateway.authenticate(bearer) {
-                Ok(()) => {
+            match app.state::<MobileState>().hub.authenticate(bearer) {
+                Ok(device) => {
                     // The operation owns cleanup even if the HTTP stream is dropped.
                     let app = app.clone();
-                    let gateway = gateway.clone();
                     let result = tauri::async_runtime::spawn(async move {
-                        operate(&app, &gateway, operation).await
+                        operate(&app, &device, operation).await
                     })
                     .await
                     .unwrap_or_else(|_| Err("Windows 端操作中断。".into()));
                     (StatusCode::OK, result)
                 }
-                Err(error) => (StatusCode::UNAUTHORIZED, Err(error)),
+                Err((status, error)) => (status, Err(error)),
             }
         }
         None => (StatusCode::BAD_REQUEST, Err("请求格式无效。".into())),
@@ -746,16 +1159,13 @@ async fn request_handler(
         .unwrap())
 }
 
-async fn operate(
-    app: &AppHandle,
-    gateway: &Gateway,
-    operation: Operation,
-) -> Result<Value, String> {
+async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<Value, String> {
+    let hub = &app.state::<MobileState>().inner().hub;
     match operation {
         Operation::Pair { .. } => unreachable!(),
         Operation::Projects => desktop(app, None).await,
         Operation::Sessions { project } => {
-            let inner = gateway.inner.lock().unwrap();
+            let inner = hub.inner.lock().unwrap();
             let mut sessions: Vec<_> = inner
                 .sessions
                 .iter()
@@ -773,10 +1183,10 @@ async fn operate(
             project,
             cols,
             rows,
-        } => create(app, gateway, &project, cols, rows).await,
+        } => create(app, device, &project, cols, rows).await,
         Operation::Poll { id, from } => {
             let wait = {
-                let inner = gateway.inner.lock().unwrap();
+                let inner = hub.inner.lock().unwrap();
                 let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
                 if from != session.next
                     || session
@@ -788,14 +1198,14 @@ async fn operate(
                 session.changed.clone().notified_owned()
             };
             let _ = tokio::time::timeout(Duration::from_millis(900), wait).await;
-            let inner = gateway.inner.lock().unwrap();
+            let inner = hub.inner.lock().unwrap();
             Ok(inner.sessions.get(&id).ok_or("终端不存在。")?.read(from))
         }
         Operation::Input { id, data } => {
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
-            if gateway.session_kind(&id)? == ProjectKind::Ssh {
+            if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_write_terminal(id, data, app.state()).await?;
             } else {
                 let app = app.clone();
@@ -809,7 +1219,7 @@ async fn operate(
         }
         Operation::Resize { id, cols, rows } => {
             let (cols, rows) = size(cols, rows);
-            if gateway.session_kind(&id)? == ProjectKind::Ssh {
+            if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_resize_terminal(id, cols, rows, app.state()).await?;
             } else {
                 app.state::<crate::TerminalManager>()
@@ -819,7 +1229,7 @@ async fn operate(
         }
         Operation::End { id } => {
             let kind = {
-                let mut inner = gateway.inner.lock().unwrap();
+                let mut inner = hub.inner.lock().unwrap();
                 let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
                 if !session.ready {
                     return Err("终端正在启动或关闭。".into());
@@ -832,7 +1242,7 @@ async fn operate(
                 session.project.kind
             };
             let result = end(app, id.clone(), kind).await;
-            let mut inner = gateway.inner.lock().unwrap();
+            let mut inner = hub.inner.lock().unwrap();
             if result.is_ok() {
                 inner.sessions.remove(&id);
             } else if let Some(session) = inner.sessions.get_mut(&id) {
@@ -850,17 +1260,18 @@ fn size(cols: u16, rows: u16) -> (u16, u16) {
 
 async fn create(
     app: &AppHandle,
-    gateway: &Gateway,
+    device: &str,
     project_id: &str,
     cols: u16,
     rows: u16,
 ) -> Result<Value, String> {
+    let hub = &app.state::<MobileState>().inner().hub;
     let project: Project = serde_json::from_value(desktop(app, Some(project_id)).await?)
         .map_err(|error| error.to_string())?;
-    let id = format!("mobile-{}", Uuid::new_v4().simple());
+    let id = format!("{TERMINAL_PREFIX}{}", Uuid::new_v4().simple());
     let number = {
-        let mut inner = gateway.inner.lock().unwrap();
-        if *gateway.stop.borrow() {
+        let mut inner = hub.inner.lock().unwrap();
+        if !inner.accepting {
             return Err("移动连接已停止。".into());
         }
         if inner.sessions.len() >= MAX_SESSIONS {
@@ -868,9 +1279,10 @@ async fn create(
         }
         inner.next_number += 1;
         let number = inner.next_number;
-        inner
-            .sessions
-            .insert(id.clone(), Session::new(project.clone(), number));
+        inner.sessions.insert(
+            id.clone(),
+            Session::new(project.clone(), device.to_string(), number),
+        );
         number
     };
     let (cols, rows) = size(cols, rows);
@@ -903,7 +1315,7 @@ async fn create(
         .and_then(|result| result)
     };
     let kept = {
-        let mut inner = gateway.inner.lock().unwrap();
+        let mut inner = hub.inner.lock().unwrap();
         if result.is_err() {
             inner.sessions.remove(&id);
             false
@@ -917,7 +1329,7 @@ async fn create(
     result?;
     if !kept {
         let _ = end(app, id, project.kind).await;
-        return Err("移动连接已停止。".into());
+        return Err("移动连接已停止或设备已移除。".into());
     }
     Ok(json!({ "id": id, "number": number }))
 }
@@ -939,6 +1351,38 @@ async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), Strin
 mod tests {
     use super::*;
 
+    const CODE: &str = "a1B@3!";
+    const PEER: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20));
+
+    fn settings(devices: Vec<Device>) -> SavedSettings {
+        SavedSettings {
+            endpoint: SavedEndpoint::Port { port: 49123 },
+            certificate: vec![1, 2, 3],
+            private_key: vec![],
+            code: CodeVerifier::new(CODE).unwrap(),
+            password: Some(CODE.into()),
+            enabled: true,
+            devices,
+        }
+    }
+
+    fn accepting_hub(devices: Vec<Device>) -> Hub {
+        let hub = Hub::default();
+        hub.load(&settings(devices));
+        hub.inner.lock().unwrap().accepting = true;
+        hub
+    }
+
+    fn project() -> Project {
+        Project {
+            id: "p".into(),
+            name: "p".into(),
+            path: "C:\\p".into(),
+            kind: ProjectKind::Local,
+            host: "Windows".into(),
+        }
+    }
+
     #[test]
     fn password_accepts_six_to_twenty_graphic_characters_without_complexity_rules() {
         for invalid in [
@@ -951,79 +1395,236 @@ mod tests {
         ] {
             assert!(!valid_code(invalid));
         }
-        for valid in [
-            "123456",
-            "abcdef",
-            "!!!!!!",
-            "a1B@3!",
-            "12345678901234567890",
-        ] {
+        for valid in ["123456", "abcdef", "!!!!!!", CODE, "12345678901234567890"] {
             assert!(valid_code(valid));
         }
     }
 
     #[test]
-    fn saved_code_survives_reload_and_pairing_is_rate_limited() {
-        let code = "a1B@3!";
-        let settings = SavedSettings {
-            endpoint: SavedEndpoint::Legacy {
-                address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49123),
-            },
-            certificate: vec![],
-            private_key: vec![],
-            code: CodeVerifier::new(code).unwrap(),
-            password: None,
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        assert!(!json.contains(code));
-        let mut restored: SavedSettings = serde_json::from_str(&json).unwrap();
+    fn legacy_settings_migrate_without_pairings_or_a_remembered_password() {
+        let legacy = json!({
+            "address": "127.0.0.1:49123",
+            "certificate": [],
+            "private_key": [],
+            "code": CodeVerifier::new(CODE).unwrap(),
+        });
+        let mut restored: SavedSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.endpoint.port(), 49123);
+        assert!(!restored.enabled);
+        assert!(restored.devices.is_empty());
+        // Verifier-only files stay valid; the password is remembered once set again.
         assert!(restored.password.is_none());
-        restored.password = Some(code.into());
+        assert!(!serde_json::to_string(&restored).unwrap().contains(CODE));
+        restored.password = Some(CODE.into());
         let remembered: SavedSettings =
             serde_json::from_str(&serde_json::to_string(&restored).unwrap()).unwrap();
-        assert_eq!(remembered.password.as_deref(), Some(code));
         assert!(remembered
             .code
             .matches(remembered.password.as_deref().unwrap()));
-        assert_eq!(restored.endpoint.port(), 49123);
+        restored.password = None;
         restored.endpoint = SavedEndpoint::Port { port: 49124 };
         let migrated = serde_json::to_value(&restored).unwrap();
         assert_eq!(migrated["port"], 49124);
         assert!(migrated.get("address").is_none());
-        let (stop, _) = watch::channel(false);
-        let gateway = Gateway {
-            port: restored.endpoint.port(),
-            fingerprint: String::new(),
-            code: restored.code,
-            stop,
-            inner: Mutex::default(),
-        };
-        for _ in 0..MAX_ATTEMPTS {
-            assert_eq!(gateway.pair("wrong").unwrap_err(), "密码不正确。");
-        }
-        assert!(gateway.pair(code).unwrap_err().contains("尝试过多"));
-        let aged = Instant::now() - ATTEMPT_WINDOW;
-        gateway.inner.lock().unwrap().failures = VecDeque::from([aged; MAX_ATTEMPTS]);
-        let token = gateway.pair(code).unwrap();
-        assert!(gateway.authenticate(Some(&token)).is_ok());
-        assert!(gateway.pair(code).is_err());
-        gateway.inner.lock().unwrap().token = None;
-        assert_ne!(gateway.pair(code).unwrap(), token);
+        assert!(!migrated.to_string().contains(CODE));
     }
 
     #[test]
-    fn automatic_listener_accepts_lan_ipv4_sources() {
+    fn pairings_persist_as_digests_and_survive_reload() {
+        let hub = accepting_hub(Vec::new());
+        let mut saved = Vec::new();
+        let token = hub
+            .pair(PEER, CODE, Some(" Pixel\u{7} 8 "), |device| {
+                saved.push(device.clone());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(saved[0].name, "Pixel 8");
+        let file = serde_json::to_string(&settings(saved.clone())).unwrap();
+        assert!(!file.contains(&token));
+
+        let restarted = Hub::default();
+        restarted.load(&serde_json::from_str(&file).unwrap());
+        restarted.inner.lock().unwrap().accepting = true;
+        assert_eq!(restarted.authenticate(Some(&token)).unwrap(), saved[0].id);
+        assert_eq!(
+            restarted.authenticate(Some("other")).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
+        // Stopping the listener must not look like a revoked pairing to the phone.
+        restarted.inner.lock().unwrap().accepting = false;
+        assert_eq!(
+            restarted.authenticate(Some(&token)).unwrap_err().0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn several_devices_pair_until_the_limit_and_revocation_ends_their_sessions() {
+        let hub = accepting_hub(Vec::new());
+        let mut tokens = Vec::new();
+        for _ in 0..MAX_DEVICES {
+            tokens.push(hub.pair(PEER, CODE, None, |_| Ok(())).unwrap());
+        }
+        assert!(hub
+            .pair(PEER, CODE, None, |_| Ok(()))
+            .unwrap_err()
+            .contains("上限"));
+        let first = hub.authenticate(Some(&tokens[0])).unwrap();
+        let second = hub.authenticate(Some(&tokens[1])).unwrap();
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            for (id, owner) in [("mobile-a", &first), ("mobile-b", &second)] {
+                let mut session = Session::new(project(), owner.clone(), 1);
+                session.ready = true;
+                inner.sessions.insert(id.into(), session);
+            }
+        }
+        let ended = hub.forget_device(&first);
+        assert_eq!(ended, vec![("mobile-a".to_string(), ProjectKind::Local)]);
+        assert!(hub.authenticate(Some(&tokens[0])).is_err());
+        assert!(hub.holds("mobile-b"));
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_the_pairing() {
+        let hub = accepting_hub(Vec::new());
+        let error = hub
+            .pair(PEER, CODE, None, |_| Err("disk".into()))
+            .unwrap_err();
+        assert!(error.contains("disk"));
+        assert!(hub.inner.lock().unwrap().devices.is_empty());
+    }
+
+    #[test]
+    fn pairing_attempts_are_limited_per_source_and_in_total() {
+        let hub = accepting_hub(Vec::new());
+        for _ in 0..MAX_PEER_ATTEMPTS {
+            assert_eq!(
+                hub.pair(PEER, "wrong", None, |_| Ok(())).unwrap_err(),
+                "密码不正确。"
+            );
+        }
+        assert!(hub
+            .pair(PEER, CODE, None, |_| Ok(()))
+            .unwrap_err()
+            .contains("尝试过多"));
+        // Another phone is not locked out by the first source.
+        let other = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 21));
+        assert!(hub.pair(other, CODE, None, |_| Ok(())).is_ok());
+
+        let aged = Instant::now() - ATTEMPT_WINDOW;
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            inner
+                .attempts
+                .insert(PEER, VecDeque::from([aged; MAX_PEER_ATTEMPTS]));
+            inner.total_attempts = VecDeque::from([Instant::now(); MAX_TOTAL_ATTEMPTS]);
+        }
+        let third = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 22));
+        assert!(hub
+            .pair(third, CODE, None, |_| Ok(()))
+            .unwrap_err()
+            .contains("尝试过多"));
+        hub.inner.lock().unwrap().total_attempts.clear();
+        assert!(hub.pair(PEER, CODE, None, |_| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn poll_reads_are_bounded_and_resume_by_sequence() {
+        let mut session = Session::new(project(), "d".into(), 1);
+        let chunk = "A".repeat(64 * 1024);
+        for _ in 0..5 {
+            session.push(OutputChunk::Bytes(chunk.clone()));
+        }
+        let first = session.read(0);
+        assert_eq!(first["chunks"].as_array().unwrap().len(), 3);
+        assert_eq!(first["next"], 3);
+        assert_eq!(first["more"], true);
+        let rest = session.read(3);
+        assert_eq!(rest["chunks"].as_array().unwrap().len(), 2);
+        assert_eq!(rest["more"], false);
+        assert_eq!(rest["reset"], false);
+
+        // A single chunk larger than the budget is still delivered.
+        session.push(OutputChunk::Bytes("B".repeat(MAX_POLL_BYTES * 2)));
+        assert_eq!(session.read(5)["chunks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn evicted_or_future_sequences_reset_and_screens_replace_history() {
+        let mut session = Session::new(project(), "d".into(), 1);
+        for _ in 0..20 {
+            session.push(OutputChunk::Bytes("x".repeat(64 * 1024)));
+        }
+        assert!(session.output_size <= MAX_OUTPUT);
+        assert_eq!(session.read(0)["reset"], true);
+        assert_eq!(session.read(99)["reset"], true);
+
+        session.push(OutputChunk::Screen {
+            data: "\u{1b}[2Jprompt$ ".into(),
+            cols: 80,
+            rows: 24,
+        });
+        let read = session.read(20);
+        let chunks = read["chunks"].as_array().unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0]["data"], "\u{1b}[2Jprompt$ ");
+        assert_eq!(chunks[0]["cols"], 80);
+        assert_eq!(read["reset"], false);
+    }
+
+    #[test]
+    fn exit_is_reported_after_the_output_drain_window() {
+        let mut session = Session::new(project(), "d".into(), 1);
+        session.finish(Exit {
+            exit_code: 3,
+            disconnected: false,
+        });
+        assert!(session.read(0)["exit"].is_null());
+        session.drain_until = Some(Instant::now() - Duration::from_millis(1));
+        assert_eq!(session.read(0)["exit"]["exitCode"], 3);
+    }
+
+    #[test]
+    fn automatic_listener_accepts_lan_sources() {
         for allowed in [
             "127.0.0.1",
             "192.168.1.2",
             "172.18.0.2",
             "10.0.0.2",
             "169.254.2.3",
+            "100.64.0.1",
+            "100.127.255.254",
+            "::ffff:192.168.1.2",
         ] {
-            assert!(lan_peer(allowed.parse().unwrap()));
+            assert!(lan_peer(allowed.parse().unwrap()), "{allowed}");
         }
-        for denied in ["0.0.0.0", "8.8.8.8", "172.32.0.2", "2001:db8::1"] {
-            assert!(!lan_peer(denied.parse().unwrap()));
+        for denied in [
+            "0.0.0.0",
+            "8.8.8.8",
+            "172.32.0.2",
+            "100.128.0.1",
+            "100.63.255.255",
+            "2001:db8::1",
+        ] {
+            assert!(!lan_peer(denied.parse().unwrap()), "{denied}");
         }
+    }
+
+    #[test]
+    fn pairing_qr_encodes_only_pairing_links() {
+        let qr = mobile_pairing_qr("qingcode://pair?v=1&host=192.168.1.2&port=48764&fp=00".into())
+            .unwrap();
+        assert_eq!(qr.modules.len(), qr.size * qr.size);
+        assert!(qr.modules.contains('1'));
+        assert!(mobile_pairing_qr("https://example.com".into()).is_err());
+    }
+
+    #[test]
+    fn device_names_are_trimmed_and_defaulted() {
+        assert_eq!(device_name(None), "Android 设备");
+        assert_eq!(device_name(Some("  ")), "Android 设备");
+        assert_eq!(device_name(Some(&"x".repeat(80))).len(), MAX_DEVICE_NAME);
     }
 }

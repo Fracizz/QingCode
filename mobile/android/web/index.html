@@ -10,7 +10,8 @@
   <link rel="stylesheet" href="app.css">
   <script src="xterm.js" defer></script>
   <script src="fit.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="jsqr.js" defer></script>
+  <script src="app.js" type="module"></script>
 </head>
 <body>
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -23,6 +24,7 @@
     <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="3"/></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01m4 0h.01m4 0h.01m4 0h.01M6 13h.01m4 0h.01m4 0h.01m4 0h.01M8 16h8"/></symbol>
     <symbol id="i-paste" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 0 0-2 2v13h16V7a2 2 0 0 0-2-2h-2"/><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 12h8m-8 4h6"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3M8 12h8"/></symbol>
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
   </svg>
 
@@ -77,7 +79,7 @@
         <div id="connection-list" class="rows"></div>
         <div id="connection-empty" class="empty-card" hidden>
           <span class="tile"><svg><use href="#i-host"/></svg></span>
-          <h2>暂无已配对电脑</h2><p>从电脑端的 Android 移动连接设置获取地址和密码。</p>
+          <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
         </div>
       </section>
 
@@ -105,10 +107,15 @@
           <button type="button" data-key="esc">Esc</button>
           <button type="button" data-key="tab">Tab</button>
           <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
+          <button type="button" data-key="alt" aria-pressed="false">Alt</button>
           <button type="button" data-key="left" aria-label="向左">←</button>
           <button type="button" data-key="down" aria-label="向下">↓</button>
           <button type="button" data-key="up" aria-label="向上">↑</button>
           <button type="button" data-key="right" aria-label="向右">→</button>
+          <button type="button" data-key="home">Home</button>
+          <button type="button" data-key="end">End</button>
+          <button type="button" data-key="pgup" aria-label="向上翻页">PgUp</button>
+          <button type="button" data-key="pgdn" aria-label="向下翻页">PgDn</button>
         </div>
         <form id="compose-form">
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘"><svg><use href="#i-keyboard"/></svg></button>
@@ -123,7 +130,12 @@
   <dialog id="pair-dialog" aria-labelledby="pair-title">
     <form id="pair-form">
       <h2 id="pair-title">添加连接</h2>
-      <p>在电脑端「设置 → 功能 → Android 移动连接」中获取地址和密码。</p>
+      <p>在电脑端「设置 → 功能 → Android 移动连接」中扫描二维码，或粘贴复制的配对链接。</p>
+      <div id="pair-link-tools" class="pair-tools">
+        <button type="button" id="pair-scan" class="secondary"><svg><use href="#i-scan"/></svg> 扫码添加</button>
+        <button type="button" id="pair-paste" class="secondary"><svg><use href="#i-paste"/></svg> 粘贴配对链接</button>
+      </div>
+      <p id="pair-link-state" class="ok" role="status" hidden>已从配对链接读取地址和证书指纹，连接时自动核对。</p>
       <label for="pair-name">连接名称</label>
       <input id="pair-name" maxlength="48" placeholder="例如 工作电脑" required>
       <div class="pair-address">
@@ -151,10 +163,20 @@
       <h2 id="host-title">连接详情</h2><p id="host-address"></p>
       <code id="host-fingerprint"></code>
       <label for="host-name">连接名称</label><input id="host-name" maxlength="48" required>
+      <label for="host-port">端口</label><input id="host-port" type="number" inputmode="numeric" min="1" max="65535" required>
+      <p class="hint">电脑端切换端口后，在这里改为新端口即可，无需重新配对。</p>
       <p id="host-error" class="error" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-close="host-dialog">取消</button><button class="primary" type="submit">保存名称</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="host-dialog">取消</button><button class="primary" type="submit">保存</button></div>
       <div class="dialog-links"><button type="button" id="repair-host" class="text-button">重新配对</button><button type="button" id="remove-host" class="text-button danger">移除连接</button></div>
     </form>
+  </dialog>
+
+  <dialog id="scan-dialog" aria-labelledby="scan-title">
+    <h2 id="scan-title">扫描配对二维码</h2>
+    <p>对准电脑端「Android 移动连接」中显示的二维码。</p>
+    <video id="scan-video" playsinline muted aria-label="相机预览"></video>
+    <p id="scan-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="scan-dialog">取消</button></div>
   </dialog>
 
   <dialog id="session-dialog" aria-labelledby="session-dialog-title">

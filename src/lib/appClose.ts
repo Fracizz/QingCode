@@ -39,7 +39,8 @@ export function requestAppClose(): Promise<void> {
     flush: flushWorkspaceSessionPersist,
     destroy: async () => {
       const window = getCurrentWindow()
-      if (window.label === 'main') await safeInvoke('关闭移动连接', 'mobile_stop')
+      // 退出只结束手机终端，不改变「随启动自动启用」的设置。
+      if (window.label === 'main') await safeInvoke('关闭移动连接', 'mobile_stop', { disable: false })
       await window.destroy()
     },
   }).finally(() => { closing = undefined })

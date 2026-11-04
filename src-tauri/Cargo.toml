@@ -77,6 +77,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 ring = "0.17"
 subtle = "2"
+qrcode = { version = "0.14", default-features = false }
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。

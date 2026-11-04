@@ -10,7 +10,19 @@ let saved: { port: number; configured: boolean; password: string | null } = {
   port: 48764, configured: false, password: null,
 }
 let activePort: number | null = null
-const status = () => ({ port: activePort, paired: false, fingerprint: activePort ? '0123456789abcdef'.repeat(4) : null })
+const status = () => ({
+  port: activePort,
+  savedPort: saved.port,
+  configured: saved.configured,
+  enabled: activePort !== null,
+  fingerprint: activePort ? '0123456789abcdef'.repeat(4) : null,
+  devices: activePort ? [{ id: 'd1', name: 'Google Pixel 8', pairedAt: 1_790_000_000, online: true }] : [],
+  addresses: activePort ? ['192.168.1.8', '10.0.0.5'] : [],
+  computer: 'DEVBOX',
+  error: null,
+})
+// A fixed finder-pattern-like matrix; the page only renders it.
+const qr = { size: 21, modules: Array.from({ length: 21 * 21 }, (_, index) => ((index * 7) % 3 === 0 ? '1' : '0')).join('') }
 
 export default function Page() {
   const [revision, setRevision] = useState(0)
@@ -33,7 +45,9 @@ if (import.meta.env.MODE === 'web-test') {
   mockIPC((command, args) => {
     if (command === 'mobile_saved_settings') return saved
     if (command === 'mobile_status') return status()
-    if (command === 'mobile_stop') { activePort = null; return null }
+    if (command === 'mobile_stop') { activePort = null; return status() }
+    if (command === 'mobile_pairing_qr') return qr
+    if (command === 'mobile_revoke_device') return status()
     if (command === 'mobile_start') {
       const values = args as { port: number; code: string | null }
       saved = { port: values.port, configured: true, password: values.code ?? saved.password }
