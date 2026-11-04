@@ -82,10 +82,197 @@
       customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
   }
 
+
+  // ---------- 聊天式 Agent 内存后端（对应 src-tauri/src/agent/） ----------
+  const SAFETY = {
+    claude: [
+      { id: 'default', label: '每次询问', description: '编辑文件和运行命令前在手机上确认', full: false },
+      { id: 'acceptEdits', label: '自动编辑', description: '自动接受文件编辑；运行命令前在手机上确认', full: false },
+      { id: 'plan', label: '只规划', description: '只读分析并给出计划，批准后再动手', full: false },
+      { id: 'bypassPermissions', label: '完全访问', description: '不再询问，直接编辑文件和运行命令', full: true },
+    ],
+    codex: [
+      { id: 'read-only', label: '只读', description: '可读取文件；编辑文件和运行命令前在手机上确认', full: false },
+      { id: 'auto', label: '自动', description: '在项目内自动编辑和运行命令；越过沙箱时在手机上确认', full: false },
+      { id: 'full', label: '完全访问', description: '不受沙箱限制，不再询问，直接编辑文件和运行命令', full: true },
+    ],
+    opencode: [
+      { id: 'ask', label: '每次询问', description: '编辑文件、运行命令和联网前在手机上确认', full: false },
+      { id: 'edits', label: '自动编辑', description: '自动接受文件编辑；运行命令和联网前在手机上确认', full: false },
+      { id: 'full', label: '完全访问', description: '不再询问，直接编辑文件、运行命令和联网', full: true },
+    ],
+  }
+  const NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' }
+  state.agent = {
+    defaults: { claude: 'default', codex: 'auto', opencode: 'ask' },
+    threads: new Map(),
+    requests: [],
+    attachments: new Map(),
+    stepDelay: 40,
+    quotas: [
+      { provider: 'claude', name: 'Claude', plan: 'pro', windows: [{ label: '5 小时', percent: 22, resetsAt: new Date(Date.now() + 3 * 3600e3).toISOString() }, { label: '每周', percent: 42, resetsAt: new Date(Date.now() + 4 * 86400e3).toISOString() }], updatedAt: Date.now() },
+      { provider: 'codex', name: 'Codex', error: 'Codex 未登录，请先在电脑上运行 codex 登录。', updatedAt: Date.now() },
+      { provider: 'opencode', name: 'OpenCode', note: 'OpenCode 按所选模型的提供方计费，额度请在提供方查看；对话内显示本会话用量。' },
+    ],
+    nextId: 1,
+  }
+
+  function agentCatalog() {
+    return ['claude', 'codex', 'opencode'].map(id => ({ id, name: NAMES[id], safety: SAFETY[id], defaultSafety: state.agent.defaults[id], defaultModel: null, installed: id !== 'codex' }))
+  }
+
+  function agentMeta(thread) {
+    const pending = thread.items.filter(item => item.kind === 'approval' && item.approval.state === 'pending').length
+    const preview = [...thread.items].reverse().find(item => (item.kind === 'assistant' || item.kind === 'user') && item.text)?.text ?? ''
+    const project = state.projects.find(item => item.id === thread.projectId)
+    return { id: thread.id, provider: thread.provider, projectId: thread.projectId, projectName: project?.name ?? '', projectKind: project?.kind, projectHost: project?.host,
+      title: thread.title, titleManual: thread.titleManual, status: thread.status, error: null, running: thread.running, safety: thread.safety, model: thread.model,
+      effort: thread.effort, mode: thread.mode, createdAt: thread.createdAt, updatedAt: thread.updatedAt, rev: thread.rev, pending, preview: preview.slice(0, 120),
+      usage: thread.usage, options: thread.options }
+  }
+
+  function agentUpsert(thread, id, kind, change) {
+    thread.rev += 1
+    thread.updatedAt = Date.now()
+    let item = thread.items.find(entry => entry.id === id)
+    if (!item) {
+      item = { id, kind, time: Date.now() }
+      thread.items.push(item)
+    }
+    change(item)
+    item.rev = thread.rev
+    for (const wake of thread.waiters.splice(0)) wake()
+    return item
+  }
+
+  function agentStatus(thread, status) {
+    thread.status = status
+    thread.rev += 1
+    for (const wake of thread.waiters.splice(0)) wake()
+  }
+
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+  // 一轮脚本化回复：思考、流式文字、命令、需要审批的编辑、总结。
+  async function agentTurn(thread, text) {
+    const turn = thread.turns = (thread.turns ?? 0) + 1
+    const delay = () => wait(state.agent.stepDelay)
+    agentStatus(thread, 'running')
+    await delay()
+    agentUpsert(thread, `r-${turn}`, 'reasoning', item => { item.text = '先查看项目结构，再定位需要修改的文件。'; item.streaming = true })
+    await delay()
+    agentUpsert(thread, `r-${turn}`, 'reasoning', item => { delete item.streaming })
+    const reply = `好的，我来处理：**${text.trim().slice(0, 40)}**\n\n1. 查看 \`src/\` 目录\n2. 修改相关代码\n\n\`\`\`ts\nexport const answer = 42\n\`\`\``
+    for (let end = 8; end <= reply.length + 7; end += 8) {
+      agentUpsert(thread, `a-${turn}`, 'assistant', item => { item.text = reply.slice(0, end); item.streaming = true })
+      await delay()
+    }
+    agentUpsert(thread, `a-${turn}`, 'assistant', item => { item.text = reply; delete item.streaming })
+    agentUpsert(thread, `t-${turn}`, 'tool', item => { item.tool = { category: 'command', title: 'ls src', status: 'running' } })
+    await delay()
+    agentUpsert(thread, `t-${turn}`, 'tool', item => { item.tool = { category: 'command', title: 'ls src', status: 'done', exitCode: 0, output: 'app.ts\nlib.ts\n' } })
+    const files = [{ path: 'src/app.ts', change: 'update', diff: '@@ -1 +1 @@\n-export const answer = 41\n+export const answer = 42\n' }]
+    const full = SAFETY[thread.provider].find(option => option.id === thread.safety)?.full
+    if (!full) {
+      agentUpsert(thread, `p-${turn}`, 'approval', item => {
+        item.approval = { type: 'edit', title: 'src/app.ts', detail: '', state: 'pending', options: [
+          { id: 'accept', label: '允许', tone: 'primary' }, { id: 'acceptForSession', label: '本会话允许', tone: 'neutral' }, { id: 'decline', label: '拒绝', tone: 'danger' }] }
+        item.files = files
+      })
+      const choice = await new Promise(resolve => { thread.answer = resolve })
+      if (choice === 'decline') {
+        agentUpsert(thread, `e-${turn}`, 'tool', item => { item.tool = { category: 'edit', title: 'src/app.ts', status: 'declined', files } })
+        agentUpsert(thread, `s-${turn}`, 'assistant', item => { item.text = '已按你的选择跳过修改。' })
+        thread.usage = { contextUsed: 12000, contextWindow: 200000, cost: { amount: 0.012, currency: 'USD' } }
+        agentStatus(thread, 'idle')
+        return
+      }
+    }
+    agentUpsert(thread, `e-${turn}`, 'tool', item => { item.tool = { category: 'edit', title: 'src/app.ts', status: 'done', files } })
+    agentUpsert(thread, `plan-${turn}`, 'plan', item => { item.steps = [{ text: '查看目录', status: 'done' }, { text: '修改代码', status: 'done' }, { text: '运行测试', status: 'pending' }] })
+    agentUpsert(thread, `s-${turn}`, 'assistant', item => { item.text = '已修改 `src/app.ts`。详情见 https://example.com/docs 。' })
+    thread.usage = { contextUsed: 24000, contextWindow: 200000, cost: { amount: 0.024, currency: 'USD' } }
+    agentStatus(thread, 'idle')
+  }
+
+  async function agent(request) {
+    const fail = error => ({ ok: false, error })
+    const thread = request.id ? state.agent.threads.get(request.id) : null
+    state.agent.requests.push(request)
+    if (state.agent.unsupported) return fail('请求格式无效。')
+    switch (request.op) {
+      case 'agent_catalog': return { ok: true, data: agentCatalog() }
+      case 'agent_defaults': state.agent.defaults[request.provider] = request.safety; return { ok: true, data: agentCatalog() }
+      case 'agent_threads': return { ok: true, data: [...state.agent.threads.values()].map(agentMeta) }
+      case 'agent_usage': return { ok: true, data: state.agent.quotas }
+      case 'agent_create': {
+        const project = state.projects.find(item => item.id === request.project)
+        if (!project) return fail('请在 Windows QingCode 中信任该项目后重试。')
+        if (/^ssh:\/\/[^/]+\/+[A-Za-z]:/.test(project.path)) return fail('Windows 远端暂不支持对话模式，请使用终端。')
+        const id = 'agent-' + state.agent.nextId++
+        const created = { id, provider: request.provider, projectId: project.id, title: '', titleManual: false, status: 'idle', running: true,
+          safety: request.safety ?? state.agent.defaults[request.provider], model: null, effort: null, mode: null, createdAt: Date.now(), updatedAt: Date.now(),
+          rev: 1, items: [], waiters: [], usage: null,
+          options: { models: [{ id: 'm-fast', label: 'Fast' }, { id: 'm-smart', label: 'Smart', efforts: ['low', 'high'] }], modes: request.provider === 'opencode' ? [{ id: 'build', label: 'Build' }, { id: 'plan', label: 'Plan' }] : undefined } }
+        state.agent.threads.set(id, created)
+        return { ok: true, data: agentMeta(created) }
+      }
+      case 'agent_image': {
+        const id = 'img-' + state.agent.attachments.size
+        state.agent.attachments.set(id, request.data)
+        return { ok: true, data: { id, mime: 'image/jpeg' } }
+      }
+    }
+    if (!thread) return fail('对话不存在或已删除。')
+    switch (request.op) {
+      case 'agent_send': {
+        if (thread.status === 'running') return fail('Agent 正在执行，请等待完成或先停止。')
+        const text = request.text ?? ''
+        agentUpsert(thread, 'u-' + thread.rev, 'user', item => { item.text = text; if (request.images?.length) item.images = request.images.length })
+        if (!thread.title) thread.title = text.split('\n')[0].slice(0, 60)
+        thread.running = true
+        void agentTurn(thread, text)
+        return { ok: true, data: agentMeta(thread) }
+      }
+      case 'agent_poll': {
+        if (state.agent.pollErrors > 0) { state.agent.pollErrors--; return fail('模拟网络断开') }
+        if (request.from === thread.rev) await new Promise(resolve => { thread.waiters.push(resolve); setTimeout(resolve, 1500) })
+        await wait(10)
+        const full = request.from === 0 || request.from > thread.rev
+        const items = full ? thread.items.slice(-300) : thread.items.filter(item => item.rev > request.from)
+        return { ok: true, data: { thread: agentMeta(thread), items: structuredClone(items), full, rev: thread.rev } }
+      }
+      case 'agent_history': return { ok: true, data: { items: [] } }
+      case 'agent_respond': {
+        const item = thread.items.find(entry => entry.id === request.approval)
+        if (!item || item.approval.state !== 'pending') return fail('该请求已处理或已失效。')
+        agentUpsert(thread, item.id, 'approval', entry => { entry.approval.state = 'resolved'; entry.approval.choice = request.choice })
+        thread.answer?.(request.choice)
+        return { ok: true, data: null }
+      }
+      case 'agent_interrupt': {
+        thread.answer?.('decline')
+        agentStatus(thread, 'idle')
+        return { ok: true, data: null }
+      }
+      case 'agent_configure': {
+        if (request.key === 'safety' && !SAFETY[thread.provider].some(option => option.id === request.value)) return fail('无效的安全选项。')
+        thread[request.key] = request.value || null
+        thread.rev += 1
+        return { ok: true, data: agentMeta(thread) }
+      }
+      case 'agent_rename': thread.title = request.title.trim(); thread.titleManual = !!thread.title; thread.rev += 1; return { ok: true, data: agentMeta(thread) }
+      case 'agent_close': thread.running = false; agentStatus(thread, 'closed'); return { ok: true, data: null }
+      case 'agent_delete': state.agent.threads.delete(thread.id); return { ok: true, data: null }
+      default: return fail('未知操作。')
+    }
+  }
+
   async function remote(profile, request) {
     const saved = state.profiles.get(profile)
     if (!saved) return { ok: false, error: '请先完成密码配对。' }
     if (state.hosts.get(saved.id) !== saved.fingerprint) return { ok: false, error: 'Windows 身份校验失败，请重新核对证书指纹。' }
+    if (request.op.startsWith('agent_')) return agent(request)
     switch (request.op) {
       case 'projects': return { ok: true, data: state.projects }
       case 'sessions': return {

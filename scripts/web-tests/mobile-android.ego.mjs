@@ -37,7 +37,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
 
     await step('pasted pairing link fills the form and skips manual fingerprint comparison', async () => {
       await page.evaluate(() => { window.__mobileFixture.state.clipboard = window.__mobileFixture.link('192.168.1.8', 48764) })
-      await page.click('#home-action', { label: 'add first connection' })
+      await page.click('#chat-empty-action', { label: 'add first connection' })
       await page.waitForSelector('#pair-dialog[open]')
       await page.click('#pair-paste', { label: 'paste pairing link' })
       await page.waitForFunction(() => !document.getElementById('pair-link-state').hidden)
@@ -87,7 +87,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
 
     await step('opening a project starts a terminal and the command bar submits a line', async () => {
       await page.click('loc=role:button[name="项目"]', { label: 'open project list' })
-      await page.click('loc=role:button[name*="本机 · D:"]', { label: 'open QingCode project' })
+      await page.click('loc=role:button[name*="QingCode 本机"]', { label: 'open QingCode project' })
       await page.waitForFunction(() => document.getElementById('terminal-status').textContent === '会话中')
       assert.match(await terminalText(), /PS D:\\code\\qingcode>/)
       await page.fill('#compose', 'git status')
@@ -122,6 +122,8 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
 
     await step('changing the port keeps the pairing and moves per-connection records', async () => {
       await page.click('#show-sessions', { label: 'open session drawer' })
+      await page.waitForSelector('#session-drawer[open]')
+      await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
       await page.click('#back', { label: 'return to dashboard' })
       await page.click('loc=role:button[name="连接"]', { label: 'open connections page' })
       await page.click('loc=role:button[name="管理连接 DEVBOX"]', { label: 'manage DEVBOX connection' })
@@ -136,7 +138,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
     })
 
     await step('resume card reopens the same session on the new address', async () => {
-      await page.click('loc=role:button[name="终端"]', { label: 'open home page' })
+      await page.click('#dashboard-nav [data-page="chat"]', { label: 'show chats' }).then(() => page.click('#chat-terminals', { label: 'open home page' }))
       await page.click('#resume', { label: 'resume last terminal' })
       await page.waitForFunction(() => document.getElementById('terminal-status').textContent === '会话中')
       assert.match(await terminalText(), /echo after/)

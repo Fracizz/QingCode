@@ -206,6 +206,7 @@ public final class MainActivity extends Activity {
                         case "index.html": type = "text/html"; break;
                         case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "composer.js": case "terminalHistory.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
+                        case "chat.js": case "chatModel.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
@@ -762,6 +763,9 @@ public final class MainActivity extends Activity {
         switch (op) {
             case "projects": case "sessions": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
+            case "agent_catalog": case "agent_defaults": case "agent_threads": case "agent_create": case "agent_send":
+            case "agent_image": case "agent_poll": case "agent_history": case "agent_respond": case "agent_interrupt":
+            case "agent_configure": case "agent_rename": case "agent_close": case "agent_delete": case "agent_usage":
                 return current.call(request);
             default:
                 return failure("未知操作。");
@@ -882,6 +886,7 @@ public final class MainActivity extends Activity {
         private static boolean idempotent(String op) {
             switch (op) {
                 case "projects": case "sessions": case "poll": case "history": case "resize": return true;
+                case "agent_catalog": case "agent_threads": case "agent_poll": case "agent_history": case "agent_usage": return true;
                 default: return false;
             }
         }
@@ -889,7 +894,12 @@ public final class MainActivity extends Activity {
         private static int readTimeout(String op) {
             // Creating a terminal may wait for a confirmation on the desktop.
             if ("ping".equals(op)) return 3000;
-            return "create".equals(op) || "image".equals(op) ? 100_000 : 32_000;
+            // 新建 / 恢复对话可能等待电脑确认并启动 Agent；读取额度会短暂启动 Agent 探测。
+            switch (op) {
+                case "create": case "image": case "agent_create": case "agent_send": case "agent_image": return 100_000;
+                case "agent_usage": return 60_000;
+                default: return 32_000;
+            }
         }
 
         JSONObject call(JSONObject request) throws Exception {

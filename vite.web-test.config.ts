@@ -16,6 +16,8 @@ const mobileAssets: Record<string, [string, string]> = {
   'terminalSelection.js': ['mobile/android/web/terminalSelection.js', 'text/javascript'],
   'connectionLatency.js': ['mobile/android/web/connectionLatency.js', 'text/javascript'],
   'workspaceState.js': ['mobile/android/web/workspaceState.js', 'text/javascript'],
+  'chat.js': ['mobile/android/web/chat.js', 'text/javascript'],
+  'chatModel.js': ['mobile/android/web/chatModel.js', 'text/javascript'],
   'app.css': ['mobile/android/web/app.css', 'text/css'],
   'xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   'xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],

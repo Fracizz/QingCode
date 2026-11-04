@@ -71,6 +71,8 @@ pub struct MobileState {
     lifecycle: tokio::sync::Mutex<()>,
     pending: Mutex<HashMap<Uuid, oneshot::Sender<Result<Value, String>>>>,
     last_error: Mutex<Option<String>>,
+    /// 聊天式 Agent 对话（Claude / Codex / OpenCode）。
+    agents: crate::agent::AgentHost,
 }
 
 struct RunningListener {
@@ -503,6 +505,73 @@ enum Operation {
         id: String,
         name: String,
     },
+    AgentCatalog,
+    AgentDefaults {
+        provider: crate::agent::Provider,
+        #[serde(default)]
+        safety: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+    },
+    AgentThreads {
+        #[serde(default)]
+        project: Option<String>,
+    },
+    AgentCreate {
+        project: String,
+        provider: crate::agent::Provider,
+        #[serde(default)]
+        safety: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+    },
+    AgentSend {
+        id: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        images: Vec<String>,
+    },
+    AgentImage {
+        data: String,
+    },
+    AgentPoll {
+        id: String,
+        from: u64,
+    },
+    AgentHistory {
+        id: String,
+        before: String,
+    },
+    AgentRespond {
+        id: String,
+        approval: String,
+        choice: String,
+        #[serde(default)]
+        answers: Value,
+    },
+    AgentInterrupt {
+        id: String,
+    },
+    AgentConfigure {
+        id: String,
+        key: String,
+        value: String,
+    },
+    AgentRename {
+        id: String,
+        title: String,
+    },
+    AgentClose {
+        id: String,
+    },
+    AgentDelete {
+        id: String,
+    },
+    AgentUsage {
+        #[serde(default)]
+        refresh: bool,
+    },
 }
 
 #[derive(Serialize)]
@@ -731,6 +800,15 @@ pub(crate) fn is_mobile_terminal(id: &str) -> bool {
 
 /// Base64 PTY output for a `mobile-*` terminal.
 pub(crate) fn deliver_data(app: &AppHandle, id: &str, data: String) {
+    if id.starts_with(crate::agent::TERMINAL_PREFIX) {
+        if let (Some(state), Ok(bytes)) = (
+            app.try_state::<MobileState>(),
+            base64::engine::general_purpose::STANDARD.decode(&data),
+        ) {
+            state.agents.remote_data(id, &bytes);
+        }
+        return;
+    }
     if let Some(state) = app.try_state::<MobileState>() {
         state
             .hub
@@ -740,6 +818,13 @@ pub(crate) fn deliver_data(app: &AppHandle, id: &str, data: String) {
 
 /// Plain-text screen snapshot for a reattached `mobile-*` daemon terminal.
 pub(crate) fn deliver_screen(app: &AppHandle, id: &str, data: String, cols: u16, rows: u16) {
+    if id.starts_with(crate::agent::TERMINAL_PREFIX) {
+        // Agent 的 JSON 流不能从屏幕快照恢复，只能提示中间输出缺失。
+        if let Some(state) = app.try_state::<MobileState>() {
+            state.agents.remote_gap(id);
+        }
+        return;
+    }
     if let Some(state) = app.try_state::<MobileState>() {
         state.hub.with_session(id, |session| {
             session.push(OutputChunk::Screen { data, cols, rows })
@@ -748,6 +833,17 @@ pub(crate) fn deliver_screen(app: &AppHandle, id: &str, data: String, cols: u16,
 }
 
 pub(crate) fn deliver_exit(app: &AppHandle, id: &str, exit_code: u32, disconnected: bool) {
+    if id.starts_with(crate::agent::TERMINAL_PREFIX) {
+        if let Some(state) = app.try_state::<MobileState>() {
+            let reason = if disconnected {
+                "远端连接已断开".to_string()
+            } else {
+                format!("退出码 {exit_code}")
+            };
+            state.agents.remote_exit(id, Some(reason));
+        }
+        return;
+    }
     if let Some(state) = app.try_state::<MobileState>() {
         state.hub.with_session(id, |session| {
             session.finish(Exit {
@@ -864,9 +960,123 @@ fn status(state: &MobileState) -> Status {
     }
 }
 
+/// SSH 远端（直连与 Server 模式）的 Agent 启动器：复用远端终端通道。
+struct RemoteAgents {
+    app: AppHandle,
+}
+
+/// 登录 Shell 加载 profile 可能较慢（nvm 等）。
+const REMOTE_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 远端终端单次写入上限为 1 MB，图片等长行分块发送。
+const REMOTE_WRITE_CHUNK: usize = 256 * 1024;
+
+fn remote_chunks(data: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut rest = data;
+    while rest.len() > REMOTE_WRITE_CHUNK {
+        let mut end = REMOTE_WRITE_CHUNK;
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    if !rest.is_empty() {
+        chunks.push(rest);
+    }
+    chunks
+}
+
+async fn write_remote(app: &AppHandle, terminal: &str, data: &str) -> Result<(), String> {
+    for chunk in remote_chunks(data) {
+        let mut attempts = 0;
+        loop {
+            match crate::remote_ssh::ssh_write_terminal(
+                terminal.to_string(),
+                chunk.to_string(),
+                app.state(),
+            )
+            .await
+            {
+                Ok(()) => break,
+                // 直连通道缓冲满时稍后重试，保持行内顺序。
+                Err(error) if error.contains("缓冲区已满") && attempts < 400 => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(())
+}
+
+impl crate::agent::RemoteLauncher for RemoteAgents {
+    fn launch(
+        &self,
+        terminal: String,
+        project: crate::agent::AgentProject,
+        script: String,
+        mut commands: tokio::sync::mpsc::UnboundedReceiver<crate::agent::RemoteCommand>,
+        ready: tokio::sync::oneshot::Receiver<()>,
+    ) {
+        let app = self.app.clone();
+        tauri::async_runtime::spawn(async move {
+            let agents = app.state::<MobileState>().agents.clone();
+            let started = crate::remote_ssh::ssh_spawn_agent(
+                terminal.clone(),
+                project.path,
+                script,
+                app.clone(),
+            )
+            .await;
+            if let Err(error) = started {
+                agents.remote_exit(&terminal, Some(error));
+                return;
+            }
+            // 等远端关闭回显后再写入，否则握手消息可能被回显成“Agent 输出”。
+            let failure = match tokio::time::timeout(REMOTE_READY_TIMEOUT, ready).await {
+                Ok(Ok(())) => None,
+                Ok(Err(_)) => Some(None),
+                Err(_) => Some(Some(
+                    "远端 Agent 未就绪，请确认远端为 Linux / macOS 且登录 Shell 可用。".to_string(),
+                )),
+            };
+            if let Some(reason) = failure {
+                let _ =
+                    crate::remote_ssh::ssh_kill_terminal(terminal.clone(), None, None, app.state())
+                        .await;
+                agents.remote_exit(&terminal, reason);
+                return;
+            }
+            while let Some(command) = commands.recv().await {
+                match command {
+                    crate::agent::RemoteCommand::Write(data) => {
+                        if let Err(error) = write_remote(&app, &terminal, &data).await {
+                            agents.remote_exit(
+                                &terminal,
+                                Some(format!("写入远端 Agent 失败：{error}")),
+                            );
+                            break;
+                        }
+                    }
+                    crate::agent::RemoteCommand::Kill => break,
+                }
+            }
+            let _ = crate::remote_ssh::ssh_kill_terminal(terminal.clone(), None, None, app.state())
+                .await;
+            agents.remote_exit(&terminal, None);
+        });
+    }
+}
+
 /// Loads persisted pairings and restarts the listener if it was enabled.
 pub fn initialize(app: &AppHandle) {
     let state = app.state::<MobileState>();
+    state
+        .agents
+        .set_remote_launcher(Arc::new(RemoteAgents { app: app.clone() }));
     let settings = match load_settings() {
         Ok(Some(settings)) => settings,
         Ok(None) => return,
@@ -1031,6 +1241,8 @@ pub async fn mobile_stop(disable: Option<bool>, app: AppHandle) -> Result<Status
     for (id, kind) in state.hub.take_live_sessions() {
         let _ = end(&app, id, kind).await;
     }
+    let agents = state.agents.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || agents.stop_all()).await;
     Ok(status(&state))
 }
 
@@ -1291,6 +1503,21 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
         // Authentication is checked by request_handler before any operation runs.
         // Never wait for terminal output or the desktop WebView bridge here.
         Operation::Ping => Ok(json!({ "pong": true })),
+        Operation::AgentCatalog
+        | Operation::AgentDefaults { .. }
+        | Operation::AgentThreads { .. }
+        | Operation::AgentCreate { .. }
+        | Operation::AgentSend { .. }
+        | Operation::AgentImage { .. }
+        | Operation::AgentPoll { .. }
+        | Operation::AgentHistory { .. }
+        | Operation::AgentRespond { .. }
+        | Operation::AgentInterrupt { .. }
+        | Operation::AgentConfigure { .. }
+        | Operation::AgentRename { .. }
+        | Operation::AgentClose { .. }
+        | Operation::AgentDelete { .. }
+        | Operation::AgentUsage { .. } => agent_operation(app, operation).await,
         Operation::Projects => desktop(app, None).await,
         Operation::Sessions { project } => {
             let inner = hub.inner.lock().unwrap();
@@ -1596,6 +1823,114 @@ async fn create(
     let inner = hub.inner.lock().unwrap();
     let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
     Ok(session.metadata(&id))
+}
+
+/// 重新向桌面端确认项目信任，返回 Agent 可用的项目描述。
+async fn agent_project(
+    app: &AppHandle,
+    project_id: &str,
+) -> Result<crate::agent::AgentProject, String> {
+    // 桌面端确认信任并建立 SSH / Server 连接；远端根目录与符号链接由远端模块校验。
+    let project: Project = serde_json::from_value(desktop(app, Some(project_id)).await?)
+        .map_err(|error| error.to_string())?;
+    if project.kind == ProjectKind::Local {
+        app.state::<crate::PathAllowlist>()
+            .ensure_executable(&project.path)?;
+    }
+    Ok(crate::agent::AgentProject {
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        kind: match project.kind {
+            ProjectKind::Local => "local",
+            ProjectKind::Wsl => "wsl",
+            ProjectKind::Ssh => "ssh",
+        }
+        .into(),
+        host: project.host,
+    })
+}
+
+/// 在阻塞线程池执行（可能启动子进程或短暂探测额度）。
+async fn agents_blocking<T: Send + 'static>(
+    app: &AppHandle,
+    action: impl FnOnce(&crate::agent::AgentHost) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let agents = app.state::<MobileState>().agents.clone();
+    tauri::async_runtime::spawn_blocking(move || action(&agents))
+        .await
+        .map_err(|_| "Windows 端操作中断。".to_string())?
+}
+
+async fn agent_operation(app: &AppHandle, operation: Operation) -> Result<Value, String> {
+    let agents = app.state::<MobileState>().agents.clone();
+    match operation {
+        Operation::AgentCatalog => agents_blocking(app, |agents| Ok(agents.catalog())).await,
+        Operation::AgentDefaults {
+            provider,
+            safety,
+            model,
+        } => {
+            agents_blocking(app, move |agents| {
+                agents.set_defaults(provider, safety, model)
+            })
+            .await
+        }
+        Operation::AgentThreads { project } => {
+            agents_blocking(app, move |agents| Ok(agents.list(project.as_deref()))).await
+        }
+        Operation::AgentCreate {
+            project,
+            provider,
+            safety,
+            model,
+        } => {
+            let project = agent_project(app, &project).await?;
+            agents_blocking(app, move |agents| {
+                agents.create(project, provider, safety, model)
+            })
+            .await
+        }
+        Operation::AgentSend { id, text, images } => {
+            let (project, running) = agents.project(&id)?;
+            // 进程未运行时会重新启动 Agent，先重新确认工作区信任与位置。
+            let refreshed = if running {
+                None
+            } else {
+                let current = agent_project(app, &project.id).await?;
+                if current.path != project.path || current.kind != project.kind {
+                    return Err("项目位置已变化，请新建对话。".into());
+                }
+                Some(current)
+            };
+            agents_blocking(app, move |agents| {
+                agents.send(&id, &text, &images, refreshed)
+            })
+            .await
+        }
+        Operation::AgentImage { data } => {
+            agents_blocking(app, move |agents| agents.attach(&data)).await
+        }
+        Operation::AgentPoll { id, from } => agents.poll(&id, from).await,
+        Operation::AgentHistory { id, before } => agents.history(&id, &before),
+        Operation::AgentRespond {
+            id,
+            approval,
+            choice,
+            answers,
+        } => agents
+            .respond(&id, &approval, &choice, &answers)
+            .map(|_| Value::Null),
+        Operation::AgentInterrupt { id } => agents.interrupt(&id).map(|_| Value::Null),
+        Operation::AgentConfigure { id, key, value } => agents.configure(&id, &key, &value),
+        Operation::AgentRename { id, title } => agents.rename(&id, &title),
+        Operation::AgentClose { id } => agents.close(&id).map(|_| Value::Null),
+        Operation::AgentDelete { id } => agents.delete(&id).map(|_| Value::Null),
+        Operation::AgentUsage { refresh } => {
+            agents_blocking(app, move |agents| Ok(agents.usage(refresh))).await
+        }
+        _ => unreachable!(),
+    }
 }
 
 async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), String> {
@@ -2074,6 +2409,16 @@ mod tests {
         assert_eq!(qr.modules.len(), qr.size * qr.size);
         assert!(qr.modules.contains('1'));
         assert!(mobile_pairing_qr("https://example.com".into()).is_err());
+    }
+
+    #[test]
+    fn remote_writes_are_chunked_on_character_boundaries() {
+        let text = "你".repeat(REMOTE_WRITE_CHUNK / 3 + 10);
+        let chunks = remote_chunks(&text);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= REMOTE_WRITE_CHUNK));
+        assert_eq!(chunks.concat(), text);
+        assert!(remote_chunks("").is_empty());
     }
 
     #[test]

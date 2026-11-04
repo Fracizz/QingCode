@@ -104,7 +104,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('reopening the project fetches the saved name from the computer', async () => {
       await drawer()
       await page.click('#back', { label: 'return to dashboard' })
-      await page.click('#dashboard-nav [data-page="home"]', { label: 'open resume home' })
+      await page.click('#dashboard-nav [data-page="chat"]', { label: 'show chats' }).then(() => page.click('#chat-terminals', { label: 'open resume home' }))
       await page.click('#resume', { label: 'resume named session' })
       await waitName('发布与构建')
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
@@ -139,7 +139,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('older desktops keep numbered sessions and disable unavailable renaming', async () => {
       await drawer()
       await page.click('#back', { label: 'return before legacy reconnect' })
-      await page.click('#dashboard-nav [data-page="home"]', { label: 'show legacy resume home' })
+      await page.click('#dashboard-nav [data-page="chat"]', { label: 'show chats' }).then(() => page.click('#chat-terminals', { label: 'show legacy resume home' }))
       await page.evaluate(() => { window.__mobileFixture.state.sessionNames = false })
       await page.click('#resume', { label: 'resume from older desktop' })
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')

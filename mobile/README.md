@@ -22,6 +22,30 @@ Android 端是终端优先的远程控制器。手机可保存多台能通过局
 项目列表将连接名称、IP / 主机名与路径分行显示；同名项目可按来源区分，也可搜索连接名或地址。
 「WSL」筛选对应电脑直接添加的 WSL 目录；通过名为 WSL 的远端连接访问的项目归入「远端」，显示例如「远端 · WSL · localhost」。首页继续终端和终端标题也保留来源信息。
 
+## 对话（Claude / Codex / OpenCode）
+
+App 默认首页是「对话」：像聊天一样和电脑上的 Claude Code、Codex、OpenCode 协作，不再需要在手机上操作全屏终端界面。导航为「对话 / 项目 / 连接」，终端从对话页底部的「终端会话」、项目行或对话设置中的「在终端中打开项目」进入。
+
+- **新建**：对话页点「新对话」，选择 Agent、项目（本机、WSL 以及 Linux / macOS 远端的已信任项目，SSH 直连与 Server 模式都支持）和安全选项；也可在「项目」页点项目行尾的对话按钮。点项目行本身仍直接打开终端。Windows 远端项目暂只支持终端。
+- **对话页**：用户消息靠右显示为气泡，Agent 回复按 Markdown 渲染（代码块可复制，网页链接交给系统浏览器）；思考过程、运行命令、修改文件、搜索等工具调用收成可展开的单行卡片，文件改动显示 diff；计划 / 待办显示为清单。执行中发送按钮变为「停止」。可附带多张图片（沿用终端设置里的压缩等级）。
+- **审批**：需要确认的命令、文件修改、额外权限、计划批准和 Agent 提问在消息流中显示为卡片，处理前不能发送新消息。Agent 结束或中断时，未处理的请求自动失效。
+- **安全选项**：每家各自提供，新对话默认使用电脑端保存的默认值（对话页右上角盾牌按钮设置，按电脑保存）。对话内点底部「安全」标签可随时切换，切到「完全访问」需二次确认。
+
+  | Agent | 选项（默认加粗） | 完全访问 |
+  | --- | --- | --- |
+  | Claude | **每次询问** / 自动编辑 / 只规划 / 完全访问 | `bypassPermissions`，不再询问 |
+  | Codex | 只读 / **自动**（项目内沙箱） / 完全访问 | `never` + `danger-full-access` |
+  | OpenCode | **每次询问** / 自动编辑 / 完全访问 | 电脑端自动放行全部权限请求 |
+
+  选择「完全访问」后不再向手机请求审批，Agent 直接编辑文件和运行命令；Agent 的提问（如 Claude 的 AskUserQuestion）仍会显示。
+- **模型与推理强度**：在对话设置中切换，选项由 Agent 实际提供。Claude 的推理强度在 Agent 空闲时重启生效，会话上下文自动恢复；OpenCode 另可切换 Build / Plan 模式。
+- **额度**：对话页顶部显示各家额度概览，点开可刷新。Claude 显示 5 小时 / 每周窗口的占用和重置时间，Codex 显示主、次额度窗口；读取时若没有运行中的 Agent，电脑端会短暂启动对应 CLI 读取，不发送对话内容。OpenCode 按所选模型的提供方计费，对话内显示上下文占用与花费。
+- **断线与恢复**：对话保存在电脑端（仅当前用户可读），手机按修订号增量同步，离线、切后台或重开 App 后接着显示，并恢复上次打开的对话及各对话的草稿。Agent 进程空闲 30 分钟、手动「暂停 Agent」或电脑端 QingCode 重启后会结束，再次发送消息时用 Agent 自己的会话 ID 恢复上下文（Codex `thread/resume`、Claude `--resume`、OpenCode `session/resume`）。关闭移动连接会结束所有 Agent 进程。
+- **远端项目**：复用电脑上已有的 SSH / Server 连接与工作区信任，在远端项目目录里启动 Agent，无需更新远端 qingcode-server。SSH 直连模式使用 SSH 终端通道；Server 模式由远端 daemon 托管终端，沿用终端的断线重连与输出补发，补发缓冲已淘汰时对话中会提示可能缺少中间过程。远端需要自行安装并登录对应 CLI，登录 Shell（`$SHELL -li`）能找到命令即可。Windows 远端的 ConPTY 会改写输出，暂不支持对话。额度弹层的「刷新」在没有运行中的 Agent 时只探测电脑本机的 CLI 账号。
+- **要求**：电脑端（或远端）需要先安装并登录对应 CLI（`claude`、`codex`、`opencode`）；WSL 项目在发行版内通过登录 Shell 启动。需要同时更新电脑端 QingCode 和 Android APK，旧版电脑端会提示更新。
+
+协议细节：Claude 使用 `claude -p --input-format stream-json --output-format stream-json --permission-prompts host`，Codex 使用 `codex app-server`（JSON-RPC），OpenCode 使用 `opencode acp`（Agent Client Protocol），本机与 WSL 通过子进程的标准输入输出通信；远端在 PTY 中先执行 `stty raw -echo` 关闭回显与行规程，输出就绪标记后再 `exec` Agent，电脑端收到标记后才写入，使 PTY 字节流就是逐行 JSON。实现在 `src-tauri/src/agent/` 与 `remote_ssh::ssh_spawn_agent`。
+
 ## 配对和使用
 
 1. 在 Windows QingCode 的「设置 → 功能 → Android 移动连接」填写端口和自定义 6–20 位密码，再保存并启用。Windows 自动监听局域网 IPv4 连接（含 Tailscale 等 `100.64.0.0/10` 地址）。密码可使用纯数字、纯字母或符号，无需组合，区分大小写；默认记住，可在电脑端显示或隐藏。启用后设置页显示配对二维码；电脑有多块网卡时可切换二维码使用的地址。
@@ -106,6 +130,8 @@ pwsh -NoProfile -File scripts/build-android.ps1 -SdkPlatform 'C:\Android\Sdk\pla
 ## 测试
 
 - `src/lib/mobileAndroidProtocol.test.ts`：配对链接、输出块、输入拆分、修饰键与按键序列（`mobile/android/web/protocol.js`）。
+- `src/lib/mobileAndroidChat.test.ts`：对话条目合并、Markdown 解析、状态与额度文案（`mobile/android/web/chatModel.js`）。
+- `src-tauri/src/agent/`：三家协议适配（流式回复、工具卡片、审批与安全选项、额度归一）、增量同步与长轮询。真实 CLI 端到端用例默认忽略，用 `cargo test --lib agent::e2e -- --ignored --nocapture --test-threads=1` 运行；OpenCode 用例会发送真实消息。
 - `src-tauri/src/mobile.rs`：配对持久化、多设备与撤销、按来源限流、轮询分页与快照、局域网来源。
 - Web 验收：`/mobile-android/` 页面加载真实 Android 网页资产，见 [Web 测试页与浏览器验收](../docs/web-ui-testing.md)。该页面不替代真机上的 WebView、相机、深链和网络验收。
 

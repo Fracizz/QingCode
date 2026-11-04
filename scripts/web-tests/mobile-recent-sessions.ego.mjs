@@ -11,6 +11,20 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const page = task.page('p1')
   const results = []
   const step = async (name, action) => { await action(); results.push({ name, passed: true }) }
+  // 窗口被遮挡时 page.screenshot() 可能挂起：拉到前台后用 CDP 截图，失败只记录。
+  const shot = async name => {
+    const metrics = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+    await page.cdp('Page.bringToFront')
+    // 截图只是附件：超时时记录后继续执行断言。
+    const capture = await page.cdp('Page.captureScreenshot', { format: 'png' }, { timeout: 8000 }).catch(error => {
+      skippedShots.push({ name, error: String(error?.message ?? error) })
+      return null
+    })
+    if (capture) await writeFile(resolve(output, name), Buffer.from(capture.data, 'base64'))
+    // 截图超时后 Ego 可能丢失模拟视口，恢复截图前的尺寸。
+    await page.cdp('Emulation.setDeviceMetricsOverride', { ...metrics, deviceScaleFactor: 1, mobile: true })
+  }
+  const skippedShots = []
   const names = () => page.evaluate(() => [...document.querySelectorAll('#home-project-list strong')].map(item => item.textContent))
   const pair = async (port, name) => {
     await page.evaluate(({ port, name }) => window.qingLink(window.__mobileFixture.link('192.168.1.8', port, undefined, name)), { port, name })
@@ -20,7 +34,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(name => document.querySelector('#active-host-name').textContent === name
       && document.querySelector('#active-host').dataset.state === 'online', name)
   }
-  const home = () => page.click('#dashboard-nav [data-page="home"]', { label: 'show terminal home' })
+  const home = () => page.click('#dashboard-nav [data-page="chat"]', { label: 'show chats' }).then(() => page.click('#chat-terminals', { label: 'show terminal home' }))
   const confirmAll = async () => {
     await page.click('#end-all-sessions', { label: 'end project sessions' })
     await page.waitForSelector('#confirm-dialog[open]')
@@ -45,7 +59,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#home-projects-title').textContent), '最近打开')
       assert.deepEqual(await names(), Array.from({ length: 10 }, (_, i) => 'Project ' + (14 - i)))
     })
-    await page.screenshot({ path: resolve(output, 'recent-top.png') })
+    await shot('recent-top.png')
     await step('the home page scrolls to the last recent project while navigation stays fixed', async () => {
       const navTop = await page.evaluate(() => document.querySelector('#dashboard-nav').getBoundingClientRect().top)
       await page.mouse.move(200, 600)
@@ -55,11 +69,13 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.ok(await page.evaluate(() => document.querySelector('#home-screen').scrollHeight > document.querySelector('#home-screen').clientHeight
         && document.documentElement.scrollWidth <= innerWidth))
     })
-    await page.screenshot({ path: resolve(output, 'recent-bottom.png') })
+    await shot('recent-bottom.png')
     await step('opening a project moves it to the top and saves its history', async () => {
       await page.click('#home-project-list .row:last-child', { label: 'open older recent project' })
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await page.click('#show-sessions', { label: 'open session drawer' })
+      await page.waitForSelector('#session-drawer[open]')
+      await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
       await page.click('#back', { label: 'return to recent projects' })
       assert.equal((await names())[0], 'Project 5')
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qingcode:mobile:recent-projects:192.168.1.8:48764'))[0].id), 'p5')
@@ -81,6 +97,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         && document.querySelector('#active-host').dataset.state === 'online')
       assert.deepEqual(await names(), ['Project 5'])
     })
+    await home()
     await page.click('#home-all-projects', { label: 'browse all projects' })
     await page.click('#project-list .row:first-child', { label: 'open batch session project' })
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
@@ -96,6 +113,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       window.__mobileFixture.state.endErrors.add(first.id)
     })
     await page.click('#show-sessions', { label: 'manage current project sessions' })
+    await page.waitForSelector('#session-drawer[open]')
+    await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true })
     await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
     await page.evaluate(() => document.querySelector('#end-all-sessions').scrollIntoView({ block: 'end' }))
@@ -103,14 +122,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       const bounds = document.querySelector('#end-all-sessions').getBoundingClientRect()
       return bounds.left >= -1 && bounds.right <= innerWidth + 1 && bounds.height >= 43.5
     }))
-    await page.screenshot({ path: resolve(output, 'all-sessions-narrow.png') })
+    await shot('all-sessions-narrow.png')
     await step('ending all sessions asks for the project and count and cancellation has no effect', async () => {
       await page.click('#end-all-sessions', { label: 'review all session endings' })
       await page.waitForSelector('#confirm-dialog[open]')
       const message = await page.evaluate(() => document.querySelector('#confirm-text').textContent)
       assert.match(message, /电脑 A \/ Project 0/)
       assert.match(message, /3 个手机会话/)
-      await page.screenshot({ path: resolve(output, 'confirm-all.png') })
+      await shot('confirm-all.png')
       await page.click('#confirm-dialog [value="cancel"]', { label: 'cancel all session endings' })
       assert.equal(await page.evaluate(() => window.__mobileFixture.state.ends.length), 0)
     })
@@ -121,15 +140,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.match(await page.evaluate(() => document.querySelector('#session-error').textContent), /已结束 2 个会话，1 个未确认结束/)
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.project).sort()), ['p0', 'p5'])
     })
-    await page.screenshot({ path: resolve(output, 'partial-failure.png') })
+    await shot('partial-failure.png')
     await step('retry ends only the remaining project session and returns home', async () => {
       await page.evaluate(() => window.__mobileFixture.state.endErrors.clear())
       await confirmAll()
       await page.waitForFunction(() => document.querySelector('#terminal-screen').hidden && !document.querySelector('#home-screen').hidden)
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.project)), ['p5'])
     })
-    await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results }, null, 2))
-    console.log({ output, results })
+    await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results, skippedShots }, null, 2))
+    console.log({ output, results, skippedShots })
     if (finish) await task.finish({ keep: [] })
   } catch (error) {
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ spaceId: task.spaceId, results, error: String(error) }, null, 2))
