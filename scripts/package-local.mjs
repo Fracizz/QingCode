@@ -19,10 +19,16 @@ Logs and JSON status: .dev/package-runs/<run-id>/
 Only independent stages run in parallel; exe and installer share a Cargo target and run sequentially.`
 
 function json(file) { return JSON.parse(readFileSync(file, 'utf8')) }
-function save(file, value) {
+export function save(file, value, rename = renameSync, wait = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
   const temporary = `${file}.${process.pid}.tmp`
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  renameSync(temporary, file)
+  // Windows scanners/readers can briefly deny replacement of an existing status file.
+  for (let attempt = 0; ; attempt++) {
+    try { rename(temporary, file); return } catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 19) throw error
+      wait(50)
+    }
+  }
 }
 function runPath(id) {
   if (!/^[0-9a-z-]+$/.test(id ?? '')) throw new Error('A valid run ID is required.')
@@ -111,7 +117,6 @@ export async function executePlan({ tasks, cwd, directory, jobs = 3, onEvent = c
             }
             task.finishedAt = new Date().toISOString()
             onEvent(`[${task.id}] ${task.status}; log: ${path.join(directory, task.log)}`)
-            persist()
             resolve()
           })
         })

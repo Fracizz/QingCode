@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import { buildPlan, executePlan } from './package-local.mjs'
+import { buildPlan, executePlan, save } from './package-local.mjs'
+
+test('a transient Windows replacement lock preserves and then updates the JSON status', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'qingcode-package-state-'))
+  try {
+    const file = path.join(directory, 'status.json')
+    writeFileSync(file, JSON.stringify({ status: 'running' }))
+    let attempts = 0
+    save(file, { status: 'succeeded' }, (source, destination) => {
+      if (++attempts < 3) {
+        assert.equal(JSON.parse(readFileSync(destination, 'utf8')).status, 'running')
+        throw Object.assign(new Error('File is temporarily locked'), { code: 'EPERM' })
+      }
+      renameSync(source, destination)
+    }, () => {})
+    assert.equal(attempts, 3)
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).status, 'succeeded')
+    assert.throws(() => save(file, {}, () => { throw Object.assign(new Error('Disk full'), { code: 'ENOSPC' }) }, () => {}), /Disk full/)
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
 
 test('desktop stages share preparation and serialize the Cargo output; APK stays independent', () => {
   const tasks = buildPlan()
