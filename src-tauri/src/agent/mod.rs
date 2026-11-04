@@ -32,8 +32,9 @@ const MAX_IMAGE: usize = 8 * 1024 * 1024;
 const ATTACHMENT_TTL: Duration = Duration::from_secs(30 * 60);
 const MAX_PROMPT: usize = 64 * 1024;
 const POLL_WAIT: Duration = Duration::from_secs(20);
-/// 空闲超过该时长的 Agent 进程会被关闭，下次发送时自动恢复会话。
-const IDLE_SHUTDOWN: Duration = Duration::from_secs(30 * 60);
+/// 空闲（无输入也无 Agent 输出）超过该时长的 Agent 进程会被关闭，与手机终端一致；
+/// 对话保留，下次发送时自动恢复会话。
+pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(24 * 60 * 60);
 const SAVE_INTERVAL: Duration = Duration::from_secs(2);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -340,8 +341,27 @@ struct Core {
     runtime: Option<Runtime>,
     generation: u64,
     last_active: Instant,
+    /// 最近活动的墙上时间（毫秒），用于手机显示空闲时长与自动结束时间。
+    last_active_ms: u64,
     /// 设置需要重启进程，当前轮结束后关闭。
     restart: bool,
+}
+
+impl Core {
+    fn touch(&mut self) {
+        self.last_active = Instant::now();
+        self.last_active_ms = now_ms();
+    }
+
+    /// 对话元数据，进程在线时附带空闲信息。
+    fn metadata(&self) -> Value {
+        let mut meta = self.thread.metadata(self.runtime.is_some());
+        if self.runtime.is_some() {
+            meta["lastActiveAt"] = json!(self.last_active_ms);
+            meta["idleDeadline"] = json!(self.last_active_ms + IDLE_SHUTDOWN.as_millis() as u64);
+        }
+        meta
+    }
 }
 
 struct Slot {
@@ -502,7 +522,7 @@ fn handle_line(shared: &Shared, slot: &Slot, generation: u64, line: &str) {
     if core.runtime.as_ref().map(|runtime| runtime.generation) != Some(generation) {
         return;
     }
-    core.last_active = Instant::now();
+    core.touch();
     drive(shared, &mut core, |adapter, cx| {
         adapter.on_line(message, cx)
     });
@@ -579,7 +599,7 @@ fn start_runtime(shared: &Arc<Shared>, slot: &Arc<Slot>, core: &mut Core) -> Res
         process,
         generation,
     });
-    core.last_active = Instant::now();
+    core.touch();
     core.thread.error = None;
     core.thread.set_status(Status::Starting);
     drive(shared, core, |adapter, cx| adapter.start(cx));
@@ -719,6 +739,7 @@ impl AgentHost {
                                 runtime: None,
                                 generation: 0,
                                 last_active: Instant::now(),
+                                last_active_ms: now_ms(),
                                 restart: false,
                             }),
                             changed: Arc::new(Notify::new()),
@@ -859,7 +880,7 @@ impl AgentHost {
                 if project.is_some_and(|project| core.thread.data.project.id != project) {
                     return None;
                 }
-                let mut meta = core.thread.metadata(core.runtime.is_some());
+                let mut meta = core.metadata();
                 // 列表不需要模型选项等大字段。
                 meta.as_object_mut().map(|meta| meta.remove("options"));
                 Some(meta)
@@ -876,6 +897,7 @@ impl AgentHost {
                 runtime: None,
                 generation: 0,
                 last_active: Instant::now(),
+                last_active_ms: now_ms(),
                 restart: false,
             }),
             changed: Arc::new(Notify::new()),
@@ -948,7 +970,7 @@ impl AgentHost {
             self.shared.threads.lock().unwrap().remove(&id);
             return Err(error);
         }
-        let meta = core.thread.metadata(core.runtime.is_some());
+        let meta = core.metadata();
         drop(core);
         slot.changed.notify_waiters();
         Ok(meta)
@@ -1027,7 +1049,7 @@ impl AgentHost {
                 return Err(error);
             }
         }
-        core.last_active = Instant::now();
+        core.touch();
         if core.thread.status != Status::Starting {
             core.thread.set_status(Status::Running);
         }
@@ -1042,7 +1064,7 @@ impl AgentHost {
             core.thread.notice("error", error.clone());
             core.thread.set_status(Status::Idle);
         }
-        let meta = core.thread.metadata(core.runtime.is_some());
+        let meta = core.metadata();
         drop(core);
         slot.changed.notify_waiters();
         match result {
@@ -1054,7 +1076,7 @@ impl AgentHost {
     fn snapshot(core: &Core, from: u64) -> Value {
         let (full, items) = core.thread.changes(from);
         json!({
-            "thread": core.thread.metadata(core.runtime.is_some()),
+            "thread": core.metadata(),
             "items": items,
             "full": full,
             "rev": core.thread.data.rev,
@@ -1096,7 +1118,7 @@ impl AgentHost {
         if core.runtime.is_none() {
             return Err("Agent 未运行，请重新发送消息以恢复会话。".into());
         }
-        core.last_active = Instant::now();
+        core.touch();
         let result =
             drive(&self.shared, &mut core, action).unwrap_or_else(|| Err("Agent 未运行。".into()));
         drop(core);
@@ -1151,7 +1173,7 @@ impl AgentHost {
                 }
             }
         }
-        let meta = core.thread.metadata(core.runtime.is_some());
+        let meta = core.metadata();
         drop(core);
         slot.changed.notify_waiters();
         Ok(meta)
@@ -1167,7 +1189,7 @@ impl AgentHost {
         core.thread.data.title = title.to_string();
         core.thread.data.title_manual = !title.is_empty();
         core.thread.bump();
-        let meta = core.thread.metadata(core.runtime.is_some());
+        let meta = core.metadata();
         drop(core);
         slot.changed.notify_waiters();
         Ok(meta)
@@ -1444,6 +1466,11 @@ mod tests {
             .create(ssh, Provider::Codex, Some("full".into()), None)
             .unwrap();
         let id = meta["id"].as_str().unwrap().to_string();
+        // 在线的 Agent 带空闲信息：24 小时无活动后自动结束。
+        assert_eq!(
+            meta["idleDeadline"].as_u64().unwrap() - meta["lastActiveAt"].as_u64().unwrap(),
+            IDLE_SHUTDOWN.as_millis() as u64
+        );
         let (terminal, script, mut commands, mut ready) = launcher.0.lock().unwrap().pop().unwrap();
         assert!(terminal.starts_with(TERMINAL_PREFIX));
         assert!(script.starts_with("stty raw -echo"));

@@ -54,6 +54,9 @@ const ONLINE_WINDOW: Duration = Duration::from_secs(15);
 const PROJECTS_TIMEOUT: Duration = Duration::from_secs(20);
 /// Opening a project may wait for a desktop prompt such as host-key confirmation.
 const CREATE_TIMEOUT: Duration = Duration::from_secs(90);
+/// 手机终端 24 小时内既无输入也无输出时自动结束，与对话的 Agent 进程一致。
+const TERMINAL_IDLE: Duration = crate::agent::IDLE_SHUTDOWN;
+const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 #[cfg(not(test))]
 const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 // Unoptimized test builds would spend seconds per derivation.
@@ -239,6 +242,12 @@ fn token_digest(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
 }
 
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |time| time.as_millis() as u64)
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -294,6 +303,9 @@ struct Session {
     next: u64,
     changed: Arc<Notify>,
     screen: MobileScreen,
+    /// 最近一次输入或输出；轮询不算活动。
+    last_active: Instant,
+    last_active_ms: u64,
 }
 
 impl Session {
@@ -313,10 +325,18 @@ impl Session {
             next: 0,
             changed: Arc::new(Notify::new()),
             screen: MobileScreen::new(),
+            last_active: Instant::now(),
+            last_active_ms: unix_now_ms(),
         }
     }
 
+    fn touch(&mut self) {
+        self.last_active = Instant::now();
+        self.last_active_ms = unix_now_ms();
+    }
+
     fn push(&mut self, chunk: OutputChunk) {
+        self.touch();
         let previous_title = self.screen.title().map(str::to_owned);
         match &chunk {
             OutputChunk::Bytes(data) => {
@@ -377,7 +397,9 @@ impl Session {
     fn metadata(&self, id: &str) -> Value {
         json!({ "id": id, "number": self.number, "exit": self.exit,
             "programTitle": self.screen.title(),
-            "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision })
+            "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
+            "lastActiveAt": self.last_active_ms,
+            "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
     }
 
     fn read(&self, from: u64) -> Value {
@@ -785,6 +807,25 @@ impl Hub {
         Ok(session.project.kind)
     }
 
+    /// 取出空闲超过 `limit` 的在线会话（标记为关闭中，由调用方结束），并直接移除早已结束的记录。
+    fn take_idle_sessions(&self, limit: Duration) -> Vec<(String, ProjectKind)> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.sessions.retain(|_, session| {
+            !(session.ready && session.exit.is_some() && session.last_active.elapsed() >= limit)
+        });
+        inner
+            .sessions
+            .iter_mut()
+            .filter(|(_, session)| {
+                session.ready && session.exit.is_none() && session.last_active.elapsed() >= limit
+            })
+            .map(|(id, session)| {
+                session.ready = false;
+                (id.clone(), session.project.kind)
+            })
+            .collect()
+    }
+
     fn take_live_sessions(&self) -> Vec<(String, ProjectKind)> {
         let sessions = std::mem::take(&mut self.inner.lock().unwrap().sessions);
         sessions
@@ -1083,8 +1124,29 @@ impl crate::agent::RemoteLauncher for RemoteAgents {
     }
 }
 
+/// 定期结束空闲超过 24 小时的手机终端；结束失败的会话恢复原状，下一轮再试。
+async fn sweep_idle_terminals(app: &AppHandle) {
+    let hub = &app.state::<MobileState>().inner().hub;
+    for (id, kind) in hub.take_idle_sessions(TERMINAL_IDLE) {
+        let result = end(app, id.clone(), kind).await;
+        let mut inner = hub.inner.lock().unwrap();
+        if result.is_ok() {
+            inner.sessions.remove(&id);
+        } else if let Some(session) = inner.sessions.get_mut(&id) {
+            session.ready = true;
+        }
+    }
+}
+
 /// Loads persisted pairings and restarts the listener if it was enabled.
 pub fn initialize(app: &AppHandle) {
+    let sweeper = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(IDLE_SWEEP_INTERVAL).await;
+            sweep_idle_terminals(&sweeper).await;
+        }
+    });
     let state = app.state::<MobileState>();
     state
         .agents
@@ -1612,6 +1674,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
+            hub.with_session(&id, Session::touch);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_write_terminal(id, data, app.state()).await?;
             } else {
@@ -1674,6 +1737,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             result
         }
         Operation::Resize { id, cols, rows } => {
+            hub.with_session(&id, Session::touch);
             let (cols, rows) = size(cols, rows);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_resize_terminal(id.clone(), cols, rows, app.state()).await?;
@@ -2591,6 +2655,55 @@ mod tests {
         assert!(chunks.iter().all(|chunk| chunk.len() <= REMOTE_WRITE_CHUNK));
         assert_eq!(chunks.concat(), text);
         assert!(remote_chunks("").is_empty());
+    }
+
+    #[test]
+    fn idle_sweep_ends_quiet_sessions_and_drops_old_exited_records() {
+        let hub = Hub::default();
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            for (id, ready, exited, idle) in [
+                ("mobile-quiet", true, false, true),
+                ("mobile-busy", true, false, false),
+                ("mobile-done", true, true, true),
+                ("mobile-starting", false, false, true),
+            ] {
+                let mut session = Session::new(project(), "phone".into(), 1);
+                session.ready = ready;
+                if exited {
+                    session.finish(Exit {
+                        exit_code: 0,
+                        disconnected: false,
+                    });
+                }
+                if idle {
+                    session.last_active = Instant::now() - Duration::from_secs(10);
+                }
+                inner.sessions.insert(id.into(), session);
+            }
+        }
+        let idle = hub.take_idle_sessions(Duration::from_secs(5));
+        assert_eq!(idle, [("mobile-quiet".to_string(), ProjectKind::Local)]);
+        let inner = hub.inner.lock().unwrap();
+        assert!(!inner.sessions["mobile-quiet"].ready, "结束期间不可再操作");
+        assert!(!inner.sessions.contains_key("mobile-done"));
+        assert!(inner.sessions["mobile-busy"].ready);
+        assert!(inner.sessions.contains_key("mobile-starting"));
+    }
+
+    #[test]
+    fn session_metadata_reports_idle_deadline_until_exit() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        let meta = session.metadata("mobile-1");
+        assert_eq!(
+            meta["idleDeadline"].as_u64().unwrap() - meta["lastActiveAt"].as_u64().unwrap(),
+            TERMINAL_IDLE.as_millis() as u64
+        );
+        session.finish(Exit {
+            exit_code: 0,
+            disconnected: false,
+        });
+        assert!(session.metadata("mobile-1")["idleDeadline"].is_null());
     }
 
     #[test]

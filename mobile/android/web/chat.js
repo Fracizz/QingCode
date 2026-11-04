@@ -3,6 +3,7 @@
 import {
   approvalChoiceLabel,
   chatSupported,
+  idleLabel,
   collectAnswers,
   diffLineKind,
   inlineTokens,
@@ -164,6 +165,7 @@ export function createChat(deps) {
         : '选择项目和 Agent，像聊天一样描述需求；编辑、命令等操作按安全选项在手机上确认。';
     get('chat-empty-action').textContent = !profile ? (deps.hasProfiles?.() ? '查看连接' : '添加连接') : !online ? '重新连接' : '新对话';
     get('chat-terminals').hidden = !profile;
+    get('chat-list-heading').hidden = empty;
   }
 
   async function refreshList() {
@@ -939,8 +941,9 @@ export function createChat(deps) {
     get('chat-options-effort-field').hidden = !efforts.length && !current.effort;
     selectOptions(get('chat-options-mode'), options.modes, current.mode, '默认模式');
     get('chat-options-mode-field').hidden = current.provider !== 'opencode';
+    const idle = idleLabel(current, Date.now(), '自动暂停');
     get('chat-options-context').textContent = providerInfo(current.provider).name + ' · ' + current.projectName
-      + (current.running ? ' · Agent 运行中' : ' · Agent 已暂停，发送消息时恢复');
+      + (current.running ? ' · Agent 在线' + (idle ? '（' + idle + '）' : '') : ' · Agent 已暂停，发送消息时恢复');
     get('chat-options-effort-hint').hidden = current.provider !== 'claude';
     showError('chat-options-error', null);
   }
@@ -1056,6 +1059,87 @@ export function createChat(deps) {
     }
   }
 
+  // ---------- 管理对话 ----------
+
+  const busyThread = thread => thread.status === 'running' || thread.status === 'starting' || thread.pending > 0;
+  const idleThread = thread => thread.running && !busyThread(thread);
+
+  function manageState(thread) {
+    if (busyThread(thread)) return threadStatus(thread).label;
+    if (thread.running) return 'Agent 在线 · ' + (idleLabel(thread, Date.now(), '自动暂停') || '空闲');
+    return 'Agent 已暂停 · 对话保留，发送消息时恢复';
+  }
+
+  function renderManage() {
+    const box = get('chat-manage-list');
+    const sorted = sortThreads(threads);
+    box.replaceChildren(...sorted.map(thread => {
+      const row = element('div', 'manage-row');
+      row.dataset.running = String(!!thread.running);
+      const text = element('span', 'row-text');
+      text.append(
+        element('strong', '', threadTitle(thread)),
+        element('small', '', providerInfo(thread.provider).name + ' · ' + thread.projectName + ' · ' + relativeTime(thread.updatedAt)),
+        element('small', 'manage-state', manageState(thread)),
+      );
+      const actions = element('span', 'manage-actions');
+      if (thread.running) {
+        const pause = element('button', 'secondary', '暂停');
+        pause.type = 'button';
+        pause.disabled = busyThread(thread);
+        pause.setAttribute('aria-label', '暂停 Agent：' + threadTitle(thread));
+        pause.addEventListener('click', () => { void manageAction([thread], 'agent_close'); });
+        actions.append(pause);
+      }
+      const remove = element('button', 'secondary danger', '删除');
+      remove.type = 'button';
+      remove.disabled = busyThread(thread);
+      remove.setAttribute('aria-label', '删除对话：' + threadTitle(thread));
+      remove.addEventListener('click', async () => {
+        if (await deps.confirm('删除对话？', `「${threadTitle(thread)}」会结束 Agent 进程并删除电脑端保存的对话记录；Agent 自己的会话记录不受影响。`, '删除')) {
+          await manageAction([thread], 'agent_delete');
+        }
+      });
+      actions.append(remove);
+      row.append(providerAvatar(thread.provider), text, actions);
+      return row;
+    }));
+    const idle = threads.filter(idleThread);
+    const paused = threads.filter(thread => !thread.running && !busyThread(thread));
+    get('chat-manage-pause-all').textContent = idle.length ? `暂停全部空闲 Agent（${idle.length}）` : '没有空闲的 Agent';
+    get('chat-manage-pause-all').disabled = !idle.length;
+    get('chat-manage-delete-paused').textContent = paused.length ? `删除已暂停的对话（${paused.length}）` : '没有已暂停的对话';
+    get('chat-manage-delete-paused').disabled = !paused.length;
+    get('chat-manage-empty').hidden = threads.length > 0;
+  }
+
+  async function manageAction(targets, op) {
+    showError('chat-manage-error', null);
+    const failed = [];
+    for (const thread of targets) {
+      try {
+        await deps.remote(op, { id: thread.id });
+        if (op === 'agent_delete') localStorage.removeItem(draftKey(thread.id));
+      } catch (error) {
+        if (error.revoked) {
+          deps.onRevoked(error);
+          return;
+        }
+        failed.push(threadTitle(thread) + '：' + explain(error));
+      }
+    }
+    if (failed.length) showError('chat-manage-error', new Error(failed.join('\n')));
+    await refreshList();
+    renderManage();
+  }
+
+  async function openManage() {
+    showError('chat-manage-error', null);
+    await refreshList();
+    renderManage();
+    get('chat-manage-dialog').showModal();
+  }
+
   // ---------- 项目入口 ----------
 
   function projectActions(project) {
@@ -1071,6 +1155,14 @@ export function createChat(deps) {
   // ---------- 事件 ----------
 
   get('chat-new').addEventListener('click', () => { void openNewDialog(); });
+  get('chat-manage').addEventListener('click', () => { void openManage(); });
+  get('chat-manage-pause-all').addEventListener('click', () => { void manageAction(threads.filter(idleThread), 'agent_close'); });
+  get('chat-manage-delete-paused').addEventListener('click', async () => {
+    const paused = threads.filter(thread => !thread.running && !busyThread(thread));
+    if (await deps.confirm('删除已暂停的对话？', `将删除 ${paused.length} 段已暂停的对话记录，Agent 自己的会话记录不受影响。`, '删除')) {
+      await manageAction(paused, 'agent_delete');
+    }
+  });
   get('chat-empty-action').addEventListener('click', () => {
     // 未连接、离线或需重新配对时沿用终端首页按钮的处理。
     if (!deps.profile() || !deps.online()) deps.connect();
@@ -1192,7 +1284,7 @@ export function createChat(deps) {
   listVisible = !get('chat-screen').hidden && !get('dashboard').hidden;
   renderList();
 
-  const dialogs = ['chat-rename-dialog', 'chat-options-dialog', 'chat-new-dialog', 'chat-settings-dialog', 'chat-quota-dialog', 'chat-project-dialog'];
+  const dialogs = ['chat-manage-dialog', 'chat-rename-dialog', 'chat-options-dialog', 'chat-new-dialog', 'chat-settings-dialog', 'chat-quota-dialog', 'chat-project-dialog'];
 
   return {
     /** 切换工作台页面时调用。 */

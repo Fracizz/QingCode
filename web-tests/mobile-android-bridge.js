@@ -89,7 +89,9 @@
   }
 
   function sessionMetadata(session) {
-    const basic = { id: session.id, number: session.number, exit: session.exit }
+    const lastActiveAt = session.lastActiveAt ?? Date.now()
+    const basic = { id: session.id, number: session.number, exit: session.exit,
+      lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3 }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
       programTitle: session.title ?? null,
       customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
@@ -141,7 +143,8 @@
     return { id: thread.id, provider: thread.provider, projectId: thread.projectId, projectName: project?.name ?? '', projectKind: project?.kind, projectHost: project?.host,
       title: thread.title, titleManual: thread.titleManual, status: thread.status, error: null, running: thread.running, safety: thread.safety, model: thread.model,
       effort: thread.effort, mode: thread.mode, createdAt: thread.createdAt, updatedAt: thread.updatedAt, rev: thread.rev, pending, preview: preview.slice(0, 120),
-      usage: thread.usage, options: thread.options }
+      usage: thread.usage, options: thread.options,
+      ...(thread.running ? { lastActiveAt: thread.updatedAt, idleDeadline: thread.updatedAt + 24 * 3600e3 } : {}) }
   }
 
   function agentUpsert(thread, id, kind, change) {

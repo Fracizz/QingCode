@@ -62,6 +62,7 @@
         </header>
         <button id="chat-quota" class="quota-strip" type="button" aria-label="查看各家使用额度" hidden></button>
         <p id="chat-error" class="error" role="alert" hidden></p>
+        <div id="chat-list-heading" class="section-heading" hidden><h2>最近对话</h2><button id="chat-manage" class="text-button" type="button">管理</button></div>
         <div id="chat-list" class="rows" aria-label="对话列表"></div>
         <div id="chat-empty" class="empty-card" hidden>
           <span class="tile"><svg><use href="#i-chat"/></svg></span>
@@ -477,6 +478,20 @@
     </div>
     <p id="chat-project-unsupported" class="hint" hidden>Windows 远端项目暂只支持终端；Linux / macOS 远端可以对话。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-project-dialog">取消</button></div>
+  </dialog>
+
+  <dialog id="chat-manage-dialog" class="sheet" aria-labelledby="chat-manage-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="chat-manage-title">管理对话</h2>
+    <p>Agent 进程 24 小时内既无输入也无输出时自动暂停（手机终端同样 24 小时后结束）。暂停只结束进程，对话保留，再次发送消息时恢复上下文。</p>
+    <div id="chat-manage-list" class="rows manage-list"></div>
+    <p id="chat-manage-empty" class="hint" hidden>还没有对话。</p>
+    <p id="chat-manage-error" class="error" role="alert" hidden></p>
+    <div class="manage-bulk">
+      <button id="chat-manage-pause-all" type="button" class="secondary">暂停全部空闲 Agent</button>
+      <button id="chat-manage-delete-paused" type="button" class="secondary danger">删除已暂停的对话</button>
+    </div>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-manage-dialog">完成</button></div>
   </dialog>
 
   <dialog id="chat-rename-dialog" aria-labelledby="chat-rename-title">

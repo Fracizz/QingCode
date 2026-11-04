@@ -30,6 +30,7 @@ import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState, terminalText, searchOffsets } from './workspaceState.js';
 import { createChat } from './chat.js';
+import { idleLabel } from './chatModel.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -1430,6 +1431,10 @@ function renderSessions() {
       const name = document.createElement('span');
       name.className = 'session-label';
       heading.append(icon('loader-circle', 'session-spinner'), name);
+      // 空闲 24 小时无输入也无输出时电脑端自动结束会话。
+      const idle = document.createElement('small');
+      idle.className = 'session-idle';
+      text.append(idle);
       option.append(text);
       const rename = button('icon-button', () => {
         const latest = sessions.find(item => item.id === session.id);
@@ -1447,6 +1452,9 @@ function renderSessions() {
     const identity = '终端 ' + (session.number ?? index + 1);
     row.querySelector('.session-label').textContent = label;
     row.querySelector('small').textContent = label === identity ? status : identity + ' · ' + status;
+    const idle = row.querySelector('.session-idle');
+    idle.textContent = session.exit ? '' : idleLabel(session);
+    idle.hidden = !idle.textContent;
     const rename = row.querySelector('.icon-button');
     rename.setAttribute('aria-label', '重命名 ' + label);
     rename.disabled = !Number.isFinite(session.nameRevision) || busy;

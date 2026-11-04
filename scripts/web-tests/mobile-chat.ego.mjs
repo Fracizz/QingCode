@@ -206,6 +206,38 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.evaluate(() => window.qingBack())
     })
 
+    await step('terminal drawer shows the 24-hour idle limit for each session', async () => {
+      await page.click('#dashboard-nav [data-page="project"]', { label: 'browse projects' })
+      await page.click('#project-list .row:first-child .row-main', { label: 'open terminal project' })
+      await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
+      await page.click('#show-sessions', { label: 'open session drawer' })
+      await page.waitForSelector('#session-drawer[open]')
+      await page.waitForFunction(() => /刚刚有活动，24 小时后自动结束/.test(document.querySelector('#session-options .session-idle')?.textContent ?? ''))
+      await shot('terminal-idle.png')
+      await page.evaluate(() => window.qingBack())
+      await page.evaluate(() => window.qingBack())
+      await page.waitForFunction(() => document.querySelector('#terminal-screen').hidden)
+    })
+
+    await step('manage sheet shows idle agents, pauses one and deletes paused conversations', async () => {
+      await page.click('#dashboard-nav [data-page="chat"]', { label: 'back to chats' })
+      await page.click('#chat-manage', { label: 'manage conversations' })
+      await page.waitForSelector('#chat-manage-dialog[open]')
+      await page.waitForFunction(() => /Agent 在线 · 刚刚有活动，24 小时后自动暂停/.test(document.querySelector('#chat-manage-list').textContent))
+      assert.equal(await text('#chat-manage-pause-all'), '暂停全部空闲 Agent（1）')
+      await shot('manage.png')
+      await page.click('#chat-manage-list .manage-actions .secondary:not(.danger)', { label: 'pause agent' })
+      await page.waitForFunction(() => /Agent 已暂停/.test(document.querySelector('#chat-manage-list').textContent))
+      assert.ok(await page.evaluate(() => document.querySelector('#chat-manage-pause-all').disabled))
+      await page.click('#chat-manage-delete-paused', { label: 'delete paused conversations' })
+      await page.waitForSelector('#confirm-dialog[open]')
+      await page.click('#confirm-action', { label: 'confirm delete' })
+      await page.waitForFunction(() => !document.querySelector('#chat-manage-empty').hidden)
+      assert.equal(await page.evaluate(() => window.__mobileFixture.state.agent.threads.size), 0)
+      await page.click('#chat-manage-dialog [data-close]', { label: 'close manage sheet' })
+      await page.waitForFunction(() => !document.querySelector('#chat-empty').hidden && document.querySelector('#chat-list-heading').hidden)
+    })
+
     await step('older desktops without chat support get an update hint', async () => {
       await page.evaluate(() => { window.__mobileFixture.state.agent.unsupported = true })
       await page.click('#dashboard-nav [data-page="project"]', { label: 'leave chats' })

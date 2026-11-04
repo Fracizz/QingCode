@@ -65,6 +65,34 @@ export function threadStatus(thread) {
   }
 }
 
+/**
+ * 时长文案：不足 1 分钟、N 分钟、N 小时（10 小时内带分钟）。
+ * 已经过的时长向下取整，剩余时长（`ceil`）向上取整，刚活动时显示「24 小时后」而不是 23 小时。
+ */
+export function formatDuration(ms, ceil = false) {
+  const round = ceil ? Math.ceil : Math.floor;
+  const minutes = Math.max(0, round(ms / 60000));
+  if (minutes < 1) return '不到 1 分钟';
+  if (minutes < 60) return `${minutes} 分钟`;
+  const rest = minutes % 60;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 10 && rest) return `${hours} 小时 ${rest} 分`;
+  return `${ceil && rest ? hours + 1 : hours} 小时`;
+}
+
+/**
+ * 空闲与自动结束提示（手机终端与对话的 Agent 进程，24 小时无输入也无输出时结束）。
+ * 没有 `idleDeadline`（已结束、已暂停或旧版电脑端）时返回空字符串。
+ */
+export function idleLabel(item, now = Date.now(), action = '自动结束') {
+  if (!Number.isFinite(item?.idleDeadline)) return '';
+  const left = item.idleDeadline - now;
+  const idle = Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null;
+  const head = idle === null ? '' : idle < 60000 ? '刚刚有活动' : `空闲 ${formatDuration(idle)}`;
+  const tail = left <= 0 ? `即将${action}` : `${formatDuration(left, true)}后${action}`;
+  return [head, tail].filter(Boolean).join('，');
+}
+
 export function relativeTime(time, now = Date.now()) {
   if (!time) return '';
   const seconds = Math.max(0, Math.round((now - time) / 1000));

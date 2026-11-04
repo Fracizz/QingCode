@@ -637,6 +637,16 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 }
 .project-entry .row-main .arrow { display: none; }
 .project-chat { width: 48px; color: var(--accent); }
+.session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
+#chat-list-heading { margin-top: 4px; }
+.manage-list { margin-top: 12px; background: var(--paper); }
+.manage-row { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 4px 12px; align-items: center; padding: 12px; }
+.manage-row .avatar { width: 32px; height: 32px; font-size: 13px; }
+.manage-row .row-text small.manage-state { white-space: normal; }
+.manage-row[data-running="true"] .manage-state { color: var(--accent); }
+.manage-actions { grid-column: 2; display: flex; gap: 8px; }
+.manage-actions button { flex: 1; min-height: 40px; padding-inline: 10px; font-size: 13px; }
+.manage-bulk { display: grid; gap: 8px; margin-top: 12px; }
 /* 列表沿用分组行；对话页参考 T3 Code 与 OpenCode 移动端：用户气泡靠右，助手回复整宽 Markdown，工具调用收成单行卡片。 */
 .heading-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .provider-avatar.small, .avatar.small { width: 32px; height: 32px; font-size: 13px; }
