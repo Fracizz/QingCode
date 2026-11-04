@@ -37,7 +37,7 @@ try {
   run('click', '#project-list .row:first-child')
   check('终端可输入', `document.querySelector('#terminal-status').textContent === '会话中'`)
   evaluate(`window.__keyEvents = []; document.addEventListener('click', e => window.__keyEvents.push({id:e.target.id,key:e.target.dataset.key,disabled:e.target.disabled}),true)`)
-  check('常用区只有两排六列，没有重复补全工具栏', `document.querySelector('#special-keys').children.length === 12 && getComputedStyle(document.querySelector('#special-keys')).gridTemplateColumns.split(' ').length === 6 && !document.querySelector('#completion-tools')`)
+  check('常用区为单行，Esc、Tab、Ctrl+C 在最前，没有重复补全工具栏', `(() => { const keys = [...document.querySelector('#special-keys').children]; return keys.length === 11 && keys.slice(0, 3).map(k => k.dataset.key).join() === 'esc,tab,interrupt' && new Set(keys.map(k => Math.round(k.getBoundingClientRect().top))).size === 1 && !document.querySelector('#completion-tools'); })()`)
 
   reset()
   run('fill', '#compose', '前👨‍👩‍👧‍👦后')
@@ -54,7 +54,7 @@ try {
   check('清空草稿只清空手机文本', `${draft} === '' && ${inputs} === ''`)
   run('fill', '#compose', '前后')
   evaluate(`document.querySelector('#compose').setSelectionRange(1,1)`)
-  press('newline')
+  more('newline')
   check('换行插入本地光标处，不提交内容', `${draft} === ${JSON.stringify('前\n后')} && ${inputs} === ''`)
 
   run('fill', '#compose', '')
@@ -74,7 +74,7 @@ try {
   press('tab')
   press('shift-tab')
   press('esc')
-  press('newline')
+  more('newline')
   check('@、Tab、Shift+Tab、Esc、换行分别发送原生按键，无隐含回车', `${inputs} === ${JSON.stringify('@\t\x1b[Z\x1b\n')}`)
   run('click', '#send')
   check('只有明确确认才发送一次回车', `${inputs} === ${JSON.stringify('@\t\x1b[Z\x1b\n\r')}`)
@@ -116,8 +116,9 @@ try {
   run('fill', '#compose', '')
   reset()
   more('alt')
-  run('click', '#keys-dialog [data-key="interrupt"]')
-  check('更多中的 Ctrl+C 不受 Alt 修饰影响', `${inputs} === String.fromCharCode(3) && document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed') === 'false'`)
+  evaluate(`document.querySelector('#keys-dialog').close()`)
+  run('click', '#special-keys [data-key="interrupt"]')
+  check('常用区 Ctrl+C 不受 Alt 修饰影响', `${inputs} === String.fromCharCode(3) && document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed') === 'false'`)
   run('click', '#keyboard')
   for (const [name, width, height] of [['phone',390,844],['narrow',320,740],['keyboard',390,430],['landscape',844,390]]) {
     run('set', 'viewport', String(width), String(height))

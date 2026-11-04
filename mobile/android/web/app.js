@@ -7,7 +7,7 @@ import {
   keySequence,
   matchesProject,
   nextModifierState,
-  outputChunk,
+  outputBatches,
   parsePairingLink,
   projectSourceLabel,
   recentProjects,
@@ -18,7 +18,7 @@ import {
   validPort,
 } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
-import { attachTerminalTouchScroll } from './terminalTouch.js';
+import { attachTerminalTouchScroll, attachTouchMouseGuard } from './terminalTouch.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
@@ -38,12 +38,23 @@ const workspace = createWorkspaceState({ storage: localStorage, onError: () => {
 const drafts = workspace.drafts;
 const inputModes = new Map();
 let inputMode = 'compose';
+// 全屏程序中的触摸：view 只看手机端历史、不向程序发鼠标事件（默认）；program 把滑动和点按发给程序。
+let touchMode = localStorage.getItem('qingcode:mobile:touch-mode') === 'program' ? 'program' : 'view';
+let disposeTouchGuard;
+// 输入框上边框右侧的短提示：图片进度只在上传期间和插入后短暂显示，「已接收」几秒后收成 ✓。
+let imageNote = null;
+let imageNoteTimer = null;
+let compactReceipt = null;
+let compactReceiptTimer = null;
 const keyRepeats = [];
 const prefix = 'qingcode:mobile:';
 const landscape = window.matchMedia('(orientation: landscape) and (min-width: 600px)');
 let deviceLandscape = landscape.matches;
 let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
+// 发送按键：default 保持原行为；enter 为文字送达后单独补发回车。
+let sendMode = localStorage.getItem(prefix + 'send-mode') === 'enter' ? 'enter' : 'default';
+const AUTO_ENTER_DELAY_MS = 120;
 let fullscreen = false;
 let fullscreenEpoch = 0;
 let requestId = 0;
@@ -774,6 +785,7 @@ function setRawKeyboard(enabled) {
   get('keys-target').textContent = '编辑目标：' + (enabled ? '终端实时输入' : '手机草稿');
   compose.placeholder = enabled ? '实时输入中 · 按键直接发送' : '输入命令，空白发送回车';
   get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
+  get('input-mode').dataset.mode = enabled ? 'raw' : 'compose';
   updateComposerActions();
 }
 
@@ -811,10 +823,50 @@ function saveDraft() {
 
 function renderSubmissionState() {
   const latest = selected ? workspace.recent(draftKey(selected))[0] : null;
-  const target = get('submission-state');
-  target.hidden = !latest && !persistenceFailed;
-  get('submission-status').textContent = persistenceFailed ? '手机保存失败，请保留原文'
-    : latest?.state === 'sending' ? '正在发送…' : latest?.state === 'received' ? '电脑已接收 · 可查看原文' : '提交结果未知 · 原文已保留';
+  const chip = get('review-submission');
+  const received = !persistenceFailed && latest?.state === 'received';
+  if (received && compactReceipt?.id !== latest.id) {
+    // 新的接收回执先完整显示，几秒后收成 ✓，仍可点开查看原文。
+    clearTimeout(compactReceiptTimer);
+    compactReceipt = { id: latest.id, compact: false };
+    compactReceiptTimer = setTimeout(() => {
+      if (compactReceipt?.id === latest.id) compactReceipt.compact = true;
+      renderSubmissionState();
+    }, 4000);
+  }
+  const compact = received && compactReceipt?.compact;
+  get('submission-state').dataset.visible = String(!!latest || persistenceFailed);
+  chip.dataset.state = persistenceFailed ? 'error' : latest?.state ?? '';
+  chip.dataset.compact = String(!!compact);
+  get('submission-status').textContent = persistenceFailed ? '⚠ 手机保存失败'
+    : latest?.state === 'sending' ? '正在发送…'
+      : received ? (compact ? '✓' : '✓ 电脑已接收 · 查看') : '⚠ 结果未知 · 查看';
+  chip.setAttribute('aria-label', persistenceFailed ? '手机保存失败，请保留原文'
+    : latest?.state === 'sending' ? '正在发送' : received ? '电脑已接收，查看提交原文' : '提交结果未知，原文已保留，点按查看');
+  renderComposeNotes();
+}
+
+function setImageNote(text, { state = 'busy', ttl = 0 } = {}) {
+  clearTimeout(imageNoteTimer);
+  imageNote = text ? { text, state } : null;
+  if (text && ttl) imageNoteTimer = setTimeout(() => { imageNote = null; renderComposeNotes(); }, ttl);
+  renderComposeNotes();
+}
+
+/** 上边框右侧同一时间只显示一项：图片进度 > 待处理的提交状态 > 补全提示 > 已接收 ✓。 */
+function renderComposeNotes() {
+  const raw = inputMode === 'raw';
+  const chip = get('review-submission');
+  const submission = get('submission-state').dataset.visible === 'true';
+  const settled = submission && chip.dataset.state === 'received';
+  const image = get('image-state');
+  image.textContent = imageNote?.text ?? '';
+  image.dataset.state = imageNote?.state ?? '';
+  image.hidden = !imageNote;
+  const urgentSubmission = submission && !settled && !imageNote;
+  const help = get('completion-help');
+  help.hidden = !!imageNote || urgentSubmission || !(raw || isSlashDraft(compose.value));
+  get('submission-state').hidden = !submission || !!imageNote || (settled && !help.hidden);
 }
 
 function openEditor() {
@@ -967,6 +1019,11 @@ get('reader-copy').addEventListener('click', async () => {
   catch (error) { get('reader-status').textContent = error.message; }
 });
 get('terminal-columns').value = String(terminalColumns);
+get('touch-mode').value = touchMode;
+get('touch-mode').addEventListener('change', () => {
+  touchMode = get('touch-mode').value === 'program' ? 'program' : 'view';
+  localStorage.setItem('qingcode:mobile:touch-mode', touchMode);
+});
 get('terminal-columns').addEventListener('change', () => {
   terminalColumns = Number(get('terminal-columns').value);
   localStorage.setItem('qingcode:mobile:columns', String(terminalColumns));
@@ -980,6 +1037,7 @@ function updateComposerActions() {
   get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
   get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
   get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
+  renderComposeNotes();
   for (const button of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send')) {
     button.disabled = !terminalReady || composing || editorComposing || (button.id === 'attach-image' && sendingImage)
       || (button.dataset.key === 'clear' && (raw || !compose.value))
@@ -995,7 +1053,7 @@ function dispatchComposer(action) {
     value = raw ? '@' : editDraft(value, compose.selectionStart, compose.selectionEnd, 'text', '@').value;
     action = 'preview';
   }
-  const plan = composerInput(value, action, term?.modes.bracketedPasteMode);
+  const plan = composerInput(value, action, term?.modes.bracketedPasteMode, { autoEnter: action === 'submit' && sendMode === 'enter' });
   const key = selected && draftKey(selected);
   const text = raw ? '' : compose.value;
   let receipt;
@@ -1003,8 +1061,18 @@ function dispatchComposer(action) {
     workspace.settle(key, receipt, state);
     if (selected && draftKey(selected) === key) renderSubmissionState();
   } : undefined;
-  if (!plan || !sendInput(plan.data, { raw: plan.interactive, onComplete })) return false;
+  if (!plan || !sendInput(plan.data, { raw: plan.interactive, onComplete: plan.enter ? undefined : onComplete })) return false;
+  if (plan.enter) {
+    // 文字先送达，再单独补发回车；期间切换了会话则不再补发。
+    const target = selected;
+    setTimeout(() => {
+      if (selected === target && terminalReady) sendInput(plan.enter, { raw: true, onComplete });
+      else onComplete?.('unknown');
+    }, AUTO_ENTER_DELAY_MS);
+  }
   if (text) receipt = workspace.submit(key, text);
+  // 草稿已提交，图片提示随之结束，不再显示「已就绪」。
+  if (text && imageNote) setImageNote('');
   if (!raw) {
     compose.value = '';
     if (selected) drafts.delete(draftKey(selected));
@@ -1095,10 +1163,14 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   composing = false;
   clearModifiers();
   setRawKeyboard(false);
+  setImageNote('');
+  get('submission-state').dataset.visible = 'false';
   get('submission-state').hidden = true;
   get('scroll-bottom').hidden = true;
   disposeTouchScroll?.();
   disposeTouchScroll = undefined;
+  disposeTouchGuard?.();
+  disposeTouchGuard = undefined;
   term?.dispose();
   term = undefined;
   fit = undefined;
@@ -1145,6 +1217,7 @@ function makeTerminal() {
   terminalHistory = attachTerminalHistory({
     term, get,
     onClose: () => disposeTouchScroll?.cancel?.(),
+    touchToProgram: () => touchMode === 'program',
     loadPage: async before => {
       const data = await remote('history', { id: historySession, before });
       if (historyEpoch !== viewEpoch) throw new Error('会话已切换');
@@ -1159,6 +1232,10 @@ function makeTerminal() {
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
     onLongPress: point => terminalSelection?.start(point),
     canInertia: () => terminalHistory?.isOpen() || (term?.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none'),
+  });
+  disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
+    shouldBlock: () => touchMode === 'view' && term?.modes.mouseTrackingMode !== 'none',
+    onTap: () => term?.focus(),
   });
   setRawKeyboard(!!selected && inputModes.get(draftKey(selected)) === 'raw');
   term.textarea.addEventListener('compositionstart', () => { composing = true; cancelKeyRepeats(); updateComposerActions(); });
@@ -1262,7 +1339,8 @@ async function openProject(item, resumeOnly = false) {
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
-  get('terminal-host').textContent = profile.name + ' / ' + projectSourceLabel(item);
+  // 头部只留一行：省略地址，完整来源在项目列表与会话设置中可见。
+  get('terminal-host').textContent = [profile.name, projectSourceLabel({ ...item, host: '' })].join(' · ');
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
   void syncTerminalFullscreen();
@@ -1290,6 +1368,8 @@ async function openProject(item, resumeOnly = false) {
 function renderSessions() {
   const tabs = get('session-tabs');
   get('session-rail').hidden = sessions.length < 2;
+  // 多会话时标签占用来源行，头部保持单行高度。
+  get('terminal-host').hidden = sessions.length >= 2;
   const options = get('session-options');
   const scroll = tabs.scrollLeft;
   tabs.replaceChildren();
@@ -1373,11 +1453,10 @@ async function poll(session, epoch) {
         term.reset();
         term.writeln('[较早的输出已超出电脑端缓存]');
       }
-      for (const raw of data.chunks) {
+      // 相邻字节块合并成一次写入：一批动画帧只渲染最后的画面。
+      for (const chunk of outputBatches(data.chunks)) {
         if (epoch !== viewEpoch) return;
         const view = term;
-        // Screen snapshots are terminal text; only byte chunks are base64.
-        const chunk = outputChunk(raw);
         if (chunk.screen) {
           view.reset();
           view.resize(chunk.cols, chunk.rows);
@@ -1737,6 +1816,12 @@ void initialize();
 for (const button of document.querySelectorAll('[data-launch]')) {
   button.addEventListener('click', () => { void newSession(button.dataset.launch); });
 }
+const sendModeSelect = get('send-mode');
+sendModeSelect.value = sendMode;
+sendModeSelect.addEventListener('change', () => {
+  sendMode = sendModeSelect.value === 'enter' ? 'enter' : 'default';
+  localStorage.setItem(prefix + 'send-mode', sendMode);
+});
 const compression = get('image-compression');
 const savedCompression = localStorage.getItem(prefix + 'image-compression');
 if (['original', 'low', 'medium', 'high'].includes(savedCompression)) compression.value = savedCompression;
@@ -1758,8 +1843,9 @@ async function sendImage() {
   try {
     const image = await rpc('pick_image', { compression: compression.value });
     if (!image || epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
+    // 选完立即在输入框边框上显示进度，上传完成后路径已写入草稿。
     get('choose-image').textContent = '正在上传…';
-    get('terminal-status').textContent = '正在上传图片…';
+    setImageNote('图片上传中…');
     const result = await remote('image', { id, data: image.data }, address);
     if (epoch !== viewEpoch || selected !== id || attempt !== imageEpoch) return;
     compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
@@ -1767,18 +1853,19 @@ async function sendImage() {
     resizeComposer();
     if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
     if (get('image-dialog').open) get('image-dialog').close();
-    get('terminal-status').textContent = '图片已就绪，可补充说明后发送';
+    setImageNote('✓ 图片已插入', { state: 'done', ttl: 2500 });
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
       else {
-        get('terminal-status').textContent = '图片上传失败，可重新选择';
+        setImageNote('⚠ 图片上传失败', { state: 'error', ttl: 6000 });
         message('image-error', error.message);
         if (!get('image-dialog').open) get('image-dialog').showModal();
       }
     }
   } finally {
+    if (imageNote?.state === 'busy' && attempt === imageEpoch) setImageNote('');
     sendingImage = false;
     get('attach-image').disabled = !terminalReady;
     get('attach-image').removeAttribute('aria-busy');

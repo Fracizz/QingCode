@@ -126,3 +126,28 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   dispose.cancel = cancel;
   return dispose;
 }
+
+/**
+ * 全屏程序开启鼠标上报时，Android WebView 在点按后补发的兼容鼠标事件会被 xterm 当作点击发给程序。
+ * 在容器捕获阶段拦下这些「来自触摸」的鼠标事件（实体鼠标不受影响），点按只用于聚焦终端。
+ */
+export function attachTouchMouseGuard(container, { shouldBlock, onTap } = {}) {
+  const view = container.ownerDocument.defaultView;
+  let touchedAt = -Infinity;
+  const touched = () => { touchedAt = view.performance.now(); };
+  function guard(event) {
+    const fromTouch = event.sourceCapabilities?.firesTouchEvents === true || view.performance.now() - touchedAt < 800;
+    if (!fromTouch || !shouldBlock?.()) return;
+    event.stopPropagation();
+    if (event.type === 'mousedown') onTap?.();
+  }
+  const types = ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
+  container.addEventListener('touchstart', touched, { capture: true, passive: true });
+  container.addEventListener('touchend', touched, { capture: true, passive: true });
+  for (const type of types) container.addEventListener(type, guard, true);
+  return () => {
+    container.removeEventListener('touchstart', touched, { capture: true });
+    container.removeEventListener('touchend', touched, { capture: true });
+    for (const type of types) container.removeEventListener(type, guard, true);
+  };
+}

@@ -12,6 +12,7 @@ import {
   matchesProject,
   launchCommand,
   nextModifierState,
+  outputBatches,
   outputChunk,
   parsePairingLink,
   projectSourceLabel,
@@ -108,6 +109,18 @@ describe('Android terminal protocol', () => {
     expect(outputChunk({ data: '\x1b[2Jprompt$ ', cols: 80, rows: 24 })).toEqual({
       screen: true, data: '\x1b[2Jprompt$ ', cols: 80, rows: 24,
     })
+  })
+
+  it('merges adjacent byte chunks into one write and keeps snapshots separate', () => {
+    // 「中」的 UTF-8 三个字节跨块拆开，合并后仍完整。
+    const bytes = new TextEncoder().encode('a中')
+    const raw = (part: Uint8Array) => btoa(String.fromCharCode(...part))
+    const batches = outputBatches([raw(bytes.slice(0, 2)), raw(bytes.slice(2)), { data: 'snap', cols: 80, rows: 24 }, btoa('b'), btoa('c')])
+    expect(batches).toHaveLength(3)
+    expect(new TextDecoder().decode(batches[0].data as Uint8Array)).toBe('a中')
+    expect(batches[1]).toEqual({ screen: true, data: 'snap', cols: 80, rows: 24 })
+    expect(new TextDecoder().decode(batches[2].data as Uint8Array)).toBe('bc')
+    expect(outputBatches([])).toEqual([])
   })
 
   it('splits input without breaking surrogate pairs', () => {

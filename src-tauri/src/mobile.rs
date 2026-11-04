@@ -43,6 +43,9 @@ const MAX_INPUT: usize = 16 * 1024;
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 /// Upper bound for one poll response body before JSON framing.
 const MAX_POLL_BYTES: usize = 192 * 1024;
+/// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
+/// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
+const OUTPUT_COALESCE: Duration = Duration::from_millis(24);
 const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
 const MAX_PEER_ATTEMPTS: usize = 5;
 /// Bounds PBKDF2 work across all sources; per-source limits stop lockouts by one host.
@@ -1294,7 +1297,12 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
                 }
                 session.changed.clone().notified_owned()
             };
-            let _ = tokio::time::timeout(Duration::from_millis(900), wait).await;
+            if tokio::time::timeout(Duration::from_millis(900), wait)
+                .await
+                .is_ok()
+            {
+                tokio::time::sleep(OUTPUT_COALESCE).await;
+            }
             let inner = hub.inner.lock().unwrap();
             let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
             let base = session.next - session.output.len() as u64;

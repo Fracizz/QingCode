@@ -279,7 +279,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .row-text strong, .row-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-text strong { font-size: 15px; font-weight: 620; line-height: 1.45; }
 .row-text small { color: var(--muted); font-size: 12px; line-height: 1.5; }
-.row-text .project-source, #resume-host, #terminal-screen #terminal-host {
+.row-text .project-source, #resume-host {
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -332,16 +332,18 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .terminal-heading h1 { font-size: 16px; font-weight: 650; }
 #terminal-host { margin-top: 1px; font-size: 12px; color: var(--muted); }
 #new-session { color: var(--accent); }
-.session-rail { display: flex; padding: 6px 8px; gap: 6px; border-bottom: 1px solid var(--divider); background: var(--paper); }
-#session-tabs { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+/* 会话标签嵌在标题下方，替代来源行；来源完整信息见「会话与设置」。 */
+.session-rail { display: flex; margin-top: 2px; min-width: 0; }
+#session-tabs { display: flex; flex: 1; min-width: 0; gap: 5px; overflow-x: auto; scrollbar-width: none; }
 #session-tabs::-webkit-scrollbar { display: none; }
 .session-tab {
   flex: none;
-  min-height: 34px;
+  min-height: 30px;
+  line-height: 28px;
   border: 1px solid var(--line);
   border-radius: var(--control-radius);
   color: var(--muted);
-  padding: 0 12px;
+  padding: 0 10px;
   white-space: nowrap;
   font-size: 12px;
 }
@@ -376,14 +378,17 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #toggle-keys[aria-expanded="false"] svg { transform: rotate(180deg); }
 #terminal-screen[data-fullscreen="true"] .terminal-head { display: none; }
 
-/* AI 编程常用键：竖屏两排六列，触摸目标至少 44px。 */
+/* AI 编程常用键：单行按使用频率排序，触摸目标至少 44px；放不下时横向滑动，「更多」固定在右端。 */
 #special-keys {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
   gap: 4px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
+#special-keys > button { flex: 1 0 44px; }
+#special-keys > #slash-command { flex-basis: 52px; }
+#special-keys > #more-keys { position: sticky; right: 0; z-index: 1; flex-basis: 48px; box-shadow: -4px 0 0 var(--paper); }
 #special-keys::-webkit-scrollbar { display: none; }
 :is(#special-keys, .extra-keys) button {
   position: relative;
@@ -407,7 +412,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .session-tab[aria-current="true"]:is(:active, :focus-visible),
 .row[aria-current="true"]:is(:active, :focus-visible),
 :is(#special-keys, .extra-keys) button[aria-pressed="true"]:not([data-locked="true"]):is(:active, :focus-visible) { background: var(--accent-pressed); }
-#compose-form { display: flex; align-items: end; gap: 2px; margin-top: 6px; padding: 2px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease; }
+#compose-form { position: relative; display: flex; align-items: end; gap: 2px; margin-top: 12px; padding: 2px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease; }
 #compose-form:focus-within { border-color: var(--accent-border); }
 #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
 #compose { flex: 1; width: 0; min-height: 44px; resize: none; padding: 11px 4px; border: 0; border-radius: var(--control-radius); background: transparent; font-family: var(--mono); font-size: 15px; }
@@ -418,11 +423,22 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #compose-form #send:is(:active, :focus-visible) { background: #96ebd9; }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }
 #compose-form #keyboard[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.input-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; margin-top: 2px; color: var(--muted); font-size: 11px; }
-#input-mode { flex: none; }
-#compose-form[data-mode="raw"] { border-color: var(--accent-border); }
-#completion-help { min-width: 0; text-align: right; }
+/* 编辑目标和短状态浮在输入框上边框（类似描边输入框的标题），不额外占行。 */
+.compose-tag, .compose-notes { position: absolute; top: 0; z-index: 1; transform: translateY(-50%); pointer-events: none; }
+.compose-tag { left: 10px; padding: 0 5px; border-radius: 4px; background: var(--paper); color: var(--muted); font: 11px/16px system-ui, sans-serif; }
+.compose-tag[data-mode="raw"] { color: var(--accent); }
+.compose-notes { right: 10px; display: flex; justify-content: flex-end; max-width: calc(100% - 120px); }
+.compose-note { min-width: 0; overflow: hidden; padding: 0 5px; border-radius: 4px; background: var(--paper); color: var(--muted); font: 11px/16px system-ui, sans-serif; white-space: nowrap; text-overflow: ellipsis; }
+#image-state[data-state="done"] { color: var(--accent); }
+#image-state[data-state="error"] { color: var(--error); }
+#submission-state { display: flex; min-width: 0; }
+/* 可点区域向上下各延伸，满足 24px 触摸高度而不撑高输入栏。 */
+.compose-chip { position: relative; min-height: 16px; border: 0; pointer-events: auto; color: var(--accent); }
+.compose-chip::before { content: ''; position: absolute; inset: -6px -4px; }
+.compose-chip[data-state="unknown"], .compose-chip[data-state="error"] { color: var(--error); }
+.compose-chip[data-state="sending"] { color: var(--muted); }
 #slash-command, #attach-image { color: var(--accent); }
+#more-keys { grid-column: span 2; }
 #special-keys .icon-button { width: auto; }
 #send { display: flex; flex-direction: column; justify-content: center; gap: 0; width: 52px; }
 #send svg { width: 18px; height: 18px; }
@@ -512,28 +528,13 @@ dialog p.hint { font-size: 12px; margin-top: 4px; }
   .font-stepper { gap: 0; }
   #special-keys { gap: 3px; }
 }
-/* 横屏或键盘压缩视口：快捷键收为一排并横向滚动，按常用程度重新排序。 */
+/* 横屏或键盘压缩视口：压缩状态行与间距。 */
 @media (max-height: 540px) {
   .terminal-head { min-height: 44px; padding-block: 0; }
   #terminal-host { display: none; }
-  .session-rail { padding-block: 3px; }
   .terminal-state { min-height: 18px; }
   #terminal-tools { padding-bottom: max(4px, var(--safe-bottom), var(--corner-bottom-inset)); }
-  #special-keys { display: flex; gap: 4px; }
-  #special-keys button { flex: 1 0 44px; min-height: 44px; }
-  #special-keys [data-key="esc"] { order: 1; }
-  #special-keys [data-key="tab"] { order: 2; }
-  #special-keys [data-key="shift-tab"] { order: 3; }
-  #special-keys [data-key="up"] { order: 4; }
-  #special-keys [data-key="down"] { order: 5; }
-  #special-keys [data-key="backspace"] { order: 6; }
-  #more-keys { order: 7; }
-  #slash-command { order: 8; }
-  #special-keys [data-key="newline"] { order: 9; }
-  #special-keys [data-key="left"] { order: 10; }
-  #special-keys [data-key="right"] { order: 11; }
-  #attach-image { order: 12; }
-  #compose-form { margin-top: 4px; }
+  #compose-form { margin-top: 10px; }
   .page-heading { margin-bottom: 12px; }
   .page-heading h1 { font-size: 22px; }
   dialog { padding-block: 16px; }
@@ -550,12 +551,15 @@ dialog p.hint { font-size: 12px; margin-top: 4px; }
   dialog[open], dialog.sheet[open], [data-state="checking"] .dot { animation: none; }
 }
 
-.session-shortcuts { margin: 16px 0; }
+/* 新建会话：独立卡片按钮，留出间距，避免边框挤在一起。 */
+.session-shortcuts { gap: 10px; margin: 18px 0 14px; overflow: visible; border-radius: 0; background: transparent; }
+.session-shortcuts > * + * { border-top: 1px solid var(--line); }
+.session-shortcuts > button { min-height: 52px; font-size: 16px; }
+#new-session-dialog > p { line-height: 1.55; }
+#new-session-dialog .dialog-actions { margin-top: 12px; }
 #terminal-menu { flex: none; width: 36px; min-width: 36px; }
-#submission-state { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 11px; color: var(--muted); }
-#submission-state button { min-height: 24px; padding: 0 4px; color: var(--accent); }
 #viewport[data-columns="fixed"] { overflow-x: auto; }
-#terminal-columns { width: 100%; min-height: 44px; margin: 6px 0; padding: 6px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--control-radius); }
+#terminal-columns, #touch-mode, #send-mode { width: 100%; min-height: 44px; margin: 6px 0; padding: 6px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--control-radius); }
 .terminal-actions { margin-top: 12px; }
 .terminal-actions button { display: block; width: 100%; text-align: left; padding: 8px 12px; border-radius: 0; border-bottom: 1px solid var(--divider); }
 dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px; width: min(900px, calc(100% - 16px)); max-width: none; height: calc(100% - 16px); max-height: none; padding: 12px; overflow: hidden; }

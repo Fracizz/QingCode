@@ -62,7 +62,7 @@ try {
   run('fill', '#compose', '保留原会话草稿 ')
   run('eval', `window.__mobileFixture.state.imageDelay = 1800`)
   run('click', '#attach-image')
-  check('upload blocks duplicate requests', `document.querySelector('#attach-image').disabled && document.querySelector('#attach-image').getAttribute('aria-busy') === 'true' && document.querySelector('#terminal-status').textContent === '正在上传图片…'`)
+  check('upload blocks duplicate requests', `document.querySelector('#attach-image').disabled && document.querySelector('#attach-image').getAttribute('aria-busy') === 'true' && document.querySelector('#image-state').textContent === '图片上传中…' && document.querySelector('#terminal-status').textContent === '会话中'`)
   run('click', '#session-tabs button:first-child')
   check('switching sessions restores the destination draft', `document.querySelector('#compose').value === ''`)
   run('wait', '2200')

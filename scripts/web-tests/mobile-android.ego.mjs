@@ -20,7 +20,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
   const inputs = () => page.evaluate(() => window.__mobileFixture.state.inputs)
   // The key bar scrolls horizontally on phones; bring a key into view before tapping it.
   const tapKey = async key => {
-    const advanced = ['alt', 'ctrl', 'home', 'end', 'pgup', 'pgdn', 'interrupt'].includes(key)
+    const advanced = ['alt', 'ctrl', 'home', 'end', 'pgup', 'pgdn'].includes(key)
     if (advanced && !await page.evaluate(() => document.querySelector('#keys-dialog').open)) await page.click('#more-keys')
     if (!advanced && await page.evaluate(() => document.querySelector('#keys-dialog').open)) await page.evaluate(() => window.qingBack())
     await page.evaluate(name => document.querySelector(`[data-key="${name}"]`).scrollIntoView({ inline: 'center', block: 'nearest' }), key)

@@ -116,14 +116,13 @@
     <section id="terminal-screen" hidden aria-labelledby="terminal-name">
       <header class="terminal-head">
         <button id="back" class="icon-button" type="button" aria-label="返回工作台"><svg><use href="#i-back"/></svg></button>
-        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
+        <!-- 头部只占一行：单会话显示来源，多会话时第二行换成会话标签，不再单独占一栏。 -->
+        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p>
+          <div id="session-rail" class="session-rail" hidden><div id="session-tabs" aria-label="终端会话"></div></div>
+        </div>
         <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
         <button id="manage-sessions" class="icon-button" type="button" aria-label="会话与设置"><svg><use href="#i-more"/></svg></button>
       </header>
-      <!-- 只有多个会话时显示标签栏，单会话把高度留给终端。 -->
-      <div id="session-rail" class="session-rail" hidden>
-        <div id="session-tabs" aria-label="终端会话"></div>
-      </div>
       <div class="terminal-body">
         <div id="viewport" aria-label="终端输出"></div>
         <section id="terminal-history" aria-label="历史输出（只读）" hidden>
@@ -144,29 +143,34 @@
           <button id="toggle-keys" type="button" aria-expanded="true" aria-controls="special-keys"><span>收起按键</span><svg><use href="#i-chevron"/></svg></button>
           <button id="terminal-menu" class="icon-button" type="button" aria-label="终端操作菜单"><svg><use href="#i-more"/></svg></button>
         </div>
-        <!-- AI 编程常用键两排六列；低频终端键在“更多”中。 -->
+        <!-- AI 编程常用键单行，按使用频率排序：Esc、Tab、Ctrl+C 最前；放不下时横向滑动，「更多」固定在右端。 -->
         <div id="special-keys" aria-label="AI 编程快捷键">
           <button type="button" data-key="esc">Esc</button>
           <button type="button" id="complete-input" data-key="tab">Tab</button>
+          <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C">Ctrl+C</button>
           <button type="button" data-key="shift-tab" aria-label="发送 Shift+Tab">⇧Tab</button>
           <button type="button" data-key="up" data-repeat aria-label="向上">↑</button>
           <button type="button" data-key="down" data-repeat aria-label="向下">↓</button>
           <button type="button" data-key="backspace" data-repeat aria-label="退格">⌫</button>
           <button type="button" id="slash-command" data-key="slash" aria-label="输入斜杠命令">/命令</button>
-          <button type="button" data-key="newline" aria-label="插入换行">换行</button>
           <button type="button" data-key="left" data-repeat aria-label="向左">←</button>
           <button type="button" data-key="right" data-repeat aria-label="向右">→</button>
-          <button type="button" id="attach-image" class="icon-button" aria-label="发送图片"><svg><use href="#i-image"/></svg></button>
           <button type="button" id="more-keys" aria-haspopup="dialog" aria-controls="keys-dialog">更多</button>
         </div>
-        <div class="input-context"><span id="input-mode">手机草稿</span><span id="completion-help">↑↓ 选择 · ↵ 确认</span></div>
         <form id="compose-form">
+          <!-- 编辑目标与输入状态嵌在输入框上边框，不额外占行。右侧同一时间只显示一项：补全提示 > 图片 > 提交状态。 -->
+          <span id="input-mode" class="compose-tag">手机草稿</span>
+          <span class="compose-notes">
+            <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
+            <span id="image-state" class="compose-note" role="status" hidden></span>
+            <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
+          </span>
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
+          <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿"><svg><use href="#i-image"/></svg></button>
           <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令，空白发送回车"></textarea>
           <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg><span id="send-label">发送</span></button>
         </form>
         <p id="input-hint" class="sr-only" aria-live="polite">命令栏可编辑中文 · 空白发送为回车</p>
-        <div id="submission-state" hidden><span id="submission-status" role="status"></span><button id="review-submission" type="button" class="text-button">查看</button></div>
       </div>
     </section>
   </main>
@@ -244,7 +248,7 @@
       <button type="button" data-key="text" data-text="-">-</button>
       <button type="button" data-key="text" data-text="|">|</button>
       <button type="button" data-key="text" data-text="/">/</button>
-      <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C">Ctrl+C</button>
+      <button type="button" data-key="newline" aria-label="插入换行">换行</button>
     </div>
     <p>Tab / ⇧Tab 由当前程序处理。Esc 取消或中断，不删除文字；Ctrl+C 也可能退出程序。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="keys-dialog">返回</button></div>
@@ -259,6 +263,9 @@
     <label for="terminal-columns">终端列宽</label>
     <select id="terminal-columns"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select>
     <p>固定列宽时可横向滚动，旋转和键盘弹出只改变可见高度。</p>
+    <label for="touch-mode">全屏程序中的触摸</label>
+    <select id="touch-mode" aria-describedby="touch-mode-hint"><option value="view" selected>只查看历史 · 防误触</option><option value="program">发给程序 · 滑动滚动、点按点击</option></select>
+    <p id="touch-mode-hint">Codex、OpenCode 等会接管鼠标。默认手指滑动只打开手机端只读历史，点按不发点击；需要用手指滚动程序界面时再改为「发给程序」。实体鼠标不受影响。</p>
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <label for="image-compression">图片压缩</label>
     <select id="image-compression" aria-describedby="image-compression-hint">
@@ -266,6 +273,11 @@
       <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
     </select>
     <p id="image-compression-hint">自动保存，下次发图直接使用。原图保留 PNG / JPEG 文件；HEIC / HEIF 需要系统支持解码，原图模式保留分辨率并转换格式。单张上传最大 8 MB，超出时请选择压缩。</p>
+    <label for="send-mode">发送按键</label>
+    <select id="send-mode" aria-describedby="send-mode-hint">
+      <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
+    </select>
+    <p id="send-mode-hint">「发送并直接 Enter」在文字送达后单独补发回车，Claude / OpenCode 会直接执行，/命令也直接提交而不只停在输入框。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button><button type="button" id="end-all-sessions" class="secondary danger">结束全部会话</button></div>
   </dialog>
 

@@ -7,6 +7,14 @@ describe('Android terminal command and skill completion', () => {
     expect(composerInput(value, 'submit', true)).toEqual({ data: value, interactive: true })
   })
 
+  it('sends Enter separately in direct-enter mode, including slash drafts', () => {
+    expect(composerInput('/effort', 'submit', true, { autoEnter: true })).toEqual({ data: '/effort', enter: '\r', interactive: false })
+    expect(composerInput('echo 中文', 'submit', false, { autoEnter: true })).toEqual({ data: 'echo 中文', enter: '\r', interactive: false })
+    expect(composerInput('a\nb', 'submit', true, { autoEnter: true })).toEqual({ data: '\x1b[200~a\rb\x1b[201~', enter: '\r', interactive: false })
+    expect(composerInput('', 'submit', false, { autoEnter: true })).toEqual({ data: '\r', interactive: false })
+    expect(composerInput('/eff', 'complete', true, { autoEnter: true })).toEqual({ data: '/eff\t', interactive: true })
+  })
+
   it('opens slash candidates with the existing prefix and without a duplicate slash', () => {
     expect(composerInput('', 'slash')).toEqual({ data: '/', interactive: true })
     expect(composerInput('eff', 'slash')).toEqual({ data: '/eff', interactive: true })
