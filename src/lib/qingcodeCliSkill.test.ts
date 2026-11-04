@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { buildQingcodeCliSkillMarkdown, QINGCODE_CLI_REPO_BINARY } from './qingcodeCliSkill'
+import {
+  buildQingcodeCliSkillMarkdown,
+  isChineseSkillLanguage,
+  QINGCODE_CLI_REPO_BINARY,
+} from './qingcodeCliSkill'
 
 describe('buildQingcodeCliSkillMarkdown', () => {
   it('embeds exe path and core commands', () => {
@@ -13,11 +17,48 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('auto-register')
     expect(md).toContain('It is not a partial patch')
     expect(md).toContain('Never grant trust implicitly')
+    expect(md).toContain('Windows access to SSH/WSL services')
+    expect(md).toContain('os.windows')
+    expect(md).toContain('settings export --scope user --output')
+    expect(md).toContain('settings import --scope workspace --project')
+    expect(md).toContain('skippedProjects')
+    expect(md).toContain('settings reset --scope user --yes')
+    expect(md).toContain('Workspace reset clears overrides')
+  })
+
+  it.each(['en', 'zh-CN'])('provides valid cross-platform JSON examples in %s', language => {
+    const md = buildQingcodeCliSkillMarkdown('QingCode.exe', language)
+    const examples = [...md.matchAll(/```json\n([\s\S]*?)```/g)].map(match => JSON.parse(match[1]))
+    const crossPlatform = examples.find(example => example.name === 'dev')
+    expect(crossPlatform.tasks[0].os.windows.target).toBe(
+      '.venv\\Scripts\\python.exe manage.py runserver'
+    )
+    expect(crossPlatform.tasks[0].target).toBe('.venv/bin/python manage.py runserver')
   })
 
   it('quotes paths with spaces', () => {
     const md = buildQingcodeCliSkillMarkdown('C:\\Program Files\\QingCode.exe')
     expect(md).toContain('"C:\\Program Files\\QingCode.exe" project list')
+  })
+
+  it('copies Chinese only for Chinese locales and English for every other locale', () => {
+    expect(isChineseSkillLanguage('zh-CN')).toBe(true)
+    expect(isChineseSkillLanguage('zh-TW')).toBe(true)
+    expect(isChineseSkillLanguage('en')).toBe(false)
+    expect(isChineseSkillLanguage('ja-JP')).toBe(false)
+
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'zh-CN')).toContain(
+      '# QingCode CLI\n\n将此文件作为 Skill'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'zh-CN')).toContain(
+      'Windows 访问 SSH/WSL 服务'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'en')).toContain(
+      'Install this file into your AI agent'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'fr-FR')).toContain(
+      'Install this file into your AI agent'
+    )
   })
 
   it('keeps the repository Skill snapshot in sync with the canonical template', () => {
@@ -26,6 +67,6 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     )
     const snapshot = readFileSync(skillPath, 'utf8').replace(/\r\n/g, '\n')
 
-    expect(snapshot).toBe(buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY))
+    expect(snapshot).toBe(buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY, 'en'))
   })
 })

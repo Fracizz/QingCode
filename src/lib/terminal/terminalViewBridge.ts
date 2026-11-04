@@ -2,6 +2,7 @@
 
 export const TERMINAL_CLEAR_EVENT = 'qingcode:terminal-clear'
 export const TERMINAL_SEARCH_EVENT = 'qingcode:terminal-search'
+export const TERMINAL_RESET_EVENT = 'qingcode:terminal-reset'
 
 export type TerminalViewBridgeDetail = {
   /** When set, only that terminal reacts; otherwise the active view reacts. */
@@ -19,6 +20,15 @@ export function requestTerminalClear(terminalId?: string) {
 export function requestTerminalSearch(terminalId?: string) {
   window.dispatchEvent(
     new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_SEARCH_EVENT, {
+      detail: { terminalId },
+    }),
+  )
+}
+
+/** Reset one xterm before the backend writes a full screen snapshot. */
+export function requestTerminalReset(terminalId: string) {
+  window.dispatchEvent(
+    new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_RESET_EVENT, {
       detail: { terminalId },
     }),
   )

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePromptStore } from '../store/promptStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 export default function PromptDialog() {
@@ -50,23 +50,25 @@ export default function PromptDialog() {
   }
 
   return (
-    <ModalOverlay onDismiss={() => answer(null)} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer(null)} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="prompt-title"
-        className="modal-content-enter relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
       >
-        <div className="flex gap-3 px-4 pt-4 pb-3">
-          <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-bg-active text-accent">
+        <div className="flex gap-3.5 px-5 pt-5 pb-4">
+          <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border/60 bg-accent/10 text-accent">
             <Pencil size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="prompt-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="prompt-title" className="text-ui-lg font-semibold text-fg">
               {t(request.title)}
             </h2>
             {request.message && (
-              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{t(request.message)}</p>
+              <p className="mt-1.5 text-ui leading-relaxed text-fg-muted">
+                {t(request.message)}
+              </p>
             )}
             <input
               ref={inputRef}
@@ -95,17 +97,17 @@ export default function PromptDialog() {
             )}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5 bg-bg-deep/20 rounded-b-lg">
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(null)}
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0"
             onClick={submit}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

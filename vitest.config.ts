@@ -6,7 +6,7 @@ export default defineConfig({
   // lib/terminal and lib/git pilot subdirectories identically.
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
+      '@': resolve(import.meta.dirname, 'src'),
     },
   },
   test: {

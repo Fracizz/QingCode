@@ -1,9 +1,11 @@
+import { hasBackend } from '../runtimeCapabilities'
 import { getLiveEditorContent, flushLiveEditorContent } from '@/lib/editorSession'
 import { getEditorPreferences } from '@/lib/editorSettings'
 import { resolveReadEncoding } from '@/lib/fileEncoding'
+import { isNonEditableViewMode } from '@/lib/openFileError'
 import { translate } from '@/lib/i18n'
 import { showGitHeadFile } from '@/lib/ipc/git'
-import { isTauri, safeInvoke } from '@/lib/tauri'
+import { safeInvoke } from '@/lib/tauri'
 import { useCompareStore } from '@/store/compareStore'
 import { useEditorStore } from '@/store/editorStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -11,7 +13,7 @@ import { pathsEqual } from '@/utils/fileReferences'
 
 /** Open a side-by-side compare of the working copy vs `git show HEAD:path`. */
 export async function openGitCompareWithHead(filePath: string): Promise<void> {
-  if (!isTauri()) {
+  if (!hasBackend()) {
     useProjectStore.getState().pushToast('error', translate('当前环境无法比较 Git 版本'))
     return
   }
@@ -24,7 +26,7 @@ export async function openGitCompareWithHead(filePath: string): Promise<void> {
       .find(t => pathsEqual(t.path, filePath))
 
   let leftContent: string
-  if (tab && !tab.loading && !tab.openError && tab.viewMode !== 'view') {
+  if (tab && !tab.loading && !tab.openError && !isNonEditableViewMode(tab)) {
     flushLiveEditorContent(tab.id)
     leftContent = getLiveEditorContent(tab.id) ?? tab.content ?? ''
   } else {

@@ -1,5 +1,4 @@
 import {
-  DEFAULT_GLOBAL_SETTINGS,
   SESSION_EDITOR_STATE_CACHE_SIZE_KEY,
   loadGlobalSettings,
   saveGlobalSettings,
@@ -45,8 +44,4 @@ export async function saveEditorStateCacheSize(
   await saveGlobalSettings(settings)
   applyEditorStateCacheSize(normalized)
   return normalized
-}
-
-export function defaultEditorStateCacheSize(): EditorStateCacheSizeSetting {
-  return parseEditorStateCacheSize(DEFAULT_GLOBAL_SETTINGS[SESSION_EDITOR_STATE_CACHE_SIZE_KEY])
 }

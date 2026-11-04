@@ -1,3 +1,5 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   lazy,
   Suspense,
@@ -75,7 +77,7 @@ import {
 } from '@/lib/git/syncTimes'
 import { isScmFetchAuthError, shouldAutoFetch, type ScmAutoFetchReason } from '@/lib/git/scmSyncMeta'
 import { confirmDialog } from '../store/confirmStore'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { isSshResource, safeInvoke } from '../lib/tauri'
 import {
   changeGitStage,
   commitGit,
@@ -85,15 +87,14 @@ import {
   getGitCommitFileContents,
   getGitCommitFiles,
   getGitFileContents,
-  getGitHead,
   getGitLog,
   getGitRemotes,
-  getGitStatus,
   pullGit,
   pushGit,
   switchGitBranch,
 } from '../lib/ipc/git'
 import { useUIStore } from '../store/uiStore'
+import { copyPathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
@@ -105,6 +106,12 @@ import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
 import ScmToolbar, { ScmPullMenu, ScmPushMenu, ScmRemotesMenu } from './ScmToolbar'
 import ScmBranchMenu from './ScmBranchMenu'
 import { flattenRemoteRows, upstreamRemoteName } from '@/lib/git/scmRemotes'
+import {
+  clearScmCommitsCache,
+  readScmCommitsCache,
+  writeScmCommitsCache,
+} from '@/lib/git/scmCommitCache'
+import { canOpenGitPathInEditor, openWorkingTreeFile } from '@/lib/git/openWorkingTreeFile'
 import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -132,7 +139,6 @@ type InlineDiffState = {
   modified: string
 }
 
-const ROW_HEIGHT = 28
 const COMMIT_PAGE_SIZE = SCM_COMMIT_PAGE_SIZE
 const BRANCH_MENU_MIN_WIDTH = 240
 const BRANCH_MENU_MAX_WIDTH = 480
@@ -165,11 +171,11 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
   const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
   const className =
     tone === 'conflict'
-      ? `${STATUS_BADGE} bg-danger text-white`
+      ? `${STATUS_BADGE} bg-destructive text-on-destructive`
       : tone === 'added'
         ? `${STATUS_BADGE} bg-ok text-bg`
         : tone === 'deleted'
-          ? `${STATUS_BADGE} bg-danger text-white`
+          ? `${STATUS_BADGE} bg-destructive text-on-destructive`
           : tone === 'modified'
             ? `${STATUS_BADGE} bg-warn text-bg`
             : `${STATUS_BADGE} bg-accent/80 text-bg`
@@ -195,7 +201,7 @@ function ScmOperationAlert({
     >
       <div className="flex items-start gap-2 text-danger">
         <AlertCircle size={14} className="mt-0.5 shrink-0" strokeWidth={2} />
-        <p className="text-ui-sm min-w-0 flex-1 leading-5">
+        <p className="text-ui-sm min-w-0 flex-1 leading-[var(--ui-line-height)]">
           {display.literal
             ? display.summaryKey
             : t(display.summaryKey, display.summaryParams)}
@@ -210,7 +216,7 @@ function ScmOperationAlert({
         </button>
       </div>
       {display.files.length > 0 && (
-        <ul className="ml-6 max-h-28 list-none space-y-0.5 overflow-y-auto border-l border-danger/20 pl-2 font-mono text-[11px] leading-5 text-danger/90">
+        <ul className="ml-6 max-h-28 list-none space-y-0.5 overflow-y-auto border-l border-danger/20 pl-2 font-mono text-ui-xs leading-[var(--ui-line-height)] text-danger/90">
           {display.files.map(file => (
             <li key={file} className="truncate">
               {file}
@@ -230,8 +236,9 @@ type GitOperation = {
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
   const root = projectPath.replace(/[\\/]+$/, '')
-  const rel = normalizeGitChangePath(relativePath).replace(/\//g, '\\')
-  return `${root}\\${rel}`
+  const separator = isSshResource(projectPath) ? '/' : '\\'
+  const rel = normalizeGitChangePath(relativePath).replace(/\//g, separator)
+  return `${root}${separator}${rel}`
 }
 
 function selectedChangesInGroup(
@@ -259,9 +266,20 @@ async function changeIsDirectory(projectPath: string, change: GitChange): Promis
   }
 }
 
-function canOpenFileInEditor(status: string): boolean {
-  return !status.includes('D')
-}
+type ScmContextMenu =
+  | {
+      x: number
+      y: number
+      kind: 'change'
+      group: GitChangeGroup
+      change: GitChange
+    }
+  | {
+      x: number
+      y: number
+      kind: 'commit-file'
+      file: GitCommitFileChange
+    }
 
 type ChangeRowProps = {
   changes: GitChange[]
@@ -327,7 +345,7 @@ function ChangeRowComponent(
         onClick={event => onSelectChange(group, change, index, event)}
         onDoubleClick={() => onOpenChange(group, change)}
         onContextMenu={event => onOpenContextMenu(event, group, change)}
-        className={`flex h-full w-full items-center gap-2 ${SCM_ROW_PAD} text-left text-[12px] leading-5 hover:bg-bg-hover ${
+        className={`flex h-full w-full items-center gap-2 ${SCM_ROW_PAD} text-left text-ui-sm leading-[var(--ui-line-height)] hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
@@ -336,7 +354,7 @@ function ChangeRowComponent(
           label={normalizeGitChangePath(change.path).replace(/\\/g, '/')}
           side="bottom"
           onlyWhenOverflow
-          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-ui-xs text-tree-fg"
         >
           <span>{formatScmDisplayPath(change.path)}</span>
         </Tooltip>
@@ -398,6 +416,7 @@ function ChangeGroupSection({
   onToggle,
   onSelectAll,
 }: ChangeGroupSectionProps) {
+  const metrics = useInterfaceMetrics()
   const listRef = useListRef(null)
   // Only shift the header action rail when the list actually shows a scrollbar.
   // Falling back to the system scrollbar width left-shifts ↑/↓ while row +/- stay at
@@ -470,7 +489,7 @@ function ChangeGroupSection({
       }
     >
       <div
-        className={`relative flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+        className={`relative flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-ui-sm text-fg-muted`}
       >
         <button
           type="button"
@@ -512,7 +531,7 @@ function ChangeGroupSection({
           <List
             listRef={listRef}
             rowCount={changes.length}
-            rowHeight={ROW_HEIGHT}
+            rowHeight={metrics.scmRowHeight}
             rowComponent={ChangeRowComponent}
             rowProps={rowProps}
             overscanCount={8}
@@ -541,9 +560,11 @@ function CommitFileListRowComponent(
     files: GitCommitFileChange[]
     selectedPath: string | null
     onSelect: (path: string) => void
+    onOpenFile: (file: GitCommitFileChange) => void
+    onOpenContextMenu: (event: ReactMouseEvent, file: GitCommitFileChange) => void
   }
 ) {
-  const { index, style, files, selectedPath, onSelect } = props
+  const { index, style, files, selectedPath, onSelect, onOpenFile, onOpenContextMenu } = props
   const file = files[index]
   if (!file) return null
   const active = selectedPath === file.path
@@ -552,7 +573,9 @@ function CommitFileListRowComponent(
       <button
         type="button"
         onClick={() => onSelect(file.path)}
-        className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
+        onDoubleClick={() => onOpenFile(file)}
+        onContextMenu={event => onOpenContextMenu(event, file)}
+        className={`flex h-full w-full items-center gap-2 px-3 text-left text-ui-sm hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
@@ -561,7 +584,7 @@ function CommitFileListRowComponent(
           label={file.path}
           side="bottom"
           onlyWhenOverflow
-          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-ui-xs text-tree-fg"
         >
           <span>{formatScmDisplayPath(file.path)}</span>
         </Tooltip>
@@ -574,22 +597,27 @@ function CommitFileList({
   files,
   selectedPath,
   onSelect,
+  onOpenFile,
+  onOpenContextMenu,
 }: {
   files: GitCommitFileChange[]
   selectedPath: string | null
   onSelect: (path: string) => void
+  onOpenFile: (file: GitCommitFileChange) => void
+  onOpenContextMenu: (event: ReactMouseEvent, file: GitCommitFileChange) => void
 }) {
   const listRef = useListRef(null)
+  const metrics = useInterfaceMetrics()
   const rowProps = useMemo(
-    () => ({ files, selectedPath, onSelect }),
-    [files, onSelect, selectedPath]
+    () => ({ files, selectedPath, onSelect, onOpenFile, onOpenContextMenu }),
+    [files, onOpenContextMenu, onOpenFile, onSelect, selectedPath]
   )
 
   return (
     <List
       listRef={listRef}
       rowCount={files.length}
-      rowHeight={ROW_HEIGHT}
+      rowHeight={metrics.scmRowHeight}
       rowComponent={CommitFileListRowComponent}
       rowProps={rowProps}
       overscanCount={20}
@@ -616,7 +644,7 @@ export default function SourceControlPanel() {
   const projectPath = currentProject?.path ?? null
 
   const status = useGitStatusStore(state =>
-    projectPath && state.panelPath === projectPath ? state.panelStatus : null
+    projectPath ? state.peekPanelStatus(projectPath) : null
   )
   const setStatus = useCallback((next: GitStatus | null) => {
     const path = useProjectStore.getState().currentProject?.path
@@ -704,12 +732,7 @@ export default function SourceControlPanel() {
   const commitFilesSequenceRef = useRef(0)
   const commitFileDiffSequenceRef = useRef(0)
   const [operation, setOperation] = useState<GitOperation | null>(null)
-  const [contextMenu, setContextMenu] = useState<{
-    x: number
-    y: number
-    group: GitChangeGroup
-    change: GitChange
-  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<ScmContextMenu | null>(null)
   const setView = useUIStore(s => s.setView)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
 
@@ -732,7 +755,7 @@ export default function SourceControlPanel() {
   )
 
   const loadRemotes = useCallback(async (path: string) => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       setRemotes([])
       setRemotesLoading(false)
       return
@@ -766,7 +789,7 @@ export default function SourceControlPanel() {
     const isCurrentRequest = () =>
       commitsSequenceRef.current === sequence &&
       useProjectStore.getState().currentProject?.path === path
-    if (!isTauri()) {
+    if (!hasBackend()) {
       if (!isCurrentRequest()) return
       setCommits([])
       commitsRef.current = []
@@ -792,11 +815,13 @@ export default function SourceControlPanel() {
         const more = next.length >= COMMIT_PAGE_SIZE
         commitsHasMoreRef.current = more
         setCommitsHasMore(more)
+        writeScmCommitsCache(path, { commits: next, hasMore: more })
         selectedCommitHashRef.current = null
         setSelectedCommitHash(null)
         return
       } catch {
         if (attempt === retryDelaysMs.length - 1 && isCurrentRequest()) {
+          clearScmCommitsCache(path)
           commitsRef.current = []
           setCommits([])
           commitsHasMoreRef.current = false
@@ -808,7 +833,7 @@ export default function SourceControlPanel() {
 
   const loadMoreCommits = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri() || !commitsHasMoreRef.current || commitsLoadingMoreRef.current) {
+    if (!project || !hasBackend() || !commitsHasMoreRef.current || commitsLoadingMoreRef.current) {
       return
     }
     const path = project.path
@@ -827,6 +852,7 @@ export default function SourceControlPanel() {
       const more = page.length >= COMMIT_PAGE_SIZE
       commitsHasMoreRef.current = more
       setCommitsHasMore(more)
+      writeScmCommitsCache(path, { commits: merged, hasMore: more })
     } catch {
       if (useProjectStore.getState().currentProject?.path === path) {
         commitsHasMoreRef.current = false
@@ -845,7 +871,7 @@ export default function SourceControlPanel() {
   }, [loadMoreCommits])
 
   const refresh = useCallback(
-    async (opts?: { soft?: boolean }) => {
+    async (opts?: { soft?: boolean; reuseInFlight?: boolean }) => {
       const sequence = ++refreshSequenceRef.current
       const soft = opts?.soft ?? false
       const project = useProjectStore.getState().currentProject
@@ -862,7 +888,7 @@ export default function SourceControlPanel() {
         useGitStatusStore.getState().clearPanelStatus()
         return
       }
-      if (!isTauri()) {
+      if (!hasBackend()) {
         loadingRefreshSequenceRef.current = null
         setLoading(false)
         setError(translate('Git 功能需要 Tauri 桌面环境'))
@@ -891,19 +917,8 @@ export default function SourceControlPanel() {
         // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
         // Hard refresh uses full git_status so branch + rename paths stay accurate.
         if (soft) {
-          await useGitStatusStore.getState().refresh(path)
-          let next = seedSourceControlStatus(path)
-          if (next?.is_repository && !next.branch) {
-            try {
-              const head = await getGitHead(path)
-              if (head?.name) {
-                next = { ...next, branch: head.name }
-                useGitStatusStore.getState().setPanelStatus(path, next)
-              }
-            } catch {
-              /* keep null branch; hard refresh can recover */
-            }
-          }
+          await useGitStatusStore.getState().refresh(path, { reuseInFlight: opts?.reuseInFlight })
+          const next = seedSourceControlStatus(path)
           if (next && isCurrentRequest()) {
             setStatus(next)
             setError(null)
@@ -911,12 +926,13 @@ export default function SourceControlPanel() {
           return
         }
 
-        const next = await getGitStatus(path)
+        await useGitStatusStore.getState().refresh(path, { full: true, reuseInFlight: opts?.reuseInFlight })
+        const next = seedSourceControlStatus(path)
+        if (!next) return
         if (useProjectStore.getState().currentProject?.path !== path) return
         if (isCurrentRequest()) {
           setStatus(next)
           setError(null)
-          useGitStatusStore.getState().applyFromGitStatus(path, next)
           setSelectedKeys(new Set())
           setInlineDiff(null)
           setInlineDiffLoading(false)
@@ -938,7 +954,7 @@ export default function SourceControlPanel() {
         }
       } catch (reason) {
         if (!isCurrentRequest()) return
-        if (!soft || !seedSourceControlStatus(path)) {
+        if (!seedSourceControlStatus(path)) {
           setStatus(null)
         }
         setError(String(reason))
@@ -994,12 +1010,23 @@ export default function SourceControlPanel() {
       if (seeded) {
         setStatus(seeded)
         setError(null)
-        void refresh({ soft: !gitStatusNeedsTrackingMetadata(seeded) })
-        if (seeded.is_repository) {
-          void loadCommits(projectPath)
-          void loadRemotes(projectPath)
-        } else {
+        // 软刷新只取 workdir 快照，不会自己拉历史 / 远程；硬刷新会。
+        // 之前两条都发，同一次打开会跑两遍 git_log。
+        const soft = !gitStatusNeedsTrackingMetadata(seeded)
+        void refresh({ soft, reuseInFlight: true })
+        if (!seeded.is_repository) {
           setRemotes([])
+        } else if (soft) {
+          const cached = readScmCommitsCache(projectPath)
+          if (cached) {
+            commitsRef.current = cached.commits
+            commitsHasMoreRef.current = cached.hasMore
+            setCommits(cached.commits)
+            setCommitsHasMore(cached.hasMore)
+          } else {
+            void loadCommits(projectPath)
+          }
+          void loadRemotes(projectPath)
         }
       } else {
         setStatus(null)
@@ -1058,10 +1085,7 @@ export default function SourceControlPanel() {
       const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
       if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
     }
-    const fromRoot = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
-    )
-    return Number.isFinite(fromRoot) && fromRoot > 0 ? fromRoot : 1
+    return 1
   }, [])
 
   const positionBranchMenu = useCallback(() => {
@@ -1127,7 +1151,7 @@ export default function SourceControlPanel() {
 
   const openBranchMenu = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri() || operation || loading) return
+    if (!project || !hasBackend() || operation || loading) return
     setBranchMenuOpen(true)
     try {
       const next = await getGitBranches(project.path)
@@ -1213,7 +1237,7 @@ export default function SourceControlPanel() {
   const loadCommitFiles = useCallback(async (rev: string) => {
     const sequence = ++commitFilesSequenceRef.current
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri()) {
+    if (!project || !hasBackend()) {
       setCommitFiles([])
       return
     }
@@ -1249,7 +1273,7 @@ export default function SourceControlPanel() {
     async (rev: string, filePath: string) => {
       const sequence = ++commitFileDiffSequenceRef.current
       const project = useProjectStore.getState().currentProject
-      if (!project || !isTauri()) return
+      if (!project || !hasBackend()) return
       selectedCommitFileRef.current = filePath
       setSelectedCommitFile(filePath)
       setCommitFileDiffLoading(true)
@@ -1263,7 +1287,7 @@ export default function SourceControlPanel() {
         if (!isCurrentRequest()) return
         const name = filePath.split(/[/\\]/).pop() ?? filePath
         setCommitFileDiff({
-          path: `${project.path}/${filePath}`,
+          path: absoluteFilePath(project.path, filePath),
           name,
           original: pair.original,
           modified: pair.modified,
@@ -1553,6 +1577,26 @@ export default function SourceControlPanel() {
               editor.closeDiffTabsForPath(abs)
             }
           }
+          setInlineDiff(current => {
+            if (!current) return current
+            return targets.some(change =>
+              pathsEqual(absoluteFilePath(project.path, change.path), current.path)
+            )
+              ? null
+              : current
+          })
+          setInlineDiffLoading(false)
+          setInlineDiffError(null)
+          const latestStatus = seedSourceControlStatus(project.path)
+          if (latestStatus) {
+            const discarded = new Set(files)
+            const nextStatus = {
+              ...latestStatus,
+              changes: latestStatus.changes.filter(change => !discarded.has(change.path)),
+            }
+            setStatus(nextStatus)
+            useGitStatusStore.getState().applyFromGitStatus(project.path, nextStatus)
+          }
           void refresh({ soft: true })
           useProjectStore
             .getState()
@@ -1571,7 +1615,7 @@ export default function SourceControlPanel() {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, t]
+    [loading, operation, refresh, setStatus, t]
   )
 
   const pullCurrent = useCallback(
@@ -1690,6 +1734,9 @@ export default function SourceControlPanel() {
   useEffect(() => {
     const onFocus = () => {
       if (!projectPath || !status?.is_repository) return
+      // SSH 的 focus 自动 fetch 会连带 fetch + 全量刷新（3–4 次远程 exec），
+      // 而且 last_fetch_at 恒为空、节流形同失效；改为进入面板时 fetch 一次 + 手动检查更新。
+      if (isSshResource(projectPath)) return
       tryAutoFetch('window-focus')
     }
     window.addEventListener('focus', onFocus)
@@ -1894,17 +1941,6 @@ export default function SourceControlPanel() {
     [groups.staged, groups.unstaged]
   )
 
-  const copyAbsolutePath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   const copyRelativePath = async (relativePath: string) => {
     try {
       await copyToClipboard(normalizeGitChangePath(relativePath).replace(/\\/g, '/'))
@@ -1928,6 +1964,10 @@ export default function SourceControlPanel() {
   }
 
   const revealInFileManager = async (absolutePath: string) => {
+    if (isSshResource(absolutePath)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(absolutePath)
     } catch (error) {
@@ -1940,10 +1980,74 @@ export default function SourceControlPanel() {
   const showChangeContextMenu = useCallback(
     (event: ReactMouseEvent, group: GitChangeGroup, change: GitChange) => {
       if (!shouldShowAppContextMenu(event)) return
-      setContextMenu({ x: event.clientX, y: event.clientY, group, change })
+      setContextMenu({ kind: 'change', x: event.clientX, y: event.clientY, group, change })
     },
     []
   )
+
+  const openCommitWorkingTreeFile = useCallback(
+    (file: GitCommitFileChange) => {
+      if (!currentProject) return
+      void openWorkingTreeFile({
+        absolutePath: absoluteFilePath(currentProject.path, file.path),
+        status: file.status,
+        looksLikeDirectory: gitChangePathLooksLikeDirectory(file.path),
+      })
+    },
+    [currentProject]
+  )
+
+  const showCommitFileContextMenu = useCallback(
+    (event: ReactMouseEvent, file: GitCommitFileChange) => {
+      if (!shouldShowAppContextMenu(event)) return
+      setContextMenu({ kind: 'commit-file', x: event.clientX, y: event.clientY, file })
+    },
+    []
+  )
+
+  const commitFileContextMenuItems = (file: GitCommitFileChange): ContextMenuItem[] => {
+    if (!currentProject) return []
+    const abs = absoluteFilePath(currentProject.path, file.path)
+    const looksLikeDir = gitChangePathLooksLikeDirectory(file.path)
+    return [
+      {
+        label: t('打开文件'),
+        icon: <FileIcon size={14} />,
+        disabled: !canOpenGitPathInEditor(file.status) || looksLikeDir,
+        action: () => openCommitWorkingTreeFile(file),
+      },
+      {
+        label: t('在资源管理器中定位'),
+        icon: <LocateFixed size={14} />,
+        separatorBefore: true,
+        action: () => revealInSidebar(abs),
+      },
+      {
+        label: t('在文件管理器中显示'),
+        icon: <ExternalLink size={14} />,
+        disabled: isSshResource(abs),
+        action: () => void revealInFileManager(abs),
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        separatorBefore: true,
+        action: () => void copyPathAction(abs),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+        action: () => void copyRelativePath(file.path),
+      },
+      {
+        label: t('复制文件名'),
+        icon: <Copy size={14} />,
+        action: () => void copyFileName(file.path),
+      },
+    ]
+  }
 
   const contextMenuItems = (group: GitChangeGroup, change: GitChange): ContextMenuItem[] => {
     if (!currentProject) return []
@@ -1988,15 +2092,17 @@ export default function SourceControlPanel() {
       {
         label: t('打开文件'),
         icon: <FileIcon size={14} />,
-        disabled: !canOpenFileInEditor(change.status) || looksLikeDir,
+        disabled: !canOpenGitPathInEditor(change.status) || looksLikeDir,
         action: () => {
           void (async () => {
             if (await changeIsDirectory(projectPath, change)) {
               revealInSidebar(abs)
               return
             }
-            setView('explorer')
-            await useEditorStore.getState().openFile(abs)
+            await openWorkingTreeFile({
+              absolutePath: abs,
+              status: change.status,
+            })
           })()
         },
       },
@@ -2009,6 +2115,7 @@ export default function SourceControlPanel() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(abs),
         action: () => void revealInFileManager(abs),
       },
       {
@@ -2016,7 +2123,7 @@ export default function SourceControlPanel() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
-        action: () => void copyAbsolutePath(abs),
+        action: () => void copyPathAction(abs),
       },
       {
         label: t('复制相对路径'),
@@ -2108,7 +2215,7 @@ export default function SourceControlPanel() {
             onSelectAll={selectAllInGroup}
           />
           <div className="flex-shrink-0 border-t border-border bg-bg-sidebar px-3 py-2.5">
-            <label className="mb-2 flex items-center gap-2 text-[12px] text-fg-muted">
+            <label className="mb-2 flex items-center gap-2 text-ui-sm text-fg-muted">
               <input
                 type="checkbox"
                 checked={pushAfterCommit}
@@ -2132,13 +2239,13 @@ export default function SourceControlPanel() {
               }
               aria-label={t('提交信息')}
               aria-invalid={commitError ? true : undefined}
-              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-5 text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
+              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-[var(--ui-line-height)] text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
             />
             <button
               type="button"
               disabled={!canCommitStagedChanges(commitMessage, groups.staged.length, writeDisabled)}
               onClick={() => void commitStaged()}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui-sm font-medium text-on-action transition-colors hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {operation?.kind === 'commit' || operation?.kind === 'push' ? (
                 <LoaderCircle size={13} className="animate-spin" />
@@ -2222,10 +2329,10 @@ export default function SourceControlPanel() {
         className="bg-bg-sidebar"
       >
         <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
-          <h2 className="text-[14px] font-semibold leading-snug text-fg">
+          <h2 className="text-ui-lg font-semibold leading-snug text-fg">
             {selectedCommit.subject || t('（无提交说明）')}
           </h2>
-          <div className="flex flex-col gap-1 text-[12px] text-fg-muted">
+          <div className="flex flex-col gap-1 text-ui-sm text-fg-muted">
             <span>
               <span className="text-fg-dim">{t('作者')}</span>
               {' · '}
@@ -2238,18 +2345,18 @@ export default function SourceControlPanel() {
             </span>
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-fg-dim">{t('提交')}</span>
-              <span className="font-mono text-[12px] text-accent">{selectedCommit.short_hash}</span>
+              <span className="font-mono text-ui-sm text-accent">{selectedCommit.short_hash}</span>
               <button
                 type="button"
                 onClick={() => void copyCommitHash(selectedCommit.short_hash)}
-                className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
+                className="rounded border border-border px-2 py-0.5 text-ui-xs text-fg hover:bg-bg-hover"
               >
                 {t('复制哈希')}
               </button>
             </span>
           </div>
         </div>
-        <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
+        <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-ui-sm font-medium text-fg">
           {commitFileFilter.trim()
             ? t('更改的文件（{shown} / {total}）', {
                 shown: filteredCommitFiles.files.length,
@@ -2272,7 +2379,7 @@ export default function SourceControlPanel() {
               aria-pressed={commitFileFilterRegex}
               aria-label={commitFileFilterRegex ? t('关闭正则') : t('使用正则')}
               onClick={() => setCommitFileFilterRegex(v => !v)}
-              className={`shrink-0 rounded border px-1.5 py-1 font-mono text-[11px] leading-none transition-colors ${
+              className={`shrink-0 rounded border px-1.5 py-1 font-mono text-ui-xs leading-none transition-colors ${
                 commitFileFilterRegex
                   ? 'border-accent bg-accent/15 text-accent'
                   : 'border-border text-fg-dim hover:bg-bg-hover hover:text-fg'
@@ -2284,23 +2391,25 @@ export default function SourceControlPanel() {
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">
           {commitFilesLoading ? (
-            <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
+            <p className="flex items-center gap-2 px-3 py-2 text-ui-xs text-fg-dim">
               <LoaderCircle size={12} className="animate-spin text-accent" />
               {t('正在读取提交文件…')}
             </p>
           ) : commitFilesError ? (
-            <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
+            <p className="px-3 py-2 text-ui-xs text-danger">{commitFilesError}</p>
           ) : commitFiles.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
+            <p className="px-3 py-2 text-ui-xs text-fg-dim">{t('此提交没有文件变更')}</p>
           ) : filteredCommitFiles.error === 'invalid-regex' ? (
-            <p className="px-3 py-2 text-[11px] text-danger">{t('正则表达式无效')}</p>
+            <p className="px-3 py-2 text-ui-xs text-danger">{t('正则表达式无效')}</p>
           ) : filteredCommitFiles.files.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('没有匹配的文件')}</p>
+            <p className="px-3 py-2 text-ui-xs text-fg-dim">{t('没有匹配的文件')}</p>
           ) : (
             <CommitFileList
               files={filteredCommitFiles.files}
               selectedPath={selectedCommitFile}
               onSelect={path => void loadCommitFileDiff(selectedCommit.hash, path)}
+              onOpenFile={openCommitWorkingTreeFile}
+              onOpenContextMenu={showCommitFileContextMenu}
             />
           )}
         </div>
@@ -2314,7 +2423,7 @@ export default function SourceControlPanel() {
           {showingCommitDiff ? (
             <>
               <div
-                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border/60 bg-bg-sidebar px-2 text-[12px] text-fg-muted`}
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border/60 bg-bg-sidebar px-2 text-ui-sm text-fg-muted`}
               >
                 <button
                   type="button"
@@ -2325,7 +2434,7 @@ export default function SourceControlPanel() {
                   {t('返回提交列表')}
                 </button>
                 {commitFileDiff && (
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-dim">
+                  <span className="min-w-0 flex-1 truncate font-mono text-ui-xs text-fg-dim">
                     {commitFileDiff.name}
                   </span>
                 )}
@@ -2345,12 +2454,14 @@ export default function SourceControlPanel() {
                       />
                     }
                   >
-                    <ScmInlineDiff
-                      path={commitFileDiff.path}
-                      name={commitFileDiff.name}
-                      original={commitFileDiff.original}
-                      modified={commitFileDiff.modified}
-                    />
+                <ScmInlineDiff
+                  path={commitFileDiff.path}
+                  name={commitFileDiff.name}
+                  original={commitFileDiff.original}
+                  modified={commitFileDiff.modified}
+                  leftTitle={t('父提交')}
+                  rightTitle={t('该提交')}
+                />
                   </Suspense>
                 </div>
               ) : null}
@@ -2364,7 +2475,7 @@ export default function SourceControlPanel() {
               }
             >
               <div
-                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-ui-sm text-fg-muted`}
                 style={{ scrollbarGutter: 'stable' }}
               >
                 <button
@@ -2428,7 +2539,7 @@ export default function SourceControlPanel() {
             <p className="font-medium">
               {t('存在 {count} 个未解决的合并冲突', { count: unmergedChanges.length })}
             </p>
-            <p className="mt-1 text-[11px] leading-5 text-fg-muted">
+            <p className="mt-1 text-ui-xs leading-[var(--ui-line-height)] text-fg-muted">
               {t('请在编辑器中解决冲突标记（<<<<<<<），解决后暂存并提交。')}
             </p>
           </div>
@@ -2446,7 +2557,7 @@ export default function SourceControlPanel() {
                 type="button"
                 onClick={() => void retryPush()}
                 disabled={Boolean(operation) || loading}
-                className="rounded border border-danger/50 px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+                className="rounded border border-danger/50 px-2 py-1 text-ui-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
                 {t('重试推送')}
               </button>
@@ -2457,7 +2568,7 @@ export default function SourceControlPanel() {
           <button
             type="button"
             onClick={() => setScmTab('changes')}
-            className={`rounded px-2.5 py-1 text-[12px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-ui-sm font-medium transition-colors ${
               scmTab === 'changes'
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -2468,7 +2579,7 @@ export default function SourceControlPanel() {
           <button
             type="button"
             onClick={() => setScmTab('history')}
-            className={`rounded px-2.5 py-1 text-[12px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-ui-sm font-medium transition-colors ${
               scmTab === 'history'
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -2544,7 +2655,11 @@ export default function SourceControlPanel() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={contextMenuItems(contextMenu.group, contextMenu.change)}
+          items={
+            contextMenu.kind === 'change'
+              ? contextMenuItems(contextMenu.group, contextMenu.change)
+              : commitFileContextMenuItems(contextMenu.file)
+          }
           onClose={() => setContextMenu(null)}
         />
       )}

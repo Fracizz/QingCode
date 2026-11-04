@@ -1,0 +1,2936 @@
+//! qingcode-server daemon 托管的持久化终端。
+//!
+//! 终端共用 SSH 连接（每条最多 6 个），各占一条 daemon 会话。SSH 断开只销毁代理通道，
+//! daemon 里的 PTY 继续运行；重连时按 seq 补发输出，缓冲已淘汰时先 reset
+//! 前端 xterm 再写屏幕快照。
+
+use super::daemon::{DaemonAttachResult, DaemonSession, SessionEventReceiver};
+use super::*;
+use crate::terminal::{encode_terminal_data, TerminalSpawnResult};
+use qingcode_server::proto::{Event, StreamChunk};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use tokio::sync::{mpsc, oneshot, Notify};
+
+/// 待发送输入的积压上限。在线与重连期间共用同一个有序队列；超出时拒绝本次
+/// 输入并报错，不静默丢弃（单次输入上限 1MB，见 `ssh_write_terminal`）。
+const PENDING_INPUT_LIMIT: usize = 2 * 1024 * 1024;
+const INPUT_CHUNK_BYTES: usize = 16 * 1024;
+const DAEMON_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const DAEMON_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+const OFFLINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
+
+type InputSendFailure = (String, Vec<u8>);
+
+#[derive(Clone)]
+pub(crate) struct PersistentLaunch {
+    pub(crate) shell: Option<String>,
+    pub(crate) args: Vec<String>,
+    pub(crate) env: BTreeMap<String, String>,
+    pub(crate) name: Option<String>,
+    pub(crate) resolved_shell: String,
+    pub(crate) fallback_from: Option<String>,
+}
+
+enum TerminalCommand {
+    /// 携带本次请求的尺寸：前端补重绘会连发 rows-1 与 rows 两次，若只在处理时读最新尺寸，
+    /// 两条命令排队时 rows-1 一步被吞掉，TUI 收不到尺寸变化也就不会重绘。
+    Resize(u16, u16),
+    Kill(Option<oneshot::Sender<()>>),
+}
+
+pub(crate) struct PersistentTerminal {
+    id: String,
+    pty_id: String,
+    connection_id: String,
+    root_uri: String,
+    next_seq: AtomicU64,
+    next_input_seq: AtomicU64,
+    size: Mutex<(u16, u16)>,
+    /// 唯一的有序输入队列：在线时由会话循环按序取出发送，重连期间继续积压，
+    /// 接回后从队首续发。发送失败的剩余部分放回队首，保证先后顺序不变。
+    pending_input: Mutex<VecDeque<Vec<u8>>>,
+    /// 有新输入入队时唤醒会话循环。
+    input_ready: Notify,
+    closed: AtomicBool,
+    detach_requested: Notify,
+    proxy_finished: AtomicBool,
+    proxy_stopped: Notify,
+    commands: mpsc::Sender<TerminalCommand>,
+    kill_context: Mutex<serde_json::Value>,
+}
+
+impl PersistentTerminal {
+    pub(crate) fn set_kill_context(&self, source: &str, operation_id: &str) {
+        *self.kill_context.lock().unwrap_or_else(|e| e.into_inner()) = serde_json::json!({
+            "id":self.pty_id,"terminalId":self.id,"source":source,"operationId":operation_id});
+    }
+
+    fn kill_payload(&self) -> serde_json::Value {
+        let value = self
+            .kill_context
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if value.is_null() {
+            serde_json::json!({"id":self.pty_id,"terminalId":self.id,"source":"backend_cleanup"})
+        } else {
+            value
+        }
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn pty_id(&self) -> &str {
+        &self.pty_id
+    }
+
+    pub(crate) fn connection_id(&self) -> &str {
+        &self.connection_id
+    }
+
+    pub(crate) fn root_uri(&self) -> &str {
+        &self.root_uri
+    }
+
+    pub(crate) fn is_open(&self) -> bool {
+        !self.closed.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn write(&self, data: Vec<u8>) -> Result<(), String> {
+        if !self.is_open() {
+            return Err("SSH 终端已结束".to_string());
+        }
+        enqueue_input(self, data)?;
+        self.input_ready.notify_one();
+        Ok(())
+    }
+
+    pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        if cols == 0 || rows == 0 {
+            return Err("终端尺寸必须大于 0".to_string());
+        }
+        *self
+            .size
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = (cols, rows);
+        match self.commands.try_send(TerminalCommand::Resize(cols, rows)) {
+            Ok(()) => Ok(()),
+            // 队列满说明前面还有 Resize 待处理：处理时会补到上面记下的最新尺寸。
+            Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err("SSH 终端已结束".to_string()),
+        }
+    }
+
+    /// Stop this proxy without sending pty.kill or affecting other sessions.
+    pub(crate) async fn detach_for_exit(&self) -> Result<(), String> {
+        self.detach_requested.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let stopped = self.proxy_stopped.notified();
+                if self.proxy_finished.load(Ordering::Acquire) {
+                    return;
+                }
+                stopped.await;
+            }
+        })
+        .await
+        .map_err(|_| "断开终端代理超时，远端进程未被主动结束".to_string())
+    }
+
+    pub(crate) async fn kill(&self) -> Result<(), String> {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let deadline = tokio::time::Instant::now() + OFFLINE_KILL_TIMEOUT;
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if !matches!(
+            tokio::time::timeout_at(
+                deadline,
+                self.commands.send(TerminalCommand::Kill(Some(ack_tx))),
+            )
+            .await,
+            Ok(Ok(()))
+        ) {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let _ = tokio::time::timeout(remaining, ack_rx).await;
+        Ok(())
+    }
+
+    fn pop_pending(&self) -> Option<Vec<u8>> {
+        self.pending_input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front()
+    }
+
+    /// 发送失败的剩余输入放回队首，下次按原顺序续发。
+    fn requeue_front(&self, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        self.pending_input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_front(data);
+    }
+
+    fn mark_closed(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+}
+
+/// 输入入队；积压超过上限时拒绝整笔输入（不截断、不丢弃已排队的内容）。
+fn enqueue_input(term: &PersistentTerminal, data: Vec<u8>) -> Result<(), String> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    let mut pending = term
+        .pending_input
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let total = pending.iter().map(Vec::len).sum::<usize>();
+    if total + data.len() > PENDING_INPUT_LIMIT {
+        return Err(format!(
+            "终端输入积压已超过 {} MB（远端未及时读取或正在重连），本次输入未发送",
+            PENDING_INPUT_LIMIT / (1024 * 1024)
+        ));
+    }
+    pending.push_back(data);
+    Ok(())
+}
+
+fn drain_kill_acks(commands: &mut mpsc::Receiver<TerminalCommand>) -> Vec<oneshot::Sender<()>> {
+    let mut acks = Vec::new();
+    while let Ok(command) = commands.try_recv() {
+        if let TerminalCommand::Kill(Some(ack)) = command {
+            acks.push(ack);
+        }
+    }
+    acks
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreKind {
+    Snapshot,
+    Replay,
+    None,
+    Exit,
+}
+
+fn attach_result_maps_to_restore_kind(
+    has_screen: bool,
+    replay_chunks: usize,
+    exited: bool,
+) -> RestoreKind {
+    if exited {
+        RestoreKind::Exit
+    } else if has_screen {
+        RestoreKind::Snapshot
+    } else if replay_chunks > 0 {
+        RestoreKind::Replay
+    } else {
+        RestoreKind::None
+    }
+}
+
+fn reconnect_delay_schedule(attempt: u32) -> Duration {
+    match attempt {
+        1 => Duration::ZERO,
+        2 | 3 => Duration::from_secs(5),
+        4..=8 => Duration::from_secs(10),
+        _ => Duration::from_secs(30),
+    }
+}
+
+fn seq_is_new(seq: u64, next_seq: u64) -> bool {
+    seq >= next_seq
+}
+
+fn attach_terminal_is_gone(error: &str) -> bool {
+    error.contains("终端不存在") || error.contains("不存在或已回收") || error.contains("已回收")
+}
+
+/// attach 已确认退出时，daemon 可以立即回收终端；此后不能再调整尺寸或补发输入。
+/// 把存活会话的准备工作放在惰性 future 中，保证退出路径不会向已回收的 PTY 发 RPC。
+async fn prepare_reconnected_terminal<F>(
+    exited: Option<i32>,
+    prepare_live: F,
+) -> Result<Option<u32>, String>
+where
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    if let Some(code) = exited {
+        return Ok(Some(u32::try_from(code).unwrap_or(0)));
+    }
+    prepare_live.await?;
+    Ok(None)
+}
+
+/// 把 attach 的 STREAM_DATA 分片按 seq/offset 还原成完整逻辑块。
+fn assemble_attach_chunks(chunks: &[StreamChunk]) -> Result<Vec<(u64, Vec<u8>)>, String> {
+    let mut assembled = Vec::new();
+    let mut current_seq = None;
+    let mut current = Vec::new();
+    for chunk in chunks {
+        let seq = chunk
+            .seq
+            .ok_or_else(|| "pty.attach 重放分片缺少 seq".to_string())?;
+        if current_seq != Some(seq) {
+            if let Some(previous_seq) = current_seq {
+                if !current.is_empty() {
+                    return Err(format!("pty.attach seq {previous_seq} 缺少结束分片"));
+                }
+            }
+            current_seq = Some(seq);
+            current.clear();
+        }
+        if chunk.offset as usize != current.len() {
+            return Err(format!(
+                "pty.attach seq {seq} 分片偏移不连续：期望 {}，实际 {}",
+                current.len(),
+                chunk.offset
+            ));
+        }
+        current.extend_from_slice(&chunk.data);
+        if chunk.last {
+            assembled.push((seq, std::mem::take(&mut current)));
+            current_seq = None;
+        }
+    }
+    if !current.is_empty() {
+        return Err("pty.attach 重放流缺少 STREAM_END 前的最后分片".to_string());
+    }
+    Ok(assembled)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalExitPayload {
+    id: String,
+    exit_code: u32,
+    disconnected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalConnectionPayload {
+    id: String,
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restore: Option<&'static str>,
+}
+
+/// daemon 终端的输出事件。`nextSeq` 是这段输出之后的续传序号：前端随输出一起持久化，
+/// 应用重启后据此只补发断线期间的输出（见 [`attach_persistent_terminal`]）。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistentTerminalDataPayload {
+    id: String,
+    data: String,
+    next_seq: u64,
+}
+
+/// daemon 的 vt100 屏幕快照。快照按 daemon 网格排版（被标记为折行的行依赖终端自动
+/// 折行衔接），前端必须先按 `cols`×`rows` 写入，再 fit 到自身尺寸并让程序重绘；
+/// 直接写进尺寸不同的 xterm 会逐行错位。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalScreenPayload {
+    id: String,
+    data: String,
+    cols: u16,
+    rows: u16,
+    next_seq: u64,
+}
+
+/// 冷接回（应用重启后首次接回）请求的起始序号：超出 daemon 的 `seq_end`，
+/// daemon 因此直接给屏幕快照而不是从头重放。原始历史是在多种 PTY 尺寸下产生的，
+/// 按当前尺寸整段重放会把全屏 TUI 画花；快照则是 daemon 当前排好的屏幕。
+const COLD_ATTACH_FROM_SEQ: u64 = u64::MAX;
+/// 沿用 PTY 尺寸接回、而旧 daemon 又没回报尺寸时的兜底网格（只记账，不下发）。
+const DEFAULT_ATTACH_COLS: u16 = 80;
+const DEFAULT_ATTACH_ROWS: u16 = 24;
+
+/// `pty.list` 中 P3 需要的字段；owner/cwd 对旧 daemon 可缺省。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PtyInfoWire {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    #[serde(default)]
+    exited: Option<i32>,
+    detached: bool,
+}
+
+impl PtyInfoWire {
+    fn is_mobile(&self) -> bool {
+        self.name
+            .as_deref()
+            .is_some_and(crate::mobile::is_mobile_terminal)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PtyListResponse {
+    ptys: Vec<PtyInfoWire>,
+}
+
+/// 返回给前端的孤儿终端；`cwd` 已映射回 SSH 资源 URI。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DetachedTerminal {
+    pty_id: String,
+    connection_id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
+fn comparable_daemon_path(path: &str) -> Option<String> {
+    if let Some(native) = windows_native_path(path) {
+        let normalized = native
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        return (!normalized.is_empty()).then_some(normalized);
+    }
+    let normalized = path.trim_end_matches('/');
+    if !normalized.starts_with('/') {
+        return None;
+    }
+    Some(if normalized.is_empty() {
+        "/".to_string()
+    } else {
+        normalized.to_string()
+    })
+}
+
+fn daemon_path_is_within(path: &str, root: &str) -> bool {
+    let (Some(path), Some(root)) = (comparable_daemon_path(path), comparable_daemon_path(root))
+    else {
+        return false;
+    };
+    path == root
+        || if root == "/" {
+            path.starts_with('/')
+        } else {
+            path.starts_with(&format!("{root}/"))
+        }
+}
+
+fn daemon_path_to_uri(connection_id: &str, path: &str) -> Option<String> {
+    if let Some(native) = windows_native_path(path) {
+        let normalized = native.replace('\\', "/");
+        let normalized = normalized.trim_end_matches('/');
+        return Some(format!("ssh://{connection_id}/{normalized}"));
+    }
+    let normalized = normalize_remote_path(path);
+    (path.starts_with('/') && !connection_id.is_empty())
+        .then(|| format!("ssh://{connection_id}{normalized}"))
+}
+
+fn trusted_root_for_daemon_path<'a>(
+    roots: &'a [RegisteredRoot],
+    path: &str,
+) -> Option<&'a RegisteredRoot> {
+    roots
+        .iter()
+        .filter(|root| root.trusted && daemon_path_is_within(path, &root.canonical_path))
+        .max_by_key(|root| {
+            comparable_daemon_path(&root.canonical_path).map_or(0, |path| path.len())
+        })
+}
+
+fn owned_detached_ptys(ptys: Vec<PtyInfoWire>, client_id: &str) -> Vec<PtyInfoWire> {
+    ptys.into_iter()
+        .filter(|info| {
+            info.detached
+                && info.exited.is_none()
+                && info.owner.as_deref() == Some(client_id)
+                && info.cols > 0
+                && info.rows > 0
+        })
+        .collect()
+}
+
+fn detached_terminal_from_info(
+    info: PtyInfoWire,
+    connection_id: &str,
+    roots: &[RegisteredRoot],
+) -> Option<DetachedTerminal> {
+    // The daemon marker survives app restarts; the in-memory phone session may not.
+    // Companion PTYs must never become desktop orphan tabs.
+    if info.is_mobile() {
+        return None;
+    }
+    let cwd = info.cwd.as_deref()?;
+    trusted_root_for_daemon_path(roots, cwd)?;
+    Some(DetachedTerminal {
+        pty_id: info.id,
+        connection_id: connection_id.to_string(),
+        cwd: daemon_path_to_uri(connection_id, cwd)?,
+        cols: info.cols,
+        rows: info.rows,
+        name: info.name.filter(|name| !name.trim().is_empty()),
+    })
+}
+
+async fn request_owned_detached_ptys(
+    session: &DaemonSession,
+    client_id: &str,
+) -> Result<Vec<PtyInfoWire>, String> {
+    let response = session
+        .request("pty.list", &serde_json::json!({ "clientId": client_id }))
+        .await?;
+    let response: PtyListResponse = serde_json::from_value(response)
+        .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+    Ok(owned_detached_ptys(response.ptys, client_id))
+}
+
+fn emit_screen(app: &AppHandle, id: &str, screen: &str, (cols, rows): (u16, u16), next_seq: u64) {
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_screen(app, id, screen.to_string(), cols.max(1), rows.max(1));
+        return;
+    }
+    let _ = app.emit(
+        "terminal-screen",
+        TerminalScreenPayload {
+            id: id.to_string(),
+            data: screen.to_string(),
+            cols: cols.max(1),
+            rows: rows.max(1),
+            next_seq,
+        },
+    );
+}
+
+fn emit_data(app: &AppHandle, id: &str, data: &[u8], next_seq: u64) {
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_data(app, id, encode_terminal_data(data));
+        return;
+    }
+    let _ = app.emit(
+        "terminal-data",
+        PersistentTerminalDataPayload {
+            id: id.to_string(),
+            data: encode_terminal_data(data),
+            next_seq,
+        },
+    );
+}
+
+fn emit_connection(
+    app: &AppHandle,
+    id: &str,
+    state: &'static str,
+    attempt: Option<u32>,
+    reason: Option<String>,
+    restore: Option<&'static str>,
+) {
+    qingcode_server::diagnostics::record(
+        "terminal.connection",
+        serde_json::json!({
+        "terminalId":id,"state":state,"attempt":attempt,"restore":restore,
+        "reason":reason.as_deref().map(qingcode_server::diagnostics::error_summary)}),
+        false,
+        false,
+    );
+    let _ = app.emit(
+        "terminal-connection",
+        TerminalConnectionPayload {
+            id: id.to_string(),
+            state,
+            attempt,
+            reason,
+            restore,
+        },
+    );
+}
+
+fn emit_exit(
+    app: &AppHandle,
+    id: &str,
+    exit_code: u32,
+    disconnected: bool,
+    reason: Option<String>,
+) {
+    qingcode_server::diagnostics::record(
+        "terminal.exit",
+        serde_json::json!({
+        "terminalId":id,"exitCode":exit_code,"disconnected":disconnected,
+        "reason":reason.as_deref().map(qingcode_server::diagnostics::error_summary)}),
+        true,
+        disconnected || exit_code != 0,
+    );
+    if crate::mobile::is_mobile_terminal(id) {
+        crate::mobile::deliver_exit(app, id, exit_code, disconnected);
+        return;
+    }
+    let _ = app.emit(
+        "terminal-exit",
+        TerminalExitPayload {
+            id: id.to_string(),
+            exit_code,
+            disconnected,
+            reason,
+        },
+    );
+}
+
+struct ActiveSession {
+    transport: SessionTransport,
+    session: DaemonSession,
+    events: SessionEventReceiver,
+}
+
+impl Drop for ActiveSession {
+    fn drop(&mut self) {
+        // Exit can cancel a reconnect while attach/replay is awaiting a response.
+        // Always close that newly opened channel as well as the previous active one.
+        self.session.shutdown();
+        self.transport.release();
+    }
+}
+
+/// A direct connection has no SSH pool lease. The DaemonSession owns its
+/// WebSocket; releasing this marker never touches any remote process.
+pub(super) enum SessionTransport {
+    Ssh(TerminalTransportLease),
+    Direct,
+}
+
+impl SessionTransport {
+    pub(super) fn release(&self) {
+        if let Self::Ssh(transport) = self {
+            transport.release();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn into_ssh(self) -> Result<TerminalTransportLease, String> {
+        match self {
+            Self::Ssh(transport) => Ok(transport),
+            Self::Direct => Err("live SSH acceptance expected an SSH transport".into()),
+        }
+    }
+
+    fn notice(&self) -> Option<&str> {
+        match self {
+            Self::Ssh(transport) => transport.notice(),
+            Self::Direct => None,
+        }
+    }
+
+    fn closed_reason(&self) -> Option<String> {
+        match self {
+            Self::Ssh(transport) => transport.closed_reason(),
+            Self::Direct => None,
+        }
+    }
+}
+
+/// 在共享终端连接上打开 daemon 会话。
+///
+/// 连接因 sshd 会话数打满而拒绝开通道时，按实测值修正该连接容量，换一条连接重试一次。
+async fn open_terminal_daemon_session(
+    manager: &SshManager,
+    connection_id: &str,
+    root_uri: &str,
+    client_id: &str,
+    daemon: &DaemonAccess,
+) -> Result<(SessionTransport, DaemonSession), String> {
+    if let Some(config) = manager.direct_config(connection_id) {
+        let session = DaemonSession::open_direct(&config, connection_id, client_id, daemon).await?;
+        return Ok((SessionTransport::Direct, session));
+    }
+    let mut retried = false;
+    let mut updated = false;
+    let mut daemon = daemon.clone();
+    loop {
+        let transport = manager
+            .lease_daemon_terminal_transport(connection_id, root_uri)
+            .await?;
+        match DaemonSession::open_on_transport(&transport, client_id, &daemon).await {
+            Ok(session) => return Ok((SessionTransport::Ssh(transport), session)),
+            Err(error) => {
+                let retry =
+                    !retried && is_channel_refused_error(&error) && transport.mark_refused().await;
+                transport.release();
+                // A cached healthy endpoint can race with an older client
+                // starting its daemon. Re-run the normal offline-first,
+                // SHA-verified preparation once before surfacing the error.
+                if !updated && error.contains("daemon 版本不匹配") {
+                    updated = true;
+                    super::host_runtime::invalidate_failed_daemon(manager, connection_id, &daemon);
+                    let root = manager.registered_root(root_uri)?;
+                    daemon = super::host_runtime::ensure_shared_daemon(manager, &root, None)
+                        .await
+                        .map_err(|reason| format!("{error}；自动更新远端服务失败：{reason}"))?;
+                    continue;
+                }
+                if !retry {
+                    return Err(error);
+                }
+                retried = true;
+            }
+        }
+    }
+}
+
+pub(super) async fn open_reconnect_daemon_session(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+) -> Result<(SessionTransport, DaemonSession), String> {
+    let current_root = manager.registered_root(&root.uri)?;
+    if !current_root.trusted {
+        return Err("未信任的 SSH 项目不能恢复终端".into());
+    }
+    if current_root.canonical_path != root.canonical_path {
+        return Err("项目根已变化，不能接回原终端".into());
+    }
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let daemon = if let Some(config) = manager.direct_config(&connection_id) {
+        DaemonAccess {
+            bin: "direct".into(),
+            token: config.token,
+        }
+    } else {
+        super::host_runtime::ensure_shared_daemon(manager, &current_root, app).await?
+    };
+    let client_id = manager.daemon_client_id(&connection_id);
+    let result =
+        open_terminal_daemon_session(manager, &connection_id, &root.uri, &client_id, &daemon).await;
+    if result.is_err() {
+        // A sibling may already have refreshed the runtime. Discard only the
+        // failed incarnation; never shut down the shared daemon or its PTYs.
+        super::host_runtime::invalidate_failed_daemon(manager, &connection_id, &daemon);
+    }
+    result
+}
+
+/// 已有共享连接全满、新开了连接时提示用户（前端以 info toast 展示）。
+fn emit_terminal_pool_notice(app: &AppHandle, connection_id: &str, transport: &SessionTransport) {
+    if let Some(message) = transport.notice() {
+        let _ = app.emit(
+            "ssh-terminal-pool-notice",
+            serde_json::json!({ "connectionId": connection_id, "message": message }),
+        );
+    }
+}
+
+enum ConnectedEnd {
+    Exited(u32),
+    Disconnected(String),
+    Closed,
+}
+
+enum ReconnectEnd {
+    Connected(ActiveSession),
+    Exited(u32),
+    Terminated(String),
+    Retry(String),
+    /// 握手成功但 attach 请求或增量补发失败；连续多次后改要屏幕快照。
+    AttachRetry(String),
+    Closed,
+}
+
+/// 增量补发连续失败这么多次后，改要屏幕快照接回。断线越久待补发越多，
+/// 一直坚持补发可能永远接不回；快照只丢断线期间的滚动历史，当前屏幕完整。
+const ATTACH_FAILURES_BEFORE_SCREEN: u32 = 2;
+
+fn attach_should_prefer_screen(consecutive_attach_failures: u32) -> bool {
+    consecutive_attach_failures >= ATTACH_FAILURES_BEFORE_SCREEN
+}
+
+pub(crate) async fn list_detached_terminals(
+    connection_id: &str,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<Vec<DetachedTerminal>, String> {
+    if !manager.server_mode(connection_id) {
+        return Ok(Vec::new());
+    }
+    let roots = manager.roots_for_connection(connection_id);
+    let Some(endpoint_root) = roots
+        .iter()
+        .filter(|root| root.trusted)
+        .max_by_key(|root| {
+            comparable_daemon_path(&root.canonical_path).map_or(0, |path| path.len())
+        })
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    let endpoint = server::ready_server_endpoint(app, manager, &endpoint_root)
+        .await
+        .ok_or_else(|| "远端 daemon 尚未就绪".to_string())?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
+    let client_id = manager.daemon_client_id(connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        connection_id,
+        &endpoint_root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let result = async {
+        let ptys = request_owned_detached_ptys(&session, &client_id).await?;
+        Ok(ptys
+            .into_iter()
+            .filter_map(|info| detached_terminal_from_info(info, connection_id, &roots))
+            .collect())
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
+/// 结束本安装留在 daemon 里、但当前没有本地活动会话的终端。
+///
+/// 仅按连接或项目根清理时也要覆盖应用重启后尚未接回的 PTY；它们不在
+/// `SshManager::persistent_terminals` 中，不能只遍历进程内表。
+pub(crate) async fn kill_detached_terminals(
+    connection_id: &str,
+    app: &AppHandle,
+    manager: &SshManager,
+    root_uri: Option<&str>,
+) -> Result<usize, String> {
+    // SSH 模式的连接没有 daemon，也就没有托管终端可清理。
+    if !manager.server_mode(connection_id) {
+        return Ok(0);
+    }
+    let roots = manager.roots_for_connection(connection_id);
+    let Some(endpoint_root) = roots
+        .iter()
+        .filter(|root| root.trusted)
+        .max_by_key(|root| {
+            comparable_daemon_path(&root.canonical_path).map_or(0, |path| path.len())
+        })
+        .cloned()
+    else {
+        return Ok(0);
+    };
+    let endpoint = server::ready_server_endpoint(app, manager, &endpoint_root)
+        .await
+        .ok_or_else(|| "远端 daemon 尚未就绪".to_string())?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
+    let client_id = manager.daemon_client_id(connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        connection_id,
+        &endpoint_root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let result = async {
+        let mut killed = 0usize;
+        for info in request_owned_detached_ptys(&session, &client_id).await? {
+            let Some(cwd) = info.cwd.as_deref() else {
+                continue;
+            };
+            if trusted_root_for_daemon_path(&roots, cwd).is_none() {
+                continue;
+            }
+            if root_uri.is_some_and(|root| !daemon_path_is_within(cwd, root)) {
+                continue;
+            }
+            if session
+                .request(
+                    "pty.kill",
+                    &serde_json::json!({ "id": info.id,"source":"connection_removed" }),
+                )
+                .await
+                .is_ok()
+            {
+                killed += 1;
+            }
+        }
+        Ok(killed)
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
+fn validate_detached_terminal_for_kill(
+    info: &PtyInfoWire,
+    client_id: &str,
+    root: &RegisteredRoot,
+) -> Result<(), String> {
+    if info.is_mobile() {
+        return Err("移动端终端不能按桌面遗留终端结束".into());
+    }
+    if !info.detached {
+        return Err("PTY 已被接回，无法按遗留终端结束".to_string());
+    }
+    validate_terminal_for_exit(info, client_id, root)
+}
+
+fn validate_terminal_for_exit(
+    info: &PtyInfoWire,
+    client_id: &str,
+    root: &RegisteredRoot,
+) -> Result<(), String> {
+    if info.owner.as_deref() != Some(client_id) {
+        return Err("PTY 不属于当前客户端".to_string());
+    }
+    let cwd = info
+        .cwd
+        .as_deref()
+        .ok_or_else(|| "PTY 缺少工作目录，无法安全结束".to_string())?;
+    if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
+        return Err("PTY 工作目录不在当前可信项目根内".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) async fn kill_detached_terminal(
+    pty_id: &str,
+    root: &RegisteredRoot,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root.uri)?;
+    let endpoint = server::require_server_endpoint(app, manager, root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let result = async {
+        // 不传 clientId：孤儿列表会过滤已退出/已接回的 PTY，无法据此区分
+        // 「确实已回收」与「仍在但不能按遗留终端处理」。完整元数据留在后端校验。
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        // 已回收的终端视为关闭成功；仍在的终端必须重新校验归属与可信根。
+        let Some(info) = response.ptys.iter().find(|info| info.id == pty_id) else {
+            return Ok(());
+        };
+        let current_root = manager.root_for_uri(&root.uri, true)?;
+        if current_root.canonical_path != root.canonical_path {
+            return Err("项目根已变化，无法安全结束遗留终端".to_string());
+        }
+        validate_detached_terminal_for_kill(info, &client_id, &current_root)?;
+        session
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
+            .await?;
+        Ok(())
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
+/// Ensures cancellation by the exit timeout also closes the temporary daemon channel.
+struct ExitSessionCleanup<'a> {
+    transport: &'a SessionTransport,
+    session: &'a DaemonSession,
+}
+
+impl Drop for ExitSessionCleanup<'_> {
+    fn drop(&mut self) {
+        self.session.shutdown();
+        self.transport.release();
+    }
+}
+
+/// Confirm termination of exactly one owned PTY, attached or detached.
+/// Unlike the legacy best-effort kill path, network errors must reach the exit dialog.
+pub(crate) async fn kill_terminal_for_exit(
+    pty_id: &str,
+    root: &RegisteredRoot,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root.uri)?;
+    let endpoint = server::require_server_endpoint(app, manager, root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let _cleanup = ExitSessionCleanup {
+        transport: &transport,
+        session: &session,
+    };
+    let result = async {
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        let Some(info) = response.ptys.iter().find(|info| info.id == pty_id) else {
+            return Ok(());
+        };
+        let current_root = manager.root_for_uri(&root.uri, true)?;
+        if current_root.canonical_path != root.canonical_path {
+            return Err("项目根已变化，无法安全结束终端".to_string());
+        }
+        validate_terminal_for_exit(info, &client_id, &current_root)?;
+        session.request("pty.kill", &serde_json::json!({
+            "id": pty_id, "source": "app_exit", "operationId": uuid::Uuid::new_v4().to_string(),
+        })).await?;
+        Ok(())
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
+fn select_restore_candidate(
+    ptys: Vec<PtyInfoWire>,
+    pty_id: &str,
+    client_id: &str,
+) -> Result<PtyInfoWire, String> {
+    let info = ptys
+        .into_iter()
+        .find(|info| info.id == pty_id)
+        .ok_or_else(|| format!("QC_PTY_GONE: PTY 不存在或已回收：{pty_id}"))?;
+    // Recheck full daemon metadata for stale orphan lists and persisted desktop tabs.
+    if info.is_mobile() {
+        return Err("移动端终端不能接回桌面".into());
+    }
+    if info.exited.is_some() {
+        return Err(format!("QC_PTY_GONE: PTY 已退出：{pty_id}"));
+    }
+    if info.owner.as_deref() != Some(client_id) || !info.detached {
+        return Err("PTY 已被接回或不属于当前客户端，无法安全接回".into());
+    }
+    Ok(info)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn attach_persistent_terminal(
+    id: String,
+    pty_id: String,
+    root: RegisteredRoot,
+    size: Option<(u16, u16)>,
+    from_seq: Option<u64>,
+    app: AppHandle,
+    manager: &SshManager,
+) -> Result<TerminalSpawnResult, String> {
+    if pty_id.trim().is_empty() {
+        return Err("ptyId 不能为空".to_string());
+    }
+    if size.is_some_and(|(cols, rows)| cols == 0 || rows == 0) {
+        return Err("终端尺寸必须大于 0".to_string());
+    }
+    let parsed = parse_remote_uri(&root.uri)?;
+    // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
+    let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, mut session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
+
+    // The orphan list hides exited/attached/foreign PTYs. Query full metadata here
+    // so absence is distinguishable from an ownership or transient attach conflict.
+    let candidate = async {
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        select_restore_candidate(response.ptys, &pty_id, &client_id)
+    }
+    .await;
+    let info = match candidate {
+        Ok(info) => info,
+        Err(error) => {
+            session.shutdown();
+            transport.release();
+            return Err(error);
+        }
+    };
+    let Some(cwd) = info.cwd.as_deref() else {
+        session.shutdown();
+        transport.release();
+        return Err(format!("PTY 缺少工作目录，无法安全接回：{pty_id}"));
+    };
+    if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
+        session.shutdown();
+        transport.release();
+        return Err("PTY 工作目录不在当前可信项目根内".to_string());
+    }
+
+    // 前端带回重启前持久化的续传序号时只补发之后的输出，和同一会话内断线重连一样无缝；
+    // 没有序号或已被淘汰时 daemon 给快照。停在全屏 TUI 时总要快照：重启后网格可能变了，
+    // 原样补发 TUI 的增量会错位。
+    let from_seq = from_seq.unwrap_or(COLD_ATTACH_FROM_SEQ);
+    // 没有视图实测网格（size 为 None）时不碰 PTY 尺寸：拿猜的尺寸（如 80x24）接回会把
+    // 正在运行的 PTY 先缩小、等视图 fit 后再撑回。ConPTY 缩小时会截掉自己屏幕缓冲里
+    // 超出的部分，而尺寸很快复原时 OpenCode 等 TUI 认为尺寸没变、不会整屏重画，画面就
+    // 永久残缺错位（daemon 自己的屏幕也一样）。这时沿用 PTY 现有尺寸，快照也按它下发，
+    // 由视图 fit 后的那一次真实 resize 让 TUI 重画（同 VS Code 接回时只下发实测尺寸）。
+    let presized = match size {
+        Some(size) => presize_before_attach(&session, &id, &pty_id, size).await,
+        None => false,
+    };
+    let attach = match session.attach(&pty_id, from_seq, true).await {
+        Ok(attach) => attach,
+        Err(error) if attach_terminal_is_gone(&error) => {
+            session.shutdown();
+            transport.release();
+            return Err(format!("QC_PTY_GONE: PTY 不存在或已退出：{pty_id}"));
+        }
+        Err(error) => {
+            session.shutdown();
+            transport.release();
+            return Err(error);
+        }
+    };
+    let exited = attach
+        .response
+        .get("exited")
+        .and_then(serde_json::Value::as_i64);
+    let next_input_seq = attach
+        .response
+        .get("nextInputSeq")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if exited.is_some() {
+        let _ = session
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
+            .await;
+        session.shutdown();
+        transport.release();
+        return Err(format!("QC_PTY_GONE: PTY 已退出，无法接回：{pty_id}"));
+    }
+    let Some(events) = session.take_events() else {
+        session.shutdown();
+        transport.release();
+        return Err("daemon 会话事件流已初始化".to_string());
+    };
+
+    // 沿用 PTY 现有尺寸时以 daemon 回报为准，断线重连也按它对齐。
+    let (cols, rows) = size.unwrap_or_else(|| {
+        attach_screen_size(&attach.response, (DEFAULT_ATTACH_COLS, DEFAULT_ATTACH_ROWS))
+    });
+    let (command_tx, command_rx) = mpsc::channel(8);
+    let terminal = Arc::new(PersistentTerminal {
+        id: id.clone(),
+        pty_id: pty_id.clone(),
+        connection_id: parsed.connection_id.clone(),
+        root_uri: normalize_remote_uri(&root.uri),
+        // 补发路径按这个起点校验序号连续；快照路径会直接改成 seq_end。
+        next_seq: AtomicU64::new(if from_seq == COLD_ATTACH_FROM_SEQ {
+            0
+        } else {
+            from_seq
+        }),
+        next_input_seq: AtomicU64::new(next_input_seq),
+        size: Mutex::new((cols, rows)),
+        pending_input: Mutex::new(VecDeque::new()),
+        input_ready: Notify::new(),
+        closed: AtomicBool::new(false),
+        detach_requested: Notify::new(),
+        proxy_finished: AtomicBool::new(false),
+        proxy_stopped: Notify::new(),
+        commands: command_tx,
+        kill_context: Mutex::new(serde_json::Value::Null),
+    });
+    // 接回出错只放弃本次接回，绝不 kill：远端进程仍在运行，留作 detached 终端，
+    // 稍后可从孤儿终端提示再次接回。
+    // 冷接回：前端已有重启前持久化的输出，补发或快照都接在后面，不清空历史。
+    let (_, restore) = match apply_attach_restore(&terminal, &app, &attach).await {
+        Ok(result) => result,
+        Err(error) => {
+            session.shutdown();
+            transport.release();
+            return Err(error);
+        }
+    };
+    // attach 前已按本网格 resize 的不再重复下发，免得 ConPTY 再整屏重绘一次；
+    // 沿用 PTY 尺寸接回时什么都不下发。
+    if size.is_some() && !presized {
+        if let Err(error) = resize_session(&session, &pty_id, cols, rows).await {
+            // 尺寸下发失败不影响接回：交给会话循环稍后重试。
+            eprintln!("[WARN] persistent terminal {id} resize after attach failed: {error}");
+            let _ = terminal
+                .commands
+                .try_send(TerminalCommand::Resize(cols, rows));
+        }
+    }
+
+    let inserted = {
+        match manager.persistent_terminals.write() {
+            Ok(mut terminals) => Ok(terminals.insert(id.clone(), Arc::clone(&terminal))),
+            Err(_) => Err(()),
+        }
+    };
+    let previous = match inserted {
+        Ok(previous) => previous,
+        Err(()) => {
+            session.shutdown();
+            transport.release();
+            return Err("SSH 终端状态不可用".to_string());
+        }
+    };
+    if let Some(previous) = previous {
+        previous.set_kill_context("session_replaced", &uuid::Uuid::new_v4().to_string());
+        previous.mark_closed();
+        if previous.pty_id() != pty_id {
+            let _ = previous.commands.try_send(TerminalCommand::Kill(None));
+        }
+    }
+
+    let task_terminal = Arc::clone(&terminal);
+    let task_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_persistent_terminal(
+            task_terminal,
+            root,
+            task_app,
+            ActiveSession {
+                transport,
+                session,
+                events,
+            },
+            command_rx,
+        )
+        .await;
+    });
+
+    let restore_name = match restore {
+        RestoreKind::Snapshot => "snapshot",
+        RestoreKind::Replay => "replay",
+        RestoreKind::None | RestoreKind::Exit => "none",
+    };
+    emit_connection(
+        &app,
+        &terminal.id,
+        "attached",
+        None,
+        None,
+        Some(restore_name),
+    );
+    Ok(TerminalSpawnResult {
+        resolved_shell: None,
+        fallback_from: None,
+        persistent: true,
+        pty_id: Some(pty_id),
+        connection_id: Some(parsed.connection_id),
+        persistent_fallback_reason: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn spawn_persistent_terminal(
+    id: String,
+    root: RegisteredRoot,
+    working_directory: String,
+    cols: u16,
+    rows: u16,
+    launch: PersistentLaunch,
+    app: AppHandle,
+    manager: &SshManager,
+) -> Result<TerminalSpawnResult, String> {
+    let parsed = parse_remote_uri(&root.uri)?;
+    // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
+    let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, mut session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
+    let opened = async {
+        let response = session
+            .request(
+                "pty.create",
+                &serde_json::json!({
+                    "cwd": working_directory,
+                    "shell": launch.shell,
+                    "args": launch.args,
+                    "env": launch.env,
+                    "name": launch.name,
+                    "cols": cols.max(1),
+                    "rows": rows.max(1),
+                }),
+            )
+            .await?;
+        let pty_id = response
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "pty.create 应答缺少 id".to_string())?
+            .to_string();
+        let seq = response
+            .get("seq")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let next_input_seq = response
+            .get("nextInputSeq")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let events = session
+            .take_events()
+            .ok_or_else(|| "daemon 会话事件流已初始化".to_string())?;
+        Ok::<_, String>((events, pty_id, seq, next_input_seq))
+    }
+    .await;
+    let (events, pty_id, seq, next_input_seq) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            session.shutdown();
+            transport.release();
+            return Err(error);
+        }
+    };
+
+    let (command_tx, command_rx) = mpsc::channel(8);
+    let terminal = Arc::new(PersistentTerminal {
+        id: id.clone(),
+        pty_id: pty_id.clone(),
+        connection_id: parsed.connection_id.clone(),
+        root_uri: normalize_remote_uri(&root.uri),
+        next_seq: AtomicU64::new(seq),
+        next_input_seq: AtomicU64::new(next_input_seq),
+        size: Mutex::new((cols.max(1), rows.max(1))),
+        pending_input: Mutex::new(VecDeque::new()),
+        input_ready: Notify::new(),
+        closed: AtomicBool::new(false),
+        detach_requested: Notify::new(),
+        proxy_finished: AtomicBool::new(false),
+        proxy_stopped: Notify::new(),
+        commands: command_tx,
+        kill_context: Mutex::new(serde_json::Value::Null),
+    });
+    let previous = {
+        let inserted = manager
+            .persistent_terminals
+            .write()
+            .map(|mut terminals| terminals.insert(id.clone(), Arc::clone(&terminal)))
+            .map_err(|_| ());
+        match inserted {
+            Ok(previous) => previous,
+            Err(_) => {
+                session.shutdown();
+                transport.release();
+                return Err("SSH 终端状态不可用".to_string());
+            }
+        }
+    };
+    if let Some(previous) = previous {
+        previous.set_kill_context("session_replaced", &uuid::Uuid::new_v4().to_string());
+        previous.mark_closed();
+        let _ = previous.commands.try_send(TerminalCommand::Kill(None));
+    }
+
+    let task_terminal = Arc::clone(&terminal);
+    tauri::async_runtime::spawn(async move {
+        run_persistent_terminal(
+            task_terminal,
+            root,
+            app,
+            ActiveSession {
+                transport,
+                session,
+                events,
+            },
+            command_rx,
+        )
+        .await;
+    });
+
+    Ok(TerminalSpawnResult {
+        resolved_shell: Some(launch.resolved_shell),
+        fallback_from: launch.fallback_from,
+        persistent: true,
+        pty_id: Some(pty_id),
+        connection_id: Some(parsed.connection_id),
+        persistent_fallback_reason: None,
+    })
+}
+
+async fn run_persistent_terminal(
+    terminal: Arc<PersistentTerminal>,
+    root: RegisteredRoot,
+    app: AppHandle,
+    mut active: ActiveSession,
+    command_rx: mpsc::Receiver<TerminalCommand>,
+) {
+    tokio::select! {
+        biased;
+        _ = terminal.detach_requested.notified() => {},
+        _ = run_persistent_terminal_inner(Arc::clone(&terminal), root, app.clone(), &mut active, command_rx) => {},
+    }
+    active.session.shutdown();
+    active.transport.release();
+    remove_persistent_terminal(&app, &terminal);
+    terminal.proxy_finished.store(true, Ordering::Release);
+    terminal.proxy_stopped.notify_waiters();
+}
+
+async fn run_persistent_terminal_inner(
+    terminal: Arc<PersistentTerminal>,
+    root: RegisteredRoot,
+    app: AppHandle,
+    active: &mut ActiveSession,
+    mut command_rx: mpsc::Receiver<TerminalCommand>,
+) {
+    let manager = app.state::<SshManager>();
+    loop {
+        match run_connected(&terminal, &app, active, &mut command_rx).await {
+            ConnectedEnd::Exited(code) => {
+                terminal.mark_closed();
+                // shell 正常退出也要释放独占的 SSH 连接与 daemon 会话。
+                active.session.shutdown();
+                active.transport.release();
+                emit_exit(&app, &terminal.id, code, false, None);
+                remove_persistent_terminal(&app, &terminal);
+                return;
+            }
+            ConnectedEnd::Closed => {
+                terminal.mark_closed();
+                active.session.shutdown();
+                active.transport.release();
+                remove_persistent_terminal(&app, &terminal);
+                return;
+            }
+            ConnectedEnd::Disconnected(reason) => {
+                let mut reason = reason;
+                active.session.shutdown();
+                active.transport.release();
+                let mut kill_acks = Vec::new();
+                let mut attempt = 0u32;
+                let mut attach_failures = 0u32;
+                loop {
+                    attempt = attempt.saturating_add(1);
+                    emit_connection(
+                        &app,
+                        &terminal.id,
+                        "reconnecting",
+                        Some(attempt),
+                        Some(reason.clone()),
+                        None,
+                    );
+                    if terminal.closed.load(Ordering::Acquire) {
+                        kill_acks.extend(drain_kill_acks(&mut command_rx));
+                        break;
+                    }
+                    let delay = reconnect_delay_schedule(attempt);
+                    if !delay.is_zero() {
+                        let sleep = tokio::time::sleep(delay);
+                        tokio::pin!(sleep);
+                        loop {
+                            tokio::select! {
+                                _ = &mut sleep => break,
+                                command = command_rx.recv() => {
+                                    match command {
+                                        Some(TerminalCommand::Kill(ack)) => {
+                                            terminal.closed.store(true, Ordering::Release);
+                                            if let Some(ack) = ack {
+                                                kill_acks.push(ack);
+                                            }
+                                        }
+                                        Some(TerminalCommand::Resize(..)) | None => {}
+                                    }
+                                }
+                            }
+                            if terminal.closed.load(Ordering::Acquire) {
+                                kill_acks.extend(drain_kill_acks(&mut command_rx));
+                                break;
+                            }
+                        }
+                    }
+                    if terminal.closed.load(Ordering::Acquire) {
+                        kill_acks.extend(drain_kill_acks(&mut command_rx));
+                        break;
+                    }
+                    let prefer_screen = attach_should_prefer_screen(attach_failures);
+                    match reconnect_terminal(&terminal, &root, &app, &manager, prefer_screen).await
+                    {
+                        ReconnectEnd::Connected(connected) => {
+                            *active = connected;
+                            break;
+                        }
+                        ReconnectEnd::Terminated(reason) => {
+                            terminal.mark_closed();
+                            for ack in kill_acks.drain(..) {
+                                let _ = ack.send(());
+                            }
+                            emit_exit(&app, &terminal.id, 0, true, Some(reason));
+                            remove_persistent_terminal(&app, &terminal);
+                            return;
+                        }
+                        ReconnectEnd::Exited(code) => {
+                            terminal.mark_closed();
+                            for ack in kill_acks.drain(..) {
+                                let _ = ack.send(());
+                            }
+                            emit_exit(&app, &terminal.id, code, false, None);
+                            remove_persistent_terminal(&app, &terminal);
+                            return;
+                        }
+                        ReconnectEnd::Retry(error) => {
+                            reason = error;
+                            if terminal.closed.load(Ordering::Acquire) {
+                                kill_acks.extend(drain_kill_acks(&mut command_rx));
+                                break;
+                            }
+                            continue;
+                        }
+                        ReconnectEnd::AttachRetry(error) => {
+                            attach_failures = attach_failures.saturating_add(1);
+                            reason = error;
+                            if terminal.closed.load(Ordering::Acquire) {
+                                kill_acks.extend(drain_kill_acks(&mut command_rx));
+                                break;
+                            }
+                            continue;
+                        }
+                        ReconnectEnd::Closed => {
+                            kill_acks.extend(drain_kill_acks(&mut command_rx));
+                            break;
+                        }
+                    }
+                }
+                if terminal.closed.load(Ordering::Acquire) {
+                    kill_offline(&terminal, &root, &app).await;
+                    for ack in kill_acks {
+                        let _ = ack.send(());
+                    }
+                    terminal.mark_closed();
+                    remove_persistent_terminal(&app, &terminal);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn run_connected(
+    terminal: &Arc<PersistentTerminal>,
+    app: &AppHandle,
+    active: &mut ActiveSession,
+    command_rx: &mut mpsc::Receiver<TerminalCommand>,
+) -> ConnectedEnd {
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + DAEMON_HEARTBEAT_INTERVAL,
+        DAEMON_HEARTBEAT_INTERVAL,
+    );
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // 本次连接已下发给 daemon 的尺寸；接回时下发的尺寸不确定，从未知开始。
+    let mut sent_size: Option<(u16, u16)> = None;
+    loop {
+        tokio::select! {
+            event = active.events.recv() => {
+                match event {
+                    Some(Event::PtyData { id, seq, data, .. }) if id == terminal.pty_id => {
+                        let next = terminal.next_seq.load(Ordering::Acquire);
+                        if seq > next {
+                            return ConnectedEnd::Disconnected(format!(
+                                "终端输出序号不连续：期望 {next}，收到 {seq}"
+                            ));
+                        }
+                        if seq_is_new(seq, next) {
+                            emit_data(app, &terminal.id, &data, seq.wrapping_add(1));
+                            terminal.next_seq.store(seq.wrapping_add(1), Ordering::Release);
+                        }
+                    }
+                    Some(Event::PtyExit { id, code }) if id == terminal.pty_id => {
+                        return ConnectedEnd::Exited(
+                            code.and_then(|code| u32::try_from(code).ok()).unwrap_or(0)
+                        );
+                    }
+                    Some(_) => {}
+                    None => {
+                        return ConnectedEnd::Disconnected(session_disconnect_reason(active));
+                    }
+                }
+            }
+            _ = terminal.input_ready.notified() => {
+                if let Err(error) = flush_pending_to_session(terminal, &active.session).await {
+                    return ConnectedEnd::Disconnected(error);
+                }
+            }
+            command = command_rx.recv() => {
+                match command {
+                    Some(TerminalCommand::Resize(cols, rows)) => {
+                        // 先按命令自带的尺寸下发（保住重绘的 rows-1 一步）；期间前端又改过
+                        // 尺寸（例如队列满时只记下了最新尺寸）就再补到最新尺寸。
+                        // 与上一次已下发的尺寸相同则跳过：ConPTY 同尺寸 resize 也可能整屏重绘。
+                        let latest = *terminal
+                            .size
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        for size in [(cols, rows), latest] {
+                            if sent_size == Some(size) {
+                                continue;
+                            }
+                            if let Err(error) =
+                                resize_active(active, &terminal.pty_id, size.0, size.1).await
+                            {
+                                return ConnectedEnd::Disconnected(error);
+                            }
+                            sent_size = Some(size);
+                        }
+                    }
+                    Some(TerminalCommand::Kill(ack)) => {
+                        terminal.closed.store(true, Ordering::Release);
+                        let _ = active.session.request(
+                            "pty.kill",
+                            &terminal.kill_payload(),
+                        ).await;
+                        if let Some(ack) = ack {
+                            let _ = ack.send(());
+                        }
+                        return ConnectedEnd::Closed;
+                    }
+                    None => return ConnectedEnd::Closed,
+                }
+            }
+            _ = heartbeat.tick() => {
+                if active.session.last_frame_age() >= DAEMON_HEARTBEAT_TIMEOUT {
+                    return ConnectedEnd::Disconnected(
+                        "约 30 秒未收到远端 daemon 回包".to_string()
+                    );
+                }
+                active.session.send_ping();
+            }
+            _ = active.session.wait_closed() => {
+                return ConnectedEnd::Disconnected(session_disconnect_reason(active));
+            }
+        }
+    }
+}
+
+fn session_disconnect_reason(active: &ActiveSession) -> String {
+    active
+        .transport
+        .closed_reason()
+        .or_else(|| active.session.closed_reason())
+        .unwrap_or_else(|| "daemon 连接已断开".to_string())
+}
+
+async fn resize_active(
+    active: &ActiveSession,
+    pty_id: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    active
+        .session
+        .request(
+            "pty.resize",
+            &serde_json::json!({ "id": pty_id, "cols": cols, "rows": rows }),
+        )
+        .await
+        .map(|_| ())
+}
+
+async fn reconnect_terminal(
+    terminal: &PersistentTerminal,
+    root: &RegisteredRoot,
+    app: &AppHandle,
+    manager: &SshManager,
+    prefer_screen: bool,
+) -> ReconnectEnd {
+    let parsed = match parse_remote_uri(&root.uri) {
+        Ok(parsed) => parsed,
+        Err(error) => return ReconnectEnd::Terminated(error),
+    };
+    if terminal.closed.load(Ordering::Acquire) {
+        return ReconnectEnd::Closed;
+    }
+    if let Err(error) = manager.ensure_connection_alive(&parsed.connection_id).await {
+        return ReconnectEnd::Retry(error);
+    }
+    // A project slot may still contain the token from a previous daemon. Unlike
+    // the file-operation fast path, reconnect must acquire a healthy host runtime.
+    // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
+    // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
+    // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
+    let (transport, mut session) =
+        match open_reconnect_daemon_session(manager, root, Some(app)).await {
+            Ok(opened) => opened,
+            Err(error) => {
+                eprintln!(
+                    "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
+                    terminal.id
+                );
+                return ReconnectEnd::Retry(error);
+            }
+        };
+    let Some(events) = session.take_events() else {
+        session.shutdown();
+        transport.release();
+        return ReconnectEnd::Retry("daemon 终端事件通道不可用".into());
+    };
+    let active = ActiveSession {
+        transport,
+        session,
+        events,
+    };
+    let from_seq = terminal.next_seq.load(Ordering::Acquire);
+    // 缓冲已淘汰时 daemon 给快照，同样要先对齐网格；终端已结束的情况交给 attach 判定。
+    let presized_size = *terminal
+        .size
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let presized = presize_before_attach(
+        &active.session,
+        &terminal.id,
+        &terminal.pty_id,
+        presized_size,
+    )
+    .await;
+    if prefer_screen {
+        eprintln!(
+            "[WARN] persistent terminal {} replay kept failing, requesting screen snapshot",
+            terminal.id
+        );
+    }
+    let attach = match active
+        .session
+        .attach_with_screen(&terminal.pty_id, from_seq, false, prefer_screen)
+        .await
+    {
+        Ok(attach) => attach,
+        Err(error) if attach_terminal_is_gone(&error) => {
+            active.session.shutdown();
+            active.transport.release();
+            return ReconnectEnd::Terminated("远端终端已结束或被回收".to_string());
+        }
+        Err(error) => {
+            active.session.shutdown();
+            active.transport.release();
+            return ReconnectEnd::AttachRetry(error);
+        }
+    };
+    let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
+        Ok(result) => result,
+        Err(error) => {
+            // 已写出的输出已推进 next_seq，下次 attach 从缺口续补。
+            active.session.shutdown();
+            active.transport.release();
+            eprintln!(
+                "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
+                terminal.id
+            );
+            return ReconnectEnd::AttachRetry(error);
+        }
+    };
+    match prepare_reconnected_terminal(exited, async {
+        let (cols, rows) = *terminal
+            .size
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // 接回期间前端改过尺寸，或 attach 前没对齐成功，才需要再下发。
+        if !presized || (cols, rows) != presized_size {
+            resize_session(&active.session, &terminal.pty_id, cols, rows).await?;
+        }
+        flush_pending_to_session(terminal, &active.session).await
+    })
+    .await
+    {
+        Ok(Some(code)) => {
+            active.session.shutdown();
+            active.transport.release();
+            return ReconnectEnd::Exited(code);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            active.session.shutdown();
+            active.transport.release();
+            eprintln!(
+                "[WARN] persistent terminal {} could not prepare live session after attach: {error}",
+                terminal.id
+            );
+            return ReconnectEnd::Retry(error);
+        }
+    }
+    let restore_name = match restore {
+        RestoreKind::Snapshot => Some("snapshot"),
+        RestoreKind::Replay => Some("replay"),
+        RestoreKind::None | RestoreKind::Exit => Some("none"),
+    };
+    emit_connection(app, &terminal.id, "attached", None, None, restore_name);
+    ReconnectEnd::Connected(active)
+}
+
+/// 快照不清空前端：断线前的输出留作滚动历史，前端只把当前屏幕换成快照（见 Terminal.tsx 的 onScreen）。
+async fn apply_attach_restore(
+    terminal: &PersistentTerminal,
+    app: &AppHandle,
+    attach: &DaemonAttachResult,
+) -> Result<(Option<i32>, RestoreKind), String> {
+    let screen = attach
+        .response
+        .get("screen")
+        .and_then(serde_json::Value::as_str);
+    let local_size = *terminal
+        .size
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let screen_size = attach_screen_size(&attach.response, local_size);
+    let seq_end = attach
+        .response
+        .get("seqEnd")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            attach
+                .stream_end
+                .summary
+                .get("seqEnd")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .unwrap_or_else(|| terminal.next_seq.load(Ordering::Acquire));
+    let exited = attach
+        .response
+        .get("exited")
+        .and_then(serde_json::Value::as_i64)
+        .map(|value| value as i32)
+        .or_else(|| {
+            attach
+                .stream_end
+                .summary
+                .get("exited")
+                .and_then(serde_json::Value::as_i64)
+                .map(|value| value as i32)
+        });
+    if !attach.stream_end.ok {
+        return Err(attach
+            .stream_end
+            .error
+            .clone()
+            .unwrap_or_else(|| "pty.attach 重放失败".to_string()));
+    }
+    let replay = assemble_attach_chunks(&attach.chunks)?;
+    let restore =
+        attach_result_maps_to_restore_kind(screen.is_some(), replay.len(), exited.is_some());
+    match restore {
+        RestoreKind::Snapshot => {
+            // 不清空前端：断线前的输出留作滚动历史，快照只更新当前屏幕。
+            if let Some(screen) = screen {
+                emit_screen(app, &terminal.id, screen, screen_size, seq_end);
+            }
+            terminal.next_seq.store(seq_end, Ordering::Release);
+        }
+        RestoreKind::Replay => {
+            let mut next_seq = terminal.next_seq.load(Ordering::Acquire);
+            for (seq, data) in &replay {
+                if *seq > next_seq {
+                    return Err(format!(
+                        "pty.attach 重放序号不连续：期望 {next_seq}，收到 {seq}"
+                    ));
+                }
+                if seq_is_new(*seq, next_seq) {
+                    next_seq = seq.wrapping_add(1);
+                    emit_data(app, &terminal.id, data, next_seq);
+                    terminal.next_seq.store(next_seq, Ordering::Release);
+                }
+            }
+            if next_seq != seq_end {
+                return Err(format!(
+                    "pty.attach 重放结束序号不连续：期望 {seq_end}，实际 {next_seq}"
+                ));
+            }
+        }
+        RestoreKind::None => {
+            let next_seq = terminal.next_seq.load(Ordering::Acquire);
+            if seq_end > next_seq {
+                return Err("pty.attach 未提供缺失输出或屏幕快照".to_string());
+            }
+        }
+        RestoreKind::Exit => {}
+    }
+    if restore == RestoreKind::Exit {
+        if let Some(screen) = screen {
+            emit_screen(app, &terminal.id, screen, screen_size, seq_end);
+            terminal.next_seq.store(seq_end, Ordering::Release);
+        } else {
+            let mut next_seq = terminal.next_seq.load(Ordering::Acquire);
+            for (seq, data) in &replay {
+                if *seq > next_seq {
+                    return Err(format!(
+                        "pty.attach 退出前重放序号不连续：期望 {next_seq}，收到 {seq}"
+                    ));
+                }
+                if seq_is_new(*seq, next_seq) {
+                    next_seq = seq.wrapping_add(1);
+                    emit_data(app, &terminal.id, data, next_seq);
+                    terminal.next_seq.store(next_seq, Ordering::Release);
+                }
+            }
+            if next_seq != seq_end {
+                return Err(format!(
+                    "pty.attach 退出前重放结束序号不连续：期望 {seq_end}，实际 {next_seq}"
+                ));
+            }
+        }
+    }
+    Ok((exited, restore))
+}
+
+/// 快照所在的 daemon 网格；旧 daemon 未返回尺寸时退回本端记录的 PTY 尺寸。
+fn attach_screen_size(response: &serde_json::Value, fallback: (u16, u16)) -> (u16, u16) {
+    let read = |key: &str| {
+        response
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+    };
+    (
+        read("cols").unwrap_or(fallback.0),
+        read("rows").unwrap_or(fallback.1),
+    )
+}
+
+async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app: &AppHandle) {
+    let manager = app.state::<SshManager>();
+    let deadline = tokio::time::Instant::now() + OFFLINE_KILL_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        let parsed = match parse_remote_uri(&root.uri) {
+            Ok(parsed) => parsed,
+            Err(_) => return,
+        };
+        if manager
+            .ensure_connection_alive(&parsed.connection_id)
+            .await
+            .is_ok()
+        {
+            if let Some(endpoint) = server::ready_server_endpoint(app, &manager, root).await {
+                if let Some(daemon) = endpoint.daemon.as_ref() {
+                    let client_id = manager.daemon_client_id(&parsed.connection_id);
+                    if let Ok((transport, session)) = open_terminal_daemon_session(
+                        &manager,
+                        &parsed.connection_id,
+                        &root.uri,
+                        &client_id,
+                        daemon,
+                    )
+                    .await
+                    {
+                        let killed = session
+                            .request("pty.kill", &terminal.kill_payload())
+                            .await
+                            .is_ok();
+                        session.shutdown();
+                        transport.release();
+                        if killed {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    eprintln!(
+        "[WARN] persistent terminal {} could not reconnect within 5s to kill remote PTY {}",
+        terminal.id, terminal.pty_id
+    );
+}
+
+async fn resize_session(
+    session: &DaemonSession,
+    pty_id: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    session
+        .request(
+            "pty.resize",
+            &serde_json::json!({ "id": pty_id, "cols": cols, "rows": rows }),
+        )
+        .await
+        .map(|_| ())
+}
+
+/// attach 前先把 daemon 网格改成客户端网格，返回是否成功。
+///
+/// 否则快照按断线期间的旧网格渲染，前端得先把 xterm 改成旧网格写快照；而接回后的
+/// resize 让 ConPTY 立刻按新宽度整屏重绘，这段输出排在快照后、仍按旧网格解析，
+/// 全屏 TUI 逐行错位成阶梯。此时终端还没登记，前端补的重绘也下发不到。
+/// 先 resize 后，快照与之后的输出都按客户端网格排版（daemon 先改解析器再改 PTY，
+/// 重绘输出不论落在快照前后都按新网格解析）。失败不影响接回，调用方退回接回后再 resize。
+async fn presize_before_attach(
+    session: &DaemonSession,
+    terminal_id: &str,
+    pty_id: &str,
+    (cols, rows): (u16, u16),
+) -> bool {
+    match resize_session(session, pty_id, cols, rows).await {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "[WARN] persistent terminal {terminal_id} resize before attach failed: {error}"
+            );
+            false
+        }
+    }
+}
+
+/// 按序发送队列里的全部输入；失败时把未送达部分放回队首并返回原因。
+async fn flush_pending_to_session(
+    terminal: &PersistentTerminal,
+    session: &DaemonSession,
+) -> Result<(), String> {
+    while let Some(input) = terminal.pop_pending() {
+        if let Err((error, unsent)) =
+            send_input_to_session(session, &terminal.pty_id, &terminal.next_input_seq, input).await
+        {
+            terminal.requeue_front(unsent);
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+async fn send_input_to_session(
+    session: &DaemonSession,
+    pty_id: &str,
+    next_input_seq: &AtomicU64,
+    input: Vec<u8>,
+) -> Result<(), InputSendFailure> {
+    struct Bytes<'a>(&'a [u8]);
+
+    impl Serialize for Bytes<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_bytes(self.0)
+        }
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct InputParams<'a> {
+        id: &'a str,
+        seq: u64,
+        data: Bytes<'a>,
+    }
+
+    for (index, chunk) in input.chunks(INPUT_CHUNK_BYTES).enumerate() {
+        let seq = next_input_seq.load(Ordering::Acquire);
+        if let Err(error) = session
+            .request(
+                "pty.input",
+                &InputParams {
+                    id: pty_id,
+                    seq,
+                    data: Bytes(chunk),
+                },
+            )
+            .await
+        {
+            return Err((error, input[index * INPUT_CHUNK_BYTES..].to_vec()));
+        }
+        next_input_seq.store(seq.wrapping_add(1), Ordering::Release);
+    }
+    Ok(())
+}
+
+fn remove_persistent_terminal(app: &AppHandle, terminal: &Arc<PersistentTerminal>) {
+    app.state::<SshManager>()
+        .forget_persistent_terminal(terminal);
+}
+
+#[cfg(test)]
+mod real_host_stability;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use qingcode_server::daemon::{run_async as run_loopback_daemon, DaemonOptions, RunDir};
+    #[cfg(unix)]
+    use qingcode_server::ipc::IpcEndpoint;
+    #[cfg(unix)]
+    use qingcode_server::proto::{
+        self, ErrorBody, Frame, HelloRequest, Kind, Request, Response, StreamEnd, WindowCredit,
+        CONTROL_STREAM, PROTOCOL_VERSION, WINDOW_BYTES,
+    };
+    #[cfg(unix)]
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    #[test]
+    fn reconnect_delay_schedule_matches_watch() {
+        let delays = (1..=10)
+            .map(|attempt| reconnect_delay_schedule(attempt).as_secs())
+            .collect::<Vec<_>>();
+        assert_eq!(delays, vec![0, 5, 5, 10, 10, 10, 10, 10, 30, 30]);
+    }
+
+    #[test]
+    fn attach_falls_back_to_screen_after_repeated_replay_failures() {
+        // 首次与第二次仍尝试增量补发，保留滚动历史；之后改要快照，避免无限重连。
+        assert!(!attach_should_prefer_screen(0));
+        assert!(!attach_should_prefer_screen(1));
+        assert!(attach_should_prefer_screen(2));
+        assert!(attach_should_prefer_screen(10));
+    }
+
+    #[test]
+    fn seq_dedup_drops_overlapping_replay() {
+        assert!(!seq_is_new(7, 8));
+        assert!(seq_is_new(8, 8));
+        assert!(seq_is_new(9, 8));
+    }
+
+    #[test]
+    fn restore_distinguishes_confirmed_absence_from_live_ownership_conflicts() {
+        assert!(select_restore_candidate(vec![], "pty", "owner")
+            .unwrap_err()
+            .contains("QC_PTY_GONE:"));
+        let info = |owner: &str, detached: bool, exited: Option<i32>| {
+            serde_json::from_value::<PtyInfoWire>(
+                serde_json::json!({"id":"pty","owner":owner,"detached":detached,"exited":exited,
+                "cols":80,"rows":24,"nextInputSeq":0,"seq":0}),
+            )
+            .unwrap()
+        };
+        assert!(select_restore_candidate(vec![info("owner", true, None)], "pty", "owner").is_ok());
+        for candidate in [info("other", true, None), info("owner", false, None)] {
+            assert!(!select_restore_candidate(vec![candidate], "pty", "owner")
+                .unwrap_err()
+                .contains("QC_PTY_GONE:"));
+        }
+        assert!(
+            select_restore_candidate(vec![info("owner", true, Some(1))], "pty", "owner")
+                .unwrap_err()
+                .contains("QC_PTY_GONE:")
+        );
+    }
+
+    fn test_terminal() -> PersistentTerminal {
+        let (commands, _rx) = mpsc::channel(1);
+        PersistentTerminal {
+            id: "t".into(),
+            pty_id: "p".into(),
+            connection_id: "c".into(),
+            root_uri: "ssh://c/root".into(),
+            next_seq: AtomicU64::new(0),
+            next_input_seq: AtomicU64::new(0),
+            size: Mutex::new((80, 24)),
+            pending_input: Mutex::new(VecDeque::new()),
+            input_ready: Notify::new(),
+            closed: AtomicBool::new(false),
+            detach_requested: Notify::new(),
+            proxy_finished: AtomicBool::new(false),
+            proxy_stopped: Notify::new(),
+            commands,
+            kill_context: Mutex::new(serde_json::Value::Null),
+        }
+    }
+
+    #[test]
+    fn queued_resizes_keep_each_requested_size_and_full_queue_keeps_latest() {
+        let (commands, mut rx) = mpsc::channel(2);
+        let terminal = PersistentTerminal {
+            commands,
+            ..test_terminal()
+        };
+        // 补重绘连发 rows-1 与 rows：排队后两步都要保留，不能都读成最新尺寸。
+        terminal.resize(100, 29).unwrap();
+        terminal.resize(100, 30).unwrap();
+        // 队列满不算失败：最新尺寸已记下，处理排队命令时会补到它。
+        terminal.resize(120, 40).unwrap();
+        let mut received = Vec::new();
+        while let Ok(TerminalCommand::Resize(cols, rows)) = rx.try_recv() {
+            received.push((cols, rows));
+        }
+        assert_eq!(received, vec![(100, 29), (100, 30)]);
+        assert_eq!(*terminal.size.lock().unwrap(), (120, 40));
+        drop(rx);
+        assert!(
+            terminal.resize(80, 24).is_err(),
+            "会话循环结束后应报告终端已结束"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_to_exited_terminal_preserves_exit_without_sending_pending_input() {
+        let terminal = test_terminal();
+        let pending = b"echo queued-during-disconnect\n".to_vec();
+        terminal.write(pending.clone()).unwrap();
+
+        // 模拟 attach 已报告退出、daemon 随即回收 PTY。旧逻辑会先发 resize/input，
+        // 将这里的「不存在」误作传输故障重试，最终误报 daemon 重启并丢失退出码。
+        let result = prepare_reconnected_terminal(Some(7), async {
+            terminal.pop_pending();
+            Err("终端不存在或已回收".to_string())
+        })
+        .await;
+        assert_eq!(result, Ok(Some(7)));
+        assert_eq!(terminal.pop_pending(), Some(pending));
+    }
+
+    #[tokio::test]
+    async fn reconnect_to_live_terminal_prepares_session_and_propagates_failure() {
+        let terminal = test_terminal();
+        terminal.write(b"echo live\n".to_vec()).unwrap();
+        let result = prepare_reconnected_terminal(None, async {
+            assert_eq!(terminal.pop_pending(), Some(b"echo live\n".to_vec()));
+            Ok(())
+        })
+        .await;
+        assert_eq!(result, Ok(None));
+
+        let result = prepare_reconnected_terminal(None, async {
+            Err("daemon pty.resize 请求超时".to_string())
+        })
+        .await;
+        assert_eq!(result, Err("daemon pty.resize 请求超时".to_string()));
+    }
+
+    #[test]
+    fn pending_input_rejects_overflow_without_dropping_and_keeps_order() {
+        let terminal = test_terminal();
+        terminal.write(vec![b'a'; 1024 * 1024]).unwrap();
+        terminal.write(vec![b'b'; 1024 * 1024]).unwrap();
+        // 超过积压上限：整笔拒绝，已排队内容一字节不丢。
+        let error = terminal.write(vec![b'c'; 1]).unwrap_err();
+        assert!(error.contains("积压"));
+        // 发送失败的剩余部分放回队首，仍排在后来的输入之前。
+        let first = terminal.pop_pending().unwrap();
+        assert_eq!(first[0], b'a');
+        terminal.requeue_front(first[512 * 1024..].to_vec());
+        let resumed = terminal.pop_pending().unwrap();
+        assert_eq!(resumed.len(), 512 * 1024);
+        assert_eq!(resumed[0], b'a');
+        assert_eq!(terminal.pop_pending().unwrap()[0], b'b');
+        assert!(terminal.pop_pending().is_none());
+        // 关闭后不再接受输入。
+        terminal.mark_closed();
+        assert!(terminal.write(vec![b'x']).is_err());
+    }
+
+    #[test]
+    fn attach_screen_size_prefers_daemon_grid_and_falls_back_to_local_size() {
+        let daemon = serde_json::json!({ "cols": 120, "rows": 40 });
+        assert_eq!(attach_screen_size(&daemon, (80, 24)), (120, 40));
+        let legacy = serde_json::json!({ "cols": 0, "rows": 99999 });
+        assert_eq!(attach_screen_size(&legacy, (80, 24)), (80, 24));
+        assert_eq!(
+            attach_screen_size(&serde_json::json!({}), (80, 24)),
+            (80, 24)
+        );
+    }
+
+    #[test]
+    fn cold_attach_requests_a_screen_instead_of_raw_history() {
+        // 冷接回的起始序号必须超出任何真实 seq_end，daemon 才会给快照而不是从头重放。
+        assert_eq!(COLD_ATTACH_FROM_SEQ, u64::MAX);
+    }
+
+    #[test]
+    fn attach_restore_kind_is_selected() {
+        assert_eq!(
+            attach_result_maps_to_restore_kind(true, 0, false),
+            RestoreKind::Snapshot
+        );
+        assert_eq!(
+            attach_result_maps_to_restore_kind(false, 2, false),
+            RestoreKind::Replay
+        );
+        assert_eq!(
+            attach_result_maps_to_restore_kind(false, 0, false),
+            RestoreKind::None
+        );
+        assert_eq!(
+            attach_result_maps_to_restore_kind(false, 0, true),
+            RestoreKind::Exit
+        );
+    }
+
+    #[test]
+    fn attach_chunks_are_reassembled_by_seq_and_offset() {
+        let chunks = vec![
+            StreamChunk {
+                seq: Some(1),
+                offset: 0,
+                data: b"ab".to_vec(),
+                last: false,
+            },
+            StreamChunk {
+                seq: Some(1),
+                offset: 2,
+                data: b"cd".to_vec(),
+                last: true,
+            },
+        ];
+        assert_eq!(
+            assemble_attach_chunks(&chunks).unwrap(),
+            vec![(1, b"abcd".to_vec())]
+        );
+    }
+
+    #[test]
+    fn persistent_event_payloads_match_frontend_contract() {
+        let reconnecting = serde_json::to_value(TerminalConnectionPayload {
+            id: "t1".into(),
+            state: "reconnecting",
+            attempt: Some(2),
+            reason: Some("network lost".into()),
+            restore: None,
+        })
+        .unwrap();
+        assert_eq!(reconnecting["state"], "reconnecting");
+        assert_eq!(reconnecting["attempt"], 2);
+        assert!(reconnecting.get("restore").is_none());
+
+        let attached = serde_json::to_value(TerminalConnectionPayload {
+            id: "t1".into(),
+            state: "attached",
+            attempt: None,
+            reason: None,
+            restore: Some("snapshot"),
+        })
+        .unwrap();
+        assert_eq!(attached["restore"], "snapshot");
+        assert!(attached.get("attempt").is_none());
+
+        let data = serde_json::to_value(PersistentTerminalDataPayload {
+            id: "t1".into(),
+            data: "aGk=".into(),
+            next_seq: 42,
+        })
+        .unwrap();
+        assert_eq!(data["nextSeq"], 42);
+        let screen = serde_json::to_value(TerminalScreenPayload {
+            id: "t1".into(),
+            data: "S".into(),
+            cols: 80,
+            rows: 24,
+            next_seq: 7,
+        })
+        .unwrap();
+        assert_eq!(
+            (screen["cols"].clone(), screen["nextSeq"].clone()),
+            (80.into(), 7.into())
+        );
+
+        let exit = serde_json::to_value(TerminalExitPayload {
+            id: "t1".into(),
+            exit_code: 7,
+            disconnected: true,
+            reason: Some("daemon restarted".into()),
+        })
+        .unwrap();
+        assert_eq!(exit["exitCode"], 7);
+        assert_eq!(exit["disconnected"], true);
+        assert_eq!(exit["reason"], "daemon restarted");
+
+        let spawn = serde_json::to_value(TerminalSpawnResult {
+            resolved_shell: Some("bash".into()),
+            fallback_from: None,
+            persistent: false,
+            pty_id: None,
+            connection_id: None,
+            persistent_fallback_reason: Some("daemon unavailable".into()),
+        })
+        .unwrap();
+        assert_eq!(spawn["persistent"], false);
+        assert_eq!(spawn["persistentFallbackReason"], "daemon unavailable");
+        assert!(spawn.get("persistent_fallback_reason").is_none());
+
+        let persistent = serde_json::to_value(TerminalSpawnResult {
+            resolved_shell: None,
+            fallback_from: None,
+            persistent: true,
+            pty_id: Some("pty-1".into()),
+            connection_id: Some("remote-a".into()),
+            persistent_fallback_reason: None,
+        })
+        .unwrap();
+        assert_eq!(persistent["ptyId"], "pty-1");
+        assert_eq!(persistent["connectionId"], "remote-a");
+        assert!(persistent.get("pty_id").is_none());
+    }
+
+    fn pty_info(id: &str, owner: Option<&str>, cwd: &str) -> PtyInfoWire {
+        PtyInfoWire {
+            id: id.into(),
+            name: Some("opencode".into()),
+            owner: owner.map(str::to_string),
+            cwd: Some(cwd.into()),
+            cols: 120,
+            rows: 40,
+            exited: None,
+            detached: true,
+        }
+    }
+
+    #[test]
+    fn detached_terminal_kill_requires_owner_detached_state_and_trusted_root() {
+        let mut root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut info = pty_info("idle-pty", Some(client_id), "/home/dev/app");
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_ok());
+        // 已退出但尚未回收的 PTY 也应能直接清理，无须接回失败后再遗留。
+        info.exited = Some(0);
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_ok());
+        assert!(validate_detached_terminal_for_kill(&info, "other-install", &root).is_err());
+        info.owner = None;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.owner = Some(client_id.into());
+        info.detached = false;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.detached = true;
+        info.cwd = Some("/home/dev/app-sibling".into());
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.cwd = None;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.cwd = Some("/home/dev/app/subdir".into());
+        root.trusted = false;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+    }
+
+    #[test]
+    fn exit_kill_accepts_attached_sessions_but_checks_owner_and_root() {
+        let mut root = RegisteredRoot {
+            uri: "ssh://c/work".into(),
+            canonical_path: "/work".into(),
+            trusted: true,
+        };
+        let mut info = pty_info("pty", Some("install:c"), "/work/project");
+        info.detached = false;
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_ok());
+        assert!(validate_detached_terminal_for_kill(&info, "install:c", &root).is_err());
+        assert!(validate_terminal_for_exit(&info, "other:c", &root).is_err());
+        info.cwd = Some("/work-sibling".into());
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_err());
+        info.cwd = Some("/work".into());
+        root.trusted = false;
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_err());
+    }
+
+    #[tokio::test]
+    async fn exit_detach_stops_proxy_without_marking_process_closed_or_sending_kill() {
+        let terminal = Arc::new(test_terminal());
+        let worker = Arc::clone(&terminal);
+        let task = tokio::spawn(async move {
+            worker.detach_requested.notified().await;
+            assert!(!worker.closed.load(Ordering::Acquire));
+            worker.proxy_finished.store(true, Ordering::Release);
+            worker.proxy_stopped.notify_waiters();
+        });
+        terminal.detach_for_exit().await.unwrap();
+        task.await.unwrap();
+        assert!(!terminal.closed.load(Ordering::Acquire));
+        // Repeated detach on an already stopped proxy is idempotent.
+        terminal.detach_for_exit().await.unwrap();
+    }
+
+    #[test]
+    fn detached_terminal_maps_owned_pty_cwd_to_ssh_uri() {
+        let roots = vec![RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        }];
+        let terminal = detached_terminal_from_info(
+            pty_info("pty-1", Some("install:remote-a"), "/home/dev/app"),
+            "remote-a",
+            &roots,
+        )
+        .unwrap();
+        assert_eq!(terminal.pty_id, "pty-1");
+        assert_eq!(terminal.connection_id, "remote-a");
+        assert_eq!(terminal.cwd, "ssh://remote-a/home/dev/app");
+        assert_eq!((terminal.cols, terminal.rows), (120, 40));
+        assert_eq!(terminal.name.as_deref(), Some("opencode"));
+        let json = serde_json::to_value(&terminal).unwrap();
+        assert_eq!(json["ptyId"], "pty-1");
+        assert_eq!(json["connectionId"], "remote-a");
+        assert!(json.get("pty_id").is_none());
+
+        let windows_roots = vec![RegisteredRoot {
+            uri: "ssh://remote-a/D:/code/app".into(),
+            canonical_path: "/D:/code/app".into(),
+            trusted: true,
+        }];
+        let windows = detached_terminal_from_info(
+            pty_info("pty-win", Some("install:remote-a"), r"\\?\D:\code\app"),
+            "remote-a",
+            &windows_roots,
+        )
+        .unwrap();
+        assert_eq!(windows.cwd, "ssh://remote-a/D:/code/app");
+    }
+
+    #[test]
+    fn detached_terminal_list_requires_exact_owner_and_trusted_root() {
+        let client_id = "install:remote-a";
+        let owned = owned_detached_ptys(
+            vec![
+                pty_info("owned", Some(client_id), "/home/dev/app"),
+                pty_info("other", Some("install:remote-b"), "/home/dev/app"),
+                pty_info("legacy", None, "/home/dev/app"),
+            ],
+            client_id,
+        );
+        assert_eq!(owned.len(), 1);
+        assert_eq!(owned[0].id, "owned");
+
+        let untrusted = vec![RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: false,
+        }];
+        assert!(detached_terminal_from_info(
+            pty_info("owned", Some(client_id), "/home/dev/app"),
+            "remote-a",
+            &untrusted,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn mobile_terminal_is_never_offered_as_a_desktop_orphan_after_restart() {
+        let root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        let desktop = pty_info("desktop-pty", Some(client_id), "/home/dev/app");
+
+        // Both share the installation owner. No MobileState/Hub is available
+        // after restart, so the persisted daemon name must be sufficient.
+        let owned = owned_detached_ptys(vec![mobile, desktop], client_id);
+        assert_eq!(owned.len(), 2);
+        let orphans: Vec<_> = owned
+            .into_iter()
+            .filter_map(|info| {
+                detached_terminal_from_info(info, "remote-a", std::slice::from_ref(&root))
+            })
+            .collect();
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].pty_id, "desktop-pty");
+    }
+
+    #[test]
+    fn mobile_terminal_cannot_be_restored_from_a_stale_desktop_tab() {
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        let error = select_restore_candidate(vec![mobile], "phone-pty", client_id).unwrap_err();
+        assert!(error.contains("移动端终端不能接回桌面"));
+        // It is still alive; never classify rejection as a missing PTY.
+        assert!(!error.contains("QC_PTY_GONE:"));
+    }
+
+    #[test]
+    fn stale_desktop_orphan_actions_cannot_kill_mobile_terminals() {
+        let root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        assert!(validate_detached_terminal_for_kill(&mobile, client_id, &root).is_err());
+        // Explicit connection/project cleanup still owns this terminal.
+        assert!(validate_terminal_for_exit(&mobile, client_id, &root).is_ok());
+    }
+
+    #[test]
+    fn missing_attach_terminal_is_classified_as_daemon_restart() {
+        assert!(attach_terminal_is_gone("终端不存在或已回收：abc"));
+        assert!(!attach_terminal_is_gone("daemon 响应超时"));
+    }
+
+    #[cfg(unix)]
+    struct LoopbackClient {
+        stream: qingcode_server::ipc::IpcStream,
+        next_id: u32,
+    }
+
+    #[cfg(unix)]
+    impl LoopbackClient {
+        async fn connect(run_dir: &RunDir) -> Self {
+            let endpoint = IpcEndpoint::new(run_dir.dir());
+            let mut stream = endpoint.connect().await.unwrap();
+            let hello = HelloRequest {
+                client_id: "loopback-client".to_string(),
+                protocol_min: PROTOCOL_VERSION,
+                protocol_max: PROTOCOL_VERSION,
+                token: run_dir.read_token().unwrap(),
+                resume_token: None,
+            };
+            write_loopback_frame(
+                &mut stream,
+                &Frame::new(Kind::Hello, CONTROL_STREAM, proto::encode(&hello).unwrap()),
+            )
+            .await;
+            let frame = read_loopback_frame(&mut stream).await;
+            assert_eq!(frame.kind, Kind::Hello);
+            Self { stream, next_id: 1 }
+        }
+
+        async fn request<T: Serialize>(&mut self, method: &str, params: &T) -> u32 {
+            let id = self.next_id;
+            self.next_id += 1;
+            let request = Request::with_params(id, method, params).unwrap();
+            write_loopback_frame(
+                &mut self.stream,
+                &Frame::new(Kind::Req, id, proto::encode(&request).unwrap()),
+            )
+            .await;
+            id
+        }
+
+        async fn wait_response(&mut self, id: u32) -> serde_json::Value {
+            loop {
+                let frame = read_loopback_frame(&mut self.stream).await;
+                maybe_ack_loopback_ping(&mut self.stream, &frame).await;
+                match frame.kind {
+                    Kind::Res if frame.stream_id == id => {
+                        return proto::decode_value::<Response>(&frame.payload)
+                            .unwrap()
+                            .result;
+                    }
+                    Kind::Err if frame.stream_id == id => {
+                        let error = proto::decode_value::<ErrorBody>(&frame.payload).unwrap();
+                        panic!("loopback request {id} failed: {error:?}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        async fn wait_response_collecting_events(
+            &mut self,
+            id: u32,
+        ) -> (serde_json::Value, Vec<Event>) {
+            let mut events = Vec::new();
+            loop {
+                let frame = read_loopback_frame(&mut self.stream).await;
+                maybe_ack_loopback_ping(&mut self.stream, &frame).await;
+                match frame.kind {
+                    Kind::Res if frame.stream_id == id => {
+                        let result = proto::decode_value::<Response>(&frame.payload)
+                            .unwrap()
+                            .result;
+                        return (result, events);
+                    }
+                    Kind::Err if frame.stream_id == id => {
+                        let error = proto::decode_value::<ErrorBody>(&frame.payload).unwrap();
+                        panic!("loopback request {id} failed: {error:?}");
+                    }
+                    Kind::Event => {
+                        if let Ok(event) = proto::decode_value::<Event>(&frame.payload) {
+                            events.push(event);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        async fn wait_attach(&mut self, id: u32) -> (serde_json::Value, Vec<StreamChunk>) {
+            let mut response = None;
+            let mut chunks = Vec::new();
+            let mut window = qingcode_server::proto::ReceiverWindow::new(WINDOW_BYTES);
+            loop {
+                let frame = read_loopback_frame(&mut self.stream).await;
+                maybe_ack_loopback_ping(&mut self.stream, &frame).await;
+                match frame.kind {
+                    Kind::Res if frame.stream_id == id => {
+                        response = Some(
+                            proto::decode_value::<Response>(&frame.payload)
+                                .unwrap()
+                                .result,
+                        );
+                    }
+                    Kind::StreamData if frame.stream_id == id => {
+                        if let Some(credit) = window.consume(frame.payload.len()) {
+                            let payload = proto::encode(&WindowCredit { credit }).unwrap();
+                            write_loopback_frame(
+                                &mut self.stream,
+                                &Frame::new(Kind::Window, id, payload),
+                            )
+                            .await;
+                        }
+                        chunks.push(proto::decode_value(&frame.payload).unwrap());
+                    }
+                    Kind::StreamEnd if frame.stream_id == id => {
+                        let end: StreamEnd = proto::decode_value(&frame.payload).unwrap();
+                        assert!(end.ok, "attach stream failed: {end:?}");
+                        return (response.expect("attach response"), chunks);
+                    }
+                    Kind::Err if frame.stream_id == id => {
+                        let error = proto::decode_value::<ErrorBody>(&frame.payload).unwrap();
+                        panic!("loopback attach failed: {error:?}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    async fn write_loopback_frame<W: AsyncWrite + Unpin>(writer: &mut W, frame: &Frame) {
+        proto::write_frame(writer, frame).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    async fn read_loopback_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Frame {
+        tokio::time::timeout(Duration::from_secs(10), proto::read_frame(reader))
+            .await
+            .expect("loopback frame timeout")
+            .expect("loopback read failed")
+    }
+
+    #[cfg(unix)]
+    async fn maybe_ack_loopback_ping<W: AsyncWrite + Unpin>(writer: &mut W, frame: &Frame) {
+        if frame.kind == Kind::Ping {
+            write_loopback_frame(writer, &Frame::empty(Kind::Pong, CONTROL_STREAM)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn loopback_persistent_terminal_survives_channel_drop() {
+        let state_dir = std::env::temp_dir().join(format!(
+            "qingcode-terminal-loopback-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = state_dir.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let run_dir = RunDir::resolve(Some(&state_dir.join("run"))).unwrap();
+        let options = DaemonOptions {
+            state_dir: Some(state_dir.join("run")),
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move { run_loopback_daemon(options).await });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while run_dir.read_token().is_err() {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let mut client = LoopbackClient::connect(&run_dir).await;
+        let create_id = client
+            .request(
+                "pty.create",
+                &serde_json::json!({
+                    "cwd": root,
+                    "shell": "/bin/sh",
+                    "cols": 80,
+                    "rows": 24
+                }),
+            )
+            .await;
+        let created = client.wait_response(create_id).await;
+        let pty_id = created["id"].as_str().unwrap().to_string();
+
+        // 默认 shell 从不发送输入；断开后直接关闭，不依赖 attach/replay。
+        let idle_create_id = client
+            .request(
+                "pty.create",
+                &serde_json::json!({ "cwd": root, "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let idle = client.wait_response(idle_create_id).await;
+        let idle_pty_id = idle["id"].as_str().unwrap().to_string();
+
+        #[derive(Serialize)]
+        struct Input<'a> {
+            id: &'a str,
+            data: ByteArray<'a>,
+        }
+        struct ByteArray<'a>(&'a [u8]);
+        impl Serialize for ByteArray<'_> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                serializer.serialize_bytes(self.0)
+            }
+        }
+        let input_id = client
+            .request(
+                "pty.input",
+                &Input {
+                    id: &pty_id,
+                    data: ByteArray(b"echo qingcode-loopback\n"),
+                },
+            )
+            .await;
+        let (_, early_events) = client.wait_response_collecting_events(input_id).await;
+
+        let mut live = Vec::new();
+        for event in early_events {
+            if let Event::PtyData { id, data, .. } = event {
+                if id == pty_id {
+                    live.extend_from_slice(&data);
+                }
+            }
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !String::from_utf8_lossy(&live).contains("qingcode-loopback") {
+            assert!(tokio::time::Instant::now() < deadline);
+            let frame = read_loopback_frame(&mut client.stream).await;
+            maybe_ack_loopback_ping(&mut client.stream, &frame).await;
+            if frame.kind == Kind::Event {
+                if let Ok(Event::PtyData { id, data, .. }) = proto::decode_value(&frame.payload) {
+                    if id == pty_id {
+                        live.extend_from_slice(&data);
+                    }
+                }
+            }
+        }
+
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut client = LoopbackClient::connect(&run_dir).await;
+        let list_id = client.request("pty.list", &serde_json::json!({})).await;
+        let listed = client.wait_response(list_id).await;
+        let entry = listed["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == pty_id)
+            .cloned()
+            .expect("daemon dropped the persistent PTY");
+        assert_eq!(entry["detached"], true);
+
+        let idle_entry = listed["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == idle_pty_id)
+            .expect("daemon dropped the idle PTY");
+        assert_eq!(idle_entry["detached"], true);
+        assert_eq!(idle_entry["nextInputSeq"], 0);
+        let kill_id = client
+            .request("pty.kill", &serde_json::json!({ "id": idle_pty_id }))
+            .await;
+        client.wait_response(kill_id).await;
+        let list_id = client.request("pty.list", &serde_json::json!({})).await;
+        let remaining = client.wait_response(list_id).await;
+        assert!(remaining["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["id"] != idle_pty_id));
+
+        let attach_id = client
+            .request(
+                "pty.attach",
+                &serde_json::json!({ "id": pty_id, "fromSeq": 0 }),
+            )
+            .await;
+        let (_, chunks) = client.wait_attach(attach_id).await;
+        let replay = assemble_attach_chunks(&chunks).unwrap();
+        let replayed = replay
+            .into_iter()
+            .flat_map(|(_, data)| data)
+            .collect::<Vec<_>>();
+        assert!(String::from_utf8_lossy(&replayed).contains("qingcode-loopback"));
+
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut client = LoopbackClient::connect(&run_dir).await;
+        let kill_id = client
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
+            .await;
+        client.wait_response(kill_id).await;
+        let list_id = client.request("pty.list", &serde_json::json!({})).await;
+        let listed = client.wait_response(list_id).await;
+        assert!(listed["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["id"] != pty_id));
+
+        let shutdown_id = client
+            .request("server.shutdown", &serde_json::json!({}))
+            .await;
+        client.wait_response(shutdown_id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+}

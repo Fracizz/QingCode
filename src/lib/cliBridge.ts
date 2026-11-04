@@ -4,7 +4,13 @@ import { authorizePaths } from './pathAllowlist'
 import { normalizeProjectPath, pushTrustedRootsToNative, trustProject } from './workspaceTrust'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
-import { useRunConfigStore } from '../store/runConfigStore'
+import { useTerminalStore } from '../store/terminalStore'
+import {
+  runConfigPath,
+  useRunConfigStore,
+  type RunConfig,
+  type RunTaskType,
+} from '../store/runConfigStore'
 import {
   isConfigRunning,
   runConfig,
@@ -12,6 +18,9 @@ import {
   stopConfig,
 } from './runConfigRuntime'
 import type { Project } from '../types'
+import { ensureSshWorkspaceConnected } from './sshWorkspace'
+import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
+import { hasRunTaskTarget, parseRunTaskOs } from './runTaskPlatform'
 
 interface CliRequest {
   id: string
@@ -20,6 +29,70 @@ interface CliRequest {
   config?: string | null
   path?: string | null
   paths?: string[] | null
+  content?: string | null
+}
+
+const CLI_RUN_TASK_TYPES = new Set<RunTaskType>(['ps1', 'bat', 'sh', 'command', 'script'])
+
+export function parseCliRunConfig(
+  content: string,
+  existing: RunConfig[]
+): { action: 'created' | 'updated'; config: RunConfig } {
+  const parsed = JSON.parse(content) as unknown
+  const candidate =
+    parsed && typeof parsed === 'object' && 'config' in parsed
+      ? (parsed as { config?: unknown }).config
+      : parsed
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('json must be a run config object')
+  }
+  const value = candidate as Partial<RunConfig>
+  const name = typeof value.name === 'string' ? value.name.trim() : ''
+  if (!name) throw new Error('config.name is required')
+  const requestedId = typeof value.id === 'string' ? value.id.trim() : ''
+  const previous =
+    (requestedId ? existing.find(config => config.id === requestedId) : undefined) ??
+    existing.find(config => config.name === name)
+  const tasks = Array.isArray(value.tasks)
+    ? value.tasks.map((task, index) => {
+        if (!task || typeof task !== 'object') throw new Error(`tasks[${index}] is invalid`)
+        const target = typeof task.target === 'string' ? task.target.trim() : ''
+        const os = parseRunTaskOs(task.os)
+        if (!hasRunTaskTarget({ target, os }))
+          throw new Error('each task.target is required (common or os override)')
+        const rawType = typeof task.type === 'string' ? task.type : 'command'
+        const type = CLI_RUN_TASK_TYPES.has(rawType as RunTaskType)
+          ? (rawType as RunTaskType)
+          : 'command'
+        const env = task.env
+        if (
+          env &&
+          (typeof env !== 'object' ||
+            Array.isArray(env) ||
+            Object.values(env).some(item => typeof item !== 'string'))
+        ) {
+          throw new Error(`tasks[${index}].env must contain string values`)
+        }
+        return {
+          id: typeof task.id === 'string' && task.id.trim() ? task.id.trim() : crypto.randomUUID(),
+          name: typeof task.name === 'string' && task.name.trim() ? task.name.trim() : undefined,
+          type,
+          target,
+          cwd: typeof task.cwd === 'string' && task.cwd.trim() ? task.cwd.trim() : undefined,
+          env: env as Record<string, string> | undefined,
+          ...(os ? { os } : {}),
+        }
+      })
+    : []
+  return {
+    action: previous ? 'updated' : 'created',
+    config: {
+      id: (previous?.id ?? requestedId) || crypto.randomUUID(),
+      name,
+      restoreWithProjectSession: value.restoreWithProjectSession === true,
+      tasks,
+    },
+  }
 }
 
 function normalizePath(path: string): string {
@@ -49,6 +122,7 @@ function resolveProject(query?: string | null): Project {
 }
 
 async function resolveConfig(project: Project, query: string) {
+  await ensureSshWorkspaceConnected(project)
   const configs = await useRunConfigStore.getState().loadConfigs(project)
   const q = query.trim()
   const byId = configs.find(c => c.id === q)
@@ -65,7 +139,7 @@ export function parseOpenTarget(target: string): {
   line?: number
   column?: number
 } {
-  const win = target.match(/^([A-Za-z]:[/\\].+):(\d+)(?::(\d+))?$/)
+  const win = target.match(/^([A-Za-z]:[/\\].+?):(\d+)(?::(\d+))?$/)
   if (win) {
     return {
       path: win[1],
@@ -86,6 +160,25 @@ export function parseOpenTarget(target: string): {
 
 async function handleRequest(req: CliRequest): Promise<unknown> {
   switch (req.op) {
+    case 'settings.export':
+    case 'settings.import': {
+      if (req.config !== 'user' && req.config !== 'workspace')
+        throw new Error('invalid settings scope')
+      const scope = req.config === 'user' ? 'global' : 'project'
+      const project = scope === 'project' ? resolveProject(req.project) : null
+      if (project) await ensureSshWorkspaceConnected(project)
+      if (req.op === 'settings.export') return exportSettings(scope, project)
+      if (!req.content) throw new Error('content is required')
+      return importSettings(req.content, scope, project)
+    }
+    case 'settings.reset': {
+      if (req.config !== 'user' && req.config !== 'workspace')
+        throw new Error('invalid settings scope')
+      const scope = req.config === 'user' ? 'global' : 'project'
+      const project = scope === 'project' ? resolveProject(req.project) : null
+      if (project) await ensureSshWorkspaceConnected(project)
+      return resetSettings(scope, project)
+    }
     case 'project.switch': {
       const project = resolveProject(req.project)
       const ok = await useProjectStore.getState().switchProject(project)
@@ -96,24 +189,81 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await runConfig(project, config)
-      return { project: project.path, config: { id: config.id, name: config.name } }
+      const result = await runConfig(project, config, { throwOnError: true })
+      return { project: project.path, config: { id: config.id, name: config.name }, ...result }
+    }
+    case 'run.list': {
+      const project = resolveProject(req.project)
+      await ensureSshWorkspaceConnected(project)
+      const configs = await useRunConfigStore.getState().loadConfigs(project)
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        path: runConfigPath(project),
+        configs,
+      }
+    }
+    case 'run.get': {
+      if (!req.config) throw new Error('config is required')
+      const project = resolveProject(req.project)
+      const config = await resolveConfig(project, req.config)
+      return { project: { id: project.id, name: project.name, path: project.path }, config }
+    }
+    case 'run.upsert': {
+      if (!req.content) throw new Error('content is required')
+      const project = resolveProject(req.project)
+      await ensureSshWorkspaceConnected(project)
+      const existing = await useRunConfigStore.getState().loadConfigs(project)
+      const result = parseCliRunConfig(req.content, existing)
+      await useRunConfigStore.getState().upsertConfig(project, result.config)
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        ...result,
+      }
+    }
+    case 'run.remove': {
+      if (!req.config) throw new Error('config is required')
+      const project = resolveProject(req.project)
+      const target = await resolveConfig(project, req.config)
+      const existing = useRunConfigStore.getState().configsByProject[project.id] ?? []
+      await useRunConfigStore.getState().saveConfigs(
+        project,
+        existing.filter(config => config.id !== target.id)
+      )
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        removed: target,
+      }
     }
     case 'run.stop': {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await stopConfig(config)
+      await stopConfig(config, project.id)
       return { project: project.path, config: { id: config.id, name: config.name } }
     }
     case 'run.status': {
       const project = resolveProject(req.project)
+      await ensureSshWorkspaceConnected(project)
       const configs = await useRunConfigStore.getState().loadConfigs(project)
       const running = configs.map(c => ({
         id: c.id,
         name: c.name,
-        running: isConfigRunning(c.id),
-        terminals: runningTaskKeysForConfig(c.id),
+        running: isConfigRunning(c.id, project.id),
+        terminals: runningTaskKeysForConfig(c.id, project.id),
+        tasks: useTerminalStore
+          .getState()
+          .terminals.filter(
+            terminal => terminal.projectId === project.id && terminal.runConfigId === c.id
+          )
+          .map(terminal => ({
+            id: terminal.runTaskId,
+            terminalId: terminal.id,
+            status: terminal.status,
+            exitCode: terminal.exitCode,
+            environment: terminal.runEnvironment,
+            target: terminal.launchCommand,
+            cwd: terminal.cwd,
+          })),
       }))
       return {
         project: { id: project.id, name: project.name, path: project.path },

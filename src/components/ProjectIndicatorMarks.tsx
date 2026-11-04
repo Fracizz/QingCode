@@ -24,7 +24,7 @@ const STATUS_DOT =
   'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
 
 const GIT_MARK_BUTTON =
-  'inline-flex !cursor-pointer items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60'
+  'inline-flex !cursor-pointer items-center justify-center rounded-sm'
 
 export function ProjectIndicatorMarks({
   project,
@@ -50,7 +50,7 @@ export function ProjectIndicatorMarks({
   }
   return (
     <span
-      className={`ml-1 inline-flex flex-shrink-0 items-center gap-0.5 leading-none transition-opacity ${
+      className={`inline-flex flex-shrink-0 items-center gap-0.5 leading-none transition-opacity ${
         isCurrent ? 'opacity-100' : 'opacity-75 group-hover:opacity-100'
       }`}
       aria-hidden

@@ -45,7 +45,6 @@ import {
   FileText,
   LoaderCircle,
   LocateFixed,
-  GitFork,
   Redo2,
   Save,
   Scissors,
@@ -54,6 +53,7 @@ import {
   AlignLeft,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -72,14 +72,6 @@ import {
 import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
-import { editorDefinitionLink } from '../lib/editorDefinitionLink'
-import { isPrimaryModifierPressed } from '../lib/tauri'
-import {
-  goToDefinition,
-  identifierAt,
-} from '../lib/definitionNavigation'
-import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
-import { scheduleSemanticOverlay } from '../lib/semanticNavigation'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -110,8 +102,7 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
-import { applyEffectiveSettings } from '../lib/effectiveSettings'
-import { copyRelativePathAction } from '../lib/copyFileActions'
+import { copyPathAction, copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
 import {
@@ -137,13 +128,14 @@ import {
   MINIMAP_SETTINGS_EVENT,
 } from '../lib/minimapSettings'
 import { loadMinimapHideScrollbar } from '../lib/minimapPolicy'
-import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
+import { isLoadingTab, isOpenErrorTab, isNonEditableViewMode, isViewOnlyTab } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
+import ImageViewer from './ImageViewer'
 import EditorMinimap from './EditorMinimap'
 import Tooltip from './Tooltip'
 const DiffEditor = lazy(() => import('./DiffEditor'))
@@ -219,10 +211,6 @@ function createTabEditorState(
       preserveSelectionTokenColors(),
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
-      editorDefinitionLink({
-        navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
-        nativeModifierPressed: isPrimaryModifierPressed,
-      }),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)
@@ -230,7 +218,6 @@ function createTabEditorState(
           // Avoid full-document copies into Zustand on every keystroke.
           markDirty(tabId)
           notifyEditorContentChanged(tabId)
-          scheduleSemanticOverlay(tabPath, update.state)
           const pasted = update.transactions.some(tr => tr.isUserEvent('input.paste'))
           if (pasted && profile === 'full' && getEditorPreferences().formatOnPaste) {
             void formatDocument(tabId, { quiet: true })
@@ -253,13 +240,7 @@ function createTabEditorState(
         {
           key: 'Ctrl-Shift-c',
           run: () => {
-            void copyToClipboard(tabPath)
-              .then(() => useProjectStore.getState().pushToast('success', translate('路径已复制')))
-              .catch(error =>
-                useProjectStore
-                  .getState()
-                  .pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
-              )
+            void copyPathAction(tabPath)
             return true
           },
         },
@@ -383,7 +364,8 @@ function bindTabToView(
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
   setCursor: (cursor: { line: number; col: number } | null) => void,
-  previousTabId: string | null
+  previousTabId: string | null,
+  preserveLiveBuffer = false
 ): { tabId: string; fresh: boolean } {
   if (previousTabId && previousTabId !== tab.id) {
     captureEditorScroll(previousTabId, view)
@@ -400,7 +382,7 @@ function bindTabToView(
   const fresh = !usableCache
   // Prefer live buffer when rebuilding a stale active state (keeps unsaved edits).
   const tabForState =
-    !usableCache && previousTabId === null && view.state.doc.length > 0
+    preserveLiveBuffer && !usableCache && previousTabId === null && view.state.doc.length > 0
       ? { ...tab, content: view.state.doc.toString() }
       : tab
   const priorSelection = !usableCache ? view.state.selection : null
@@ -466,14 +448,13 @@ export default function Editor() {
   const saveFile = useEditorStore(s => s.saveFile)
   const setCursor = useEditorStore(s => s.setCursor)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
-  const currentProject = useProjectStore(s => s.currentProject)
   const setView = useUIStore(s => s.setView)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
     items: ContextMenuItem[]
   } | null>(null)
-  const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
+  const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('preview')
   const [previewContent, setPreviewContent] = useState('')
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [minimapHideScrollbar, setMinimapHideScrollbar] = useState(loadMinimapHideScrollbar)
@@ -489,7 +470,7 @@ export default function Editor() {
     activeTab.kind !== 'diff' &&
     !isOpenErrorTab(activeTab) &&
     !isLoadingTab(activeTab) &&
-    !isViewOnlyTab(activeTab)
+    !isNonEditableViewMode(activeTab)
   const activeProfile = activeTab ? editorPerfProfileForTab(activeTab) : 'full'
   const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
@@ -559,6 +540,7 @@ export default function Editor() {
     } else if (epoch !== boundEpochRef.current || staleExtensions) {
       // External reload / draft restore, or stale HMR EditorState (old occurrence /
       // bracket-match plugins still bound to this tab).
+      const contentChanged = epoch !== boundEpochRef.current
       boundEpochRef.current = epoch
       unregisterEditorView(activeTab.id, view)
       const bind = bindTabToView(
@@ -570,7 +552,8 @@ export default function Editor() {
         markDirty,
         saveFile,
         setCursor,
-        null
+        null,
+        !contentChanged
       )
       boundTabIdRef.current = bind.tabId
       cancelHeavy = scheduleHeavyEditorFeatures(
@@ -611,10 +594,6 @@ export default function Editor() {
     window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
     return () => window.removeEventListener(THEME_SETTINGS_EVENT, onTheme)
   }, [])
-
-  useEffect(() => {
-    void applyEffectiveSettings(currentProject)
-  }, [currentProject])
 
   useEffect(() => {
     const onMinimap = (event: Event) => {
@@ -703,7 +682,7 @@ export default function Editor() {
   }, [mdPreviewMode, showSourcePane, showPreviewPane, activeTabId, previewContent])
 
   useEffect(() => {
-    if (!markdownTab) queueMicrotask(() => setMdPreviewMode('off'))
+    queueMicrotask(() => setMdPreviewMode(markdownTab ? 'preview' : 'off'))
   }, [markdownTab, activeTabId])
 
   useEffect(() => {
@@ -743,17 +722,6 @@ export default function Editor() {
     return () => window.clearTimeout(timer)
   }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal, activeTab])
 
-  const copyPath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   const copyAsReference = async (path: string) => {
     const view = viewRef.current
     const projectState = useProjectStore.getState()
@@ -780,6 +748,10 @@ export default function Editor() {
   }
 
   const revealPath = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(path)
     } catch (error) {
@@ -794,7 +766,6 @@ export default function Editor() {
     const canEditSelection = !!view && hasNonEmptySelection(view)
     const canUndo = !!view && undoDepth(view.state) > 0
     const canRedo = !!view && redoDepth(view.state) > 0
-    const canFindCalls = !!view && !!identifierAt(view.state, view.state.selection.main.head)
 
     return [
       {
@@ -890,18 +861,11 @@ export default function Editor() {
         },
       },
       {
-        label: t('查找用法'),
-        icon: <GitFork size={14} />,
-        shortcut: 'Shift+F12',
-        disabled: !canFindCalls,
-        action: () => void findUsagesAtActiveEditor(),
-      },
-      {
         label: t('复制路径'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
-        action: () => copyPath(path),
+        action: () => void copyPathAction(path),
       },
       {
         label: t('复制相对路径'),
@@ -924,6 +888,7 @@ export default function Editor() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(path),
         action: () => revealPath(path),
       },
       ...(markdownTab
@@ -962,8 +927,8 @@ export default function Editor() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
         <FileText size={40} strokeWidth={1.2} />
-        <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
-        <p className="text-xs text-fg-dim flex items-center gap-1.5">
+        <p className="text-ui-lg">{t('从侧边栏打开文件开始编辑')}</p>
+        <p className="text-ui-sm text-fg-dim flex items-center gap-1.5">
           <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
         </p>
       </div>
@@ -982,6 +947,10 @@ export default function Editor() {
     return <EditorOpenError tab={activeTab} />
   }
 
+  if (activeTab.viewMode === 'image') {
+    return <ImageViewer tab={activeTab} />
+  }
+
   if (isViewOnlyTab(activeTab)) {
     return <LargeFileViewer tab={activeTab} />
   }
@@ -990,7 +959,7 @@ export default function Editor() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-bg text-fg-muted">
         <LoaderCircle size={28} className="animate-spin text-accent" aria-hidden />
-        <p className="text-sm">{t('正在打开文件…')}</p>
+        <p className="text-ui-lg">{t('正在打开文件…')}</p>
         <Tooltip
           label={activeTab.path}
           side="bottom"
@@ -1008,10 +977,10 @@ export default function Editor() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
         {markdownTab && (
           <div className="flex h-8 flex-shrink-0 items-center gap-1 border-b border-border px-2">
-            <span className="mr-1 text-[11px] text-fg-dim">{t('Markdown')}</span>
+            <span className="mr-1 text-ui-xs text-fg-dim">{t('Markdown')}</span>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'off'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -1023,7 +992,7 @@ export default function Editor() {
             </button>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'side'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -1035,7 +1004,7 @@ export default function Editor() {
             </button>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'preview'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -1085,7 +1054,11 @@ export default function Editor() {
                 showSourcePane ? 'border-l' : ''
               }`}
             >
-              <MarkdownPreview ref={previewScrollRef} content={previewContent} />
+              <MarkdownPreview
+                ref={previewScrollRef}
+                content={previewContent}
+                filePath={activeTab.path}
+              />
             </div>
           )}
         </div>

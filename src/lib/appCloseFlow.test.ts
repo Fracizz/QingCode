@@ -1,0 +1,137 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from 'vitest'
+import { appExitTerminals, runAppClose, type AppCloseDependencies } from './appCloseFlow'
+import type { TerminalTab } from '../types'
+
+vi.mock('./i18n', () => ({ translate: (text: string, values?: Record<string, unknown>) =>
+  text.replace(/\{(\w+)\}/g, (_, key: string) => String(values?.[key] ?? key)),
+}))
+
+function tab(id: string, remote = true, overrides: Partial<TerminalTab> = {}): TerminalTab {
+  return { id, name: id, projectId: id, cwd: remote ? `ssh://conn/${id}` : `/tmp/${id}`,
+    launchCommand: '', status: 'running', exitCode: null,
+    ...(remote ? { persistent: true, ptyId: `pty-${id}`, connectionId: 'conn' } : {}), ...overrides }
+}
+
+function fixture(tabs: TerminalTab[], decisions = ['preserve']) {
+  const events: string[] = []
+  const deps: AppCloseDependencies = {
+    pauseSpawns: vi.fn(async () => { events.push('pause') }),
+    resumeSpawns: vi.fn(() => { events.push('resume') }),
+    terminals: () => tabs,
+    transferCount: () => 0,
+    choose: vi.fn(async () => decisions.shift() ?? null),
+    confirmFiles: vi.fn(async () => { events.push('files'); return true }),
+    finishRemote: vi.fn(async (tab, action) => { events.push(`${action}:${tab.id}`) }),
+    closeTerminal: vi.fn(async tab => { events.push(`close:${tab.id}`) }),
+    markEnded: vi.fn(tab => { events.push(`ended:${tab.id}`); Object.assign(tab, { status: 'exited', endedAt: 123 }) }),
+    markDetached: vi.fn(tab => { events.push(`detached:${tab.id}`) }),
+    flush: vi.fn(() => { events.push('flush') }),
+    destroy: vi.fn(async () => { events.push('destroy') }),
+  }
+  return { deps, events }
+}
+
+describe('app close decisions', () => {
+  it('preserves all persistent sessions including idle and unrestored ones, closes local/compat shells', async () => {
+    const tabs = [tab('idle'), tab('restore', true, { status: 'exited', awaitingRestoreSpawn: true }),
+      tab('local', false), tab('compat', true, { persistent: false, ptyId: undefined })]
+    const { deps, events } = fixture(tabs)
+    await runAppClose(deps)
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.stringContaining('3 小时'),
+      options: expect.arrayContaining([expect.objectContaining({ id: 'preserve', primary: true })]) }))
+    expect(deps.finishRemote).toHaveBeenCalledTimes(2)
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'preserve')
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[1], 'preserve')
+    expect(events.indexOf('files')).toBeLessThan(events.indexOf('close:local'))
+    expect(events.indexOf('flush')).toBeLessThan(events.indexOf('destroy'))
+    expect(deps.markEnded).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['cancel', null])('does nothing on dismissal (%s)', async decision => {
+    const { deps } = fixture([tab('remote')])
+    vi.mocked(deps.choose).mockResolvedValue(decision)
+    await runAppClose(deps)
+    expect(deps.confirmFiles).not.toHaveBeenCalled()
+    expect(deps.finishRemote).not.toHaveBeenCalled()
+    expect(deps.destroy).not.toHaveBeenCalled()
+    expect(deps.resumeSpawns).toHaveBeenCalledOnce()
+  })
+
+  it('does not terminate or detach when the save dialog is cancelled', async () => {
+    const { deps } = fixture([tab('remote'), tab('local', false)], ['terminate'])
+    vi.mocked(deps.confirmFiles).mockResolvedValue(false)
+    await runAppClose(deps)
+    expect(deps.finishRemote).not.toHaveBeenCalled()
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+    expect(deps.destroy).not.toHaveBeenCalled()
+  })
+
+  it('marks confirmed kills ended before persisting, leaving no live PTY to reattach', async () => {
+    const tabs = [tab('remote'), tab('other-project')]
+    const { deps, events } = fixture(tabs, ['terminate'])
+    await runAppClose(deps)
+    expect(deps.finishRemote).toHaveBeenCalledTimes(2)
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'terminate')
+    expect(deps.markDetached).not.toHaveBeenCalled()
+    expect(events.indexOf('ended:remote')).toBeLessThan(events.indexOf('flush'))
+  })
+
+  it('retries only failures and never repeats acknowledged kills', async () => {
+    const tabs = [tab('ok'), tab('offline')]
+    const { deps } = fixture(tabs, ['terminate', 'retry'])
+    vi.mocked(deps.finishRemote).mockImplementationOnce(async () => {})
+      .mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+    await runAppClose(deps)
+    expect(deps.finishRemote).toHaveBeenCalledTimes(3)
+    expect(deps.finishRemote).toHaveBeenNthCalledWith(3, tabs[1], 'terminate')
+    expect(deps.choose).toHaveBeenLastCalledWith(expect.objectContaining({ title: '部分终端未确认结束' }))
+    expect(deps.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an uncertain PTY recoverable when exiting after failure', async () => {
+    const remote = tab('offline')
+    const { deps } = fixture([remote], ['terminate', 'exit'])
+    vi.mocked(deps.finishRemote).mockRejectedValueOnce(new Error('timeout')).mockResolvedValue(undefined)
+    await runAppClose(deps)
+    expect(deps.markEnded).not.toHaveBeenCalled()
+    expect(deps.finishRemote).toHaveBeenLastCalledWith(remote, 'preserve')
+    expect(deps.markDetached).toHaveBeenCalledWith(remote)
+    expect(remote.ptyId).toBe('pty-offline')
+    expect(deps.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('cancels after failure without detaching the remaining live process', async () => {
+    const { deps } = fixture([tab('offline')], ['terminate', 'cancel'])
+    vi.mocked(deps.finishRemote).mockRejectedValue(new Error('offline'))
+    await runAppClose(deps)
+    expect(deps.markEnded).not.toHaveBeenCalled()
+    expect(deps.markDetached).not.toHaveBeenCalled()
+    expect(deps.destroy).not.toHaveBeenCalled()
+  })
+
+  it('unfreezes after spawn-settle or window-destroy failure', async () => {
+    const { deps } = fixture([tab('remote')])
+    vi.mocked(deps.pauseSpawns).mockRejectedValueOnce(new Error('still starting'))
+    await expect(runAppClose(deps)).rejects.toThrow('still starting')
+    expect(deps.choose).not.toHaveBeenCalled()
+    expect(deps.resumeSpawns).toHaveBeenCalledOnce()
+    vi.mocked(deps.destroy).mockRejectedValueOnce(new Error('window unavailable'))
+    await expect(runAppClose(deps)).rejects.toThrow('window unavailable')
+    expect(deps.resumeSpawns).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers ordinary exit without preserve for local-only windows', async () => {
+    const { deps } = fixture([tab('local', false)], ['terminate'])
+    await runAppClose(deps)
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({ options: [
+      expect.objectContaining({ id: 'cancel' }), expect.objectContaining({ id: 'terminate', label: '退出' }),
+    ] }))
+  })
+
+  it('ignores ended and not-yet-created tabs, but includes temporarily unavailable persistent PTYs', () => {
+    const unrestored = tab('unavailable', true, { status: 'exited', restoreUnavailable: true })
+    expect(appExitTerminals([tab('ended', true, { status: 'exited', endedAt: 123 }),
+      tab('pending', false, { status: 'starting', ptySpawnPending: true }), unrestored])).toEqual([unrestored])
+  })
+})

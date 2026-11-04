@@ -1,8 +1,11 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
-import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { isSshResource, safeInvoke, NotInTauriError } from '../lib/tauri'
 import { translate } from '../lib/i18n'
 import { useProjectStore } from './projectStore'
 import type { Project } from '../types'
+import { parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
+import { scanDirectoryEntries } from '../lib/fileIpc'
 
 export type RunTaskType = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
@@ -13,6 +16,7 @@ export interface RunTask {
   target: string
   cwd?: string
   env?: Record<string, string>
+  os?: RunTaskOs
 }
 
 export interface RunConfig {
@@ -27,11 +31,7 @@ interface RunConfigFile {
   configs: RunConfig[]
 }
 
-/** `.qingcode/run.json` schema stored at the project root. */
-export interface RunConfigFileV1 {
-  version: 1
-  configs: RunConfig[]
-}
+class RunConfigFormatError extends Error {}
 
 function projectConfigDir(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
@@ -50,6 +50,28 @@ function legacyRunConfigPath(project: Project): string {
 function runConfigPath(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
   return `${projectConfigDir(project)}${sep}run.json`
+}
+
+async function ensureRunConfigDirectory(project: Project): Promise<void> {
+  if (!isSshResource(project.path)) return
+  const path = projectConfigDir(project)
+  try {
+    await safeInvoke('检查运行配置目录', 'validate_directory', { path })
+  } catch {
+    try {
+      await safeInvoke('创建运行配置目录', 'create_directory', {
+        parent: project.path,
+        name: '.qingcode',
+      })
+    } catch (createError) {
+      // Another window may have created it between validation and creation.
+      try {
+        await safeInvoke('检查运行配置目录', 'validate_directory', { path })
+      } catch {
+        throw createError
+      }
+    }
+  }
 }
 
 /** Display path for UI — always forward slashes, relative to project root. */
@@ -71,12 +93,53 @@ function normalizeConfigs(input: unknown): RunConfig[] {
     }))
 }
 
+/** Import must distinguish absence from a failed read, and must never migrate/write while discovering. */
+export async function readRunConfigsForImport(project: Project): Promise<RunConfig[]> {
+  const rootEntries = await scanDirectoryEntries({ path: project.path })
+  for (const name of ['.qingcode', '.nestcode']) {
+    const entry = rootEntries.find(candidate => candidate.name === name)
+    if (!entry) continue
+    if (!entry.is_dir) throw new RunConfigFormatError(`${name}: expected a directory`)
+    const separator = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
+    const directory = `${project.path.replace(/[\\/]+$/, '')}${separator}${name}`
+    const entries = await scanDirectoryEntries({ path: directory, workspaceRoot: project.path })
+    if (!entries.some(candidate => candidate.name === 'run.json')) continue
+    const path = `${directory}${separator}run.json`
+    const raw = await safeInvoke<string>('读取运行配置', 'read_file', { path })
+    const parsed: unknown = JSON.parse(raw)
+    // Unlike the permissive legacy loader, import must not normalize an unknown
+    // or malformed file to [] and then silently overwrite it.
+    if (!parsed || typeof parsed !== 'object' || !('configs' in parsed) || !Array.isArray(parsed.configs)) {
+      throw new RunConfigFormatError(`${path}: configs must be an array`)
+    }
+    for (const config of parsed.configs) {
+      if (!config || typeof config.id !== 'string' || typeof config.name !== 'string' || !Array.isArray(config.tasks) ||
+        config.tasks.some((task: Partial<RunTask>) => !normalizeTask(task))) {
+        throw new RunConfigFormatError(`${path}: invalid configuration or task`)
+      }
+    }
+    return (parsed.configs as RunConfig[]).map(config => ({
+      ...config,
+      tasks: config.tasks.map(task => ({
+        ...task,
+        // Valid OS-only/legacy tasks may omit common fields. Preserve all data
+        // while keeping the in-memory RunTask invariants used by the panel.
+        type: normalizeTask(task)!.type,
+        target: task.target ?? '',
+      })),
+    }))
+  }
+  return []
+}
+
 function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {
-  if (!t || typeof t.id !== 'string' || typeof t.target !== 'string') return null
+  if (!t || typeof t.id !== 'string') return null
+  const os = parseRunTaskOs(t.os)
+  if (typeof t.target !== 'string' && !os) return null
   const allowed: RunTaskType[] = ['ps1', 'bat', 'sh', 'command', 'script']
   const type = allowed.includes(t.type as RunTaskType) ? (t.type as RunTaskType) : 'command'
   const cwd = typeof t.cwd === 'string' ? t.cwd.trim() || undefined : undefined
-  let target = t.target.trim()
+  let target = t.target?.trim() ?? ''
   if (type === 'command' && cwd) {
     target = stripRedundantCdPrefix(target)
   }
@@ -87,6 +150,7 @@ function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {
     target,
     cwd,
     env: t.env && typeof t.env === 'object' ? (t.env as Record<string, string>) : undefined,
+    ...(os ? { os } : {}),
   }
 }
 
@@ -127,6 +191,7 @@ interface RunConfigState {
   saveConfigs: (project: Project, configs: RunConfig[]) => Promise<void>
   upsertConfig: (project: Project, config: RunConfig) => Promise<void>
   removeConfig: (project: Project, configId: string) => Promise<void>
+  removeConfigs: (project: Project, configIds: string[]) => Promise<void>
 }
 
 export const useRunConfigStore = create<RunConfigState>((set, get) => ({
@@ -134,13 +199,17 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   loadedProjects: new Set<string>(),
 
   loadConfigs: async (project: Project) => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       set(s => ({ configsByProject: { ...s.configsByProject, [project.id]: [] } }))
       return []
     }
     const readConfigs = async (path: string) => {
       const raw = await safeInvoke<string>('读取运行配置', 'read_file', { path })
-      return normalizeConfigs(JSON.parse(raw) as RunConfigFile)
+      try {
+        return normalizeConfigs(JSON.parse(raw) as RunConfigFile)
+      } catch (error) {
+        throw new RunConfigFormatError(`${path}: ${String(error)}`)
+      }
     }
     try {
       const configs = await readConfigs(runConfigPath(project))
@@ -149,10 +218,19 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
         loadedProjects: new Set(s.loadedProjects).add(project.id),
       }))
       return configs
-    } catch {
+    } catch (error) {
+      if (error instanceof RunConfigFormatError) {
+        useProjectStore.getState().pushToast('error', `运行配置格式错误: ${error.message}`)
+        set(s => ({
+          configsByProject: { ...s.configsByProject, [project.id]: [] },
+          loadedProjects: new Set(s.loadedProjects).add(project.id),
+        }))
+        throw error
+      }
       try {
         const legacyPath = legacyRunConfigPath(project)
         const configs = await readConfigs(legacyPath)
+        await ensureRunConfigDirectory(project)
         await safeInvoke('保存运行配置', 'write_file', {
           path: runConfigPath(project),
           content: JSON.stringify({ configs } satisfies RunConfigFile, null, 2),
@@ -177,6 +255,7 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     try {
       const file: RunConfigFile = { configs }
       const content = JSON.stringify(file, null, 2)
+      await ensureRunConfigDirectory(project)
       await safeInvoke('保存运行配置', 'write_file', {
         path: runConfigPath(project),
         content,
@@ -199,40 +278,57 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   },
 
   removeConfig: async (project: Project, configId: string) => {
-    const current = get().configsByProject[project.id] ?? []
-    const target = current.find(c => c.id === configId)
-    const next = current.filter(c => c.id !== configId)
-    await get().saveConfigs(project, next)
-    if (!target) return
+    await get().removeConfigs(project, [configId])
+  },
 
-    useProjectStore
-      .getState()
-      .pushToast(
-        'success',
-        translate('已删除运行配置「{name}」', { name: target.name }),
-        undefined,
-        {
-          label: translate('撤销'),
-          onAction: async () => {
-            const latest = get().configsByProject[project.id] ?? []
-            if (latest.some(config => config.id === target.id)) return
-            try {
-              await get().saveConfigs(project, [...latest, target])
-              useProjectStore
-                .getState()
-                .pushToast('success', translate('已恢复运行配置「{name}」', { name: target.name }))
-            } catch {
-              // saveConfigs has already shown the actionable error toast.
-            }
-          },
+  removeConfigs: async (project: Project, configIds: string[]) => {
+    const current = get().configsByProject[project.id] ?? []
+    const ids = new Set(configIds)
+    const targets = current.flatMap((config, index) =>
+      ids.has(config.id) ? [{ config, index }] : []
+    )
+    if (targets.length === 0) return
+    const next = current.filter(c => !ids.has(c.id))
+    await get().saveConfigs(project, next)
+    const removedMessage =
+      targets.length === 1
+        ? translate('已删除运行配置「{name}」', { name: targets[0].config.name })
+        : translate('已删除 {count} 个运行配置', { count: targets.length })
+
+    useProjectStore.getState().pushToast('success', removedMessage, undefined, {
+      label: translate('撤销'),
+      onAction: async () => {
+        const latest = get().configsByProject[project.id] ?? []
+        const restored = [...latest]
+        for (const { config, index } of targets) {
+          if (!restored.some(item => item.id === config.id)) {
+            restored.splice(Math.min(index, restored.length), 0, config)
+          }
         }
-      )
+        if (restored.length === latest.length) return
+        try {
+          await get().saveConfigs(project, restored)
+          useProjectStore
+            .getState()
+            .pushToast(
+              'success',
+              targets.length === 1
+                ? translate('已恢复运行配置「{name}」', { name: targets[0].config.name })
+                : translate('已恢复 {count} 个运行配置', { count: restored.length - latest.length })
+            )
+        } catch {
+          // saveConfigs has already shown the actionable error toast.
+        }
+      },
+    })
   },
 }))
 
-export { runConfigPath, defaultConfigs, stripRedundantCdPrefix }
+export { runConfigPath, defaultConfigs, ensureRunConfigDirectory, stripRedundantCdPrefix }
 
 /** Session restore is opt-in; older run.json files without the field stay disabled. */
-export function runConfigFollowsProjectSession(config: Pick<RunConfig, 'restoreWithProjectSession'>) {
+export function runConfigFollowsProjectSession(
+  config: Pick<RunConfig, 'restoreWithProjectSession'>
+) {
   return config.restoreWithProjectSession === true
 }

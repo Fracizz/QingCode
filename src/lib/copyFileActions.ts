@@ -5,12 +5,18 @@ import { explorerPathsForCopyShortcut } from './explorerSelection'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import {
+  clipboardAbsolutePath,
   copyToClipboard,
   findProjectForPath,
   formatFileReference,
   pathsEqual,
   projectRelativePath,
 } from '../utils/fileReferences'
+
+/** Focusable UI targets (for example project chips) can expose their copy path. */
+export const COPY_PATH_FOCUS_ATTR = 'data-qingcode-copy-path'
+export const COPY_REFERENCE_FOCUS_ATTR = 'data-qingcode-copy-reference-path'
+export const COPY_REFERENCE_LINE_ATTR = 'data-qingcode-copy-reference-line'
 
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
@@ -21,7 +27,28 @@ function asPathList(pathOrPaths: string | readonly string[]): string[] {
   return typeof pathOrPaths === 'string' ? [pathOrPaths] : [...pathOrPaths]
 }
 
-/** Prefer focused explorer selection; fall back to the active editor tab. */
+function focusedCopyPath(): string | null {
+  if (typeof document === 'undefined' || !(document.activeElement instanceof HTMLElement)) {
+    return null
+  }
+  return document.activeElement.closest(`[${COPY_PATH_FOCUS_ATTR}]`)?.getAttribute(
+    COPY_PATH_FOCUS_ATTR,
+  ) ?? null
+}
+
+function focusedReference(): { path: string; line?: number } | null {
+  if (typeof document === 'undefined' || !(document.activeElement instanceof HTMLElement)) {
+    return null
+  }
+  const element = document.activeElement.closest(`[${COPY_REFERENCE_FOCUS_ATTR}]`)
+  const path = element?.getAttribute(COPY_REFERENCE_FOCUS_ATTR)
+  if (!path) return null
+  const rawLine = element?.getAttribute(COPY_REFERENCE_LINE_ATTR)
+  const line = rawLine && /^[1-9]\d*$/.test(rawLine) ? Number(rawLine) : undefined
+  return { path, ...(line ? { line } : {}) }
+}
+
+/** Prefer focused explorer selection, then the active editor tab. */
 function pathsForCopyShortcut(): string[] {
   const fromExplorer = explorerPathsForCopyShortcut()
   if (fromExplorer.length > 0) return fromExplorer
@@ -45,7 +72,7 @@ export async function copyPathAction(pathOrPaths: string | readonly string[]): P
   if (paths.length === 0) return
   const pushToast = useProjectStore.getState().pushToast
   try {
-    await copyToClipboard(paths.join('\n'))
+    await copyToClipboard(paths.map(clipboardAbsolutePath).join('\n'))
     pushToast(
       'success',
       paths.length === 1
@@ -105,8 +132,7 @@ export async function copyFileReferenceAction(
   const references: string[] = []
 
   for (const path of paths) {
-    const project =
-      findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+    const project = findProjectForPath(projectState.projects, path)
     if (!project) {
       pushToast('error', translate('无法确定该路径所属项目'))
       return
@@ -145,7 +171,8 @@ export async function copyFileReferenceAction(
 
 /** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C — explorer selection when focused, else active tab. */
 export async function copyActivePathAction(): Promise<void> {
-  const paths = pathsForCopyShortcut()
+  const focusedPath = focusedCopyPath()
+  const paths = focusedPath ? [focusedPath] : pathsForCopyShortcut()
   if (paths.length === 0) return
   await copyPathAction(paths)
 }
@@ -157,7 +184,8 @@ export async function copyActiveRelativePathAction(): Promise<void> {
 }
 
 export async function copyActiveFileReferenceAction(): Promise<void> {
-  const paths = pathsForCopyShortcut()
+  const focused = focusedReference()
+  const paths = focused ? [focused.path] : pathsForCopyShortcut()
   if (paths.length === 0) return
-  await copyFileReferenceAction(paths)
+  await copyFileReferenceAction(paths, focused ? { startLine: focused.line ?? 1 } : undefined)
 }

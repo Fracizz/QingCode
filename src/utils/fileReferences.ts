@@ -15,10 +15,10 @@ export async function copyToClipboard(text: string) {
 }
 
 export function findProjectForPath(projects: Project[], filePath: string) {
-  const normalizedFile = normalizePath(filePath).toLowerCase()
+  const normalizedFile = comparisonPath(filePath)
   return projects
     .filter(project => {
-      const root = normalizePath(project.path).toLowerCase()
+      const root = comparisonPath(project.path)
       return normalizedFile === root || normalizedFile.startsWith(`${root}/`)
     })
     .sort((a, b) => b.path.length - a.path.length)[0]
@@ -88,7 +88,7 @@ export function parseFileReference(input: string): ParsedFileReference {
 export function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
   const file = normalizePath(filePath)
-  if (file.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+  if (comparisonPath(file).startsWith(`${comparisonPath(root)}/`)) {
     return file.slice(root.length + 1)
   }
   return file.split('/').pop() || file
@@ -101,7 +101,7 @@ export function projectRelativePath(projectPath: string, filePath: string) {
 export function formatFileToastDetail(
   projects: Project[],
   filePath: string,
-  fallbackName?: string,
+  fallbackName?: string
 ): string {
   const project = findProjectForPath(projects, filePath)
   const relative = project
@@ -117,13 +117,30 @@ export function normalizePath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
+/**
+ * Absolute path for「复制路径」.
+ * SSH resources drop the internal `ssh://<connection-id>` prefix.
+ * Windows OpenSSH roots (`/D:/code/app`) become `D:/code/app`.
+ */
+export function clipboardAbsolutePath(path: string): string {
+  if (!path.startsWith('ssh://')) return path
+  const remote = path.replace(/^ssh:\/\/[^/]+/, '') || '/'
+  const drive = /^\/([A-Za-z]:(?:\/.*)?)$/.exec(remote)
+  return drive?.[1] ?? remote
+}
+
+function comparisonPath(path: string): string {
+  const normalized = normalizePath(path)
+  return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()
+}
+
 export function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return separator > 0 ? path.slice(0, separator) : path
 }
 
 export function pathsEqual(a: string, b: string) {
-  return normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase()
+  return comparisonPath(a) === comparisonPath(b)
 }
 
 /** True when `paths` already contains an entry equal to `path` (separator/case insensitive). */
@@ -145,8 +162,8 @@ export function addPathToSet(paths: Set<string>, path: string) {
 
 /** True when `childPath` is the same as or nested under `ancestorPath`. */
 export function isDescendantOf(childPath: string, ancestorPath: string) {
-  const child = normalizePath(childPath).toLowerCase()
-  const ancestor = normalizePath(ancestorPath).toLowerCase()
+  const child = comparisonPath(childPath)
+  const ancestor = comparisonPath(ancestorPath)
   return child === ancestor || child.startsWith(`${ancestor}/`)
 }
 

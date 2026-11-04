@@ -4,7 +4,7 @@
   top: 6px;
   right: 10px;
   z-index: 20;
-  max-width: min(100% - 16px, 360px);
+  width: min(360px, calc(100% - 20px));
   pointer-events: auto;
 }
 
@@ -13,12 +13,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 280px;
-  padding: 4px 28px 4px 6px;
+  min-width: 0;
+  padding: 4px 6px;
   border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   background: var(--color-bg-elevated);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-find-widget);
   color: var(--color-fg);
 }
 
@@ -26,28 +26,31 @@
   display: flex;
   align-items: center;
   flex: 1 1 160px;
-  min-width: 120px;
-  height: 26px;
+  min-width: 0;
+  height: var(--ui-control-height);
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
-  background: var(--color-bg-deep);
+  background: var(--color-bg-input);
 }
 
 .terminal-search-bar__input-wrap:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .terminal-search-bar__input {
+  /* The wrapper owns the focus border, including keyboard and auto focus. */
+  appearance: none;
   flex: 1;
   min-width: 0;
   height: 100%;
   padding: 0 8px;
   border: 0;
+  border-radius: inherit;
   background: transparent;
   color: var(--color-fg);
-  font-size: 13px;
+  font-size: var(--ui-font-size);
   outline: none;
+  box-shadow: none;
 }
 
 .terminal-search-bar__input::placeholder {
@@ -67,7 +70,7 @@
   min-width: 3.5rem;
   padding: 0 4px;
   color: var(--color-fg-muted);
-  font-size: 12px;
+  font-size: var(--ui-font-size-sm);
   text-align: center;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -89,8 +92,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--ui-chip-height);
+  height: var(--ui-chip-height);
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -108,10 +111,4 @@
 .terminal-search-bar__btn:disabled {
   opacity: 0.35;
   cursor: default;
-}
-
-.terminal-search-bar__close {
-  position: absolute;
-  top: 4px;
-  right: 4px;
 }

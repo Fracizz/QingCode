@@ -1,0 +1,79 @@
+/* Typography changes font pixels, never the WebView zoom or editor/terminal grid. */
+:root {
+  --ui-line-height: 20px;
+  --ui-control-height: 26px;
+  --ui-row-height: 26px;
+  --ui-chip-height: 24px;
+  --ui-activity-button-size: 40px;
+  --ui-activity-icon-size: 22px;
+}
+
+@utility text-ui {
+  font-size: var(--ui-font-size);
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-sm {
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-xs {
+  font-size: max(10px, calc(var(--ui-font-size) - 2px));
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-2xs {
+  font-size: max(9px, calc(var(--ui-font-size) - 3px));
+  line-height: var(--ui-line-height);
+}
+/* 带边框的小徽标：裁掉字体上下留白，让文字在边框内真正垂直居中（上下间距交给 padding） */
+@utility text-ui-badge {
+  font-size: var(--ui-font-size-sm);
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
+}
+
+/* Keep project origins secondary at large UI sizes; retain full glyph metrics
+   so descenders and non-Latin connection names have room inside the border. */
+.project-source-badge {
+  font-size: min(var(--ui-font-size-sm), max(12px, calc(var(--ui-font-size) * 0.8)));
+  line-height: 1.25;
+  /* Short connection names keep their natural width; long sources remain
+     bounded, and very narrow parents can still constrain the entire badge. */
+  flex-shrink: 0;
+  max-width: min(100%, clamp(6em, 45%, 12em));
+}
+
+@utility text-ui-lg {
+  font-size: calc(var(--ui-font-size) + 1px);
+  line-height: calc(var(--ui-line-height) + 2px);
+}
+@utility text-ui-xl {
+  font-size: calc(var(--ui-font-size) + 2px);
+  line-height: calc(var(--ui-line-height) + 3px);
+}
+@utility text-ui-title {
+  font-size: calc(var(--ui-font-size) + 3px);
+  line-height: calc(var(--ui-line-height) + 4px);
+}
+@utility text-ui-heading {
+  font-size: calc(var(--ui-font-size) + 5px);
+  line-height: calc(var(--ui-line-height) + 6px);
+}
+@utility text-ui-display {
+  font-size: calc(var(--ui-font-size) + 7px);
+  line-height: calc(var(--ui-line-height) + 8px);
+}
+@utility text-ui-hero {
+  font-size: calc(var(--ui-font-size) + 11px);
+  line-height: calc(var(--ui-line-height) + 12px);
+}
+
+/* Integer-sized chrome keeps borders/icons at their native CSS pixel size. */
+.ui-chip { height: var(--ui-chip-height); }
+.ui-activity-button {
+  width: var(--ui-activity-button-size);
+  height: var(--ui-activity-button-size);
+}
+.ui-activity-button > .lucide {
+  width: var(--ui-activity-icon-size);
+  height: var(--ui-activity-icon-size);
+}

@@ -11,6 +11,12 @@ describe('getPropertiesLocation', () => {
     expect(getPropertiesLocation(String.raw`D:\Work\demo`)).toBe(String.raw`D:\Work`)
     expect(getPropertiesLocation('/home/user/project')).toBe('/home/user')
   })
+
+  it('drops the ssh connection id from a Windows OpenSSH parent', () => {
+    expect(
+      getPropertiesLocation('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode/src/a.ts'),
+    ).toBe('D:/code/qingcode/src')
+  })
 })
 
 describe('formatEntryCount', () => {

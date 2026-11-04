@@ -15,6 +15,7 @@ import {
 } from './lib/workspaceSessionSync'
 import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
 import { loadSessionPersistEnabled } from './lib/sessionPersistSettings'
+import { loadGitRefreshIntervalStartMinutes } from './lib/gitRefreshSettings'
 import { installDevNativeContextMenuToggle } from './lib/devBuild'
 import { installPerformanceDiagnostics } from './lib/performanceDiagnostics'
 
@@ -38,6 +39,7 @@ void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(nul
 // Sync session-persist cache from default-settings.json for the next boot.
 void loadSessionPersistEnabled()
 void import('./lib/projectIndicatorSettings').then(m => m.loadProjectIndicatorsEnabled())
+void loadGitRefreshIntervalStartMinutes()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

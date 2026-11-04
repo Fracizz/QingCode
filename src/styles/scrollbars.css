@@ -4,19 +4,20 @@
   scrollbar-color: #3c3c3c transparent;
 }
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: #3c3c3c;
+  background-color: #3c3c3c;
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
+  transition: background-color 150ms ease;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #525252;
+  background-color: #555555;
   background-clip: content-box;
 }

@@ -1,7 +1,6 @@
-import { parentPath } from '../utils/fileReferences'
+import { clipboardAbsolutePath, parentPath } from '../utils/fileReferences'
 import { safeInvoke } from './tauri'
-
-type FileStat = { size: number; is_dir: boolean }
+import { getFileStat } from './fileIpc'
 
 export type FolderEntryCounts = {
   fileCount: number
@@ -21,7 +20,7 @@ export type FileProperties = {
 
 /** Containing folder path (IDEA / Windows style), not the item's own full path. */
 export function getPropertiesLocation(path: string): string {
-  return parentPath(path)
+  return clipboardAbsolutePath(parentPath(path))
 }
 
 export async function loadFileProperties(
@@ -30,7 +29,7 @@ export async function loadFileProperties(
   isDir: boolean,
 ): Promise<FileProperties> {
   const [stat, createdMs, modifiedMs] = await Promise.all([
-    safeInvoke<FileStat>('读取文件信息', 'file_stat', { path }),
+    getFileStat({ path }),
     safeInvoke<number | null>('读取创建时间', 'file_ctime', { path }).catch(() => null),
     safeInvoke<number | null>('读取修改时间', 'file_mtime', { path }).catch(() => null),
   ])
@@ -72,9 +71,4 @@ export function formatFileTime(ms: number | null, locale: string): string {
     dateStyle: 'medium',
     timeStyle: 'medium',
   }).format(new Date(ms))
-}
-
-/** @deprecated Use {@link formatFileTime}. */
-export function formatModifiedTime(ms: number | null, locale: string): string {
-  return formatFileTime(ms, locale)
 }

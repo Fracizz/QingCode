@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useEffect,
   useLayoutEffect,
@@ -11,7 +12,6 @@ import {
 import { createPortal } from 'react-dom'
 import {
   ChevronDown,
-  Folder,
   AlertTriangle,
   Plus,
   X,
@@ -41,34 +41,53 @@ import { copyPathAction } from '../lib/copyFileActions'
 import { shouldShowAppContextMenu, deferToNativeContextMenuInDev } from '../lib/devBuild'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
+import { TooltipSuppressionContext } from './tooltipContext'
 import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 import { useI18n } from '../lib/i18n'
-import { insertLineXForDraggedChip, previewReorderIds, sameIdOrder, sortVisibleProjects } from '../lib/projectChipOrder'
-import { EMPTY_PROJECT_INDICATORS, useProjectIndicators, type ProjectIndicators } from '../hooks/useProjectIndicators'
+import {
+  insertLineXForDraggedChip,
+  previewReorderIds,
+  sameIdOrder,
+  sortVisibleProjects,
+  visibleProjectChipRange,
+} from '../lib/projectChipOrder'
+import {
+  EMPTY_PROJECT_INDICATORS,
+  useProjectIndicators,
+  type ProjectIndicators,
+} from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
-import { isTauri } from '../lib/tauri'
+import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import type { ProjectLabel } from '../lib/projectLabels'
+import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import { isWslProject } from '../lib/wslWorkspace'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { isTauri, isSshResource } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
 const CHIP_GAP = 4
-const ADD_BTN_W = 28
-const OVERFLOW_BTN_W = 28
 /** Pointer DnD threshold — HTML5 DnD is flaky in WebView2 title bar (see Sidebar). */
 const DRAG_THRESHOLD_PX = 5
 
 export default function ProjectPicker() {
+  const { fontSize } = useInterfaceMetrics()
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => sortVisibleProjects(allProjects), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const hideProjectsByIds = useProjectStore(s => s.hideProjectsByIds)
   const refreshProjectTree = useProjectStore(s => s.refreshProjectTree)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
-  const setView = useUIStore(s => s.setView)
+  const showExplorerViewKeepingSidebar = useUIStore(s => s.showExplorerViewKeepingSidebar)
   const requestSearch = useUIStore(s => s.requestSearch)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
@@ -93,7 +112,7 @@ export default function ProjectPicker() {
   } | null>(null)
   const suppressChipClickRef = useRef(false)
 
-  const [visibleCount, setVisibleCount] = useState(projects.length)
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: projects.length })
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
@@ -117,25 +136,20 @@ export default function ProjectPicker() {
       measure
         .querySelectorAll<HTMLDivElement>('[data-chip-id]')
         .forEach(el => widths.set(el.dataset.chipId ?? '', el.offsetWidth))
-      const available = container.clientWidth
-      let total = ADD_BTN_W
-      let count = 0
-      for (let i = 0; i < projects.length; i++) {
-        const w = (widths.get(projects[i].id) ?? 0) + CHIP_GAP
-        const allShown = count + 1 === projects.length
-        const reserveOverflow = allShown ? 0 : OVERFLOW_BTN_W + CHIP_GAP
-        if (total + w + reserveOverflow > available) break
-        total += w
-        count++
-      }
-      setVisibleCount(count)
+      const next = visibleProjectChipRange(
+        projects.map(project => widths.get(project.id) ?? 0),
+        container.clientWidth,
+        projects.findIndex(project => project.id === currentProject?.id),
+      )
+      setVisibleRange(previous => previous.start === next.start && previous.end === next.end ? previous : next)
     }
 
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(container)
+    measure.querySelectorAll<HTMLElement>('[data-chip-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [projects])
+  }, [projects, currentProject?.id, fontSize, projectLabels])
 
   const closeDropdown = () => setOverflowOpen(false)
 
@@ -165,7 +179,7 @@ export default function ProjectPicker() {
   const positionDropdown = () => {
     const rect = overflowBtnRef.current?.getBoundingClientRect()
     if (!rect) return
-    const width = 240
+    const width = Math.min(420, window.innerWidth - 16)
     setDropdownStyle({
       left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
       top: rect.bottom + 4,
@@ -176,7 +190,8 @@ export default function ProjectPicker() {
   const handleSwitch = async (project: Project) => {
     if (suppressChipClickRef.current) return
     closeDropdown()
-    setView('explorer')
+    // 用户收起的侧栏不因切换项目而重新展开
+    showExplorerViewKeepingSidebar()
     await switchProject(project)
   }
 
@@ -185,16 +200,14 @@ export default function ProjectPicker() {
     if ((event.target as HTMLElement).closest('button')) return
     event.stopPropagation()
 
-    const visibleIds = projects.slice(0, visibleCount).map(p => p.id)
+    const visibleIds = projects.slice(visibleRange.start, visibleRange.end).map(p => p.id)
     if (!visibleIds.includes(projectId)) return
 
     const widthsById = new Map<string, number>()
-    measureRef.current
-      ?.querySelectorAll<HTMLDivElement>('[data-chip-id]')
-      .forEach(el => {
-        const id = el.dataset.chipId
-        if (id) widthsById.set(id, el.offsetWidth)
-      })
+    measureRef.current?.querySelectorAll<HTMLDivElement>('[data-chip-id]').forEach(el => {
+      const id = el.dataset.chipId
+      if (id) widthsById.set(id, el.offsetWidth)
+    })
 
     chipDragRef.current = {
       dragId: projectId,
@@ -230,7 +243,7 @@ export default function ProjectPicker() {
         session.dragId,
         session.widthsById,
         CHIP_GAP,
-        x,
+        x
       )
       if (!sameIdOrder(next, session.previewIds)) {
         session.previewIds = next
@@ -240,9 +253,7 @@ export default function ProjectPicker() {
         setInsertLineX(null)
         return
       }
-      setInsertLineX(
-        insertLineXForDraggedChip(next, session.dragId, session.widthsById, CHIP_GAP),
-      )
+      setInsertLineX(insertLineXForDraggedChip(next, session.dragId, session.widthsById, CHIP_GAP))
     }
 
     const onMove = (moveEvent: PointerEvent) => {
@@ -305,7 +316,7 @@ export default function ProjectPicker() {
       setPreviewIds(null)
       setInsertLineX(null)
       if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
-        void reorderVisibleProjects(fromIndex, toIndex)
+        void reorderVisibleProjects(visibleRange.start + fromIndex, visibleRange.start + toIndex)
       }
       window.setTimeout(() => {
         suppressChipClickRef.current = false
@@ -325,6 +336,10 @@ export default function ProjectPicker() {
 
   const handleOpenInExplorer = async (path: string) => {
     closeDropdown()
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await openPath(path)
     } catch (e) {
@@ -375,9 +390,10 @@ export default function ProjectPicker() {
         label: t('在此项目内搜索'),
         icon: <Search size={14} />,
         disabled: unavailable,
-        action: () => void activateThen(async () => {
-          requestSearch(project.path)
-        }),
+        action: () =>
+          void activateThen(async () => {
+            requestSearch(project.path)
+          }),
       },
       {
         label: t('刷新项目'),
@@ -389,7 +405,7 @@ export default function ProjectPicker() {
       {
         label: t('在文件管理器中打开'),
         icon: <ExternalLink size={14} />,
-        disabled: unavailable,
+        disabled: unavailable || project.kind === 'ssh',
         action: () => void handleOpenInExplorer(project.path),
       },
       {
@@ -405,9 +421,12 @@ export default function ProjectPicker() {
         action: () => handleRename(project),
       },
       {
-        label: t('重新定位项目'),
+        label: project.kind === 'ssh' ? t('重新连接') : t('重新定位项目'),
         icon: <LocateFixed size={14} />,
-        action: () => handleRelocate(project.id),
+        action: () =>
+          project.kind === 'ssh'
+            ? (closeDropdown(), requestSshReconnect(project))
+            : handleRelocate(project.id),
       },
       {
         label: unavailable ? t('移除项目') : t('从顶栏隐藏'),
@@ -456,13 +475,13 @@ export default function ProjectPicker() {
   }
 
   const displayVisibleProjects = useMemo(() => {
-    if (!previewIds) return projects.slice(0, visibleCount)
+    if (!previewIds) return projects.slice(visibleRange.start, visibleRange.end)
     const byId = new Map(projects.map(p => [p.id, p]))
     return previewIds
       .map(id => byId.get(id))
       .filter((project): project is Project => project != null)
-  }, [projects, previewIds, visibleCount])
-  const overflowProjects = projects.slice(visibleCount)
+  }, [projects, previewIds, visibleRange])
+  const overflowProjects = projects.filter((_, index) => index < visibleRange.start || index >= visibleRange.end)
   const hasOverflow = overflowProjects.length > 0
 
   return (
@@ -473,97 +492,105 @@ export default function ProjectPicker() {
       {/* Keep the dynamic chip strip in the client area. Marking this whole
           container as app-region: drag makes WebView2 subtract every interactive
           chip/button from the native region. The inert filler owns dragging. */}
-      <div
-        ref={containerRef}
-        className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
-      >
-        {insertLineX !== null && dragId !== null && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-accent z-10"
-            style={{ left: insertLineX }}
-          />
-        )}
-        {displayVisibleProjects.map((project, index) => {
-          const unavailable = unavailableProjectIds.includes(project.id)
-          return (
-          <Chip
-            key={project.id}
-            chipIndex={index}
-            project={project}
-            indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
-            isCurrent={currentProject?.id === project.id}
-            unavailable={unavailable}
-            dragging={dragId === project.id}
-            onSwitch={() => void handleSwitch(project)}
-            onRemove={() => handleRemove(project)}
-            onRelocate={() => handleRelocate(project.id)}
-            onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
-            onContextMenu={event => openProjectContextMenu(event, project)}
-            onPointerDown={
-              unavailable ? undefined : event => handleChipPointerDown(event, project.id)
-            }
-          />
-          )
-        })}
-
-        {hasOverflow && (
-          <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
-            <button
-              ref={overflowBtnRef}
-              type="button"
-              aria-label={t('更多项目')}
-              aria-expanded={overflowOpen}
-              aria-haspopup="menu"
-              onClick={openOverflow}
-              onDoubleClick={event => event.stopPropagation()}
-              className={`flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors
-                ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
-            >
-              <ChevronDown
-                size={14}
-                className={`transition-transform ${overflowOpen ? 'rotate-180' : ''}`}
+      <TooltipSuppressionContext value={dragId !== null}>
+        <div
+          ref={containerRef}
+          className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
+        >
+          {insertLineX !== null && dragId !== null && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-accent z-10"
+              style={{ left: insertLineX }}
+            />
+          )}
+          {displayVisibleProjects.map((project, index) => {
+            const unavailable = unavailableProjectIds.includes(project.id)
+            return (
+              <Chip
+                key={project.id}
+                chipIndex={index}
+                project={project}
+                label={projectLabels.get(project.id)}
+                sshConnections={sshConnections}
+                indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+                isCurrent={currentProject?.id === project.id}
+                unavailable={unavailable}
+                dragging={dragId === project.id}
+                onSwitch={() => void handleSwitch(project)}
+                onRemove={() => handleRemove(project)}
+                onRelocate={() =>
+                  project.kind === 'ssh'
+                    ? requestSshReconnect(project)
+                    : handleRelocate(project.id)
+                }
+                onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
+                onContextMenu={event => openProjectContextMenu(event, project)}
+                onPointerDown={
+                  unavailable ? undefined : event => handleChipPointerDown(event, project.id)
+                }
               />
+            )
+          })}
+
+          {hasOverflow && (
+            <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
+              <button
+                ref={overflowBtnRef}
+                type="button"
+                aria-label={t('更多项目')}
+                aria-expanded={overflowOpen}
+                aria-haspopup="menu"
+                onClick={openOverflow}
+                onDoubleClick={event => event.stopPropagation()}
+                className={`flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors
+                  ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+              >
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${overflowOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </Tooltip>
+          )}
+
+          <Tooltip label={t('添加项目')} side="bottom" wrapperClassName="flex-shrink-0">
+            <button
+              type="button"
+              aria-label={t('添加项目')}
+              aria-haspopup="dialog"
+              onClick={openAddDialog}
+              onDoubleClick={event => event.stopPropagation()}
+              className="flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              <Plus size={14} />
             </button>
           </Tooltip>
-        )}
 
-        <Tooltip label={t('添加项目')} side="bottom" wrapperClassName="flex-shrink-0">
-          <button
-            type="button"
-            aria-label={t('添加项目')}
-            aria-haspopup="dialog"
-            onClick={openAddDialog}
-            onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            <Plus size={14} />
-          </button>
-        </Tooltip>
+          {projects.length === 0 && (
+            <button
+              type="button"
+              aria-label={t('添加项目')}
+              aria-haspopup="dialog"
+              onClick={openAddDialog}
+              onDoubleClick={event => event.stopPropagation()}
+              className="flex items-center ui-chip h-6 px-2 rounded text-ui transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              {t('添加项目')}
+            </button>
+          )}
 
-        {projects.length === 0 && (
-          <button
-            type="button"
-            aria-label={t('添加项目')}
-            aria-haspopup="dialog"
-            onClick={openAddDialog}
-            onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center h-6 px-2 rounded text-[13px] transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            {t('添加项目')}
-          </button>
-        )}
-
-        {/* Absorbs leftover width after chips. Keeping the native drag region on
-            this inert leaf avoids hit-testing the dynamic chip subtree.
-            `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
-        <div
-          className={`flex-1 self-stretch min-w-0 -ml-1 ${
-            windowDragMode === 'native' ? 'window-drag-region' : ''
-          }`}
-          data-tauri-drag-region={windowDragMode === 'tauri-fallback' ? true : undefined}
-        />
-      </div>
+          {/* Absorbs leftover width after chips. Keeping the native drag region on
+              this inert leaf avoids hit-testing the dynamic chip subtree.
+              `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
+          <div
+            className={`flex-1 self-stretch min-w-0 -ml-1 ${
+              windowDragMode === 'native' ? 'window-drag-region' : ''
+            }`}
+            data-tauri-drag-region={windowDragMode === 'tauri-fallback' ? true : undefined}
+          />
+        </div>
+      </TooltipSuppressionContext>
 
       {/* Hidden measuring layer: renders every chip at natural width so we can compute overflow. */}
       <div
@@ -575,6 +602,8 @@ export default function ProjectPicker() {
           <Chip
             key={project.id}
             project={project}
+            label={projectLabels.get(project.id)}
+            sshConnections={sshConnections}
             indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
             isCurrent={currentProject?.id === project.id}
             unavailable={unavailableProjectIds.includes(project.id)}
@@ -593,14 +622,14 @@ export default function ProjectPicker() {
           <div
             ref={dropdownRef}
             role="menu"
-            className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
+            className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
             }}
           >
-            <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
+            <div className="px-2.5 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
               {t('更多项目')}
             </div>
             <div className="flex-1 overflow-auto">
@@ -610,17 +639,19 @@ export default function ProjectPicker() {
                 return (
                   <div
                     key={project.id}
+                    data-qingcode-copy-path={project.path}
                     role="menuitem"
+                    aria-label={projectLabels.get(project.id)?.text ?? project.name}
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
                     onContextMenu={event => openProjectContextMenu(event, project)}
-                    className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-[13px] outline-none
+                    className={`group flex items-center gap-2 rounded px-2.5 py-1.5 text-ui outline-none
                       ${
                         isCurrent
-                          ? 'border-brand bg-bg-active text-fg'
+                          ? 'bg-bg-active text-fg'
                           : unavailable
-                          ? 'border-transparent text-fg-dim'
-                          : 'cursor-pointer border-transparent text-fg hover:bg-bg-hover focus:bg-bg-active'
+                            ? 'text-fg-dim'
+                            : 'cursor-pointer text-fg hover:bg-bg-hover focus:bg-bg-active'
                       }`}
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
@@ -629,16 +660,27 @@ export default function ProjectPicker() {
                       ) : isCurrent ? (
                         <Check size={13} className="text-brand" />
                       ) : (
-                        <Folder size={14} className="text-accent" />
+                        <ProjectKindIcon
+                          project={project}
+                          preparation
+                          size={14}
+                          className="text-accent"
+                        />
                       )}
                     </span>
                     <Tooltip
-                      label={project.path}
+                      label={projectChipTooltipLabel(project, sshConnections, t)}
                       side="right"
-                      wrapperClassName="truncate min-w-0 flex-1"
+                      wrapperClassName="min-w-0 flex-1"
                     >
-                      <span className="truncate">{project.name}</span>
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                        <span className="block truncate text-ui-sm text-fg-dim">
+                          {sshProjectDisplayPath(project, null, sshConnections)}
+                        </span>
+                      </span>
                     </Tooltip>
+                    <ProjectKindBadge project={project} />
                     <ProjectIndicatorMarks
                       project={project}
                       indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
@@ -648,7 +690,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={t('重命名项目')}
-                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
+                        className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                         onClick={event => {
                           event.stopPropagation()
                           handleRename(project)
@@ -658,20 +700,28 @@ export default function ProjectPicker() {
                       </button>
                     </Tooltip>
                     {unavailable ? (
-                      <Tooltip label={t('重新定位项目')} side="right" wrapperClassName="flex-shrink-0">
+                      <Tooltip
+                        label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                        side="right"
+                        wrapperClassName="flex-shrink-0"
+                      >
                         <button
                           type="button"
-                          aria-label={t('重新定位项目')}
-                          className="text-warn hover:text-fg"
+                          aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
-                            handleRelocate(project.id)
+                            if (project.kind === 'ssh') {
+                              requestSshReconnect(project)
+                            } else {
+                              handleRelocate(project.id)
+                            }
                           }}
                         >
                           <LocateFixed size={13} />
                         </button>
                       </Tooltip>
-                    ) : (
+                    ) : project.kind === 'ssh' ? null : (
                       <Tooltip
                         label={t('在文件管理器中打开')}
                         side="right"
@@ -680,7 +730,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('在文件管理器中打开')}
-                          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
+                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
                             void handleOpenInExplorer(project.path)
@@ -698,17 +748,17 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                        className={`${
+                        className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded hover:bg-bg-active ${
                           unavailable
                             ? 'text-fg-dim hover:text-danger'
-                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger'
+                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg'
                         }`}
                         onClick={event => {
                           event.stopPropagation()
                           handleRemove(project)
                         }}
                       >
-                        <X size={13} />
+                        {unavailable ? <X size={13} /> : <EyeOff size={13} />}
                       </button>
                     </Tooltip>
                   </div>
@@ -720,7 +770,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageProjects}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <ListChecks size={14} />
@@ -731,7 +781,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageWorkspaces}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Layers size={14} />
@@ -740,7 +790,7 @@ export default function ProjectPicker() {
               </button>
             </div>
           </div>,
-          document.body,
+          document.body
         )}
 
       <ProjectAddDialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} />
@@ -759,6 +809,8 @@ export default function ProjectPicker() {
 
 function Chip({
   project,
+  label,
+  sshConnections,
   indicators,
   chipIndex,
   isCurrent,
@@ -773,6 +825,8 @@ function Chip({
   onPointerDown,
 }: {
   project: Project
+  label?: ProjectLabel
+  sshConnections: ReadonlyArray<SshConnection>
   indicators: ProjectIndicators
   chipIndex?: number
   isCurrent: boolean
@@ -789,7 +843,7 @@ function Chip({
   const { t } = useI18n()
   const showIndicators = useProjectIndicatorsVisible()
   const statusLabel = [
-    project.name,
+    label?.text ?? project.name,
     showIndicators && indicators.running > 0
       ? t('运行中的终端 {count}', { count: indicators.running })
       : '',
@@ -799,7 +853,9 @@ function Chip({
     showIndicators && indicators.gitChanges > 0
       ? t('Git 更改 {count}', { count: indicators.gitChanges })
       : '',
-  ].filter(Boolean).join(' · ')
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const activate = () => {
     if (!unavailable) onSwitch()
   }
@@ -807,14 +863,14 @@ function Chip({
     <div
       data-chip-id={measure ? project.id : undefined}
       data-chip-index={measure ? undefined : chipIndex}
-      role={measure ? undefined : 'button'}
+      data-qingcode-copy-path={measure ? undefined : project.path}
+      role={measure ? undefined : unavailable ? 'group' : 'button'}
       tabIndex={measure || unavailable ? -1 : 0}
       aria-current={isCurrent ? 'true' : undefined}
-      aria-disabled={unavailable || undefined}
       aria-label={statusLabel}
       onClick={activate}
       onKeyDown={event => {
-        if (measure || unavailable) return
+        if (event.target !== event.currentTarget || measure || unavailable) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           activate()
@@ -823,19 +879,22 @@ function Chip({
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
       onPointerDown={measure ? undefined : onPointerDown}
-      className={`group relative flex items-center gap-0.5 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default
+      className={`group relative flex items-center gap-0.5 ui-chip h-6 px-0.5 rounded text-ui flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default ${measure ? '' : 'min-w-0 max-w-[calc(100%-64px)]'}
         ${
           dragging
             ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'
             : isCurrent
-            ? 'bg-bg-active text-fg'
-            : unavailable
-            ? 'text-fg-dim'
-            : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+              ? 'bg-bg-active text-fg'
+              : unavailable
+                ? 'text-fg-dim'
+                : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
         }`}
     >
       {isCurrent && (
-        <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />
+        <span
+          className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
+          aria-hidden
+        />
       )}
       {unavailable ? (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
@@ -843,17 +902,33 @@ function Chip({
         </span>
       ) : (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
-          <Folder size={12} className={isCurrent ? 'text-brand' : 'text-accent'} />
+          <ProjectKindIcon
+            project={project}
+            preparation={!measure}
+            size={12}
+            className={isCurrent ? 'text-brand' : 'text-accent'}
+          />
         </span>
       )}
-      <span className="truncate max-w-[140px]">{project.name}</span>
+      <Tooltip
+        label={projectChipTooltipLabel(project, sshConnections, t)}
+        side="bottom"
+        onlyWhenOverflow={!label?.source && !isSshProject(project) && !isWslProject(project)}
+        wrapperClassName="min-w-0 flex items-center"
+      >
+        <ProjectName name={project.name} label={label} compact />
+      </Tooltip>
       <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
-      {project.ephemeral && !unavailable && (
-        <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+      {project.ephemeral && !unavailable && project.kind !== 'ssh' && (
+        <Tooltip
+          label={t('在文件管理器中打开')}
+          side="bottom"
+          wrapperClassName="inline-flex flex-shrink-0 items-center"
+        >
           <button
             type="button"
             aria-label={t('在文件管理器中打开')}
-            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg w-4 h-4"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
             onClick={event => {
               event.stopPropagation()
               onOpenInExplorer()
@@ -865,11 +940,15 @@ function Chip({
       )}
       {unavailable ? (
         <>
-          <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+          <Tooltip
+            label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+            side="bottom"
+            wrapperClassName="inline-flex flex-shrink-0 items-center"
+          >
             <button
               type="button"
-              aria-label={t('重新定位项目')}
-              className="inline-flex items-center justify-center text-warn hover:text-fg w-4 h-4"
+              aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRelocate()
@@ -878,11 +957,15 @@ function Chip({
               <LocateFixed size={12} />
             </button>
           </Tooltip>
-          <Tooltip label={t('移除项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+          <Tooltip
+            label={t('移除项目')}
+            side="bottom"
+            wrapperClassName="inline-flex flex-shrink-0 items-center"
+          >
             <button
               type="button"
               aria-label={t('移除项目')}
-              className="inline-flex items-center justify-center text-fg-dim hover:text-danger w-4 h-4"
+              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-5 ui-chip h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRemove()
@@ -893,17 +976,21 @@ function Chip({
           </Tooltip>
         </>
       ) : (
-        <Tooltip label={t('从顶栏隐藏')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip
+          label={t('从顶栏隐藏')}
+          side="bottom"
+          wrapperClassName="inline-flex flex-shrink-0 items-center"
+        >
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}
-            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
             onClick={event => {
               event.stopPropagation()
               onRemove()
             }}
           >
-            <X size={12} />
+            <EyeOff size={12} />
           </button>
         </Tooltip>
       )}

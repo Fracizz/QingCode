@@ -19,11 +19,22 @@ export const MAX_COMMAND_HISTORY = 50
 export const MAX_COMMAND_HISTORY_ENTRY_CHARS = 500
 /** Soft ceiling for the whole JSON blob (localStorage quota safety). */
 export const MAX_TERMINAL_OUTPUT_STORAGE_CHARS = 1_500_000
+/** 输出变化后等待合并的时间。 */
+export const OUTPUT_PERSIST_DEBOUNCE_MS = 1_200
+/** 持续输出时两次持久化的最小间隔，避免周期性同步写 localStorage 掉帧。 */
+export const OUTPUT_PERSIST_MIN_INTERVAL_MS = 5_000
+
+/** 下一次输出持久化应等待的毫秒数：至少防抖时长，且距上次持久化不少于最小间隔。 */
+export function nextOutputPersistDelay(now: number, lastPersistAt: number): number {
+  return Math.max(OUTPUT_PERSIST_DEBOUNCE_MS, lastPersistAt + OUTPUT_PERSIST_MIN_INTERVAL_MS - now)
+}
 
 export type PersistedTerminalOutput = {
   scrollback: string
   history: string[]
   updatedAt: number
+  /** daemon 终端在这份 scrollback 之后的续传序号；重启接回时只补发此后的输出。 */
+  seq?: number
 }
 
 export type TerminalOutputSnapshot = {
@@ -256,6 +267,9 @@ function parseTerminalOutput(value: unknown): PersistedTerminalOutput | null {
     scrollback: truncateScrollbackText(value.scrollback, maxLines),
     history: normalizeCommandHistory(value.history),
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    ...(typeof value.seq === 'number' && Number.isSafeInteger(value.seq) && value.seq >= 0
+      ? { seq: value.seq }
+      : {}),
   }
 }
 
@@ -350,7 +364,10 @@ export function clearTerminalOutputSnapshot(): void {
 }
 
 export function buildTerminalOutputSnapshot(input: {
-  terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }>
+  terminals: Record<
+    string,
+    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
+  >
   now?: number
   scrollbackLines?: number
 }): TerminalOutputSnapshot {
@@ -366,6 +383,7 @@ export function buildTerminalOutputSnapshot(input: {
       scrollback,
       history,
       updatedAt: entry.updatedAt ?? now,
+      ...(entry.seq !== undefined ? { seq: entry.seq } : {}),
     }
   }
   return enforceTerminalOutputStorageBudget({

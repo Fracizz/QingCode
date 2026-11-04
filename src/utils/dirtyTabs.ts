@@ -2,6 +2,7 @@ import type { EditorTab } from '../types'
 import { flushAutoSave, shouldAutoSaveBeforeDiscard } from '../lib/autoSave'
 import { confirmDialog } from '../store/confirmStore'
 import { translate } from '../lib/i18n'
+import { useEditorStore } from '../store/editorStore'
 
 type TranslateFn = (source: string, values?: Record<string, string | number>) => string
 
@@ -27,19 +28,33 @@ export function formatDirtyDiscardCopy(
 }
 
 export async function confirmDiscardTabs(tabs: EditorTab[], action: string) {
+  const currentTabs = () => tabs.map(tab => useEditorStore.getState().findTab(tab.id) ?? tab)
   if (shouldAutoSaveBeforeDiscard()) {
     await flushAutoSave(getDirtyTabs(tabs).map(tab => tab.id))
   }
-  const dirtyTabs = getDirtyTabs(tabs)
+  const dirtyTabs = getDirtyTabs(currentTabs())
   if (dirtyTabs.length === 0) return true
 
   const copy = formatDirtyDiscardCopy(dirtyTabs, action)
-  return confirmDialog({
+  const decision = await confirmDialog({
     title: copy.title,
     message: copy.message,
     detail: copy.detail,
     kind: 'warning',
-    confirmLabel: copy.confirmLabel,
+    confirmLabel: translate(action === '关闭文件' ? '保存并关闭' : '保存并继续'),
+    altLabel: copy.confirmLabel,
     cancelLabel: copy.cancelLabel,
   })
+  if (decision === 'alt') return true
+  if (!decision) return false
+  try {
+    for (const tab of dirtyTabs) {
+      await useEditorStore.getState().saveFile(tab.id)
+      // saveFile reports failures itself, including conflicts and cancelled writes.
+      if (useEditorStore.getState().findTab(tab.id)?.dirty !== false) return false
+    }
+    return getDirtyTabs(currentTabs()).length === 0
+  } catch {
+    return false
+  }
 }

@@ -73,6 +73,8 @@ describe('architecture boundaries', () => {
     const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..')
     const violations = sourceFiles(srcDir)
       .filter(path => !path.includes(`${join('lib', 'ipc')}`))
+      // This development-only IPC receiver implements the other side of the contract.
+      .filter(path => path !== join(srcDir, 'dev', 'webTestBackend.ts'))
       .filter(path => {
         const source = readFileSync(path, 'utf8')
         return /['"](?:git_[a-z_]+|get_git_[a-z_]+|create_terminal|kill_terminal|write_terminal|resize_terminal|spawn_script)['"]/.test(
@@ -80,5 +82,12 @@ describe('architecture boundaries', () => {
         )
       })
     expect(violations).toEqual([])
+  })
+
+  it('keeps the Web test backend independent of application stores and views', () => {
+    const devDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dev')
+    for (const path of sourceFiles(devDir)) {
+      expect(readFileSync(path, 'utf8')).not.toMatch(/(?:from\s+|import\()['"][^'"]*\/(?:store|components)\//)
+    }
   })
 })

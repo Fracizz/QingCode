@@ -1,8 +1,7 @@
 //! Debounced filesystem watching for open files and project roots.
 //! Emits `fs-change` events to the frontend; self-writes can be suppressed briefly.
 
-use crate::code_navigation::SemanticNavigationState;
-use crate::path_guard::PathAllowlist;
+use crate::path_guard::{strip_verbatim_prefix, PathAllowlist};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind, Debouncer};
 use serde::Serialize;
@@ -19,6 +18,8 @@ const HIGH_CHURN_DIRS: &[&str] = &[
     ".next",
     ".turbo",
     ".cache",
+    ".dev",
+    ".venv",
     "node_modules",
     "target",
     "dist",
@@ -26,6 +27,10 @@ const HIGH_CHURN_DIRS: &[&str] = &[
     "out",
     "coverage",
 ];
+
+/// 只在项目根下第一级才算高 churn 的目录：`release/` 是打包产物，
+/// 但 `src/release/` 这类同名源码目录仍要正常刷新目录树与 Git。
+const ROOT_HIGH_CHURN_DIRS: &[&str] = &["release"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,17 +120,6 @@ fn dunce_simplify(path: &Path) -> PathBuf {
     strip_verbatim_prefix(path.to_path_buf())
 }
 
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let s = path.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
-            return PathBuf::from(rest);
-        }
-    }
-    path
-}
-
 fn is_high_churn_path(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| {
         let path_components = path
@@ -144,11 +138,18 @@ fn is_high_churn_path(path: &Path, roots: &[PathBuf]) -> bool {
         {
             return false;
         }
-        path_components[root_components.len()..].iter().any(|name| {
-            HIGH_CHURN_DIRS
+        let relative = &path_components[root_components.len()..];
+        let root_level = relative.first().is_some_and(|name| {
+            ROOT_HIGH_CHURN_DIRS
                 .iter()
                 .any(|ignored| name.eq_ignore_ascii_case(ignored))
-        })
+        });
+        root_level
+            || relative.iter().any(|name| {
+                HIGH_CHURN_DIRS
+                    .iter()
+                    .any(|ignored| name.eq_ignore_ascii_case(ignored))
+            })
     })
 }
 
@@ -198,7 +199,6 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
                 return;
             };
             let mut seen = HashSet::new();
-            let mut semantic_paths = Vec::new();
             for event in events {
                 if is_high_churn_path(&event.path, &watched_roots) {
                     continue;
@@ -223,19 +223,7 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
                 if !seen.insert(key) {
                     continue;
                 }
-                semantic_paths.push(path.clone());
                 emit_change(&app_for_cb, path, event.kind);
-            }
-            if semantic_paths.is_empty() {
-                return;
-            }
-            if let Some(index) = app_for_cb.try_state::<SemanticNavigationState>() {
-                let index = index.inner().clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    for path in semantic_paths {
-                        let _ = index.refresh_path_from_disk(&path);
-                    }
-                });
             }
         },
     )
@@ -411,6 +399,7 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
     #[test]
     fn high_churn_filter_only_applies_below_watched_root() {
         let roots = vec![PathBuf::from(r"D:\Work\demo")];
@@ -420,6 +409,24 @@ mod tests {
         ));
         assert!(is_high_churn_path(
             Path::new(r"D:\Work\demo\node_modules\pkg\index.js"),
+            &roots
+        ));
+        // 打包产物与本地状态目录：写入不该触发全量 git status / 目录树刷新。
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\release\QingCode-setup.exe"),
+            &roots
+        ));
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\.venv\Lib\site-packages\x.py"),
+            &roots
+        ));
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\.dev\state.json"),
+            &roots
+        ));
+        // 同名的源码目录不算产物。
+        assert!(!is_high_churn_path(
+            Path::new(r"D:\Work\demo\src\release\notes.ts"),
             &roots
         ));
         assert!(!is_high_churn_path(

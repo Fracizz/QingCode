@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterCommands, fuzzyScore, type AppCommand } from './commands'
+import { buildCommands, filterCommands, fuzzyScore, type AppCommand } from './commands'
 
 describe('fuzzyScore', () => {
   it('scores empty query as match-all', () => {
@@ -22,7 +22,7 @@ describe('filterCommands', () => {
   const commands: AppCommand[] = [
     { id: 'a', title: '格式化文档', keywords: 'format prettier', run: () => {} },
     { id: 'b', title: '打开设置', keywords: 'settings', run: () => {} },
-    { id: 'c', title: '切换终端', keywords: 'terminal', when: () => false, run: () => {} },
+    { id: 'c', title: '显示或隐藏终端', keywords: 'terminal', when: () => false, run: () => {} },
   ]
 
   it('filters by title and keywords', () => {
@@ -42,5 +42,16 @@ describe('filterCommands', () => {
       return key
     })
     expect(hits.map(c => c.id)).toEqual(['b'])
+  })
+})
+
+describe('buildCommands', () => {
+  it('registers open file with its remappable shortcut', () => {
+    const command = buildCommands().find(item => item.id === 'file.openFile')
+
+    expect(command).toMatchObject({
+      title: '打开文件',
+      shortcutCommand: 'openFile',
+    })
   })
 })

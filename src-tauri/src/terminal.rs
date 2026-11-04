@@ -1,22 +1,204 @@
 use portable_pty::{ChildKiller, CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use std::time::{Duration, Instant};
+use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, Signal, System};
 use tauri::{AppHandle, Emitter};
+mod wsl;
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsPtyKiller(std::os::windows::io::OwnedHandle);
+
+#[cfg(windows)]
+impl WindowsPtyKiller {
+    fn new(child: &dyn portable_pty::Child) -> std::io::Result<Self> {
+        use std::os::windows::io::BorrowedHandle;
+
+        let raw = child.as_raw_handle().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing PTY process handle",
+            )
+        })?;
+        // SAFETY: the borrowed handle is used only while child still owns it.
+        unsafe { BorrowedHandle::borrow_raw(raw) }
+            .try_clone_to_owned()
+            .map(Self)
+    }
+}
+
+#[cfg(windows)]
+impl ChildKiller for WindowsPtyKiller {
+    fn kill(&mut self) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+
+        // portable-pty 0.8 interprets TerminateProcess's BOOL backwards.
+        let handle = self.0.as_raw_handle();
+        // SAFETY: handle refers to the process owned by self.
+        if unsafe { TerminateProcess(handle, 1) } != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        // The process may have exited normally just before the termination request.
+        if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(Self(
+            self.0.try_clone().expect("duplicate PTY process handle"),
+        ))
+    }
+}
 
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalDataPayload {
     pub id: String,
-    pub data: Vec<u8>,
+    /// Base64 PTY bytes. JSON number arrays are too expensive for high-rate output.
+    pub data: String,
+}
+
+const TERMINAL_READ_BUF: usize = 32 * 1024;
+const TERMINAL_EMIT_COALESCE_MAX: usize = 32 * 1024;
+const TERMINAL_EMIT_CHANNEL: usize = 64;
+
+const BASE64_TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn encode_terminal_data(input: &[u8]) -> String {
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    let mut index = 0;
+    while index + 3 <= input.len() {
+        let n = (u32::from(input[index]) << 16)
+            | (u32::from(input[index + 1]) << 8)
+            | u32::from(input[index + 2]);
+        out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+        out.push(BASE64_TABLE[((n >> 6) & 63) as usize] as char);
+        out.push(BASE64_TABLE[(n & 63) as usize] as char);
+        index += 3;
+    }
+    match input.len() - index {
+        1 => {
+            let n = u32::from(input[index]) << 16;
+            out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+            out.push('=');
+            out.push('=');
+        }
+        2 => {
+            let n = (u32::from(input[index]) << 16) | (u32::from(input[index + 1]) << 8);
+            out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 6) & 63) as usize] as char);
+            out.push('=');
+        }
+        _ => {}
+    }
+    out
+}
+
+fn take_coalesced_terminal_output(
+    mut data: Vec<u8>,
+    mut try_recv: impl FnMut() -> Option<Vec<u8>>,
+    max_bytes: usize,
+) -> Vec<u8> {
+    while data.len() < max_bytes {
+        match try_recv() {
+            Some(more) => data.extend_from_slice(&more),
+            None => break,
+        }
+    }
+    data
+}
+
+fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::SyncSender<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(TERMINAL_EMIT_CHANNEL);
+    // Companion terminals bypass webview broadcast; the desktop UI never shows them.
+    let mobile = crate::mobile::is_mobile_terminal(&id);
+    std::thread::spawn(move || {
+        while let Ok(first) = receiver.recv() {
+            let data = take_coalesced_terminal_output(
+                first,
+                || receiver.try_recv().ok(),
+                TERMINAL_EMIT_COALESCE_MAX,
+            );
+            if mobile {
+                crate::mobile::deliver_data(&app, &id, encode_terminal_data(&data));
+                continue;
+            }
+            let _ = app.emit(
+                "terminal-data",
+                TerminalDataPayload {
+                    id: id.clone(),
+                    data: encode_terminal_data(&data),
+                },
+            );
+        }
+    });
+    sender
+}
+
+/// PTY 读线程的暂停闸门：前端 xterm 积压过多时暂停读取，子进程写满 PTY 后自然阻塞。
+/// 进程退出或会话关闭时必须 `set_paused(false)`，否则读线程会一直挂起。
+#[derive(Clone, Default)]
+struct OutputGate(Arc<(Mutex<bool>, std::sync::Condvar)>);
+
+impl OutputGate {
+    fn set_paused(&self, paused: bool) {
+        let (lock, cvar) = &*self.0;
+        *lock.lock().unwrap() = paused;
+        if !paused {
+            cvar.notify_all();
+        }
+    }
+
+    fn wait_until_resumed(&self) {
+        let (lock, cvar) = &*self.0;
+        let mut paused = lock.lock().unwrap();
+        while *paused {
+            paused = cvar.wait(paused).unwrap();
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalExitPayload {
     pub id: String,
     pub exit_code: u32,
+    /// SSH 连接断开导致的结束（不是进程自己退出）；本地终端恒为 false。
+    pub disconnected: bool,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct TerminalInputErrorPayload {
+    id: String,
+    message: String,
+}
+
+fn spawn_terminal_writer(
+    mut writer: Box<dyn std::io::Write + Send>,
+    on_error: impl FnOnce(String) + Send + 'static,
+) -> std::sync::mpsc::SyncSender<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(8);
+    std::thread::spawn(move || {
+        while let Ok(bytes) = receiver.recv() {
+            if let Err(error) = writer.write_all(&bytes).and_then(|_| writer.flush()) {
+                on_error(error.to_string());
+                return;
+            }
+        }
+    });
+    sender
 }
 
 #[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -24,14 +206,24 @@ pub struct TerminalExitPayload {
 pub struct TerminalSpawnResult {
     pub resolved_shell: Option<String>,
     pub fallback_from: Option<String>,
+    /// SSH 终端由远端 daemon 托管；本地终端恒为 false。
+    pub persistent: bool,
+    /// daemon PTY id；持久化 SSH 终端成功创建或接入时返回。
+    pub pty_id: Option<String>,
+    /// daemon PTY 所属 SSH 连接；与 `pty_id` 一起用于应用重启后的接回。
+    pub connection_id: Option<String>,
+    /// 持久化终端创建失败或条件不满足时，回退直连的原因。
+    pub persistent_fallback_reason: Option<String>,
 }
 
 struct TerminalSession {
-    master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: Box<dyn std::io::Write + Send>,
+    master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    writer: std::sync::mpsc::SyncSender<Vec<u8>>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     generation: u64,
     shell_pid: Option<u32>,
+    output_gate: OutputGate,
+    wsl_task: Option<wsl::WslTask>,
 }
 
 pub struct TerminalManager {
@@ -58,8 +250,33 @@ impl TerminalManager {
     ) -> Result<TerminalSpawnResult, String> {
         validate_terminal_cwd(cwd)?;
         let (cmd, resolved) = build_host_shell_command(host_shell, cwd)?;
-        self.spawn_with(id, cmd, &resolved.program, cols, rows, app)?;
+        self.spawn_with(id, cmd, &resolved.program, cols, rows, app, None)?;
         Ok(resolved.spawn_result())
+    }
+
+    /// 手机端 WSL 终端：进入发行版的登录 shell。`startup` 为终端配置的启动命令，
+    /// 在交互登录 shell 中执行（加载 rc 中的 PATH，如 nvm），结束后保留登录 shell。
+    pub(crate) fn spawn_mobile_wsl(
+        &self,
+        id: String,
+        cwd: &str,
+        startup: Option<&str>,
+        cols: u16,
+        rows: u16,
+        app: AppHandle,
+    ) -> Result<TerminalSpawnResult, String> {
+        let path = crate::run_environment::parse_wsl_path(cwd).ok_or("无效的 WSL 项目目录")?;
+        let program = locate_program("wsl.exe").ok_or("未找到 wsl.exe，请启用 WSL")?;
+        let mut command = CommandBuilder::new(&program);
+        command.args(mobile_wsl_args(&path.distro, &path.path, startup));
+        self.spawn_with(id, command, &program, cols, rows, app, None)?;
+        Ok(ResolvedHostShell {
+            id: "wsl".into(),
+            program,
+            args: Vec::new(),
+            fallback_from: None,
+        }
+        .spawn_result())
     }
 
     /// Spawn a pty running a user-configured script/command. `shell_kind` is one
@@ -78,19 +295,38 @@ impl TerminalManager {
         target: &str,
         env: HashMap<String, String>,
         host_shell: Option<&str>,
+        project_root: Option<&str>,
         cols: u16,
         rows: u16,
         app: AppHandle,
     ) -> Result<TerminalSpawnResult, String> {
         validate_terminal_cwd(cwd)?;
+        if shell_kind != "interactive" {
+            if target.trim().is_empty() {
+                return Err("运行任务 target 不能为空".into());
+            }
+            if let Some(path) = crate::run_environment::parse_wsl_path(cwd) {
+                if !cfg!(windows) {
+                    return Err("WSL 任务仅支持 Windows 宿主".into());
+                }
+                let (cmd, task) = wsl::build(path, project_root, shell_kind, target, env)?;
+                let program = task.program().to_string();
+                self.spawn_with(id, cmd, &program, cols, rows, app, Some(task))?;
+                return Ok(TerminalSpawnResult {
+                    resolved_shell: Some("wsl".into()),
+                    ..Default::default()
+                });
+            }
+        }
         let (cmd, resolved, program) =
             build_script_command(shell_kind, target, cwd, env, host_shell)?;
-        self.spawn_with(id, cmd, &program, cols, rows, app)?;
+        self.spawn_with(id, cmd, &program, cols, rows, app, None)?;
         Ok(resolved
             .map(|shell| shell.spawn_result())
             .unwrap_or_default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_with(
         &self,
         id: String,
@@ -99,6 +335,7 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
         app: AppHandle,
+        wsl_task: Option<wsl::WslTask>,
     ) -> Result<(), String> {
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
@@ -110,6 +347,9 @@ impl TerminalManager {
             format!("无法启动终端程序「{program}」: {detail}")
         })?;
         let shell_pid = child.process_id();
+        #[cfg(windows)]
+        let killer = Box::new(WindowsPtyKiller::new(&*child).map_err(|error| error.to_string())?);
+        #[cfg(not(windows))]
         let killer = child.clone_killer();
         drop(pair.slave);
 
@@ -120,43 +360,85 @@ impl TerminalManager {
             .take_writer()
             .map_err(|e| format!("failed to take pty writer: {}", e))?;
 
+        // Each PTY owns its blocking writer. The registry and kill path never wait
+        // for a child process to consume stdin. Bound queued messages and size.
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        let writer_app = app.clone();
+        let writer_id = id.clone();
+        let writer_sessions = Arc::clone(&self.sessions);
+        let writer_tx = spawn_terminal_writer(writer, move |message| {
+            let current = writer_sessions
+                .lock()
+                .unwrap()
+                .get(&writer_id)
+                .map(|session| session.generation);
+            if should_emit_terminal_exit(current, generation) {
+                let _ = writer_app.emit(
+                    "terminal-input-error",
+                    TerminalInputErrorPayload {
+                        id: writer_id,
+                        message,
+                    },
+                );
+            }
+        });
+        qingcode_server::diagnostics::record(
+            "terminal.created",
+            serde_json::json!({
+            "terminalId":id,"shellPid":shell_pid,"generation":generation}),
+            false,
+            false,
+        );
+        let output_gate = OutputGate::default();
         let session = TerminalSession {
-            master,
-            writer,
+            master: Arc::new(Mutex::new(master)),
+            writer: writer_tx,
             killer: Some(killer),
             generation,
             shell_pid,
+            output_gate: output_gate.clone(),
+            wsl_task,
         };
 
-        {
+        let old = {
             let mut sessions = self.sessions.lock().unwrap();
-            if let Some(mut old) = sessions.remove(&id) {
-                if let Some(mut k) = old.killer.take() {
-                    let _ = k.kill();
-                }
+            sessions.insert(id.clone(), session)
+        };
+        if let Some(mut old) = old {
+            qingcode_server::diagnostics::record(
+                "terminal.replacement_kill_requested",
+                serde_json::json!({
+                "terminalId":id,"oldGeneration":old.generation,"newGeneration":generation,
+                "shellPid":old.shell_pid,"source":"session_replaced"}),
+                true,
+                false,
+            );
+            old.output_gate.set_paused(false);
+            if let Some(task) = old.wsl_task.take() {
+                let _ = task.stop();
             }
-            sessions.insert(id.clone(), session);
+            if let Some(mut killer) = old.killer.take() {
+                let _ = killer.kill();
+            }
         }
 
         let app_clone = app.clone();
         let id_clone = id.clone();
+        let emit_tx = spawn_terminal_data_emitter(app_clone, id_clone);
 
+        let reader_gate = output_gate.clone();
         std::thread::spawn(move || {
             use std::io::Read;
             let mut reader = reader;
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; TERMINAL_READ_BUF];
             loop {
+                reader_gate.wait_until_resumed();
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = app_clone.emit(
-                            "terminal-data",
-                            TerminalDataPayload {
-                                id: id_clone.clone(),
-                                data: buf[..n].to_vec(),
-                            },
-                        );
+                        if emit_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -166,17 +448,42 @@ impl TerminalManager {
         let sessions = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let status = child.wait();
-            let current_generation = {
-                let sessions = sessions.lock().unwrap();
-                sessions.get(&id).map(|session| session.generation)
-            };
-            if should_emit_terminal_exit(current_generation, generation) {
-                {
-                    let mut sessions = sessions.lock().unwrap();
+            qingcode_server::diagnostics::record(
+                "terminal.process_wait_returned",
+                serde_json::json!({
+                "terminalId":id,"generation":generation,"exitCode":status.as_ref().ok().map(|s|s.exit_code()),
+                "waitFailed":status.is_err()}),
+                true,
+                false,
+            );
+            // 进程已退出：放开可能被前端暂停的读线程，让它读到 EOF 后结束。
+            output_gate.set_paused(false);
+            let is_current = {
+                let mut sessions = sessions.lock().unwrap();
+                if should_emit_terminal_exit(
+                    sessions.get(&id).map(|session| session.generation),
+                    generation,
+                ) {
                     sessions.remove(&id);
+                    true
+                } else {
+                    false
                 }
+            };
+            if is_current {
                 let exit_code = resolve_exit_code(status.map(|status| status.exit_code()).ok());
-                let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
+                if crate::mobile::is_mobile_terminal(&id) {
+                    crate::mobile::deliver_exit(&app, &id, exit_code, false);
+                    return;
+                }
+                let _ = app.emit(
+                    "terminal-exit",
+                    TerminalExitPayload {
+                        id,
+                        exit_code,
+                        disconnected: false,
+                    },
+                );
             }
         });
 
@@ -184,23 +491,44 @@ impl TerminalManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(id) {
-            session
-                .writer
-                .write_all(data.as_bytes())
-                .map_err(|e| e.to_string())?;
-            session.writer.flush().map_err(|e| e.to_string())
-        } else {
-            Err("Terminal not found".to_string())
+        if data.len() > 1024 * 1024 {
+            return Err("单次终端输入不能超过 1MB，请分段粘贴".to_string());
+        }
+        let writer = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|session| session.writer.clone())
+            .ok_or_else(|| "Terminal not found".to_string())?;
+        writer
+            .try_send(data.as_bytes().to_vec())
+            .map_err(|error| match error {
+                std::sync::mpsc::TrySendError::Full(_) => {
+                    "终端输入缓冲区已满，请等待当前命令处理后重试".to_string()
+                }
+                std::sync::mpsc::TrySendError::Disconnected(_) => "终端输入通道已关闭".to_string(),
+            })
+    }
+
+    /// 前端 xterm 积压超过高水位时暂停读取 PTY，回落后恢复。
+    pub fn set_output_paused(&self, id: &str, paused: bool) {
+        if let Some(session) = self.sessions.lock().unwrap().get(id) {
+            session.output_gate.set_paused(paused);
         }
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(id) {
-            session
-                .master
+        let master = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|session| Arc::clone(&session.master));
+        if let Some(master) = master {
+            master
+                .lock()
+                .unwrap()
                 .resize(clamp_pty_size(cols, rows))
                 .map_err(|e| e.to_string())
         } else {
@@ -208,22 +536,64 @@ impl TerminalManager {
         }
     }
 
-    pub fn kill(&self, id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(mut session) = sessions.remove(id) {
-            if let Some(mut k) = session.killer.take() {
-                let _ = k.kill();
+    pub fn is_open(&self, id: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(id)
+    }
+
+    pub fn kill(&self, id: &str) -> Result<(), String> {
+        let session = self.sessions.lock().unwrap().remove(id);
+        if let Some(mut session) = session {
+            session.output_gate.set_paused(false);
+            if let Some(task) = &session.wsl_task {
+                if let Err(error) = task.stop() {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .entry(id.into())
+                        .or_insert(session);
+                    return Err(error);
+                }
+            }
+            let owned = session
+                .shell_pid
+                .filter(|_| session.wsl_task.is_none())
+                .map(snapshot_descendants)
+                .unwrap_or_default();
+            if request_graceful_stop(&session, &owned) {
+                // 宽限期放到后台线程：同步 Tauri 命令运行在主线程，不能阻塞 UI。
+                // 会话已从表中移除，同 id 的新终端不受影响；shell 可能已随 Ctrl+C 自行退出，
+                // 因此这里的 kill 失败不再回滚。
+                std::thread::spawn(move || {
+                    force_stop_after(&owned, Instant::now() + GRACEFUL_STOP_TIMEOUT);
+                    if let Some(k) = session.killer.as_mut() {
+                        let _ = k.kill();
+                    }
+                });
+                return Ok(());
+            }
+            force_stop_after(&owned, Instant::now());
+            if let Some(k) = session.killer.as_mut() {
+                if let Err(error) = k.kill() {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .entry(id.into())
+                        .or_insert(session);
+                    return Err(format!("停止终端进程失败：{error}"));
+                }
             }
         }
+        Ok(())
     }
 
     pub fn has_child_processes(&self, id: &str) -> Result<bool, String> {
-        let sessions = self.sessions.lock().unwrap();
-        let Some(session) = sessions.get(id) else {
-            // Session already cleaned up (process exited) → not busy.
-            return Ok(false);
-        };
-        let Some(pid) = session.shell_pid else {
+        let pid = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|session| session.shell_pid);
+        let Some(pid) = pid else {
             return Ok(false);
         };
         // Parent process may already be gone; treat as not busy.
@@ -251,8 +621,26 @@ impl TerminalManager {
     }
 
     pub fn kill_all(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
-        for (_, mut session) in sessions.drain() {
+        let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
+        let mut stopping = Vec::new();
+        for (_, mut session) in sessions {
+            session.output_gate.set_paused(false);
+            let owned = if let Some(task) = session.wsl_task.take() {
+                let _ = task.stop();
+                Vec::new()
+            } else {
+                session
+                    .shell_pid
+                    .map(snapshot_descendants)
+                    .unwrap_or_default()
+            };
+            request_graceful_stop(&session, &owned);
+            stopping.push((session, owned));
+        }
+        // 所有终端共享同一个宽限期，退出应用最多额外等待一次。
+        let deadline = Instant::now() + GRACEFUL_STOP_TIMEOUT;
+        for (mut session, owned) in stopping {
+            force_stop_after(&owned, deadline);
             if let Some(mut killer) = session.killer.take() {
                 let _ = killer.kill();
             }
@@ -299,6 +687,10 @@ impl ResolvedHostShell {
         TerminalSpawnResult {
             resolved_shell: Some(self.id.clone()),
             fallback_from: self.fallback_from.clone(),
+            persistent: false,
+            pty_id: None,
+            connection_id: None,
+            persistent_fallback_reason: None,
         }
     }
 }
@@ -581,6 +973,55 @@ fn validate_terminal_cwd(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 去掉 Windows canonicalize 产生的 verbatim 前缀（`\\?\D:\...`、`\\?\UNC\...`）。
+///
+/// CreateProcess 能接受该前缀，但 PowerShell 无法把它映射到盘符，提示符会显示成
+/// `PS Microsoft.PowerShell.Core\FileSystem::\\?\D:\...>`，因此交给 shell 前必须还原。
+pub(crate) fn strip_windows_verbatim_prefix(cwd: &str) -> Cow<'_, str> {
+    let Some(rest) = cwd.strip_prefix(r"\\?\") else {
+        return Cow::Borrowed(cwd);
+    };
+    if rest
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"UNC\"))
+    {
+        return Cow::Owned(format!(r"\\{}", &rest[4..]));
+    }
+    Cow::Borrowed(rest)
+}
+
+fn shell_working_directory(cwd: &str) -> Cow<'_, str> {
+    if cfg!(windows) {
+        strip_windows_verbatim_prefix(cwd)
+    } else {
+        Cow::Borrowed(cwd)
+    }
+}
+
+/// 命令通过位置参数 `$1` 传入，不拼进脚本文本，避免二次 shell 解析。
+fn mobile_wsl_args(distro: &str, cwd: &str, startup: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--distribution",
+        distro,
+        "--cd",
+        cwd,
+        "--exec",
+        "/bin/sh",
+        "-c",
+    ]
+    .map(String::from)
+    .to_vec();
+    match startup.map(str::trim).filter(|command| !command.is_empty()) {
+        Some(command) => args.extend([
+            r#""${SHELL:-/bin/sh}" -lic "$1"; exec "${SHELL:-/bin/sh}" -l"#.into(),
+            "sh".into(),
+            command.into(),
+        ]),
+        None => args.push(r#"exec "${SHELL:-/bin/sh}" -l"#.into()),
+    }
+    args
+}
+
 fn build_host_shell_command(
     shell: Option<&str>,
     cwd: &str,
@@ -591,7 +1032,8 @@ fn build_host_shell_command(
         cmd.arg(arg);
     }
     if !cwd.is_empty() {
-        cmd.cwd(cwd);
+        let cwd = shell_working_directory(cwd);
+        cmd.cwd(cwd.as_ref());
     }
     Ok((cmd, resolved))
 }
@@ -611,7 +1053,8 @@ fn build_script_command(
         cmd.arg(arg);
     }
     if let Some(ref cwd) = spec.cwd {
-        cmd.cwd(cwd);
+        let cwd = shell_working_directory(cwd);
+        cmd.cwd(cwd.as_ref());
     }
     for (k, v) in spec.env {
         cmd.env(k, v);
@@ -741,6 +1184,102 @@ fn process_exists(pid: u32) -> bool {
     system.process(Pid::from_u32(pid)).is_some()
 }
 
+/// 关闭终端时留给前台程序自行退出的宽限期，超时后强制结束。
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Descendant of an owned PTY. Start time guards against PID reuse during the grace period.
+struct OwnedProcess {
+    pid: Pid,
+    start_time: u64,
+    /// Console hosts exit with their shell; they are force-stopped but never waited on.
+    noise: bool,
+}
+
+/// Snapshot descendants of this owned PTY; task launchers often leave reload/worker children.
+fn snapshot_descendants(root: u32) -> Vec<OwnedProcess> {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for (pid, process) in system.processes() {
+        if let Some(parent) = process.parent() {
+            children.entry(parent).or_default().push(*pid);
+        }
+    }
+    let mut stack = children
+        .get(&Pid::from_u32(root))
+        .cloned()
+        .unwrap_or_default();
+    // Windows keeps stale parent PIDs, so reused PIDs can form cycles.
+    let mut seen = HashSet::new();
+    let mut owned = Vec::new();
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some(process) = system.process(pid) {
+            owned.push(OwnedProcess {
+                pid,
+                start_time: process.start_time(),
+                noise: is_console_noise_process(&process.name().to_string_lossy()),
+            });
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids.iter().copied());
+        }
+    }
+    owned
+}
+
+fn refresh_owned(processes: &[OwnedProcess]) -> System {
+    let pids: Vec<Pid> = processes.iter().map(|owned| owned.pid).collect();
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::Some(&pids), true);
+    system
+}
+
+/// The snapshot entry is still the same live process (not exited, reaped-pending or reused).
+fn live_owned<'a>(system: &'a System, owned: &OwnedProcess) -> Option<&'a sysinfo::Process> {
+    system.process(owned.pid).filter(|process| {
+        process.start_time() == owned.start_time && process.status() != ProcessStatus::Zombie
+    })
+}
+
+/// 先礼：向 PTY 写入 Ctrl+C（前台程序收到 SIGINT / CTRL_C_EVENT），POSIX 上再补发 SIGTERM。
+/// 返回是否存在需要等待的前台程序；空闲 shell 无需宽限期。
+fn request_graceful_stop(session: &TerminalSession, processes: &[OwnedProcess]) -> bool {
+    if processes.iter().all(|owned| owned.noise) {
+        return false;
+    }
+    let _ = session.writer.try_send(b"\x03".to_vec());
+    let system = refresh_owned(processes);
+    for owned in processes.iter().filter(|owned| !owned.noise) {
+        if let Some(process) = live_owned(&system, owned) {
+            // Windows 不支持 SIGTERM，返回 None，仅依赖上面的 Ctrl+C。
+            let _ = process.kill_with(Signal::Term);
+        }
+    }
+    true
+}
+
+/// 后兵：等待前台程序退出，到期后强制结束快照中仍存活的进程。
+fn force_stop_after(processes: &[OwnedProcess], deadline: Instant) {
+    loop {
+        let system = refresh_owned(processes);
+        let pending = processes
+            .iter()
+            .any(|owned| !owned.noise && live_owned(&system, owned).is_some());
+        if !pending || Instant::now() >= deadline {
+            for owned in processes {
+                if let Some(process) = live_owned(&system, owned) {
+                    process.kill();
+                }
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Console host helpers that sit under the shell even when the prompt is idle.
 fn is_console_noise_process(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -757,25 +1296,260 @@ fn is_console_noise_process(name: &str) -> bool {
     )
 }
 
+/// Meaningful descendants of `root`. Console hosts are not counted, but they
+/// are not leaves: a foreground program parented under conhost still counts.
+fn meaningful_descendant_count(processes: &[(u32, Option<u32>, &str)], root: u32) -> usize {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, parent, _) in processes {
+        if let Some(parent) = parent {
+            children.entry(*parent).or_default().push(*pid);
+        }
+    }
+    let names: HashMap<u32, &str> = processes
+        .iter()
+        .map(|(pid, _, name)| (*pid, *name))
+        .collect();
+    let mut stack = children.get(&root).cloned().unwrap_or_default();
+    let mut seen = HashSet::new();
+    let mut count = 0;
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if !is_console_noise_process(names.get(&pid).copied().unwrap_or("")) {
+            count += 1;
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids.iter().copied());
+        }
+    }
+    count
+}
+
 fn count_meaningful_child_processes(parent_pid: u32) -> usize {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
-    let parent = Pid::from_u32(parent_pid);
-    system
+    let owned: Vec<(u32, Option<u32>, String)> = system
         .processes()
         .values()
-        .filter(|process| {
-            if process.parent() != Some(parent) {
-                return false;
-            }
-            let name = process.name().to_string_lossy();
-            !is_console_noise_process(name.as_ref())
+        .map(|process| {
+            (
+                process.pid().as_u32(),
+                process.parent().map(|parent| parent.as_u32()),
+                process.name().to_string_lossy().into_owned(),
+            )
         })
-        .count()
+        .collect();
+    let processes: Vec<(u32, Option<u32>, &str)> = owned
+        .iter()
+        .map(|(pid, parent, name)| (*pid, *parent, name.as_str()))
+        .collect();
+    meaningful_descendant_count(&processes, parent_pid)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mobile_wsl_args_pass_profile_command_as_positional_argument() {
+        let plain = super::mobile_wsl_args("Ubuntu", "/home/app", None);
+        assert_eq!(plain.last().unwrap(), r#"exec "${SHELL:-/bin/sh}" -l"#);
+        assert_eq!(
+            super::mobile_wsl_args("Ubuntu", "/home/app", Some("  ")),
+            plain
+        );
+
+        let command = r#"claude --resume "$(cat id)""#;
+        let args = super::mobile_wsl_args("Ubuntu", "/home/app", Some(command));
+        assert_eq!(&args[..7], &plain[..7]);
+        assert_eq!(
+            &args[7..],
+            [
+                r#""${SHELL:-/bin/sh}" -lic "$1"; exec "${SHELL:-/bin/sh}" -l"#,
+                "sh",
+                command,
+            ]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_pty_killer_reports_success_for_terminated_child() {
+        let pair = portable_pty::native_pty_system()
+            .openpty(super::clamp_pty_size(80, 24))
+            .unwrap();
+        let mut child = pair
+            .slave
+            .spawn_command(portable_pty::CommandBuilder::new("cmd.exe"))
+            .unwrap();
+        let mut killer = super::WindowsPtyKiller::new(&*child).unwrap();
+        portable_pty::ChildKiller::kill(&mut killer).unwrap();
+        assert_eq!(child.wait().unwrap().exit_code(), 1);
+    }
+
+    /// 父进程（shell）下挂一个长时间运行的子进程，模拟终端里的前台程序。
+    fn spawn_shell_with_worker() -> std::process::Child {
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd")
+            .args(["/c", "ping -n 30 127.0.0.1 >nul"])
+            .spawn();
+        #[cfg(not(windows))]
+        let child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30; :"])
+            .spawn();
+        child.unwrap()
+    }
+
+    fn wait_for_descendants(root: u32) -> Vec<OwnedProcess> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let owned = snapshot_descendants(root);
+            if owned.iter().any(|process| !process.noise) || Instant::now() >= deadline {
+                return owned;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn force_stop_kills_snapshot_descendants_after_deadline() {
+        let mut shell = spawn_shell_with_worker();
+        let owned = wait_for_descendants(shell.id());
+        assert!(
+            owned.iter().any(|process| !process.noise),
+            "worker not found"
+        );
+        force_stop_after(&owned, Instant::now());
+        let system = refresh_owned(&owned);
+        assert!(owned
+            .iter()
+            .all(|process| live_owned(&system, process).is_none()));
+        let _ = shell.kill();
+        let _ = shell.wait();
+    }
+
+    #[test]
+    fn force_stop_skips_reused_pids() {
+        let mut worker = spawn_shell_with_worker();
+        let pid = Pid::from_u32(worker.id());
+        let stale = [OwnedProcess {
+            pid,
+            start_time: 0,
+            noise: false,
+        }];
+        // 启动时间不匹配 = PID 已被复用，绝不能误杀，也不应等待。
+        let started = Instant::now();
+        force_stop_after(&stale, Instant::now() + Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            worker.try_wait().unwrap().is_none(),
+            "reused pid was killed"
+        );
+        worker.kill().unwrap();
+        worker.wait().unwrap();
+    }
+
+    #[test]
+    fn encode_terminal_data_uses_standard_base64() {
+        assert_eq!(super::encode_terminal_data(b"hello"), "aGVsbG8=");
+        assert_eq!(super::encode_terminal_data(&[0, 1, 255]), "AAH/");
+        assert_eq!(super::encode_terminal_data(&[]), "");
+    }
+
+    #[test]
+    fn coalesces_queued_pty_chunks_without_waiting() {
+        let mut rest = vec![vec![3_u8, 4], vec![5]];
+        let combined = super::take_coalesced_terminal_output(
+            vec![1, 2],
+            || {
+                if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest.remove(0))
+                }
+            },
+            32,
+        );
+        assert_eq!(combined, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn blocked_writer_has_a_bounded_queue_and_does_not_block_other_writers() {
+        struct PausedWriter {
+            entered: std::sync::mpsc::Sender<()>,
+            resume: std::sync::mpsc::Receiver<()>,
+            paused: bool,
+        }
+        impl std::io::Write for PausedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if !self.paused {
+                    self.entered.send(()).unwrap();
+                    self.resume.recv().unwrap();
+                    self.paused = true;
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        #[derive(Debug, Clone)]
+        struct TestKiller(std::sync::mpsc::Sender<()>);
+        impl ChildKiller for TestKiller {
+            fn kill(&mut self) -> std::io::Result<()> {
+                self.0.send(()).unwrap();
+                Ok(())
+            }
+            fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+                Box::new(self.clone())
+            }
+        }
+        let (entered, arrived) = std::sync::mpsc::channel();
+        let (resume, paused) = std::sync::mpsc::channel();
+        let writer = super::spawn_terminal_writer(
+            Box::new(PausedWriter {
+                entered,
+                resume: paused,
+                paused: false,
+            }),
+            |_| {},
+        );
+        let manager = TerminalManager::new();
+        let pair = NativePtySystem::default()
+            .openpty(clamp_pty_size(80, 24))
+            .unwrap();
+        let (kill, killed) = std::sync::mpsc::channel();
+        manager.sessions.lock().unwrap().insert(
+            "blocked".to_string(),
+            TerminalSession {
+                wsl_task: None,
+                master: Arc::new(Mutex::new(pair.master)),
+                writer,
+                killer: Some(Box::new(TestKiller(kill))),
+                generation: 1,
+                shell_pid: None,
+                output_gate: OutputGate::default(),
+            },
+        );
+        manager.write("blocked", "first").unwrap();
+        arrived
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        for _ in 0..8 {
+            manager.write("blocked", "queued").unwrap();
+        }
+        assert!(manager
+            .write("blocked", "overflow")
+            .unwrap_err()
+            .contains("缓冲区已满"));
+        let other = super::spawn_terminal_writer(Box::new(std::io::sink()), |_| {});
+        other.try_send(vec![2]).unwrap();
+        manager.kill("blocked").unwrap();
+        killed
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(manager.sessions.lock().unwrap().is_empty());
+        resume.send(()).unwrap();
+    }
     use super::*;
 
     fn all_programs_available(program: &str) -> Option<String> {
@@ -788,6 +1562,37 @@ mod tests {
         assert_eq!(infer_script_kind("scripts/build.bat"), "bat");
         assert_eq!(infer_script_kind("scripts/build.CMD"), "bat");
         assert_eq!(infer_script_kind("scripts/build.sh"), "sh");
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_restores_drive_paths() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\D:\code\qingcode"),
+            r"D:\code\qingcode"
+        );
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\C:\"), r"C:\");
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_restores_unc_paths() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\server\share\project"),
+            r"\\server\share\project"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\unc\server\share"),
+            r"\\server\share"
+        );
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_leaves_normal_paths_untouched() {
+        assert_eq!(strip_windows_verbatim_prefix(r"D:\code"), r"D:\code");
+        assert_eq!(
+            strip_windows_verbatim_prefix("/home/dev/code"),
+            "/home/dev/code"
+        );
+        assert_eq!(strip_windows_verbatim_prefix(""), "");
     }
 
     #[test]
@@ -1020,6 +1825,27 @@ mod tests {
     }
 
     #[test]
+    fn output_gate_blocks_reader_until_resumed() {
+        let gate = super::OutputGate::default();
+        gate.wait_until_resumed();
+        gate.set_paused(true);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader_gate = gate.clone();
+        let handle = std::thread::spawn(move || {
+            reader_gate.wait_until_resumed();
+            done_tx.send(()).unwrap();
+        });
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        gate.set_paused(false);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
     fn should_emit_terminal_exit_only_for_current_generation() {
         assert!(should_emit_terminal_exit(Some(3), 3));
         assert!(!should_emit_terminal_exit(Some(4), 3));
@@ -1053,5 +1879,26 @@ mod tests {
         assert!(is_console_noise_process("wslhost.exe"));
         assert!(!is_console_noise_process("opencode.exe"));
         assert!(!is_console_noise_process("node"));
+    }
+
+    #[test]
+    fn meaningful_descendants_ignore_console_host_but_count_its_children() {
+        let idle = [(10, None, "powershell.exe"), (11, Some(10), "conhost.exe")];
+        assert_eq!(meaningful_descendant_count(&idle, 10), 0);
+
+        let direct = [
+            (10, None, "powershell.exe"),
+            (11, Some(10), "conhost.exe"),
+            (12, Some(10), "claude.exe"),
+        ];
+        assert_eq!(meaningful_descendant_count(&direct, 10), 1);
+
+        // Some console apps are parented to conhost, not the shell.
+        let nested = [
+            (10, None, "powershell.exe"),
+            (11, Some(10), "conhost.exe"),
+            (12, Some(11), "claude.exe"),
+        ];
+        assert_eq!(meaningful_descendant_count(&nested, 10), 1);
     }
 }

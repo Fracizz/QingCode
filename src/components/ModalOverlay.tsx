@@ -1,4 +1,8 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode, type SyntheticEvent } from 'react'
+import { createPortal } from 'react-dom'
+
+/** Interrupt dialogs (confirm / prompt / choice) must sit above feature dialogs such as SSH. */
+export const INTERRUPT_MODAL_Z = 'z-[140]'
 
 interface Props {
   children: ReactNode
@@ -17,11 +21,16 @@ const FOCUSABLE_SELECTOR = [
   'input:not([disabled])',
   'select:not([disabled])',
   'textarea:not([disabled])',
+  'summary',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
 let nextModalId = 0
 const modalStack: Array<{ id: number; overlay: HTMLDivElement }> = []
+
+function stopWindowChromeBubble(event: SyntheticEvent) {
+  event.stopPropagation()
+}
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(element => {
@@ -48,7 +57,7 @@ export default function ModalOverlay({
   useLayoutEffect(() => {
     const modalId = ++nextModalId
     const overlay = overlayRef.current
-    restoreFocusRef.current =
+    restoreFocusRef.current ??=
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (overlay) modalStack.push({ id: modalId, overlay })
 
@@ -60,6 +69,8 @@ export default function ModalOverlay({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (modalStack.at(-1)?.id !== modalId) return
+      // A portaled menu owns Escape/Tab while it has focus, including inside dialogs.
+      if (event.target instanceof HTMLElement && event.target.closest('[data-qingcode-context-menu]')) return
 
       if (event.key === 'Escape' && onDismissRef.current) {
         event.preventDefault()
@@ -94,35 +105,49 @@ export default function ModalOverlay({
       const index = modalStack.map(modal => modal.id).lastIndexOf(modalId)
       if (index >= 0) modalStack.splice(index, 1)
       const parent = modalStack.at(-1)
+      const focusHasMoved = () => {
+        const active = document.activeElement
+        return active instanceof HTMLElement && active !== document.body &&
+          active !== document.documentElement && active.isConnected
+      }
       if (parent) {
         window.setTimeout(() => {
           if (modalStack.at(-1) !== parent || !parent.overlay.isConnected) return
+          // A click or portaled menu may already own focus by the time this runs.
+          if (focusHasMoved()) return
           const preferred = parent.overlay.querySelector<HTMLElement>('[data-modal-autofocus]')
-          ;(preferred ?? focusableElements(parent.overlay)[0] ?? parent.overlay).focus()
+          const previous = restoreFocusRef.current
+          ;(previous?.isConnected && parent.overlay.contains(previous)
+            ? previous : preferred ?? focusableElements(parent.overlay)[0] ?? parent.overlay).focus()
         }, 0)
         return
       }
 
       const previous = restoreFocusRef.current
       window.setTimeout(() => {
-        if (modalStack.length === 0 && previous?.isConnected) previous.focus()
+        if (modalStack.length === 0 && previous?.isConnected && !focusHasMoved()) previous.focus()
       }, 0)
     }
   }, [])
 
-  return (
+  const overlay = (
     <div
       ref={overlayRef}
-      className={`fixed inset-0 ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
+      data-modal-overlay=""
+      className={`window-no-drag-region fixed inset-0 isolate ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
       role="presentation"
       tabIndex={-1}
+      onPointerDown={stopWindowChromeBubble}
+      onClick={stopWindowChromeBubble}
+      onDoubleClick={stopWindowChromeBubble}
     >
       <div
-        className="modal-overlay-enter absolute inset-0 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
+        className="modal-overlay-enter absolute inset-0 -z-10 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
         aria-hidden
         onMouseDown={onDismiss}
       />
       {children}
     </div>
   )
+  return typeof document === 'undefined' ? overlay : createPortal(overlay, document.body)
 }

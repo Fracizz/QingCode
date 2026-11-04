@@ -8,6 +8,11 @@ param(
   [switch]$SkipIcons,
   # Skip copying to release/ when output already matches the build artifact.
   [switch]$SkipCopy,
+  # Reuse existing server binaries; version and integrity checks still run before publishing.
+  [switch]$SkipServer,
+  [switch]$SkipAndroid,
+  # Unified local CLI already refreshed the validated offline pack.
+  [switch]$SkipServerPack,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
   [string]$Target = ''
 )
@@ -118,6 +123,10 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
+  # 便携版 exe 本体不含 Server。离线包在 release/servers/，使用时放到 exe 同目录。
+  Write-Step 'SSH server binaries'
+  Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
+
   $frontendRebuilt = $false
   if ($SkipFrontend) {
     Write-Host '  skip frontend (-SkipFrontend)'
@@ -165,6 +174,9 @@ try {
   if (-not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Path $outDir | Out-Null
   }
+
+  # 便携版没有安装目录，server 二进制与 exe 同目录（运行时「exe 目录/servers」）。
+  if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
 
   $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
   # Keep unversioned QingCode.exe for the default (host) build only.
@@ -219,13 +231,14 @@ try {
   }
 
   Write-Host ""
+  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
   Write-Host "OK portable exe written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
   Write-Host "  源: $($exe.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Tips: -SkipFrontend (Rust only) · -Force (full rebuild) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
+  Write-Host "Tips: -SkipFrontend (Rust only) · -SkipServer · -Force (full rebuild) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
 } finally {
   Pop-Location
 }

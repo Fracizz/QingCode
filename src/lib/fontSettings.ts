@@ -1,6 +1,7 @@
 import { isTauri, safeInvoke } from './tauri'
 import { loadGlobalSettings, saveGlobalSettings } from './projectSettings'
 import { getEditorPreferences, notifyEditorSettingsChanged } from './editorSettings'
+import { interfaceMetrics } from './interfaceMetrics'
 
 export const FONT_SETTINGS_KEY = 'qingcode:font-settings'
 export const FONT_SETTINGS_EVENT = 'qingcode:font-settings-changed'
@@ -15,37 +16,6 @@ export const SYSTEM_MONO_FONT =
 /** Concrete mono stack for xterm cell metrics (avoid generic `ui-monospace`). */
 export const TERMINAL_MONO_FONT =
   '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
-
-/** Families known to keep stable cell metrics for TUI / box-drawing in xterm. */
-const SAFE_TERMINAL_FONT_NAMES = new Set([
-  'cascadia mono',
-  'cascadia code',
-  'consolas',
-  'courier new',
-  'jetbrains mono',
-  'fira code',
-  'fira mono',
-  'source code pro',
-  'ibm plex mono',
-  'roboto mono',
-  'ubuntu mono',
-  'dejavu sans mono',
-  'liberation mono',
-  'noto sans mono',
-  'hack',
-  'inconsolata',
-  'menlo',
-  'monaco',
-  'sf mono',
-  'sarasa mono',
-  'sarasa mono sc',
-  'sarasa mono tc',
-  'sarasa mono hc',
-  'sarasa mono j',
-  'sarasa mono k',
-  'iosevka',
-  'iosevka term',
-])
 
 export const JETBRAINS_MONO_FONT =
   '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace'
@@ -68,11 +38,19 @@ export const MONO_FONT_OPTIONS: FontOption[] = [
   { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
 ]
 
+export const TERMINAL_FONT_OPTIONS: FontOption[] = [
+  { label: '系统默认', value: TERMINAL_MONO_FONT },
+  { label: 'JetBrains Mono', value: JETBRAINS_MONO_FONT },
+  { label: 'Cascadia Code', value: '"Cascadia Code", Consolas, monospace' },
+  { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
+]
+
 export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20] as const
 
 export type FontSettings = {
   interfaceFont: string
   monoFont: string
+  terminalFont: string
   interfaceFontSize: number
   editorFontSize: number
   terminalFontSize: number
@@ -81,10 +59,16 @@ export type FontSettings = {
 export const DEFAULT_FONT_SETTINGS: FontSettings = {
   interfaceFont: SYSTEM_INTERFACE_FONT,
   monoFont: SYSTEM_MONO_FONT,
+  terminalFont: TERMINAL_MONO_FONT,
   interfaceFontSize: 13,
   /** Keep in sync with DEFAULT_GLOBAL_SETTINGS['editor.fontSize']. */
   editorFontSize: 14,
   terminalFontSize: 13,
+}
+
+/** Missing or empty values from older preferences now use the terminal default. */
+function normalizeTerminalFont(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value : TERMINAL_MONO_FONT
 }
 
 type StoredFontSettings = Partial<FontSettings & { monoFontSize?: number }>
@@ -109,6 +93,7 @@ export function loadFontSettings(): FontSettings {
     return {
       ...DEFAULT_FONT_SETTINGS,
       ...raw,
+      terminalFont: normalizeTerminalFont(raw.terminalFont),
       editorFontSize: raw.editorFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.editorFontSize,
       terminalFontSize: raw.terminalFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.terminalFontSize,
     }
@@ -118,12 +103,32 @@ export function loadFontSettings(): FontSettings {
 }
 
 export function applyFontSettings(settings: FontSettings) {
+  const metrics = interfaceMetrics(settings.interfaceFontSize)
   document.documentElement.style.setProperty('--font-sans', settings.interfaceFont)
   document.documentElement.style.setProperty('--font-mono', settings.monoFont)
-  document.documentElement.style.setProperty('--ui-font-size', `${settings.interfaceFontSize}px`)
-  document.documentElement.style.setProperty('--ui-font-scale', String(settings.interfaceFontSize / 13))
+  document.documentElement.style.setProperty('--terminal-font-family', normalizeTerminalFont(settings.terminalFont))
+  const sizes: Record<string, number> = {
+    '--ui-font-size': metrics.fontSize,
+    '--ui-font-size-sm': metrics.smallFontSize,
+    '--ui-line-height': metrics.lineHeight,
+    '--ui-control-height': metrics.controlHeight,
+    '--ui-row-height': metrics.rowHeight,
+    '--ui-chip-height': metrics.chipHeight,
+    '--tab-height': metrics.tabHeight,
+    '--title-bar-height': metrics.titleHeight,
+    '--status-bar-height': metrics.statusHeight,
+    '--activity-bar-width': metrics.activityWidth,
+    '--ui-activity-button-size': metrics.activityButtonSize,
+    '--ui-activity-icon-size': metrics.activityIconSize,
+  }
+  for (const [property, value] of Object.entries(sizes)) {
+    document.documentElement.style.setProperty(property, `${value}px`)
+  }
+  // Clear the old zoom preference for already-running / hot-reloaded windows.
+  document.documentElement.style.removeProperty('--ui-font-scale')
   document.documentElement.style.setProperty('--editor-font-size', `${settings.editorFontSize}px`)
   document.documentElement.style.setProperty('--terminal-font-size', `${settings.terminalFontSize}px`)
+  window.dispatchEvent(new Event(FONT_SETTINGS_EVENT))
 }
 
 export function getResolvedMonoFont(): string {
@@ -134,55 +139,13 @@ export function getResolvedMonoFont(): string {
   )
 }
 
-function bareFontName(part: string): string {
-  return part.replace(/^["']|["']$/g, '').trim().toLowerCase()
-}
-
-/** Reject generic / proportional faces that break OpenCode-style TUIs in WebView2. */
-function isUsableTerminalFontPart(part: string): boolean {
-  const bare = bareFontName(part)
-  if (!bare || bare === 'ui-monospace' || bare === 'monospace' || bare === 'serif' || bare === 'sans-serif') {
-    return false
-  }
-  if (SAFE_TERMINAL_FONT_NAMES.has(bare)) return true
-  // Allow unknown families that still measure as monospace (W ≈ i).
-  if (typeof document === 'undefined') return false
-  try {
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return false
-    ctx.font = `14px ${part}`
-    const w = ctx.measureText('MW').width
-    const n = ctx.measureText('ii').width
-    return Math.abs(w - n) < 0.75
-  } catch {
-    return false
-  }
-}
-
-/**
- * Font stack for xterm. Generic families like `ui-monospace` can resolve to a face
- * with poor box-drawing coverage while fallbacks supply glyphs at wrong widths,
- * which corrupts TUI UIs (block art, progress bars). Prefer concrete mono fonts.
- */
+/** Honor the selected font stack without filtering families or changing their order. */
 export function getResolvedTerminalFont(): string {
-  const mono = getResolvedMonoFont()
-  const parts = mono
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean)
-    .filter(isUsableTerminalFontPart)
-
-  const seen = new Set<string>()
-  const ordered: string[] = []
-  for (const part of [...parts, ...TERMINAL_MONO_FONT.split(',').map(p => p.trim())]) {
-    const key = bareFontName(part)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    ordered.push(part)
-  }
-  ordered.push('monospace')
-  return ordered.join(', ')
+  if (typeof document === 'undefined') return TERMINAL_MONO_FONT
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue('--terminal-font-family').trim() ||
+    TERMINAL_MONO_FONT
+  )
 }
 
 export function getResolvedTerminalFontSize(): number {
@@ -269,9 +232,9 @@ export type SaveFontSettingsOptions = {
 
 /** Apply font CSS + localStorage without writing settings JSON. */
 export function applyStoredFontSettings(settings: FontSettings) {
-  localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(settings))
-  applyFontSettings(settings)
-  window.dispatchEvent(new Event(FONT_SETTINGS_EVENT))
+  const normalized = { ...settings, terminalFont: normalizeTerminalFont(settings.terminalFont) }
+  localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(normalized))
+  applyFontSettings(normalized)
 }
 
 /**
@@ -343,16 +306,16 @@ export function withCurrentFontOption(options: FontOption[], value: string): Fon
   return [{ label, value }, ...options]
 }
 
-export type FontKind = 'sans' | 'mono'
+export type FontKind = 'sans' | 'mono' | 'terminal'
 
 /** Build a CSS font-family stack from an OS font family name. */
 export function fontStackFromFamily(family: string, kind: FontKind): string {
   const trimmed = family.trim()
   if (!trimmed) {
-    return kind === 'mono' ? SYSTEM_MONO_FONT : SYSTEM_INTERFACE_FONT
+    return kind === 'sans' ? SYSTEM_INTERFACE_FONT : SYSTEM_MONO_FONT
   }
   const quoted = `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-  return kind === 'mono' ? `${quoted}, ${SYSTEM_MONO_FONT}` : `${quoted}, ${SYSTEM_INTERFACE_FONT}`
+  return kind === 'sans' ? `${quoted}, ${SYSTEM_INTERFACE_FONT}` : `${quoted}, ${SYSTEM_MONO_FONT}`
 }
 
 /** Turn installed family names into selectable options, skipping preset labels. */

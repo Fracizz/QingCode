@@ -2,30 +2,37 @@
 
 ## Project Structure & Module Organization
 
-QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
+QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; SSH/SFTP/remote PTY handling belongs in `src-tauri/src/remote_ssh.rs`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
 
 Global `default-settings.json` and workspace `.qingcode/project-settings.json` are **JSON5** (comments, trailing commas). Default templates in `src/lib/projectSettings.ts` must keep **per-key comments** and state in the file header that comments must not be deleted (`不得删除注释`).
 
 ## Build, Test, and Development Commands
 
 - `pnpm install` installs the frontend toolchain.
+- `pnpm package:local` is the local-only parallel packaging CLI (see `docs/local-packaging.md`). Use `--plan`, `--only`, `--jobs`, `start`, `status <run-id>`, and `cancel <run-id> [--task apk]`. Independent preparation/APK stages run in parallel; desktop Cargo stages run sequentially. It never pushes tags or publishes releases.
 - `pnpm tauri:dev` starts the complete Windows desktop application; use this for features involving files, terminals, or native dialogs.
 - `pnpm dev` runs only Vite's browser UI for layout-focused work.
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.
-- `pnpm test` / `pnpm test:watch` run Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}`.
-- `pnpm check` runs frontend typecheck + Vitest, then Rust `fmt` / `clippy -D warnings` / `test`.
+- `pnpm test` runs Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}` plus packaging tests; `pnpm test:watch` runs Vitest in watch mode.
+- `pnpm check` runs frontend typecheck, Vitest coverage, packaging tests, and ESLint, then Rust `fmt` / `clippy -D warnings` / `test`.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting; `cargo clippy --all-targets -- -D warnings` enforces lint cleanliness.
 - `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Local Windows packaging: `pnpm package` builds the **x64 NSIS installer** (`release/QingCode-setup.exe`); `pnpm package:fast` skips frontend/icons. Portable exe: `pnpm package:exe`; `package:installer` is the same NSIS path; ARM64 (`package:*:arm64`) and `package:macos` are for CI / other hosts. `pnpm smoke:start` smokes `release/QingCode.exe`.
-- Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release. After a successful **tag** Release, `Sync Gitee Release` mirrors the 6 canonical assets to Gitee when `GITEE_TOKEN` is set (also runnable manually).
-- `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 功能 also exposes the same action for the running exe.
+- Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), plus the **Android companion APK** when the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` (optional `ANDROID_KEY_PASSWORD`) secrets exist, then uploads assets to GitHub Release. After a successful **tag** Release, `Sync Gitee Release` mirrors the 6 canonical assets (and the optional APK) to Gitee when `GITEE_TOKEN` is set (also runnable manually).
+- `scripts/build-android.ps1` builds `release/QingCode-Android.apk` without Gradle (see `mobile/README.md`). Its version comes from `package.json` via `scripts/android-version.mjs`; local builds sign with `~/.android/debug.keystore`, while published APKs must use `-Release` with the fixed release keystore. Android web assets live in `mobile/android/web/`; keep pure logic in `protocol.js` with Vitest coverage in `src/lib/mobileAndroidProtocol.test.ts`.
+- `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 工具与集成 also exposes the same action for the running exe.
+- `src/lib/qingcodeCliSkill.ts` is the canonical QingCode CLI Skill template. After changing CLI Skill guidance, run `pnpm skill:sync` and keep `.agents/skills/qingcode-cli/SKILL.md` plus its snapshot test synchronized.
 
 ## Coding Style & Naming Conventions
 
 Match the surrounding code: TypeScript uses two-space indentation, functional React components, PascalCase component filenames (for example, `PromptDialog.tsx`), and camelCase helpers. Name stores by responsibility, such as `editorStore.ts`. Rust follows `rustfmt` and snake_case naming. Route frontend calls through `safeInvoke` in `src/lib/tauri.ts`; new commands must be registered in `src-tauri/src/lib.rs`. Reuse shared overlays, tooltips, and dialogs rather than adding browser-native prompts or duplicate UI patterns. Never put HTML `title` on DOM nodes for hover tips — use `Tooltip` (see `DESIGN.md`; ESLint `react/forbid-dom-props`).
 
+Treat local paths, `ssh://<connection-id>/<absolute-path>` resources, and a remote user's POSIX paths as different domains. Do not pass SSH resource identifiers to Windows filesystem APIs or local processes. Remote file and command operations must stay inside the registered project root, preserve workspace-trust gates, reject symlink escapes, and require explicit host-fingerprint confirmation when identity changes. Keep remote feature limits documented in `docs/ssh-workspaces.md`.
+
 ## Testing Guidelines
 
-Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`) and manually verify the affected path in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise file-changing commands against disposable files or a temporary workspace. Release CI runs `pnpm check`, then packages Windows x64 / Windows ARM64 / macOS arm64 artifacts.
+Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`); prefer the platform-specific Web browser workflow below for browser-testable UI, and verify native integration paths in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise local file-changing commands against disposable files or a temporary workspace. Exercise SSH changes against a disposable remote project and cover first-connect fingerprint confirmation, reconnect, trust denial, root-boundary/symlink rejection, SFTP writes, remote PTY, Git, and local/remote transfer as applicable; do not treat local-only tests as remote acceptance. Release CI runs `pnpm check`, then packages Windows x64 / Windows ARM64 / macOS arm64 artifacts.
+
+**Web UI acceptance:** Prefer a Web test page over direct desktop control. Use `agent-browser` on Linux (including WSL), and `ego-browser` on Windows/macOS; an available Windows Ego bridge does not change the Linux default. Honor explicit engine selection and keep the same engine for the session. Run `pnpm test:web` (http://127.0.0.1:38439/); Linux uses `agent-browser` against the fixture page, while Ego uses `ego-browser skill` and `scripts/web-tests/project-manager.ego.mjs` (see [docs/web-ui-testing.md](docs/web-ui-testing.md)). Reuse real components/styles with fixed in-memory fixtures; assert interactions and save screenshots/reports under `.dev/`. Extend this approach for other UI paths. Web acceptance does not replace real file, SQLite, SSH, PTY, or native-dialog integration tests.
 
 ## Dual Remotes (Gitee + GitHub)
 
@@ -45,3 +52,28 @@ Use `git push origin <branch>` to publish to both. Fetch either side with `git f
 ## Commit & Pull Request Guidelines
 
 Recent history uses Conventional Commit-style messages, commonly `feat: <concise Chinese summary>`; use the appropriate type (`feat`, `fix`, `docs`, or `refactor`) and keep each commit focused. Pull requests should explain user-visible behavior, list validation commands, link the relevant issue when available, and include screenshots or a short recording for UI changes. Do not commit local `.dev` state, generated `dist/` or `release/` output, or application data. Treat capability and CSP changes as security-sensitive and explain why they are required.
+
+## 252.107 dependency downloads via the local PC proxy
+
+Verified on 2026-11-02 for this checkout at `D:\code\qingcode` on `192.168.252.107`:
+
+- The local PC's v2rayN/sing-box HTTP proxy is reachable at `http://192.168.10.127:7999` after LAN access is enabled. A proxied download of `sql.js-1.15.1.tgz` (13,645,330 bytes) succeeded in about 2.8 seconds. Recheck connectivity before relying on this dated result.
+- For future dependency installation, run in PowerShell on **252.107** (the environment variables apply only to the current terminal/process and its children):
+
+```powershell
+Set-Location -LiteralPath 'D:\code\qingcode'
+$env:HTTP_PROXY = 'http://192.168.10.127:7999'
+$env:HTTPS_PROXY = $env:HTTP_PROXY
+pnpm.cmd install --frozen-lockfile
+```
+
+- For Git Bash on the same remote machine:
+
+```bash
+cd /d/code/qingcode
+HTTP_PROXY=http://192.168.10.127:7999 HTTPS_PROXY=http://192.168.10.127:7999 pnpm install --frozen-lockfile
+```
+
+- Keep the local PC and proxy running with LAN access enabled. If the local PC's IP or proxy port changes, update the address above. Remote `127.0.0.1` refers to 252.107 itself, not the local PC. Use `pnpm.cmd` in PowerShell when execution policy blocks `pnpm.ps1`.
+- Do not persist this host-specific proxy in the repository's `.npmrc` or change the lockfile/registry just to resolve a download timeout.
+- If the proxy is unavailable, the fallback is to download the exact locked package tarballs on the local PC, transfer with sshctl, and let pnpm install them with lockfile integrity validation. Once the remote pnpm cache is complete, `pnpm.cmd install --frozen-lockfile --offline` works. Delete task-created downloads, archives, and temporary cache on the local PC after successful transfer, as requested by the user; retain the remote dependency cache.

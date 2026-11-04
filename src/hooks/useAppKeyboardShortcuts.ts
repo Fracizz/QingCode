@@ -16,8 +16,9 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
 import { openFindInActiveEditor } from '../lib/editorFind'
-import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
 import { activeEditorSelectionSeed } from '../lib/editorSelectionSeed'
+import { openFileFromDialog } from '../lib/openFileDialog'
+import { explorerDirectoryForSearchShortcut } from '../lib/explorerSelection'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -28,7 +29,6 @@ export interface UseAppKeyboardShortcutsDeps {
   setView: (view: import('../store/uiStore').View) => void
   openPalette: (seedQuery?: string) => void
   openSymbolPicker: () => void
-  openWorkspaceSymbolPicker: (seedQuery?: string) => void
 }
 
 export function useAppKeyboardShortcuts({
@@ -36,7 +36,6 @@ export function useAppKeyboardShortcuts({
   setView,
   openPalette,
   openSymbolPicker,
-  openWorkspaceSymbolPicker,
 }: UseAppKeyboardShortcutsDeps) {
   useEffect(() => {
     const isCommandPaletteShortcut = (event: KeyboardEvent) => {
@@ -53,16 +52,12 @@ export function useAppKeyboardShortcuts({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      // WebView2 may reserve F12-family accelerators before editor handlers run.
-      // Find Usages is an app command, so honor its configured binding even when
-      // an earlier native guard already marked the event as prevented.
+      // ContextMenu owns the shortcuts it displays. Its focused menu button
+      // bubbles the event to the menu listener after this capture listener.
       if (
-        shortcutMatchesEvent(shortcuts.findCalls, event) &&
-        !isShortcutInputTarget(event.target)
+        event.target instanceof HTMLElement &&
+        event.target.closest('[data-qingcode-context-menu]')
       ) {
-        event.preventDefault()
-        event.stopPropagation()
-        void findUsagesAtActiveEditor()
         return
       }
       // Ctrl+Shift+F: always seed from the editor selection (e.g. double-clicked
@@ -73,9 +68,10 @@ export function useAppKeyboardShortcuts({
       ) {
         event.preventDefault()
         event.stopPropagation()
-        useUIStore.getState().requestGlobalSearch(
-          activeEditorSelectionSeed({ maxLength: 500, singleLine: true })
-        )
+        const seed = activeEditorSelectionSeed({ maxLength: 500, singleLine: true })
+        const directory = explorerDirectoryForSearchShortcut()
+        if (directory) useUIStore.getState().requestSearch(directory, seed)
+        else useUIStore.getState().requestGlobalSearch(seed)
         return
       }
       if (event.defaultPrevented) return
@@ -91,11 +87,9 @@ export function useAppKeyboardShortcuts({
         openPalette('')
         return
       }
-      if (shortcutMatchesEvent(shortcuts.goToSymbolInWorkspace, event)) {
+      if (shortcutMatchesEvent(shortcuts.openFile, event)) {
         event.preventDefault()
-        openWorkspaceSymbolPicker(
-          activeEditorSelectionSeed({ maxLength: 200, singleLine: true })
-        )
+        void openFileFromDialog()
         return
       }
 
@@ -193,5 +187,5 @@ export function useAppKeyboardShortcuts({
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [shortcuts, setView, openPalette, openSymbolPicker, openWorkspaceSymbolPicker])
+  }, [shortcuts, setView, openPalette, openSymbolPicker])
 }

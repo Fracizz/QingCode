@@ -7,6 +7,7 @@ import {
   OVERFLOW_TOOLTIP_DELAY,
   resolveOverflowElement,
   TOOLTIP_ARROW_GAP,
+  tooltipSideMaxWidth,
 } from './Tooltip'
 
 const trigger = {
@@ -157,6 +158,45 @@ describe('getTooltipArrowOffsetX', () => {
     const offset = getTooltipArrowOffsetX(8, 160, 390, 1)
     expect(offset).toBeGreaterThanOrEqual(10)
     expect(offset).toBeLessThanOrEqual(160 - 10 - 12)
+  })
+})
+
+describe('tooltipSideMaxWidth', () => {
+  const anchor = {
+    left: 200,
+    right: 620,
+    top: 80,
+    bottom: 108,
+    width: 420,
+    height: 28,
+  }
+
+  it('caps a right tip that would slide back over the anchor', () => {
+    const cap = tooltipSideMaxWidth(anchor, 'right', 480, 900)
+    // Room beside the row: 900 - 620 - 8 - 8.
+    expect(cap).toBe(264)
+    const placed = getTooltipPosition(anchor, 'right', { width: cap!, height: 40 }, {
+      width: 900,
+      height: 600,
+    })
+    expect(placed.left).toBe(anchor.right + 8)
+  })
+
+  it('leaves a tip that already fits beside the anchor', () => {
+    expect(tooltipSideMaxWidth(anchor, 'right', 200, 900)).toBeUndefined()
+  })
+
+  it('does not wrap into a sliver when the anchor is against the viewport edge', () => {
+    const nearEdge = { ...anchor, left: 760, right: 860, width: 100 }
+    expect(tooltipSideMaxWidth(nearEdge, 'right', 400, 900)).toBeUndefined()
+  })
+
+  it('caps a left tip using the space before the anchor', () => {
+    expect(tooltipSideMaxWidth(anchor, 'left', 500, 900)).toBe(200 - 8 - 8)
+  })
+
+  it('ignores vertical tips', () => {
+    expect(tooltipSideMaxWidth(anchor, 'bottom', 800, 900)).toBeUndefined()
   })
 })
 

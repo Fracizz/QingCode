@@ -23,8 +23,8 @@ export type PersistedEditorTab = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos
-  /** Restored large files reopen in the slice viewer. */
-  viewMode?: 'view'
+  /** Restored large files reopen in the slice viewer; images in the image viewer. */
+  viewMode?: 'view' | 'image'
 }
 
 export type PersistedTerminalMeta = {
@@ -43,6 +43,14 @@ export type PersistedTerminalMeta = {
   /** Run-config task linkage (rehydrated into runningByTask after restart). */
   runConfigId?: string
   runTaskId?: string
+  /** True when the tab is hosted by the remote daemon. */
+  persistent?: boolean
+  /** Daemon PTY id, persisted only for restart reattach. */
+  ptyId?: string
+  /** SSH connection that owns the daemon PTY. */
+  connectionId?: string
+  endedAt?: number
+  exitCode?: number | null
 }
 
 export type PersistedProjectSession = {
@@ -73,7 +81,7 @@ export type EditorTabSnapshotInput = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos | null
-  viewMode?: 'edit' | 'view'
+  viewMode?: 'edit' | 'view' | 'image'
 }
 
 export type TerminalSnapshotInput = {
@@ -90,6 +98,11 @@ export type TerminalSnapshotInput = {
   allowTitleRename?: boolean
   runConfigId?: string
   runTaskId?: string
+  persistent?: boolean
+  ptyId?: string
+  connectionId?: string
+  endedAt?: number
+  exitCode?: number | null
 }
 
 export type ProjectEditorSessionInput = {
@@ -124,7 +137,7 @@ function parseEditorTab(value: unknown): PersistedEditorTab | null {
   if (typeof value.language === 'string') tab.language = value.language
   const scroll = parseScroll(value.scroll)
   if (scroll) tab.scroll = scroll
-  if (value.viewMode === 'view') tab.viewMode = 'view'
+  if (value.viewMode === 'view' || value.viewMode === 'image') tab.viewMode = value.viewMode
   return tab
 }
 
@@ -178,6 +191,17 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
   }
   if (typeof value.runTaskId === 'string' && value.runTaskId) {
     terminal.runTaskId = value.runTaskId
+  }
+  if (typeof value.persistent === 'boolean') terminal.persistent = value.persistent
+  if (typeof value.endedAt === 'number' && Number.isFinite(value.endedAt) && value.endedAt > 0) {
+    terminal.endedAt = value.endedAt
+    terminal.exitCode = typeof value.exitCode === 'number' && Number.isFinite(value.exitCode) ? value.exitCode : null
+  }
+  if (typeof value.ptyId === 'string' && value.ptyId.trim()) {
+    terminal.ptyId = value.ptyId.trim()
+  }
+  if (typeof value.connectionId === 'string' && value.connectionId.trim()) {
+    terminal.connectionId = value.connectionId.trim()
   }
   return terminal
 }
@@ -296,7 +320,7 @@ export function serializeEditorTab(tab: EditorTabSnapshotInput): PersistedEditor
   if (tab.scroll && Number.isFinite(tab.scroll.top) && Number.isFinite(tab.scroll.left)) {
     out.scroll = { top: tab.scroll.top, left: tab.scroll.left }
   }
-  if (tab.viewMode === 'view') out.viewMode = 'view'
+  if (tab.viewMode === 'view' || tab.viewMode === 'image') out.viewMode = tab.viewMode
   return out
 }
 
@@ -317,6 +341,10 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   }
   if (terminal.runConfigId) out.runConfigId = terminal.runConfigId
   if (terminal.runTaskId) out.runTaskId = terminal.runTaskId
+  if (typeof terminal.persistent === 'boolean') out.persistent = terminal.persistent
+  if (terminal.ptyId) out.ptyId = terminal.ptyId
+  if (terminal.connectionId) out.connectionId = terminal.connectionId
+  if (terminal.endedAt) { out.endedAt = terminal.endedAt; out.exitCode = terminal.exitCode ?? null }
   return out
 }
 

@@ -17,7 +17,7 @@ function toneClass(size: CountBadgeSize, count: number): string {
   if (size === 'chip') {
     return 'bg-accent/12 text-accent/85 transition-colors group-hover:bg-accent/20 group-hover:text-accent hover:bg-accent/20 hover:text-accent'
   }
-  return 'bg-accent text-white'
+  return 'bg-action text-on-action'
 }
 
 export function CountBadge({

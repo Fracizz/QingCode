@@ -1,10 +1,14 @@
 # Build QingCode Windows NSIS installer (.exe setup) via Tauri.
-# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>]
+# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer]
 [CmdletBinding()]
 param(
   [switch]$Force,
   [switch]$SkipFrontend,
   [switch]$SkipIcons,
+  # Reuse existing server binaries; version and integrity checks still run before publishing.
+  [switch]$SkipServer,
+  [switch]$SkipAndroid,
+  [switch]$SkipServerPack,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -18,7 +22,6 @@ $iconSvg = Join-Path $projectRoot 'public\app-icon-file.svg'
 $iconIco = Join-Path $projectRoot 'src-tauri\icons\icon.ico'
 $distIndex = Join-Path $projectRoot 'dist\index.html'
 $bundleDir = Resolve-CargoBundleDir -ProjectRoot $projectRoot -Target $Target
-$cargoReleaseDir = Resolve-CargoReleaseDir -ProjectRoot $projectRoot -Target $Target
 
 $archSuffix = switch -Regex ($Target) {
   'aarch64-pc-windows' { '-windows-arm64' }
@@ -79,6 +82,12 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
+  # 安装包不内置 Server；离线包单独写入 release/servers/ 和
+  # release/QingCode-servers.zip，安装器保持轻量，运行时按本地目录或在线下载发现。
+  Write-Step 'SSH server binaries (not bundled)'
+  Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
+  if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
+
   $frontendRebuilt = $false
   if ($SkipFrontend) {
     Write-Host '  skip frontend (-SkipFrontend)'
@@ -112,19 +121,21 @@ try {
     Write-Host "  bundle dir: $bundleDir" -ForegroundColor DarkGray
   }
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  # Skip beforeBuildCommand when dist is already fresh to avoid a second full frontend build.
+  # Frontend was handled above, including -Force; never build it a second time.
   $tauriArgs = @('tauri', 'build', '--bundles', 'nsis', '--ci')
   if ($Target) {
     $tauriArgs += @('--target', $Target)
   }
   # Pass override via file: PowerShell strips quotes from inline JSON in @args.
-  if (-not $Force -and -not (Test-FrontendStale -ProjectRoot $projectRoot) -and (Test-Path $distIndex)) {
+  if (Test-Path $distIndex) {
     $devDir = Join-Path $projectRoot '.dev'
     if (-not (Test-Path $devDir)) {
       New-Item -ItemType Directory -Path $devDir | Out-Null
     }
     $skipFrontendConfig = Join-Path $devDir 'tauri-package-override.json'
-    $overrideJson = (@{ build = @{ beforeBuildCommand = '' } } | ConvertTo-Json -Depth 3) + "`n"
+    $overrideJson = (@{
+      build = @{ beforeBuildCommand = '' }
+    } | ConvertTo-Json -Depth 5) + "`n"
     [System.IO.File]::WriteAllText(
       $skipFrontendConfig,
       $overrideJson,
@@ -147,50 +158,11 @@ try {
     throw "NSIS bundle directory not found: $nsisDir"
   }
 
-  Write-Step 'Build selectable language components'
-  $componentStageRelative = if ($Target) {
-    ".dev\nsis-language-components\$Target"
-  } else {
-    '.dev\nsis-language-components\host'
-  }
-  $componentStage = Join-Path $projectRoot $componentStageRelative
-  & (Join-Path $PSScriptRoot 'build-language-components.ps1') `
-    -Configuration Release `
-    -Target $Target `
-    -Destination $componentStage
-  if ($LASTEXITCODE -ne 0) {
-    throw "Language component build failed with exit code $LASTEXITCODE."
-  }
-
-  Write-Step 'Add language selection page to NSIS installer'
-  # Tauri writes the rendered NSIS sources beside release/, while the compiled
-  # setup executable is written under release/bundle/nsis/.
-  $renderedNsisRoot = Join-Path $cargoReleaseDir 'nsis'
-  $renderedInstaller = Join-Path $renderedNsisRoot 'x64\installer.nsi'
-  if (-not (Test-Path -LiteralPath $renderedInstaller)) {
-    $renderedInstaller = Get-ChildItem -Path $renderedNsisRoot -Recurse -Filter 'installer.nsi' -File |
-      Select-Object -First 1 -ExpandProperty FullName
-  }
-  if (-not $renderedInstaller) {
-    throw "Rendered NSIS installer script not found in $renderedNsisRoot."
-  }
-  & node (Join-Path $PSScriptRoot 'patch-language-components-nsis.mjs') $renderedInstaller $componentStage
-  if ($LASTEXITCODE -ne 0) {
-    throw "Failed to patch language component selection into NSIS."
-  }
-  $makeNsis = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe'
-  if (-not (Test-Path -LiteralPath $makeNsis)) {
-    throw "Tauri NSIS compiler not found: $makeNsis"
-  }
-  & $makeNsis '-INPUTCHARSET' 'UTF8' '-OUTPUTCHARSET' 'UTF8' '-V3' $renderedInstaller
-  if ($LASTEXITCODE -ne 0) {
-    throw "Patched NSIS installer compilation failed with exit code $LASTEXITCODE."
-  }
-  $setup = Get-ChildItem -Path (Split-Path -Parent $renderedInstaller) -Filter '*.exe' -File |
+  $setup = Get-ChildItem -LiteralPath $nsisDir -Filter '*.exe' -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
   if (-not $setup) {
-    throw "Build completed but no patched NSIS installer .exe found beside $renderedInstaller."
+    throw "Build completed but no NSIS installer .exe found in $nsisDir."
   }
 
   Write-Step 'Copy to release/'
@@ -209,15 +181,17 @@ try {
   Copy-Item $setup.FullName $latest -Force
 
   Write-Host ""
+  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
+  Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack; not inside the installer)"
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: language components are selectable (all five on by default)." -ForegroundColor DarkGray
-  Write-Host "               Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
-  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
+  Write-Host "Install notes: first install waits for Start Install; upgrades run in place automatically; optional launch checked on finish page; /S for silent install (/R opts into launch)." -ForegroundColor DarkGray
+  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
+  Clear-ServerResourceDir -ProjectRoot $projectRoot
   Pop-Location
 }

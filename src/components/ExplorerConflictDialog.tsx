@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useExplorerConflictStore } from '../store/explorerConflictStore'
 import { validateEntryName } from '../store/promptStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 /** IDEA-style name-conflict dialog with an inline rename field. */
@@ -57,7 +57,7 @@ export default function ExplorerConflictDialog() {
   }
 
   return (
-    <ModalOverlay onDismiss={() => answer({ action: 'cancel' })} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer({ action: 'cancel' })} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="alertdialog"
         aria-modal="true"
@@ -70,12 +70,12 @@ export default function ExplorerConflictDialog() {
             <AlertTriangle size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="explorer-conflict-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="explorer-conflict-title" className="text-ui-lg font-semibold text-fg">
               {t(request.title)}
             </h2>
             <p
               id="explorer-conflict-message"
-              className="mt-1.5 text-[13px] leading-relaxed text-fg"
+              className="mt-1.5 text-ui leading-relaxed text-fg"
             >
               {t(request.message)}
             </p>
@@ -111,14 +111,14 @@ export default function ExplorerConflictDialog() {
         <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer({ action: 'cancel' })}
           >
             {t('取消')}
           </button>
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer({ action: 'skip' })}
           >
             {t('跳过')}
@@ -126,7 +126,7 @@ export default function ExplorerConflictDialog() {
           {request.showApplyAll && (
             <button
               type="button"
-              className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
               onClick={() => answer({ action: 'skip_all' })}
             >
               {t('全部跳过')}
@@ -134,7 +134,7 @@ export default function ExplorerConflictDialog() {
           )}
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
             onClick={submitRename}
           >
             {t('重命名')}
@@ -142,7 +142,7 @@ export default function ExplorerConflictDialog() {
           {request.showApplyAll && (
             <button
               type="button"
-              className="px-3 py-1.5 text-[13px] rounded bg-danger/90 hover:bg-danger text-white transition-colors"
+              className="px-3 py-1.5 text-ui rounded bg-destructive/90 hover:bg-destructive text-on-destructive transition-colors"
               onClick={() => answer({ action: 'overwrite_all' })}
             >
               {t('全部覆盖')}
@@ -150,7 +150,7 @@ export default function ExplorerConflictDialog() {
           )}
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-danger/90 hover:bg-danger text-white transition-colors"
+            className="px-3 py-1.5 text-ui rounded bg-destructive/90 hover:bg-destructive text-on-destructive transition-colors"
             onClick={() => answer({ action: 'overwrite' })}
           >
             {t('覆盖')}

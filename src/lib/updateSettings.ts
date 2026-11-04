@@ -1,5 +1,4 @@
 import {
-  DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   saveGlobalSettings,
 } from './projectSettings'
@@ -71,9 +70,4 @@ export function isVersionSkipped(latest: string, skipped: string | null): boolea
 
 export function notifyUpdateSettingsChanged(settings: UpdateSettings) {
   window.dispatchEvent(new CustomEvent(UPDATE_SETTINGS_EVENT, { detail: settings }))
-}
-
-/** Ensure defaults object exposes the startup flag for Settings “modified” UI. */
-export function defaultCheckOnStartup(): boolean {
-  return parseCheckOnStartup(DEFAULT_GLOBAL_SETTINGS[UPDATE_CHECK_ON_STARTUP_KEY])
 }

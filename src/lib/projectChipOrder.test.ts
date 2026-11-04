@@ -8,7 +8,23 @@ import {
   reorderVisibleProjects,
   sameIdOrder,
   sortVisibleProjects,
+  visibleProjectChipRange,
 } from './projectChipOrder'
+
+describe('visibleProjectChipRange', () => {
+  it('keeps a selected overflow project visible without changing project order', () => {
+    expect(visibleProjectChipRange([90, 90, 90, 90, 90], 270, 4)).toEqual({ start: 3, end: 5 })
+    expect(visibleProjectChipRange([90, 90, 90, 90, 90], 270, 0)).toEqual({ start: 0, end: 2 })
+  })
+  it('measures the selected chip width and reserves overflow controls', () => {
+    expect(visibleProjectChipRange([40, 40, 180], 270, 2)).toEqual({ start: 2, end: 3 })
+    expect(visibleProjectChipRange([90, 90], 220, 1)).toEqual({ start: 0, end: 2 })
+  })
+  it('retains one current chip in narrow windows and handles an empty project list', () => {
+    expect(visibleProjectChipRange([100, 100], 90, 1)).toEqual({ start: 1, end: 2 })
+    expect(visibleProjectChipRange([], 90, -1)).toEqual({ start: 0, end: 0 })
+  })
+})
 
 function project(over: Partial<Project>): Project {
   return {

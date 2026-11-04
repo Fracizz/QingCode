@@ -17,6 +17,31 @@ vi.mock('./excludeSettings', () => ({
 import { safeInvoke } from './tauri'
 
 describe('preserveLoadedChildren', () => {
+  it('keeps freshly scanned children while preserving a concurrent nested expansion', () => {
+    const before: FileNode[] = [{ name: 'docs', path: 'D:/proj/docs', is_dir: true, loaded: true,
+      children: [{ name: 'nested', path: 'D:/proj/docs/nested', is_dir: true, loaded: false }],
+    }]
+    const existing: FileNode[] = [{ ...before[0], children: [
+      { name: 'nested', path: 'D:/proj/docs/nested', is_dir: true, loaded: true,
+        children: [{ name: 'inside.txt', path: 'D:/proj/docs/nested/inside.txt', is_dir: false }] },
+    ] }]
+    const fresh: FileNode[] = [{ ...before[0], children: [
+      { name: 'nested', path: 'D:/proj/docs/nested', is_dir: true, loaded: false },
+      { name: 'new.txt', path: 'D:/proj/docs/new.txt', is_dir: false },
+    ] }]
+    const merged = preserveLoadedChildren(fresh, existing, before)
+    expect(merged[0].children?.map(n => n.name)).toEqual(['nested', 'new.txt'])
+    expect(merged[0].children?.[0].children?.[0].name).toBe('inside.txt')
+  })
+
+  it('does not restore stale children after a failed rescan', () => {
+    const existing: FileNode[] = [{ name: 'docs', path: 'D:/proj/docs', is_dir: true, loaded: true,
+      children: [{ name: 'old.txt', path: 'D:/proj/docs/old.txt', is_dir: false }],
+    }]
+    const fresh: FileNode[] = [{ name: 'docs', path: 'D:/proj/docs', is_dir: true, loaded: false }]
+    expect(preserveLoadedChildren(fresh, existing, existing)).toEqual(fresh)
+  })
+
   it('keeps an expanded directory when a root refresh finishes afterwards', () => {
     const existing: FileNode[] = [
       {

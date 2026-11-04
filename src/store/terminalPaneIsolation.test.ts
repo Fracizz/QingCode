@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '../types'
 import {
   inferTerminalPaneOwnership,
+  reorderTerminalTabs,
   terminalPaneOf,
   useTerminalStore,
 } from './terminalStore'
@@ -104,6 +105,33 @@ describe('terminal pane isolation', () => {
       ['c', 'bl'],
       ['d', 'br'],
     ])
+  })
+
+  it('reorders terminal tabs around a drop target without disturbing other tabs', () => {
+    const terminals = [
+      tab('p1a', 'primary'),
+      tab('tr1', 'secondary'),
+      tab('p1b', 'primary'),
+      tab('tr2', 'secondary'),
+    ]
+
+    expect(reorderTerminalTabs(terminals, 'p1b', 'p1a', 'before').map(t => t.id)).toEqual([
+      'p1b',
+      'p1a',
+      'tr1',
+      'tr2',
+    ])
+    expect(reorderTerminalTabs(terminals, 'tr1', 'tr2', 'after').map(t => t.id)).toEqual([
+      'p1a',
+      'p1b',
+      'tr2',
+      'tr1',
+    ])
+  })
+
+  it('does not reorder terminals across projects', () => {
+    const terminals = [tab('p1a'), tab('p2a', 'primary', { projectId: 'p2' })]
+    expect(reorderTerminalTabs(terminals, 'p1a', 'p2a', 'before')).toBe(terminals)
   })
 
   it('ensureQuadTerminals does not steal primary sessions into other panes', () => {

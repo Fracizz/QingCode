@@ -1,0 +1,72 @@
+[package]
+name = "qingcode-server"
+version = "0.1.15"
+description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
+authors = ["Franciz"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "qingcode_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qingcode-server"
+path = "src/main.rs"
+
+# 应用协议与网络层使用 Rust 实现；TLS 的 ring 加密后端需要对应目标的 C 编译器。
+# musl 静态产物仍需在发布构建中验证，不能仅凭本地 GNU 编译成功认定可部署。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 协议负载是 MessagePack（设计 §5.1），字节字段用 serde_bytes 走 bin 类型，
+# 避免 Vec<u8> 被编码成整数数组而膨胀数倍。
+rmp-serde = "1"
+serde_bytes = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "fs", "signal", "process"] }
+ignore = "0.4.29"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
+regex-syntax = "0.8"
+notify = "8.2.0"
+notify-debouncer-mini = "0.7.0"
+# PTY 宿主（pty.rs）：portable-pty 在 Linux/macOS 走 openpty、Windows 走 ConPTY；
+# vt100 提供无界面终端模拟器，用于断线后的屏幕快照。0.15 在 resize 后解析
+# 滚动区/宽字符等常见序列会 unwrap panic（release 下直接让 daemon 崩溃），必须 ≥0.18。
+portable-pty = "0.8"
+vt100 = "0.18"
+# self-check 子命令计算自身二进制的 sha256（安装完整性校验，设计 §4.2/§8.3）。
+# 纯 Rust、无 C 依赖，musl 静态链接不受影响。
+sha2 = "0.10"
+# generate_token 的 OS 随机源（Linux getrandom(2)、Windows ProcessPrng）：
+# token 是 localhost socket 的唯一凭据，时间+pid 兜底熵不足、可预测。
+# 版本对齐依赖树里 tempfile（notify-debouncer-mini）已引入的 0.4，
+# 不新增传递依赖；纯 Rust、无 C 依赖，musl 静态链接不受影响。
+getrandom = "0.4"
+# Independent HTTPS/WSS endpoint; Rust TLS with ring matches the SSH client's provider.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", features = ["sink"] }
+# flock / setsid / SIGHUP 等只有 unix 需要，Windows 目标上不会被链接。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+# serve --detach 的 Windows 自拉起需要 CreateProcessW + HANDLE_LIST 精确控制
+# 句柄继承（std::process::Command 会把父进程的全部可继承句柄——包括 SSH 会话
+# 的 stdout 管道——复制给子进程，导致 exec 通道永远等不到 EOF）。版本对齐
+# notify 依赖树里的 windows-sys 0.60；linux musl 构建不编译此依赖。
+[target.'cfg(windows)'.dependencies]
+base64 = "0.22"
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  # daemon named pipe 的「仅当前用户」DACL：SID → SDDL 字符串 → 安全描述符。
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  # ConPTY 子进程恢复 Ctrl+C 处理（SetConsoleCtrlHandler）。
+  "Win32_System_Console",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }

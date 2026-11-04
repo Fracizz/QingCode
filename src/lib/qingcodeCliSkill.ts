@@ -6,18 +6,16 @@
 
 export const QINGCODE_CLI_REPO_BINARY = String.raw`.\src-tauri\target\debug\qingcode.exe`
 
-export function buildQingcodeCliSkillMarkdown(exePath: string): string {
-  const bin = exePath.trim() || 'QingCode.exe'
-  const quoted = bin.includes(' ') ? `"${bin}"` : bin
-
+function buildEnglishSkill(quoted: string): string {
   return `---
 name: qingcode-cli
 description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
-  run-config CRUD/start/stop. Use when the user asks to add projects, list
-  projects, edit .qingcode/run.json run configs, start or stop a run
-  configuration, grant workspace trust, or open files in a running QingCode
-  instance.
+  local/SSH run-config CRUD and start/stop. Use when the user asks to add
+  projects, list projects, edit .qingcode/run.json run configs, start or stop a
+  run configuration, grant workspace trust, open files in a running QingCode
+  instance, import/export user or workspace settings and local project lists, restore defaults,
+  or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
 
 # QingCode CLI
@@ -39,7 +37,9 @@ Prefer these subcommands over hand-editing SQLite, directly rewriting
 - Exit: \`0\` ok · \`1\` error · \`2\` usage · \`3\` app not running.
 - Check both the exit code and \`ok\`; surface \`error\` to the user instead of guessing.
 
-## Offline (no GUI required)
+## Project and local run-config commands
+
+These commands do not require the GUI for local projects:
 
 \`\`\`text
 ${quoted} project list
@@ -52,8 +52,28 @@ ${quoted} run upsert --json <file|-> [--project ...]
 ${quoted} run remove <name|id> [--project ...]
 \`\`\`
 
-- For offline \`run *\`, \`--project\` may be omitted only when the database has exactly one project.
+- \`project add\` accepts local directories only. Add SSH projects through QingCode's SSH project
+  dialog so the connection, host fingerprint, and remote root are registered together.
+- For run-config CRUD, \`--project\` may be omitted only when the database has exactly one project.
 - With multiple projects, pass an ID or exact path from \`project list\`; use a name only when unique.
+- Local project run-config CRUD reads and writes \`<project>/.qingcode/run.json\` directly without
+  starting QingCode.
+
+### SSH run-config CRUD
+
+The same \`run list|get|upsert|remove\` syntax works for projects whose path starts with \`ssh://\`,
+but QingCode must be running. The CLI automatically routes these operations through the GUI's
+authenticated SSH/SFTP session; it must never treat an \`ssh://\` URI as a local filesystem path.
+
+- Pass \`--project <id|ssh-uri|unique-name>\` when more than one project exists.
+- If exit \`3\`, start QingCode and retry. Do not directly rewrite a guessed local copy of the
+  remote \`.qingcode/run.json\`.
+- If the SSH password is not available in the current app session, ask the user to reconnect by
+  opening the SSH project in QingCode; do not request or place a password in \`run.json\`.
+- The remote \`.qingcode\` directory is created automatically on the first successful save.
+
+### Run-config JSON
+
 - \`run upsert --json -\` reads stdin. The body may be a config object or \`{ "config": {...} }\`:
 
 \`\`\`json
@@ -67,10 +87,77 @@ ${quoted} run remove <name|id> [--project ...]
 }
 \`\`\`
 
-Config and task \`id\` values are optional when creating and are auto-generated. Task \`type\`:
-\`ps1\` | \`bat\` | \`sh\` | \`command\` | \`script\`.
+Config and task \`id\` values are optional when creating and are auto-generated. Local task \`type\`:
+\`ps1\` | \`bat\` | \`sh\` | \`command\` | \`script\`. For SSH Linux projects use only \`command\`, \`sh\`, or
+\`script\`; \`ps1\`, \`bat\`, and \`cmd\` scripts are unsupported and will be rejected when started.
 The optional \`restoreWithProjectSession\` field defaults to \`false\`; set it to \`true\`
 to restore and restart linked task terminals with the project session after an app restart.
+
+### Cross-platform task OS overrides
+
+Keep one config (for example, \`dev\`) and stable task IDs. Each task's common
+\`type\`, \`target\`, \`cwd\`, and \`env\` are defaults; optional \`os.windows\`, \`os.linux\`,
+and \`os.macos\` override them. Scalar fields replace the default, including an
+empty \`cwd\` (project root); \`env\` merges by variable name, with OS values winning.
+The common \`target\` can be omitted when at least one OS provides it. Starting on
+an OS without an effective target fails before any task is launched.
+
+\`\`\`json
+{
+  "name": "dev",
+  "tasks": [{
+    "id": "backend", "type": "command", "cwd": "backend",
+    "target": ".venv/bin/python manage.py runserver",
+    "env": { "PYTHONUNBUFFERED": "1" },
+    "os": {
+      "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" },
+      "macos": { "target": "uv run python manage.py runserver" }
+    }
+  }]
+}
+\`\`\`
+
+- Local projects use the native OS. Windows WSL UNC projects use \`linux\` and
+  \`wsl.exe\` with the distribution and POSIX path taken from the project path;
+  no default-distribution guessing. SSH projects use the probed remote OS.
+- Relative \`cwd\` is relative to the project root, never to the GUI/CLI process.
+  Task directories and script files must stay inside the trusted project root;
+  cross-distribution, cross-connection and symlink escapes are rejected.
+- Put Windows virtualenv paths in \`os.windows\` and Linux paths in the common
+  defaults or \`os.linux\`. WSL requires Linux tools (including \`setsid\` from
+  util-linux); Windows drive PATH entries are excluded from WSL task lookup.
+- Existing configs without \`os\` and existing CLI syntax remain supported.
+  Preserve every OS override when updating. Older QingCode versions do not
+  understand \`os\` and may drop it when editing; use the updated app/CLI to save.
+- \`run start\` submits tasks asynchronously and returns the selected environment
+  and task terminal IDs in addition to the existing fields. \`run status\` retains
+  \`running\`/\`terminals\` and adds task status, exit code, actual target/cwd and
+  environment. Verify readiness separately; a live process does not prove an
+  HTTP service or Celery worker is ready. Do not put secrets in status output.
+- Windows SSH run tasks remain unsupported and fail explicitly. POSIX SSH
+  requires an available shell and the selected connection mode's capabilities.
+  Celery on native Windows is not officially supported; use WSL for a Linux
+  worker or a project-verified Windows development override.
+
+SSH task rules:
+
+- \`cwd\` omitted: remote project root. Relative \`cwd\`: relative to that root. An absolute POSIX
+  \`cwd\` such as \`/opt/service\` stays on the same SSH connection. Do not use Windows paths.
+- \`command\` runs through remote POSIX \`/bin/sh -lc\`; do not write CMD or PowerShell syntax.
+- \`sh\` runs the target with \`/bin/sh\`.
+- \`script\` selects a remote interpreter by extension: Python (\`.py\`), Node/Bun
+  (\`.js\`/\`.mjs\`/\`.cjs\`), project/global \`tsx\` or Bun (\`.ts\`/\`.tsx\`/\`.mts\`/\`.cts\`), and the
+  corresponding interpreter for \`.rb\`, \`.php\`, \`.pl\`, \`.bash\`, \`.zsh\`, or \`.sh\`. Other files
+  run directly when executable and otherwise fall back to \`/bin/sh\`.
+- \`env\` values must be strings and names must be valid POSIX environment identifiers.
+
+### Windows access to SSH/WSL services
+
+For a WSL project, verify the actual service URL from Windows; localhost forwarding
+and reachable addresses depend on the WSL networking configuration. For SSH, use
+the remote address or an explicitly configured tunnel; SSH alone does not forward ports.
+Check the listening address, port ownership and firewall before changing a working
+binding. Do not replace a project's established bind address without evidence.
 
 ### Updating a run config
 
@@ -82,7 +169,34 @@ matching ID is supplied. It is not a partial patch.
 3. Apply the requested changes and upsert the complete config object.
 4. Read it again with \`run get\` and verify the result.
 
-## Online (QingCode GUI must be running)
+## Settings import / export (QingCode GUI must be running)
+
+\`\`\`text
+${quoted} settings export --scope user --output <new-file.json>
+${quoted} settings import --scope user --json <file|->
+${quoted} settings export --scope workspace --project <id|path|name> --output <new-file.json>
+${quoted} settings import --scope workspace --project <id|path|name> --json <file|->
+${quoted} settings reset --scope user --yes
+${quoted} settings reset --scope workspace --project <id|path|name> --yes
+\`\`\`
+
+- Default scope is \`user\`; workspace uses the current GUI project when \`--project\` is omitted.
+- User export includes settings, theme, fonts, shortcuts, language, terminal profiles, and durable
+  local projects. SSH connections, passwords, private keys, trust grants, and sessions are excluded.
+- Workspace export contains only settings overrides; SSH workspaces need an active connection.
+- Import accepts the exported JSON envelope or plain JSON/JSON5 settings. Invalid input, mismatched
+  scope/version, or unsaved settings tabs fail without overwriting the settings file.
+- Import merges keys/custom entries and local projects by path, retaining existing projects;
+  unavailable paths are returned in \`skippedProjects\`. It never grants trust or runs commands.
+- \`--output\` writes reusable JSON and refuses to overwrite an existing file. Without it, stdout
+  is \`{ ok, data }\`; save only \`data\` for later import. \`--json -\` reads stdin.
+- Exit \`3\` means start QingCode first. Use settings commands instead of editing SQLite.
+- \`settings reset\` requires \`--yes\`. Reset only when the user explicitly requests restoring
+  defaults; explain the selected scope and export a backup when requested. User reset clears custom
+  settings and restores UI preferences while retaining projects, workspace settings, trust, and sessions.
+  Workspace reset clears overrides/custom settings and resumes inheritance from user settings.
+
+## Online execution (QingCode GUI must be running)
 
 \`\`\`text
 ${quoted} project switch <id|path|name>
@@ -93,21 +207,25 @@ ${quoted} trust grant <path>
 ${quoted} open <file>[:line[:col]] ...
 \`\`\`
 
-- If \`--project\` is omitted for online \`run *\`, the GUI current project is used.
-- If exit \`3\`, tell the user to start QingCode first; do not invent a headless runner.
+- If \`--project\` is omitted for \`run start|stop|status\`, the GUI current project is used.
+- If exit \`3\`, tell the user to start QingCode first; do not invent a headless runner. This also
+  applies to run-config CRUD for SSH projects.
 - \`run start\` executes the commands stored in the selected config.
 
 ## Typical agent flow
 
-1. Discover state with \`project list\` and \`run list\`; add a project only when needed.
+1. Discover state with \`project list\`; identify SSH projects by their \`ssh://\` path, then use
+   \`run list --project <id>\`.
 2. Create a config, or use the full-object update flow above for an existing config.
-3. Ensure the GUI is running before any online command.
-4. Start the config, then inspect \`run status\` and report the result.
+3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
+4. Start the config, then inspect \`run status\`. For SSH/WSL projects, also verify
+   the actual service URL from Windows or the intended client.
 5. If restricted mode blocks execution, explain it and ask for explicit approval before \`trust grant\`.
 
 ## Safety
 
-- \`project add\` and \`run upsert\` write persistent state; keep them within the user's request.
+- \`project add\` and \`run upsert\` write persistent state; keep them within the user's request. For
+  SSH projects, \`run upsert\` writes the remote project's \`.qingcode/run.json\` over SFTP.
 - Use \`project remove\` / \`run remove\` only when the user clearly asked to delete.
 - \`project remove\` removes the project and recent-file records from QingCode's database; it does
   not delete the project directory or its files.
@@ -115,4 +233,222 @@ ${quoted} open <file>[:line[:col]] ...
 - Do not use this CLI for packaging, release tags, or force-push.
 - Named workspaces are out of scope — only the user DB project list.
 `
+}
+
+function buildChineseSkill(quoted: string): string {
+  return `---
+name: qingcode-cli
+description: >-
+  使用 QingCode.exe 子命令管理多个项目，以及本地/SSH 运行配置的增删改查、启动和停止。
+  当用户要求添加或列出项目、编辑 .qingcode/run.json、启动或停止运行配置、授予工作区
+  信任、在运行中的 QingCode 中打开文件、导入导出用户/工作区设置与本地项目列表、恢复默认设置，
+  或 SSH/WSL 启动后 Windows 无法访问前端时使用。
+---
+
+# QingCode CLI
+
+将此文件作为 Skill / 自定义指令安装到 AI Agent；具体路径和格式取决于对应产品。
+QingCode 只提供文本，不会自动注册或适配任何 Agent。
+
+优先使用这些子命令，不要手动修改 SQLite、直接重写 \`.qingcode/run.json\`，也不要猜测界面步骤。
+
+## 可执行文件
+
+\`${quoted}\`
+
+## 输出约定
+
+- 命令结果向 stdout 输出 JSON \`{ ok, data?, error? }\`；\`--help\` 输出纯文本。
+- 退出码：\`0\` 成功 · \`1\` 错误 · \`2\` 用法错误 · \`3\` 应用未运行。
+- 同时检查退出码和 \`ok\`；应向用户展示 \`error\`，不要自行猜测原因。
+
+## 项目与本地运行配置命令
+
+本地项目执行以下命令不需要启动 GUI：
+
+\`\`\`text
+${quoted} project list
+${quoted} project add <dir> [<dir>...]
+${quoted} project remove <id|path|name>
+
+${quoted} run list [--project <id|path|name>]
+${quoted} run get <name|id> [--project ...]
+${quoted} run upsert --json <file|-> [--project ...]
+${quoted} run remove <name|id> [--project ...]
+\`\`\`
+
+- \`project add\` 只接受本地目录。SSH 项目应通过 QingCode 的 SSH 项目对话框添加，使连接、
+  主机指纹和远端根目录能够一起登记。
+- 运行配置增删改查仅在数据库只有一个项目时可以省略 \`--project\`。
+- 存在多个项目时，传入 \`project list\` 返回的 ID 或精确路径；名称只有在唯一时才能使用。
+- 本地项目直接读写 \`<project>/.qingcode/run.json\`，不需要启动 QingCode。
+
+### SSH 运行配置增删改查
+
+路径以 \`ssh://\` 开头的项目同样使用 \`run list|get|upsert|remove\`，但必须先启动 QingCode。
+CLI 会自动通过 GUI 中已认证的 SSH/SFTP 会话执行操作；绝不能把 \`ssh://\` URI 当成本地路径。
+
+- 有多个项目时传入 \`--project <id|ssh-uri|唯一名称>\`。
+- 如果退出码为 \`3\`，启动 QingCode 后重试。不要改写猜测出来的远端 \`.qingcode/run.json\`
+  本地副本。
+- 如果当前应用会话中没有 SSH 密码，请让用户在 QingCode 中重新打开并连接 SSH 项目；
+  不要索要密码，也不要把密码写入 \`run.json\`。
+- 首次成功保存时会自动创建远端 \`.qingcode\` 目录。
+
+### 运行配置 JSON
+
+\`run upsert --json -\` 从 stdin 读取。内容可以是配置对象，也可以是 \`{ "config": {...} }\`：
+
+\`\`\`json
+{
+  "name": "前后端",
+  "restoreWithProjectSession": false,
+  "tasks": [
+    { "name": "后端", "type": "command", "target": "cargo run", "cwd": "src-tauri" },
+    { "name": "前端", "type": "command", "target": "pnpm dev" }
+  ]
+}
+\`\`\`
+
+创建时配置和任务的 \`id\` 可以省略，系统会自动生成。本地任务 \`type\` 支持：
+\`ps1\` | \`bat\` | \`sh\` | \`command\` | \`script\`。SSH Linux 项目只能使用
+\`command\`、\`sh\` 或 \`script\`；启动时会拒绝 \`ps1\`、\`bat\` 和 \`cmd\` 脚本。
+可选字段 \`restoreWithProjectSession\` 默认为 \`false\`；设为 \`true\` 后，应用重启并恢复
+项目会话时会重新启动关联的任务终端。
+
+### 跨平台任务 OS 覆盖
+
+保留同一个配置（例如 \`dev\`）和稳定的任务 ID。任务公共 \`type\`、\`target\`、\`cwd\`、\`env\`
+作为默认值；\`os.windows\`、\`os.linux\`、\`os.macos\` 按实际执行系统覆盖。
+普通字段直接替换，\`cwd: ""\` 表示项目根目录；\`env\` 按变量名合并，OS 同名值优先。
+至少一个 OS 提供命令时可省略公共 \`target\`；当前系统没有有效命令时，在启动任何任务前报错。
+
+\`\`\`json
+{
+  "name": "dev",
+  "tasks": [{
+    "id": "backend", "type": "command", "cwd": "backend",
+    "target": ".venv/bin/python manage.py runserver",
+    "env": { "PYTHONUNBUFFERED": "1" },
+    "os": {
+      "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" },
+      "macos": { "target": "uv run python manage.py runserver" }
+    }
+  }]
+}
+\`\`\`
+
+- 本地项目以本机系统为准。Windows 打开的 WSL UNC 项目使用 \`linux\`，通过 \`wsl.exe\`
+  指定路径所属发行版和 Linux 路径，不猜默认发行版；SSH 以探测到的远端系统为准。
+- 相对 \`cwd\` 始终相对于项目根目录。任务目录及脚本必须位于受信任的项目根目录内，
+  拒绝跨发行版、跨 SSH 连接及符号链接越界。
+- Windows 虚拟环境路径写入 \`os.windows\`；Linux 路径放公共默认值或 \`os.linux\`。
+  WSL 使用 Linux 工具链，需要 \`setsid\`（util-linux）；任务 PATH 排除 Windows 盘符目录。
+- 新版兼容没有 \`os\` 的旧配置和现有 CLI 语法；更新完整对象时保留所有 OS 覆盖。
+  旧版 QingCode 不认识 \`os\`，编辑保存可能丢失这些字段，应使用新版应用与 CLI 保存。
+- \`run start\` 异步提交任务，原返回字段之外增加实际环境和任务终端 ID；\`run status\`
+  保留 \`running\`/\`terminals\`，增加每个任务的状态、退出码、实际命令、目录与环境。
+  进程存活不代表 HTTP 服务或 Celery 已就绪，仍需验证可访问性或执行测试任务；状态不输出环境变量值。
+- Windows SSH 运行任务仍不支持，会明确报错。POSIX SSH 需要可用 Shell 及当前连接模式支持。
+  Celery 官方不支持原生 Windows；使用 WSL Linux worker，或经过项目验证的 Windows 开发覆盖命令。
+
+SSH 任务规则：
+
+- 未填写 \`cwd\`：使用远端项目根目录。相对 \`cwd\`：相对于项目根目录。绝对 POSIX 路径
+  （例如 \`/opt/service\`）仍使用同一个 SSH 连接。不要填写 Windows 路径。
+- \`command\` 通过远端 POSIX \`/bin/sh -lc\` 运行；不要使用 CMD 或 PowerShell 语法。
+- \`sh\` 使用 \`/bin/sh\` 运行目标。
+- \`script\` 根据扩展名选择远端解释器：Python（\`.py\`）、Node/Bun
+  （\`.js\`/\`.mjs\`/\`.cjs\`）、项目内或全局 \`tsx\`/Bun
+  （\`.ts\`/\`.tsx\`/\`.mts\`/\`.cts\`），以及 \`.rb\`、\`.php\`、\`.pl\`、\`.bash\`、
+  \`.zsh\`、\`.sh\` 对应的解释器。其他文件在可执行时直接运行，否则回退到 \`/bin/sh\`。
+- \`env\` 的值必须是字符串，名称必须是有效的 POSIX 环境变量标识符。
+
+### Windows 访问 SSH/WSL 服务
+
+WSL 项目需要从 Windows 验证实际服务地址；localhost 转发与可达地址取决于 WSL 网络配置。
+SSH 项目使用远端可达地址或已明确配置的隧道，SSH 连接本身不会自动转发端口。
+先核对监听地址、端口归属与防火墙，再调整配置；没有证据时保留项目已验证的绑定地址。
+
+### 更新运行配置
+
+\`run upsert\` 会按 \`id\` 替换完整配置；未提供匹配 ID 时按精确 \`name\` 替换。
+它不是局部更新。
+
+1. 使用 \`run get\` 读取现有对象。
+2. 保留其 \`id\`、任务、任务 ID、\`env\` 以及用户未要求修改的所有字段。
+3. 应用用户要求的变更，并提交完整配置对象。
+4. 再次使用 \`run get\` 验证结果。
+
+## 配置导入 / 导出（必须启动 QingCode GUI）
+
+\`\`\`text
+${quoted} settings export --scope user --output <新文件.json>
+${quoted} settings import --scope user --json <file|->
+${quoted} settings export --scope workspace --project <id|path|name> --output <新文件.json>
+${quoted} settings import --scope workspace --project <id|path|name> --json <file|->
+${quoted} settings reset --scope user --yes
+${quoted} settings reset --scope workspace --project <id|path|name> --yes
+\`\`\`
+
+- 默认范围为 \`user\`；工作区未指定 \`--project\` 时使用 GUI 当前项目。
+- 用户导出包含设置、主题、字体、快捷键、语言、终端配置和持久化本地项目列表。
+  不包含 SSH 连接、密码、私钥、信任授权及会话数据。
+- 工作区仅导出设置覆盖项；SSH 工作区需要有效连接。
+- 导入支持导出的 JSON 包或普通 JSON/JSON5 设置对象；无效输入、范围/版本不匹配、
+  设置标签存在未保存修改时拒绝写入。
+- 按键合并设置和 custom；本地项目按路径合并，不删除原记录；不可用路径返回
+  \`skippedProjects\`。导入不会授予工作区信任或执行命令。
+- \`--output\` 写入可再次导入的 JSON 文件，已存在时拒绝覆盖；省略时 stdout 为
+  \`{ ok, data }\`，仅保存 \`data\` 用于导入。\`--json -\` 从 stdin 读取。
+- 退出码 \`3\` 表示需要先启动 QingCode；使用配置命令，不要直接编辑 SQLite。
+- \`settings reset\` 必须显式提供 \`--yes\`。仅在用户明确要求恢复默认时执行，说明范围，
+  用户需要备份时先导出。用户重置清空自定义设置并恢复界面偏好，保留项目列表、工作区设置、
+  信任和会话；工作区重置清空覆盖项和自定义设置，重新继承用户设置。
+
+## 在线执行（必须启动 QingCode GUI）
+
+\`\`\`text
+${quoted} project switch <id|path|name>
+${quoted} run start <name|id> [--project ...]
+${quoted} run stop <name|id> [--project ...]
+${quoted} run status [--project ...]
+${quoted} trust grant <path>
+${quoted} open <file>[:line[:col]] ...
+\`\`\`
+
+- \`run start|stop|status\` 未提供 \`--project\` 时使用 GUI 当前项目。
+- 如果退出码为 \`3\`，告诉用户先启动 QingCode；不要虚构无界面的运行器。SSH 项目的运行配置
+  增删改查也遵循此规则。
+- \`run start\` 执行所选配置中保存的命令。
+
+## Agent 典型流程
+
+1. 使用 \`project list\` 获取状态；通过 \`ssh://\` 路径识别 SSH 项目，然后执行
+   \`run list --project <id>\`。
+2. 创建配置；更新现有配置时遵循上面的完整对象更新流程。
+3. 执行任务以及操作 SSH 运行配置前，确保 GUI 正在运行。
+4. 启动配置后检查 \`run status\`；SSH/WSL 项目再从 Windows 或实际使用端验证服务地址。
+5. 如果受限模式阻止执行，说明原因，并在执行 \`trust grant\` 前取得用户明确授权。
+
+## 安全
+
+- \`project add\` 和 \`run upsert\` 会写入持久状态，必须限制在用户请求范围内。对于 SSH
+  项目，\`run upsert\` 会通过 SFTP 写入远端项目的 \`.qingcode/run.json\`。
+- 只有用户明确要求删除时才能使用 \`project remove\` / \`run remove\`。
+- \`project remove\` 只会删除 QingCode 数据库中的项目和最近文件记录，不会删除项目目录或文件。
+- 绝不能隐式授予信任。确认准确的项目根目录，并取得用户明确授权。
+- 不要使用此 CLI 执行打包、发布标签或强推。
+- 命名工作区不在范围内——只操作用户数据库中的项目列表。
+`
+}
+
+export function isChineseSkillLanguage(language: string): boolean {
+  return /^zh(?:-|$)/i.test(language.trim())
+}
+
+export function buildQingcodeCliSkillMarkdown(exePath: string, language = 'en'): string {
+  const bin = exePath.trim() || 'QingCode.exe'
+  const quoted = bin.includes(' ') ? `"${bin}"` : bin
+  return isChineseSkillLanguage(language) ? buildChineseSkill(quoted) : buildEnglishSkill(quoted)
 }

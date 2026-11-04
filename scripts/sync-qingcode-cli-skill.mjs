@@ -7,6 +7,6 @@ import {
 
 const skillPath = fileURLToPath(new URL('../.agents/skills/qingcode-cli/SKILL.md', import.meta.url))
 
-await writeFile(skillPath, buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY), 'utf8')
+await writeFile(skillPath, buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY, 'en'), 'utf8')
 
 process.stdout.write(`Updated ${skillPath}\n`)

@@ -10,6 +10,7 @@ import {
   SquareSplitHorizontal,
   LayoutGrid,
   SquareCode,
+  FileText,
 } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
@@ -30,6 +31,7 @@ import {
   type PanelLayoutMode,
 } from '../lib/panelLayoutMode'
 import { useUIStore } from '../store/uiStore'
+import { isExternalFileWindow } from '../lib/windowSession'
 
 function layoutModeIcon(mode: PanelLayoutMode) {
   switch (mode) {
@@ -72,6 +74,8 @@ export default function TitleBar({
   const nativeWindowDrag = windowDragMode === 'native'
   const tauriWindowDragFallback = windowDragMode === 'tauri-fallback'
   const sideLayoutActive = panelLayout === 'sideTerminal'
+  const currentProject = useProjectStore(s => s.currentProject)
+  const standaloneFiles = isExternalFileWindow() && !currentProject
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -165,13 +169,48 @@ export default function TitleBar({
     checked: layoutMode === mode,
     action: () => setPanelLayoutMode(mode),
   }))
+  if (sideLayoutActive) {
+    layoutMenuItems.push(
+      {
+        label: t(sideDualTerminal && terminalOpen ? '关闭双终端' : '开启双终端'),
+        icon: <SquareSplitHorizontal size={14} />,
+        separatorBefore: true,
+        checked: sideDualTerminal && terminalOpen,
+        action: () => sideDualTerminal && !terminalOpen ? openTerminalPanel() : toggleSideDualTerminal(),
+      },
+      {
+        label: t(sideQuadTerminal && terminalOpen ? '关闭四终端' : '开启四终端'),
+        icon: <LayoutGrid size={14} />,
+        checked: sideQuadTerminal && terminalOpen,
+        action: () => sideQuadTerminal && !terminalOpen ? openTerminalPanel() : toggleSideQuadTerminal(),
+      },
+      {
+        label: t(sideEditorVisible ? '隐藏编辑器' : '显示编辑器'),
+        icon: <SquareCode size={14} />,
+        checked: sideEditorVisible,
+        action: () => toggleSideEditorVisible(),
+      },
+    )
+  }
 
   return (
     <div
-      className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
+      className={`title-bar-shell ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg-chrome border-b border-border select-none transition-opacity duration-150 ${
         windowFocused ? '' : 'opacity-60'
       }`}
-      onDoubleClick={inTauri ? toggleMaximize : undefined}
+      onDoubleClick={
+        inTauri
+          ? event => {
+              if (
+                event.target instanceof Element &&
+                event.target.closest('[data-modal-overlay], [aria-modal="true"]')
+              ) {
+                return
+              }
+              void toggleMaximize()
+            }
+          : undefined
+      }
     >
       <div className="flex-1 flex items-center h-full min-w-0">
         <div
@@ -181,11 +220,20 @@ export default function TitleBar({
           <AppIcon size={14} className="flex-shrink-0" />
           <FileMenu onExit={handleClose} />
         </div>
-        <ProjectPicker />
+        {standaloneFiles ? (
+          <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden px-1">
+            <span className="inline-flex max-w-[180px] items-center gap-1.5 truncate rounded bg-bg-active px-2 py-1 text-ui-sm text-fg">
+              <FileText size={13} className="flex-shrink-0 text-brand" />
+              {t('独立文件')}
+            </span>
+          </div>
+        ) : (
+          <ProjectPicker />
+        )}
         {/* Modern WebView2 uses native non-client regions only; older runtimes
             receive the Tauri JS/IPC fallback attribute instead. */}
         <div
-          className={`flex-shrink-0 h-full w-[140px] ${
+          className={`title-drag-spacer flex-shrink-0 h-full w-[140px] ${
             nativeWindowDrag ? 'window-drag-region' : ''
           }`}
           data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
@@ -195,7 +243,7 @@ export default function TitleBar({
           } : undefined}
         />
         <span
-          className={`flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand ${
+          className={`title-product-name flex h-full flex-shrink-0 items-center truncate px-3 text-ui font-semibold tracking-[0.01em] text-brand ${
             nativeWindowDrag ? 'window-drag-region' : ''
           }`}
           data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
@@ -209,11 +257,11 @@ export default function TitleBar({
       </div>
 
       <div
-        className="flex h-full flex-shrink-0 items-center gap-1 px-1"
+        className="flex h-full flex-shrink-0 items-center gap-1 pl-1 pr-2"
         onDoubleClick={event => event.stopPropagation()}
       >
         {sideLayoutActive && (
-          <>
+          <span className="title-layout-detail contents">
             <Tooltip
               label={
                 sideDualTerminal && terminalOpen
@@ -234,7 +282,7 @@ export default function TitleBar({
                       : t('开启双终端')
                 }
                 aria-pressed={sideDualTerminal && terminalOpen}
-                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
+                className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideDualTerminal && terminalOpen
                     ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -271,7 +319,7 @@ export default function TitleBar({
                       : t('开启四终端')
                 }
                 aria-pressed={sideQuadTerminal && terminalOpen}
-                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
+                className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideQuadTerminal && terminalOpen
                     ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -296,7 +344,7 @@ export default function TitleBar({
                 type="button"
                 aria-label={sideEditorVisible ? t('隐藏编辑器') : t('显示编辑器')}
                 aria-pressed={sideEditorVisible}
-                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
+                className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideEditorVisible
                     ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -307,7 +355,7 @@ export default function TitleBar({
                 <SquareCode size={14} strokeWidth={1.5} />
               </button>
             </Tooltip>
-          </>
+          </span>
         )}
         <Tooltip label={t('选择面板布局')} side="bottom">
           <button
@@ -315,7 +363,7 @@ export default function TitleBar({
             aria-label={t('选择面板布局')}
             aria-haspopup="menu"
             aria-expanded={layoutMenu !== null}
-            className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
+            className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
               layoutMenu
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -373,8 +421,9 @@ function WindowButton({
       <button
         type="button"
         aria-label={label}
-        className={`flex h-6 w-9 items-center justify-center rounded text-fg-muted transition-colors
-        ${danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-bg-hover hover:text-fg'}`}
+        className={`flex ui-chip h-6 w-8 items-center justify-center rounded text-fg-muted transition-colors ${
+          danger ? 'hover:bg-[#e81123] hover:text-white active:bg-[#c4101e]' : 'hover:bg-bg-hover hover:text-fg active:bg-bg-active'
+        }`}
         onClick={onClick}
       >
         {children}

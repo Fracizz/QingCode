@@ -8,7 +8,6 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
@@ -17,9 +16,12 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    /* TS 7 默认不自动加载 @types；保持与原有检查相同的类型环境。 */
+    "types": ["node", "react", "react-dom"],
+    "noUncheckedSideEffectImports": false,
     /* 加速重复类型检查：增量编译，缓存到 node_modules/.tmp */
     "incremental": true,
-    "tsBuildInfoFile": "node_modules/.tmp/tsbuildinfo.json",
+    "tsBuildInfoFile": "node_modules/.tmp/tsbuildinfo-native.json",
 
     /* Linting */
     "strict": true,

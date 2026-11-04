@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QingCode",
-  "version": "0.1.11",
+  "version": "0.1.15",
   "identifier": "com.qingcode.app",
   "build": {
     "beforeDevCommand": "pnpm dev:app",
@@ -27,6 +27,10 @@
       }
     ],
     "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      },
       "dangerousDisableAssetCspModification": ["style-src"],
       "csp": {
         "default-src": "'self' customprotocol: asset:",
@@ -70,6 +74,7 @@
         "type": "skip"
       },
       "nsis": {
+        "template": "./windows/installer.nsi",
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"],
         "displayLanguageSelector": false,

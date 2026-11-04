@@ -1,7 +1,9 @@
+import { hasBackend } from './runtimeCapabilities'
 import type { Project } from '../types'
 import { confirmDialog } from '../store/confirmStore'
 import { translate } from './i18n'
 import { syncRootsFromProjects, syncTrustedRoots } from './pathAllowlist'
+import { isSshResource, safeInvoke } from './tauri'
 
 /** New storage; migrates once from legacy `qingcode:run-trust`. */
 export const WORKSPACE_TRUST_STORAGE_KEY = 'qingcode:workspace-trust'
@@ -9,7 +11,6 @@ export const WORKSPACE_TRUST_CHANGED_EVENT = 'qingcode:workspace-trust-changed'
 
 /** @deprecated Kept so older builds' keys can be migrated. */
 export const RUN_TRUST_STORAGE_KEY = 'qingcode:run-trust'
-export const RUN_TRUST_CHANGED_EVENT = WORKSPACE_TRUST_CHANGED_EVENT
 
 export type WorkspaceTrustLevel = 'trusted' | 'restricted'
 
@@ -31,7 +32,11 @@ function emptyStore(): TrustStore {
 
 /** Normalize project path for stable trust lookups across slash styles / trailing separators. */
 export function normalizeProjectPath(path: string): string {
-  return path.trim().replace(/[/\\]+$/, '').replace(/\\/g, '/').toLowerCase()
+  const normalized = path
+    .trim()
+    .replace(/[/\\]+$/, '')
+    .replace(/\\/g, '/')
+  return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()
 }
 
 /**
@@ -113,10 +118,7 @@ function writeStore(store: TrustStore) {
   window.dispatchEvent(new Event(WORKSPACE_TRUST_CHANGED_EVENT))
 }
 
-function removeFromLists(
-  store: TrustStore,
-  project: Pick<Project, 'id' | 'path'>,
-): TrustStore {
+function removeFromLists(store: TrustStore, project: Pick<Project, 'id' | 'path'>): TrustStore {
   const path = normalizeProjectPath(project.path)
   return {
     trustedIds: store.trustedIds.filter(id => id !== project.id),
@@ -128,7 +130,7 @@ function removeFromLists(
 
 /** `trusted` | `restricted` | `undecided` (never asked). */
 export function getWorkspaceTrust(
-  project: Pick<Project, 'id' | 'path'>,
+  project: Pick<Project, 'id' | 'path'>
 ): WorkspaceTrustLevel | 'undecided' {
   const store = readStore()
   const path = normalizeProjectPath(project.path)
@@ -143,6 +145,14 @@ export function getWorkspaceTrust(
 
 export function isProjectTrusted(project: Pick<Project, 'id' | 'path'>): boolean {
   return getWorkspaceTrust(project) === 'trusted'
+}
+
+/** Read storage once when selecting a large batch of background candidates. */
+export function createProjectTrustChecker(): (project: Pick<Project, 'id' | 'path'>) => boolean {
+  const store = readStore()
+  const ids = new Set(store.trustedIds)
+  const paths = new Set(store.trustedPaths)
+  return project => ids.has(project.id) || paths.has(normalizeProjectPath(project.path))
 }
 
 export function isProjectRestricted(project: Pick<Project, 'id' | 'path'>): boolean {
@@ -176,13 +186,24 @@ export function untrustProject(project: Pick<Project, 'id' | 'path'>): void {
  * paths that are already registered as project roots.
  */
 export async function pushTrustedRootsToNative(
-  projects: Array<Pick<Project, 'id' | 'path' | 'ephemeral'>>,
+  projects: Array<Pick<Project, 'id' | 'path' | 'ephemeral'>>
 ): Promise<void> {
   await syncRootsFromProjects(projects)
   const roots = projects
     .filter(project => project.ephemeral || isProjectTrusted(project))
     .map(project => project.path)
   await syncTrustedRoots(roots)
+  if (!hasBackend()) return
+  await Promise.all(
+    projects
+      .filter(project => isSshResource(project.path))
+      .map(project =>
+        safeInvoke('同步 SSH 项目信任状态', 'ssh_set_workspace_trust', {
+          rootUri: project.path,
+          trusted: project.ephemeral || isProjectTrusted(project),
+        })
+      )
+  )
 }
 
 /**
@@ -191,7 +212,7 @@ export async function pushTrustedRootsToNative(
  * @returns trust level, or `false` if the user cancelled.
  */
 export async function ensureWorkspaceTrust(
-  project: Pick<Project, 'id' | 'path' | 'name' | 'ephemeral'>,
+  project: Pick<Project, 'id' | 'path' | 'name' | 'ephemeral'>
 ): Promise<WorkspaceTrustLevel | false> {
   if (project.ephemeral) {
     trustProject(project)
@@ -205,7 +226,7 @@ export async function ensureWorkspaceTrust(
     title: translate('是否信任此项目？'),
     message: translate(
       '信任「{name}」中的文件作者后，可编辑文件、使用终端并运行项目脚本。受限模式下只能浏览，不会执行项目内命令。',
-      { name: project.name },
+      { name: project.name }
     ),
     detail: project.path,
     kind: 'warning',

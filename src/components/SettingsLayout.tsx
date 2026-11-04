@@ -1,57 +1,25 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
-
-export type SettingsCategoryId =
-  | 'common'
-  | 'editor'
-  | 'terminal'
-  | 'ai'
-  | 'features'
-  | 'language'
-  | 'json'
-  | 'about'
+import { useCallback, type ReactNode } from 'react'
+import type { SettingsCategoryId } from '../lib/settingsSearch'
+export type { SettingsCategoryId } from '../lib/settingsSearch'
 
 export function SettingsSection({
   id,
   title,
   children,
   onSectionRef,
-  onVisible,
 }: {
   id: SettingsCategoryId
   title: string
   children: ReactNode
   onSectionRef: (id: SettingsCategoryId, node: HTMLElement | null) => void
-  onVisible: (id: SettingsCategoryId) => void
 }) {
-  const localRef = useRef<HTMLElement | null>(null)
-
-  useEffect(() => {
-    const el = localRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries.some(entry => entry.isIntersecting)) onVisible(id)
-      },
-      { rootMargin: '-20% 0px -60% 0px', threshold: 0 },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [id, onVisible])
-
   const setSectionRef = useCallback(
-    (node: HTMLElement | null) => {
-      localRef.current = node
-      onSectionRef(id, node)
-    },
+    (node: HTMLElement | null) => onSectionRef(id, node),
     [id, onSectionRef],
   )
-
   return (
-    <section
-      ref={setSectionRef}
-      className="scroll-mt-4"
-    >
-      <h2 className="text-[18px] font-semibold text-fg mb-3 pb-2 border-b border-border">
+    <section ref={setSectionRef} aria-labelledby={`settings-heading-${id}`} className="scroll-mt-4">
+      <h2 id={`settings-heading-${id}`} className="text-ui-heading font-semibold text-fg mb-3 pb-2 border-b border-border">
         {title}
       </h2>
       <div className="flex flex-col gap-5">{children}</div>
@@ -65,6 +33,7 @@ export function SettingItem({
   modified,
   locked,
   lockHint,
+  layout = 'responsive',
   children,
 }: {
   title: string
@@ -72,23 +41,22 @@ export function SettingItem({
   modified?: boolean
   locked?: boolean
   lockHint?: string
+  layout?: 'responsive' | 'stacked'
   children: ReactNode
 }) {
   return (
     <div
-      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'} ${
-        locked ? 'opacity-70' : ''
-      }`}
+      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'}`}
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-        <div className="min-w-[12rem] flex-1 basis-0">
-          <div className="text-[13px] font-medium text-fg">{title}</div>
+      <div className={`settings-item-row flex flex-col gap-2${layout === 'stacked' ? ' settings-item-stacked' : ''}`}>
+        <div className="settings-item-copy min-w-0 flex-1">
+          <div className="text-ui font-medium text-fg">{title}</div>
           <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted break-words">{description}</p>
           {locked && lockHint && (
             <p className="text-ui-sm mt-1 text-warn break-words">{lockHint}</p>
           )}
         </div>
-        <div className="w-full sm:w-auto sm:max-w-[min(100%,320px)] sm:flex-shrink-0 pt-0.5">
+        <div className="settings-item-control min-w-0 w-full max-w-full pt-0.5">
           {children}
         </div>
       </div>

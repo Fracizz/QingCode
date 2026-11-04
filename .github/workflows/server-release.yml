@@ -1,0 +1,216 @@
+name: Server Release
+
+# qingcode-server 的独立构建与发布：与主程序 Release 分开走，
+# 标签独立命名（server-v<qingcode-server 版本>），资产供客户端
+# `ssh.server.autoDownload` 在本机缺失二进制时下载（manifest.json 带 sha256）。
+
+on:
+  push:
+    tags:
+      - 'server-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing server-v* tag to (re)build. Leave empty to use qingcode-server/Cargo.toml version and create/update the release.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: server-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install C cross compilers for TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Install Rust toolchain and configure musl build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add ${{ matrix.target }}
+          # Rust supplies self-contained musl crt/libc; rust-lld links the final
+          # static ELF. TLS/ring also builds C sources, requiring target CC/AR.
+          LLD="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"
+          TARGET='${{ matrix.target }}'
+          LINKER_KEY="CARGO_TARGET_${TARGET^^}_LINKER"
+          LINKER_KEY="${LINKER_KEY//-/_}"
+          echo "$LINKER_KEY=$LLD" >> "$GITHUB_ENV"
+          if [ "$TARGET" = x86_64-unknown-linux-musl ]; then
+            echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+            echo "AR_x86_64_unknown_linux_musl=ar" >> "$GITHUB_ENV"
+          else
+            # Compile ring against GCC's freestanding headers. No glibc
+            # headers/libraries enter the final Rust musl-linked binary.
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+            echo "AR_aarch64_unknown_linux_musl=aarch64-linux-gnu-ar" >> "$GITHUB_ENV"
+            echo "CFLAGS_aarch64_unknown_linux_musl=-ffreestanding -DRING_CORE_NOSTDLIBINC=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path src-tauri/Cargo.toml \
+            -p qingcode-server --profile server-release --target ${{ matrix.target }}
+          # Reject an accidental dynamically linked/glibc artifact.
+          readelf -l "src-tauri/target/${{ matrix.target }}/server-release/qingcode-server" > "$RUNNER_TEMP/server-elf-layout.txt"
+          if grep -q INTERP "$RUNNER_TEMP/server-elf-layout.txt"; then
+            echo "server must be static (unexpected ELF interpreter)" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp "src-tauri/target/${{ matrix.target }}/server-release/qingcode-server" \
+             "dist/qingcode-server-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-server-${{ matrix.arch }}
+          path: dist/qingcode-server-${{ matrix.arch }}
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows serve binary
+        shell: pwsh
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-server --profile server-release
+          if ($LASTEXITCODE -ne 0) { throw "windows server build failed: $LASTEXITCODE" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src-tauri/target/server-release/qingcode-server.exe dist/qingcode-server-windows-x86_64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-server-windows-x86_64
+          path: dist/qingcode-server-windows-x86_64.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            arch: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build macOS Server
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-server --profile server-release --target ${{ matrix.target }}
+          mkdir -p dist
+          cp src-tauri/target/${{ matrix.target }}/server-release/qingcode-server dist/qingcode-server-macos-${{ matrix.arch }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-server-macos-${{ matrix.arch }}
+          path: dist/qingcode-server-macos-${{ matrix.arch }}
+          if-no-files-found: error
+
+  publish:
+    needs: [build, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version and tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' src-tauri/qingcode-server/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="server-v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate manifest
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          {
+            echo '{'
+            echo "  \"version\": \"$VERSION\","
+            echo '  "artifacts": {'
+            first=1
+            for f in qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64; do
+              [ -f "$f" ] || continue
+              SHA="$(sha256sum "$f" | cut -d' ' -f1)"
+              SIZE="$(stat -c%s "$f")"
+              [ $first -eq 0 ] && echo ','
+              first=0
+              printf '    "%s": {"sha256": "%s", "size": %s}' "$f" "$SHA" "$SIZE"
+            done
+            echo
+            echo '  }'
+            echo '}'
+          } > manifest.json
+          cat manifest.json
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64 manifest.json
+          else
+            release_flags=(--latest=false)
+            if [[ "${{ steps.meta.outputs.version }}" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              "${release_flags[@]}" \
+              --title "qingcode-server ${TAG#server-v}" \
+              --notes "qingcode-server 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 ssh.server.autoDownload 使用；Windows 安装包和便携版使用独立离线服务包。" \
+              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64 manifest.json
+          fi

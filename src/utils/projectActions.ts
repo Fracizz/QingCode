@@ -4,9 +4,10 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useEditorStore } from '../store/editorStore'
 import { confirmDialog } from '../store/confirmStore'
 import { promptDialog, validateEntryName } from '../store/promptStore'
-import { isTauri } from '../lib/tauri'
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { translate } from '../lib/i18n'
 import { listBusyTerminals } from '@/lib/terminal/terminalClose'
+import { requestSshReconnect } from '../lib/sshWorkspace'
 
 /** Confirm then remove a project, tearing down its terminals and editor tabs. */
 export async function removeProjectWithConfirm(id: string, name: string, path: string) {
@@ -14,7 +15,7 @@ export async function removeProjectWithConfirm(id: string, name: string, path: s
     useTerminalStore.getState().terminals.filter(t => t.projectId === id),
   )
   const runningCount = busy.length
-  if (isTauri()) {
+  if (hasBackend()) {
     const ok = await confirmDialog({
       title: translate('移除项目'),
       message: translate('确定从工作区移除「{name}」？', { name }),
@@ -40,6 +41,11 @@ export async function removeProjectWithConfirm(id: string, name: string, path: s
 
 /** Open a directory picker and relocate the project, updating terminal cwds on success. */
 export async function relocateProjectWithDialog(id: string) {
+  const project = useProjectStore.getState().projects.find(p => p.id === id)
+  if (project?.kind === 'ssh') {
+    requestSshReconnect(project)
+    return
+  }
   try {
     const selected = await open({ directory: true, multiple: false })
     if (typeof selected === 'string' && (await useProjectStore.getState().relocateProject(id, selected))) {

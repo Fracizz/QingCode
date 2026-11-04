@@ -19,6 +19,7 @@ import {
 } from './editorSession'
 import { shouldRestoreWorkspace } from './windowSession'
 import { isSessionPersistEnabled } from './sessionPersistSettings'
+import { isNonEditableViewMode } from './openFileError'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import {
@@ -48,9 +49,6 @@ let hydrated = false
 /** False until project list has loaded — avoids writing an empty snapshot over storage. */
 let persistReady = false
 let persistTimer: ReturnType<typeof setTimeout> | null = null
-let unsubEditor: (() => void) | null = null
-let unsubTerminal: (() => void) | null = null
-let unsubProject: (() => void) | null = null
 
 function splitPinned(tabs: EditorTab[]) {
   const pinned: EditorTab[] = []
@@ -251,7 +249,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
               id: tab.id,
               path: tab.path,
               name: tab.name,
-              dirty: tab.viewMode === 'view' ? false : tab.dirty,
+              dirty: isNonEditableViewMode(tab) ? false : tab.dirty,
               language: tab.language,
               scroll: scrollForTab(tab.id),
               viewMode: tab.viewMode,
@@ -264,7 +262,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
       id: tab.id,
       path: tab.path,
       name: tab.name,
-      dirty: tab.viewMode === 'view' ? false : tab.dirty,
+      dirty: isNonEditableViewMode(tab) ? false : tab.dirty,
       language: tab.language,
       scroll: scrollForTab(tab.id),
       viewMode: tab.viewMode,
@@ -289,6 +287,11 @@ export function captureWorkspaceSessionSnapshot(options?: {
         allowTitleRename: t.allowTitleRename,
         runConfigId: t.runConfigId,
         runTaskId: t.runTaskId,
+        persistent: t.persistent,
+        ptyId: t.ptyId,
+        endedAt: t.endedAt,
+        exitCode: t.exitCode,
+        connectionId: t.connectionId,
       })),
     activeTerminalByProject: terminalState.activeTerminalByProject,
     secondaryTerminalByProject: terminalState.secondaryTerminalByProject,
@@ -323,9 +326,9 @@ export function installWorkspaceSessionPersistence() {
   installed = true
   if (!shouldRestoreWorkspace()) return
 
-  unsubEditor = useEditorStore.subscribe(() => scheduleWorkspaceSessionPersist())
-  unsubTerminal = useTerminalStore.subscribe(() => scheduleWorkspaceSessionPersist())
-  unsubProject = useProjectStore.subscribe((state, prev) => {
+  useEditorStore.subscribe(() => scheduleWorkspaceSessionPersist())
+  useTerminalStore.subscribe(() => scheduleWorkspaceSessionPersist())
+  useProjectStore.subscribe((state, prev) => {
     if (state.currentProject?.id !== prev.currentProject?.id) {
       scheduleWorkspaceSessionPersist()
     }
@@ -340,19 +343,4 @@ export function flushWorkspaceSessionPersist() {
     persistTimer = null
   }
   persistNow()
-}
-
-/** Test helper — reset module flags between Vitest cases. */
-export function _resetWorkspaceSessionSyncForTests() {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = null
-  unsubEditor?.()
-  unsubTerminal?.()
-  unsubProject?.()
-  unsubEditor = null
-  unsubTerminal = null
-  unsubProject = null
-  installed = false
-  hydrated = false
-  persistReady = false
 }

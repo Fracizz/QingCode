@@ -1,8 +1,12 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
 import type { GitStatus } from '@/lib/git/git'
-import { isTauri } from '../lib/tauri'
-import { getGitHead, getGitWorkdirStatus } from '../lib/ipc/git'
-import { notifyGitDirtyCount } from '../lib/projectIndicators'
+import { getGitHead, getGitStatus, getGitWorkdirStatus } from '../lib/ipc/git'
+import {
+  notifyGitDirtyCount,
+  normalizedProjectPath,
+  projectPathsMatch,
+} from '../lib/projectIndicators'
 import {
   absoluteGitPath,
   buildStatusMap,
@@ -11,214 +15,273 @@ import {
   preserveGitStatusMetadata,
   gitStatusKey,
   type GitStatusEntry,
-  type GitWorkdirStatus,
 } from '@/lib/git/gitStatus'
+
+type GitSnapshot = {
+  statusByPath: Map<string, string>
+  entries: GitStatusEntry[]
+  dirtyCount: number
+  panelStatus: GitStatus
+}
+type RefreshOptions = {
+  /** Background polling updates the cache without changing the active project. */
+  background?: boolean
+  /** Opening a view can reuse a pending read; file mutations need a trailing read. */
+  reuseInFlight?: boolean
+  full?: boolean
+}
 type GitStatusState = {
   projectPath: string | null
-  /** Normalized absolute path → porcelain status. */
   statusByPath: Map<string, string>
-  /** Original-cased dirty entries for SCM panel seeding. */
   entries: GitStatusEntry[]
   dirtyCount: number
   refreshing: boolean
-  /** Canonical SCM snapshot for the active/recent project. */
   panelPath: string | null
   panelStatus: GitStatus | null
-  refresh: (projectPath: string | null | undefined) => Promise<void>
-  /** Apply a full `git_status` snapshot without a second CLI round-trip. */
+  snapshots: ReadonlyMap<string, GitSnapshot>
+  activate: (projectPath: string) => void
+  refresh: (projectPath: string | null | undefined, options?: RefreshOptions) => Promise<void>
   applyFromGitStatus: (projectPath: string, status: GitStatus) => void
   setPanelStatus: (projectPath: string, status: GitStatus | null) => void
   clearPanelStatus: (projectPath?: string) => void
   scheduleRefresh: (projectPath?: string | null, delayMs?: number) => void
   statusFor: (path: string) => string | null
   statusForDir: (dirPath: string) => string | null
-  /** Seed the SCM panel from the already-loaded workdir map. */
+  dirtyCountFor: (projectPath?: string | null) => number
   peekPanelStatus: (projectPath: string) => GitStatus | null
   clear: () => void
 }
 
-let refreshTimer: ReturnType<typeof setTimeout> | null = null
-let lastRefreshAt = 0
-let inFlight: Promise<void> | null = null
+type InFlightRefresh = { promise: Promise<void>; again: boolean; full: boolean }
+const inFlight = new Map<string, InFlightRefresh>()
+const revisions = new Map<string, number>()
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const lastRefreshAt = new Map<string, number>()
 const MIN_REFRESH_GAP_MS = 1_500
-
-export const useGitStatusStore = create<GitStatusState>((set, get) => ({
-  projectPath: null,
-  statusByPath: new Map(),
-  entries: [],
+const emptyActive = () => ({
+  statusByPath: new Map<string, string>(),
+  entries: [] as GitStatusEntry[],
   dirtyCount: 0,
-  refreshing: false,
-  panelPath: null,
   panelStatus: null,
+})
 
-  clear: () => {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-    set({
-      projectPath: null,
-      statusByPath: new Map(),
-      entries: [],
-      dirtyCount: 0,
-      refreshing: false,
-      panelPath: null,
-      panelStatus: null,
-    })
-  },
-
-  setPanelStatus: (projectPath, status) =>
-    set({
-      panelPath: projectPath,
-      panelStatus: status,
-    }),
-
-  clearPanelStatus: projectPath =>
-    set(state =>
-      projectPath === undefined || state.panelPath === projectPath
-        ? { panelPath: null, panelStatus: null }
-        : state
-    ),
-
-  statusFor: path => get().statusByPath.get(gitStatusKey(path)) ?? null,
-
-  statusForDir: dirPath => dirGitStatus(get().statusByPath, dirPath),
-
-  peekPanelStatus: projectPath => {
-    const state = get()
-    if (state.panelPath === projectPath && state.panelStatus) return state.panelStatus
-    if (state.projectPath !== projectPath) return null
-    return preserveGitStatusMetadata(
-      gitStatusFromWorkdirEntries(
-        projectPath,
-        state.entries,
-        state.panelPath === projectPath ? (state.panelStatus?.branch ?? null) : null,
-      ),
-      state.panelPath === projectPath ? state.panelStatus : null,
-    )
-  },
-
-  applyFromGitStatus: (projectPath, status) => {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-    if (!status.is_repository) {
-      set({
-        projectPath,
-        statusByPath: new Map(),
-        entries: [],
-        dirtyCount: 0,
-        refreshing: false,
-        panelPath: projectPath,
-        panelStatus: status,
-      })
-      notifyGitDirtyCount(projectPath, 0)
-      lastRefreshAt = Date.now()
-      return
-    }
-    const entries = status.changes.map(change => ({
-      path: absoluteGitPath(projectPath, change.path),
-      status: change.status,
-    }))
-    const dirtyCount = status.changes.length
-    set({
-      projectPath,
+export const useGitStatusStore = create<GitStatusState>((set, get) => {
+  const publish = (projectPath: string, status: GitStatus) => {
+    const key = normalizedProjectPath(projectPath)
+    const entries = status.is_repository
+      ? status.changes.map(change => ({
+          path: absoluteGitPath(projectPath, change.path),
+          status: change.status,
+        }))
+      : []
+    const snapshot: GitSnapshot = {
       statusByPath: buildStatusMap(entries),
       entries,
-      dirtyCount,
-      refreshing: false,
-      panelPath: projectPath,
+      dirtyCount: entries.length,
       panelStatus: status,
-    })
-    notifyGitDirtyCount(projectPath, dirtyCount)
-    lastRefreshAt = Date.now()
-  },
-
-  refresh: async projectPath => {
-    if (!projectPath || !isTauri()) {
-      get().clear()
-      return
     }
+    set(state => ({
+      snapshots: new Map(state.snapshots).set(key, snapshot),
+      ...(state.projectPath && projectPathsMatch(state.projectPath, projectPath)
+        ? { ...snapshot, panelPath: state.projectPath }
+        : {}),
+    }))
+    lastRefreshAt.set(key, Date.now())
+    notifyGitDirtyCount(projectPath, snapshot.dirtyCount)
+  }
 
-    const run = async () => {
-      set({ refreshing: true, projectPath })
-      try {
-        const result: GitWorkdirStatus | null = await getGitWorkdirStatus(projectPath)
-        if (get().projectPath !== projectPath) return
-        if (!result) {
-          set({
-            statusByPath: new Map(),
-            entries: [],
-            dirtyCount: 0,
-            panelPath: projectPath,
-            panelStatus: { is_repository: false, branch: null, changes: [] },
-          })
-          notifyGitDirtyCount(projectPath, 0)
-          return
+  return {
+    projectPath: null,
+    ...emptyActive(),
+    refreshing: false,
+    panelPath: null,
+    snapshots: new Map(),
+
+    activate: projectPath => {
+      const key = normalizedProjectPath(projectPath)
+      if (get().projectPath === projectPath) return
+      const snapshot = get().snapshots.get(key)
+      set({
+        projectPath,
+        ...(snapshot ?? emptyActive()),
+        panelPath: snapshot ? projectPath : null,
+        refreshing: inFlight.has(key),
+      })
+    },
+
+    clear: () => {
+      for (const timer of refreshTimers.values()) clearTimeout(timer)
+      refreshTimers.clear()
+      inFlight.clear()
+      revisions.clear()
+      lastRefreshAt.clear()
+      set({
+        projectPath: null,
+        ...emptyActive(),
+        refreshing: false,
+        panelPath: null,
+        snapshots: new Map(),
+      })
+    },
+
+    setPanelStatus: (projectPath, status) => {
+      if (!status) {
+        get().clearPanelStatus(projectPath)
+        return
+      }
+      if (get().peekPanelStatus(projectPath) === status) return
+      if (!get().projectPath) get().activate(projectPath)
+      const key = normalizedProjectPath(projectPath)
+      // Filling HEAD metadata must not discard an in-flight workdir update.
+      if (get().peekPanelStatus(projectPath)?.changes !== status.changes) {
+        revisions.set(key, (revisions.get(key) ?? 0) + 1)
+      }
+      publish(projectPath, status)
+    },
+
+    clearPanelStatus: projectPath => {
+      set(state => {
+        const snapshots = new Map(state.snapshots)
+        if (projectPath) snapshots.delete(normalizedProjectPath(projectPath))
+        else snapshots.clear()
+        return {
+          snapshots,
+          ...(!projectPath || (state.panelPath && projectPathsMatch(state.panelPath, projectPath))
+            ? { panelPath: null, panelStatus: null }
+            : {}),
         }
-        const previous = get().panelPath === projectPath ? get().panelStatus : null
-        const panelStatus = preserveGitStatusMetadata(
-          gitStatusFromWorkdirEntries(
-            projectPath,
-            result.entries,
-            previous?.branch ?? null,
-          ),
-          previous,
-        )
-        set({
-          statusByPath: buildStatusMap(result.entries),
-          entries: result.entries,
-          dirtyCount: result.dirty_count,
-          panelPath: projectPath,
-          panelStatus,
-        })
-        notifyGitDirtyCount(projectPath, result.dirty_count)
-        // Workdir status confirms a repo but does not include the branch name.
-        // Fill HEAD so the status bar / SCM soft-open can show it without a
-        // second full `git_status` round-trip.
-        if (panelStatus.is_repository && !panelStatus.branch) {
-          try {
-            const head = await getGitHead(projectPath)
-            if (get().projectPath !== projectPath) return
-            if (head?.name) {
-              set(state => ({
-                panelStatus:
-                  state.panelPath === projectPath && state.panelStatus
-                    ? { ...state.panelStatus, branch: head.name }
-                    : state.panelStatus,
-              }))
+      })
+    },
+
+    statusFor: path => get().statusByPath.get(gitStatusKey(path)) ?? null,
+    statusForDir: dirPath => dirGitStatus(get().statusByPath, dirPath),
+    dirtyCountFor: projectPath =>
+      projectPath ? (get().snapshots.get(normalizedProjectPath(projectPath))?.dirtyCount ?? 0) : 0,
+    peekPanelStatus: projectPath =>
+      get().snapshots.get(normalizedProjectPath(projectPath))?.panelStatus ?? null,
+
+    applyFromGitStatus: (projectPath, status) => {
+      get().activate(projectPath)
+      const key = normalizedProjectPath(projectPath)
+      const timer = refreshTimers.get(key)
+      if (timer) clearTimeout(timer)
+      refreshTimers.delete(key)
+      revisions.set(key, (revisions.get(key) ?? 0) + 1)
+      publish(projectPath, status)
+    },
+
+    refresh: async (projectPath, options = {}) => {
+      if (!projectPath || !hasBackend()) {
+        if (!options.background) get().clear()
+        return
+      }
+      const key = normalizedProjectPath(projectPath)
+      if (!options.background) get().activate(projectPath)
+      const existing = inFlight.get(key)
+      if (existing) {
+        if (!options.reuseInFlight || (options.full && !existing.full)) {
+          existing.again = true
+          // A file mutation (or a newer full read) makes the pending result obsolete.
+          // Publish only the trailing read so badges never bounce through that old count.
+          revisions.set(key, (revisions.get(key) ?? 0) + 1)
+        }
+        existing.full ||= options.full ?? false
+        try {
+          await existing.promise
+        } catch (reason) {
+          if (options.full) throw reason
+        }
+        return
+      }
+
+      const entry: InFlightRefresh = {
+        promise: Promise.resolve(),
+        again: false,
+        full: options.full ?? false,
+      }
+      // Register before awaiting: a switch back to this project must join the same read.
+      inFlight.set(key, entry)
+      if (projectPathsMatch(get().projectPath ?? '', projectPath)) set({ refreshing: true })
+      entry.promise = (async () => {
+        try {
+          do {
+            entry.again = false
+            const revision = revisions.get(key) ?? 0
+            const isCurrent = () =>
+              inFlight.get(key) === entry && (revisions.get(key) ?? 0) === revision
+            const full = entry.full
+            try {
+              let status: GitStatus
+              let needsHead = false
+              if (full) {
+                status = await getGitStatus(projectPath)
+              } else {
+                const result = await getGitWorkdirStatus(projectPath)
+                if (!isCurrent()) continue
+                needsHead = result?.branch === undefined
+                const previous = get().peekPanelStatus(projectPath)
+                status = result
+                  ? preserveGitStatusMetadata(
+                      gitStatusFromWorkdirEntries(
+                        projectPath,
+                        result.entries,
+                        result.branch !== undefined ? result.branch : (previous?.branch ?? null)
+                      ),
+                      previous
+                    )
+                  : // The lightweight local command also returns null for transient failures
+                    // (including an allowlist sync still in progress). Confirm before erasing a repo.
+                    previous?.is_repository
+                    ? await getGitStatus(projectPath)
+                    : { is_repository: false, branch: null, changes: [] }
+              }
+              if (!isCurrent()) continue
+              publish(projectPath, status)
+              if (needsHead && status.is_repository && !status.branch) {
+                try {
+                  const head = await getGitHead(projectPath)
+                  const latest = get().peekPanelStatus(projectPath)
+                  if (isCurrent() && head?.name && latest)
+                    publish(projectPath, { ...latest, branch: head.name })
+                } catch {
+                  /* Keep the successful workdir snapshot. */
+                }
+              }
+            } catch (reason) {
+              // Transient failures keep the last successful snapshot, including badges.
+              if (full) throw reason
             }
-          } catch {
-            /* keep null branch */
+          } while (entry.again && inFlight.get(key) === entry)
+        } finally {
+          if (inFlight.get(key) === entry) {
+            inFlight.delete(key)
+            if (projectPathsMatch(get().projectPath ?? '', projectPath)) set({ refreshing: false })
           }
         }
-        lastRefreshAt = Date.now()
-      } catch {
-        // Keep the previous badge on transient CLI failures (same as project-tab indicators).
-      } finally {
-        if (get().projectPath === projectPath) set({ refreshing: false })
+      })()
+      try {
+        await entry.promise
+      } catch (reason) {
+        if (options.full) throw reason
       }
-    }
+    },
 
-    if (inFlight) {
-      await inFlight
-    }
-    inFlight = run().finally(() => {
-      inFlight = null
-    })
-    await inFlight
-  },
-
-  scheduleRefresh: (projectPath, delayMs = 600) => {
-    const path = projectPath ?? get().projectPath
-    if (!path) return
-    if (refreshTimer) clearTimeout(refreshTimer)
-    const since = Date.now() - lastRefreshAt
-    const wait = Math.max(delayMs, since < MIN_REFRESH_GAP_MS ? MIN_REFRESH_GAP_MS - since : 0)
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null
-      void get().refresh(path)
-    }, wait)
-  },
-}))
+    scheduleRefresh: (projectPath, delayMs = 600) => {
+      const path = projectPath ?? get().projectPath
+      if (!path) return
+      const key = normalizedProjectPath(path)
+      const timer = refreshTimers.get(key)
+      if (timer) clearTimeout(timer)
+      const since = Date.now() - (lastRefreshAt.get(key) ?? 0)
+      const wait = Math.max(delayMs, MIN_REFRESH_GAP_MS - since)
+      refreshTimers.set(
+        key,
+        setTimeout(() => {
+          refreshTimers.delete(key)
+          // A delayed event from the previous project must never activate it again.
+          void get().refresh(path, { background: true })
+        }, wait)
+      )
+    },
+  }
+})

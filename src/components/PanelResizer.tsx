@@ -7,6 +7,10 @@ interface Props {
   tooltipSide?: TooltipSide
   onMouseDown?: (e: React.MouseEvent<HTMLDivElement>) => void
   onPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void
+  onValueChange?: (value: number) => void
+  onReset?: () => void
+  keyboardStep?: number
+  keyboardDirection?: 1 | -1
   ariaValueNow?: number
   ariaValueMin?: number
   ariaValueMax?: number
@@ -20,6 +24,10 @@ export default function PanelResizer({
   tooltipSide = orientation === 'horizontal' ? 'top' : 'right',
   onMouseDown,
   onPointerDown,
+  onValueChange,
+  onReset,
+  keyboardStep = 10,
+  keyboardDirection = 1,
   ariaValueNow,
   ariaValueMin,
   ariaValueMax,
@@ -38,6 +46,29 @@ export default function PanelResizer({
         onMouseDown={onMouseDown}
         onPointerDown={onPointerDown}
         role="separator"
+        tabIndex={onValueChange ? 0 : undefined}
+        aria-label={tooltip}
+        onDoubleClick={onReset}
+        onKeyDown={event => {
+          if (!onValueChange || ariaValueNow == null) return
+          if (event.key === 'Enter' && onReset) {
+            event.preventDefault()
+            event.stopPropagation()
+            onReset()
+            return
+          }
+          const decrease = orientation === 'vertical' ? 'ArrowLeft' : 'ArrowUp'
+          const increase = orientation === 'vertical' ? 'ArrowRight' : 'ArrowDown'
+          let value: number
+          if (event.key === 'Home' && ariaValueMin != null) value = ariaValueMin
+          else if (event.key === 'End' && ariaValueMax != null) value = ariaValueMax
+          else if (event.key === decrease || event.key === increase) {
+            value = ariaValueNow + (event.key === decrease ? -1 : 1) * keyboardDirection * keyboardStep * (event.shiftKey ? 5 : 1)
+          } else return
+          event.preventDefault()
+          event.stopPropagation()
+          onValueChange(Math.min(ariaValueMax ?? Infinity, Math.max(ariaValueMin ?? -Infinity, value)))
+        }}
         aria-orientation={orientation === 'horizontal' ? 'horizontal' : 'vertical'}
         aria-valuenow={ariaValueNow}
         aria-valuemin={ariaValueMin}

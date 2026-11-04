@@ -1,8 +1,9 @@
-import { safeInvoke, isTauri } from './tauri'
+import { hasBackend } from './runtimeCapabilities'
+import { safeInvoke } from './tauri'
 
 /** Push registered project roots to the native path sandbox. */
 export async function syncProjectRoots(roots: string[]): Promise<void> {
-  if (!isTauri()) return
+  if (!hasBackend()) return
   await safeInvoke('同步项目根目录', 'sync_project_roots', { roots })
 }
 
@@ -11,7 +12,7 @@ export async function syncProjectRoots(roots: string[]): Promise<void> {
  * (Save As destination, Explorer "Open with", temp empty-project dirs, etc.).
  */
 export async function authorizePaths(paths: string[]): Promise<void> {
-  if (!isTauri() || paths.length === 0) return
+  if (!hasBackend() || paths.length === 0) return
   await safeInvoke('授权路径', 'authorize_paths', { paths })
 }
 
@@ -23,6 +24,6 @@ export async function syncRootsFromProjects(
 
 /** Push workspace-trusted project roots (write / terminal / run) to the native sandbox. */
 export async function syncTrustedRoots(roots: string[]): Promise<void> {
-  if (!isTauri()) return
+  if (!hasBackend()) return
   await safeInvoke('同步受信任项目根目录', 'sync_trusted_roots', { roots })
 }

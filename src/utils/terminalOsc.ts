@@ -21,6 +21,8 @@ export type TerminalOscHandlers = {
   onCommandStart?: () => void
   /** Foreground command finished or prompt returned. */
   onCommandEnd?: () => void
+  /** Text written by a terminal application; clipboard reads are never exposed. */
+  onClipboardWrite?: (text: string) => void
 }
 
 /**
@@ -41,68 +43,70 @@ export function parseShellIntegrationOsc(
   return null
 }
 
-/** Strip OSC title / shell-integration sequences from PTY output. */
-export class TerminalOscParser {
-  private carry = ''
-  private readonly decoder = new TextDecoder('utf-8', { fatal: false })
+/** xterm `term.parser` 中注册 OSC 处理所需的最小接口，便于单测。 */
+export type TerminalOscRegistry = {
+  registerOscHandler(ident: number, callback: (data: string) => boolean): { dispose(): void }
+}
 
-  feed(data: Uint8Array, handlers?: TerminalOscHandlers): Uint8Array {
-    const input = this.carry + this.decoder.decode(data, { stream: true })
+const TITLE_OSC_IDENTS = [0, 1, 2] as const
+const SHELL_INTEGRATION_OSC_IDENTS = [133, 633] as const
+/**
+ * xterm 或已加载插件默认会响应、但我们需要吞掉的 OSC：
+ * 8 超链接（默认弹原生 confirm 并 window.open）、
+ * 4/10/11/12/104/110/111/112 调色板与颜色查询。其余编号 xterm 本身就会忽略。
+ */
+export const SUPPRESSED_OSC_IDENTS = [4, 8, 10, 11, 12, 104, 110, 111, 112] as const
 
-    const output: string[] = []
-    let index = 0
+/** Bound application clipboard writes to 1 MiB of UTF-8 text. */
+export const MAX_OSC_CLIPBOARD_BYTES = 1024 * 1024
 
-    while (index < input.length) {
-      const start = input.indexOf('\x1b]', index)
-      if (start === -1) {
-        output.push(input.slice(index))
-        index = input.length
-        break
-      }
-
-      output.push(input.slice(index, start))
-
-      const bellEnd = input.indexOf('\x07', start + 2)
-      const stEnd = input.indexOf('\x1b\\', start + 2)
-      let end = -1
-      let endLength = 0
-
-      if (bellEnd !== -1 && (stEnd === -1 || bellEnd < stEnd)) {
-        end = bellEnd
-        endLength = 1
-      } else if (stEnd !== -1) {
-        end = stEnd
-        endLength = 2
-      }
-
-      if (end === -1) {
-        this.carry = input.slice(start)
-        return encodeOutput(output.join(''))
-      }
-
-      const sequence = input.slice(start, end + endLength)
-      const bodyMatch =
-        /^\x1b\]([\s\S]*)\x07$/.exec(sequence) ?? /^\x1b\]([\s\S]*)\x1b\\$/.exec(sequence)
-      const body = bodyMatch?.[1] ?? ''
-
-      const titleMatch = /^(?:0|1|2);([\s\S]*)$/.exec(body)
-      if (titleMatch) {
-        const title = titleMatch[1]?.trim()
-        if (title) handlers?.onTitle?.(sanitizeOscTitle(title))
-      } else {
-        const marker = parseShellIntegrationOsc(body)
-        if (marker === 'start') handlers?.onCommandStart?.()
-        else if (marker === 'end') handlers?.onCommandEnd?.()
-      }
-
-      index = end + endLength
-    }
-
-    this.carry = ''
-    return encodeOutput(output.join(''))
+function clipboardWriteText(data: string): string | undefined {
+  const separator = data.indexOf(';')
+  if (separator < 0 || !/^[cs]*$/.test(data.slice(0, separator))) return
+  const encoded = data.slice(separator + 1)
+  // Reject queries, unsupported selections and malformed payloads without clearing the clipboard.
+  if (encoded.length > Math.ceil(MAX_OSC_CLIPBOARD_BYTES / 3) * 4) return
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return
+  try {
+    const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0))
+    if (bytes.length > MAX_OSC_CLIPBOARD_BYTES) return
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return
   }
 }
 
-function encodeOutput(text: string): Uint8Array {
-  return new TextEncoder().encode(text)
+/**
+ * 在 xterm 解析器上直接处理窗口标题与 shell-integration 标记，并吞掉这些序列。
+ * 相比在输出流里先解码再重编码扫描，零额外拷贝，且天然处理跨分块的序列。
+ * OSC 52 始终在此终结：只转发有效文本写入，禁止插件读取本机剪贴板。
+ */
+export function registerTerminalOscHandlers(
+  parser: TerminalOscRegistry,
+  handlers: TerminalOscHandlers,
+): () => void {
+  const disposables = [
+    ...SUPPRESSED_OSC_IDENTS.map(ident => parser.registerOscHandler(ident, () => true)),
+    parser.registerOscHandler(52, data => {
+      const text = clipboardWriteText(data)
+      if (text !== undefined) handlers.onClipboardWrite?.(text)
+      return true
+    }),
+    ...TITLE_OSC_IDENTS.map(ident =>
+      parser.registerOscHandler(ident, data => {
+        const title = data.trim()
+        if (title) handlers.onTitle?.(sanitizeOscTitle(title))
+        return true
+      }),
+    ),
+    ...SHELL_INTEGRATION_OSC_IDENTS.map(ident =>
+      parser.registerOscHandler(ident, data => {
+        const marker = parseShellIntegrationOsc(`${ident};${data}`)
+        if (marker === 'start') handlers.onCommandStart?.()
+        else if (marker === 'end') handlers.onCommandEnd?.()
+        return true
+      }),
+    ),
+  ]
+  return () => disposables.forEach(disposable => disposable.dispose())
 }

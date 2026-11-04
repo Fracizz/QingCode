@@ -1,16 +1,28 @@
+import TerminalExitNotice from './TerminalExitNotice'
+import TerminalConnectionNotice from './TerminalConnectionNotice'
+import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
+  consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
+  setTerminalViewGrid,
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
+import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
+import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
+import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import {
+  protectTerminalSelectionMenu,
+  shouldUseTerminalContextMenu,
+} from '@/lib/terminal/terminalSelectionMenu'
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
@@ -18,7 +30,7 @@ import {
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
-import { shouldShowAppContextMenu } from '../lib/devBuild'
+import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
   getTerminalScrollback,
@@ -29,6 +41,7 @@ import {
 } from '@/lib/terminal/terminalCursorSettings'
 import {
   TERMINAL_CLEAR_EVENT,
+  TERMINAL_RESET_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
 } from '@/lib/terminal/terminalViewBridge'
@@ -37,7 +50,11 @@ import {
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
-import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
+import {
+  restoredExitRecovery,
+  shouldKeepShellAfterExit,
+} from '@/lib/terminal/terminalShellLifecycle'
+import { terminalSessionOpen } from '../lib/ipc/terminal'
 import {
   isPanelResizing,
   PANEL_RESIZE_BEGIN_EVENT,
@@ -47,16 +64,39 @@ import {
 } from '../lib/panelResize'
 import {
   getTerminalPtyResizeDelay,
+  getTerminalRedrawRevealMaxMs,
   isValidTerminalGridSize,
+  shouldRevealTerminalAfterRedraw,
+  shouldSendPtyResizeNow,
   terminalGridSizeChanged,
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
 import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
-import { TerminalOscParser } from '../utils/terminalOsc'
+import {
+  acquireTerminalWebglSlot,
+  releaseTerminalWebglSlot,
+  touchTerminalWebglSlot,
+} from '@/lib/terminal/terminalWebglBudget'
+import { createGlyphAtlasRepairScheduler, type GlyphAtlasRepairScheduler } from '@/lib/terminal/terminalGlyphAtlasRepair'
+import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import { isSshResource, isTauri } from '../lib/tauri'
+import { TERMINAL_DROP_ATTR, confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
+import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
+import { terminalContent } from '../lib/terminal/terminalContent'
+import { exportTerminalContent } from '../lib/terminal/terminalExport'
+import {
+  isSameTerminalSession,
+  prepareTerminalAttachments,
+  storeAttachmentFiles,
+  terminalClipboardPaths,
+} from '../lib/terminal/terminalAttachments'
+import { copyToClipboard } from '../utils/fileReferences'
+import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
+import TerminalComposer from './TerminalComposer'
 import '@xterm/xterm/css/xterm.css'
 
 /** Highlight + count require decorations; colors must be #RRGGBB. */
@@ -72,6 +112,12 @@ function terminalSearchOptions(incremental = false): ISearchOptions {
     incremental,
     decorations: TERMINAL_SEARCH_DECORATIONS,
   }
+}
+
+function writeFinishedTaskHint(term: XTerm) {
+  term.writeln(
+    `\x1b[90m${translate('按 Ctrl+C 在当前标签进入命令行，或点标签「重启」重新运行任务。')}\x1b[0m`
+  )
 }
 
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
@@ -100,10 +146,10 @@ const DARK_THEME = {
 }
 
 const LIGHT_THEME = {
-  background: '#e6e6e6',
+  background: '#ffffff',
   foreground: '#1f1f1f',
   cursor: '#1a1a1a',
-  cursorAccent: '#e6e6e6',
+  cursorAccent: '#ffffff',
   selectionBackground: '#b9d6f5',
   black: '#000000',
   red: '#c43b32',
@@ -149,7 +195,7 @@ const FOREST_THEME = {
 
 function terminalTheme() {
   const resolved = getResolvedTheme()
-  if (resolved === 'forest') return FOREST_THEME
+  if (resolved === 'olive' || (resolved as string) === 'forest') return FOREST_THEME
   if (resolved === 'dark') return DARK_THEME
   return LIGHT_THEME
 }
@@ -163,13 +209,23 @@ function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undef
   return { backend: 'conpty', buildNumber: 22621 }
 }
 
+/** 单个终端 WebGL 上下文连续丢失这么多次后不再尝试，保持 DOM 渲染。 */
+const TERMINAL_WEBGL_MAX_CONTEXT_LOSSES = 3
+const TERMINAL_WEBGL_RETRY_MS = 1000
+/** 区分同一终端的多次挂载（StrictMode / 快速重挂），避免互相归还对方的预算槽位。 */
+let terminalWebglMountSeq = 0
+
 interface TerminalViewProps {
   terminalId: string
   layoutKey?: string
   isActive?: boolean
 }
 
-export default function TerminalView({ terminalId, layoutKey, isActive = false }: TerminalViewProps) {
+export default function TerminalView({
+  terminalId,
+  layoutKey,
+  isActive = false,
+}: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -178,7 +234,23 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const ptyResizeTimerRef = useRef<number | null>(null)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
   const pendingPtySizeRef = useRef<{ cols: number; rows: number } | null>(null)
+  /** 上一次真正写入 PTY 的尺寸时间，用于合并连续的 SIGWINCH。 */
+  const ptyResizeSentAtRef = useRef(0)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
+  /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
+  const redrawPendingRef = useRef(false)
+  /**
+   * 正在解析的屏幕快照数。快照按 daemon 网格排版、整行依赖自动折行，xterm 又是分帧异步
+   * 解析的：解析完之前任何一次 fit 改了列数，后半段就会逐行错位成阶梯。期间推迟所有 fit。
+   */
+  const screenWriteLockRef = useRef(0)
+  /** 最近一次 PTY 输出解析完成的时间，用于判断 TUI 重绘是否已经停下来。 */
+  const lastOutputParsedAtRef = useRef(0)
+  const revealTimerRef = useRef<number | null>(null)
+  /** 申请或刷新 WebGL 渲染（预算见 terminalWebglBudget）；挂载时由主 effect 赋值。 */
+  const ensureWebglRef = useRef<() => void>(() => {})
+  /** 清空 WebGL 字形图集并整屏重绘（右键「重绘终端显示」）；挂载时由主 effect 赋值。 */
+  const repaintTerminalRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -187,11 +259,13 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     items: ContextMenuItem[]
   } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
   const [searchMatchTotal, setSearchMatchTotal] = useState(0)
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
+  const redrawTerminal = useTerminalStore(s => s.redrawTerminal)
   const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
@@ -200,33 +274,83 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     isActiveRef.current = isActive
   }, [isActive])
 
-  const isTerminalWritable = useCallback(
-    () => useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited',
-    [terminalId],
+  const isTerminalWritable = useCallback(() => {
+    const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+    return tab?.status === 'running' && !tab.ptySpawnPending
+  }, [terminalId])
+
+  const prepareAttachmentPaths = useCallback(
+    async (paths: string[]) => {
+      const target = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+      if (!target || !isTerminalWritable()) throw new Error(translate('目标终端已不可用'))
+      const text = await prepareTerminalAttachments(target, paths)
+      if (paths.length && !text) throw new Error(translate('附件准备失败，请重试'))
+      if (
+        !isSameTerminalSession(
+          target,
+          useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+        )
+      ) {
+        throw new Error(translate('目标终端已不可用'))
+      }
+      return text
+    },
+    [isTerminalWritable, terminalId]
   )
 
-  const copySelection = useCallback(async () => {
-    const term = xtermRef.current
-    if (!term?.hasSelection()) return
-    const selection = term.getSelection()
+  const copySelection = useCallback(async (selection = xtermRef.current?.getSelection()) => {
     if (!selection) return
     try {
-      await navigator.clipboard.writeText(selection)
+      await copyToClipboard(selection)
     } catch (error) {
-      console.error('Terminal copy failed:', error)
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
     }
   }, [])
 
-  const pasteFromClipboard = useCallback(async () => {
-    const term = xtermRef.current
-    if (!term || !isTerminalWritable()) return
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text) term.paste(text)
-    } catch (error) {
-      console.error('Terminal paste failed:', error)
-    }
-  }, [isTerminalWritable])
+  const pasteFromClipboard = useCallback(
+    async (event?: ClipboardEvent) => {
+      const term = xtermRef.current
+      if (!term || !isTerminalWritable()) return
+      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+      const text = event?.clipboardData?.getData('text/plain')
+      try {
+        if (tab && (!isSshResource(tab.cwd) || getTerminalSshUploadOnPaste())) {
+          const files = await terminalClipboardPaths(event)
+          if (files.length > 0) {
+            const attachment = await prepareTerminalAttachments(tab, files)
+            if (
+              attachment &&
+              xtermRef.current === term &&
+              isSameTerminalSession(
+                tab,
+                useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              )
+            )
+              term.paste(attachment)
+            return
+          }
+        }
+        const pastedText = text || (await navigator.clipboard.readText())
+        if (
+          pastedText &&
+          tab &&
+          xtermRef.current === term &&
+          isSameTerminalSession(
+            tab,
+            useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+          )
+        )
+          term.paste(pastedText)
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', translate('粘贴失败：{error}', { error: String(error) }))
+      }
+    },
+    [isTerminalWritable, terminalId]
+  )
 
   const selectAll = useCallback(() => {
     xtermRef.current?.selectAll()
@@ -243,6 +367,15 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
   }, [])
+
+  const resetTerminalView = useCallback(() => {
+    const term = xtermRef.current
+    if (!term) return
+    term.reset()
+    term.scrollToBottom()
+    searchAddonRef.current?.clearDecorations()
+    resetSearchMatch()
+  }, [resetSearchMatch])
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
@@ -268,13 +401,43 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     else addon.findPrevious(query, opts)
   }
 
-  const contextMenuItems = (): ContextMenuItem[] => [
+  // Capture once: TUI output can invalidate the live selection while the menu is open.
+  const contextMenuItems = useCallback((selection: string, screen: string): ContextMenuItem[] => [
     {
       label: translate('复制'),
       shortcut: 'Ctrl+C',
-      disabled: !xtermRef.current?.hasSelection(),
+      disabled: !selection,
       action: () => {
-        void copySelection()
+        void copySelection(selection)
+      },
+    },
+    {
+      label: translate('复制当前屏幕'),
+      disabled: !screen,
+      action: () => {
+        void copySelection(screen)
+      },
+    },
+    {
+      label: translate('导出终端内容…'),
+      disabled: !xtermRef.current,
+      action: () => {
+        const term = xtermRef.current
+        if (!term) return
+        // Snapshot before the asynchronous save dialog; avoid scanning history on every right-click.
+        const buffer = terminalContent(term, 'buffer')
+        const name =
+          useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.name ??
+          'terminal'
+        void exportTerminalContent(buffer, name)
+          .then(saved => {
+            if (saved) useProjectStore.getState().pushToast('success', translate('终端内容已导出'))
+          })
+          .catch(error =>
+            useProjectStore
+              .getState()
+              .pushToast('error', translate('导出失败：{error}', { error: String(error) }))
+          )
       },
     },
     {
@@ -284,6 +447,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       action: () => {
         void pasteFromClipboard()
       },
+    },
+    {
+      label: translate('编辑长文本'),
+      disabled: !isTerminalWritable(),
+      action: () => setComposerOpen(true),
     },
     {
       label: translate('全选'),
@@ -301,7 +469,26 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       shortcut: 'Ctrl+Shift+K',
       action: clearBuffer,
     },
-  ]
+    {
+      // 兜底：字形显示错乱时手动清空字形图集并整屏重绘，不影响终端内容与进程。
+      label: translate('重绘终端显示'),
+      action: () => repaintTerminalRef.current(),
+    },
+    ...(isSshResource(
+      useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? ''
+    )
+      ? [
+          {
+            label: translate('清理远程粘贴文件'),
+            separatorBefore: true,
+            action: () => {
+              const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              if (tab) void confirmClearSshTerminalPasteUploads(tab.cwd)
+            },
+          },
+        ]
+      : []),
+  ], [clearBuffer, copySelection, isTerminalWritable, openSearch, pasteFromClipboard, selectAll, terminalId])
 
   const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
@@ -311,11 +498,15 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
   const commitGridSize = useCallback((next: TerminalGridSize) => {
     const term = xtermRef.current
+    // next 总是按容器算出的网格：登记给 store，恢复/兜底启动按它接回而不是默认 80x24。
+    if (term) setTerminalViewGrid(terminalId, next)
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
+    // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
+    if (screenWriteLockRef.current > 0) return false
     // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
     return true
-  }, [])
+  }, [terminalId])
 
   const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
@@ -340,61 +531,152 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     clearPtyResizeTimer()
     const pending = pendingPtySizeRef.current
     pendingPtySizeRef.current = null
-    if (pending) void resizeTerminal(terminalId, pending.cols, pending.rows)
+    if (!pending) return
+    ptyResizeSentAtRef.current = Date.now()
+    void resizeTerminal(terminalId, pending.cols, pending.rows)
   }, [clearPtyResizeTimer, resizeTerminal, terminalId])
 
-  const schedulePtyResize = useCallback((next: TerminalGridSize) => {
-    const term = xtermRef.current
-    pendingPtySizeRef.current = next
-    clearPtyResizeTimer()
-    const delay = getTerminalPtyResizeDelay(term?.buffer.active.type ?? 'normal')
-    ptyResizeTimerRef.current = window.setTimeout(() => {
-      ptyResizeTimerRef.current = null
-      flushPendingPtyResize()
-    }, delay)
-  }, [clearPtyResizeTimer, flushPendingPtyResize])
+  const schedulePtyResize = useCallback(
+    (next: TerminalGridSize) => {
+      const term = xtermRef.current
+      pendingPtySizeRef.current = next
+      clearPtyResizeTimer()
+      const delay = getTerminalPtyResizeDelay(term?.buffer.active.type ?? 'normal')
+      ptyResizeTimerRef.current = window.setTimeout(() => {
+        ptyResizeTimerRef.current = null
+        flushPendingPtyResize()
+      }, delay)
+    },
+    [clearPtyResizeTimer, flushPendingPtyResize]
+  )
 
-  const fitNow = useCallback((refresh = false, focusAfter = false) => {
+  /**
+   * 重挂回放的是旧网格下的原始字节，全屏 TUI 在重绘前会先显示一帧错位画面；
+   * 重绘过程中 rows-1 → rows 的两次 SIGWINCH 也各自整屏输出一次。
+   * 这段时间先把画面透明化（保留焦点能力，不用 visibility），等输出安静后再揭开。
+   */
+  const setReplayMasked = useCallback((masked: boolean) => {
     const container = containerRef.current
-    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
-    const term = xtermRef.current
-    if (!term) return
-    const w = container.clientWidth
-    const h = container.clientHeight
-    if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
-    lastFitSizeRef.current = { w, h }
-    try {
-      const next = readProposedGridSize()
-      if (next) commitGridSize(next)
-      const pending = useTerminalStore
-        .getState()
-        .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
-      if (pending) {
-        void spawnPendingTerminal(terminalId, term.cols, term.rows)
-      }
-      if (refresh) {
-        term.refresh(0, term.rows - 1)
-        term.scrollToBottom()
-      }
-      if (focusAfter && isActiveRef.current) term.focus()
-    } catch {}
-  }, [commitGridSize, readProposedGridSize, spawnPendingTerminal, terminalId])
-
-  const scheduleFit = useCallback((refresh = false, focusAfter = false) => {
-    pendingFitFlagsRef.current = {
-      refresh: pendingFitFlagsRef.current.refresh || refresh,
-      focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
+    if (!container) return
+    if (!masked && revealTimerRef.current !== null) {
+      window.clearTimeout(revealTimerRef.current)
+      revealTimerRef.current = null
     }
-    // 非拖动场景每帧最多计算一次字符网格；拖动结束由 settle 统一提交。
-    if (fitRafRef.current !== 0 || isPanelResizing()) return
-    fitRafRef.current = window.requestAnimationFrame(() => {
-      fitRafRef.current = 0
-      if (isPanelResizing()) return
-      const flags = pendingFitFlagsRef.current
-      pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      fitNow(flags.refresh, flags.focusAfter)
-    })
-  }, [fitNow])
+    container.style.opacity = masked ? '0' : ''
+  }, [])
+
+  const revealAfterRedraw = useCallback(
+    (startedAt: number, redrawSent: boolean) => {
+      const term = xtermRef.current
+      if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current)
+      revealTimerRef.current = null
+      if (!term || xtermRef.current !== term) return
+      // 没有真正发出 SIGWINCH 就不会有回包，直接揭开。
+      if (!redrawSent) {
+        setReplayMasked(false)
+        return
+      }
+      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+      const maxMs = getTerminalRedrawRevealMaxMs(isSshResource(tab?.cwd ?? ''))
+      const tick = () => {
+        revealTimerRef.current = null
+        if (xtermRef.current !== term) return
+        if (
+          shouldRevealTerminalAfterRedraw({
+            startedAt,
+            lastOutputAt: lastOutputParsedAtRef.current,
+            now: Date.now(),
+            maxMs,
+          })
+        ) {
+          setReplayMasked(false)
+          return
+        }
+        revealTimerRef.current = window.setTimeout(tick, 16)
+      }
+      tick()
+    },
+    [setReplayMasked, terminalId]
+  )
+
+  const flushPendingRedraw = useCallback(() => {
+    const term = xtermRef.current
+    const container = containerRef.current
+    // 不要求激活：单窗格里不可见的标签也有真实尺寸，后台重绘好切回来即是最终画面。
+    if (!redrawPendingRef.current || !term) return
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    if (screenWriteLockRef.current > 0) return
+    redrawPendingRef.current = false
+    // 回放的旧字节按旧网格排版，而当前尺寸与 PTY 相同时 resize 会被去重，
+    // TUI 收不到 SIGWINCH 就不会重绘，画面一直错位（切换项目后常见）。
+    clearPtyResizeTimer()
+    pendingPtySizeRef.current = null
+    const startedAt = Date.now()
+    ptyResizeSentAtRef.current = startedAt
+    // 重绘分两步、中间隔开（见 store 的 PTY_RESIZE_MIN_GAP_MS）：从最后一步下发后才开始
+    // 等输出安静，免得第一步的回包一安静就揭开，露出中间尺寸的那一帧。
+    void redrawTerminal(terminalId, term.cols, term.rows)
+      .catch(() => false)
+      .then(sent => revealAfterRedraw(sent ? Date.now() : startedAt, sent))
+  }, [clearPtyResizeTimer, redrawTerminal, revealAfterRedraw, terminalId])
+
+  const fitNow = useCallback(
+    (refresh = false, focusAfter = false) => {
+      const container = containerRef.current
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+      const term = xtermRef.current
+      if (!term) return
+      const w = container.clientWidth
+      const h = container.clientHeight
+      // 游离时收到快照会把网格改成 daemon 尺寸并挂起重绘，挂回槽位时容器尺寸可能没变，
+      // 这时也不能跳过，否则网格停在快照尺寸、TUI 收不到重绘。
+      if (
+        !refresh &&
+        !redrawPendingRef.current &&
+        w === lastFitSizeRef.current.w &&
+        h === lastFitSizeRef.current.h
+      ) {
+        return
+      }
+      lastFitSizeRef.current = { w, h }
+      try {
+        const next = readProposedGridSize()
+        if (next) commitGridSize(next)
+        const pending = useTerminalStore
+          .getState()
+          .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+        if (pending) {
+          void spawnPendingTerminal(terminalId, term.cols, term.rows)
+        }
+        flushPendingRedraw()
+        if (refresh) {
+          term.refresh(0, term.rows - 1)
+          term.scrollToBottom()
+        }
+        if (focusAfter && isActiveRef.current) term.focus()
+      } catch {}
+    },
+    [commitGridSize, flushPendingRedraw, readProposedGridSize, spawnPendingTerminal, terminalId]
+  )
+
+  const scheduleFit = useCallback(
+    (refresh = false, focusAfter = false) => {
+      pendingFitFlagsRef.current = {
+        refresh: pendingFitFlagsRef.current.refresh || refresh,
+        focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
+      }
+      // 非拖动场景每帧最多计算一次字符网格；拖动结束由 settle 统一提交。
+      if (fitRafRef.current !== 0 || isPanelResizing()) return
+      fitRafRef.current = window.requestAnimationFrame(() => {
+        fitRafRef.current = 0
+        if (isPanelResizing()) return
+        const flags = pendingFitFlagsRef.current
+        pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
+        fitNow(flags.refresh, flags.focusAfter)
+      })
+    },
+    [fitNow]
+  )
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -428,12 +710,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         useProjectStore.getState().pushToast('error', `打开链接失败: ${String(e)}`)
       })
     })
-    const clipboardAddon = new ClipboardAddon()
     const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(linkAddon)
-    term.loadAddon(clipboardAddon)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
     term.open(containerRef.current)
@@ -443,30 +723,81 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       setSearchMatchTotal(event.resultCount)
     })
 
-    // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
+    // Prefer WebGL so customGlyphs apply; fall back silently to the DOM renderer.
     // Dynamic import keeps the heavy addon out of the initial xterm chunk.
+    // WebGL 上下文有全局上限，按 terminalWebglBudget 预算申请：超额时回收不可见终端，
+    // 被回收或上下文丢失的终端在重新可见时再申请。
     let webglCancelled = false
-    void import('@xterm/addon-webgl')
-      .then(({ WebglAddon }) => {
-        if (webglCancelled || xtermRef.current !== term) return
-        try {
-          // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
-          // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
-          // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
-          const webgl = new WebglAddon(true)
-          webgl.onContextLoss(() => {
-            try {
-              webgl.dispose()
-            } catch {}
-          })
-          term.loadAddon(webgl)
-        } catch {
-          // Canvas renderer remains active.
-        }
-      })
-      .catch(() => {
-        // Canvas renderer remains active.
-      })
+    let webgl: { dispose(): void } | null = null
+    // 字形图集合并后的自愈（见 terminalGlyphAtlasRepair）；随 WebGL addon 一起创建与释放。
+    let atlasRepair: GlyphAtlasRepairScheduler | null = null
+    let webglLoading = false
+    let webglLosses = 0
+    const webglSlotKey = `${terminalId}#${++terminalWebglMountSeq}`
+    const isTerminalVisible = () => {
+      const el = containerRef.current
+      return Boolean(
+        el && el.offsetParent !== null && window.getComputedStyle(el).visibility !== 'hidden'
+      )
+    }
+    const releaseWebgl = () => {
+      const addon = webgl
+      webgl = null
+      atlasRepair?.dispose()
+      atlasRepair = null
+      releaseTerminalWebglSlot(webglSlotKey)
+      try {
+        addon?.dispose()
+      } catch {}
+    }
+    const ensureWebgl = () => {
+      if (webglCancelled) return
+      if (webgl) {
+        touchTerminalWebglSlot(webglSlotKey)
+        return
+      }
+      if (webglLoading || webglLosses >= TERMINAL_WEBGL_MAX_CONTEXT_LOSSES) return
+      webglLoading = true
+      void import('@xterm/addon-webgl')
+        .then(({ WebglAddon }) => {
+          webglLoading = false
+          if (webglCancelled || webgl) return
+          if (!acquireTerminalWebglSlot(webglSlotKey, isTerminalVisible, releaseWebgl)) return
+          try {
+            // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
+            // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
+            // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
+            const addon = new WebglAddon(true)
+            addon.onContextLoss(() => {
+              webglLosses += 1
+              releaseWebgl()
+              // GPU 重置后稍等再申请；不可见的终端等下次激活或可见时再申请。
+              window.setTimeout(() => {
+                if (isTerminalVisible()) ensureWebgl()
+              }, TERMINAL_WEBGL_RETRY_MS)
+            })
+            term.loadAddon(addon)
+            webgl = addon
+            const repair = createGlyphAtlasRepairScheduler(() => addon.clearTextureAtlas())
+            atlasRepair = repair
+            // 图集页被移除 = 发生了合并：本终端未变化单元格的纹理坐标已失效，重建图集与模型。
+            addon.onRemoveTextureAtlasCanvas(() => repair.schedule())
+          } catch {
+            // DOM renderer remains active.
+            releaseTerminalWebglSlot(webglSlotKey)
+          }
+        })
+        .catch(() => {
+          // DOM renderer remains active.
+          webglLoading = false
+        })
+    }
+    ensureWebglRef.current = ensureWebgl
+    repaintTerminalRef.current = () => {
+      if (atlasRepair) atlasRepair.repairNow()
+      else term.refresh(0, Math.max(0, term.rows - 1))
+    }
+    ensureWebgl()
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
@@ -476,12 +807,17 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const hadRestoredScrollback = hasTerminalScrollback(terminalId)
     // Restored scrollback is written via subscribeTerminalOutput; only show a
     // status line when there is nothing to replay (or after restore note).
-    if (tab?.status === 'exited' && !hadRestoredScrollback) {
+    if (
+      tab?.status === 'exited' &&
+      !consumeTerminalDisconnectNotice(terminalId) &&
+      !hadRestoredScrollback
+    ) {
       const detail =
         tab.exitCode === null
           ? translate('进程未启动')
           : translate('进程已退出，退出码 {code}', { code: String(tab.exitCode) })
       term.writeln(`\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+      if (tab && !shouldKeepShellAfterExit(tab)) writeFinishedTaskHint(term)
     }
 
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -498,28 +834,27 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         clearBuffer()
         return false
       }
-      if (mod && !event.altKey && !event.shiftKey && key === 'c') {
-        if (term.hasSelection()) {
-          void copySelection()
+      if (mod && !event.altKey && key === 'c') {
+        if (term.hasSelection() || event.shiftKey) {
+          // Native writing owns this copy; a later browser copy must not overwrite it.
+          event.preventDefault()
+          event.stopPropagation()
+          if (term.hasSelection()) void copySelection()
           return false
         }
         if (event.ctrlKey) {
           event.preventDefault()
           event.stopPropagation()
-          if (!event.repeat && isTerminalWritable()) {
+          if (!event.repeat) {
             void writeToTerminal(terminalId, '\x03')
           }
           return false
         }
       }
-      if (mod && key === 'v') {
-        event.preventDefault()
-        void pasteFromClipboard()
-        return false
-      }
-      if (event.shiftKey && event.key === 'Insert') {
-        event.preventDefault()
-        void pasteFromClipboard()
+      // Let the OS deliver a paste event, including screenshot/File payloads.
+      // Handling Ctrl+V here would discard that payload and paste twice on some hosts.
+      if ((mod && !event.altKey && key === 'v') || (event.shiftKey && event.key === 'Insert')) {
+        // Skip xterm's Ctrl+V -> SYN translation while preserving the browser's paste action.
         return false
       }
       return true
@@ -527,20 +862,43 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const onPaste = (event: ClipboardEvent) => {
       if (!isTerminalWritable()) return
-      const text = event.clipboardData?.getData('text/plain') ?? ''
-      if (text) return
       event.preventDefault()
       event.stopPropagation()
-      void pasteFromClipboard()
+      void pasteFromClipboard(event)
     }
 
+    // 从截图工具等其它窗口点回终端时，WebView 激活窗口后会把焦点还给上次聚焦的元素
+    // （如资源管理器），覆盖这里的 focus；随后的 Ctrl+V 就被资源管理器当成上传处理。
+    // 因此在焦点恢复完成后再补一次，期间用户点了别处则不再抢焦点。
+    let focusClaim = 0
     const onMouseDown = () => {
+      const claim = ++focusClaim
       term.focus()
+      const reclaim = () => {
+        if (claim !== focusClaim || xtermRef.current !== term) return
+        if (!container.contains(document.activeElement)) term.focus()
+      }
+      window.requestAnimationFrame(reclaim)
+      window.setTimeout(reclaim, 120)
+    }
+    const onWindowPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !container.contains(event.target)) focusClaim += 1
     }
 
     const container = containerRef.current
     container.addEventListener('paste', onPaste, true)
+    const disposeSelectionMenuGuard = protectTerminalSelectionMenu(
+      container,
+      () => term.getSelection(),
+      () => !deferToNativeContextMenuInDev(),
+      (event, selection) => setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: contextMenuItems(selection, terminalContent(term, 'screen')),
+      })
+    )
     container.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('pointerdown', onWindowPointerDown, true)
 
     const updateFont = () => {
       term.options.fontFamily = getResolvedTerminalFont()
@@ -572,7 +930,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     // Release builds show the window after splash; delayed refits catch final size
     // and Cascadia/Consolas loading so OpenCode gets correct cols before painting.
     const fitTimers = [50, 150, 400].map(ms =>
-      window.setTimeout(() => scheduleFit(true, false), ms),
+      window.setTimeout(() => scheduleFit(true, false), ms)
     )
     void document.fonts?.ready?.then(() => {
       term.options.fontFamily = getResolvedTerminalFont()
@@ -581,55 +939,160 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     term.onResize(({ cols, rows }) => {
       // 拖动时合并 ConPTY 整屏刷新；暂停或松手后再发送最新行列。
-      if (isPanelResizing()) {
+      // 拖动结束后、启动字体加载、系统窗口连续缩放都会在很短时间内产生多次网格
+      // 变化，每条 SIGWINCH 都让 TUI 整屏重排一次（Claude Code 还会把每次重排
+      // 追加进 scrollback，见 anthropics/claude-code#46834）。因此只在「安静期」
+      // 后的第一次变化立即提交，300ms 内的其余变化合并成一次。
+      if (isPanelResizing() || !shouldSendPtyResizeNow(ptyResizeSentAtRef.current, Date.now())) {
         schedulePtyResize({ cols, rows })
         return
       }
-      clearPtyResizeTimer()
-      pendingPtySizeRef.current = null
-      void resizeTerminal(terminalId, cols, rows)
+      pendingPtySizeRef.current = { cols, rows }
+      flushPendingPtyResize()
     })
     term.onData(data => {
       const status = useTerminalStore
         .getState()
         .terminals.find(tab => tab.id === terminalId)?.status
-      if (status !== 'exited') writeToTerminal(terminalId, data)
+      if (status !== 'exited' || data === '\x03') writeToTerminal(terminalId, data)
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
+    // The parser gate is enabled after history has been parsed, not merely enqueued.
+    let clipboardWritesEnabled = false
+    const disposeOscHandlers = registerTerminalOscHandlers(term.parser, {
+      onClipboardWrite: text => {
+        if (!clipboardWritesEnabled) return
+        void copyToClipboard(text).catch(error =>
+          useProjectStore
+            .getState()
+            .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
+        )
+      },
+      onTitle: title => {
+        const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+        // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
+        // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
+        if (shouldApplyOscTabTitle(current, title)) {
+          useTerminalStore.getState().renameTerminal(terminalId, title)
+        }
+      },
+      onCommandStart: () => markTerminalCommandStarted(terminalId),
+      onCommandEnd: () => markTerminalCommandFinished(terminalId),
+    })
+    // xterm 积压超过高水位时暂停 PTY 读取，保证按键回显不被大段输出淹没。
+    const flowHolder = {}
+    const writeFlow = new TerminalWriteFlow(paused =>
+      setTerminalOutputPaused(terminalId, flowHolder, paused)
+    )
     let unsubscribeOutput: (() => void) | undefined
-    const oscParser = new TerminalOscParser()
     const subscribeTimer = window.setTimeout(() => {
+      // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，之后再 fit 也无法还原。
+      // 视图由 TerminalHost 常驻，只有应用启动或新建标签时才走这里的回放。
+      resizeGridFromContainer()
+      setReplayMasked(true)
+      let replaying = true
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
-        const cleaned = oscParser.feed(data, {
-          onTitle: title => {
-            const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-            // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
-            // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
-            if (shouldApplyOscTabTitle(current, title)) {
-              useTerminalStore.getState().renameTerminal(terminalId, title)
-            }
-          },
-          onCommandStart: () => markTerminalCommandStarted(terminalId),
-          onCommandEnd: () => markTerminalCommandFinished(terminalId),
+        const size = data.length
+        const isReplay = replaying
+        writeFlow.written(size)
+        term.write(data, () => {
+          writeFlow.parsed(size)
+          lastOutputParsedAtRef.current = Date.now()
+          if (!isReplay || xtermRef.current !== term) return
+          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
+          if (term.buffer.active.type !== 'alternate') return
+          redrawPendingRef.current = true
+          scheduleFit(true, false)
         })
-        term.write(cleaned)
+      }, snapshot => {
+        // daemon 接回下发的屏幕快照按 daemon 网格排版（同 VS Code 的 replay 事件）：
+        // 网格不同就先按原网格写入，再由 fit 正常 resize，让 TUI 按新尺寸重画；
+        // 期间用遮罩盖住，揭开由 flushPendingRedraw 等重绘回包后负责。
+        // 普通屏幕的快照自带清屏，会抹掉当前视口：先把视口里已有的行推进滚动历史，
+        // 断线前的输出不丢，快照只换掉当前屏幕。
+        const buffer = term.buffer.active
+        if (
+          snapshot.data.startsWith('\x1b[?1049l') &&
+          buffer.type === 'normal' &&
+          (buffer.baseY > 0 || buffer.cursorY > 0 || buffer.cursorX > 0)
+        ) {
+          const used = Math.min(term.rows, buffer.cursorY + 1)
+          term.write(`\x1b[${term.rows};1H${'\n'.repeat(used)}`)
+        }
+        const fitsGrid = term.cols === snapshot.cols && term.rows === snapshot.rows
+        if (!fitsGrid) {
+          setReplayMasked(true)
+          term.resize(snapshot.cols, snapshot.rows)
+        }
+        screenWriteLockRef.current += 1
+        term.write(snapshot.data, () => {
+          screenWriteLockRef.current = Math.max(0, screenWriteLockRef.current - 1)
+          if (xtermRef.current !== term) return
+          if (!fitsGrid) redrawPendingRef.current = true
+          // 补上解析期间被推迟的 fit；网格不同时由它 resize 并触发 TUI 重绘。
+          scheduleFit(true, false)
+        })
+      })
+      replaying = false
+      term.write('', () => {
+        clipboardWritesEnabled = true
+        // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
+        if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-      if (restored?.status === 'exited' && hadRestoredScrollback) {
-        const note = restored.awaitingRestoreSpawn
-          ? translate('会话输出已恢复；进程将按原配置重新启动')
-          : translate('会话输出已恢复；可从终端标签重启进程')
-        term.writeln(`\x1b[90m[${note}]\x1b[0m`)
-      }
+      if (restored?.status !== 'exited' || !hadRestoredScrollback) return
+      void (async () => {
+        let sessionOpen: boolean | null = null
+        try {
+          sessionOpen = await terminalSessionOpen(terminalId)
+        } catch {
+          sessionOpen = null
+        }
+        if (xtermRef.current !== term) return
+        const latest = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+        if (!latest || latest.status !== 'exited') return
+        const pendingRestoreNote = translate(terminalRestoreNotices(latest).history)
+        if (sessionOpen === null) {
+          if (latest.awaitingRestoreSpawn) {
+            term.writeln(`\r\n\x1b[90m[${pendingRestoreNote}]\x1b[0m`)
+          }
+          return
+        }
+        const recovery = restoredExitRecovery({
+          awaitingRestoreSpawn: latest.awaitingRestoreSpawn === true,
+          sessionOpen: sessionOpen && !latest.endedAt,
+          keepShell: shouldKeepShellAfterExit(latest),
+        })
+        if (recovery === 'reattach') {
+          useTerminalStore.setState(s => ({
+            terminals: s.terminals.map(tab =>
+              tab.id === terminalId && tab.status === 'exited'
+                ? { ...tab, status: 'running', exitCode: null }
+                : tab
+            ),
+          }))
+          return
+        }
+        const note =
+          recovery === 'await-spawn'
+            ? pendingRestoreNote
+            : translate('会话输出已恢复；可从终端标签重启进程')
+        term.writeln(`\r\n\x1b[90m[${note}]\x1b[0m`)
+        if (recovery === 'locked') writeFinishedTaskHint(term)
+      })()
     }, 0)
 
     const ro = new ResizeObserver(() => {
-      if (!isActiveRef.current) return
+      // 单窗格下未激活的标签只是 invisible，仍有真实尺寸：同样跟随布局 fit，
+      // 让后台 TUI 提前按新网格重排，切回来时就不会先显示一帧旧网格画面。
+      // 隐藏（display:none）的标签宽高为 0，fitNow 会自动跳过。
       // 【终端防闪烁关键逻辑，请勿移除】拖动期间严禁在 ResizeObserver/rAF 中
       // 调用 fit/term.resize。WebGL canvas 会立刻清空，而内容下一帧才重绘，
       // WebView2 因此会显示空白帧。拖动的最终网格只能由下面的 settle 提交。
       if (isPanelResizing()) return
       scheduleFit()
+      // 从隐藏变为可见（如多窗格切换）时，被回收的 WebGL 在这里重新申请。
+      if (isTerminalVisible()) ensureWebgl()
     })
     if (containerRef.current) ro.observe(containerRef.current)
 
@@ -637,7 +1100,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (isActiveRef.current) term.options.cursorBlink = false
     }
     const onPanelResizeSettle = (event: Event) => {
-      if (!isActiveRef.current) return
+      if (!isActiveRef.current) {
+        // 不可见的标签无需等待 WebGL 换帧屏障，直接按最终尺寸 fit。
+        scheduleFit()
+        return
+      }
       if (fitRafRef.current !== 0) {
         window.cancelAnimationFrame(fitRafRef.current)
         fitRafRef.current = 0
@@ -681,6 +1148,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     return () => {
       webglCancelled = true
+      ensureWebglRef.current = () => {}
+      repaintTerminalRef.current = () => {}
+      // addon 随 term.dispose() 一起释放，这里只归还预算槽位。
+      releaseTerminalWebglSlot(webglSlotKey)
       window.clearTimeout(subscribeTimer)
       for (const id of fitTimers) window.clearTimeout(id)
       if (fitRafRef.current !== 0) {
@@ -688,8 +1159,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         fitRafRef.current = 0
       }
       clearPtyResizeTimer()
+      if (revealTimerRef.current !== null) {
+        window.clearTimeout(revealTimerRef.current)
+        revealTimerRef.current = null
+      }
       pendingPtySizeRef.current = null
       unsubscribeOutput?.()
+      writeFlow.dispose()
+      disposeOscHandlers()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
@@ -701,22 +1178,29 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       searchResultsSub.dispose()
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
+      disposeSelectionMenuGuard()
+      window.removeEventListener('pointerdown', onWindowPointerDown, true)
       term.dispose()
       container.replaceChildren()
       xtermRef.current = null
       searchAddonRef.current = null
+      setTerminalViewGrid(terminalId, null)
     }
   }, [
     clearBuffer,
     clearPtyResizeTimer,
     copySelection,
+    contextMenuItems,
     fitSettledPanelGrid,
+    flushPendingPtyResize,
     isTerminalWritable,
     openSearch,
     pasteFromClipboard,
+    resizeGridFromContainer,
     resizeTerminal,
     scheduleFit,
     schedulePtyResize,
+    setReplayMasked,
     spawnPendingTerminal,
     terminalId,
     writeToTerminal,
@@ -731,6 +1215,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   useEffect(() => {
     if (!isActive) return
     scheduleFit(true, true)
+    ensureWebglRef.current()
   }, [isActive, scheduleFit])
 
   // Restart / deferred create: fit again as soon as a PTY is requested.
@@ -754,13 +1239,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (!matches(detail)) return
       openSearch()
     }
+    const onReset = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
+      if (!matches(detail)) return
+      resetTerminalView()
+    }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+    window.addEventListener(TERMINAL_RESET_EVENT, onReset)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+      window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
     }
-  }, [clearBuffer, openSearch, terminalId])
+  }, [clearBuffer, openSearch, resetTerminalView, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {
@@ -776,51 +1268,147 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     if (!term || !terminal) return
     const previous = previousStatusRef.current
     if (terminal.status === 'starting' && previous === 'exited') {
-      if (terminal.restorePreservedOutput) {
-        term.writeln(`\x1b[90m\r\n── ${translate('正在重启终端…')} ──\x1b[0m`)
-      } else {
-        term.reset()
-        term.writeln(`\x1b[90m${translate('正在重启终端…')}\x1b[0m`)
+      const notice = terminalRestoreNotices(terminal).starting
+      // Reconnection keeps both the process and screen; only a new PTY is a restart.
+      if (notice) {
+        if (terminal.restorePreservedOutput) {
+          term.writeln(`\x1b[90m\r\n── ${translate(notice)} ──\x1b[0m`)
+        } else {
+          term.reset()
+          term.writeln(`\x1b[90m${translate(notice)}\x1b[0m`)
+        }
       }
     } else if (terminal.status === 'exited' && previous !== 'exited') {
-      if (terminal.exitCode === null) {
-        term.writeln(`\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`)
-      } else if (!shouldKeepShellAfterExit(terminal)) {
-        // Run-config / one-shot tasks: PTY is gone — explain why typing is disabled.
-        term.writeln(
-          `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
-            code: String(terminal.exitCode),
-          })} ──\x1b[0m`,
-        )
-        term.writeln(
-          `\x1b[90m${translate(
-            '由运行配置拉起，结束后不能继续输入。点标签「重启」再跑，或新开普通终端。',
-          )}\x1b[0m`,
-        )
-      } else {
-        const detail = translate('进程已退出，退出码 {code}', { code: String(terminal.exitCode) })
-        term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
-      }
+      const exited = terminal
+      void (async () => {
+        let sessionOpen: boolean | null = null
+        try {
+          sessionOpen = await terminalSessionOpen(terminalId)
+        } catch {
+          sessionOpen = null
+        }
+        if (xtermRef.current !== term) return
+        const latest = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+        if (!latest || latest.status !== 'exited') return
+        // 断线说明已由 store 写入输出，不再追加“进程未启动”。
+        if (!sessionOpen && consumeTerminalDisconnectNotice(terminalId)) return
+        if (sessionOpen && !latest.endedAt) {
+          useTerminalStore.setState(state => ({
+            terminals: state.terminals.map(tab =>
+              tab.id === terminalId && tab.status === 'exited'
+                ? { ...tab, status: 'running', exitCode: null }
+                : tab
+            ),
+          }))
+          return
+        }
+        if (exited.exitCode === null) {
+          term.writeln(
+            `\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`
+          )
+        } else if (!shouldKeepShellAfterExit(exited)) {
+          term.writeln(
+            `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
+              code: String(exited.exitCode),
+            })} ──\x1b[0m`
+          )
+          writeFinishedTaskHint(term)
+        } else {
+          const detail = translate('进程已退出，退出码 {code}', { code: String(exited.exitCode) })
+          term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+        }
+      })()
+    } else if (
+      terminal.status === 'running' &&
+      previous === 'starting' &&
+      term.buffer.active.type === 'alternate'
+    ) {
+      // 接回在途期间视图要的重绘会被并进「补一次 resize」，而这次 resize 引起的 TUI 重绘
+      // 可能赶在视图 fit 回自身网格之前、按快照网格解析成残缺画面。接回完成后由视图在
+      // 网格就绪时（flushPendingRedraw 会等快照解析完）再整屏重绘一次。
+      redrawPendingRef.current = true
+      scheduleFit(true, false)
     }
     previousStatusRef.current = terminal.status
-  }, [terminal])
+  }, [scheduleFit, terminal, terminalId])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    void getCurrentWebview()
+      .onDragDropEvent(event => {
+        if (event.payload.type !== 'drop' || !isTerminalWritable()) return
+        if (document.querySelector('[data-terminal-composer]')) return
+        const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+        if (!tab || (isSshResource(tab.cwd) && !getTerminalSshUploadOnPaste())) return
+        const point = logicalDropPoint(event.payload.position, window.devicePixelRatio)
+        const host = document.elementFromPoint(point.x, point.y)?.closest(`[${TERMINAL_DROP_ATTR}]`)
+        if (host?.getAttribute(TERMINAL_DROP_ATTR) !== terminalId) return
+        const paths = event.payload.paths.filter(Boolean)
+        if (paths.length === 0) return
+        const term = xtermRef.current
+        void prepareTerminalAttachments(tab, paths)
+          .then(text => {
+            if (
+              text &&
+              xtermRef.current === term &&
+              isSameTerminalSession(
+                tab,
+                useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              )
+            )
+              term?.paste(text)
+          })
+          .catch(error =>
+            useProjectStore
+              .getState()
+              .pushToast('error', translate('粘贴失败：{error}', { error: String(error) }))
+          )
+      })
+      .then(stop => {
+        if (cancelled) stop()
+        else unlisten = stop
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [isTerminalWritable, terminal?.cwd, terminalId])
 
   return (
     <div
+      {...{ [TERMINAL_DROP_ATTR]: terminalId }}
       className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border"
       onMouseDown={() => {
         if (isActive) xtermRef.current?.focus()
       }}
       onContextMenu={(event: ReactMouseEvent) => {
+        if (deferToNativeContextMenuInDev()) return
+        const term = xtermRef.current
+        if (
+          term &&
+          !shouldUseTerminalContextMenu(term.hasSelection(), term.modes.mouseTrackingMode, event.shiftKey)
+        ) {
+          // Prevent browser chrome while leaving the TUI's mouse press/release untouched.
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         if (!shouldShowAppContextMenu(event)) return
         setContextMenu({
           x: event.clientX,
           y: event.clientY,
-          items: contextMenuItems(),
+          items: contextMenuItems(
+            xtermRef.current?.getSelection() ?? '',
+            xtermRef.current ? terminalContent(xtermRef.current, 'screen') : ''
+          ),
         })
       }}
     >
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
+      {/* 底边不再留 8px：它会和排不满一整行的余量叠在一起，看起来像空了一行。 */}
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 pt-2">
         {searchOpen ? (
           <TerminalSearchBar
             query={searchQuery}
@@ -833,13 +1421,56 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           />
         ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
+        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} />
       </div>
+      {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && (
+        <TerminalExitNotice
+          exitCode={terminal.exitCode}
+          restoreUnavailable={terminal.restoreUnavailable}
+          onReopen={() => useTerminalStore.getState().reopenTerminalShell(terminalId)}
+          onExport={async () => {
+            const root = useProjectStore.getState().projects.find(project => project.id === terminal.projectId)?.path
+            try { await exportTerminalDiagnostics(terminal, root) }
+            catch (error) { useProjectStore.getState().pushToast('error', String(error)) }
+          }}
+        />
+      )}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           items={contextMenu.items}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {composerOpen && terminal && (
+        <TerminalComposer
+          terminalId={terminalId}
+          terminalName={terminal.name}
+          onClose={() => {
+            setComposerOpen(false)
+            if (isActiveRef.current) xtermRef.current?.focus()
+          }}
+          onFill={text => {
+            const term = xtermRef.current
+            if (
+              !term ||
+              !isTerminalWritable() ||
+              (/\r|\n/.test(text) && !term.modes.bracketedPasteMode)
+            )
+              return false
+            term.paste(text)
+            return true
+          }}
+          prepareClipboard={async event => {
+            const paths = await terminalClipboardPaths(event)
+            return prepareAttachmentPaths(paths)
+          }}
+          prepareFiles={async files => {
+            const paths = await storeAttachmentFiles(files)
+            return prepareAttachmentPaths(paths)
+          }}
+          prepareFilePaths={prepareAttachmentPaths}
         />
       )}
     </div>

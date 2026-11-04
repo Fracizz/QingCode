@@ -15,15 +15,6 @@ export type FileSizePreferenceSettings = {
   maxSizeForEdit: MaxSizeForEditMap
 }
 
-export const DEFAULT_FILE_SIZE_PREFERENCES: FileSizePreferenceSettings = {
-  maxSizeForEdit: { ...DEFAULT_MAX_SIZE_FOR_EDIT },
-}
-
-export function readFileSizePreferences(settings: SettingsFile): FileSizePreferenceSettings {
-  return {
-    maxSizeForEdit: parseMaxSizeForEditMap(settings['files.maxSizeForEdit']),
-  }
-}
 
 /**
  * Merge global + workspace `files.maxSizeForEdit` maps (workspace keys overlay).
@@ -50,9 +41,6 @@ let cached: FileSizePreferenceSettings = {
   maxSizeForEdit: { ...DEFAULT_MAX_SIZE_FOR_EDIT },
 }
 
-export function getFileSizePreferences(): FileSizePreferenceSettings {
-  return cached
-}
 
 export function notifyFileSizeSettingsChanged(settings: FileSizePreferenceSettings) {
   cached = { maxSizeForEdit: { ...settings.maxSizeForEdit } }

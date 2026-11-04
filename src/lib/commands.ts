@@ -3,10 +3,12 @@ import { requestAppClose } from './appClose'
 import { getAutoSaveSettings } from './autoSave'
 import { saveScopedAutoSaveSettings } from './autoSaveSettings'
 import { formatDocument } from './formatDocument'
+import { isNonEditableViewMode } from './openFileError'
 import { translate } from './i18n'
 import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
 import { ensureSettingsFile, resolveGlobalSettingsPath } from './projectSettings'
 import { isTauri } from './tauri'
+import { hasBackend } from './runtimeCapabilities'
 import { getResolvedTheme, loadTheme, saveTheme, type AppTheme } from './themeSettings'
 import type { ShortcutCommand, ShortcutMap } from './shortcuts'
 import { useEditorStore } from '../store/editorStore'
@@ -15,15 +17,14 @@ import { useRunConfigStore } from '../store/runConfigStore'
 import { runConfig } from './runConfigRuntime'
 import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
-import { useWorkspaceSymbolPickerStore } from '../store/workspaceSymbolPickerStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { saveVisibleProjectsAsWorkspace } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
-import { findUsagesAtActiveEditor } from './symbolNavigation'
 import { activeEditorSelectionSeed } from './editorSelectionSeed'
+import { openFileFromDialog } from './openFileDialog'
 
 export type AppCommand = {
   id: string
@@ -109,18 +110,18 @@ export function resolveCommandShortcut(
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
   const tab = tabs.find(t => t.id === activeTabId) ?? null
-  if (!tab || tab.openError || tab.viewMode === 'view' || tab.content === undefined) return null
+  if (!tab || tab.openError || isNonEditableViewMode(tab) || tab.content === undefined) return null
   return tab
 }
 
 function cycleTheme() {
-  const order: AppTheme[] = ['dark', 'light', 'forest']
+  const order: AppTheme[] = ['dark', 'light', 'olive']
   const current = loadTheme()
   const resolved = current === 'auto' ? getResolvedTheme('auto') : current
-  const idx = order.indexOf(resolved === 'forest' ? 'forest' : resolved)
+  const idx = order.indexOf(resolved === 'forest' || resolved === 'olive' ? 'olive' : resolved)
   const next = order[(Math.max(0, idx) + 1) % order.length]
   saveTheme(next)
-  const label = next === 'dark' ? '深色' : next === 'light' ? '浅色' : '森林'
+  const label = next === 'dark' ? '深色' : next === 'light' ? '浅色' : '橄榄绿'
   useProjectStore
     .getState()
     .pushToast('info', translate('已切换主题：{theme}', { theme: translate(label) }))
@@ -128,7 +129,7 @@ function cycleTheme() {
 
 async function openUserSettingsJson() {
   const pushToast = useProjectStore.getState().pushToast
-  if (!isTauri()) {
+  if (!hasBackend()) {
     pushToast('error', translate('当前环境无法打开设置文件'))
     return
   }
@@ -211,6 +212,13 @@ export function buildCommands(): AppCommand[] {
           pushToast('error', translate('新建窗口失败: {error}', { error: String(e) }))
         })
       },
+    },
+    {
+      id: 'file.openFile',
+      title: '打开文件',
+      keywords: 'open file local standalone',
+      shortcutCommand: 'openFile',
+      run: () => void openFileFromDialog(),
     },
     {
       id: 'file.openFolder',
@@ -297,28 +305,6 @@ export function buildCommands(): AppCommand[] {
         return Boolean(tab && !tab.openError && !tab.loading)
       },
       run: () => useSymbolPickerStore.getState().openPicker(),
-    },
-    {
-      id: 'editor.goToWorkspaceSymbol',
-      title: '转到工作区中的符号',
-      keywords: 'go to workspace symbol functions classes variables',
-      shortcutCommand: 'goToSymbolInWorkspace',
-      when: () => Boolean(useProjectStore.getState().currentProject && isTauri()),
-      run: () =>
-        useWorkspaceSymbolPickerStore
-          .getState()
-          .openPicker(activeEditorSelectionSeed({ maxLength: 200, singleLine: true })),
-    },
-    {
-      id: 'editor.findCalls',
-      title: '查找用法',
-      keywords: 'find usages references calls callers reads writes imports',
-      shortcutCommand: 'findCalls',
-      when: () => {
-        const { tabs, activeTabId } = useEditorStore.getState()
-        return Boolean(tabs.find(tab => tab.id === activeTabId))
-      },
-      run: () => void findUsagesAtActiveEditor(),
     },
     {
       id: 'editor.goToLine',
@@ -417,7 +403,7 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'view.toggleTerminal',
-      title: '切换终端',
+      title: '显示或隐藏终端',
       keywords: 'terminal console',
       shortcutCommand: 'toggleTerminal',
       run: () => requestToggleTerminal(),
@@ -539,7 +525,7 @@ export function buildCommands(): AppCommand[] {
     {
       id: 'view.theme',
       title: '切换颜色主题',
-      keywords: 'theme dark light forest toggle',
+      keywords: 'theme dark light olive forest toggle',
       run: () => cycleTheme(),
     },
     {
@@ -555,6 +541,12 @@ export function buildCommands(): AppCommand[] {
       run: () => openWorkspaceManager(),
     },
     {
+      id: 'ssh.connections',
+      title: '远程连接管理',
+      keywords: 'ssh remote connection manager 远程 连接 管理 主机',
+      run: () => useUIStore.getState().openRemoteConnections(),
+    },
+    {
       id: 'workspace.saveVisible',
       title: '保存为多项目工作区',
       keywords: 'workspace save group projects',
@@ -562,9 +554,9 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'project.add',
-      title: '添加项目',
-      keywords: 'add project folder',
-      run: () => void useProjectStore.getState().addProjectFromDialog(),
+      title: '新建项目',
+      keywords: 'add create new project folder wsl ssh remote 添加 创建 远程',
+      run: () => useUIStore.getState().openCreateProject(),
     },
     {
       id: 'app.quit',

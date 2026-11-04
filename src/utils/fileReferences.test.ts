@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addPathToSet,
+  clipboardAbsolutePath,
   collectAncestorDirs,
   findProjectForPath,
   formatFileReference,
@@ -36,6 +37,22 @@ describe('normalizePath / parentPath / pathsEqual', () => {
     expect(pathsEqual('D:/Work/A', 'd:\\work\\a\\')).toBe(true)
   })
 
+  it('copies the remote filesystem path instead of the ssh connection uri', () => {
+    expect(
+      clipboardAbsolutePath('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode'),
+    ).toBe('D:/code/qingcode')
+    expect(clipboardAbsolutePath('ssh://c1/home/owner/app/src/a.ts')).toBe(
+      '/home/owner/app/src/a.ts',
+    )
+    expect(clipboardAbsolutePath('D:/code/qingcode')).toBe('D:/code/qingcode')
+    expect(clipboardAbsolutePath('ssh://c1/')).toBe('/')
+  })
+
+  it('keeps SSH POSIX paths case-sensitive', () => {
+    expect(pathsEqual('ssh://host/Home/User/Foo.ts', 'ssh://host/Home/User/foo.ts')).toBe(false)
+    expect(isDescendantOf('ssh://host/Home/User/Foo.ts', 'ssh://host/Home/User')).toBe(true)
+  })
+
   it('pathSetHas / addPathToSet tolerate separator differences', () => {
     const set = new Set(['D:\\proj\\test'])
     expect(pathSetHas(set, 'D:/proj/test')).toBe(true)
@@ -47,7 +64,9 @@ describe('normalizePath / parentPath / pathsEqual', () => {
     const expanded = addPathToSet(new Set(), 'D:/repo/eman-nem/src/main/java/com/eman')
     expect(pathSetHas(expanded, 'D:/repo/eman-commonmng')).toBe(false)
     expect(pathSetHas(expanded, 'D:/repo/eman-nem/src/main/java/com/eman-commonmng')).toBe(false)
-    expect(pathSetHas(addPathToSet(new Set(), 'D:/repo/eman'), 'D:/repo/eman-commonmng')).toBe(false)
+    expect(pathSetHas(addPathToSet(new Set(), 'D:/repo/eman'), 'D:/repo/eman-commonmng')).toBe(
+      false
+    )
   })
 })
 
@@ -67,7 +86,7 @@ describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
 
   it('does not treat string-prefix sibling folders as ancestors', () => {
     expect(
-      collectAncestorDirs('D:/repo/eman-nem/src/main/java/com/eman/Foo.java', 'D:/repo'),
+      collectAncestorDirs('D:/repo/eman-nem/src/main/java/com/eman/Foo.java', 'D:/repo')
     ).toEqual([
       'D:/repo/eman-nem',
       'D:/repo/eman-nem/src',
@@ -77,7 +96,7 @@ describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
       'D:/repo/eman-nem/src/main/java/com/eman',
     ])
     expect(collectAncestorDirs('D:/repo/eman-commonmng/src/Foo.java', 'D:/repo/eman-nem')).toEqual(
-      [],
+      []
     )
   })
 

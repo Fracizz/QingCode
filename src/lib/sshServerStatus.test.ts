@@ -1,0 +1,231 @@
+import { describe, expect, it } from 'vitest'
+import {
+  isAgentCommandUnavailable,
+  parseSshServerState,
+  parseSshServerTimings,
+  sshServerChip,
+  sshServerEventMatches,
+  sshServerIsDirect,
+  sshServerModeKey,
+  sshServerSwitchBlocker,
+  sshServerTipLines,
+  sshServerTransportKey,
+  type SshServerState,
+} from './sshServerStatus'
+
+const readyServer: SshServerState = {
+  connectionId: 'c1',
+  rootUri: 'ssh://c1/home/app',
+  phase: 'readyServer',
+  mode: 'server',
+  connectionMode: 'server',
+  version: '0.1.13',
+  transport: 'daemon',
+  reason: null,
+  timings: null,
+}
+
+describe('sshServerStatus', () => {
+  it('keeps an independent Agent distinct from the legacy SSH direct mode', () => {
+    const agent = { ...readyServer, transport: 'agent' as const }
+    expect(parseSshServerState(agent)?.transport).toBe('agent')
+    expect(sshServerIsDirect(agent)).toBe(false)
+    expect(sshServerModeKey(agent)).toBe('Server 端口直连')
+    expect(sshServerTransportKey('agent')).toBe('HTTPS / WSS')
+    expect(sshServerTipLines(agent)[0]).toEqual({ key: 'Server 端口直连' })
+    expect(sshServerModeKey({ ...agent, phase: 'disconnected', reason: 'connection reset' })).toBe('Server 已断开')
+  })
+  it('offers switching to Server from direct mode unless a precondition blocks it', () => {
+    const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }
+    expect(sshServerIsDirect(readyServer)).toBe(false)
+    expect(sshServerIsDirect(direct)).toBe(true)
+    expect(sshServerSwitchBlocker(direct)).toBeNull()
+    expect(sshServerSwitchBlocker({ ...direct, reason: null })).toBeNull()
+    expect(sshServerSwitchBlocker({ ...direct, reason: '工作区未信任' })).toContain('信任')
+  })
+
+  it('treats the connection mode as authoritative and never blocks switching from SSH', () => {
+    const sshState: SshServerState = {
+      ...readyServer,
+      phase: 'readyDirect',
+      mode: 'direct',
+      connectionMode: 'ssh',
+      transport: 'direct',
+      version: null,
+      reason: 'SSH 模式（连接配置）',
+    }
+    expect(sshServerChip(sshState)).toEqual({ kind: 'ssh' })
+    expect(sshServerSwitchBlocker(sshState)).toBeNull()
+    expect(sshServerTipLines(sshState)).toEqual([
+      { key: 'SSH 直连（兼容模式）' },
+      { key: '已启用兼容模式，不部署远端服务' },
+    ])
+  })
+
+  it('parses old events without connectionMode as server', () => {
+    const legacy = parseSshServerState({
+      connectionId: 'c1',
+      rootUri: 'ssh://c1/home/app',
+      phase: 'readyDirect',
+      mode: 'direct',
+      version: null,
+      transport: 'direct',
+      reason: '已关闭 ssh.server.enabled',
+    })
+    expect(legacy?.connectionMode).toBe('server')
+    expect(sshServerSwitchBlocker(legacy!)).toBeNull()
+  })
+
+  it('keeps authentication and disconnect failures visible for compatibility connections', () => {
+    const authenticating: SshServerState = {
+      ...readyServer, connectionMode: 'ssh', phase: 'authenticating', mode: 'direct',
+    }
+    expect(sshServerChip(authenticating)).toEqual({ kind: 'pending' })
+    expect(sshServerModeKey(authenticating)).toBe('SSH 正在认证')
+    expect(sshServerTipLines(authenticating)[0]).toEqual({ key: 'SSH 正在认证' })
+    const disconnected: SshServerState = {
+      ...authenticating, phase: 'disconnected', reason: '保活超时',
+    }
+    expect(sshServerChip(disconnected)).toEqual({ kind: 'offline' })
+    expect(sshServerTipLines(disconnected)).toContainEqual({ key: 'SSH 已断开' })
+    expect(sshServerTipLines(disconnected)).toContainEqual({
+      key: '原因：{reason}', params: { reason: '保活超时' },
+    })
+  })
+
+  it('accepts the backend server mode and maps the legacy agent alias', () => {
+    // 后端 ServerMode::Server 序列化为 "server"；曾因前端只认 agent 而整条丢弃。
+    expect(parseSshServerState({ ...readyServer, mode: 'server' })?.mode).toBe('server')
+    expect(parseSshServerState({ ...readyServer, mode: 'agent' })?.mode).toBe('server')
+    expect(parseSshServerState({ ...readyServer, mode: 'proxy' })).toBeNull()
+  })
+
+  it('parses optional timings and keeps intentional disconnects visible', () => {
+    expect(parseSshServerState(readyServer)?.timings).toBeNull()
+    expect(parseSshServerState({ ...readyServer, timings: '发现 1.2s · 合计 1.5s' })?.timings).toBe(
+      '发现 1.2s · 合计 1.5s',
+    )
+    expect(parseSshServerState({ ...readyServer, timings: 3 })).toBeNull()
+    const disconnected: SshServerState = {
+      ...readyServer,
+      phase: 'disconnected',
+      mode: 'unknown',
+      version: null,
+      transport: null,
+    }
+    expect(sshServerChip(disconnected)).toEqual({ kind: 'offline' })
+    expect(sshServerChip({ ...disconnected, reason: '保活超时' })).toEqual({ kind: 'offline' })
+  })
+
+  it('parses a camelCase payload and rejects a bad phase', () => {
+    expect(parseSshServerState(readyServer)).toEqual(readyServer)
+    expect(parseSshServerState({ ...readyServer, phase: 'booting' })).toBeNull()
+    expect(parseSshServerState({ ...readyServer, version: 1 })).toBeNull()
+  })
+
+  it('labels disconnected and ready states', () => {
+    expect(sshServerChip(null)).toBeNull()
+    expect(sshServerChip({ ...readyServer, phase: 'disconnected' })).toEqual({ kind: 'offline' })
+    expect(sshServerChip(readyServer)).toEqual({ kind: 'agent' })
+    expect(sshServerChip({ ...readyServer, version: null })).toEqual({ kind: 'agent' })
+    expect(sshServerChip({ ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: '已关闭 ssh.server.enabled' })).toEqual({ kind: 'direct' })
+    expect(sshServerChip({ ...readyServer, phase: 'installing' })).toEqual({ kind: 'pending' })
+  })
+
+  it('builds concise one-line tips', () => {
+    expect(
+      sshServerTipLines({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+        version: null,
+        reason: '工作区未信任',
+      })
+    ).toEqual([
+      { key: 'SSH 直连' },
+      { key: '回退原因：{reason}', params: { reason: '工作区未信任' } },
+    ])
+    // 多行原因（如部署诊断输出）在 tooltip 里只保留首行，完整内容进详情弹窗。
+    expect(
+      sshServerTipLines({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+        version: null,
+        reason:
+          '远端服务程序校验未通过：文件可能损坏。\n用法: qingcode-agent (--version | serve)\n',
+      })
+    ).toEqual([
+      { key: 'SSH 直连' },
+      {
+        key: '回退原因：{reason}',
+        params: { reason: '远端服务程序校验未通过：文件可能损坏。' },
+      },
+    ])
+    expect(sshServerTipLines(readyServer)).toEqual([
+      { key: 'SSH + 远端服务' },
+      { key: '运行方式：{transport}', params: { transport: '常驻服务' } },
+      { key: '远端服务 v{version}', params: { version: '0.1.13' } },
+    ])
+    expect(sshServerTipLines({ ...readyServer, version: null })).toEqual([
+      { key: 'SSH + 远端服务' },
+      { key: '运行方式：{transport}', params: { transport: '常驻服务' } },
+    ])
+    expect(sshServerTipLines({ ...readyServer, phase: 'installing' })).toEqual([
+      { key: '正在安装远端服务' },
+      { key: '阶段：{phase}', params: { phase: '正在安装' } },
+    ])
+  })
+
+  it('labels the user-facing mode separately from the internal transport', () => {
+    expect(sshServerModeKey(readyServer)).toBe('SSH + 远端服务')
+    expect(
+      sshServerModeKey({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+      })
+    ).toBe('SSH 直连')
+    expect(sshServerModeKey({ ...readyServer, phase: 'probing', mode: 'unknown' })).toBe(
+      '正在检查远端服务'
+    )
+  })
+
+  it('ignores events for a different project', () => {
+    expect(sshServerEventMatches('ssh://c1/home/app', 'ssh://c1/home/app')).toBe(true)
+    expect(sshServerEventMatches('ssh://c2/other', 'ssh://c1/home/app')).toBe(false)
+  })
+
+  it('treats a missing command as unavailable', () => {
+    expect(isAgentCommandUnavailable(Object.assign(new Error('command ssh_server_info not found'), { name: 'Error' }))).toBe(true)
+    expect(isAgentCommandUnavailable(Object.assign(new Error('browser'), { name: 'NotInTauriError' }))).toBe(true)
+    expect(isAgentCommandUnavailable(new Error('连接已断开'))).toBe(false)
+  })
+})
+
+describe('parseSshServerTimings', () => {
+  it('splits stages, total and background stages', () => {
+    expect(
+      parseSshServerTimings('状态目录 0.0s · 启动 serve 2.7s · 合计 17.5s · daemon 7.4s（后台）'),
+    ).toEqual({
+      stages: [
+        { label: '状态目录', seconds: 0, background: false },
+        { label: '启动 serve', seconds: 2.7, background: false },
+        { label: 'daemon', seconds: 7.4, background: true },
+      ],
+      total: 17.5,
+    })
+    expect(parseSshServerTimings('daemon 0.9s（后台）')).toEqual({
+      stages: [{ label: 'daemon', seconds: 0.9, background: true }],
+      total: null,
+    })
+  })
+
+  it('rejects summaries it does not understand', () => {
+    expect(parseSshServerTimings('')).toBeNull()
+    expect(parseSshServerTimings('发现 1.2s · 奇怪的段')).toBeNull()
+  })
+})

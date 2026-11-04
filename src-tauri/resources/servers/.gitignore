@@ -1,0 +1,5 @@
+# Windows 打包时临时复制 qingcode-server-* 与 manifest.json 到这里，
+# 安装脚本通过临时 bundle.resources 配置逐项打包，结束后立即清理。
+# 普通 tauri dev / tauri build 不依赖这些临时文件。
+*
+!.gitignore

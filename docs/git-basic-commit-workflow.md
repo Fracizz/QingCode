@@ -238,14 +238,15 @@ message: 提交信息
 核心文件：
 
 - `src/components/SourceControlPanel.tsx`
-- `src/lib/git.ts`
-- `src/lib/gitStatus.ts`
+- `src/lib/git/git.ts`
+- `src/lib/git/gitStatus.ts`
 - `src/store/gitStatusStore.ts`
-- `src/store/sourceControlStore.ts`
+
+说明：面板状态统一存放在 `src/store/gitStatusStore.ts`（早期设计稿里的 `sourceControlStore` 已并入该 store，仓库中不再有独立的 store 文件）；面板组件与交互逻辑位于 `src/components/SourceControlPanel.tsx`。
 
 ### 7.1 状态辅助函数
 
-在 `src/lib/gitStatus.ts` 增加纯函数：
+在 `src/lib/git/gitStatus.ts` 增加纯函数：
 
 - 读取 index 状态
 - 读取 worktree 状态
@@ -272,7 +273,7 @@ Git 写操作统一走：
 校验输入
   → safeInvoke
   → 完整 git_status 刷新
-  → 同步 gitStatusStore/sourceControlStore
+  → 同步 gitStatusStore 中的分支与分组状态
   → 成功或失败反馈
 ```
 
@@ -336,7 +337,7 @@ Git 写操作统一走：
 
 ### 9.2 前端
 
-在 `src/lib/gitStatus.test.ts` 及相关 store 测试中覆盖：
+在 `src/lib/git/gitStatus.test.ts` 及相关 store 测试中覆盖：
 
 - staged / unstaged 分组
 - `MM` 和 `AM` 同时进入两组

@@ -6,6 +6,7 @@ import {
   resolveNewTerminalName,
   shouldApplyOscTabTitle,
   terminalDisplayLabel,
+  windowsSshShellLabel,
 } from './terminalName'
 
 describe('formatTerminalName / terminalDisplayLabel', () => {
@@ -42,12 +43,32 @@ describe('isGenericShellOscTitle', () => {
     expect(isGenericShellOscTitle('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe(
       true,
     )
+    expect(isGenericShellOscTitle('conhost')).toBe(true)
+    expect(isGenericShellOscTitle('conhost.exe')).toBe(true)
+    expect(isGenericShellOscTitle('C:\\Windows\\System32\\conhost.exe')).toBe(true)
+    expect(isGenericShellOscTitle('OpenConsole.exe')).toBe(true)
   })
 
   it('keeps app titles such as OpenCode', () => {
     expect(isGenericShellOscTitle('opencode')).toBe(false)
     expect(isGenericShellOscTitle('OpenCode')).toBe(false)
     expect(isGenericShellOscTitle('npm run dev')).toBe(false)
+  })
+})
+
+describe('windowsSshShellLabel', () => {
+  it('names Windows OpenSSH terminals PowerShell by default or auto', () => {
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'powershell')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'auto')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/c:/Users/Administrator')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/home/owner/app')).toBeNull()
+    expect(windowsSshShellLabel('D:/local')).toBeNull()
+  })
+
+  it('allows CMD and pwsh to use their localized label', () => {
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'cmd')).toBeNull()
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'pwsh')).toBeNull()
   })
 })
 
@@ -60,6 +81,7 @@ describe('shouldApplyOscTabTitle', () => {
 
   it('blocks generic shell noise and run-config tasks', () => {
     expect(shouldApplyOscTabTitle({}, 'powershell')).toBe(false)
+    expect(shouldApplyOscTabTitle({}, 'conhost')).toBe(false)
     expect(shouldApplyOscTabTitle({ shellKind: 'command' }, 'npm run dev')).toBe(false)
     expect(shouldApplyOscTabTitle({ shellKind: 'ps1' }, 'build')).toBe(false)
   })

@@ -175,14 +175,7 @@ export function readEffectiveExcludeSettings(settings: SettingsFile): EffectiveE
   }
 }
 
-let cached: EffectiveExcludeSettings = readEffectiveExcludeSettings(DEFAULT_GLOBAL_SETTINGS)
-
-export function getExcludeSettings(): EffectiveExcludeSettings {
-  return cached
-}
-
 export function notifyExcludeSettingsChanged(settings: EffectiveExcludeSettings) {
-  cached = settings
   window.dispatchEvent(new CustomEvent(EXCLUDE_SETTINGS_EVENT, { detail: settings }))
 }
 

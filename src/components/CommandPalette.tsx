@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Command, FileText } from 'lucide-react'
+import { hasBackend } from '../lib/runtimeCapabilities'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { Command, FileText, LoaderCircle } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import Kbd from './Kbd'
 import { useI18n } from '../lib/i18n'
 import {
   buildCommands,
@@ -15,10 +17,9 @@ import {
   parseQuickOpenLocation,
   quickOpenEntriesFromSearchHits,
   type QuickOpenEntry,
-  type QuickOpenSearchHit,
 } from '../lib/quickOpen'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { searchFiles } from '../lib/searchFiles'
 import { useCommandPaletteStore } from '../store/commandPaletteStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
@@ -41,6 +42,52 @@ function commandQuery(query: string) {
   return query.startsWith('>') ? query.slice(1).trimStart() : query
 }
 
+/** Renders text with matched query characters highlighted in brand color. */
+function highlightMatch(text: string, rawQuery: string): ReactNode {
+  const query = rawQuery.trim().toLowerCase()
+  if (!query) return text
+
+  const lower = text.toLowerCase()
+  const exactIdx = lower.indexOf(query)
+  if (exactIdx !== -1) {
+    return (
+      <>
+        {text.slice(0, exactIdx)}
+        <span className="font-semibold text-brand underline decoration-brand/40 underline-offset-2">
+          {text.slice(exactIdx, exactIdx + query.length)}
+        </span>
+        {text.slice(exactIdx + query.length)}
+      </>
+    )
+  }
+
+  // Fuzzy match fallback
+  const segments: ReactNode[] = []
+  let queryIdx = 0
+  let lastIdx = 0
+
+  for (let i = 0; i < text.length && queryIdx < query.length; i++) {
+    if (text[i].toLowerCase() === query[queryIdx]) {
+      if (i > lastIdx) {
+        segments.push(text.slice(lastIdx, i))
+      }
+      segments.push(
+        <span key={i} className="font-semibold text-brand">
+          {text[i]}
+        </span>,
+      )
+      lastIdx = i + 1
+      queryIdx++
+    }
+  }
+
+  if (lastIdx < text.length) {
+    segments.push(text.slice(lastIdx))
+  }
+
+  return segments.length > 0 && queryIdx === query.length ? segments : text
+}
+
 export default function CommandPalette() {
   const { t } = useI18n()
   const open = useCommandPaletteStore(s => s.open)
@@ -60,6 +107,10 @@ export default function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [tick, setTick] = useState(0)
   const [nativeEntries, setNativeEntries] = useState<QuickOpenEntry[]>([])
+  const [searching, setSearching] = useState(false)
+  const [failedProjects, setFailedProjects] = useState<string[]>([])
+  const [truncated, setTruncated] = useState(false)
+  const [searchRetry, setSearchRetry] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -91,8 +142,14 @@ export default function CommandPalette() {
   useEffect(() => {
     const requestId = ++searchRequestId.current
     const { fileQuery: needle, projectName } = parseQuickOpenLocation(query)
-    queueMicrotask(() => setNativeEntries([]))
-    if (!open || isCommandMode(query) || !needle || !isTauri()) return
+    queueMicrotask(() => {
+      if (requestId !== searchRequestId.current) return
+      setNativeEntries([])
+      setSearching(false)
+      setFailedProjects([])
+      setTruncated(false)
+    })
+    if (!open || isCommandMode(query) || !needle || !hasBackend()) return
 
     const roots = projects
       .filter(project => !unavailableProjectIds.includes(project.id))
@@ -103,6 +160,10 @@ export default function CommandPalette() {
     if (roots.length === 0) return
 
     let disposed = false
+    const searchAbort = new AbortController()
+    queueMicrotask(() => {
+      if (!disposed) setSearching(true)
+    })
     const timer = window.setTimeout(() => {
       const task = queuedNativeSearch.current.then(async () => {
         if (disposed || requestId !== searchRequestId.current) return
@@ -111,7 +172,7 @@ export default function CommandPalette() {
           if (disposed || requestId !== searchRequestId.current) return
           try {
             const excludes = await loadExcludeSettingsForProject(project)
-            const hits = await safeInvoke<QuickOpenSearchHit[]>('快速打开文件', 'search_files', {
+            const response = await searchFiles('快速打开文件', {
               root: project.path,
               query: needle,
               ignoreCase: true,
@@ -123,24 +184,34 @@ export default function CommandPalette() {
               excludePatterns: excludes.searchExclude,
               useIgnoreFiles: excludes.useIgnoreFiles,
               followSymlinks: excludes.followSymlinks,
-            })
+            }, searchAbort.signal)
             if (disposed || requestId !== searchRequestId.current) return
-            found = mergeQuickOpenEntries(found, quickOpenEntriesFromSearchHits(project, hits))
+            if (response.cancelled) {
+              setFailedProjects(names => [...names, project.name])
+              continue
+            }
+            if (response.truncated) setTruncated(true)
+            found = mergeQuickOpenEntries(found, quickOpenEntriesFromSearchHits(project, response.hits))
             setNativeEntries(found)
           } catch (error) {
             // A missing/inaccessible project must not prevent results from others.
             console.warn('quick open native search failed:', error)
+            if (!disposed && requestId === searchRequestId.current) {
+              setFailedProjects(names => [...names, project.name])
+            }
           }
         }
+        if (!disposed && requestId === searchRequestId.current) setSearching(false)
       })
       queuedNativeSearch.current = task.catch(() => {})
     }, BACKGROUND_SEARCH_DEBOUNCE_MS)
 
     return () => {
       disposed = true
+      searchAbort.abort()
       window.clearTimeout(timer)
     }
-  }, [open, query, projects, currentProject?.id, unavailableProjectIds])
+  }, [open, query, projects, currentProject?.id, unavailableProjectIds, searchRetry])
 
   const results = useMemo((): PaletteItem[] => {
     void tick
@@ -194,6 +265,7 @@ export default function CommandPalette() {
   }
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex(i => (results.length === 0 ? 0 : (i + 1) % results.length))
@@ -222,7 +294,7 @@ export default function CommandPalette() {
         aria-modal="true"
         aria-labelledby="command-palette-title"
         aria-describedby="command-palette-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elevated/95 backdrop-blur-md [box-shadow:var(--shadow-elevation-3)]"
       >
         <h2 id="command-palette-title" className="sr-only">
           {commandMode ? t('命令面板') : t('快速打开')}
@@ -243,32 +315,48 @@ export default function CommandPalette() {
             onChange={event => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
             placeholder={placeholder}
+            role="combobox"
+            aria-expanded="true"
+            aria-autocomplete="list"
+            aria-label={commandMode ? t('命令') : t('快速打开')}
             aria-controls="command-palette-list"
             aria-activedescendant={
               results[activeIndex] ? `command-palette-item-${activeIndex}` : undefined
             }
             className="modal-search-input"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>
+        {!commandMode && (searching || failedProjects.length > 0 || truncated) && (
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-ui-sm text-fg-muted" role="status">
+            {searching && <LoaderCircle size={13} className="animate-spin shrink-0" aria-hidden />}
+            <span className="min-w-0 flex-1 break-words">
+              {searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('部分项目未能完成搜索') : t('结果已达搜索上限，请细化关键词')}
+              {failedProjects.length > 0 && ` · ${failedProjects.join('、')}`}
+            </span>
+            {!searching && failedProjects.length > 0 && <button type="button" className="shrink-0 text-accent hover:underline" onClick={() => setSearchRetry(n => n + 1)}>{t('重试')}</button>}
+          </div>
+        )}
         <div
           id="command-palette-list"
           ref={listRef}
           role="listbox"
+          aria-busy={!commandMode && searching}
           aria-label={commandMode ? t('命令') : t('文件列表')}
           className="max-h-[min(360px,50vh)] overflow-y-auto py-1"
         >
           {results.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[13px] text-fg-dim">
-              {commandMode ? t('没有匹配的命令') : t('没有匹配的文件')}
+            <p className="px-3 py-6 text-center text-ui text-fg-dim">
+              {commandMode ? t('没有匹配的命令') : searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('搜索未完成，请重试') : t('没有匹配的文件')}
             </p>
           ) : (
             results.map((item, index) => {
               const active = index === activeIndex
               if (item.kind === 'command') {
                 const shortcut = resolveCommandShortcut(item.command, shortcuts)
+                const titleText = t(item.command.title, item.command.titleValues)
                 return (
                   <button
                     key={item.command.id}
@@ -277,23 +365,28 @@ export default function CommandPalette() {
                     role="option"
                     aria-selected={active}
                     data-cmd-index={index}
-                    className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors ${
-                      active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                    className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
+                      active
+                        ? 'border-brand bg-accent/15 text-fg'
+                        : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
                     }`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => void runItem(item)}
                   >
                     <span className="min-w-0 flex-1 truncate">
-                      {t(item.command.title, item.command.titleValues)}
+                      {highlightMatch(titleText, commandQuery(query))}
                     </span>
                     {shortcut && (
-                      <span className="text-ui-sm flex-shrink-0 font-mono text-fg-dim">{shortcut}</span>
+                      <span className="flex-shrink-0">
+                        <Kbd>{shortcut}</Kbd>
+                      </span>
                     )}
                   </button>
                 )
               }
 
               const Icon = getFileIcon(item.entry.label) ?? FileText
+              const { fileQuery } = parseQuickOpenLocation(query)
               return (
                 <button
                   key={item.entry.id}
@@ -302,15 +395,17 @@ export default function CommandPalette() {
                   role="option"
                   aria-selected={active}
                   data-cmd-index={index}
-                  className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors ${
-                    active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
+                    active
+                      ? 'border-brand bg-accent/15 text-fg'
+                      : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
                   }`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => void runItem(item)}
                 >
                   <Icon size={15} className="flex-shrink-0 opacity-80" />
                   <span className="min-w-0 flex-1 truncate">
-                    <span>{item.entry.label}</span>
+                    <span>{highlightMatch(item.entry.label, fileQuery)}</span>
                     <span className="text-ui-sm ml-2 text-fg-dim">
                       {item.entry.relativePath}
                       {projects.length > 1 ? ` · ${item.entry.projectName}` : ''}

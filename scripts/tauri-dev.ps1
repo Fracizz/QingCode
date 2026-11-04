@@ -109,14 +109,6 @@ Get-Process -Name 'qingcode', 'QingCode' -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 400
 
-# Keep grammar native code out of the main executable in development too.
-# Components are staged beside target/debug/qingcode.exe where the runtime
-# component registry discovers them.
-& (Join-Path $PSScriptRoot 'build-language-components.ps1') -Configuration Debug
-if ($LASTEXITCODE -ne 0) {
-  throw "Language component build failed with exit code $LASTEXITCODE."
-}
-
 $devPort = Get-AvailableDevPort
 $env:VITE_DEV_PORT = "$devPort"
 
@@ -128,6 +120,8 @@ $overridePath = Join-Path $devDir 'tauri-dev-override.json'
 # exits with -1 shortly after the app window opens, tearing down `tauri dev`
 # even though Vite was healthy. Own Vite in this script and clear the hook.
 $overrideJson = @{
+  # Keep the dev single-instance mutex separate from an installed release.
+  identifier = 'com.qingcode.app.dev'
   build = @{
     devUrl = "http://127.0.0.1:$devPort"
     beforeDevCommand = ''

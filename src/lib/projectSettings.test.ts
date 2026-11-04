@@ -5,7 +5,9 @@ import {
   DEFAULT_GLOBAL_SETTINGS_TEXT,
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_PROJECT_SETTINGS_TEXT,
+  GIT_REFRESH_INTERVAL_START_MINUTES_KEY,
   PROJECTS_KEY,
+  PROJECT_INDICATORS_ENABLED_KEY,
   PROJECTS_SYNC_ON_STARTUP_KEY,
   SESSION_EDITOR_STATE_CACHE_SIZE_KEY,
   UPDATE_CHECK_ON_STARTUP_KEY,
@@ -86,6 +88,24 @@ describe('parseSettingsText', () => {
   })
 })
 
+describe('removed ssh.server.persistentTerminals key', () => {
+  it('ignores a stale key left in an old settings file without throwing', () => {
+    const text = `{
+      version: 1,
+      custom: {},
+      "ssh.server.persistentTerminals": false,
+    }`
+    let parsed: ReturnType<typeof parseSettingsText> | null = null
+    expect(() => {
+      parsed = parseSettingsText(text, 'global')
+    }).not.toThrow()
+    expect(parsed?.['ssh.server.persistentTerminals']).toBe(false)
+    expect(DEFAULT_GLOBAL_SETTINGS['ssh.server.persistentTerminals']).toBeUndefined()
+    expect(DEFAULT_PROJECT_SETTINGS['ssh.server.persistentTerminals']).toBeUndefined()
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).not.toContain('ssh.server.persistentTerminals')
+  })
+})
+
 describe('validateSettings / strip / format', () => {
   it('rejects invalid shapes', () => {
     expect(validateSettings(null)).toMatch(/对象/)
@@ -104,10 +124,14 @@ describe('validateSettings / strip / format', () => {
       [PROJECTS_KEY]: [{ path: 'D:/a' }],
       [PROJECTS_SYNC_ON_STARTUP_KEY]: false,
       [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 24,
+      [PROJECT_INDICATORS_ENABLED_KEY]: false,
+      [GIT_REFRESH_INTERVAL_START_MINUTES_KEY]: 12,
     })
     expect(stripped[PROJECTS_KEY]).toBeUndefined()
     expect(stripped[PROJECTS_SYNC_ON_STARTUP_KEY]).toBeUndefined()
     expect(stripped[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]).toBeUndefined()
+    expect(stripped[PROJECT_INDICATORS_ENABLED_KEY]).toBeUndefined()
+    expect(stripped[GIT_REFRESH_INTERVAL_START_MINUTES_KEY]).toBeUndefined()
   })
 
   it('formatSettings returns commented template for default shape', () => {

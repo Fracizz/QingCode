@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useEffect,
   useRef,
   useState,
@@ -11,6 +9,7 @@ import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
 import TerminalTabs from './TerminalTabs'
 import EmptyState from './EmptyState'
+import { TerminalHosts, TerminalSlot, type TerminalHostEntry } from './TerminalHost'
 import {
   TERMINAL_FOCUS_PANES,
   useTerminalStore,
@@ -27,8 +26,7 @@ import {
   terminalWidthResizerHint,
 } from '../lib/panelLayout'
 import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
-
-const TerminalView = lazy(() => import('./Terminal'))
+import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
 const DUAL_RATIO_KEY = 'qingcode:dual-terminal-ratio'
 const QUAD_RATIO_KEY = 'qingcode:quad-terminal-ratio'
@@ -39,10 +37,6 @@ const DUAL_RATIO_MAX = 0.9
 const DUAL_RESIZER_PX = 8
 
 type QuadRatios = { col: number; row: number }
-
-function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
-  return <div className={className} aria-hidden="true" />
-}
 
 function clampRatio(value: number): number {
   return Math.min(DUAL_RATIO_MAX, Math.max(DUAL_RATIO_MIN, value))
@@ -55,9 +49,7 @@ function paneFrameClass(focused: boolean): string {
 
 function loadDualRatio(): number {
   try {
-    const raw = Number(localStorage.getItem(DUAL_RATIO_KEY))
-    if (!Number.isFinite(raw)) return 0.5
-    return clampRatio(raw)
+    return parseTerminalPaneRatio(localStorage.getItem(DUAL_RATIO_KEY))
   } catch {
     return 0.5
   }
@@ -96,6 +88,10 @@ export interface TerminalPanelProps {
   layoutSwitching?: boolean
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   onWidthResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  onHeightChange?: (value: number) => void
+  onWidthChange?: (value: number) => void
+  onHeightReset?: () => void
+  onWidthReset?: () => void
   terminalPanelRef: RefObject<HTMLDivElement | null>
 }
 
@@ -112,6 +108,10 @@ export default function TerminalPanel({
   layoutSwitching = false,
   onResizerPointerDown,
   onWidthResizerPointerDown,
+  onHeightChange,
+  onWidthChange,
+  onHeightReset,
+  onWidthReset,
   terminalPanelRef,
 }: TerminalPanelProps) {
   const skipDockTransition = isTerminalResizing || layoutSwitching
@@ -119,6 +119,17 @@ export default function TerminalPanel({
   const quadMode = position === 'side' && quadTerminal
   const multiPane = dualMode || quadMode
   const sideWidthEqual = sideSplit === 'equal' || !editorVisible
+  const [measuredSideWidth, setMeasuredSideWidth] = useState(terminalWidth)
+  useEffect(() => {
+    const panel = terminalPanelRef.current
+    if (position !== 'side' || !terminalOpen || !sideWidthEqual || !panel) return
+    const measure = () => setMeasuredSideWidth(Math.round(panel.getBoundingClientRect().width))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [position, terminalOpen, sideWidthEqual, terminalPanelRef])
+  const currentSideWidth = sideWidthEqual ? measuredSideWidth : terminalWidth
   const { t } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
@@ -131,6 +142,18 @@ export default function TerminalPanel({
   const ensureQuadTerminals = useTerminalStore(s => s.ensureQuadTerminals)
   const currentProject = useProjectStore(s => s.currentProject)
   const projectTerminals = terminals.filter(term => term.projectId === currentProject?.id)
+  // 打开过的项目的终端视图一直常驻（见 TerminalHost），切回来不重建 xterm；
+  // 没打开过的项目不提前创建，保持原来的按需挂载。
+  const [visitedTerminalIds, setVisitedTerminalIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  if (projectTerminals.some(term => !visitedTerminalIds.has(term.id))) {
+    setVisitedTerminalIds(previous => {
+      const next = new Set(previous)
+      for (const term of projectTerminals) next.add(term.id)
+      return next
+    })
+  }
   const isSide = position === 'side'
   const [dualRatio, setDualRatio] = useState(loadDualRatio)
   const [quadRatios, setQuadRatios] = useState(loadQuadRatios)
@@ -364,21 +387,22 @@ export default function TerminalPanel({
     multiPaneList.map(paneId).filter((id): id is string => Boolean(id)),
   )
 
-  /** Keep every project terminal mounted; park ones not shown in a visible pane. */
-  const parkedTerminalViews = projectTerminals
-    .filter(term => !visiblePaneIds.has(term.id))
-    .map(term => (
-      <div key={term.id} className="hidden" aria-hidden="true">
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-          <TerminalView terminalId={term.id} isActive={false} layoutKey={layoutKey} />
-        </Suspense>
-      </div>
-    ))
+  const focusedTerminalId = multiPane
+    ? visiblePaneIds.has(paneId(terminalFocusPane) ?? '')
+      ? paneId(terminalFocusPane)
+      : null
+    : activeTerminalId
+  const hostEntries: TerminalHostEntry[] = terminals
+    .filter(term => term.projectId === currentProject?.id || visitedTerminalIds.has(term.id))
+    .map(term => ({
+      terminalId: term.id,
+      isActive: term.id === focusedTerminalId && term.projectId === currentProject?.id,
+    }))
+  const terminalHosts = <TerminalHosts entries={hostEntries} layoutKey={layoutKey} />
 
   const renderPaneTerminal = (pane: TerminalFocusPane) => {
     const termId = paneId(pane)
     const term = termId ? projectTerminals.find(t => t.id === termId) : undefined
-    const focused = !multiPane || terminalFocusPane === pane
     if (!term) {
       return (
         <EmptyState
@@ -389,9 +413,7 @@ export default function TerminalPanel({
       )
     }
     return (
-      <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-        <TerminalView terminalId={term.id} isActive={focused} layoutKey={layoutKey} />
-      </Suspense>
+      <TerminalSlot terminalId={term.id} onPointerDown={() => setTerminalFocusPane(pane)} />
     )
   }
 
@@ -415,7 +437,7 @@ export default function TerminalPanel({
           focused={focused}
           showPanelActions={options.showPanelActions}
         />
-        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-deep">
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-terminal">
           {renderPaneTerminal(pane)}
         </div>
       </div>
@@ -434,9 +456,7 @@ export default function TerminalPanel({
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}
       >
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-          <TerminalView terminalId={term.id} isActive={isFocused} layoutKey={layoutKey} />
-        </Suspense>
+        <TerminalSlot terminalId={term.id} />
       </div>
     )
   })
@@ -445,7 +465,7 @@ export default function TerminalPanel({
     <>
       <div
         ref={dualSplitRef}
-        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-terminal"
         style={{
           gridTemplateColumns: `minmax(0, ${dualRatio}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - dualRatio}fr)`,
           gridTemplateRows: 'minmax(0, 1fr)',
@@ -459,6 +479,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整双终端比例')}
             tooltipSide="right"
             onPointerDown={onDualResizerPointerDown}
+            onValueChange={value => setDualRatio(clampRatio(value / 100))}
+            onReset={() => setDualRatio(0.5)}
+            keyboardStep={2}
             ariaValueNow={Math.round(dualRatio * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -467,7 +490,6 @@ export default function TerminalPanel({
         </div>
         {paneShell('secondary', { showPanelActions: true })}
       </div>
-      {parkedTerminalViews}
     </>
   )
 
@@ -475,7 +497,7 @@ export default function TerminalPanel({
     <>
       <div
         ref={quadSplitRef}
-        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-terminal"
         style={{
           gridTemplateColumns: `minmax(0, ${quadRatios.col}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.col}fr)`,
           gridTemplateRows: `minmax(0, ${quadRatios.row}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.row}fr)`,
@@ -504,6 +526,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整四终端列比例')}
             tooltipSide="right"
             onPointerDown={onQuadColResizerPointerDown}
+            onValueChange={value => setQuadRatios(previous => ({ ...previous, col: clampRatio(value / 100) }))}
+            onReset={() => setQuadRatios(previous => ({ ...previous, col: 0.5 }))}
+            keyboardStep={2}
             ariaValueNow={Math.round(quadRatios.col * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -517,6 +542,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整四终端行比例')}
             tooltipSide="top"
             onPointerDown={onQuadRowResizerPointerDown}
+            onValueChange={value => setQuadRatios(previous => ({ ...previous, row: clampRatio(value / 100) }))}
+            onReset={() => setQuadRatios(previous => ({ ...previous, row: 0.5 }))}
+            keyboardStep={2}
             ariaValueNow={Math.round(quadRatios.row * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -524,7 +552,6 @@ export default function TerminalPanel({
           />
         </div>
       </div>
-      {parkedTerminalViews}
     </>
   )
 
@@ -535,7 +562,7 @@ export default function TerminalPanel({
   ) : (
     <>
       <TerminalTabs />
-      <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">
+      <div className="relative flex-1 min-w-0 bg-bg-terminal overflow-hidden min-h-0">
         {projectTerminals.length === 0 && (
           <div className="absolute inset-0">
             <EmptyState
@@ -550,8 +577,11 @@ export default function TerminalPanel({
     </>
   )
 
+  // 宿主固定在片段首位：侧边/底部切换只换外层 div，常驻终端视图不受影响。
   if (isSide) {
     return (
+      <>
+      {terminalHosts}
       <div
         ref={terminalPanelRef}
         data-terminal-panel
@@ -572,10 +602,13 @@ export default function TerminalPanel({
           <PanelResizer
             orientation="vertical"
             active={isTerminalResizing}
-            tooltip={terminalWidthResizerHint(terminalWidth, t)}
+            tooltip={terminalWidthResizerHint(currentSideWidth, t)}
             tooltipSide="left"
             onPointerDown={onWidthResizerPointerDown}
-            ariaValueNow={terminalWidth}
+            onValueChange={onWidthChange}
+            onReset={onWidthReset}
+            keyboardDirection={-1}
+            ariaValueNow={currentSideWidth}
             ariaValueMin={getTerminalMinWidth()}
             ariaValueMax={getTerminalMaxWidth()}
           />
@@ -584,10 +617,13 @@ export default function TerminalPanel({
           {body}
         </div>
       </div>
+      </>
     )
   }
 
   return (
+    <>
+    {terminalHosts}
     <div
       ref={terminalPanelRef}
       data-terminal-panel
@@ -605,6 +641,9 @@ export default function TerminalPanel({
           tooltip={terminalResizerHint(terminalHeight, t)}
           tooltipSide="top"
           onPointerDown={onResizerPointerDown}
+          onValueChange={onHeightChange}
+          onReset={onHeightReset}
+          keyboardDirection={-1}
           ariaValueNow={terminalHeight}
           ariaValueMin={TERMINAL_MIN_HEIGHT}
           ariaValueMax={getTerminalMaxHeight()}
@@ -614,5 +653,6 @@ export default function TerminalPanel({
         {body}
       </div>
     </div>
+    </>
   )
 }

@@ -23,13 +23,9 @@ export interface SettingsFile {
   [key: string]: unknown
 }
 
-/** @deprecated Prefer SettingsFile */
-export type ProjectSettingsFile = SettingsFile
 
 export type SettingsScope = 'global' | 'project'
 
-export const PROJECT_SETTINGS_RELATIVE_PATH = '.qingcode/project-settings.json'
-export const GLOBAL_SETTINGS_DISPLAY_PATH = '全局设置 / default-settings.json'
 
 export const PROJECTS_KEY = 'qingcode.projects'
 export const PROJECTS_SYNC_ON_STARTUP_KEY = 'qingcode.projects.syncOnStartup'
@@ -41,7 +37,9 @@ export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
 export const SESSION_EDITOR_STATE_CACHE_SIZE_KEY = 'qingcode.session.editorStateCacheSize'
 /** Show running/dirty/git badges on title-bar project chips. */
 export const PROJECT_INDICATORS_ENABLED_KEY = 'qingcode.projectIndicators.enabled'
-
+/** Background Git status polling interval start in whole minutes. */
+export const GIT_REFRESH_INTERVAL_START_MINUTES_KEY =
+  'qingcode.git.refreshIntervalStartMinutes'
 function buildSharedDefaults(): SettingsFile {
   return {
     version: 1,
@@ -101,6 +99,11 @@ function buildSharedDefaults(): SettingsFile {
     'explorer.excludeGitIgnore': false,
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
+    'terminal.integrated.sshUploadOnPaste': true,
+    'ssh.server.enabled': true,
+    'ssh.server.autoDownload': true,
+    'ssh.server.offlineDir': '',
+    'ssh.transfer.concurrency': 4,
     custom: {},
   }
 }
@@ -114,6 +117,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [SESSION_PERSIST_KEY]: true,
   [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 'auto',
   [PROJECT_INDICATORS_ENABLED_KEY]: true,
+  [GIT_REFRESH_INTERVAL_START_MINUTES_KEY]: 5,
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -125,8 +129,6 @@ export const DEFAULT_PROJECT_SETTINGS: SettingsFile = (() => {
   return next
 })()
 
-/** @deprecated Prefer DEFAULT_GLOBAL_SETTINGS */
-export const DEFAULT_SETTINGS = DEFAULT_GLOBAL_SETTINGS
 
 const SHARED_SETTINGS_BODY = `
   // ============================== 编辑器 ==============================
@@ -230,6 +232,30 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.scrollback": 5000,
   // terminal.integrated.cursorBlinking：终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
+  // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 true）
+  "terminal.integrated.sshUploadOnPaste": true,
+
+  // ============================== SSH ==============================
+  // ssh.server.enabled：仅兼容尚未保存 mode 的旧连接（true=Server，false=SSH，默认 true）。
+  // 新建连接固定默认 Server；SSH 直连在每个连接的「高级」兼容选项中设置。
+  // 此键只读取用户设置，工作区覆盖无效。
+  "ssh.server.enabled": true,
+
+  // ssh.server.autoDownload：安装包不附带 server 二进制。缺失时是否从 GitHub Release
+  // （server-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
+  // 离线：设置里手动选择 servers 目录，或把它放在 QingCode.exe 旁边，
+  // 或用 QINGCODE_SERVER_DIR 指定目录（本地文件优先于下载）。
+  // 下载的执行文件不签名，信任源是本仓库官方 Release（默认 true）
+  "ssh.server.autoDownload": true,
+
+  // ssh.server.offlineDir：手动选择的离线服务目录（本机路径）。可填 servers 目录，
+  // 或包含 servers 子目录的文件夹。非空时优先于程序旁边的 servers、
+  // QINGCODE_SERVER_DIR 和在线下载。留空表示不手动指定（默认 ""）
+  "ssh.server.offlineDir": "",
+
+  // ssh.transfer.concurrency：SSH / Server 端口直连上传、下载的单任务文件并发数，
+  // 包含文件夹内的文件；默认 4，范围 1–8。工作区可覆盖全局设置。
+  "ssh.transfer.concurrency": 4,
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */
@@ -292,7 +318,7 @@ ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   //
   // qingcode.update.checkOnStartup
   //   true  = 正式构建启动约 3 秒后自动检查 GitHub/Gitee Release
-  //   false = 仅通过设置 → 功能 →「检查更新」手动检查
+  //   false = 仅通过设置 → 更新与关于 →「检查更新」手动检查
   "qingcode.update.checkOnStartup": true,
   //
   // qingcode.update.skippedVersion
@@ -311,9 +337,16 @@ ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   //
   // qingcode.projectIndicators.enabled
   //   true  = 顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标（默认）
-  //           Git 数量后台每 60–90 秒轮询，窗口聚焦或 Git 变更时也会刷新
-  //   false = 隐藏上述角标，并停止 Git 轮询
+  //           Git 数量按 qingcode.git.refreshIntervalStartMinutes 设定的随机周期轮询
+  //   false = 隐藏上述角标，并停止角标使用的多项目 Git 轮询
   "qingcode.projectIndicators.enabled": true,
+  //
+  // qingcode.git.refreshIntervalStartMinutes
+  //   后台 Git 状态随机轮询周期的起始值，单位为分钟；最小值和默认值均为 5
+  //   实际周期为起始值至其 1.5 倍（向上取整）之间的随机整分钟
+  //   顶栏多项目 Git 刷新逐个执行，不会同时并发刷新全部项目
+  //   仅影响定时轮询；窗口聚焦、文件保存或 Git 状态变化仍会即时刷新
+  "qingcode.git.refreshIntervalStartMinutes": 5,
 
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
@@ -342,8 +375,6 @@ ${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY)}
 }
 `
 
-/** @deprecated Prefer DEFAULT_GLOBAL_SETTINGS_TEXT */
-export const DEFAULT_SETTINGS_TEXT = DEFAULT_GLOBAL_SETTINGS_TEXT
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -392,6 +423,8 @@ export function stripGlobalOnlyKeys(settings: SettingsFile): SettingsFile {
   delete next[PROJECTS_KEY]
   delete next[PROJECTS_SYNC_ON_STARTUP_KEY]
   delete next[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]
+  delete next[PROJECT_INDICATORS_ENABLED_KEY]
+  delete next[GIT_REFRESH_INTERVAL_START_MINUTES_KEY]
   return next
 }
 
@@ -615,10 +648,6 @@ export function parseSettings(input: unknown, scope: SettingsScope = 'global'): 
   return next
 }
 
-/** @deprecated Prefer parseSettings */
-export function parseProjectSettings(input: unknown): SettingsFile {
-  return parseSettings(input, 'project')
-}
 
 export function validateSettings(input: unknown): string | null {
   if (!isRecord(input)) return '设置必须是 JSON 对象'
@@ -630,10 +659,6 @@ export function validateSettings(input: unknown): string | null {
   return null
 }
 
-/** @deprecated Prefer validateSettings */
-export function validateProjectSettings(input: unknown): string | null {
-  return validateSettings(input)
-}
 
 export function readProjectEntries(settings: SettingsFile): SettingsProjectEntry[] {
   const raw = settings[PROJECTS_KEY]

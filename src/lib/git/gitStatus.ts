@@ -9,6 +9,11 @@ export type GitStatusEntry = {
 export type GitWorkdirStatus = {
   entries: GitStatusEntry[]
   dirty_count: number
+  /**
+   * SSH 的 workdir 快照来自完整 `git status --branch`，顺带就带回了分支名；
+   * 本地命令不返回，保持 undefined，仍由 `getGitHead` 补齐。
+   */
+  branch?: string | null
 }
 
 export type GitChangeGroup = 'staged' | 'unstaged'

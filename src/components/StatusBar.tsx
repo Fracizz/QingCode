@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { GitBranch, Folder, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
+import { GitBranch, Folder, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -7,10 +7,12 @@ import { useUIStore } from '../store/uiStore'
 import { formatTerminalName } from '../utils/terminalName'
 import StatusTip from './StatusTip'
 import { useI18n } from '../lib/i18n'
+import { isNonEditableViewMode } from '../lib/openFileError'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { getGitHead, type GitHeadInfo } from '../lib/ipc/git'
 import { isProjectRestricted, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { useActiveGitDirtyCount } from '../hooks/useActiveGitDirtyCount'
 import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
@@ -19,11 +21,24 @@ import {
 } from '../lib/fileEncoding'
 import { checkForAppUpdate } from '../lib/appUpdate'
 import { formatAppMemoryMb } from '../lib/appMemory'
+import { gitHeadPollIntervalMs } from '../lib/gitRefreshSettings'
 import {
   readStatusBarRowTop,
   STATUS_BAR_ROW_ATTR,
   StatusBarRowContext,
 } from './statusBarRowContext'
+import { hasBackend } from '../lib/runtimeCapabilities'
+import { isExternalFileWindow } from '../lib/windowSession'
+import { ProjectKindIcon } from './ProjectKindMark'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { isSshProject } from '../lib/sshWorkspace'
+import { isWslProject } from '../lib/wslWorkspace'
+import SshServerStatusChip from './SshServerStatusChip'
+import { isSshResource } from '../lib/tauri'
+import { parentPath, pathsEqual } from '../utils/fileReferences'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 type AppMemoryInfo = {
   totalBytes: number
@@ -33,7 +48,6 @@ type AppMemoryInfo = {
   projectTerminalBytes: number
 }
 
-const GIT_HEAD_REFRESH_MS = 15_000
 /** Background poll while the window is visible. */
 const APP_MEMORY_REFRESH_MS = 10_000
 /** Faster poll while the memory tip is open. */
@@ -41,17 +55,21 @@ const APP_MEMORY_TIP_REFRESH_MS = 5_000
 
 /** Subtle vertical rule between logical status-bar groups. */
 function StatusDivider() {
-  return <span className="mx-1.5 h-3 w-px flex-shrink-0 bg-border" aria-hidden />
+  return <span className="status-divider" aria-hidden />
 }
 
-/** Clickable status-bar chips: primary text, hover lift only — never accent fill. */
-const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
-/** Secondary / meta copy: brighter than global fg-muted for 24px bar readability. */
-const STATUS_SECONDARY = 'text-fg/85'
+/** Shared hit area and keyboard focus for status actions and connection chips. */
+const STATUS_ACTION = 'status-action'
+const STATUS_SECONDARY = 'text-fg-muted'
 
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
+  const projectLabels = useProjectLabels()
+  const sshConnections = useProjectStore(s => s.sshConnections)
+  const projects = useProjectStore(s => s.projects)
+  const addProject = useProjectStore(s => s.addProject)
+  const switchProject = useProjectStore(s => s.switchProject)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const cursor = useEditorStore(s => s.cursor)
@@ -67,12 +85,13 @@ export default function StatusBar() {
   const [memoryTipOpen, setMemoryTipOpen] = useState(false)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
-  const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
+  const gitDirtyCount = useActiveGitDirtyCount()
   const [encodingMenu, setEncodingMenu] = useState<{
     x: number
     y: number
     anchorCenterX: number
   } | null>(null)
+  const [standaloneMenu, setStandaloneMenu] = useState<{ x: number; y: number } | null>(null)
   const pushToast = useProjectStore(s => s.pushToast)
   const rowRef = useRef<HTMLDivElement>(null)
 
@@ -110,6 +129,7 @@ export default function StatusBar() {
     isProjectRestricted(currentProject)
 
   const activeTab = tabs.find(t => t.id === activeTabId)
+  const standaloneFiles = isExternalFileWindow() && !currentProject
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   const projectTerminalIds = useMemo(
     () =>
@@ -197,20 +217,36 @@ export default function StatusBar() {
   useEffect(() => {
     const projectPath = currentProject?.path
     // Non-git / ephemeral / browser preview: hide the chip (no placeholder).
-    if (!projectPath || !isTauri() || currentProject?.ephemeral) {
+    if (!projectPath || !hasBackend() || currentProject?.ephemeral) {
       queueMicrotask(() => setGitHead(null))
       return
     }
 
     let cancelled = false
+    /** 已经拿到过分支：后面的补偿重试就不必再跑。 */
+    let hasHead = false
     const retryTimers: number[] = []
+    // SSH 取分支 = 一次完整 git status；分支名改为跟随 workdir / SCM 快照，不再单独轮询。
+    const sshProject = isSshResource(projectPath)
 
     const applyHead = (info: GitHeadInfo | null) => {
-      if (!cancelled) setGitHead(info)
+      if (cancelled) return
+      hasHead = info !== null
+      setGitHead(info)
+    }
+
+    const headFromCache = (): GitHeadInfo | null => {
+      const cached = useGitStatusStore.getState().peekPanelStatus(projectPath)
+      if (!cached?.is_repository || !cached.branch) return null
+      return { name: cached.branch, detached: cached.branch === 'HEAD' }
     }
 
     /** Prefer filesystem HEAD; fall back to SCM cache branch when present. */
     const loadGitHead = async () => {
+      if (sshProject) {
+        applyHead(headFromCache())
+        return
+      }
       const cached = useGitStatusStore.getState().peekPanelStatus(projectPath)
       try {
         const info = await getGitHead(projectPath)
@@ -218,9 +254,10 @@ export default function StatusBar() {
         if (info) {
           applyHead(info)
           // Keep SCM panel branch in sync when soft refresh left it empty.
-          if (cached?.is_repository && !cached.branch) {
+          const latest = useGitStatusStore.getState().peekPanelStatus(projectPath)
+          if (latest?.is_repository && !latest.branch) {
             useGitStatusStore.getState().setPanelStatus(projectPath, {
-              ...cached,
+              ...latest,
               branch: info.name,
             })
           }
@@ -242,22 +279,21 @@ export default function StatusBar() {
     }
 
     // Seed immediately from SCM cache so the chip appears before IPC returns.
-    const seed = useGitStatusStore.getState().peekPanelStatus(projectPath)
-    if (seed?.is_repository && seed.branch) {
-      applyHead({ name: seed.branch, detached: false })
-    } else {
-      applyHead(null)
-    }
+    const seed = headFromCache()
+    if (seed) applyHead(seed)
+    else applyHead(null)
 
     void loadGitHead()
-    // Allowlist sync can lag project switch; retry briefly so a race does not
-    // leave the status bar empty until the 15s poll.
-    for (const delay of [120, 400, 1000]) {
-      retryTimers.push(
-        window.setTimeout(() => {
-          void loadGitHead()
-        }, delay)
-      )
+    // Allowlist sync can lag project switch; retry briefly, but only while the chip
+    // is still empty — a successful read must not be repeated three more times.
+    if (!sshProject) {
+      for (const delay of [120, 400, 1000]) {
+        retryTimers.push(
+          window.setTimeout(() => {
+            if (!hasHead) void loadGitHead()
+          }, delay)
+        )
+      }
     }
 
     const onFocus = () => {
@@ -266,6 +302,9 @@ export default function StatusBar() {
     const onVisibility = () => {
       if (!document.hidden) void loadGitHead()
     }
+    // 本地项目：在终端里 `git checkout` / `git switch` 会改写工作区并触发该事件，
+    // 分支芯片要跟着刷新，而不是等下一次 15 秒轮询。本地读 HEAD 很便宜；
+    // SSH 不监听（每次都是远程往返），分支名跟随 workdir 快照。
     const onWorktree = (event: Event) => {
       const detail = (event as CustomEvent<{ projectPath?: string }>).detail
       if (detail?.projectPath && detail.projectPath !== projectPath) return
@@ -273,17 +312,25 @@ export default function StatusBar() {
     }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('qingcode:git-worktree-changed', onWorktree)
-    const intervalId = window.setInterval(() => {
-      void loadGitHead()
-    }, GIT_HEAD_REFRESH_MS)
+    if (!sshProject) window.addEventListener('qingcode:git-worktree-changed', onWorktree)
+    const pollMs = gitHeadPollIntervalMs(sshProject)
+    const intervalId = pollMs > 0
+      ? window.setInterval(() => {
+          void loadGitHead()
+        }, pollMs)
+      : null
 
-    // When SCM soft-refresh fills branch later, mirror it into the status bar.
+    // When SCM / workdir refresh fills branch later, mirror it into the status bar.
     const unsubScm = useGitStatusStore.subscribe(state => {
       if (cancelled || state.panelPath !== projectPath) return
       const branch = state.panelStatus?.is_repository ? state.panelStatus.branch : null
       if (!branch) return
-      setGitHead(prev => prev ?? { name: branch, detached: false })
+      setGitHead(prev => {
+        if (!sshProject) return prev ?? { name: branch, detached: false }
+        // SSH 没有轮询，分支名完全跟随快照：切分支后也要跟着变。
+        if (prev?.name === branch) return prev
+        return { name: branch, detached: branch === 'HEAD' }
+      })
     })
 
     return () => {
@@ -291,50 +338,141 @@ export default function StatusBar() {
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
-      window.clearInterval(intervalId)
+      if (intervalId !== null) window.clearInterval(intervalId)
       for (const id of retryTimers) window.clearTimeout(id)
       unsubScm()
     }
   }, [currentProject?.path, currentProject?.ephemeral])
 
-  const showEditorHints = Boolean(activeTab)
   const showEncoding =
     activeTab?.kind === 'diff' ||
-    Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
-  const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
+    Boolean(activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab))
+  const showMetaGroup = Boolean(appVersion) || Boolean(appMemory)
+
+  const isSshActiveTab = isSshResource(activeTab?.path)
+  const standaloneMenuItems = activeTab
+    ? [
+        {
+          label: t('在文件管理器中显示'),
+          disabled: isSshActiveTab,
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+              return
+            }
+            void revealItemInDir(activeTab.path).catch(error => {
+              pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
+            })
+          },
+        },
+        {
+          label: t('打开所在文件夹'),
+          disabled: isSshActiveTab,
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+              return
+            }
+            void openPath(parentPath(activeTab.path)).catch(error => {
+              pushToast('error', t('打开文件夹失败: {error}', { error: String(error) }))
+            })
+          },
+        },
+        {
+          label: t('将所在文件夹作为项目打开'),
+          disabled: isSshActiveTab,
+          separatorBefore: true,
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('暂不支持直接将远程文件夹添加为本地项目'))
+              return
+            }
+            void (async () => {
+              const folder = parentPath(activeTab.path)
+              const existing = projects.find(project => pathsEqual(project.path, folder))
+              const opened = existing ? await switchProject(existing) : await addProject(folder)
+              if (opened) setView('explorer')
+            })()
+          },
+        },
+      ]
+    : []
 
   return (
     <StatusBarRowContext.Provider value={rowRef}>
       <div
         ref={rowRef}
         {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-        className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 text-fg text-ui flex items-center gap-2 overflow-hidden px-3 select-none"
       >
         {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          <Folder size={13} className="flex-shrink-0 text-brand" />
-          <span className="min-w-0 max-w-[28%] truncate">
-            {currentProject ? currentProject.name : t('未选择项目')}
-          </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          {standaloneFiles ? (
+            <StatusTip label={activeTab?.path ?? t('独立文件窗口')}>
+              <button
+                type="button"
+                disabled={!activeTab}
+                aria-label={t('独立文件')}
+                aria-haspopup="menu"
+                aria-expanded={standaloneMenu !== null}
+                className={`inline-flex min-w-0 max-w-[28%] items-center gap-1.5 ${STATUS_ACTION} disabled:cursor-default`}
+                onClick={event => {
+                  if (!activeTab) return
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setStandaloneMenu({ x: rect.left, y: rect.top })
+                }}
+              >
+                <FileText size={13} className="flex-shrink-0 text-brand" />
+                <span className="truncate">{t('独立文件')}</span>
+              </button>
+            </StatusTip>
+          ) : (
+            <>
+              {currentProject ? (
+                <ProjectKindIcon
+                  project={currentProject}
+                  size={13}
+                  className="flex-shrink-0 text-brand"
+                />
+              ) : (
+                <Folder size={13} className="flex-shrink-0 text-brand" />
+              )}
+              {currentProject ? (
+                <StatusTip
+                  label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+                  wrapperClassName="status-project-label min-w-0 max-w-[45%] shrink! font-medium"
+                >
+                  <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
+                </StatusTip>
+              ) : <span className="truncate">{t('未选择项目')}</span>}
+              {currentProject && isWslProject(currentProject) ? (
+                <span className="status-source-label flex-shrink-0 text-ui-sm">{t('WSL')}</span>
+              ) : null}
+              {currentProject && isSshProject(currentProject) ? (
+                <SshServerStatusChip rootUri={currentProject.path} />
+              ) : null}
+            </>
+          )}
           {gitHead && (
             <>
               <StatusDivider />
               <StatusTip
-                label={
+                wrapperClassName="status-branch"
+                label={`${gitHead.name}\n${
                   gitHead.detached
                     ? t('分离的 HEAD（未在分支上）')
                     : gitDirtyCount > 0
                       ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
                       : t('当前 Git 分支')
-                }
+                }`}
               >
                 <button
                   type="button"
-                  className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
+                  className={`inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
                   onClick={() => setView('sourceControl')}
                 >
                   <GitBranch size={13} className="flex-shrink-0" />
-                  <span>
+                  <span className="truncate">
                     {gitHead.detached
                       ? t('分离 HEAD · {sha}', { sha: gitHead.name })
                       : gitHead.name}
@@ -346,69 +484,36 @@ export default function StatusBar() {
               </StatusTip>
             </>
           )}
-          {restricted && (
-            <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
-              <span className="flex flex-shrink-0 items-center gap-1 text-warn">
-                <ShieldAlert size={13} />
-                {t('受限')}
-              </span>
-            </StatusTip>
-          )}
         </div>
-
-        {/* Right: hints | session actions | meta */}
-        <div className="flex flex-shrink-0 items-center">
-          {showEditorHints && (
-            <>
-              <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
-                {cursor && (
-                  <span className="hidden sm:inline">
-                    {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
-                  </span>
-                )}
-                <StatusTip
-                  label={t(
-                    'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
-                  )}
-                >
-                  <span className="hidden lg:inline">
-                    {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
-                  </span>
-                </StatusTip>
-              </div>
-              <StatusDivider />
-            </>
-          )}
-
-          <StatusTip label={t('切换终端面板')}>
-            <button
-              type="button"
-              aria-label={t('切换终端面板')}
-              className={`flex max-w-[180px] items-center gap-1.5 px-1.5 py-px ${STATUS_ACTION}`}
-              onClick={requestToggleTerminal}
-            >
-              <TerminalIcon size={13} className="flex-shrink-0" />
-              <span className="truncate">
-                {t('{running}/{total} 运行中', {
-                  running: runningTerminals,
-                  total: projectTerminals.length,
-                })}
-                {activeTerm ? (
-                  <span
-                    className={STATUS_SECONDARY}
-                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
-                ) : null}
-              </span>
-            </button>
+        {restricted && (
+          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
+            <span className="flex flex-shrink-0 items-center gap-1 text-warn">
+              <ShieldAlert size={13} />
+              {t('受限')}
+            </span>
           </StatusTip>
+        )}
 
-          {showMetaGroup && (
+        {/* Right: file context | terminal actions | application metadata. */}
+        <div className="flex flex-shrink-0 items-center">
+          {((cursor && activeTab) || showEncoding) && (
             <>
-              <StatusDivider />
-              <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
+              <div className="status-file-meta inline-flex items-center gap-2">
+                {cursor && activeTab && (
+                  <StatusTip
+                    wrapperClassName="status-cursor"
+                    label={t(
+                      'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
+                    )}
+                  >
+                    <span className="tabular-nums whitespace-nowrap px-1">
+                      {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
+                    </span>
+                  </StatusTip>
+                )}
                 {activeTab?.kind === 'diff' ? (
                   <span>{t('差异对比')}</span>
-                ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+                ) : activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab) ? (
                   <StatusTip label={t('转换编码（下次保存）· 或按编码重新打开')}>
                     <button
                       type="button"
@@ -432,7 +537,37 @@ export default function StatusBar() {
                     </button>
                   </StatusTip>
                 ) : null}
-                {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
+              </div>
+              <span className="status-file-meta"><StatusDivider /></span>
+            </>
+          )}
+
+          <StatusTip label={[t('切换终端面板'), appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
+            <button
+              type="button"
+              aria-label={t('切换终端面板')}
+              className={`flex max-w-[180px] items-center gap-1.5 ${STATUS_ACTION}`}
+              onClick={requestToggleTerminal}
+            >
+              <TerminalIcon size={13} className="flex-shrink-0" />
+              <span className="truncate tabular-nums">
+                {t('{running}/{total} 运行中', {
+                  running: runningTerminals,
+                  total: projectTerminals.length,
+                })}
+                {activeTerm ? (
+                  <span
+                    className={`status-terminal-name ${STATUS_SECONDARY}`}
+                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
+                ) : null}
+              </span>
+            </button>
+          </StatusTip>
+
+          {showMetaGroup && (
+            <div className="status-app-meta inline-flex items-center">
+              <StatusDivider />
+              <div className={`text-ui-sm flex items-center gap-2 ${STATUS_SECONDARY}`}>
                 {appMemory && (
                   <StatusTip
                     label={t(
@@ -449,12 +584,12 @@ export default function StatusBar() {
                     onShow={() => setMemoryTipOpen(true)}
                     onHide={() => setMemoryTipOpen(false)}
                   >
-                    <span className="rounded px-1 -mx-1 tabular-nums">
+                    <span className="px-1 tabular-nums whitespace-nowrap">
                       {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
                     </span>
                   </StatusTip>
                 )}
-                {appMemory && appVersion ? <StatusDivider /> : null}
+
                 {appVersion && (
                   <StatusTip
                     label={
@@ -496,7 +631,7 @@ export default function StatusBar() {
                   </StatusTip>
                 )}
               </div>
-            </>
+            </div>
           )}
         </div>
         {encodingMenu && (
@@ -508,6 +643,15 @@ export default function StatusBar() {
             onClose={() => setEncodingMenu(null)}
             preferAbove
             arrow="bottom-end"
+          />
+        )}
+        {standaloneMenu && (
+          <ContextMenu
+            x={standaloneMenu.x}
+            y={standaloneMenu.y}
+            items={standaloneMenuItems}
+            onClose={() => setStandaloneMenu(null)}
+            preferAbove
           />
         )}
       </div>

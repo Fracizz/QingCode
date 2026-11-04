@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use tauri::State;
 
+mod sync_cache;
+
 /// Reject paths outside the registered project / authorized sandbox before any Git I/O.
 fn ensure_git_root(path: &str, allowlist: &PathAllowlist) -> Result<(), String> {
     allowlist.ensure_allowed(path)?;
@@ -39,7 +41,7 @@ pub struct GitStatus {
     pub last_fetch_at: Option<i64>,
     /// Last pull/merge from remote (ms since epoch), from HEAD reflog.
     pub last_pull_at: Option<i64>,
-    /// Last push time (ms since epoch), from HEAD reflog when available.
+    /// Last push time (ms since epoch), from the upstream branch reflog when available.
     pub last_push_at: Option<i64>,
     pub changes: Vec<GitChange>,
 }
@@ -139,14 +141,33 @@ fn read_last_fetch_at(root: &Path) -> Option<i64> {
     resolve_git_path(root, "FETCH_HEAD").and_then(|path| file_mtime_ms(&path))
 }
 
-fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
-    let output = run_git(root, &["reflog", "--date=unix", "-n", "100"]).ok()?;
+/// reflog 里能认出「拉取」的动作 / 说明。
+const PULL_REFLOG_NEEDLES: &[&str] = &["pull ", "pull:", "merge branch", "fast-forward"];
+/// 远程跟踪分支 reflog 里推送留下的动作。
+///
+/// `git push` 不写 HEAD 的 reflog，只更新 `refs/remotes/<remote>/<branch>`，
+/// 并记一条 `update by push`；所以推送时间要从上游分支的 reflog 里找。
+const PUSH_REFLOG_NEEDLES: &[&str] = &["update by push"];
+
+fn read_reflog_text(root: &Path, reference: Option<&str>) -> Option<String> {
+    let mut args = vec!["reflog", "show", "--date=unix", "-n", "100"];
+    if let Some(reference) = reference {
+        args.push(reference);
+    }
+    let output = run_git(root, &args).ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// 在一份 reflog 输出里找第一条命中 `needles` 的时间戳（毫秒）。
+///
+/// 每条 reflog 形如 `<sha> <ref>@{<unix>}: <action>: <message>`，`<message>` 可以缺省
+/// （`update by push` 就没有）。因此动作段和说明段都要看。
+fn reflog_timestamp(text: &str, needles: &[&str]) -> Option<i64> {
     for line in text.lines() {
-        let marker = "HEAD@{";
+        let marker = "@{";
         let Some(marker_at) = line.find(marker) else {
             continue;
         };
@@ -157,20 +178,34 @@ fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
         let Some(ts_secs) = rest[..end].parse::<i64>().ok() else {
             continue;
         };
-        let message = line.split(": ").skip(2).collect::<Vec<_>>().join(": ");
-        let lower = message.to_ascii_lowercase();
-        if needles.iter().any(|needle| lower.contains(needle)) {
+        let mut parts = line.splitn(3, ": ");
+        parts.next();
+        let action = parts.next().unwrap_or("").to_ascii_lowercase();
+        let message = parts.next().unwrap_or("").to_ascii_lowercase();
+        if needles
+            .iter()
+            .any(|needle| action.contains(needle) || message.contains(needle))
+        {
             return Some(ts_secs.saturating_mul(1000));
         }
     }
     None
 }
 
-fn read_sync_times(root: &Path) -> (Option<i64>, Option<i64>, Option<i64>) {
+/// 同步时间：`FETCH_HEAD` 的 mtime + HEAD reflog（拉取）+ 上游分支 reflog（推送）。
+fn read_sync_times(root: &Path, upstream: Option<&str>) -> (Option<i64>, Option<i64>, Option<i64>) {
+    if let Some(times) = sync_cache::read(root, upstream) {
+        return times;
+    }
     let last_fetch_at = read_last_fetch_at(root);
-    let last_pull_at =
-        read_last_reflog_at(root, &["pull ", "pull:", "merge branch", "fast-forward"]);
-    let last_push_at = read_last_reflog_at(root, &["push "]);
+    let last_pull_at = read_reflog_text(root, None)
+        .as_deref()
+        .and_then(|text| reflog_timestamp(text, PULL_REFLOG_NEEDLES));
+    let last_push_at = upstream
+        .filter(|name| !name.is_empty() && !name.starts_with('-'))
+        .and_then(|name| read_reflog_text(root, Some(&format!("refs/remotes/{name}"))))
+        .as_deref()
+        .and_then(|text| reflog_timestamp(text, PUSH_REFLOG_NEEDLES));
     (last_fetch_at, last_pull_at, last_push_at)
 }
 
@@ -597,127 +632,6 @@ fn decode_git_text(bytes: &[u8]) -> String {
         .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
 }
 
-fn truncate_diff(bytes: Vec<u8>) -> String {
-    if bytes.len() <= MAX_DIFF_BYTES {
-        return decode_git_text(&bytes);
-    }
-    format!(
-        "{}\n\n… 差异内容已截断（最多显示 1MB）",
-        decode_git_text(&bytes[..MAX_DIFF_BYTES])
-    )
-}
-
-fn stdout_if_success(output: Output) -> Result<Option<Vec<u8>>, String> {
-    if output.status.success() {
-        if output.stdout.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(output.stdout))
-        }
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        // No commits yet / missing HEAD — caller should fall back.
-        if stderr.to_ascii_lowercase().contains("bad revision")
-            || stderr.to_ascii_lowercase().contains("unknown revision")
-            || stderr.contains("ambiguous argument 'HEAD'")
-            || stderr.contains("不存在")
-        {
-            Ok(None)
-        } else {
-            Err(format!("读取 Git 差异失败：{stderr}"))
-        }
-    }
-}
-
-fn synthetic_untracked_diff(root: &Path, relative: &str) -> Result<Option<String>, String> {
-    let absolute = root.join(relative);
-    if !absolute.is_file() {
-        return Ok(None);
-    }
-    let bytes = std::fs::read(&absolute).map_err(|error| format!("读取未跟踪文件失败：{error}"))?;
-    if bytes.len() > MAX_DIFF_BYTES {
-        return Ok(Some(format!(
-            "diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n@@ 文件过大，已跳过内容预览（>{MAX_DIFF_BYTES} bytes）@@\n"
-        )));
-    }
-    let content = decode_git_text(&bytes);
-    let mut out = format!(
-        "diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n"
-    );
-    let lines: Vec<&str> = content.split_inclusive('\n').collect();
-    if lines.is_empty() || (lines.len() == 1 && lines[0].is_empty()) {
-        out.push_str("@@ -0,0 +0,0 @@\n");
-        return Ok(Some(out));
-    }
-    let count = lines.len();
-    out.push_str(&format!("@@ -0,0 +1,{count} @@\n"));
-    for line in lines {
-        out.push('+');
-        out.push_str(line);
-        if !line.ends_with('\n') {
-            out.push('\n');
-            out.push_str("\\ No newline at end of file\n");
-        }
-    }
-    Ok(Some(out))
-}
-
-fn collect_file_diff(root: &Path, relative: &str) -> Result<String, String> {
-    // Prefer HEAD so staged + unstaged changes both appear (VS Code-like).
-    let head = run_git(
-        root,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-color",
-            "--unified=3",
-            "HEAD",
-            "--",
-            relative,
-        ],
-    )?;
-    if let Some(bytes) = stdout_if_success(head)? {
-        return Ok(truncate_diff(bytes));
-    }
-
-    let cached = run_git(
-        root,
-        &[
-            "diff",
-            "--cached",
-            "--no-ext-diff",
-            "--no-color",
-            "--unified=3",
-            "--",
-            relative,
-        ],
-    )?;
-    if let Some(bytes) = stdout_if_success(cached)? {
-        return Ok(truncate_diff(bytes));
-    }
-
-    let unstaged = run_git(
-        root,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-color",
-            "--unified=3",
-            "--",
-            relative,
-        ],
-    )?;
-    if let Some(bytes) = stdout_if_success(unstaged)? {
-        return Ok(truncate_diff(bytes));
-    }
-
-    if let Some(synthetic) = synthetic_untracked_diff(root, relative)? {
-        return Ok(synthetic);
-    }
-
-    Ok(String::new())
-}
-
 fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
     let output = run_git(
         root,
@@ -756,7 +670,8 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
 fn collect_git_status_with_sync(root: &Path) -> Result<GitStatus, String> {
     let mut status = collect_git_status(root)?;
     if status.is_repository {
-        let (last_fetch_at, last_pull_at, last_push_at) = read_sync_times(root);
+        let (last_fetch_at, last_pull_at, last_push_at) =
+            read_sync_times(root, status.upstream.as_deref());
         status.last_fetch_at = last_fetch_at;
         status.last_pull_at = last_pull_at;
         status.last_push_at = last_push_at;
@@ -1016,62 +931,63 @@ fn validate_local_branch_name(branch: &str) -> Result<&str, String> {
     Ok(branch)
 }
 
-fn list_branches(root: &Path) -> Result<GitBranchList, String> {
-    let local_output = run_git(
-        root,
-        &[
-            "for-each-ref",
-            // One line per ref: name<TAB>head_marker<TAB>upstream
-            "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
-            "refs/heads",
-        ],
-    )?;
-    if !local_output.status.success() {
-        return Err(format!(
-            "读取本地分支失败：{}",
-            git_output_text(&local_output)
-        ));
-    }
+/// Include the full ref for classification; preserve Git's short-name disambiguation.
+pub(crate) const BRANCH_LIST_FORMAT: &str =
+    "--format=%(refname)%09%(refname:short)%09%(HEAD)%09%(upstream:short)";
+pub(crate) const BRANCH_LIST_SORT: &str = "--sort=-committerdate";
 
+pub(crate) fn parse_branch_list(text: &str) -> GitBranchList {
     let mut local = Vec::new();
-    for line in decode_git_text(&local_output.stdout).lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(3, '\t');
+    let mut remote = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(4, '\t');
+        let reference = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("").trim();
+        let head = parts.next().unwrap_or("");
+        let upstream = parts.next().unwrap_or("").trim();
         if name.is_empty() {
             continue;
         }
-        let head_marker = parts.next().unwrap_or("");
-        let upstream_raw = parts.next().unwrap_or("").trim();
-        local.push(GitBranchInfo {
-            name: name.to_string(),
-            current: head_marker == "*",
-            upstream: if upstream_raw.is_empty() {
-                None
-            } else {
-                Some(upstream_raw.to_string())
-            },
-        });
-    }
-
-    let remote_output = run_git(
-        root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
-    )?;
-    let mut remote = Vec::new();
-    if remote_output.status.success() {
-        for line in decode_git_text(&remote_output.stdout).lines() {
-            let name = line.trim();
-            if name.is_empty() || name.ends_with("/HEAD") {
-                continue;
-            }
+        if reference.starts_with("refs/heads/") {
+            local.push(GitBranchInfo {
+                name: name.to_string(),
+                current: head == "*",
+                upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+            });
+        } else if reference.starts_with("refs/remotes/") && !name.ends_with("/HEAD") {
             remote.push(name.to_string());
         }
     }
+    GitBranchList { local, remote }
+}
 
-    Ok(GitBranchList { local, remote })
+fn list_branches(root: &Path) -> Result<GitBranchList, String> {
+    let mut output = run_git(
+        root,
+        &[
+            "for-each-ref",
+            BRANCH_LIST_FORMAT,
+            BRANCH_LIST_SORT,
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?;
+    if !output.status.success() {
+        // Retain local branches if only remote-ref enumeration is broken.
+        output = run_git(
+            root,
+            &[
+                "for-each-ref",
+                BRANCH_LIST_FORMAT,
+                BRANCH_LIST_SORT,
+                "refs/heads",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!("读取本地分支失败：{}", git_output_text(&output)));
+        }
+    }
+    Ok(parse_branch_list(&decode_git_text(&output.stdout)))
 }
 
 fn switch_branch(root: &Path, branch: &str) -> Result<(), String> {
@@ -1210,7 +1126,7 @@ pub async fn git_log(
         .map_err(|error| format!("读取提交记录失败：{error}"))?
 }
 
-fn validate_commit_rev(rev: &str) -> Result<&str, String> {
+pub(crate) fn validate_commit_rev(rev: &str) -> Result<&str, String> {
     let rev = rev.trim();
     if rev.is_empty() || rev.len() > 64 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("无效的提交哈希".to_string());
@@ -1294,20 +1210,6 @@ pub async fn git_commit_file_contents(
     tauri::async_runtime::spawn_blocking(move || commit_file_contents(&root, &rev, &file))
         .await
         .map_err(|error| format!("读取提交文件内容失败：{error}"))?
-}
-
-#[tauri::command]
-pub async fn git_diff(
-    path: String,
-    file: String,
-    allowlist: State<'_, PathAllowlist>,
-) -> Result<String, String> {
-    ensure_git_root(&path, &allowlist)?;
-    let root = PathBuf::from(path);
-    let relative = resolve_relative(&root, &file)?;
-    tauri::async_runtime::spawn_blocking(move || collect_file_diff(&root, &relative))
-        .await
-        .map_err(|error| format!("读取 Git Diff 任务失败：{error}"))?
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1545,12 +1447,14 @@ mod tests {
         assert_eq!(decode_git_text(&[0xD6, 0xD0, 0xCE, 0xC4]), "中文");
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_relative_rejects_parent_dir() {
         let root = Path::new(r#"D:\project"#);
         assert!(resolve_relative(root, "../outside.txt").is_err());
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_relative_normalizes_separators() {
         let root = Path::new(r#"D:\project"#);
@@ -1870,6 +1774,168 @@ mod tests {
     }
 
     #[test]
+    fn branch_query_orders_local_and_remote_by_latest_commit_without_truncating() {
+        let root = init_test_repo("branch-recency");
+        for (name, date) in [
+            ("a-old", "2020-01-01T00:00:00+00:00"),
+            ("z-new", "2022-01-01T00:00:00+00:00"),
+            ("m-middle", "2021-01-01T00:00:00+00:00"),
+        ] {
+            let output = Command::new("git")
+                .current_dir(&root)
+                .env("GIT_COMMITTER_DATE", date)
+                .env("GIT_AUTHOR_DATE", date)
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    name,
+                ])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", git_output_text(&output));
+            git_success(&root, &["branch", name]);
+            git_success(
+                &root,
+                &["update-ref", &format!("refs/remotes/origin/{name}"), "HEAD"],
+            );
+        }
+        // Enough branches to exceed the menu's ten-branch viewport.
+        for index in 0..15 {
+            git_success(&root, &["branch", &format!("extra-{index:02}"), "a-old"]);
+        }
+        let result = list_branches(&root).unwrap();
+        let selected: Vec<_> = result
+            .local
+            .iter()
+            .filter(|branch| matches!(branch.name.as_str(), "a-old" | "z-new" | "m-middle"))
+            .map(|branch| branch.name.as_str())
+            .collect();
+        assert_eq!(selected, ["z-new", "m-middle", "a-old"]);
+        assert_eq!(result.local.len(), 19);
+        assert_eq!(
+            result.remote,
+            ["origin/z-new", "origin/m-middle", "origin/a-old"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn combined_branch_query_matches_git_names_sorting_and_tracking() {
+        let root = init_test_repo("combined-branches");
+        fs::write(root.join("a.txt"), "initial\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        for name in ["feature/demo", "origin/topic", "local/HEAD", "功能/中文"] {
+            git_success(&root, &["branch", name]);
+        }
+        // Disambiguated short names must match Git, even with overlapping namespaces.
+        git_success(&root, &["tag", "feature/demo"]);
+        git_success(&root, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        git_success(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/topic",
+            ],
+        );
+        git_success(
+            &root,
+            &["remote", "add", "origin", "https://example.invalid/repo"],
+        );
+        git_success(
+            &root,
+            &["branch", "--set-upstream-to=refs/remotes/origin/topic"],
+        );
+
+        let legacy_local = run_git(
+            &root,
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
+                "refs/heads",
+            ],
+        )
+        .unwrap();
+        let expected_local: Vec<_> = decode_git_text(&legacy_local.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let legacy_remote = run_git(
+            &root,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )
+        .unwrap();
+        let expected_remote: Vec<_> = decode_git_text(&legacy_remote.stdout)
+            .lines()
+            .filter(|name| !name.ends_with("/HEAD"))
+            .map(str::to_string)
+            .collect();
+        let result = list_branches(&root).unwrap();
+        let actual_local: Vec<_> = result
+            .local
+            .iter()
+            .map(|branch| {
+                format!(
+                    "{}\t{}\t{}",
+                    branch.name,
+                    if branch.current { "*" } else { " " },
+                    branch.upstream.as_deref().unwrap_or("")
+                )
+            })
+            .collect();
+        assert_eq!(actual_local, expected_local);
+        assert_eq!(result.remote, expected_remote);
+        assert!(result
+            .local
+            .iter()
+            .any(|branch| branch.name == "local/HEAD"));
+        assert_eq!(
+            result.local.iter().filter(|branch| branch.current).count(),
+            1
+        );
+
+        git_success(&root, &["checkout", "--detach", "HEAD"]);
+        assert!(list_branches(&root)
+            .unwrap()
+            .local
+            .iter()
+            .all(|branch| !branch.current));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn branch_query_handles_unborn_and_nested_worktree_roots() {
+        let root = init_test_repo("branch-worktree");
+        assert!(list_branches(&root).unwrap().local.is_empty());
+        fs::write(root.join("a.txt"), "initial\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        let linked = temp_base("branch-worktree-linked");
+        git_success(
+            &root,
+            &["worktree", "add", "-b", "linked", &linked.to_string_lossy()],
+        );
+        let nested = linked.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let branches = list_branches(&nested).unwrap();
+        assert_eq!(
+            branches
+                .local
+                .iter()
+                .find(|branch| branch.current)
+                .unwrap()
+                .name,
+            "linked"
+        );
+        git_success(&root, &["worktree", "remove", &linked.to_string_lossy()]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn lists_recent_commits_in_order() {
         let root = init_test_repo("commit-log");
         fs::write(root.join("a.txt"), "1\n").unwrap();
@@ -1901,6 +1967,70 @@ mod tests {
         assert!(list_commits(&empty, 20, 0).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn reflog_timestamp_reads_action_and_message() {
+        let head = concat!(
+            "1111111 HEAD@{1700000000}: clone: from https://example.com/repo.git
+",
+            "2222222 HEAD@{1700000500}: pull origin main: Fast-forward
+",
+        );
+        assert_eq!(
+            reflog_timestamp(head, PULL_REFLOG_NEEDLES),
+            Some(1_700_000_500_000)
+        );
+        assert_eq!(reflog_timestamp(head, &["rebase "]), None);
+
+        // 推送只出现在远程跟踪分支的 reflog 里，且没有说明段。
+        let upstream = concat!(
+            "3333333 refs/remotes/origin/main@{1700000900}: update by push
+",
+            "2222222 refs/remotes/origin/main@{1700000400}: fetch: fast-forward
+",
+        );
+        assert_eq!(
+            reflog_timestamp(upstream, PUSH_REFLOG_NEEDLES),
+            Some(1_700_000_900_000)
+        );
+        // 时间戳不是数字（--date 非 unix）时跳过该行而不是 panic。
+        assert_eq!(
+            reflog_timestamp(
+                "4444444 HEAD@{yesterday}: pull origin main
+",
+                PULL_REFLOG_NEEDLES
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn sync_times_report_last_push_from_upstream_reflog() {
+        let base = temp_base("push-time");
+        let remote = base.join("remote.git");
+        fs::create_dir_all(&remote).unwrap();
+        git_success(&remote, &["init", "--bare"]);
+        let root = base.join("work");
+        fs::create_dir_all(&root).unwrap();
+        git_success(&root, &["init"]);
+        git_success(&root, &["config", "user.email", "test@qingcode.local"]);
+        git_success(&root, &["config", "user.name", "QingCode Test"]);
+        git_success(&root, &["commit", "--allow-empty", "-m", "init"]);
+        git_success(
+            &root,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+
+        let status = collect_git_status_with_sync(&root).unwrap();
+        assert_eq!(status.last_push_at, None);
+
+        git_success(&root, &["push", "-u", "origin", "HEAD"]);
+        let status = collect_git_status_with_sync(&root).unwrap();
+        assert!(status.upstream.is_some(), "{status:?}");
+        assert!(status.last_push_at.is_some(), "{status:?}");
+
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]

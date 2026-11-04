@@ -11,8 +11,6 @@ export const FOLD_MARKER_H =
 export const FOLD_MARKER_BOX = FOLD_MARKER_W
 /** Chevron width as `em` (8px when editor font-size is 14px). */
 export const FOLD_MARKER_W_EM = FOLD_MARKER_W / FOLD_MARKER_BASE_FONT
-/** Fold gutter column width at base font (13px). */
-export const FOLD_GUTTER_W_EM = 13 / FOLD_MARKER_BASE_FONT
 const FOLD_MARKER_STROKE = 1.25
 const FOLD_MARKER_INSET = 0.5
 

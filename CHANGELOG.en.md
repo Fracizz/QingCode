@@ -6,6 +6,190 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-04
+
+### Added
+
+- Android supports selecting multiple images, uploading them sequentially into the draft and retaining successful attachments after a partial failure.
+- The Android session drawer supports program titles, manual names, recent projects and ending all project sessions.
+
+### Changed
+
+- Mobile images are stored in the corresponding local, WSL or SSH project's `.qingcode/terminal-paste/` directory, with Linux paths for WSL.
+- The image button stays inside the input bar, with clearer original-image, upload and submission states.
+
+### Fixed
+
+- Terminal dimensions use the available content area so collapsing shortcuts does not obscure the final row.
+- Switching sessions stops the remaining image batch and prevents late results from changing another draft.
+
+## [0.1.14-beta.24] - 2026-11-03
+
+### Added
+
+- Add QR pairing, persistent pairing information and multi-device connection management to the Android companion terminal.
+
+### Changed
+
+- Show terminal connection status in an overlay and improve parallel update feedback, mobile connection saving, passwords and port changes.
+- Improve daemon terminal output replay and add stable-key signing for Android releases.
+
+### Fixed
+
+- Fix corrupted terminal glyphs after long-running sessions.
+
+## [0.1.14-beta.14] - 2026-10-30
+
+### Fixed
+
+- Recalculate Server package digests to detect rapid changes to files of the same size.
+
+## [0.1.14-beta.13] - 2026-10-30
+
+### Added
+
+- Discover project run configurations for easier import and task startup.
+
+### Changed
+
+- Improve Git reads, build tooling, status bar information and focus styles.
+- Bundle validated Server packages and improve installation and same-version upgrades.
+
+### Fixed
+
+- Recover from remote Server version mismatches, with an update action and clearer offline package errors.
+- Confirm forced shutdown before installation while preserving other installations.
+
+## [0.1.14-beta.12] - 2026-10-29
+
+### Fixed
+
+- Automatically close the running app during Windows installation and upgrades, and complete the installer flow.
+
+## [0.1.14-beta.11] - 2026-10-29
+
+### Fixed
+
+- Correct canonical test roots when Windows CI temporary directories use junctions, allowing publication of the responsiveness and Server direct-connection fixes from the unpublished beta.10 application build.
+
+## [0.1.14-beta.10] - 2026-10-29
+
+### Added
+
+- Direct connections to Server ports, with improved connection reuse and Windows connection preparation.
+
+### Fixed
+
+- Session persistence no longer republishes unchanged editor contents and repeatedly submits file watch requests while idle. Watch sets are deduplicated by path, and slow requests retain only the latest pending configuration.
+- Improved remote Server version checks, server package recovery messages and isolation of terminal control resources.
+- Fixed terminal copy, context menu and paste-upload behavior over direct connections, with improved snapshot recovery and terminal recovery diagnostics.
+
+## [0.1.14-beta.9] - 2026-10-28
+
+### Changed
+
+- Update application and remote server versions and rebuild; functionality is unchanged from beta.8.
+
+## [0.1.14-beta.8] - 2026-10-27
+
+### Added
+
+- SSH Server mode, persistent terminal recovery, and bulk import from local SSH configuration
+- Remote file uploads, image viewing and Windows SSH Git, plus WSL project identification and cross-platform run configurations
+
+### Changed
+
+- Improved multi-project management, idle editor and batch run operations
+- Hardened remote trust, connection tests, server deployment, paged directory scanning and terminal cleanup
+
+### Changed
+
+- Fewer background Git reads: refreshes that arrive while a read of the same project is running now coalesce into one trailing read (changes saved meanwhile are not lost), window-focus refresh on local projects has a 2-second cooldown, and project badges stop polling while the window is hidden
+- Reopening source control reuses commit history cached for the last 30 seconds, so one open no longer fetches history and remotes twice
+- Top-bar project badges for SSH projects now poll at 4x the configured interval with a 60-second focus cooldown
+- Writes under the project-root `release/` and any `.dev` or `.venv` no longer trigger explorer and Git refreshes (same-named source folders such as `src/release/` are unaffected)
+
+### Fixed
+
+- The source control toolbar's "last push" time is no longer always empty: it now reads `update by push` from the upstream branch reflog (`git push` does not write the HEAD reflog)
+- Local projects: the status bar branch updates right after switching branches in the terminal instead of waiting for the 15-second poll
+- SSH: remote commands now have an overall time limit (2 minutes, 15 minutes for fetch / pull / push), so a hung command no longer holds a concurrency slot forever
+- SSH: the shared SFTP session is treated as stalled after 45 seconds without a reply and replaced on the next operation
+- SSH: for projects in a repository subfolder, commit file lists stay inside the project and are project-relative; diffs resolve paths from the project folder; a failed prefix probe now reports an error instead of mislabeling paths
+- Pasting several local files into a remote terminal at once keeps the upload notice until the last upload finishes
+- A failed terminal resize no longer causes a retry at the same size to be skipped
+- SSH: each remote terminal now uses its own connection, so terminals across several projects no longer exhaust one connection's session limit (sshd `MaxSessions`), and a reconnect or stall on the main connection no longer drops older terminals in other projects
+
+## [0.1.13-beta.3] - 2026-10-23
+
+### Fixed
+
+- SSH projects no longer borrow another project's Git change count: switching projects clears the count before the new snapshot lands, so the activity bar, status bar and project tab always agree
+- When an SSH project sits inside a subdirectory of its repository, Git status is limited to the project subtree and paths are rebased onto it — outer-repo changes no longer leak into the count, and changes no longer decorate the wrong file
+- The editor's own paste uploads and write temporaries (`.qingcode/terminal-paste/`, `*.qingcode-*.tmp`) no longer count as Git changes
+
+### Changed
+
+- Slower Git refresh for SSH projects: the branch chip no longer polls every 15 seconds, the workdir snapshot returns the branch in the same round-trip, window-focus refresh has a 60-second cooldown, and focus no longer triggers an automatic fetch; switching projects, saving, opening source control and manual refresh still update immediately
+
+## [0.1.13-beta.2] - 2026-10-09
+
+### Added
+
+- JSON import, export, and default reset for user and workspace settings, including local project lists, with matching CLI commands and AI CLI Skill guidance
+- Project search by name or path; open workspace files from Git history diffs
+- Markdown preview copy and link actions
+
+### Changed
+
+- Tighter editor tabs, terminal tabs, and project controls; consistent font sizes, corner radii, window controls, and overlay interactions
+- Improved theme contrast, an olive-green Forest theme, reduced-motion support, and updated application icons
+- Hardened search cancellation, SSH file transfers, and terminal output queues; improved panel resizing and multi-terminal layouts
+
+### Fixed
+
+- Explorer refresh overwriting rescanned folders with stale cached children; dropped filesystem-event batches and deferred updates during continuous writes; refresh the local tree and re-register watches on window focus
+- Re-importing removed projects and SSH projects incorrectly marked as missing on re-entry; connection errors retain a retry path
+- SSH file-tree errors and Markdown link parsing and copying
+- Windows file associations and truncated Git history hash columns
+- Updated UTF-16 detection for newer Rust Clippy checks while preserving validation of odd-length input
+
+## [0.1.13-beta.1] - 2026-09-08
+
+### Added
+
+- SSH remote projects: connect, host-fingerprint confirmation, remote files, and remote terminals
+- SSH run configurations with QingCode CLI support
+- Search can pick folders and custom types, and Ctrl+Shift+F follows the Explorer folder
+
+### Changed
+
+- Removed semantic navigation and language components (Go to Definition, Find Usages, workspace symbols, Tree-sitter components)
+- Improved global layout, interaction, motion, and copy; terminal overflow list and collapse icons follow panel layout
+- CLI Skill: SSH/WSL dev servers must bind `127.0.0.1`, or Windows cannot reach the frontend
+
+### Fixed
+
+- Windows heap corruption from a cross-thread `Rc` race and a double-free on event-loop exit
+- SSH remote file creation failures and fingerprint confirmation hidden by overlays
+- Crash-monitor process matching and dump paths
+
+## [0.1.12] - 2026-08-19
+
+### Added
+
+- Markdown preview now supports local relative images
+- Independent file windows, single-instance open forwarding, and Ctrl+O system-file-dialog opening
+- Better coordination between Explorer favorites, search, and terminal workflows
+
+### Changed
+
+- Windows installers now install all language components by default
+
+### Fixed
+
+- Improved favorites card sections and path display, plus search and startup stability
+
 ## [0.1.11] - 2026-08-07
 
 ### Added
@@ -237,7 +421,14 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Windows single-file exe packaging (`pnpm package:exe`)
 - GitHub / Gitee Release workflow and version scripts
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.13-beta.2...HEAD
+[0.1.13-beta.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.3
+[0.1.13-beta.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.2
+[0.1.13-beta.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.1
+[0.1.12]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.12
+[0.1.11]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.11
+[0.1.10]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.10
+[0.1.9]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.9
 [0.1.8]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
 [0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6

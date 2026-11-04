@@ -37,7 +37,24 @@ export function isGenericShellOscTitle(title: string): boolean {
   if (/^(powershell|pwsh|cmd|bash|wsl|sh|zsh|fish)(\.exe)?$/i.test(cleaned)) {
     return true
   }
+  // ConPTY / Windows OpenSSH report the console host, not the shell.
+  const file = (cleaned.replace(/\\/g, '/').split('/').pop() ?? cleaned).replace(
+    /^(administrator:\s*)+/i,
+    '',
+  )
+  if (/^(conhost|openconsole|winpty-agent)(\.exe)?$/i.test(file)) {
+    return true
+  }
   return GENERIC_SHELL_LABELS.has(shortenTerminalLabel(cleaned))
+}
+
+/** Windows OpenSSH project roots look like `ssh://<id>/D:/code/app`. */
+export function windowsSshShellLabel(cwd: string, shell?: string | null): string | null {
+  if (!cwd.startsWith('ssh://')) return null
+  const remote = cwd.replace(/^ssh:\/\/[^/]+/, '')
+  if (!/^\/[A-Za-z]:(?:\/|$)/.test(remote)) return null
+  if (shell === 'cmd' || shell === 'pwsh') return null
+  return 'PowerShell'
 }
 
 /**

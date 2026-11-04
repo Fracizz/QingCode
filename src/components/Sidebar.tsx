@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useCallback,
   useEffect,
@@ -35,14 +36,22 @@ import {
   Scissors,
   ClipboardPaste,
   ClipboardCopy,
+  BookmarkPlus,
+  BookmarkMinus,
+  Download,
+  Upload,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
+import { ProjectKindIcon } from './ProjectKindMark'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { safeInvoke } from '../lib/tauri'
+import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { confirmDialog } from '../store/confirmStore'
 import {
@@ -51,17 +60,26 @@ import {
 } from '../utils/explorerNameConflict'
 import { showPropertiesDialog } from '../store/propertiesStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { open } from '@tauri-apps/plugin-dialog'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
 import {
   addPathToSet,
   collectAncestorDirs,
+  findProjectForPath,
   isDescendantOf,
   pathSetHas,
   pathsEqual,
 } from '../utils/fileReferences'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
+import {
+  isExplorerUploadZone,
+  logicalDropPoint,
+  readExplorerDropHit,
+  sshUploadDropFromQuery,
+} from '../utils/sshExplorerDrop'
 import {
   createTreeDepth,
   dirsToReveal,
@@ -80,7 +98,7 @@ import {
 } from '../utils/projectActions'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { formatBytes } from '../utils/formatBytes'
-import { useI18n } from '../lib/i18n'
+import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
@@ -92,9 +110,28 @@ import {
   copyPathAction,
   copyRelativePathAction,
 } from '../lib/copyFileActions'
-import { setExplorerSelectedPaths } from '../lib/explorerSelection'
+import {
+  setExplorerSelectedDirectoryPath,
+  setExplorerSelectedPaths,
+} from '../lib/explorerSelection'
 import { useShortcutStore } from '../store/shortcutStore'
 import ExplorerTreeRow from './ExplorerTreeRow'
+import FavoriteItemsSection from './FavoriteItemsSection'
+import { useFavoriteStore } from '../store/favoriteStore'
+import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
+import {
+  EXPLORER_HEADING_GRID,
+  EXPLORER_HEADING_ICON,
+  EXPLORER_HEADING_INSET,
+  EXPLORER_HEADING_LABEL,
+  EXPLORER_HEADING_ROW,
+} from './explorerLayout'
+import { authorizePaths } from '../lib/pathAllowlist'
+import { requestSshReconnect } from '../lib/sshWorkspace'
+import { formatDirectoryErrorDetail } from '../lib/directoryError'
+import { startSshTransfer } from '../lib/sshTransfer'
+import { readClipboardFileList } from '../lib/sshTerminalPaste'
+import { planExplorerPaste, systemClipboardSignature } from '../lib/explorerPaste'
 
 type DirectoryDeleteStats = {
   path: string
@@ -103,37 +140,34 @@ type DirectoryDeleteStats = {
 }
 
 type ContextTarget =
-  | { kind: 'project'; project: Project }
-  | { kind: 'node'; node: FileNode }
-  | { kind: 'empty' }
+  { kind: 'project'; project: Project } | { kind: 'node'; node: FileNode } | { kind: 'empty' }
 
 function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return separator > 0 ? path.slice(0, separator) : path
 }
 
-const EXPLORER_DROP_ATTR = 'data-explorer-drop'
 const DRAG_THRESHOLD_PX = 5
 const EMPTY_TREE: FileNode[] = []
 
 /** Hit-test explorer drop targets (pointer DnD; avoids flaky HTML5 DnD in WebView2). */
 function resolveExplorerDropFromPoint(
   clientX: number,
-  clientY: number,
+  clientY: number
 ): { path: string; isDir: boolean } | null {
-  const el = document.elementFromPoint(clientX, clientY)
-  const row = el?.closest(`[${EXPLORER_DROP_ATTR}]`) as HTMLElement | null
-  const path = row?.getAttribute(EXPLORER_DROP_ATTR)
-  if (!path) return null
-  return { path, isDir: row?.getAttribute('data-explorer-isdir') === '1' }
+  return readExplorerDropHit(document.elementFromPoint(clientX, clientY))
 }
 
 export default function Sidebar() {
+  const metrics = useInterfaceMetrics()
+  const projectLabels = useProjectLabels()
   const { t } = useI18n()
   const {
     projects,
     currentProject,
+    sshConnections,
     projectTrees,
+    projectTreeErrors,
     unavailableProjectIds,
     switchProject,
     refreshProjectTree,
@@ -159,6 +193,11 @@ export default function Sidebar() {
   const clearPendingNewFile = useUIStore(s => s.clearPendingNewFile)
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const closeTabsForPath = useEditorStore(s => s.closeTabsForPath)
+  const favoriteItemsByProject = useFavoriteStore(s => s.itemsByProject)
+  const addFavorite = useFavoriteStore(s => s.addFavorite)
+  const removeFavorite = useFavoriteStore(s => s.removeFavorite)
+  const moveFavoritePath = useFavoriteStore(s => s.moveFavoritePath)
+  const removeFavoritePath = useFavoriteStore(s => s.removeFavoritePath)
   const renameShortcut = useShortcutStore(s => s.shortcuts.renameInExplorer)
   const [refreshing, setRefreshing] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
@@ -173,9 +212,7 @@ export default function Sidebar() {
   /** Primary selection (keyboard / range anchor). */
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
-  const [clipboard, setClipboard] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(
-    null,
-  )
+  const [clipboard, setClipboard] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [draggingPaths, setDraggingPaths] = useState<Set<string>>(() => new Set())
   const [dragGhost, setDragGhost] = useState<{
@@ -193,18 +230,29 @@ export default function Sidebar() {
     active: boolean
     pointerId: number
   } | null>(null)
+  const externalDropActiveRef = useRef(false)
+  const externalDropPathsRef = useRef<string[]>([])
+  const uploadLocalPathsRef = useRef<(destination: string, paths: string[]) => Promise<boolean>>(
+    async () => false
+  )
+  // 应用内复制/剪切时系统剪贴板的文件签名，粘贴时据此判断系统剪贴板是否更新
+  const systemClipboardAtInternalCopyRef = useRef<string | null>(null)
   const scrolledRevealSeqRef = useRef(0)
   const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
   const treeRevealSeq = useProjectStore(s => s.treeRevealSeq)
-  const tree = currentProject ? projectTrees[currentProject.id] ?? EMPTY_TREE : EMPTY_TREE
+  const treeLoaded = currentProject
+    ? Object.prototype.hasOwnProperty.call(projectTrees, currentProject.id)
+    : false
+  const tree = currentProject ? (projectTrees[currentProject.id] ?? EMPTY_TREE) : EMPTY_TREE
+  const treeError = currentProject ? projectTreeErrors[currentProject.id] : undefined
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
-    [expandedPaths, pendingCreate, pendingRename, tree],
+    [expandedPaths, pendingCreate, pendingRename, tree]
   )
   const cutPaths = useMemo(
     () => new Set(clipboard?.mode === 'cut' ? clipboard.paths : []),
-    [clipboard],
+    [clipboard]
   )
   const isProjectRootSelected =
     !!currentProject && selectedPath != null && pathsEqual(selectedPath, currentProject.path)
@@ -224,22 +272,29 @@ export default function Sidebar() {
   }, [currentProject?.id, replaceSelection])
 
   useEffect(() => {
-    const paths =
-      selectedPaths.size > 0
-        ? [...selectedPaths]
-        : selectedPath
-          ? [selectedPath]
-          : []
+    const paths = selectedPaths.size > 0 ? [...selectedPaths] : selectedPath ? [selectedPath] : []
     setExplorerSelectedPaths(paths)
-    return () => setExplorerSelectedPaths([])
-  }, [selectedPath, selectedPaths])
+    const selectedNode = selectedPath ? findNodeByPath(tree, selectedPath) : null
+    const selectedDirectory =
+      selectedPath && currentProject && pathsEqual(selectedPath, currentProject.path)
+        ? currentProject.path
+        : selectedNode?.is_dir
+          ? selectedNode.path
+          : null
+    setExplorerSelectedDirectoryPath(selectedDirectory)
+    return () => {
+      setExplorerSelectedPaths([])
+      setExplorerSelectedDirectoryPath(null)
+    }
+  }, [currentProject, selectedPath, selectedPaths, tree])
 
   useEffect(() => {
     if (treeRevealPath) queueMicrotask(() => replaceSelection(treeRevealPath))
   }, [treeRevealPath, treeRevealSeq, replaceSelection])
 
   useEffect(() => {
-    if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path)) return
+    if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path))
+      return
     if (pathsEqual(treeRevealPath, currentProject.path)) return
 
     const ancestors = collectAncestorDirs(treeRevealPath, currentProject.path)
@@ -247,7 +302,9 @@ export default function Sidebar() {
     const toExpand = [
       ...ancestors.map(path => findNodeByPath(tree, path)?.path ?? path),
       ...(target?.is_dir ? [target.path] : []),
-    ].filter(path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path))
+    ].filter(
+      path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path)
+    )
     if (toExpand.length === 0) return
 
     queueMicrotask(() =>
@@ -255,7 +312,7 @@ export default function Sidebar() {
         let next = existing
         for (const path of toExpand) next = addPathToSet(next, path)
         return next === existing ? existing : new Set(next)
-      }),
+      })
     )
 
     if (target?.is_dir && !target.loaded) {
@@ -272,7 +329,7 @@ export default function Sidebar() {
           next = addPathToSet(next, path)
         }
         return next === existing ? existing : new Set(next)
-      }),
+      })
     )
   }, [currentProject, pendingCreate])
 
@@ -286,7 +343,7 @@ export default function Sidebar() {
       visibleTreeRows,
       treeRevealPath,
       currentProject.path,
-      pendingCreate,
+      pendingCreate
     )
     if (targetIndex == null || visibleTreeRows.length === 0) return
 
@@ -326,7 +383,7 @@ export default function Sidebar() {
         })
       }
     },
-    [currentProject, expandedPaths, expandProjectDir],
+    [currentProject, expandedPaths, expandProjectDir]
   )
 
   const selectTreeNode = useCallback(
@@ -372,7 +429,7 @@ export default function Sidebar() {
 
       replaceSelection(node.path)
     },
-    [replaceSelection, selectedPath, visibleTreeRows],
+    [replaceSelection, selectedPath, visibleTreeRows]
   )
 
   const scrollTreeRowIntoView = useCallback(
@@ -382,7 +439,7 @@ export default function Sidebar() {
         listRef.current?.scrollToRow({ index, align: 'smart', behavior: 'auto' })
       }
     },
-    [visibleTreeRows],
+    [visibleTreeRows]
   )
 
   const openTreeNode = useCallback(
@@ -395,14 +452,19 @@ export default function Sidebar() {
       }
       void useEditorStore.getState().openFile(node.path)
     },
-    [toggleFolderExpand],
+    [toggleFolderExpand]
   )
 
   const handleTreeKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (visibleTreeRows.length === 0) return
 
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+      if (
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowUp' ||
+        event.key === 'Home' ||
+        event.key === 'End'
+      ) {
         event.preventDefault()
         const direction =
           event.key === 'ArrowDown'
@@ -455,7 +517,7 @@ export default function Sidebar() {
       openTreeNode,
       toggleFolderExpand,
       visibleTreeRows,
-    ],
+    ]
   )
 
   const handleLocateActiveFile = () => {
@@ -468,7 +530,21 @@ export default function Sidebar() {
     if (refreshing || !currentProject) return
     setRefreshing(true)
     try {
-      await refreshProjectTree(currentProject)
+      await Promise.all([
+        refreshProjectTree(currentProject),
+        useFavoriteStore.getState().loadProjectFavorites(currentProject, { force: true }),
+      ])
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleRetryTree = async () => {
+    if (refreshing || !currentProject) return
+    setRefreshing(true)
+    try {
+      if (currentProject.kind === 'ssh') await switchProject(currentProject)
+      else await refreshProjectTree(currentProject)
     } finally {
       setRefreshing(false)
     }
@@ -491,10 +567,16 @@ export default function Sidebar() {
   }
 
   const handleOpenProject = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await openPath(path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', t('打开项目目录失败: {error}', { error: String(e) }))
+      useProjectStore
+        .getState()
+        .pushToast('error', t('打开项目目录失败: {error}', { error: String(e) }))
     }
   }
 
@@ -514,7 +596,10 @@ export default function Sidebar() {
     const norm = path.replace(/\\/g, '/')
     return useProjectStore
       .getState()
-      .projects.find(p => norm === p.path.replace(/\\/g, '/') || norm.startsWith(p.path.replace(/\\/g, '/') + '/'))
+      .projects.find(
+        p =>
+          norm === p.path.replace(/\\/g, '/') || norm.startsWith(p.path.replace(/\\/g, '/') + '/')
+      )
   }
 
   const openTerminalHere = async (cwd: string) => {
@@ -533,6 +618,26 @@ export default function Sidebar() {
     // deleted/moved entries visible after mutations.
     if (pathsEqual(path, project.path)) await refreshProjectTree(project)
     else await expandProjectDir(project.id, path, { force: true })
+  }
+
+  const syncFavoriteMove = async (project: Project, oldPath: string, newPath: string) => {
+    try {
+      await moveFavoritePath(project, oldPath, newPath)
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const syncFavoriteRemove = async (project: Project, path: string) => {
+    try {
+      await removeFavoritePath(project, path)
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
+    }
   }
 
   const pruneTreePaths = (removedPaths: string[]) => {
@@ -581,7 +686,9 @@ export default function Sidebar() {
         { parent: parentPath, name }
       )
       await refreshDirectory(parentPath)
-      useProjectStore.getState().pushToast('success', t('已新建{kind}: {name}', { kind: label, name }))
+      useProjectStore
+        .getState()
+        .pushToast('success', t('已新建{kind}: {name}', { kind: label, name }))
       if (!directory) await useEditorStore.getState().openFile(path)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
@@ -631,6 +738,8 @@ export default function Sidebar() {
         newName: name,
       })
       renameEditorPath(path, newPath)
+      const project = projectOfPath(path)
+      if (project) await syncFavoriteMove(project, path, newPath)
       await refreshDirectory(parentPath(path))
       replaceSelection(newPath)
       useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
@@ -648,9 +757,17 @@ export default function Sidebar() {
     return anchorPath ? [anchorPath] : selectedPath ? [selectedPath] : []
   }
 
+  const rememberSystemClipboard = () => {
+    systemClipboardAtInternalCopyRef.current = null
+    void readClipboardFileList().then(files => {
+      systemClipboardAtInternalCopyRef.current = systemClipboardSignature(files)
+    })
+  }
+
   const cutExplorerPaths = (anchorPath?: string) => {
     const paths = pathsForClipboardAction(anchorPath)
     if (paths.length === 0) return
+    rememberSystemClipboard()
     setClipboard({ mode: 'cut', paths })
     useProjectStore.getState().pushToast('success', t('已剪切 {count} 项', { count: paths.length }))
   }
@@ -658,6 +775,7 @@ export default function Sidebar() {
   const copyExplorerPaths = (anchorPath?: string) => {
     const paths = pathsForClipboardAction(anchorPath)
     if (paths.length === 0) return
+    rememberSystemClipboard()
     setClipboard({ mode: 'copy', paths })
     useProjectStore.getState().pushToast('success', t('已复制 {count} 项', { count: paths.length }))
   }
@@ -671,10 +789,9 @@ export default function Sidebar() {
         .getState()
         .pushToast('success', t('已复制文件到剪贴板（{count} 项）', { count: paths.length }))
     } catch (error) {
-      useProjectStore.getState().pushToast(
-        'error',
-        t('复制文件到剪贴板失败：{error}', { error: String(error) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制文件到剪贴板失败：{error}', { error: String(error) }))
     }
   }
 
@@ -690,9 +807,17 @@ export default function Sidebar() {
   const transferExplorerPaths = async (
     paths: string[],
     destDir: string,
-    mode: 'cut' | 'copy',
+    mode: 'cut' | 'copy'
   ): Promise<number> => {
     let ok = 0
+    for (const source of paths) {
+      if (isSshResource(source) !== isSshResource(destDir)) {
+        useProjectStore
+          .getState()
+          .pushToast('error', t('不支持本地与 SSH 资源之间直接剪切或移动，请使用上传或下载功能'))
+        return 0
+      }
+    }
     const parentsToRefresh = new Set<string>([destDir])
     const movedSources: string[] = []
     const applyAll: { current: 'overwrite' | 'skip' | null } = { current: null }
@@ -709,6 +834,7 @@ export default function Sidebar() {
       const conflict = await findExplorerNameConflict(source, destDir)
       let conflictPolicy: 'overwrite' | 'fail' = 'fail'
       let destName: string | undefined
+      let overwrittenPath: string | null = null
       if (conflict) {
         const decision = await resolveExplorerNameConflict({
           conflict,
@@ -720,6 +846,7 @@ export default function Sidebar() {
         if (decision.action === 'skip') continue
         if (decision.action === 'overwrite') {
           conflictPolicy = 'overwrite'
+          overwrittenPath = conflict.destPath
           closeTabsForPath(conflict.destPath)
         } else {
           destName = decision.newName
@@ -737,6 +864,11 @@ export default function Sidebar() {
       })
       if (mode === 'cut') {
         renameEditorPath(source, newPath)
+        const project = projectOfPath(source)
+        if (project) {
+          if (overwrittenPath) await syncFavoriteRemove(project, overwrittenPath)
+          await syncFavoriteMove(project, source, newPath)
+        }
         parentsToRefresh.add(parentPath(source))
         movedSources.push(source)
       }
@@ -752,17 +884,39 @@ export default function Sidebar() {
   }
 
   const pasteExplorerClipboard = async (hintPath?: string) => {
-    if (!clipboard || !currentProject) return
+    if (!currentProject) return
     const destDir = resolvePasteDest(hintPath)
     if (!destDir) return
-    const { mode, paths } = clipboard
+    // SSH 目标：系统剪贴板中的本机文件/文件夹直接上传
+    const systemFiles = isSshResource(destDir) ? await readClipboardFileList() : []
+    const plan = planExplorerPaste({
+      destDir,
+      clipboard,
+      systemFiles,
+      systemSignatureAtInternalCopy: systemClipboardAtInternalCopyRef.current,
+    })
+    if (plan.kind === 'none') {
+      if (isSshResource(destDir)) {
+        useProjectStore.getState().pushToast('info', t('剪贴板中没有可上传的本机文件'))
+      }
+      return
+    }
+    if (plan.kind === 'upload') {
+      // 跨本机/SSH 的剪切按复制处理，不删除本机源文件
+      const uploaded = await uploadLocalPathsRef.current(destDir, plan.paths)
+      // 写明目标目录：焦点意外留在资源管理器时，用户能看出文件传到了哪里
+      if (uploaded) {
+        const name = pathsEqual(destDir, currentProject.path) ? currentProject.name : baseName(destDir)
+        useProjectStore.getState().pushToast('success', t('已上传到 {name}', { name }))
+      }
+      return
+    }
+    const { mode, paths } = plan.clipboard
     try {
       const ok = await transferExplorerPaths(paths, destDir, mode)
       if (mode === 'cut') setClipboard(null)
       if (ok > 0) {
-        useProjectStore
-          .getState()
-          .pushToast('success', t('已粘贴 {count} 项', { count: ok }))
+        useProjectStore.getState().pushToast('success', t('已粘贴 {count} 项', { count: ok }))
       }
     } catch (e) {
       useProjectStore.getState().pushToast('error', t('粘贴失败: {error}', { error: String(e) }))
@@ -824,8 +978,7 @@ export default function Sidebar() {
       }
 
       const target = resolveExplorerDropFromPoint(moveEvent.clientX, moveEvent.clientY)
-      const invalid =
-        !target || session.paths.some(p => pathsEqual(p, target.path))
+      const invalid = !target || session.paths.some(p => pathsEqual(p, target.path))
       if (invalid) {
         setDragOverPath(null)
         setDragGhost({
@@ -891,10 +1044,11 @@ export default function Sidebar() {
   const handleDeleteNode = async (node: FileNode) => {
     const confirmed = await confirmDialog({
       title: t('永久删除'),
-      message: t('确定永久删除{kind}「{name}」？', { kind: node.is_dir ? t('文件夹') : t('文件'), name: node.name }),
-      detail: node.is_dir
-        ? t('文件夹内的全部内容都会被删除，且无法撤销。')
-        : t('此操作无法撤销。'),
+      message: t('确定永久删除{kind}「{name}」？', {
+        kind: node.is_dir ? t('文件夹') : t('文件'),
+        name: node.name,
+      }),
+      detail: node.is_dir ? t('文件夹内的全部内容都会被删除，且无法撤销。') : t('此操作无法撤销。'),
       kind: 'danger',
       confirmLabel: t('删除'),
       cancelLabel: t('取消'),
@@ -904,9 +1058,13 @@ export default function Sidebar() {
     if (node.is_dir) {
       let detail = t('路径：{path}', { path: node.path })
       try {
-        const stats = await safeInvoke<DirectoryDeleteStats>('统计文件夹', 'directory_delete_stats', {
-          path: node.path,
-        })
+        const stats = await safeInvoke<DirectoryDeleteStats>(
+          '统计文件夹',
+          'directory_delete_stats',
+          {
+            path: node.path,
+          }
+        )
         detail = [
           t('路径：{path}', { path: stats.path || node.path }),
           t('包含 {count} 个文件（约 {size}）', {
@@ -931,6 +1089,8 @@ export default function Sidebar() {
     try {
       await safeInvoke('删除', 'delete_path', { path: node.path })
       closeTabsForPath(node.path)
+      const project = projectOfPath(node.path)
+      if (project) await syncFavoriteRemove(project, node.path)
       pruneTreePaths([node.path])
       await refreshDirectory(parentPath(node.path))
       useProjectStore.getState().pushToast('success', t('已删除: {name}', { name: node.name }))
@@ -944,11 +1104,147 @@ export default function Sidebar() {
   }
 
   const revealNode = async (node: FileNode) => {
+    if (isSshResource(node.path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       if (node.is_dir) await openPath(node.path)
       else await revealItemInDir(node.path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(e) }))
+      useProjectStore
+        .getState()
+        .pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(e) }))
+    }
+  }
+
+  const uploadLocalPaths = useCallback(
+    async (destination: string, paths: string[]) => {
+      const selected = paths.map(path => path.trim()).filter(Boolean)
+      if (selected.length === 0) return false
+      try {
+        await authorizePaths(selected)
+        const result = await startSshTransfer({ direction: 'upload', destination, paths: selected })
+        const project = findProjectForPath(useProjectStore.getState().projects, destination)
+        if (project) {
+          if (pathsEqual(destination, project.path)) await refreshProjectTree(project)
+          else await expandProjectDir(project.id, destination, { force: true })
+        }
+        setExpandedPaths(existing => addPathToSet(existing, destination))
+        return result.status === 'completed'
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', t('上传失败：{error}', { error: String(error) }))
+        return false
+      }
+    },
+    [expandProjectDir, refreshProjectTree, t]
+  )
+
+  useEffect(() => {
+    uploadLocalPathsRef.current = uploadLocalPaths
+  }, [uploadLocalPaths])
+
+  const uploadToRemote = async (destination: string, directory = false) => {
+    const selected = await open({
+      directory,
+      multiple: !directory,
+      title: directory ? t('选择要上传的文件夹') : t('选择要上传的文件'),
+    })
+    const paths = Array.isArray(selected)
+      ? selected
+      : typeof selected === 'string'
+        ? [selected]
+        : []
+    await uploadLocalPaths(destination, paths)
+  }
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const project = currentProject
+    if (!project || project.kind !== 'ssh' || unavailableProjectIds.includes(project.id)) return
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+
+    const clearExternalHover = (forgetPaths = true) => {
+      if (forgetPaths) externalDropPathsRef.current = []
+      if (!externalDropActiveRef.current) return
+      externalDropActiveRef.current = false
+      if (explorerDragRef.current?.active) return
+      setDragOverPath(null)
+      setDragGhost(null)
+    }
+
+    const destinationLabel = (destination: string) =>
+      pathsEqual(destination, project.path) ? project.name : baseName(destination)
+
+    void getCurrentWebview()
+      .onDragDropEvent(event => {
+        const payload = event.payload
+        if (payload.type === 'leave') {
+          clearExternalHover()
+          return
+        }
+        if (explorerDragRef.current?.active) return
+        if (payload.type === 'enter') externalDropPathsRef.current = payload.paths
+        const point = logicalDropPoint(payload.position, window.devicePixelRatio)
+        const element = document.elementFromPoint(point.x, point.y)
+        const resolved = sshUploadDropFromQuery(project, {
+          inUploadZone: isExplorerUploadZone(element),
+          hit: readExplorerDropHit(element),
+        })
+        if (!resolved) {
+          clearExternalHover(payload.type === 'drop')
+          return
+        }
+        externalDropActiveRef.current = true
+        const count = (
+          payload.type === 'drop' ? payload.paths : externalDropPathsRef.current
+        ).length
+        const name = destinationLabel(resolved.destination)
+        setDragOverPath(prev =>
+          prev != null && pathsEqual(prev, resolved.highlight) ? prev : resolved.highlight
+        )
+        setDragGhost({
+          x: point.x,
+          y: point.y,
+          label:
+            count > 1
+              ? translate('上传 {count} 项到 {name}', { count, name })
+              : translate('上传到 {name}', { name }),
+        })
+        if (payload.type !== 'drop') return
+        clearExternalHover()
+        void uploadLocalPathsRef.current(resolved.destination, payload.paths)
+      })
+      .then(stop => {
+        if (cancelled) stop()
+        else unlisten = stop
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+      clearExternalHover()
+    }
+  }, [currentProject, unavailableProjectIds])
+
+  const downloadFromRemote = async (paths: string[]) => {
+    const destination = await open({
+      directory: true,
+      multiple: false,
+      title: t('选择下载目录'),
+    })
+    if (typeof destination !== 'string') return
+    try {
+      await authorizePaths([destination])
+      await startSshTransfer({ direction: 'download', paths, destination })
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('下载失败：{error}', { error: String(error) }))
     }
   }
 
@@ -1019,11 +1315,33 @@ export default function Sidebar() {
           disabled: unavailable,
           action: () => activateThen(() => startCreateEntry(project.path, true, project.id)),
         },
+        ...(project.kind === 'ssh'
+          ? [
+              {
+                label: t('上传文件到此处'),
+                icon: <Upload size={14} />,
+                disabled: unavailable,
+                action: () => void uploadToRemote(project.path),
+              },
+              {
+                label: t('上传文件夹到此处'),
+                icon: <Upload size={14} />,
+                disabled: unavailable,
+                action: () => void uploadToRemote(project.path, true),
+              },
+              {
+                label: t('下载项目'),
+                icon: <Download size={14} />,
+                disabled: unavailable,
+                action: () => void downloadFromRemote([project.path]),
+              },
+            ]
+          : []),
         {
           label: t('粘贴'),
           icon: <ClipboardPaste size={14} />,
           shortcut: 'Ctrl+V',
-          disabled: unavailable || !clipboard,
+          disabled: unavailable || (project.kind !== 'ssh' && !clipboard),
           action: () => void pasteExplorerClipboard(project.path),
         },
         {
@@ -1036,7 +1354,7 @@ export default function Sidebar() {
         {
           label: t('在文件管理器中打开'),
           icon: <ExternalLink size={14} />,
-          disabled: unavailable,
+          disabled: unavailable || project.kind === 'ssh',
           action: () => handleOpenProject(project.path),
         },
         {
@@ -1070,9 +1388,12 @@ export default function Sidebar() {
           action: () => renameProjectWithPrompt(project.id, project.name),
         },
         {
-          label: t('重新定位项目'),
+          label: project.kind === 'ssh' ? t('重新连接') : t('重新定位项目'),
           icon: <LocateFixed size={14} />,
-          action: () => handleRelocateProject(project.id),
+          action: () =>
+            project.kind === 'ssh'
+              ? requestSshReconnect(project)
+              : handleRelocateProject(project.id),
         },
         {
           label: t('从顶栏隐藏'),
@@ -1091,6 +1412,15 @@ export default function Sidebar() {
     const node = target.node
     const parent = node.is_dir ? node.path : parentPath(node.path)
     const project = projectOfPath(parent)
+    const relativeFavoritePath = project ? favoriteRelativePath(project.path, node.path) : null
+    const favorite = relativeFavoritePath
+      ? (favoriteItemsByProject[project?.id ?? ''] ?? []).find(
+          item =>
+            project &&
+            favoriteRelativePathKey(project.path, item.relativePath) ===
+              favoriteRelativePathKey(project.path, relativeFavoritePath)
+        )
+      : undefined
     return [
       ...(!node.is_dir
         ? [
@@ -1142,6 +1472,63 @@ export default function Sidebar() {
               action: () => requestSearch(node.path),
             },
           ]),
+      ...(project && relativeFavoritePath
+        ? [
+            favorite
+              ? {
+                  label: t('取消收藏'),
+                  icon: <BookmarkMinus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void removeFavorite(project, favorite.relativePath).catch(error => {
+                      useProjectStore
+                        .getState()
+                        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
+                    }),
+                }
+              : {
+                  label: node.is_dir ? t('收藏文件夹') : t('收藏文件'),
+                  icon: <BookmarkPlus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void addFavorite(project, node.path, node.is_dir ? 'directory' : 'file').catch(
+                      error => {
+                        useProjectStore
+                          .getState()
+                          .pushToast(
+                            'error',
+                            t('更新收藏夹失败: {error}', { error: String(error) })
+                          )
+                      }
+                    ),
+                },
+          ]
+        : []),
+      ...(isSshResource(node.path)
+        ? [
+            ...(node.is_dir
+              ? [
+                  {
+                    label: t('上传文件到此处'),
+                    icon: <Upload size={14} />,
+                    separatorBefore: true,
+                    action: () => void uploadToRemote(node.path),
+                  },
+                  {
+                    label: t('上传文件夹到此处'),
+                    icon: <Upload size={14} />,
+                    action: () => void uploadToRemote(node.path, true),
+                  },
+                ]
+              : []),
+            {
+              label: node.is_dir ? t('下载文件夹') : t('下载文件'),
+              icon: <Download size={14} />,
+              separatorBefore: !node.is_dir,
+              action: () => void downloadFromRemote(pathsForClipboardAction(node.path)),
+            },
+          ]
+        : []),
       {
         label: t('剪切'),
         icon: <Scissors size={14} />,
@@ -1158,13 +1545,17 @@ export default function Sidebar() {
       {
         label: t('复制文件到剪贴板'),
         icon: <ClipboardCopy size={14} />,
+        disabled: isSshResource(node.path),
         action: () => void copyFilesToSystemClipboard(node.path),
       },
       {
         label: t('粘贴'),
         icon: <ClipboardPaste size={14} />,
         shortcut: 'Ctrl+V',
-        disabled: !clipboard,
+        // SSH 节点始终可粘贴：系统剪贴板中的本机文件会上传
+        disabled:
+          !isSshResource(node.path) &&
+          (!clipboard || clipboard.paths.some(p => isSshResource(p))),
         action: () => void pasteExplorerClipboard(node.is_dir ? node.path : parent),
       },
       {
@@ -1196,11 +1587,13 @@ export default function Sidebar() {
         label: t('显示属性'),
         icon: <Info size={14} />,
         separatorBefore: true,
+        disabled: isSshResource(node.path),
         action: () => showEntryProperties(node.path, node.name, node.is_dir),
       },
       {
         label: node.is_dir ? t('在文件管理器中打开') : t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(node.path),
         action: () => revealNode(node),
       },
       {
@@ -1214,53 +1607,53 @@ export default function Sidebar() {
   }
 
   const handleExplorerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (pendingRename || pendingCreate) return
-      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-        const key = event.key.toLowerCase()
-        if (key === 'x') {
-          event.preventDefault()
-          cutExplorerPaths()
-          return
-        }
-        if (key === 'c' && !event.shiftKey) {
-          event.preventDefault()
-          copyExplorerPaths()
-          return
-        }
-        if (key === 'v') {
-          event.preventDefault()
-          void pasteExplorerClipboard()
-          return
-        }
-      }
-      if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+    if (pendingRename || pendingCreate) return
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase()
+      if (key === 'x') {
         event.preventDefault()
-        void copyPathAction(paths)
+        cutExplorerPaths()
         return
       }
-      if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+      if (key === 'c' && !event.shiftKey) {
         event.preventDefault()
-        void copyRelativePathAction(paths)
+        copyExplorerPaths()
         return
       }
-      if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+      if (key === 'v') {
         event.preventDefault()
-        void copyFileReferenceAction(paths)
+        void pasteExplorerClipboard()
         return
       }
-      if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
-        const node = findNodeByPath(tree, selectedPath)
-        if (!node) return
-        event.preventDefault()
-        startInlineRename(node)
-        return
-      }
+    }
+    if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyPathAction(paths)
+      return
+    }
+    if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyRelativePathAction(paths)
+      return
+    }
+    if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyFileReferenceAction(paths)
+      return
+    }
+    if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
+      const node = findNodeByPath(tree, selectedPath)
+      if (!node) return
+      event.preventDefault()
+      startInlineRename(node)
+      return
+    }
     handleTreeKeyDown(event)
   }
 
@@ -1280,10 +1673,12 @@ export default function Sidebar() {
       }
     >
       {/* Section header */}
-      <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted">
-        <span className="flex items-center gap-2">
-          <FolderOpen size={13} className="text-brand" />
-          {t('资源管理器')}
+      <div
+        className={`${EXPLORER_HEADING_INSET} ${EXPLORER_HEADING_ROW} justify-between pr-4 text-ui-xs font-semibold tracking-wide text-fg-muted`}
+      >
+        <span className={`${EXPLORER_HEADING_GRID} min-w-0`}>
+          <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
+          <span className={EXPLORER_HEADING_LABEL}>{t('资源管理器')}</span>
         </span>
         <div className="flex items-center gap-0.5">
           <Tooltip label={t('在侧边栏定位当前文件')} side="bottom">
@@ -1293,9 +1688,7 @@ export default function Sidebar() {
               disabled={!activeTabPath}
               aria-label={t('在侧边栏定位当前文件')}
               className={`p-1 rounded transition-colors flex-shrink-0
-              ${!activeTabPath
-                ? 'opacity-40'
-                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              ${!activeTabPath ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
             >
               <LocateFixed size={13} />
             </button>
@@ -1308,9 +1701,7 @@ export default function Sidebar() {
               aria-label={t('刷新')}
               aria-busy={refreshing}
               className={`p-1 rounded transition-colors flex-shrink-0
-              ${!currentProject
-                ? 'opacity-40'
-                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              ${!currentProject ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
             >
               <RefreshCw
                 size={13}
@@ -1325,10 +1716,10 @@ export default function Sidebar() {
       <div className="flex-1 min-h-0 flex flex-col pb-3">
         {!currentProject ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">{t('未打开项目')}</p>
+            <p className="text-ui text-fg-muted mb-3">{t('未打开项目')}</p>
             <button
               onClick={handleAddProject}
-              className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
               <Plus size={14} /> {t('添加项目')}
             </button>
@@ -1341,7 +1732,7 @@ export default function Sidebar() {
                 <div
                   data-explorer-drop={currentProject.path}
                   data-explorer-isdir="1"
-                  className={`group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none cursor-default [&_button]:cursor-default ${
+                  className={`group ${EXPLORER_HEADING_ROW} gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-ui select-none cursor-default [&_button]:cursor-default ${
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? 'text-accent font-medium'
                       : isProjectRootSelected
@@ -1352,8 +1743,7 @@ export default function Sidebar() {
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? {
                           boxShadow: 'inset 3px 0 0 var(--color-accent)',
-                          background:
-                            'color-mix(in srgb, var(--color-accent) 28%, transparent)',
+                          background: 'color-mix(in srgb, var(--color-accent) 28%, transparent)',
                         }
                       : undefined
                   }
@@ -1367,104 +1757,125 @@ export default function Sidebar() {
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }}
                 >
-                  {unavailable ? (
-                    <AlertTriangle size={15} className="text-warn flex-shrink-0" />
-                  ) : (
-                    <FolderOpen size={15} className="text-brand flex-shrink-0" />
-                  )}
-                  <Tooltip
-                    label={currentProject.path}
-                    side="bottom"
-                    wrapperClassName="truncate min-w-0 flex-1"
-                  >
-                    <span className="truncate font-medium">{currentProject.name}</span>
-                  </Tooltip>
-                  <Tooltip label={t('新建文件')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('新建文件')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void startCreateEntry(currentProject.path, false, currentProject.id)
-                      }}
+                  <span className={`${EXPLORER_HEADING_GRID} min-w-0 flex-1`}>
+                    {unavailable ? (
+                      <AlertTriangle size={15} className="size-[15px] shrink-0 text-warn" />
+                    ) : (
+                      <ProjectKindIcon
+                        project={currentProject}
+                        size={15}
+                        open
+                        className={EXPLORER_HEADING_ICON}
+                      />
+                    )}
+                    <Tooltip
+                      label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+                      side="bottom"
+                      wrapperClassName="flex min-w-0 items-center"
                     >
-                      <FilePlus size={13} />
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t('新建文件夹')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('新建文件夹')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void startCreateEntry(currentProject.path, true, currentProject.id)
-                      }}
-                    >
-                      <FolderPlus size={13} />
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t('在文件管理器中打开')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('在文件管理器中打开')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void handleOpenProject(currentProject.path)
-                      }}
-                    >
-                      <ExternalLink size={13} />
-                    </button>
-                  </Tooltip>
-                  {unavailable && (
-                    <>
-                      <Tooltip label={t('重新定位项目')} side="bottom">
-                        <button
-                          type="button"
-                          aria-label={t('重新定位项目')}
-                          className="p-0.5 text-warn hover:text-fg"
-                          onClick={event => {
-                            event.stopPropagation()
-                            handleRelocateProject(currentProject.id)
-                          }}
+                      <span className="flex min-w-0 flex-1 font-medium">
+                        <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
+                      </span>
+                    </Tooltip>
+                  </span>
+                  <span className="flex shrink-0 items-center">
+                    <Tooltip label={t('新建文件')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('新建文件')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void startCreateEntry(currentProject.path, false, currentProject.id)
+                        }}
+                      >
+                        <FilePlus size={13} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('新建文件夹')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('新建文件夹')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void startCreateEntry(currentProject.path, true, currentProject.id)
+                        }}
+                      >
+                        <FolderPlus size={13} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('在文件管理器中打开')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('在文件管理器中打开')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void handleOpenProject(currentProject.path)
+                        }}
+                      >
+                        <ExternalLink size={13} />
+                      </button>
+                    </Tooltip>
+                    {unavailable && (
+                      <>
+                        <Tooltip
+                          label={currentProject.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                          side="bottom"
                         >
-                          <LocateFixed size={13} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip label={t('移除项目')} side="bottom">
-                        <button
-                          type="button"
-                          aria-label={t('移除项目')}
-                          className="p-0.5 text-fg-dim hover:text-danger"
-                          onClick={event => {
-                            event.stopPropagation()
-                            handleRemoveProject(
-                              currentProject.id,
-                              currentProject.name,
-                              currentProject.path,
-                            )
-                          }}
-                        >
-                          <X size={13} />
-                        </button>
-                      </Tooltip>
-                    </>
-                  )}
+                          <button
+                            type="button"
+                            aria-label={currentProject.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                            className="p-0.5 text-warn hover:text-fg"
+                            onClick={event => {
+                              event.stopPropagation()
+                              if (currentProject.kind === 'ssh') {
+                                requestSshReconnect(currentProject)
+                              } else {
+                                handleRelocateProject(currentProject.id)
+                              }
+                            }}
+                          >
+                            <LocateFixed size={13} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={t('移除项目')} side="bottom">
+                          <button
+                            type="button"
+                            aria-label={t('移除项目')}
+                            className="p-0.5 text-fg-dim hover:text-danger"
+                            onClick={event => {
+                              event.stopPropagation()
+                              handleRemoveProject(
+                                currentProject.id,
+                                currentProject.name,
+                                currentProject.path
+                              )
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
+                        </Tooltip>
+                      </>
+                    )}
+                  </span>
                 </div>
 
+                <FavoriteItemsSection project={currentProject} />
+
                 <div
+                  data-explorer-upload=""
                   className="flex-1 min-h-0 flex flex-col"
                   onContextMenu={event =>
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }
                 >
                   {unavailable ? (
-                    <div className="px-4 py-2 text-[12px] text-warn flex items-center gap-1.5">
+                    <div className="px-4 py-2 text-ui-sm text-warn flex items-center gap-1.5">
                       <AlertTriangle size={12} /> {t('目录不可用，请重新定位')}
                     </div>
                   ) : (
@@ -1477,9 +1888,28 @@ export default function Sidebar() {
                           onCancel={cancelCreate}
                         />
                       )}
-                      {tree.length === 0 &&
+                      {treeError && (
+                        <div className="px-4 py-2 text-ui-sm text-warn" role="alert">
+                          <div className="break-words">{formatDirectoryErrorDetail(treeError)}</div>
+                          <button
+                            type="button"
+                            className="mt-1 rounded px-2 py-1 text-accent hover:bg-bg-hover disabled:opacity-50"
+                            onClick={() => void handleRetryTree()}
+                            disabled={refreshing}
+                          >
+                            {t('重试')}
+                          </button>
+                        </div>
+                      )}
+                      {!treeLoaded && !treeError && pendingCreate?.parentPath !== currentProject.path && (
+                        <div className="px-4 py-2 text-ui-sm text-fg-muted" aria-live="polite">
+                          {t('正在加载文件树…')}
+                        </div>
+                      )}
+                      {treeLoaded &&
+                        tree.length === 0 &&
                         pendingCreate?.parentPath !== currentProject.path && (
-                          <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
+                          <div className="px-4 py-2 text-ui-sm text-fg-muted">{t('空文件夹')}</div>
                         )}
                       {visibleTreeRows.length > 0 && (
                         <div
@@ -1495,7 +1925,7 @@ export default function Sidebar() {
                             rowCount={visibleTreeRows.length}
                             rowHeight={index => {
                               const kind = visibleTreeRows[index]?.kind
-                              return kind === 'create' || kind === 'rename' ? 30 : 26
+return kind === 'create' || kind === 'rename' ? metrics.createRowHeight : metrics.rowHeight
                             }}
                             /* eslint-disable react-hooks/refs -- react-window invokes these callbacks after render. */
                             rowProps={{
@@ -1549,12 +1979,12 @@ export default function Sidebar() {
       {dragGhost &&
         createPortal(
           <div
-            className="pointer-events-none fixed z-[300] max-w-[240px] truncate rounded border border-accent bg-bg-elevated px-2.5 py-1 text-[12px] font-medium text-accent shadow-lg shadow-black/50"
+            className="pointer-events-none fixed z-[300] max-w-[240px] truncate rounded border border-accent bg-bg-elevated px-2.5 py-1 text-ui-sm font-medium text-accent shadow-lg shadow-black/50"
             style={{ left: dragGhost.x + 14, top: dragGhost.y + 14 }}
           >
             {dragGhost.label}
           </div>,
-          document.body,
+          document.body
         )}
     </div>
   )

@@ -12,6 +12,21 @@
 .qing-md-preview h2 { font-size: 1.35em; }
 .qing-md-preview h3 { font-size: 1.15em; }
 .qing-md-preview p { margin: 0.55em 0; }
+.qing-md-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.75em 0;
+}
+.qing-md-image-loading,
+.qing-md-image-error {
+  display: inline-block;
+  margin: 0.55em 0;
+  color: var(--color-fg-dim);
+}
+.qing-md-image-error {
+  color: var(--color-warn);
+}
 .qing-md-preview ul,
 .qing-md-preview ol { margin: 0.55em 0; padding-left: 1.4em; }
 .qing-md-preview code {

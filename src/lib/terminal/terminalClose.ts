@@ -5,7 +5,9 @@ import { getTerminalCommandRunning } from '@/lib/terminal/terminalCommandActivit
 
 function isTerminalNotFoundError(error: unknown): boolean {
   const message = String(error).toLowerCase()
-  return message.includes('terminal not found') || message.includes('not found')
+  // Only a missing PTY session. A broader "not found" also matches
+  // "Command not found" and would skip the close prompt.
+  return message.includes('terminal not found')
 }
 
 async function hasMeaningfulChildProcesses(terminalId: string): Promise<boolean> {
@@ -21,7 +23,21 @@ async function hasMeaningfulChildProcesses(terminalId: string): Promise<boolean>
   }
 }
 
-/** True when the tab can be closed without two-click confirmation or a dialog. */
+/**
+ * Tab X: a session that has not exited arms on the first click and closes on
+ * the second. Exited tabs close immediately. This does not consult the child
+ * process probe — a foreground TUI can be invisible to that probe.
+ */
+export function terminalCloseButtonAction(
+  status: TerminalTab['status'] | undefined,
+  armed: boolean,
+): 'close' | 'arm' | 'ignore' {
+  if (!status) return 'ignore'
+  if (status === 'exited' || armed) return 'close'
+  return 'arm'
+}
+
+/** True when bulk close / the context menu can skip the terminate dialog. */
 export async function canCloseTerminalDirectly(
   terminal: TerminalTab | undefined,
 ): Promise<boolean> {

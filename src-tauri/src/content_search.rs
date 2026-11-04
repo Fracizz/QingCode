@@ -71,7 +71,7 @@ pub fn cancel_content_search() {
     SEARCH_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
-fn is_search_current(search_id: u64) -> bool {
+pub(crate) fn is_search_current(search_id: u64) -> bool {
     SEARCH_GENERATION.load(Ordering::SeqCst) == search_id
 }
 
@@ -93,56 +93,7 @@ fn is_hard_ignored_dir(name: &str) -> bool {
     )
 }
 
-fn is_binary_extension(name: &str) -> bool {
-    let ext = Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "bmp"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "eot"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "tar"
-            | "7z"
-            | "rar"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "mp3"
-            | "mp4"
-            | "avi"
-            | "mov"
-            | "mkv"
-            | "wasm"
-            | "lock"
-            | "map"
-            | "pyc"
-            | "pyo"
-            | "pyd"
-            | "class"
-            | "o"
-            | "obj"
-            | "typed"
-    )
-}
-
-fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
+pub(crate) fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
     match extensions {
         None | Some([]) => true,
         Some(exts) => Path::new(name)
@@ -222,10 +173,14 @@ impl Sink for CollectSink<'_> {
     }
 }
 
+type ScanHook = Option<Arc<dyn Fn(usize) + Send + Sync>>;
+
 struct SharedState {
     search_id: u64,
     /// External cancel token; when true, search stops and reports `cancelled`.
     cancel_flag: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    scan_hook: ScanHook,
     should_quit: AtomicBool,
     max_matches: usize,
     max_files_scanned: usize,
@@ -275,6 +230,16 @@ pub fn search_file_contents(
     search_id: u64,
     cancel_flag: Option<Arc<AtomicBool>>,
 ) -> ContentSearchResponse {
+    search_file_contents_impl(root, options, search_id, cancel_flag, None)
+}
+
+fn search_file_contents_impl(
+    root: &Path,
+    options: ContentSearchOptions,
+    search_id: u64,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    _scan_hook: ScanHook,
+) -> ContentSearchResponse {
     let trimmed = options.query.trim();
     if trimmed.is_empty() {
         return ContentSearchResponse {
@@ -311,6 +276,8 @@ pub fn search_file_contents(
     let state = Arc::new(SharedState {
         search_id,
         cancel_flag,
+        #[cfg(test)]
+        scan_hook: _scan_hook,
         should_quit: AtomicBool::new(false),
         max_matches: options.max_matches.max(1),
         max_files_scanned: options.max_files_scanned.max(1),
@@ -393,7 +360,10 @@ pub fn search_file_contents(
             }
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if is_binary_extension(&name) || !matches_extensions(&name, extensions.as_deref()) {
+            // Shared binary list; ambiguous `.key` files defer to NUL detection.
+            if crate::binary_ext::is_content_search_binary_extension(&name)
+                || !matches_extensions(&name, extensions.as_deref())
+            {
                 return WalkState::Continue;
             }
             if let Ok(meta) = entry.metadata() {
@@ -402,14 +372,15 @@ pub fn search_file_contents(
                 }
             }
 
-            {
+            let scanned = {
                 let mut scanned = state.files_scanned.lock().unwrap();
                 *scanned += 1;
                 if *scanned > state.max_files_scanned {
                     state.note_truncated();
                     return WalkState::Quit;
                 }
-            }
+                *scanned
+            };
 
             if state.check_quit() {
                 return WalkState::Quit;
@@ -423,6 +394,12 @@ pub fn search_file_contents(
                 should_quit: &state.should_quit,
             };
             let _ = searcher.search_path(&matcher, path, sink);
+            #[cfg(test)]
+            if let Some(scan_hook) = &state.scan_hook {
+                scan_hook(scanned);
+            }
+            #[cfg(not(test))]
+            let _ = scanned;
             if file_matches.is_empty() {
                 return if state.check_quit() {
                     WalkState::Quit
@@ -482,12 +459,22 @@ pub fn search_file_contents(
 }
 
 #[cfg(test)]
+fn search_file_contents_with_scan_hook(
+    root: &Path,
+    options: ContentSearchOptions,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    scan_hook: Arc<dyn Fn(usize) + Send + Sync>,
+) -> ContentSearchResponse {
+    search_file_contents_impl(root, options, 0, cancel_flag, Some(scan_hook))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
     use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -633,6 +620,60 @@ mod tests {
     }
 
     #[test]
+    fn skips_office_documents_like_the_shared_binary_extension_list() {
+        // 回归：content_search 曾自带一份 39 项清单，与 binary_ext 的权威源分歧，
+        // 于是 .docx 这类 ZIP 容器会被当文本扫出乱码命中。两处必须只剩一份清单。
+        let dir = temp_dir("binary-ext");
+        fs::write(dir.join("report.docx"), "findme_docx\n").unwrap();
+        fs::write(dir.join("notes.txt"), "findme_text\n").unwrap();
+
+        let resp = search(&dir, opts("findme"));
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.clone()))
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t.contains("findme_docx")),
+            ".docx is a binary container and must not be content-searched: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("findme_text")),
+            "plain text still matches: {texts:?}"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn searches_text_key_lock_and_source_map_files() {
+        let dir = temp_dir("text-ambiguous-ext");
+        fs::write(dir.join("server.key"), "findme_key\n").unwrap();
+        fs::write(dir.join("package.lock"), "findme_lock\n").unwrap();
+        fs::write(dir.join("bundle.map"), "findme_map\n").unwrap();
+        fs::write(dir.join("deck.key"), "PK\u{0}\u{0}findme_binary").unwrap();
+
+        let resp = search(&dir, opts("findme"));
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.as_str()))
+            .collect();
+        assert!(texts.iter().any(|text| text.contains("findme_key")));
+        assert!(texts.iter().any(|text| text.contains("findme_lock")));
+        assert!(texts.iter().any(|text| text.contains("findme_map")));
+        assert!(!texts.iter().any(|text| text.contains("findme_binary")));
+
+        let mut key_only = opts("findme");
+        key_only.extensions = Some(vec!["key".to_string()]);
+        let resp = search(&dir, key_only);
+        assert_eq!(resp.match_count, 1, "resp={resp:?}");
+        assert!(resp.files[0].name.eq_ignore_ascii_case("server.key"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn case_insensitive_match_works() {
         let dir = temp_dir("case");
         fs::write(dir.join("a.txt"), "HelloWorld\n").unwrap();
@@ -651,17 +692,13 @@ mod tests {
     }
 
     #[test]
-    fn cancel_stops_in_flight_search() {
+    fn cancel_flag_stops_search_and_marks_cancelled() {
         let dir = temp_dir("cancel");
-        for i in 0..800 {
-            fs::write(
-                dir.join(format!("f{i}.txt")),
-                format!("needle_{i}\n{}", "x".repeat(8000)),
-            )
-            .unwrap();
-        }
+        fs::write(dir.join("one.txt"), "needle\n").unwrap();
 
-        let cancel = Arc::new(AtomicBool::new(false));
+        // Pre-set the token so this test does not race a fast filesystem scan.
+        // Production sets the same token from the UI while the worker runs.
+        let cancel = Arc::new(AtomicBool::new(true));
         let cancel_thread = Arc::clone(&cancel);
         let dir_clone = dir.clone();
         let handle = thread::spawn(move || {
@@ -671,12 +708,49 @@ mod tests {
             search_file_contents(&dir_clone, o, 0, Some(cancel_thread))
         });
 
-        thread::sleep(Duration::from_millis(20));
-        cancel.store(true, Ordering::SeqCst);
         let resp = handle.join().unwrap();
         assert!(
             resp.cancelled,
-            "expected cancel flag to stop search, scanned={}",
+            "expected pre-set cancel flag to stop search, scanned={}",
+            resp.files_scanned
+        );
+        assert!(cancel.load(Ordering::SeqCst));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancel_flag_during_search_stops_before_scanning_all_files() {
+        let dir = temp_dir("cancel-in-flight");
+        for index in 0..200 {
+            fs::write(dir.join(format!("file-{index:03}.txt")), "needle\n").unwrap();
+        }
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let first_file_scanned = Arc::new(AtomicBool::new(false));
+        let hook_cancel = Arc::clone(&cancel);
+        let hook_first_file_scanned = Arc::clone(&first_file_scanned);
+        let scan_hook = Arc::new(move |_scanned: usize| {
+            // Workers can finish out of order. Cancel on the first completion,
+            // rather than waiting for the worker assigned scan number one.
+            hook_cancel.store(true, Ordering::SeqCst);
+            hook_first_file_scanned.store(true, Ordering::SeqCst);
+        });
+
+        let mut o = opts("needle");
+        o.use_ignore_files = false;
+        o.max_matches = 10_000;
+        o.max_files_scanned = 10_000;
+        let resp = search_file_contents_with_scan_hook(&dir, o, Some(cancel), scan_hook);
+
+        assert!(
+            first_file_scanned.load(Ordering::SeqCst),
+            "扫描钩子未观察到首个文件完成"
+        );
+        assert!(resp.cancelled, "resp={resp:?}");
+        assert!(
+            resp.files_scanned < 200,
+            "取消后不应扫描全部文件，scanned={}",
             resp.files_scanned
         );
 

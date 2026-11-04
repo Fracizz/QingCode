@@ -1,7 +1,8 @@
 mod app_memory;
 mod app_paths;
+mod binary_ext;
 mod cli;
-mod code_navigation;
+mod clipboard_files;
 mod commands;
 mod content_search;
 mod exclude;
@@ -14,23 +15,255 @@ mod git;
 mod git_command;
 mod git_status;
 mod ipc;
-mod language_components;
-mod native_input;
 mod path_guard;
-mod symbol_search;
+mod remote_ssh;
+mod run_environment;
 mod terminal;
+mod terminal_diagnostics;
 mod update;
 mod user_locales;
 
 use file_watcher::FileWatcherManager;
 use path_guard::PathAllowlist;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
+mod mobile;
+mod mobile_screen;
 
-/// File paths passed on the command line (Explorer "Open with").
-struct LaunchFiles(Mutex<Vec<String>>);
+const MAIN_WINDOW_LABEL: &str = "main";
+
+/// File targets waiting for a specific window. Keeping this native-side avoids
+/// losing a second-instance request while the new WebView is still loading.
+struct LaunchFiles {
+    queues: Mutex<HashMap<String, Vec<String>>>,
+    open_paths_by_window: Mutex<HashMap<String, Vec<String>>>,
+    external_window_label: Mutex<Option<String>>,
+    creating_external_window: AtomicBool,
+}
+
+impl LaunchFiles {
+    fn new(initial: Vec<String>) -> Self {
+        let launch_as_external = !initial.is_empty();
+        let mut queues = HashMap::new();
+        if launch_as_external {
+            queues.insert(MAIN_WINDOW_LABEL.to_string(), initial);
+        }
+        Self {
+            queues: Mutex::new(queues),
+            open_paths_by_window: Mutex::new(HashMap::new()),
+            external_window_label: Mutex::new(
+                launch_as_external.then(|| MAIN_WINDOW_LABEL.to_string()),
+            ),
+            creating_external_window: AtomicBool::new(false),
+        }
+    }
+
+    fn enqueue(&self, label: &str, targets: Vec<String>) {
+        if targets.is_empty() {
+            return;
+        }
+        if let Ok(mut queues) = self.queues.lock() {
+            queues.entry(label.to_string()).or_default().extend(targets);
+        }
+    }
+
+    fn take(&self, label: &str) -> Vec<String> {
+        self.queues
+            .lock()
+            .ok()
+            .and_then(|mut queues| queues.remove(label))
+            .unwrap_or_default()
+    }
+
+    fn sync_open_paths(&self, label: &str, paths: Vec<String>) {
+        if let Ok(mut by_window) = self.open_paths_by_window.lock() {
+            by_window.insert(
+                label.to_string(),
+                paths
+                    .into_iter()
+                    .map(|path| normalized_file_key(&path))
+                    .collect(),
+            );
+        }
+    }
+
+    fn window_with_target(&self, app: &tauri::AppHandle, target: &str) -> Option<String> {
+        let key = normalized_file_key(open_target_path(target));
+        self.open_paths_by_window.lock().ok().and_then(|by_window| {
+            by_window.iter().find_map(|(label, paths)| {
+                (paths.iter().any(|path| path == &key) && app.get_webview_window(label).is_some())
+                    .then(|| label.clone())
+            })
+        })
+    }
+}
+
+fn open_target_path(target: &str) -> &str {
+    let mut candidate = target;
+    for _ in 0..2 {
+        let Some((path, suffix)) = candidate.rsplit_once(':') else {
+            break;
+        };
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        candidate = path;
+    }
+    candidate
+}
+
+fn normalized_file_key(path: &str) -> String {
+    let normalized = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path))
+        .to_string_lossy()
+        .replace('\\', "/");
+    if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+#[cfg(test)]
+mod launch_target_tests {
+    use super::open_target_path;
+
+    #[test]
+    fn strips_optional_line_and_column_from_open_target() {
+        assert_eq!(
+            open_target_path(r"D:\docs\README.md:12:3"),
+            r"D:\docs\README.md"
+        );
+        assert_eq!(
+            open_target_path(r"D:\docs\README.md:12"),
+            r"D:\docs\README.md"
+        );
+        assert_eq!(open_target_path(r"D:\docs\README.md"), r"D:\docs\README.md");
+    }
+}
+
+fn focus_window(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+fn focus_preferred_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        focus_window(&window);
+        return;
+    }
+    if let Some(window) = app.webview_windows().into_values().next() {
+        focus_window(&window);
+    }
+}
+
+fn build_external_file_window(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<tauri::WebviewWindow, String> {
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App("index.html?fresh=1&external=1".into()),
+    )
+    .title("QingCode · 独立文件")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(720.0, 480.0)
+    .decorations(false)
+    .center()
+    .visible(false)
+    .background_color(tauri::window::Color(30, 30, 30, 255));
+
+    #[cfg(target_os = "windows")]
+    let builder = builder.enable_clipboard_access();
+
+    builder.build().map_err(|error| error.to_string())
+}
+
+/// Queue files for the dedicated project-less window. The same window is
+/// reused until the user turns it into a project window.
+pub(crate) fn route_external_file_targets(
+    app: &tauri::AppHandle,
+    targets: Vec<String>,
+) -> Result<(), String> {
+    if targets.is_empty() {
+        focus_preferred_window(app);
+        return Ok(());
+    }
+
+    let state = app.state::<LaunchFiles>();
+    let mut remaining = Vec::new();
+    let mut already_open: HashMap<String, Vec<String>> = HashMap::new();
+    for target in targets {
+        if let Some(label) = state.window_with_target(app, &target) {
+            already_open.entry(label).or_default().push(target);
+        } else {
+            remaining.push(target);
+        }
+    }
+    for (label, targets) in already_open {
+        state.enqueue(&label, targets);
+        let _ = app.emit_to(&label, "open-files", ());
+        if let Some(window) = app.get_webview_window(&label) {
+            focus_window(&window);
+        }
+    }
+    if remaining.is_empty() {
+        return Ok(());
+    }
+
+    let targets = remaining;
+    let existing_label = state
+        .external_window_label
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+
+    if let Some(label) = existing_label {
+        if let Some(window) = app.get_webview_window(&label) {
+            state.enqueue(&label, targets);
+            let _ = app.emit_to(&label, "open-files", ());
+            focus_window(&window);
+            return Ok(());
+        }
+        if state.creating_external_window.load(Ordering::Acquire) {
+            state.enqueue(&label, targets);
+            return Ok(());
+        }
+    }
+
+    // `qing-*` matches capabilities/secondary.json for editor/file/dialog access.
+    let label = format!("qing-external-files-{}", uuid::Uuid::new_v4().simple());
+    state.enqueue(&label, targets);
+    if let Ok(mut current) = state.external_window_label.lock() {
+        *current = Some(label.clone());
+    }
+
+    if state.creating_external_window.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+
+    let result = build_external_file_window(app, &label);
+    state
+        .creating_external_window
+        .store(false, Ordering::Release);
+    if let Err(error) = result {
+        let _ = state.take(&label);
+        if let Ok(mut current) = state.external_window_label.lock() {
+            if current.as_deref() == Some(label.as_str()) {
+                *current = None;
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
 
 fn legacy_database_paths(data_dir: &Path) -> [PathBuf; 2] {
     [
@@ -114,6 +347,52 @@ fn get_column_migrations() -> Vec<Migration> {
             sql: "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "create favorite items table",
+            sql: "CREATE TABLE IF NOT EXISTS favorite_items (
+                    project_id TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    item_type TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(project_id, relative_path)
+                  );
+                  CREATE INDEX IF NOT EXISTS idx_favorite_items_project_order
+                    ON favorite_items(project_id, sort_order);",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "add remote project metadata",
+            sql: "ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'local';
+                  ALTER TABLE projects ADD COLUMN connection_id TEXT;
+                  ALTER TABLE projects ADD COLUMN root_path TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "create ssh connections table",
+            sql: "CREATE TABLE IF NOT EXISTS ssh_connections (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 22,
+                    username TEXT NOT NULL,
+                    auth_kind TEXT NOT NULL,
+                    private_key_path TEXT,
+                    host_key_fingerprint TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                  );",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "add ssh connection mode",
+            sql: "ALTER TABLE ssh_connections ADD COLUMN mode TEXT;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -150,9 +429,42 @@ fn write_terminal(
 }
 
 #[tauri::command]
-fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
-    state.kill(&id);
-    Ok(())
+fn set_terminal_output_paused(id: String, paused: bool, state: tauri::State<'_, TerminalManager>) {
+    state.set_output_paused(&id, paused);
+}
+
+#[tauri::command]
+fn terminal_session_open(
+    id: String,
+    terminals: tauri::State<'_, TerminalManager>,
+    ssh: tauri::State<'_, remote_ssh::SshManager>,
+) -> bool {
+    terminals.is_open(&id) || ssh.terminal_is_open(&id)
+}
+
+#[tauri::command]
+fn kill_terminal(
+    id: String,
+    source: Option<String>,
+    operation_id: Option<String>,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<(), String> {
+    qingcode_server::diagnostics::record(
+        "terminal.kill_requested",
+        serde_json::json!({
+        "terminalId":id,"source":qingcode_server::diagnostics::termination_source(source.as_deref()),
+        "operationId":qingcode_server::diagnostics::identifier(operation_id.as_deref())}),
+        true,
+        false,
+    );
+    let result = state.kill(&id);
+    qingcode_server::diagnostics::record(
+        "terminal.kill_completed",
+        serde_json::json!({"terminalId":id,"ok":result.is_ok()}),
+        true,
+        false,
+    );
+    result
 }
 
 #[tauri::command]
@@ -203,14 +515,36 @@ fn app_exe_path() -> Result<String, String> {
         .map_err(|e| format!("locate exe: {e}"))
 }
 
-/// Consume CLI file paths once (Explorer → Open with / `QingCode.exe path`).
+/// Consume launch targets queued specifically for the calling window.
 #[tauri::command]
-fn take_launch_files(state: tauri::State<'_, LaunchFiles>) -> Vec<String> {
-    state
-        .0
-        .lock()
-        .map(|mut paths| std::mem::take(&mut *paths))
-        .unwrap_or_default()
+fn take_launch_files(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) -> Vec<String> {
+    state.take(window.label())
+}
+
+/// Once the dedicated window opens a project, future Explorer requests should
+/// create a new project-less file window instead of entering that project.
+#[tauri::command]
+fn release_external_file_window(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) {
+    if let Ok(mut current) = state.external_window_label.lock() {
+        if current.as_deref() == Some(window.label()) {
+            *current = None;
+        }
+    }
+}
+
+#[tauri::command]
+fn sync_open_file_paths(
+    paths: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) {
+    state.sync_open_paths(window.label(), paths);
 }
 
 #[tauri::command]
@@ -244,24 +578,46 @@ fn spawn_script(
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    project_root: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<TerminalSpawnResult, String> {
     allowlist.ensure_executable(&cwd)?;
+    let kind = shell_kind.as_str();
+    // 运行任务必须绑定所属项目根；缺失时拒绝，而不是静默跳过边界校验。
+    // `interactive`（终端配置）不属于项目任务，不受此限制。
+    let project_root = match project_root.as_deref() {
+        Some(root) if !root.trim().is_empty() => Some(root),
+        _ if kind != "interactive" => return Err("运行任务缺少所属项目根目录，已拒绝启动".into()),
+        _ => None,
+    };
+    let canonical_root = match project_root {
+        Some(root) => {
+            allowlist.ensure_executable(root)?;
+            let canonical_root = std::fs::canonicalize(run_environment::to_host_path(root))
+                .map_err(|e| format!("项目目录不可用: {e}"))?;
+            let canonical_cwd = std::fs::canonicalize(run_environment::to_host_path(&cwd))
+                .map_err(|e| format!("工作目录不可用: {e}"))?;
+            if !canonical_cwd.starts_with(&canonical_root) {
+                return Err("任务工作目录必须位于当前项目根目录内".into());
+            }
+            Some(canonical_root)
+        }
+        None => None,
+    };
     // Script file targets must stay inside the sandbox. Inline `command` /
     // `interactive` strings are unrestricted once the cwd is trusted (UI confirms).
-    let kind = shell_kind.as_str();
     if kind != "command" && kind != "interactive" {
-        let target_path = {
-            let p = Path::new(&target);
-            if p.is_absolute() {
-                target.clone()
-            } else {
-                Path::new(&cwd).join(p).to_string_lossy().into_owned()
-            }
-        };
+        let target_path = run_environment::resolve_task_target(&cwd, &target);
         allowlist.ensure_allowed(&target_path)?;
+        if let Some(root) = canonical_root.as_ref() {
+            let target =
+                std::fs::canonicalize(&target_path).map_err(|e| format!("脚本不可用: {e}"))?;
+            if !target.starts_with(root) {
+                return Err("任务脚本必须位于当前项目根目录内".into());
+            }
+        }
     }
     state.spawn_script(
         id,
@@ -270,6 +626,7 @@ fn spawn_script(
         &target,
         env,
         shell.as_deref(),
+        project_root,
         cols.unwrap_or(80),
         rows.unwrap_or(24),
         app,
@@ -309,15 +666,92 @@ fn repair_windows_main_window_size(window: &tauri::WebviewWindow) {
     let _ = window.reload();
 }
 
+/// 配置远端 server 二进制的本地查找目录（按优先级）：
+/// `QINGCODE_SERVER_DIR` 环境变量（旧名 `QINGCODE_AGENT_DIR` 兼容）→ 安装目录 `/servers`
+/// （旧名 `/agents` 兼容）→ 安装目录上级 `/server`（旧名 `/agent` 兼容）→ 应用资源目录
+/// `/servers`。目录不存在时由 `set_server_binary_dirs` 自动过滤。
+fn configure_ssh_server_binary_dirs(app: &tauri::AppHandle) {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let env_dir = std::env::var("QINGCODE_SERVER_DIR")
+        .or_else(|_| std::env::var("QINGCODE_AGENT_DIR"))
+        .ok();
+    if let Some(dir) = env_dir {
+        if !dir.trim().is_empty() {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            dirs.push(exe_dir.join("servers"));
+            dirs.push(exe_dir.join("agents"));
+            if let Some(parent) = exe_dir.parent() {
+                dirs.push(parent.join("server"));
+                dirs.push(parent.join("agent"));
+            }
+        }
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("servers"));
+        dirs.push(resource_dir.join("agents"));
+    }
+    // 下载缓存目录：便携版等未随包携带二进制时，`ssh.server.autoDownload`
+    // 开启后从 GitHub Release 下载到这里（优先级最低，不遮蔽随包产物）。
+    if let Ok(cache_dir) = app.path().app_cache_dir() {
+        let dir = cache_dir
+            .join("servers")
+            .join(qingcode_server::SERVER_VERSION);
+        let _ = std::fs::create_dir_all(&dir);
+        app.state::<remote_ssh::SshManager>()
+            .set_server_cache_dir(dir.clone());
+        dirs.push(dir);
+    }
+    app.state::<remote_ssh::SshManager>()
+        .set_server_binary_dirs(dirs);
+}
+
+fn configure_ssh_client_id(app: &tauri::AppHandle) {
+    let client_id = app_paths::load_or_create_client_id().unwrap_or_else(|error| {
+        eprintln!("[WARN] 无法持久化 qingcode-client-id：{error}");
+        uuid::Uuid::new_v4().to_string()
+    });
+    app.state::<remote_ssh::SshManager>()
+        .set_client_id(client_id);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Some(code) = cli::try_run_as_cli() {
         std::process::exit(code);
     }
 
+    qingcode_server::diagnostics::initialize(
+        app_paths::app_data_dir()
+            .join("diagnostics")
+            .join("terminal"),
+        "desktop",
+    );
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
+    let launch_as_external = !launch_files.is_empty();
+    // Explorer/NSIS shortcuts can provide an arbitrary $OUTDIR. Keep relative
+    // launch-file resolution above, then stabilize native runtime loading.
+    app_paths::stabilize_runtime_working_directory();
 
     tauri::Builder::default()
+        // Must be registered first: it owns process arbitration before any
+        // other desktop plugin can initialize a competing app instance.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let paths = file_associations::collect_cli_file_paths_from(args, Some(Path::new(&cwd)));
+            let app = app.clone();
+            // On Windows the callback runs inside WM_COPYDATA. Creating a WebView
+            // synchronously from that handler can deadlock WebView2, so route on
+            // a worker thread (the documented Tauri multi-window pattern).
+            std::thread::spawn(move || {
+                if let Err(error) = route_external_file_targets(&app, paths) {
+                    eprintln!("route second-instance files failed: {error}");
+                    focus_preferred_window(&app);
+                }
+            });
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -330,30 +764,44 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
+        .manage(mobile::MobileState::default())
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
-        .manage(code_navigation::SemanticNavigationState::new())
-        .manage(symbol_search::SymbolSearchState::new())
-        .manage(LaunchFiles(Mutex::new(launch_files)))
-        .setup(|app| {
+        .manage(remote_ssh::SshManager::new())
+        .manage(LaunchFiles::new(launch_files))
+        .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
+            mobile::initialize(app.handle());
+            configure_ssh_server_binary_dirs(app.handle());
+            configure_ssh_client_id(app.handle());
+            if let Err(error) = remote_ssh::configure_direct_connections(app.handle()) {
+                eprintln!("[WARN] 无法加载 Server 直连配置: {error}");
+            }
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
+                let mut window_config = window_config.clone();
+                if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
+                    window_config.url =
+                        tauri::WebviewUrl::App("index.html?fresh=1&external=1".into());
+                    window_config.title = "QingCode · 独立文件".to_string();
+                }
                 // Keep visible:false from config so the HTML splash owns the first show().
                 // Pin an explicit inner size on Windows so borderless+hidden does not boot
                 // at ~14x14; only fall back to a decorations toggle if size is still wrong.
                 #[cfg(target_os = "windows")]
-                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
-                    .devtools(cfg!(debug_assertions))
-                    .enable_clipboard_access()
-                    .inner_size(1280.0, 800.0)
-                    .min_inner_size(720.0, 480.0)
-                    .build()?;
+                let window =
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                        .devtools(cfg!(debug_assertions))
+                        .enable_clipboard_access()
+                        .inner_size(1280.0, 800.0)
+                        .min_inner_size(720.0, 480.0)
+                        .build()?;
                 #[cfg(not(target_os = "windows"))]
-                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
-                    .devtools(cfg!(debug_assertions))
-                    .enable_clipboard_access()
-                    .build()?;
+                let window =
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                        .devtools(cfg!(debug_assertions))
+                        .enable_clipboard_access()
+                        .build()?;
 
                 #[cfg(target_os = "windows")]
                 {
@@ -369,32 +817,26 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            mobile::mobile_status,
+            mobile::mobile_saved_settings,
+            mobile::mobile_start,
+            mobile::mobile_stop,
+            mobile::mobile_revoke_device,
+            mobile::mobile_pairing_qr,
+            mobile::mobile_bridge_reply,
             commands::scan_directory,
             commands::validate_directory,
             commands::file_stat,
             commands::read_file,
+            commands::read_image_file,
             commands::detect_file_encoding,
             commands::read_file_slice,
             commands::find_line_offset,
-            commands::replace_file_range,
             commands::write_file,
             commands::search_files,
             commands::search_file_contents,
             commands::start_content_search,
             commands::cancel_content_search,
-            symbol_search::search_symbol_definitions,
-            symbol_search::search_symbol_references,
-            symbol_search::search_workspace_symbols,
-            code_navigation::prepare_semantic_index,
-            code_navigation::update_semantic_overlay,
-            code_navigation::clear_semantic_overlay,
-            code_navigation::resolve_symbol_at,
-            code_navigation::find_symbol_usages_at,
-            code_navigation::find_symbol_usages_by_id,
-            code_navigation::search_indexed_workspace_symbols,
-            code_navigation::semantic_index_status,
-            language_components::language_component_statuses,
-            native_input::primary_modifier_pressed,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,
@@ -403,6 +845,8 @@ pub fn run() {
             commands::copy_path_into,
             commands::delete_path,
             commands::clipboard_write_files,
+            commands::clipboard_read_files,
+            commands::clipboard_store_file,
             commands::clipboard_write_text,
             commands::directory_delete_stats,
             commands::directory_entry_counts,
@@ -428,16 +872,21 @@ pub fn run() {
             git::git_log,
             git::git_commit_files,
             git::git_commit_file_contents,
-            git::git_diff,
             git::git_file_contents,
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,
+            set_terminal_output_paused,
             kill_terminal,
+            terminal_diagnostics::terminal_diagnostic_event,
+            terminal_diagnostics::terminal_diagnostic_log,
+            terminal_session_open,
             resize_terminal,
             terminal_has_child_processes,
             get_app_memory,
             spawn_script,
+            run_environment::resolve_run_environment,
+            remote_ssh::ssh_run_environment,
             db_url,
             default_settings_path,
             app_exe_path,
@@ -448,6 +897,8 @@ pub fn run() {
             update::check_app_update,
             update::download_app_update,
             take_launch_files,
+            release_external_file_window,
+            sync_open_file_paths,
             resolve_cli_request,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,
@@ -457,6 +908,99 @@ pub fn run() {
             file_watcher::is_fs_watch_suppressed,
             file_watcher::file_mtime,
             file_watcher::file_ctime,
+            remote_ssh::ssh_probe_host,
+            remote_ssh::direct_agent_info,
+            remote_ssh::direct_agent_probe,
+            remote_ssh::direct_agent_test,
+            remote_ssh::direct_agent_save,
+            remote_ssh::direct_agent_provision,
+            remote_ssh::direct_agent_manage,
+            remote_ssh::direct_agent_update,
+            remote_ssh::direct_agent_prepare_update,
+            remote_ssh::direct_agent_firewall_plan,
+            remote_ssh::direct_agent_firewall_apply,
+            remote_ssh::ssh_import_candidates,
+            remote_ssh::ssh_open_session,
+            remote_ssh::ssh_test_connection,
+            remote_ssh::ssh_browse_directory,
+            remote_ssh::ssh_connect,
+            remote_ssh::ssh_disconnect,
+            remote_ssh::ssh_connection_status,
+            remote_ssh::ssh_workspace_status,
+            remote_ssh::ssh_prepare_workspace,
+            remote_ssh::ssh_activate_workspace,
+            remote_ssh::ssh_warmup_directory,
+            remote_ssh::ssh_shared_server_ready,
+            remote_ssh::ssh_workspace_roots,
+            remote_ssh::ssh_server_states,
+            remote_ssh::ssh_set_workspace_trust,
+            remote_ssh::ssh_server_info,
+            remote_ssh::ssh_server_latency,
+            remote_ssh::ssh_server_restart,
+            remote_ssh::ssh_server_update,
+            remote_ssh::ssh_windows_repair_plan,
+            remote_ssh::ssh_windows_repair,
+            remote_ssh::ssh_server_stop,
+            remote_ssh::ssh_server_logs,
+            remote_ssh::ssh_set_server_auto_download,
+            remote_ssh::ssh_set_server_offline_dir,
+            remote_ssh::ssh_server_package_info,
+            remote_ssh::ssh_validate_server_offline_dir,
+            remote_ssh::ssh_download_server_package,
+            remote_ssh::ssh_reset_server_failure,
+            remote_ssh::ssh_validate_directory,
+            remote_ssh::ssh_scan_directory,
+            remote_ssh::ssh_file_stat,
+            remote_ssh::ssh_file_mtime,
+            remote_ssh::ssh_read_file,
+            remote_ssh::ssh_read_image_file,
+            remote_ssh::ssh_detect_file_encoding,
+            remote_ssh::ssh_read_file_slice,
+            remote_ssh::ssh_find_line_offset,
+            remote_ssh::ssh_write_file,
+            remote_ssh::ssh_check_symlink_write,
+            remote_ssh::ssh_create_file,
+            remote_ssh::ssh_create_directory,
+            remote_ssh::ssh_rename_path,
+            remote_ssh::ssh_move_path,
+            remote_ssh::ssh_copy_path_into,
+            remote_ssh::ssh_delete_path,
+            remote_ssh::ssh_directory_delete_stats,
+            remote_ssh::ssh_transfer_paths,
+            remote_ssh::cancel_ssh_transfer,
+            remote_ssh::ssh_search_files_detailed,
+            remote_ssh::cancel_ssh_file_search,
+            remote_ssh::ssh_search_files,
+            remote_ssh::ssh_list_file_extensions,
+            remote_ssh::ssh_search_file_contents,
+            remote_ssh::ssh_git_status,
+            remote_ssh::ssh_git_log,
+            remote_ssh::ssh_git_branch_list,
+            remote_ssh::ssh_git_remotes,
+            remote_ssh::ssh_git_switch,
+            remote_ssh::ssh_git_commit_files,
+            remote_ssh::ssh_git_commit_file_contents,
+            remote_ssh::ssh_git_file_contents,
+            remote_ssh::ssh_git_show_head_file,
+            remote_ssh::ssh_git_discard,
+            remote_ssh::ssh_git_stage,
+            remote_ssh::ssh_git_unstage,
+            remote_ssh::ssh_git_commit,
+            remote_ssh::ssh_git_push,
+            remote_ssh::ssh_git_fetch,
+            remote_ssh::ssh_git_pull,
+            remote_ssh::ssh_format_document,
+            remote_ssh::ssh_create_terminal,
+            remote_ssh::ssh_spawn_script,
+            remote_ssh::ssh_write_terminal,
+            remote_ssh::ssh_resize_terminal,
+            remote_ssh::ssh_kill_terminal,
+            remote_ssh::ssh_finish_terminal_on_exit,
+            remote_ssh::ssh_terminal_diagnostic_log,
+            remote_ssh::ssh_kill_detached_terminal,
+            remote_ssh::ssh_list_detached_terminals,
+            remote_ssh::ssh_attach_terminal,
+            remote_ssh::ssh_forget_workspace_root,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -164,9 +164,6 @@ function evictStateCacheIfNeeded() {
   }
 }
 
-export function getEditorStateCacheMax(): number {
-  return editorStateCacheMax
-}
 
 /** Apply a new cache budget and immediately evict least-recent detached states. */
 export function setEditorStateCacheMax(value: number) {

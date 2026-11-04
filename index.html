@@ -11,7 +11,8 @@
         var theme = 'dark'
         try {
           var stored = localStorage.getItem('qingcode:theme')
-          if (stored === 'light' || stored === 'dark' || stored === 'forest' || stored === 'auto') theme = stored
+          if (stored === 'forest') stored = 'olive'
+          if (stored === 'light' || stored === 'dark' || stored === 'olive' || stored === 'auto') theme = stored
         } catch (e) {}
         var resolved =
           theme === 'auto' && window.matchMedia
@@ -22,7 +23,7 @@
               ? 'dark'
               : theme
         document.documentElement.setAttribute('data-theme', resolved)
-        document.documentElement.style.colorScheme = resolved
+        document.documentElement.style.colorScheme = resolved === 'light' ? 'light' : 'dark'
       })()
     </script>
     <style>
@@ -32,20 +33,23 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: #18191d;
+        color: #f3f3f5;
       }
       html[data-theme='light'],
       html[data-theme='light'] body,
       html[data-theme='light'] #root {
-        background: #f0f0f0;
-        color: #1f1f1f;
+        background: #ffffff;
+        color: #111827;
       }
+      html[data-theme='olive'],
+      html[data-theme='olive'] body,
+      html[data-theme='olive'] #root,
       html[data-theme='forest'],
       html[data-theme='forest'] body,
       html[data-theme='forest'] #root {
-        background: #002626;
-        color: #b2c2b0;
+        background: #151d18;
+        color: #dce5df;
       }
 
       #startup-splash {
@@ -55,14 +59,15 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #1e1e1e;
+        background: #18191d;
         transition: opacity 140ms ease, visibility 140ms ease;
       }
       html[data-theme='light'] #startup-splash {
-        background: #f0f0f0;
+        background: #ffffff;
       }
+      html[data-theme='olive'] #startup-splash,
       html[data-theme='forest'] #startup-splash {
-        background: #002626;
+        background: #151d18;
       }
       #startup-splash.startup-splash--hide {
         opacity: 0;
@@ -177,9 +182,8 @@
           <!-- Inline logo avoids a startup fetch; paintStartupSplashLogo() may refresh later. -->
           <!-- Keep in sync with src/assets/app-icon.svg (paintStartupSplashLogo refreshes after boot). -->
           <svg id="startup-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="160" height="160">
-            <path fill="#2FAF9B" d="M96 379H416V419H96V379Z"/>
-            <path fill="#4ECDB5" d="M96 339H416V379H96V339Z"/>
-            <path id="startup-logo-bracket" fill="#F3F6F8" d="M124 93H264L388 197L264 301H124L248 197L124 93Z"/>
+            <rect x="96" y="344" width="320" height="64" rx="12" fill="#4ECDB5"/>
+            <path id="startup-logo-bracket" fill="#F3F6F8" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
           </svg>
         </div>
         <div class="startup-title">QingCode</div>
@@ -240,6 +244,6 @@
         }
       })()
     </script>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalizeShortcut,
   COPY_RELATIVE_PATH_SHORTCUT,
+  DEFAULT_SHORTCUTS,
   isReservedShortcut,
   shortcutFromKeyboardEvent,
   shortcutMatchesEvent,
@@ -19,6 +20,10 @@ function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
 }
 
 describe('canonicalizeShortcut', () => {
+  it('uses Ctrl+O as the default open-file shortcut', () => {
+    expect(DEFAULT_SHORTCUTS.openFile).toBe('Ctrl+O')
+  })
+
   it('treats Shift+Alt+F and Alt+Shift+F as the same binding', () => {
     expect(canonicalizeShortcut('Shift+Alt+F')).toBe('Alt+Shift+F')
     expect(canonicalizeShortcut('Alt+Shift+F')).toBe('Alt+Shift+F')

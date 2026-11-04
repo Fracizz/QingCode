@@ -8,7 +8,7 @@ import type {
   GitStatus,
 } from '../git/git'
 import type { GitWorkdirStatus } from '../git/gitStatus'
-import { safeInvoke } from '../tauri'
+import { isSshResource, safeInvoke } from '../tauri'
 
 export type GitHeadInfo = {
   name: string
@@ -16,10 +16,32 @@ export type GitHeadInfo = {
 }
 
 export function getGitHead(path: string): Promise<GitHeadInfo | null> {
+  if (isSshResource(path)) {
+    return getGitStatus(path).then(status =>
+      status.is_repository && status.branch
+        ? { name: status.branch, detached: status.branch === 'HEAD' }
+        : null
+    )
+  }
   return safeInvoke('读取 Git 分支', 'get_git_head', { path })
 }
 
 export function getGitWorkdirStatus(path: string): Promise<GitWorkdirStatus | null> {
+  if (isSshResource(path)) {
+    return getGitStatus(path).then(status =>
+      status.is_repository
+        ? {
+            dirty_count: status.changes.length,
+            // 一次远程往返已经拿到分支，别再为状态栏单独跑一次全量 status。
+            branch: status.branch ?? null,
+            entries: status.changes.map(change => ({
+              path: `${path.replace(/\/+$/, '')}/${change.path}`,
+              status: change.status,
+            })),
+          }
+        : null
+    )
+  }
   return safeInvoke('读取 Git 状态', 'get_git_workdir_status', { path })
 }
 

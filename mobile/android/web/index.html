@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>QingCode</title>
+  <link rel="stylesheet" href="xterm.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="xterm.js" defer></script>
+  <script src="fit.js" defer></script>
+  <script src="jsqr.js" defer></script>
+  <script src="app.js" type="module"></script>
+</head>
+<body>
+  <!-- Same Lucide paths as the EXE: Terminal, Folders (projects), Cloud (connections). -->
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M12 19h8"></path><path d="m4 17 6-6-6-6"></path></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></symbol>
+    <symbol id="i-project" viewBox="0 0 24 24"><path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"></path><path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"></path></symbol>
+    <symbol id="i-host" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6Z"></path><path d="m14 5 5 5"></path></symbol>
+    <symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><path d="M11 14h10"></path><path d="M16 4h2a2 2 0 0 1 2 2v1.344"></path><path d="m17 18 4-4-4-4"></path><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"></path><rect x="8" y="2" width="8" height="4" rx="1"></rect></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></symbol>
+    <symbol id="i-return" viewBox="0 0 24 24"><path d="M9 10 4 15l5 5"></path><path d="M20 4v7a4 4 0 0 1-4 4H4"></path></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8" cy="8" r="1"></circle><path d="m21 15-5-5L5 21"></path></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+  </svg>
+
+  <main>
+    <div id="dashboard" class="dashboard">
+      <header class="app-head">
+        <div class="brand"><img src="qingcode-icon.png" alt="" width="28" height="28">QingCode</div>
+        <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><svg><use href="#i-chevron"/></svg></button>
+      </header>
+
+      <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
+        <div id="home-pull" class="pull-indicator" aria-hidden="true"><svg><use href="#i-refresh"/></svg></div>
+        <header class="page-heading"><h1 id="home-title">终端</h1><p>接回会话，继续手边的工作。</p></header>
+        <div id="home-context" class="context-card" hidden>
+          <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span><span id="home-latency"></span></small></div>
+          <button id="home-reconnect" class="text-button" type="button" hidden>重连</button>
+        </div>
+        <button id="resume" class="resume-card" type="button" hidden>
+          <span class="tile"><svg><use href="#i-terminal"/></svg></span>
+          <span class="row-text"><small>继续终端</small><strong id="resume-name"></strong><small id="resume-host"></small></span>
+          <svg class="arrow"><use href="#i-chevron"/></svg>
+        </button>
+        <div id="home-empty" class="empty-card">
+          <span class="tile"><svg><use href="#i-terminal"/></svg></span>
+          <h2 id="home-empty-title">连接一台 QingCode</h2>
+          <p id="home-empty-text">配对电脑后，就能在这里打开远程终端。</p>
+          <button id="home-action" class="primary" type="button">添加连接</button>
+        </div>
+        <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
+        <section id="home-projects" class="home-projects" hidden aria-labelledby="home-projects-title">
+          <div class="section-heading"><h2 id="home-projects-title">最近打开</h2><button id="home-all-projects" class="text-button" type="button">全部项目 <svg><use href="#i-chevron"/></svg></button></div>
+          <div id="home-project-list" class="rows"></div>
+          <p id="home-recent-empty" class="hint" hidden>还没有最近打开的项目，可从全部项目中选择。</p>
+        </section>
+        <ol id="home-guide" class="setup-guide">
+          <li><span>1</span><div><strong>开启电脑连接</strong><p>电脑端设置 → 功能 → Android 移动连接</p></div></li>
+          <li><span>2</span><div><strong>扫码配对</strong><p>扫描电脑上的二维码，输入连接密码。</p></div></li>
+          <li><span>3</span><div><strong>继续工作</strong><p>选择项目，接回终端或新建会话。</p></div></li>
+        </ol>
+      </section>
+
+      <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
+        <div id="project-pull" class="pull-indicator" aria-hidden="true"><svg><use href="#i-refresh"/></svg></div>
+        <header class="page-heading with-action">
+          <div><h1 id="project-title">项目</h1><p id="project-subtitle"></p></div>
+          <button id="refresh" class="icon-button tonal" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
+        </header>
+        <div id="project-filters">
+          <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索 IP、项目名或路径" aria-label="搜索 IP、项目名或路径" autocomplete="off" enterkeyhint="search"></div>
+        </div>
+        <p id="project-error" class="error" role="alert" hidden></p>
+        <p id="list-label" class="list-label" role="status"></p>
+        <div id="project-list" class="rows"></div>
+        <div id="project-empty" class="empty-card" hidden>
+          <span class="tile"><svg><use href="#i-folder"/></svg></span>
+          <h2 id="project-empty-title"></h2><p id="project-empty-text"></p>
+          <button id="project-empty-action" class="secondary" type="button"></button>
+        </div>
+      </section>
+
+      <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
+        <header class="page-heading with-action">
+          <div><h1 id="connection-title">连接</h1><p>选择要控制的 QingCode 电脑。</p></div>
+          <button id="add-host" class="primary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>
+        </header>
+        <p id="connection-error" class="error" role="alert" hidden></p>
+        <div id="connection-list" class="rows"></div>
+        <div id="connection-empty" class="empty-card" hidden>
+          <span class="tile"><svg><use href="#i-host"/></svg></span>
+          <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
+        </div>
+      </section>
+
+      <nav id="dashboard-nav" aria-label="主导航">
+        <button type="button" data-page="home" aria-current="page"><span class="nav-icon"><svg><use href="#i-terminal"/></svg></span>终端</button>
+        <button type="button" data-page="project"><span class="nav-icon"><svg><use href="#i-project"/></svg></span>项目</button>
+        <button type="button" data-page="connection"><span class="nav-icon"><svg><use href="#i-host"/></svg></span>连接</button>
+      </nav>
+    </div>
+
+    <section id="terminal-screen" hidden aria-labelledby="terminal-name">
+      <header class="terminal-head">
+        <button id="show-sessions" class="icon-button" type="button" aria-label="打开会话侧栏" aria-controls="session-drawer" aria-expanded="false"><svg><use href="#i-sidebar"/></svg></button>
+        <div class="terminal-heading"><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
+        <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
+        <button id="manage-sessions" class="icon-button" type="button" aria-label="终端设置"><svg><use href="#i-more"/></svg></button>
+      </header>
+      <div class="terminal-body">
+        <div id="viewport" aria-label="终端输出"></div>
+        <section id="terminal-history" aria-label="历史输出（只读）" hidden>
+          <div id="history-scroll" tabindex="0" aria-label="向上滚动加载更早输出">
+            <button id="history-more" type="button">加载更早输出</button>
+            <p id="history-status" role="status"></p>
+            <pre id="history-content"></pre>
+          </div>
+        </section>
+        <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg><span>回到最新</span></button>
+      </div>
+      <div id="terminal-tools">
+        <div class="terminal-state">
+          <span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p>
+          <button id="terminal-retry" class="text-button" type="button" hidden>重试</button>
+          <span id="terminal-latency" aria-label="手机到电脑往返延迟">电脑 --</span>
+          <span id="terminal-size" aria-label="终端列数和行数"></span>
+          <button id="toggle-keys" type="button" aria-expanded="true" aria-controls="special-keys"><span>收起按键</span><svg><use href="#i-chevron"/></svg></button>
+          <button id="terminal-menu" class="icon-button" type="button" aria-label="终端操作菜单"><svg><use href="#i-more"/></svg></button>
+        </div>
+        <!-- AI 编程常用键单行，按使用频率排序：Esc、Tab、Ctrl+C 最前；放不下时横向滑动，「更多」固定在右端。 -->
+        <div id="special-keys" aria-label="AI 编程快捷键">
+          <button type="button" data-key="esc">Esc</button>
+          <button type="button" id="complete-input" data-key="tab">Tab</button>
+          <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C">Ctrl+C</button>
+          <button type="button" data-key="shift-tab" aria-label="发送 Shift+Tab">⇧Tab</button>
+          <button type="button" data-key="up" data-repeat aria-label="向上">↑</button>
+          <button type="button" data-key="down" data-repeat aria-label="向下">↓</button>
+          <button type="button" data-key="backspace" data-repeat aria-label="退格">⌫</button>
+          <button type="button" id="slash-command" data-key="slash" aria-label="输入斜杠命令">/命令</button>
+          <button type="button" data-key="left" data-repeat aria-label="向左">←</button>
+          <button type="button" data-key="right" data-repeat aria-label="向右">→</button>
+          <button type="button" id="more-keys" aria-haspopup="dialog" aria-controls="keys-dialog">更多</button>
+        </div>
+        <form id="compose-form">
+          <!-- 编辑目标由实时输入配色和占位文字表达；短状态在框内独立一行，避免压住边框或按钮。 -->
+          <span id="input-mode" class="sr-only">命令输入</span>
+          <span class="compose-notes">
+            <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
+            <span id="image-state" class="compose-note" role="status" hidden></span>
+            <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
+          </span>
+          <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
+          <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿，可多选"><svg><use href="#i-image"/></svg></button>
+          <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令…"></textarea>
+          <button id="send" class="icon-button" type="submit" aria-label="发送回车"><svg><use href="#i-return"/></svg><span id="send-label">发送</span></button>
+        </form>
+        <p id="input-hint" class="sr-only" aria-live="polite">命令栏可编辑中文 · 空白发送为回车</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="pair-dialog" aria-labelledby="pair-title">
+    <form id="pair-form">
+      <h2 id="pair-title">添加连接</h2>
+      <p>打开电脑端「设置 → 功能 → Android 移动连接」，用手机扫描其中的二维码。</p>
+      <div id="pair-link-tools" class="pair-tools">
+        <button type="button" id="pair-scan" class="secondary"><svg><use href="#i-scan"/></svg> 扫码添加</button>
+        <button type="button" id="pair-paste" class="secondary"><svg><use href="#i-paste"/></svg> 粘贴配对链接</button>
+      </div>
+      <p id="pair-link-state" class="ok" role="status" hidden>已从配对链接读取地址和证书指纹，连接时自动核对。</p>
+      <label for="pair-name">连接名称</label>
+      <input id="pair-name" maxlength="48" placeholder="例如 工作电脑" required>
+      <div class="pair-address">
+        <div><label for="pair-host">IPv4 地址</label><input id="pair-host" inputmode="decimal" autocomplete="off" placeholder="192.168.1.10" required></div>
+        <div><label for="pair-port">端口</label><input id="pair-port" type="number" inputmode="numeric" min="1" max="65535" value="48764" required></div>
+      </div>
+      <label for="pair-code">连接密码</label>
+      <input id="pair-code" type="password" minlength="6" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6–20 位密码" required>
+      <p id="pair-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="pair-confirm" aria-labelledby="pair-confirm-title">
+    <form method="dialog">
+      <h2 id="pair-confirm-title">核对电脑身份</h2>
+      <p>请逐位核对电脑端显示的 SHA-256 指纹。</p>
+      <code id="pair-fingerprint"></code>
+      <div class="dialog-actions"><button class="secondary" value="cancel">取消</button><button class="primary" value="confirm">指纹一致</button></div>
+    </form>
+  </dialog>
+
+  <!-- 竖屏手机上以 Material 3 底部弹层呈现，可按住拖动条下滑关闭。 -->
+  <dialog id="host-dialog" class="sheet" aria-labelledby="host-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <form id="host-form">
+      <h2 id="host-title">连接详情</h2><p id="host-address"></p>
+      <p id="host-latency" class="hint"></p>
+      <code id="host-fingerprint"></code>
+      <label for="host-name">连接名称</label><input id="host-name" maxlength="48" required>
+      <label for="host-port">端口</label><input id="host-port" type="number" inputmode="numeric" min="1" max="65535" required>
+      <p class="hint">电脑端切换端口后，在这里改为新端口即可，无需重新配对。</p>
+      <p id="host-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="host-dialog">取消</button><button class="primary" type="submit">保存</button></div>
+      <div class="dialog-links"><button type="button" id="repair-host" class="text-button">重新配对</button><button type="button" id="remove-host" class="text-button danger">移除连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="scan-dialog" aria-labelledby="scan-title">
+    <h2 id="scan-title">扫描配对二维码</h2>
+    <p>将电脑端二维码完整放在画面中央，稍等相机对焦；若模糊，请稍微拉远手机。</p>
+    <video id="scan-video" playsinline muted aria-label="相机预览"></video>
+    <p id="scan-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="scan-dialog">取消</button></div>
+  </dialog>
+
+  <dialog id="keys-dialog" class="sheet" aria-labelledby="keys-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="keys-title">更多按键</h2>
+    <p id="keys-target">编辑目标：手机草稿</p>
+    <div class="extra-keys" aria-label="编辑与终端按键">
+      <button type="button" data-key="reference" aria-label="输入 @ 引用">@引用</button>
+      <button type="button" data-key="delete-word">删词</button>
+      <button type="button" data-key="delete-line-start">删至行首</button>
+      <button type="button" data-key="clear-input" aria-label="清除终端当前输入">清除输入</button>
+      <button type="button" data-key="clear">清空草稿</button>
+      <button type="button" data-key="home">Home</button>
+      <button type="button" data-key="end">End</button>
+      <button type="button" data-key="pgup" data-repeat>PgUp</button>
+      <button type="button" data-key="pgdn" data-repeat>PgDn</button>
+      <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" data-key="alt" aria-pressed="false">Alt</button>
+      <button type="button" data-key="text" data-text="-">-</button>
+      <button type="button" data-key="text" data-text="|">|</button>
+      <button type="button" data-key="text" data-text="/">/</button>
+      <button type="button" data-key="newline" aria-label="插入换行">换行</button>
+    </div>
+    <p>「清除输入」清除终端当前行尚未提交的文字；「清空草稿」只清手机命令栏。按键由当前程序处理。Esc 取消或中断，不删除文字；Ctrl+C 也可能退出程序。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="keys-dialog">返回</button></div>
+  </dialog>
+
+  <dialog id="session-drawer" class="session-drawer" aria-labelledby="session-drawer-title">
+    <header class="drawer-heading"><h2 id="session-drawer-title">会话</h2><button class="icon-button" type="button" data-close="session-drawer" aria-label="关闭会话侧栏"><svg><use href="#i-back"/></svg></button></header>
+    <p id="session-context"></p>
+    <div id="session-options" class="rows" aria-label="项目会话"></div>
+    <p id="session-error" class="error" role="alert" hidden></p>
+    <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
+    <div class="drawer-actions">
+      <button id="drawer-new-session" class="secondary wide" type="button">新建终端</button>
+      <button id="back" class="secondary" type="button">返回工作台</button>
+      <button id="drawer-settings" class="secondary" type="button">终端设置</button>
+      <button id="end-session" class="secondary danger wide" type="button">结束当前会话</button>
+      <button id="end-all-sessions" class="secondary danger wide" type="button">结束全部会话</button>
+    </div>
+  </dialog>
+
+  <dialog id="rename-session-dialog" aria-labelledby="rename-session-title">
+    <form id="rename-session-form">
+      <h2 id="rename-session-title">重命名会话</h2>
+      <label for="session-name-input">会话名称</label>
+      <input id="session-name-input" maxlength="80" autocomplete="off">
+      <p>手动名称优先。留空保存后恢复跟随程序标题。</p>
+      <p id="rename-session-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="rename-session-dialog">取消</button><button id="save-session-name" type="submit" class="primary">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="session-dialog" class="sheet" aria-labelledby="session-dialog-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="session-dialog-title">终端设置</h2>
+    <label for="terminal-columns">终端列宽</label>
+    <select id="terminal-columns"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select>
+    <p>固定列宽时可横向滚动，旋转和键盘弹出只改变可见高度。</p>
+    <fieldset id="touch-mode" class="setting-choices" aria-describedby="touch-mode-hint">
+      <legend>全屏程序中的触摸</legend>
+      <label><input type="radio" name="touch-mode" value="view" checked><span><strong>只查看历史</strong><small>防误触，不向程序发送点击</small></span></label>
+      <label><input type="radio" name="touch-mode" value="program"><span><strong>发给程序</strong><small>滑动滚动，点按点击</small></span></label>
+    </fieldset>
+    <p id="touch-mode-hint">Codex、OpenCode 等会接管鼠标。默认手指滑动只打开手机端只读历史，点按不发点击；需要用手指滚动程序界面时再改为「发给程序」。实体鼠标不受影响。</p>
+    <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
+    <label for="image-compression">图片压缩</label>
+    <select id="image-compression" aria-describedby="image-compression-hint">
+      <option value="original">原图 · 不压缩</option><option value="low">低压缩 · 更清晰</option>
+      <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
+    </select>
+    <p id="image-compression-hint">自动保存，下次发图直接使用。原图保留 PNG / JPEG 文件；HEIC / HEIF 需要系统支持解码，原图模式保留分辨率并转换格式。单张上传最大 8 MB，超出时请选择压缩。</p>
+    <label for="send-mode">发送按键</label>
+    <select id="send-mode" aria-describedby="send-mode-hint">
+      <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
+    </select>
+    <p id="send-mode-hint">「发送并直接 Enter」等待文字发送成功后再单独发送回车；/命令也会提交。是否执行由当前终端程序决定。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button></div>
+  </dialog>
+
+  <dialog id="new-session-dialog" aria-labelledby="new-session-title">
+    <h2 id="new-session-title">新建会话</h2>
+    <div id="terminal-profiles" class="rows session-shortcuts" aria-label="终端配置"></div>
+    <p id="terminal-profiles-error" class="error" role="alert" hidden></p>
+    <p>选项来自电脑端「设置 → 终端 → 终端配置」；启动命令在当前项目环境（本机、WSL 或远端）中执行。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="new-session-dialog">取消</button></div>
+  </dialog>
+
+  <dialog id="image-dialog" aria-labelledby="image-title">
+    <h2 id="image-title">图片未能上传</h2>
+    <p>可重新选择未上传的图片；压缩等级在终端设置中调整。已插入的图片会保留在草稿中。</p>
+    <p id="image-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="image-dialog">取消</button><button type="button" id="choose-image" class="primary">选择图片</button></div>
+  </dialog>
+
+  <dialog id="terminal-menu-dialog" class="sheet" aria-labelledby="terminal-menu-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="terminal-menu-title">终端操作</h2><p id="terminal-menu-context"></p>
+    <div class="rows terminal-actions">
+      <button id="menu-edit" type="button">展开编辑指令</button>
+      <button id="menu-submissions" type="button">最近提交与项目草稿</button>
+      <button id="menu-read" type="button">阅读与搜索输出</button>
+      <button id="menu-sessions" type="button">会话列表</button>
+      <button id="menu-new" type="button">新建终端</button>
+      <button id="menu-dashboard" type="button">返回项目列表</button>
+    </div>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="terminal-menu-dialog">关闭</button></div>
+  </dialog>
+  <dialog id="expanded-dialog" class="workspace-dialog" aria-labelledby="expanded-title">
+    <header class="workspace-head"><h2 id="expanded-title">编辑指令</h2><button type="button" class="secondary" data-close="expanded-dialog">收起</button></header>
+    <p id="expanded-context"></p>
+    <textarea id="expanded-compose" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="完整指令" placeholder="输入需求、代码或日志；回车换行"></textarea>
+    <p id="expanded-save-status">草稿保存在手机，输入法回车只换行。图片上传后的路径会加入指令。</p>
+    <div class="dialog-actions"><button id="expanded-attach" type="button" class="secondary">添加图片</button><button id="expanded-send" type="button" class="primary">发送</button></div>
+  </dialog>
+  <dialog id="submissions-dialog" class="workspace-dialog" aria-labelledby="submissions-title">
+    <header class="workspace-head"><h2 id="submissions-title">提交与草稿</h2><button type="button" class="secondary" data-close="submissions-dialog">关闭</button></header>
+    <p>“电脑已接收”表示终端收到输入。结果未知时先核对输出，内容不会自动重发。</p>
+    <div id="submission-list" class="rows"></div>
+    <textarea id="submission-preview" readonly aria-label="保留的原文" placeholder="此会话暂无提交记录或其他项目草稿"></textarea>
+    <div class="dialog-actions"><button id="copy-submission" type="button" class="secondary">复制原文</button><button id="restore-submission" type="button" class="primary">加入当前草稿</button></div>
+    <p id="submission-feedback" role="status"></p>
+  </dialog>
+  <dialog id="reader-dialog" class="workspace-dialog" aria-labelledby="reader-title">
+    <header class="workspace-head"><h2 id="reader-title">输出阅读</h2><button type="button" class="secondary" data-close="reader-dialog">关闭</button></header>
+    <div class="reader-controls"><select id="reader-source" aria-label="阅读范围"><option value="terminal">当前终端缓存</option><option value="history">已加载历史</option></select><button id="reader-refresh" type="button" class="secondary">刷新内容</button></div>
+    <div class="reader-controls"><input id="reader-query" type="search" placeholder="搜索此页内容" aria-label="搜索输出"><button id="reader-previous" type="button" class="secondary" aria-label="上一个匹配">↑</button><button id="reader-next" type="button" class="secondary" aria-label="下一个匹配">↓</button></div>
+    <div class="reader-controls"><label><input id="reader-wrap" type="checkbox"> 自动换行</label><span id="reader-status" role="status"></span><button id="reader-copy" type="button" class="text-button">复制</button></div>
+    <p>只读快照，最多保留末尾 60 万字符。实时输出不会改变阅读位置；刷新后才更新。</p>
+    <div id="reader-scroll"><pre id="reader-content" tabindex="0" aria-label="只读输出"></pre></div>
+  </dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2><p id="confirm-text"></p>
+      <div class="dialog-actions"><button class="secondary" value="cancel">取消</button><button id="confirm-action" class="destructive" value="confirm"></button></div>
+    </form>
+  </dialog>
+</body>
+</html>

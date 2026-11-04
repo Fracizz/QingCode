@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   getTerminalPtyResizeDelay,
+  getTerminalRedrawRevealMaxMs,
+  shouldRevealTerminalAfterRedraw,
   isValidTerminalGridSize,
+  shouldSendPtyResizeNow,
   terminalGridSizeChanged,
   TERMINAL_ALTERNATE_PTY_DELAY_MS,
   TERMINAL_NORMAL_PTY_DELAY_MS,
+  TERMINAL_PTY_RESIZE_LEAD_GAP_MS,
+  TERMINAL_REDRAW_QUIET_MS,
+  TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS,
+  TERMINAL_REDRAW_REVEAL_MAX_REMOTE_MS,
 } from '@/lib/terminal/terminalResizePolicy'
 
 describe('terminal resize policy', () => {
@@ -23,5 +30,49 @@ describe('terminal resize policy', () => {
   it('uses a shorter PTY merge window for alternate-screen applications', () => {
     expect(getTerminalPtyResizeDelay('alternate')).toBe(TERMINAL_ALTERNATE_PTY_DELAY_MS)
     expect(getTerminalPtyResizeDelay('normal')).toBe(TERMINAL_NORMAL_PTY_DELAY_MS)
+  })
+
+  it('sends the first PTY resize immediately after a quiet period', () => {
+    expect(shouldSendPtyResizeNow(0, 1_000)).toBe(true)
+    expect(shouldSendPtyResizeNow(Number.NaN, 1_000)).toBe(true)
+    expect(shouldSendPtyResizeNow(1_000, 1_000 + TERMINAL_PTY_RESIZE_LEAD_GAP_MS)).toBe(true)
+  })
+
+  it('coalesces burst resizes so a TUI is not asked to relayout per frame', () => {
+    expect(shouldSendPtyResizeNow(1_000, 1_010)).toBe(false)
+    expect(shouldSendPtyResizeNow(1_000, 1_000 + TERMINAL_PTY_RESIZE_LEAD_GAP_MS - 1)).toBe(false)
+  })
+})
+
+describe('terminal redraw reveal policy', () => {
+  const maxMs = TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS
+
+  it('keeps the mask until the program answers the redraw', () => {
+    // 旧输出早已安静，但重绘回包还没到，不能揭开旧帧。
+    expect(
+      shouldRevealTerminalAfterRedraw({ startedAt: 1000, lastOutputAt: 500, now: 1200, maxMs })
+    ).toBe(false)
+  })
+
+  it('reveals once redraw output has been quiet long enough', () => {
+    const base = { startedAt: 1000, lastOutputAt: 1100, maxMs }
+    expect(
+      shouldRevealTerminalAfterRedraw({ ...base, now: 1100 + TERMINAL_REDRAW_QUIET_MS - 1 })
+    ).toBe(false)
+    expect(
+      shouldRevealTerminalAfterRedraw({ ...base, now: 1100 + TERMINAL_REDRAW_QUIET_MS })
+    ).toBe(true)
+  })
+
+  it('falls back to the max wait when the program never answers', () => {
+    expect(
+      shouldRevealTerminalAfterRedraw({ startedAt: 1000, lastOutputAt: 0, now: 1000 + maxMs, maxMs })
+    ).toBe(true)
+  })
+
+  it('waits longer for remote terminals', () => {
+    expect(getTerminalRedrawRevealMaxMs(false)).toBe(TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS)
+    expect(getTerminalRedrawRevealMaxMs(true)).toBe(TERMINAL_REDRAW_REVEAL_MAX_REMOTE_MS)
+    expect(TERMINAL_REDRAW_REVEAL_MAX_REMOTE_MS).toBeGreaterThan(TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS)
   })
 })

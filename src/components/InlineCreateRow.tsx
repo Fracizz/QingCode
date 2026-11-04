@@ -56,7 +56,7 @@ export default function InlineCreateRow({
 
   return (
     <div
-      className="flex items-center gap-1 pr-2 py-[3px] text-[13px] select-none bg-bg-active/60"
+      className="flex items-center gap-1 pr-2 py-[3px] text-ui select-none bg-bg-active/60"
       style={{ paddingLeft: pad }}
     >
       <span className="w-[14px] flex-shrink-0" />
@@ -88,7 +88,7 @@ export default function InlineCreateRow({
             if (!submittingRef.current) onCancel()
           }, 80)
         }}
-        className={`flex-1 min-w-0 h-[22px] px-1.5 text-[13px] bg-bg border rounded-sm outline-none text-fg
+        className={`flex-1 min-w-0 h-[calc(var(--ui-control-height)-4px)] px-1.5 text-ui bg-bg border rounded-sm outline-none text-fg
           ${error ? 'border-danger' : 'border-accent'}`}
         aria-label={
           renaming

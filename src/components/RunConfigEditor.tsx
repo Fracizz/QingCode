@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Trash2, Wand2, CircleHelp } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
@@ -16,11 +16,14 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { isSshResource } from '../lib/tauri'
+import { hasRunTaskTarget, parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
+import { confirmDialog } from '../store/confirmStore'
 
 const TYPE_OPTIONS: RunTaskType[] = ['command', 'ps1', 'bat', 'sh', 'script']
 
 const TYPE_LABEL: Record<RunTaskType, string> = {
-  command: '命令（CMD）',
+  command: '命令（按运行系统）',
   ps1: 'ps1 脚本',
   bat: 'bat 脚本',
   sh: 'sh 脚本',
@@ -40,18 +43,37 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   const descriptionId = useId()
   const [name, setName] = useState(initial?.name ?? '')
   const [restoreWithProjectSession, setRestoreWithProjectSession] = useState(
-    initial ? runConfigFollowsProjectSession(initial) : false,
+    initial ? runConfigFollowsProjectSession(initial) : false
   )
   const [tasks, setTasks] = useState<RunTask[]>(initial?.tasks ?? [])
   const [saving, setSaving] = useState(false)
+  const dismissPending = useRef(false)
+  const [invalidOsTasks, setInvalidOsTasks] = useState<Set<string>>(new Set())
+  const remote = isSshResource(project.path)
+  const hasInvalidOs = tasks.some(task => invalidOsTasks.has(task.id))
+  const dirty = name !== (initial?.name ?? '') ||
+    restoreWithProjectSession !== (initial ? runConfigFollowsProjectSession(initial) : false) ||
+    JSON.stringify(tasks) !== JSON.stringify(initial?.tasks ?? [])
+  const saveHint = !name.trim() ? t('请填写配置名称')
+    : hasInvalidOs ? t('请修正任务的系统覆盖配置')
+      : !tasks.some(hasRunTaskTarget) ? t('请至少填写一个任务的命令或脚本路径') : ''
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      setName(initial?.name ?? '')
-      setRestoreWithProjectSession(initial ? runConfigFollowsProjectSession(initial) : false)
-      setTasks(initial?.tasks ?? [])
-    })
-  }, [initial])
+  const requestClose = async () => {
+    if (saving || dismissPending.current) return
+    dismissPending.current = true
+    try {
+      if (!dirty || await confirmDialog({
+        title: t('放弃运行配置修改？'),
+        message: t('尚未保存的名称和任务将丢失。'),
+        confirmLabel: t('放弃修改'),
+        cancelLabel: t('继续编辑'),
+        kind: 'warning',
+      })) onClose()
+    } finally {
+      dismissPending.current = false
+    }
+  }
+
 
   const addTask = () => {
     setTasks(ts => [
@@ -68,7 +90,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     setTasks(ts => ts.filter(t => t.id !== id))
   }
 
-  const loadTemplate = () => {
+  const loadTemplate = async () => {
+    if (saving || dismissPending.current) return
+    if (dirty && !await confirmDialog({
+      title: t('替换为模板？'),
+      message: t('模板将替换当前名称、会话恢复选项和全部任务。'),
+      confirmLabel: t('替换'), cancelLabel: t('保留当前内容'), kind: 'warning',
+    })) return
     const tpl = defaultConfigs()[0]
     setName(tpl.name)
     setRestoreWithProjectSession(runConfigFollowsProjectSession(tpl))
@@ -82,10 +110,8 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
       .map(t => {
         const cwd = t.cwd?.trim() || undefined
         const targetRaw = t.target.trim()
-        const normalized =
-          t.type === 'command' ? normalizeCommandTarget(targetRaw) : targetRaw
-        const target =
-          t.type === 'command' && cwd ? stripRedundantCdPrefix(normalized) : normalized
+        const normalized = t.type === 'command' ? normalizeCommandTarget(targetRaw) : targetRaw
+        const target = t.type === 'command' && cwd ? stripRedundantCdPrefix(normalized) : normalized
         return {
           ...t,
           name: t.name?.trim() || undefined,
@@ -94,7 +120,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           env: t.env && Object.keys(t.env).length > 0 ? t.env : undefined,
         }
       })
-      .filter(t => t.target.length > 0)
+      .filter(hasRunTaskTarget)
     if (cleanTasks.length === 0) return
     const config: RunConfig = {
       id: initial?.id ?? crypto.randomUUID(),
@@ -106,13 +132,15 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     try {
       await upsertConfig(project, config)
       onClose()
+    } catch {
+      // The store reports the write failure; keep the form for retry.
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <ModalOverlay onDismiss={onClose}>
+    <ModalOverlay onDismiss={() => void requestClose()}>
       <div
         className="modal-content-enter relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
         onClick={e => e.stopPropagation()}
@@ -123,36 +151,44 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
         aria-describedby={descriptionId}
       >
         <div className="flex items-center justify-between px-4 h-11 border-b border-border flex-shrink-0">
-          <h2 id={titleId} className="text-[13px] font-medium">
+          <h2 id={titleId} className="text-ui font-medium">
             {initial ? t('编辑运行配置') : t('新建运行配置')}
             <span className="text-fg-dim"> · {project.name}</span>
           </h2>
           <button
             type="button"
             aria-label={t('关闭运行配置编辑器')}
-            onClick={onClose}
+            onClick={() => void requestClose()}
+            disabled={saving}
             className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto px-4 py-2 flex flex-col gap-2">
+        <fieldset disabled={saving} className="min-w-0 flex-1 overflow-auto border-0 px-4 py-2 flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <label htmlFor="run-config-name" className="text-[12px] text-fg-muted w-16 flex-shrink-0">{t('名称')}</label>
+            <label
+              htmlFor="run-config-name"
+              className="text-ui-sm text-fg-muted w-16 flex-shrink-0"
+            >
+              {t('名称')} <span className="text-warn" aria-hidden>*</span>
+            </label>
             <input
               id="run-config-name"
+              aria-label={t('名称')}
               data-modal-autofocus
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('如：前后端')}
-              className="flex-1 px-2 py-1 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+              className="flex-1 px-2 py-1 text-ui rounded bg-bg-deep border border-border focus:border-accent outline-none"
             />
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
                 type="button"
-                onClick={loadTemplate}
-                className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
+                onClick={() => void loadTemplate()}
+                disabled={saving}
+                className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
               >
                 <Wand2 size={13} /> {t('模板')}
               </button>
@@ -162,7 +198,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           <div className="flex items-center gap-2">
             <label
               htmlFor="run-config-session-restore"
-              className="w-16 flex-shrink-0 text-[12px] text-fg-muted"
+              className="w-16 flex-shrink-0 text-ui-sm text-fg-muted"
             >
               {t('会话恢复')}
             </label>
@@ -171,7 +207,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               aria-label={t('跟随项目会话恢复')}
               value={restoreWithProjectSession ? 'on' : 'off'}
               onChange={event => setRestoreWithProjectSession(event.target.value === 'on')}
-              className="rounded border border-border bg-bg-deep px-2 py-1 text-[12px] outline-none focus:border-accent"
+              className="rounded border border-border bg-bg-deep px-2 py-1 text-ui-sm outline-none focus:border-accent"
             >
               <option value="on">{t('开启')}</option>
               <option value="off">{t('关闭')}</option>
@@ -182,18 +218,18 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-[12px] text-fg-muted">{t('任务（每个任务启动一个终端）')}</span>
+            <span className="text-ui-sm text-fg-muted">{t('任务（每个任务启动一个终端）')}</span>
             <button
               type="button"
               onClick={addTask}
-              className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded text-accent hover:bg-bg-hover"
+              className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded text-accent hover:bg-bg-hover"
             >
               <Plus size={13} /> {t('添加任务')}
             </button>
           </div>
 
           {tasks.length === 0 ? (
-            <div className="text-[12px] text-fg-dim py-3 text-center border border-dashed border-border rounded">
+            <div className="text-ui-sm text-fg-dim py-3 text-center border border-dashed border-border rounded">
               {t('点击“添加任务”或“模板”快速开始')}
             </div>
           ) : (
@@ -202,14 +238,24 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 key={task.id}
                 index={idx}
                 task={task}
+                remote={remote}
                 onChange={patch => updateTask(task.id, patch)}
                 onRemove={() => removeTask(task.id)}
+                onOsValidityChange={valid =>
+                  setInvalidOsTasks(current => {
+                    const next = new Set(current)
+                    if (valid) next.delete(task.id)
+                    else next.add(task.id)
+                    return next
+                  })
+                }
               />
             ))
           )}
-        </div>
+        </fieldset>
 
-        <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-border flex-shrink-0">
+        {saveHint && <p role="status" className="px-4 py-2 text-ui-sm text-fg-muted">{saveHint}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-t border-border flex-shrink-0">
           <p id={descriptionId} className="text-ui-sm truncate text-fg-dim">
             {t('保存至')}{' '}
             <button
@@ -222,21 +268,22 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             </button>
           </p>
           <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-[13px] px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            {t('取消')}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !name.trim() || tasks.filter(t => t.target.trim()).length === 0}
-            className="text-[13px] px-3 py-1.5 rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-default"
-          >
-            {t('保存')}
-          </button>
+            <button
+              type="button"
+              onClick={() => void requestClose()}
+              disabled={saving}
+              className="text-ui px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              {t('取消')}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || hasInvalidOs || !name.trim() || !tasks.some(hasRunTaskTarget)}
+              className="text-ui px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
+            >
+              {saving ? t('正在保存…') : t('保存')}
+            </button>
           </div>
         </div>
       </div>
@@ -247,13 +294,17 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
 function TaskEditor({
   index,
   task,
+  remote,
   onChange,
   onRemove,
+  onOsValidityChange,
 }: {
   index: number
   task: RunTask
+  remote: boolean
   onChange: (patch: Partial<RunTask>) => void
   onRemove: () => void
+  onOsValidityChange: (valid: boolean) => void
 }) {
   const { t } = useI18n()
   const envEntries = Object.entries(task.env ?? {})
@@ -266,30 +317,34 @@ function TaskEditor({
     onChange({ env: Object.keys(env).length > 0 ? env : undefined })
   }
 
-  const commandHelp = t(
-    'Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。',
-  )
+  const commandHelp = remote
+    ? t('SSH 下使用 POSIX Shell；工作目录已填时无需再写 cd。')
+    : t(
+        '按项目运行系统选择 Shell：Windows 使用 CMD，Linux/macOS 使用 Shell，WSL 使用所属发行版的 Linux 工具链。'
+      )
+  const typeOptions = TYPE_OPTIONS
+  const unsupported = remote && (task.type === 'ps1' || task.type === 'bat')
 
   return (
     <div className="rounded-md border border-border bg-bg/40 p-2 flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
+        <span className="text-ui-xs text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
         <input
           aria-label={t('任务名')}
           value={task.name ?? ''}
           onChange={e => onChange({ name: e.target.value })}
           placeholder={t('任务名（可选，如：后端）')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
         />
         <select
           aria-label={t('任务类型')}
           value={task.type}
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
-          className="max-w-[9.5rem] px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
         >
-          {TYPE_OPTIONS.map(taskType => (
+          {typeOptions.map(taskType => (
             <option key={taskType} value={taskType}>
-              {t(TYPE_LABEL[taskType])}
+              {taskType === 'command' && remote ? t('命令（Shell）') : t(TYPE_LABEL[taskType])}
             </option>
           ))}
         </select>
@@ -307,7 +362,7 @@ function TaskEditor({
       {task.type === 'command' ? (
         <div className="flex items-start gap-2">
           <div className="flex items-center gap-0.5 w-16 flex-shrink-0 pt-1">
-            <label className="text-[11px] text-fg-muted">{t('命令')}</label>
+            <label className="text-ui-sm text-fg-muted">{t('命令')} *</label>
             <Tooltip label={commandHelp} side="bottom" wrapperClassName="inline-flex">
               <span className="text-fg-dim hover:text-fg-muted cursor-default" aria-hidden>
                 <CircleHelp size={11} />
@@ -317,42 +372,47 @@ function TaskEditor({
           <CommandTextarea
             value={task.target}
             onChange={value => onChange({ target: value })}
-            placeholder="python manage.py runserver"
+            placeholder={task.name === '前端' ? 'pnpm dev' : task.name === '后端' ? 'python manage.py runserver' : t('例如：pnpm dev 或 python main.py')}
             ariaLabel={t('命令')}
             className="flex-1 min-w-0"
           />
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('脚本路径')}</label>
+          <label className="text-ui-sm text-fg-muted w-16 flex-shrink-0">{t('脚本路径')} *</label>
           <input
             aria-label={t('脚本路径')}
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
-            placeholder="scripts/run_backend.ps1"
-            className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            placeholder={remote ? 'scripts/run_backend.py' : 'scripts/run_backend.ps1'}
+            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
           />
         </div>
       )}
       <div className="flex items-center gap-2">
-        <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('工作目录')}</label>
+        <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('工作目录')}</label>
         <input
           aria-label={t('工作目录')}
           value={task.cwd ?? ''}
           onChange={e => onChange({ cwd: e.target.value })}
           placeholder={t('留空=项目根；可相对，如 backend/')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
+      {unsupported && !task.os?.linux && !task.os?.macos ? (
+        <p className="pl-[4.5rem] text-ui-xs text-warn">
+          {t('SSH Linux 项目不支持 PowerShell 或 BAT 任务，请改用命令、sh 或脚本。')}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
+          <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
           {envEntries.length > 0 && <span className="flex-1 min-w-0" />}
           <button
             type="button"
             aria-label={t('添加环境变量')}
             onClick={() => setEnv([...envEntries, ['', '']])}
-            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
+            className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
           >
             <Plus size={11} /> {t('添加')}
           </button>
@@ -363,20 +423,24 @@ function TaskEditor({
               aria-label={t('环境变量名称')}
               value={k}
               onChange={e =>
-                setEnv(envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry)))
+                setEnv(
+                  envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry))
+                )
               }
               placeholder="KEY"
-              className="w-28 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="w-28 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <span className="text-fg-dim">=</span>
             <input
               aria-label={t('环境变量值')}
               value={v}
               onChange={e =>
-                setEnv(envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry)))
+                setEnv(
+                  envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry))
+                )
               }
               placeholder="value"
-              className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <button
               type="button"
@@ -389,12 +453,68 @@ function TaskEditor({
           </div>
         ))}
       </div>
+      <TaskOsEditor
+        value={task.os}
+        onChange={os => onChange({ os })}
+        onValidityChange={onOsValidityChange}
+      />
     </div>
   )
 }
 
+function TaskOsEditor({
+  value,
+  onChange,
+  onValidityChange,
+}: {
+  value: RunTaskOs | undefined
+  onChange: (value: RunTaskOs | undefined) => void
+  onValidityChange: (valid: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [draft, setDraft] = useState(() => (value ? JSON.stringify(value, null, 2) : ''))
+  const [error, setError] = useState('')
+  return (
+    <details className="border-t border-border pt-1.5" open={!!value || !!error}>
+      <summary className="cursor-pointer text-ui-xs text-fg-muted">{t('按系统覆盖（os）')}</summary>
+      <p className="py-1 text-ui-xs text-fg-dim">
+        {t(
+          '公共字段作为默认值；windows / linux / macos 可覆盖 type、target、cwd、env。环境变量按名称合并；WSL 使用 linux，SSH 使用远端系统。'
+        )}
+      </p>
+      <CommandTextarea
+        value={draft}
+        ariaLabel={t('系统覆盖 JSON')}
+        placeholder={
+          '{ "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" } }'
+        }
+        onChange={text => {
+          setDraft(text)
+          try {
+            const os = text.trim() ? parseRunTaskOs(JSON.parse(text)) : undefined
+            setError('')
+            onValidityChange(true)
+            onChange(os)
+          } catch (e) {
+            setError(String(e))
+            onValidityChange(false)
+          }
+        }}
+      />
+      {error && (
+        <p role="alert" className="text-ui-xs text-danger">
+          {error}
+        </p>
+      )}
+    </details>
+  )
+}
+
 function normalizeCommandTarget(target: string): string {
-  return target.replace(/\r\n/g, '\n').replace(/\s*\n+\s*/g, ' && ').trim()
+  return target
+    .replace(/\r\n/g, '\n')
+    .replace(/\s*\n+\s*/g, ' && ')
+    .trim()
 }
 
 function CommandTextarea({
@@ -438,7 +558,7 @@ function CommandTextarea({
       aria-label={ariaLabel}
       onChange={e => onChange(e.target.value)}
       onInput={resize}
-      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-[12px] leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
+      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
     />
   )
 }

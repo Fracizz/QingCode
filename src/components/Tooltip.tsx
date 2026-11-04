@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -9,6 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { readStatusBarRowTop } from './statusBarRowContext'
+import { TooltipSuppressionContext } from './tooltipContext'
 import {
   TipArrow,
   syncStyleTopToTipArrowClearance,
@@ -26,6 +28,8 @@ const SHOW_DELAY = 600
 export const OVERFLOW_TOOLTIP_DELAY = 1000
 const VIEWPORT_MARGIN = 8
 const ARROW_EDGE_PAD = 10
+/** Below this, a side tip slides on-screen instead of wrapping into an unreadable column. */
+const MIN_SIDE_TIP_WIDTH = 160
 /** @deprecated use tipArrowBoxGap(zoom); kept for tests at zoom=1 */
 export const TOOLTIP_ARROW_GAP = tipArrowBoxGap(1)
 export { TIP_ARROW_CLEARANCE }
@@ -63,23 +67,20 @@ export function copyTooltipRect(rect: RectLike, top = rect.top): RectLike {
   }
 }
 
-/** Read CSS `zoom` from a scaled tip, falling back to `--ui-font-scale`. */
+/** Placement follows actual CSS geometry, not the chosen interface font size. */
 export function readTooltipZoom(el?: HTMLElement | null): number {
   if (el) {
     const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
     if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
   }
-  const scale = Number.parseFloat(
-    getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
-  )
-  return Number.isFinite(scale) && scale > 0 ? scale : 1
+  return 1
 }
 
 /**
  * Pure placement helper — exported for unit tests.
  *
- * `rect` is viewport-space (e.g. getBoundingClientRect). When the tip uses
- * `.ui-font-scaled` (`zoom`), pass layout tip size + zoom so returned `left`/`top`
+ * `rect` is viewport-space (e.g. getBoundingClientRect). With explicit CSS zoom,
+ * pass layout tip size + zoom so returned `left`/`top`
  * are pre-zoom style values (same approach as getContextMenuStylePosition).
  */
 export function getTooltipPosition(
@@ -179,6 +180,28 @@ export function getTooltipPosition(
   }
 }
 
+/**
+ * Viewport width available beside a left/right anchor.
+ * When the natural tip is wider than that gap, cap it so the label wraps there
+ * instead of sliding back over the trigger (where a modal would cover the start).
+ * Returns undefined when the tip already fits, or when the gap is too narrow to wrap into.
+ */
+export function tooltipSideMaxWidth(
+  rect: RectLike,
+  side: TooltipSide,
+  tipVisualWidth: number,
+  viewportWidth: number,
+  gap = OFFSET,
+): number | undefined {
+  if (side !== 'left' && side !== 'right') return undefined
+  const room =
+    side === 'right'
+      ? viewportWidth - rect.right - gap - VIEWPORT_MARGIN
+      : rect.left - gap - VIEWPORT_MARGIN
+  if (!(tipVisualWidth > room) || room < MIN_SIDE_TIP_WIDTH) return undefined
+  return Math.floor(room)
+}
+
 /** Local X offset of a bottom caret so it points at the trigger center. */
 export function getTooltipArrowOffsetX(
   tipLeftStyle: number,
@@ -202,7 +225,7 @@ interface Props {
   onlyWhenOverflow?: boolean
   /** Keep the tooltip visible without waiting for hover (for transient guidance). */
   forceOpen?: boolean
-  /** When false, focus does not open the tip (avoids tip-on-click). Default false. */
+  /** When false, focus does not open the tip (avoids tip-on-click). Default true; mouse focus is ignored. */
   showOnFocus?: boolean
   /** Speech-bubble caret pointing at the trigger (status-bar tips). */
   arrow?: boolean
@@ -232,7 +255,7 @@ export default function Tooltip({
   delay,
   onlyWhenOverflow = false,
   forceOpen = false,
-  showOnFocus = false,
+  showOnFocus = true,
   arrow = false,
   anchor = 'child',
   clearanceTop,
@@ -242,11 +265,12 @@ export default function Tooltip({
   liveTip = false,
   children,
 }: Props) {
+  const suppressed = useContext(TooltipSuppressionContext)
   const showDelay = delay ?? (onlyWhenOverflow ? OVERFLOW_TOOLTIP_DELAY : SHOW_DELAY)
   const triggerRef = useRef<HTMLSpanElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const visible = forceOpen || open
+  const visible = !suppressed && (forceOpen || open)
   const [style, setStyle] = useState<CSSProperties>({})
   const [arrowOffset, setArrowOffset] = useState<number | null>(null)
   const timerRef = useRef<number | undefined>(undefined)
@@ -265,6 +289,13 @@ export default function Tooltip({
       timerRef.current = undefined
     }
   }, [])
+
+  useLayoutEffect(() => {
+    if (!suppressed) return
+    clearTimer()
+    // Discard hover state so releasing a drag cannot revive an old tooltip.
+    setOpen(false)
+  }, [clearTimer, suppressed])
 
   const overflowElement = useCallback(() => {
     const trigger = triggerRef.current
@@ -299,12 +330,25 @@ export default function Tooltip({
     const lineTop = resolveClearanceLineTop(rect)
     const placementRect = copyTooltipRect(rect, lineTop)
     const tipEl = tipRef.current
-    const tip = tipEl
-      ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
-      : undefined
     const viewport = { width: window.innerWidth, height: window.innerHeight }
     const zoom = readTooltipZoom(tipEl)
     const gap = arrow ? tipArrowBoxGap(zoom) : undefined
+    const gapPx = gap ?? OFFSET
+    let tip = tipEl
+      ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      : undefined
+    let sideMaxWidth: number | undefined
+    if (tipEl && tip && (side === 'left' || side === 'right')) {
+      // Measure the natural width first; an inline cap from the previous label would lie.
+      tipEl.style.maxWidth = ''
+      tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      const cap = tooltipSideMaxWidth(rect, side, tip.width * zoom, viewport.width, gapPx)
+      if (cap != null) {
+        sideMaxWidth = cap / zoom
+        tipEl.style.maxWidth = `${sideMaxWidth}px`
+        tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      }
+    }
     let next = getTooltipPosition(
       placementRect,
       side,
@@ -313,6 +357,7 @@ export default function Tooltip({
       zoom,
       gap != null ? { gap } : undefined,
     )
+    if (sideMaxWidth != null) next = { ...next, maxWidth: sideMaxWidth }
 
     // Apply immediately, then sync caret tip → trigger top to TIP_ARROW_CLEARANCE.
     if (tipEl) {
@@ -346,6 +391,7 @@ export default function Tooltip({
 
   const scheduleShow = () => {
     clearTimer()
+    if (suppressed) return
     if (!shouldShowForOverflow()) return
     timerRef.current = window.setTimeout(() => {
       if (!shouldShowForOverflow()) return
@@ -406,27 +452,35 @@ export default function Tooltip({
       <span
         ref={triggerRef}
         className={wrapperClassName}
-        onMouseEnter={scheduleShow}
+        onMouseEnter={event => {
+          // Moving/reordering triggers can receive enter events during a drag.
+          if (event.buttons !== 0) return
+          scheduleShow()
+        }}
         onMouseLeave={forceOpen ? undefined : hide}
-        onFocus={showOnFocus ? scheduleShow : undefined}
+        onFocus={showOnFocus ? event => {
+          if (event.target instanceof HTMLElement && event.target.matches(':focus-visible')) scheduleShow()
+        } : undefined}
         onBlur={forceOpen ? undefined : hide}
         onPointerDown={forceOpen ? undefined : hide}
       >
         {children}
       </span>
+      {/* z-[160]: above interrupt modals (z-140) so the backdrop cannot dim or cover the tip. */}
       {visible &&
         createPortal(
           <div
             ref={tipRef}
             role="tooltip"
-            className={`tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max rounded px-2.5 py-1.5 text-[11px] leading-5 text-fg break-words whitespace-pre-line ${
+            data-tooltip-arrow={showArrow ? '' : undefined}
+            className={`tooltip-enter ui-font-scaled fixed z-[160] pointer-events-none w-max rounded px-2.5 py-1.5 text-ui-xs leading-[var(--ui-line-height)] text-fg break-words whitespace-pre-line ${
               showArrow
                 ? 'max-w-[min(320px,calc(100vw-16px))] bg-bg-elevated'
                 : 'max-w-[min(480px,calc(100vw-16px))] border border-border-strong bg-bg-elevated shadow-lg shadow-black/40'
             }`}
             style={{
               ...style,
-              filter: showArrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
+              filter: showArrow ? 'var(--tooltip-arrow-shadow)' : undefined,
             }}
           >
             {liveTip ? <span data-panel-resize-live-tip>{label}</span> : label}

@@ -1,35 +1,48 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { translate } from './i18n'
-import { listBusyTerminals } from '@/lib/terminal/terminalClose'
-import { confirmDialog } from '../store/confirmStore'
+import { choiceDialog } from '../store/choiceStore'
 import { useEditorStore } from '../store/editorStore'
-import { useTerminalStore } from '../store/terminalStore'
+import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import { isTransferActive, useTransferStore } from '../store/transferStore'
+import { closeTerminalOnExit, finishRemoteTerminalOnExit } from './ipc/terminal'
+import { runAppClose } from './appCloseFlow'
+import { flushWorkspaceSessionPersist } from './workspaceSessionSync'
+import { safeInvoke } from './tauri'
 
-/** Confirm dirty tabs / busy terminals, then destroy the current window. */
-export async function requestAppClose() {
-  // Only warn for busy terminals (child processes / run tasks). Idle shells
-  // still get killed on quit, but should not look like "仍在运行".
-  const busyTerminals = await listBusyTerminals(useTerminalStore.getState().terminals)
-  const detail =
-    busyTerminals.length > 0
-      ? translate('{count} 个终端仍在运行，退出后将终止。', {
-          count: busyTerminals.length,
-        })
-      : undefined
+let closing: Promise<void> | undefined
 
-  if (
-    !(await confirmDialog({
-      title: translate('退出 QingCode'),
-      message: translate('确定要关闭应用程序吗？'),
-      detail,
-      kind: 'warning',
-      confirmLabel: translate('退出'),
-      cancelLabel: translate('取消'),
-    }))
-  ) {
-    return
-  }
-  if (!(await confirmDiscardTabs(useEditorStore.getState().getAllTabs(), '退出应用'))) return
-  await getCurrentWindow().destroy()
+/** All native close/menu/command entry points share one in-flight decision. */
+export function requestAppClose(): Promise<void> {
+  if (closing) return closing
+  closing = runAppClose({
+    pauseSpawns: pauseTerminalSpawnsForExit,
+    resumeSpawns: resumeTerminalSpawnsAfterExit,
+    terminals: () => useTerminalStore.getState().terminals,
+    transferCount: () => useTransferStore.getState().tasks.filter(task => isTransferActive(task.status)).length,
+    choose: choiceDialog,
+    confirmFiles: () => confirmDiscardTabs(useEditorStore.getState().getAllTabs(), '退出应用'),
+    finishRemote: (tab, action) => finishRemoteTerminalOnExit({
+      id: tab.id, ptyId: tab.ptyId!, cwd: tab.cwd, action,
+    }),
+    closeTerminal: closeTerminalOnExit,
+    markEnded: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
+      current.id === tab.id && current.ptyId === tab.ptyId
+        ? { ...current, status: 'exited', endedAt: tab.cwd.startsWith('ssh://') ? Date.now() : undefined,
+          awaitingRestoreSpawn: false, ptySpawnPending: false }
+        : current,
+    ) })),
+    markDetached: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
+      current.id === tab.id && current.ptyId === tab.ptyId && !current.endedAt
+        ? { ...current, status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true }
+        : current,
+    ) })),
+    flush: flushWorkspaceSessionPersist,
+    destroy: async () => {
+      const window = getCurrentWindow()
+      // 退出只结束手机终端，不改变「随启动自动启用」的设置。
+      if (window.label === 'main') await safeInvoke('关闭移动连接', 'mobile_stop', { disable: false })
+      await window.destroy()
+    },
+  }).finally(() => { closing = undefined })
+  return closing
 }

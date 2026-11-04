@@ -1,11 +1,11 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react'
-import PanelResizer from './PanelResizer'
+import type { ReactNode } from 'react'
+import ScmResizableColumn from './ScmResizableColumn'
 import {
   clampSidebarWidth,
+  SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
 } from '../lib/sidebarLayout'
-import { beginPanelResize, endPanelResize } from '../lib/panelResize'
 import { sidebarResizerHint } from '../lib/panelLayout'
 import { useI18n } from '../lib/i18n'
 
@@ -16,53 +16,21 @@ interface Props {
   className?: string
 }
 
+/** Share the frame-batched preview and end-of-drag persistence used by SCM. */
 export default function ResizableSidebar({ width, onWidthChange, children, className }: Props) {
   const { t } = useI18n()
-  const [active, setActive] = useState(false)
-  const dragRef = useRef<{ startX: number; startW: number } | null>(null)
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      dragRef.current = { startX: e.clientX, startW: width }
-      setActive(true)
-
-      const onMove = (ev: MouseEvent) => {
-        const st = dragRef.current
-        if (!st) return
-        onWidthChange(clampSidebarWidth(st.startW + (ev.clientX - st.startX)))
-      }
-
-      const onUp = () => {
-        dragRef.current = null
-        setActive(false)
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        endPanelResize('vertical')
-      }
-
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-      beginPanelResize('vertical')
-    },
-    [width, onWidthChange]
-  )
-
   return (
-    <div className="flex flex-shrink-0 h-full overflow-hidden" style={{ width }}>
-      <div className={`flex-1 min-w-0 flex flex-col overflow-hidden border-r border-border ${className ?? ''}`}>
-        {children}
-      </div>
-      <PanelResizer
-        orientation="vertical"
-        active={active}
-        tooltip={sidebarResizerHint(width, t)}
-        tooltipSide="right"
-        onMouseDown={onMouseDown}
-        ariaValueNow={width}
-        ariaValueMin={SIDEBAR_MIN_WIDTH}
-        ariaValueMax={SIDEBAR_MAX_WIDTH}
-      />
-    </div>
+    <ScmResizableColumn
+      width={width}
+      minWidth={SIDEBAR_MIN_WIDTH}
+      maxWidth={clampSidebarWidth(SIDEBAR_MAX_WIDTH)}
+      defaultWidth={SIDEBAR_DEFAULT_WIDTH}
+      constrainToParent={false}
+      onWidthChange={next => onWidthChange(clampSidebarWidth(next))}
+      tooltip={sidebarResizerHint(width, t)}
+      className={className}
+    >
+      {children}
+    </ScmResizableColumn>
   )
 }

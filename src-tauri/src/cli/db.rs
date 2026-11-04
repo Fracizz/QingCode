@@ -113,7 +113,7 @@ pub fn list_projects(conn: &Connection) -> Result<Vec<ProjectRow>, String> {
 }
 
 pub fn normalize_path(path: &str) -> String {
-    path.trim()
+    crate::terminal::strip_windows_verbatim_prefix(path.trim())
         .trim_end_matches(['/', '\\'])
         .replace('\\', "/")
         .to_lowercase()
@@ -180,12 +180,10 @@ pub fn insert_project(conn: &Connection, path: &Path) -> Result<ProjectRow, Stri
         return Err(format!("not a directory: {}", path.display()));
     }
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let abs_str = abs.to_string_lossy().to_string();
-    // Strip Windows \\?\ prefix for consistency with the GUI.
-    let abs_str = abs_str
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&abs_str)
-        .to_string();
+    // canonicalize turns UNC paths into \\?\UNC\...; preserve the leading
+    // share separator so WSL detection and filesystem access still work.
+    let abs_str =
+        crate::terminal::strip_windows_verbatim_prefix(&abs.to_string_lossy()).into_owned();
 
     let existing = list_projects(conn)?;
     let n = normalize_path(&abs_str);
@@ -239,4 +237,30 @@ pub fn remove_project(conn: &Connection, query: &str) -> Result<ProjectRow, Stri
 
 pub fn run_json_path(project_path: &str) -> PathBuf {
     Path::new(project_path).join(".qingcode").join("run.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_wsl_project_path_preserves_unc_root() {
+        let canonical = r"\\?\UNC\wsl.localhost\Ubuntu\home\code\QingCode";
+        let saved = crate::terminal::strip_windows_verbatim_prefix(canonical);
+        assert_eq!(saved, r"\\wsl.localhost\Ubuntu\home\code\QingCode");
+        let wsl = crate::run_environment::parse_wsl_path(&saved).unwrap();
+        assert_eq!(wsl.distro, "Ubuntu");
+        assert_eq!(wsl.path, "/home/code/QingCode");
+        assert_eq!(normalize_path(canonical), normalize_path(&saved));
+    }
+
+    #[test]
+    fn canonical_local_project_path_matches_existing_registration() {
+        assert_eq!(
+            normalize_path(r"\\?\D:\Code\QingCode"),
+            normalize_path("D:/Code/QingCode/")
+        );
+        assert_eq!(normalize_path(r"\\server\share\app"), "//server/share/app");
+        assert_eq!(normalize_path("/home/code/app"), "/home/code/app");
+    }
 }

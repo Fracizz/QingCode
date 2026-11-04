@@ -72,6 +72,24 @@ describe('editorStore tab lifecycle', () => {
     expect(useEditorStore.getState().findTab('a')?.dirty).toBe(false)
   })
 
+  it('does not publish unchanged active or cached contents during session flush', () => {
+    const before = useEditorStore.getState()
+    const changed = vi.fn()
+    const unsubscribe = useEditorStore.subscribe(changed)
+    try {
+      before.setTabContent('a', 'a')
+      before.setTabContent('c', 'c')
+      expect(useEditorStore.getState()).toBe(before)
+      expect(changed).not.toHaveBeenCalled()
+
+      before.setTabContent('c', 'updated cached buffer')
+      expect(useEditorStore.getState().findTab('c')?.content).toBe('updated cached buffer')
+      expect(changed).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('reloadFromDisk replaces content and clears dirty', async () => {
     useEditorStore.getState().markDirty('b')
     await useEditorStore.getState().reloadFromDisk('b', 'from-disk', 1234)

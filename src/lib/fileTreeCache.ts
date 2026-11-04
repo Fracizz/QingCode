@@ -1,4 +1,5 @@
 import { safeInvoke } from './tauri'
+import { scanDirectoryEntries } from './fileIpc'
 import type { Project } from '../types'
 import { collectAncestorDirs, findProjectForPath } from '../utils/fileReferences'
 import {
@@ -26,12 +27,12 @@ export async function scanDirectory(
     excludeGitIgnore?: boolean
   },
 ): Promise<FileNode[]> {
-  const tree = await safeInvoke<FileNode[]>(options?.action ?? '读取目录', 'scan_directory', {
+  const tree = await scanDirectoryEntries({
     path,
     workspaceRoot: options?.workspaceRoot ?? path,
     excludePatterns: options?.excludePatterns ?? null,
     excludeGitIgnore: options?.excludeGitIgnore ?? false,
-  })
+  }, options?.action ?? '读取目录')
   return withLoadedFlags(tree)
 }
 
@@ -45,6 +46,15 @@ export async function loadProjectRootTree(project: Project | string): Promise<Fi
     excludePatterns: excludes.filesExclude,
     excludeGitIgnore: excludes.excludeGitIgnore,
   })
+}
+
+/** Cache only a complete small root. The native command requests a single page. */
+export async function loadWarmupRootTree(project: Project): Promise<FileNode[] | null> {
+  const excludes = await loadExcludeSettingsForProject(project)
+  const nodes = await safeInvoke<FileNode[] | null>('预读 SSH 项目目录', 'ssh_warmup_directory', {
+    rootUri: project.path, excludePatterns: excludes.filesExclude,
+  })
+  return nodes ? withLoadedFlags(nodes) : null
 }
 
 export async function loadDirChildren(
@@ -77,10 +87,29 @@ export function patchDirChildren(
  * Prefer {@link reloadLoadedChildren} for intentional refresh / watcher reloads
  * so expanded folders re-read disk instead of keeping stale children.
  */
-export function preserveLoadedChildren(fresh: FileNode[], existing: FileNode[]): FileNode[] {
+export function preserveLoadedChildren(
+  fresh: FileNode[],
+  existing: FileNode[],
+  beforeReload?: FileNode[],
+): FileNode[] {
   return fresh.map(node => {
     const previous = findNodeByPath(existing, node.path)
     if (!node.is_dir || !previous?.is_dir || !previous.loaded) return node
+    const before = beforeReload && findNodeByPath(beforeReload, node.path)
+    // A completed rescan owns its listing. Only carry over expansions that
+    // landed while it was pending, including those below another loaded folder.
+    if (node.loaded) {
+      return {
+        ...node,
+        children: preserveLoadedChildren(
+          node.children ?? [],
+          previous.children ?? [],
+          beforeReload ? (before?.children ?? []) : undefined,
+        ),
+      }
+    }
+    // A failed reload must not resurrect the unchanged, stale cached listing.
+    if (before?.loaded && before.children === previous.children) return node
     return {
       ...node,
       children: previous.children,

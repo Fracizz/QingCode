@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  binaryFileTypeLabel,
   canPreviewAnyway,
+  canRetryOpen,
+  fileExtension,
+  fileExtensionLabel,
+  isBinaryExtension,
   isLoadingTab,
   openFileErrorTitle,
   parseOpenFileError,
@@ -11,7 +16,8 @@ describe('parseOpenFileError', () => {
   it('classifies detection failures as encoding errors without a double prefix', () => {
     const detectFailed = parseOpenFileError('无法识别文件编码（binary content）：install.sh')
     expect(detectFailed.kind).toBe('encoding')
-    expect(detectFailed.message).toBe('无法识别文件编码（binary content）：install.sh')
+    // Never leak the decoder's English plumbing into the UI.
+    expect(detectFailed.message).toBe('无法识别文件编码（二进制内容）：install.sh')
 
     expect(parseOpenFileError('无法识别文件编码（unsupported text encoding）：a.txt').kind).toBe(
       'encoding',
@@ -19,6 +25,25 @@ describe('parseOpenFileError', () => {
     expect(parseOpenFileError('暂不支持打开非文本或无法按 utf8 解码的文件：a.sh').kind).toBe(
       'encoding',
     )
+  })
+
+  it('classifies remote binary reads by extension instead of blaming the encoding', () => {
+    const remotePng = parseOpenFileError(
+      '检测远程文件编码失败：binary content',
+      'ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/nem-panel/shot.png',
+    )
+    expect(remotePng.kind).toBe('binary')
+    expect(remotePng.message).toBe('远程文件包含二进制内容，不是文本文件')
+
+    expect(
+      parseOpenFileError('暂不支持在文本编辑器中打开 .png 格式（二进制文件）：shot.png').kind,
+    ).toBe('binary')
+  })
+
+  it('keeps the read-only preview escape hatch for extensionless binary payloads', () => {
+    const unknown = parseOpenFileError('检测远程文件编码失败：binary content', 'ssh://c1/tmp/blob')
+    expect(unknown.kind).toBe('encoding')
+    expect(canPreviewAnyway(unknown.kind)).toBe(true)
   })
 
   it('keeps extension-blocked formats as binary and unknown failures as generic', () => {
@@ -38,6 +63,37 @@ describe('parseOpenFileError', () => {
     expect(openFileErrorTitle('encoding')).toContain('加密软件')
     expect(openFileErrorTitle('encoding')).toContain('密文字节')
     expect(openFileErrorTitle('binary')).not.toContain('密文字节')
+  })
+
+  it('does not blame local encryption software for a remote decode failure', () => {
+    expect(openFileErrorTitle('encoding', { remote: true })).not.toContain('加密软件')
+    expect(openFileErrorTitle('encoding', { remote: true })).toBe('文件内容无法按当前编码解码。')
+  })
+})
+
+describe('binary file copy', () => {
+  it('names the file type instead of showing decoder jargon', () => {
+    expect(binaryFileTypeLabel('ssh://c1/D:/app/shot.png')).toBe('图片')
+    expect(binaryFileTypeLabel('/tmp/report.PDF')).toBe('PDF 文档')
+    expect(binaryFileTypeLabel('/tmp/bundle.zip')).toBe('压缩包')
+    expect(binaryFileTypeLabel('/tmp/main.rs')).toBeNull()
+    expect(binaryFileTypeLabel('/tmp/blob')).toBeNull()
+  })
+
+  it('reads extensions without the dot for display', () => {
+    expect(fileExtension('/tmp/Shot.PNG')).toBe('png')
+    expect(fileExtensionLabel('/tmp/Shot.PNG')).toBe('.png')
+    expect(fileExtensionLabel('/tmp/Makefile')).toBe('')
+    expect(isBinaryExtension('/tmp/shot.png')).toBe(true)
+    expect(isBinaryExtension('/tmp/main.rs')).toBe(false)
+  })
+
+  it('retries only failures that may be transient', () => {
+    expect(canRetryOpen('binary')).toBe(false)
+    expect(canRetryOpen('too-large')).toBe(false)
+    expect(canRetryOpen('encoding')).toBe(true)
+    expect(canRetryOpen('access')).toBe(true)
+    expect(canRetryOpen('generic')).toBe(true)
   })
 })
 

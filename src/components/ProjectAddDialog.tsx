@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import {
-  AlertTriangle,
-  Check,
-  FilePlus2,
-  Folder,
-  FolderOpen,
-  ListChecks,
-} from 'lucide-react'
+import { AlertTriangle, Check, Cloud, FilePlus2, FolderPlus, ListChecks } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -14,6 +7,11 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
+import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 
 function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => {
@@ -24,6 +22,9 @@ function sortProjects(projects: Project[]): Project[] {
   })
 }
 
+const footerActionClass =
+  'inline-flex w-full min-w-0 flex-col items-center justify-center gap-0.5 rounded px-0.5 py-1 text-ui-xs leading-tight text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50'
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -33,14 +34,17 @@ interface Props {
 export default function ProjectAddDialog({ open, onClose }: Props) {
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
+  const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const unhideProject = useProjectStore(s => s.unhideProject)
   const setView = useUIStore(s => s.setView)
   const openProjectManager = useUIStore(s => s.openProjectManager)
+  const openCreateProject = useUIStore(s => s.openCreateProject)
+  const openRemoteConnections = useUIStore(s => s.openRemoteConnections)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -53,9 +57,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     const q = query.trim().toLowerCase()
     if (!q) return projects
     return projects.filter(
-      p => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q),
+      p => (projectLabels.get(p.id)?.text ?? p.name).toLowerCase().includes(q)
+        || sshProjectDisplayPath(p, null, sshConnections).toLowerCase().includes(q)
+        || p.path.toLowerCase().includes(q)
     )
-  }, [projects, query])
+  }, [projects, query, projectLabels, sshConnections])
 
   useEffect(() => {
     if (!open) return
@@ -81,7 +87,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
 
   useEffect(() => {
     queueMicrotask(() =>
-      setActiveIndex(i => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1))),
+      setActiveIndex(i => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1)))
     )
   }, [filtered.length])
 
@@ -98,16 +104,24 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     setView('explorer')
     if (project.hidden) await unhideProject(project.id)
     if (unavailableProjectIds.includes(project.id)) {
+      if (project.kind === 'ssh') {
+        requestSshReconnect(project)
+        return
+      }
       void relocateProjectWithDialog(project.id)
       return
     }
     await switchProject(project)
   }
 
-  const handleOpenFolder = () => {
+  const handleCreate = () => {
     onClose()
-    setView('explorer')
-    void addProjectFromDialog()
+    openCreateProject()
+  }
+
+  const handleRemote = () => {
+    onClose()
+    openRemoteConnections()
   }
 
   const handleAddEmpty = async () => {
@@ -140,16 +154,14 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setActiveIndex(i =>
-        filtered.length === 0 ? 0 : (i - 1 + filtered.length) % filtered.length,
-      )
+      setActiveIndex(i => (filtered.length === 0 ? 0 : (i - 1 + filtered.length) % filtered.length))
       return
     }
     if (event.key === 'Enter') {
       event.preventDefault()
       const selected = filtered[activeIndex]
       if (selected) void selectProject(selected)
-      else if (filtered.length === 0) handleOpenFolder()
+      else if (filtered.length === 0) handleCreate()
     }
   }
 
@@ -160,7 +172,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         aria-modal="true"
         aria-labelledby="project-add-title"
         aria-describedby="project-add-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[340px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[420px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
         <h2 id="project-add-title" className="sr-only">
@@ -180,7 +192,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
             aria-controls="project-add-list"
             className="modal-search-input"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-sm leading-none text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>
@@ -194,32 +206,31 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         >
           {filtered.length === 0 ? (
             <p className="text-ui-sm px-3 py-5 text-center text-fg-dim">
-              {projects.length === 0
-                ? t('暂无项目，可打开文件夹添加')
-                : t('没有匹配的项目')}
+              {projects.length === 0 ? t('暂无项目，可打开文件夹添加') : t('没有匹配的项目')}
             </p>
           ) : (
             filtered.map((project, index) => {
               const unavailable = unavailableProjectIds.includes(project.id)
               const isCurrent = currentProject?.id === project.id
               const active = index === activeIndex
+              const location = sshProjectDisplayPath(project, null, sshConnections)
               return (
                 <Tooltip
                   key={project.id}
-                  label={project.path}
+                  label={projectChipTooltipLabel(project, sshConnections, t)}
                   side="right"
                   wrapperClassName="block w-full"
                 >
                   <button
                     type="button"
                     role="option"
-                    aria-label={`${project.name} — ${project.path}`}
+                    aria-label={`${projectLabels.get(project.id)?.text ?? project.name} — ${location}`}
                     aria-selected={active || isCurrent}
                     data-project-index={index}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => void selectProject(project)}
                     className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors
-                      ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
+                  ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                       {unavailable ? (
@@ -227,12 +238,22 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                       ) : isCurrent ? (
                         <Check size={12} className="text-accent" />
                       ) : (
-                        <Folder size={13} className="text-accent" />
+                        <ProjectKindIcon
+                          project={project}
+                          size={13}
+                          className="text-accent"
+                        />
                       )}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
+                    <span className="min-w-0 flex-1 text-ui">
+                      <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                      <span className="block truncate text-ui-sm text-fg-dim">{location}</span>
+                    </span>
+                    <ProjectKindBadge project={project} />
                     {project.hidden ? (
-                      <span className="flex-shrink-0 text-[10px] text-fg-dim">{t('已隐藏')}</span>
+                      <span className="flex-shrink-0 text-ui-sm text-fg-dim">
+                        {t('已隐藏')}
+                      </span>
                     ) : null}
                   </button>
                 </Tooltip>
@@ -241,38 +262,34 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
           )}
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-0.5 border-t border-border px-1.5 py-1">
-          <button
-            type="button"
-            onClick={handleOpenFolder}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
-          >
-            <FolderOpen size={13} />
-            {t('打开文件夹')}
+        <div className="grid grid-cols-4 gap-0.5 border-t border-border px-1 py-1.5">
+          <button type="button" onClick={handleCreate} className={footerActionClass}>
+            <FolderPlus size={14} />
+            <span className="whitespace-nowrap">{t('新建项目')}</span>
           </button>
           <Tooltip
-            label={t('退出后从列表移除')}
+            label={t('退出后从项目列表移除；文件保留在系统临时目录')}
             side="top"
-            wrapperClassName="inline-flex flex-1 min-w-0"
+            wrapperClassName="flex w-full min-w-0"
           >
             <button
               type="button"
               disabled={addingEmpty}
               onClick={() => void handleAddEmpty()}
-              aria-label={`${t('临时项目')} — ${t('退出后从列表移除')}`}
-              className="inline-flex w-full items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+              aria-label={`${t('草稿项目')} — ${t('退出后从项目列表移除；文件保留在系统临时目录')}`}
+              className={footerActionClass}
             >
-              <FilePlus2 size={13} />
-              {t('临时项目')}
+              <FilePlus2 size={14} />
+              <span className="whitespace-nowrap">{t('草稿项目')}</span>
             </button>
           </Tooltip>
-          <button
-            type="button"
-            onClick={handleManage}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
-          >
-            <ListChecks size={13} />
-            {t('项目管理')}
+          <button type="button" onClick={handleRemote} className={footerActionClass}>
+            <Cloud size={14} />
+            <span className="whitespace-nowrap">{t('远程连接')}</span>
+          </button>
+          <button type="button" onClick={handleManage} className={footerActionClass}>
+            <ListChecks size={14} />
+            <span className="whitespace-nowrap">{t('项目管理')}</span>
           </button>
         </div>
       </div>

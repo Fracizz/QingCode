@@ -5,9 +5,8 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { formatEntryCount, formatFileTime } from '../lib/fileProperties'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction } from '../lib/copyFileActions'
 import { formatBytes } from '../utils/formatBytes'
-import { useProjectStore } from '../store/projectStore'
 
 type PropertyRow = {
   key: string
@@ -34,10 +33,9 @@ function RowLoading({ label }: { label: string }) {
 
 function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
   const { t } = useI18n()
-  const pushToast = useProjectStore(s => s.pushToast)
 
   return (
-    <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px] leading-snug">
+    <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-ui leading-snug">
       {rows.map(row => (
         <div key={row.key} className="contents">
           <dt className="whitespace-nowrap text-fg-muted">
@@ -58,11 +56,7 @@ function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
             onClick={
               row.isLocation
                 ? () => {
-                    void copyToClipboard(path)
-                      .then(() => pushToast('success', t('路径已复制')))
-                      .catch((err: unknown) => {
-                        pushToast('error', t('复制路径失败: {error}', { error: String(err) }))
-                      })
+                    void copyPathAction(path)
                   }
                 : undefined
             }
@@ -71,7 +65,7 @@ function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
               <RowLoading label={t('加载中…')} />
             ) : row.isLocation ? (
               <Tooltip label={t('点击复制完整路径')} side="bottom" wrapperClassName="block min-w-0">
-                <span className="break-all font-mono text-[12px] leading-relaxed">{row.value}</span>
+                <span className="break-all font-mono text-ui-sm leading-relaxed">{row.value}</span>
               </Tooltip>
             ) : (
               <span className="break-all tabular-nums">{row.value}</span>
@@ -203,17 +197,17 @@ export default function PropertiesDialog() {
           <div className="min-w-0 flex-1">
             <h2
               id="properties-title"
-              className="truncate text-[14px] font-semibold leading-tight text-fg"
+              className="truncate text-ui-lg font-semibold leading-tight text-fg"
             >
               {title}
             </h2>
-            <p className="mt-0.5 text-[11px] text-fg-muted">{t('属性')}</p>
+            <p className="mt-0.5 text-ui-xs text-fg-muted">{t('属性')}</p>
           </div>
         </div>
 
         <div className="px-4 py-3">
           {error && (
-            <p className="mb-3 text-[13px] text-danger">{t('读取属性失败: {error}', { error })}</p>
+            <p className="mb-3 text-ui text-danger">{t('读取属性失败: {error}', { error })}</p>
           )}
           <div className="flex flex-col gap-3">
             {sections.map((section, index) => (
@@ -231,7 +225,7 @@ export default function PropertiesDialog() {
           <button
             ref={okRef}
             type="button"
-            className="rounded bg-accent px-3 py-1.5 text-[13px] text-white transition-colors hover:bg-accent/90"
+            className="rounded bg-action px-3 py-1.5 text-ui text-on-action transition-colors hover:bg-action/90"
             onClick={close}
           >
             {t('确定')}

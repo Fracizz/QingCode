@@ -3,6 +3,7 @@ import {
   AppWindow,
   FileDown,
   FilePlus,
+  FileText,
   FolderOpen,
   LogOut,
   Save,
@@ -18,11 +19,14 @@ import {
   saveScopedAutoSaveSettings,
 } from '../lib/autoSaveSettings'
 import { isTauri } from '../lib/tauri'
+import { isNonEditableViewMode } from '../lib/openFileError'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
+import { useShortcutStore } from '../store/shortcutStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import { openFileFromDialog } from '../lib/openFileDialog'
 
 export default function FileMenu({ onExit }: { onExit: () => void | Promise<void> }) {
   const { t } = useI18n()
@@ -38,6 +42,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
   const saveFile = useEditorStore(s => s.saveFile)
   const saveAs = useEditorStore(s => s.saveAs)
   const closeTab = useEditorStore(s => s.closeTab)
+  const openFileShortcut = useShortcutStore(s => s.shortcuts.openFile)
 
   useEffect(() => {
     void loadEffectiveAutoSaveSettings(currentProject).then(settings => {
@@ -87,7 +92,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
   const canSave =
     !!activeTab &&
     !activeTab.openError &&
-    activeTab.viewMode !== 'view' &&
+    !isNonEditableViewMode(activeTab) &&
     activeTab.content !== undefined
   const dirtyCount = useEditorStore(s => {
     let count = s.tabs.filter(tab => tab.dirty).length
@@ -123,9 +128,15 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
       },
     },
     {
+      label: t('打开文件'),
+      icon: <FileText size={14} />,
+      shortcut: openFileShortcut || undefined,
+      separatorBefore: true,
+      action: () => void openFileFromDialog(),
+    },
+    {
       label: t('打开文件夹'),
       icon: <FolderOpen size={14} />,
-      separatorBefore: true,
       action: () => void addProjectFromDialog(),
     },
     {
@@ -186,7 +197,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
         aria-label={t('文件')}
         aria-haspopup="menu"
         aria-expanded={menu !== null}
-        className={`flex h-6 items-center rounded px-2 text-[13px] transition-colors
+        className={`flex h-6 items-center rounded px-2 text-ui transition-colors
           ${menu ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
         onPointerDown={event => event.stopPropagation()}
         onDoubleClick={event => event.stopPropagation()}

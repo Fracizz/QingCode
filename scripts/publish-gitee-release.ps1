@@ -214,7 +214,7 @@ $resolved = @(
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
     ForEach-Object { (Resolve-Path -LiteralPath $_).Path }
 )
-# Prefer the 6 canonical names; fall back to whatever the caller passed if version filter fails.
+# Prefer the 6 canonical names (+ optional APK); fall back to whatever the caller passed if version filter fails.
 try {
   $fileList = @(Select-CanonicalReleaseFiles -Version $Tag -Paths $resolved)
 } catch {

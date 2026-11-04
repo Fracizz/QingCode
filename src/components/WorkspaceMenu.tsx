@@ -42,6 +42,7 @@ export default function WorkspaceMenu() {
 
   const anchorRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const openAtEnd = useRef(false)
 
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -89,6 +90,8 @@ export default function WorkspaceMenu() {
   useLayoutEffect(() => {
     if (!open) return
     positionDropdown()
+    const items = dropdownRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+    ;(openAtEnd.current ? items?.[items.length - 1] : items?.[0])?.focus()
   }, [open])
 
   useEffect(() => {
@@ -101,7 +104,20 @@ export default function WorkspaceMenu() {
       close()
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+      if (event.isComposing) return
+      const items = [...(dropdownRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault()
+        close()
+        anchorRef.current?.querySelector('button')?.focus()
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault()
+        const current = items.indexOf(document.activeElement as HTMLButtonElement)
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+          : event.key === 'ArrowDown' ? (current + 1) % items.length
+            : (current - 1 + items.length) % items.length
+        items[next]?.focus()
+      }
     }
     const onReposition = () => positionDropdown()
     window.addEventListener('pointerdown', onPointerDown)
@@ -166,8 +182,14 @@ export default function WorkspaceMenu() {
             aria-haspopup="menu"
             disabled={busy}
             onClick={toggle}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+              event.preventDefault()
+              openAtEnd.current = event.key === 'ArrowUp'
+              setOpen(true)
+            }}
             onDoubleClick={event => event.stopPropagation()}
-            className={`flex max-w-[120px] items-center gap-1 h-6 rounded px-1.5 text-[12px] flex-shrink-0 transition-colors disabled:opacity-50
+            className={`flex max-w-[120px] items-center gap-1 h-6 rounded px-1.5 text-ui-sm flex-shrink-0 transition-colors disabled:opacity-50
               ${open ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
           >
             <Layers size={13} className="flex-shrink-0" />
@@ -185,21 +207,21 @@ export default function WorkspaceMenu() {
           <div
             ref={dropdownRef}
             role="menu"
-            className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
+            className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
             }}
           >
-            <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
+            <div className="px-2.5 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
               {t('多项目工作区')}
             </div>
 
             <div className="flex-1 overflow-auto">
               {workspaces.length === 0 ? (
-                <div className="px-3 py-2 text-[12px] text-fg-muted">
-                  {t('暂无工作区，可先保存当前顶栏项目')}
+                <div className="px-2.5 py-2 text-ui-sm text-fg-muted">
+                  {t('暂无工作区，可将顶栏项目保存为工作区')}
                 </div>
               ) : (
                 workspaces.map(workspace => {
@@ -211,7 +233,7 @@ export default function WorkspaceMenu() {
                       role="menuitem"
                       disabled={busy}
                       onClick={() => void handleOpen(workspace)}
-                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] outline-none disabled:opacity-50
+                      className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui outline-none disabled:opacity-50
                         ${isActive ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover focus:bg-bg-active'}`}
                     >
                       <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
@@ -224,7 +246,7 @@ export default function WorkspaceMenu() {
                       <span className="min-w-0 flex-1 truncate">
                         {formatNamedWorkspaceName(workspace.name, t)}
                       </span>
-                      <span className="flex-shrink-0 text-[11px] text-fg-muted">
+                      <span className="flex-shrink-0 text-ui-xs text-fg-muted">
                         {t('{count} 个项目', { count: workspace.members.length })}
                       </span>
                     </button>
@@ -233,25 +255,25 @@ export default function WorkspaceMenu() {
               )}
             </div>
 
-            <div className="border-t border-border-strong mt-1 pt-1">
+            <div className="border-t border-border-strong/80 my-1 pt-1">
               <button
                 type="button"
                 role="menuitem"
                 disabled={busy}
                 onClick={() => void handleSave()}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Plus size={14} />
                 </span>
-                {t('保存当前顶栏项目')}
+                {t('将顶栏项目保存为工作区')}
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={busy}
                 onClick={handleManage}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Settings2 size={14} />

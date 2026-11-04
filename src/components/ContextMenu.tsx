@@ -9,6 +9,7 @@ import {
   tipArrowBoxGap,
   TIP_ARROW_W,
 } from './tipArrow'
+import { shortcutMatchesEvent } from '../lib/shortcuts'
 
 export interface ContextMenuItem {
   label: string
@@ -36,6 +37,7 @@ export default function ContextMenu({
   arrow,
   /** Viewport X of the trigger center (caret tip aims here). */
   arrowAnchorX,
+  zIndex = 'z-[120]',
 }: {
   x: number
   y: number
@@ -44,7 +46,21 @@ export default function ContextMenu({
   preferAbove?: boolean
   arrow?: ContextMenuArrow
   arrowAnchorX?: number
+  zIndex?: string
 }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    // Strict Mode replays layout effects after we have focused the first menu item.
+    // Keep the original opener rather than replacing it with that item.
+    returnFocusRef.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      const previous = returnFocusRef.current
+      queueMicrotask(() => {
+        if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus()
+      })
+    }
+  }, [])
   const shellRef = useRef<HTMLDivElement>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -108,10 +124,11 @@ export default function ContextMenu({
     }
 
     setPosition({ x: nextX, y: nextY })
+    const firstEnabled = items.findIndex(item => !item.disabled)
+    setActiveIndex(firstEnabled >= 0 ? firstEnabled : null)
     menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
   }, [x, y, items, preferAbove, arrow, arrowAnchorX])
 
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   useEffect(() => {
@@ -120,7 +137,19 @@ export default function ContextMenu({
       onClose()
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      const shortcutItem = items.find(
+        item => !item.disabled && item.shortcut && shortcutMatchesEvent(item.shortcut, event),
+      )
+      if (shortcutItem) {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+        void shortcutItem.action()
+        return
+      }
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault()
+        event.stopPropagation()
         onClose()
         return
       }
@@ -168,26 +197,27 @@ export default function ContextMenu({
   return createPortal(
     <div
       ref={shellRef}
-      className="menu-enter ui-font-scaled fixed z-[120]"
+      data-qingcode-context-menu
+      className={`menu-enter ui-font-scaled fixed ${zIndex}`}
       style={{
         left: position.x,
         top: position.y,
         // Soft bubble shadow so the caret is included (tip-style).
-        filter: arrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
+        filter: arrow ? 'var(--tooltip-arrow-shadow)' : undefined,
       }}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => event.preventDefault()}
     >
       <div
         ref={bubbleRef}
-        className={`relative min-w-[220px] max-w-[min(360px,calc(100vw-16px))] rounded-md bg-bg-elevated ${
-          arrow ? '' : 'border border-border-strong shadow-2xl shadow-black/45'
+        className={`relative min-w-[220px] max-w-[min(360px,calc(100vw-16px))] rounded-lg bg-bg-elevated/95 backdrop-blur-md ${
+          arrow ? '' : 'border border-border-strong [box-shadow:var(--shadow-elevation-2)]'
         }`}
       >
-        <div ref={menuRef} role="menu" className="overflow-y-auto py-1">
+        <div ref={menuRef} role="menu" className="overflow-y-auto p-1">
           {items.map((item, index) => (
             <div key={`${item.label}-${index}`}>
-              {item.separatorBefore && <div className="my-1 border-t border-border-strong" />}
+              {item.separatorBefore && <div className="my-1 border-t border-border-strong/80" />}
               <button
                 ref={el => {
                   itemRefs.current[index] = el
@@ -197,7 +227,7 @@ export default function ContextMenu({
                 aria-checked={item.checked !== undefined ? item.checked : undefined}
                 disabled={item.disabled}
                 tabIndex={activeIndex === index ? 0 : -1}
-                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] outline-none transition-colors
+                className={`flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-ui outline-none transition-colors
               ${
                 item.danger
                   ? 'text-danger hover:bg-danger/10 focus:bg-danger/10'
@@ -223,7 +253,7 @@ export default function ContextMenu({
                 </span>
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.shortcut && (
-                  <span className="ml-5 text-[11px] text-fg-dim">{item.shortcut}</span>
+                  <span className="ml-5 text-ui-xs text-fg-dim">{item.shortcut}</span>
                 )}
               </button>
             </div>

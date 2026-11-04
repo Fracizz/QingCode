@@ -5,11 +5,11 @@ import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
   GIT_DIRTY_COUNT_EVENT,
+  gitDirtyCountForProject,
   notifyGitDirtyCount,
   projectGitRefreshDelay,
   projectPathsMatch,
-  PROJECT_GIT_REFRESH_MAX_MS,
-  PROJECT_GIT_REFRESH_MIN_MS,
+  SSH_PROJECT_GIT_REFRESH_MULTIPLIER,
 } from './projectIndicators'
 
 const projects: Project[] = [
@@ -22,10 +22,26 @@ function tab(id: string, path: string, dirty = true): EditorTab {
 }
 
 describe('project indicators', () => {
-  it('jitters background Git refreshes between 60 and 90 seconds', () => {
-    expect(projectGitRefreshDelay(0)).toBe(PROJECT_GIT_REFRESH_MIN_MS)
-    expect(projectGitRefreshDelay(0.5)).toBe(75_000)
-    expect(projectGitRefreshDelay(1)).toBe(PROJECT_GIT_REFRESH_MAX_MS)
+  it('does not attribute a stale store count to another project', () => {
+    expect(gitDirtyCountForProject('D:\\code\\a', 'D:/code/a', 7)).toBe(7)
+    expect(gitDirtyCountForProject('D:\\code\\b', 'D:/code/a', 11)).toBe(0)
+    expect(gitDirtyCountForProject('ssh://c1/D:/code/app', 'ssh://c1/D:/code/app', 3)).toBe(3)
+    expect(gitDirtyCountForProject('ssh://c1/D:/code/app', 'ssh://c1/D:/code/other', 9)).toBe(0)
+    expect(gitDirtyCountForProject(null, 'D:/code/a', 4)).toBe(0)
+    expect(gitDirtyCountForProject('D:/code/a', null, 4)).toBe(0)
+  })
+
+  it('randomizes background Git refreshes in whole minutes from a 5-minute floor', () => {
+    expect(projectGitRefreshDelay(5, 0)).toBe(300_000)
+    expect(projectGitRefreshDelay(5, 0.5)).toBe(420_000)
+    expect(projectGitRefreshDelay(5, 1)).toBe(480_000)
+    expect(projectGitRefreshDelay(4, 0)).toBe(300_000)
+  })
+
+  it('backs off SSH project polling so a 5-minute floor does not mean 5-minute RTTs', () => {
+    expect(projectGitRefreshDelay(5, 0, true)).toBe(300_000 * SSH_PROJECT_GIT_REFRESH_MULTIPLIER)
+    expect(projectGitRefreshDelay(5, 1, true)).toBe(480_000 * SSH_PROJECT_GIT_REFRESH_MULTIPLIER)
+    expect(projectGitRefreshDelay(5, 0, false)).toBe(300_000)
   })
 
   it('groups dirty active and inactive tabs by owning project without duplicates', () => {

@@ -80,6 +80,46 @@ describe('parseWorkspaceSession', () => {
     expect(parsed!.projects.p1.activeTabId).toBe('t1')
   })
 
+  it('keeps daemon PTY identity and accepts legacy terminals without it', () => {
+    const parsed = parseWorkspaceSession({
+      version: 1,
+      updatedAt: 10,
+      projects: {
+        p1: {
+          tabs: [],
+          activeTabId: null,
+          terminals: [
+            {
+              id: 'persistent',
+              name: 'OpenCode',
+              cwd: 'ssh://conn/home/app',
+              launchCommand: 'opencode',
+              persistent: true,
+              ptyId: 'pty-1',
+              connectionId: 'conn',
+            },
+            {
+              id: 'legacy',
+              name: 'terminal',
+              cwd: 'D:/app',
+              launchCommand: '',
+            },
+          ],
+          activeTerminalId: 'persistent',
+        },
+      },
+    })
+
+    expect(parsed!.projects.p1.terminals[0]).toMatchObject({
+      persistent: true,
+      ptyId: 'pty-1',
+      connectionId: 'conn',
+    })
+    expect(parsed!.projects.p1.terminals[1].persistent).toBeUndefined()
+    expect(parsed!.projects.p1.terminals[1].ptyId).toBeUndefined()
+    expect(parsed!.projects.p1.terminals[1].connectionId).toBeUndefined()
+  })
+
   it('drops empty project sessions', () => {
     const parsed = parseWorkspaceSession({
       version: 1,
@@ -244,6 +284,9 @@ describe('localStorage roundtrip', () => {
           shellKind: 'command',
           runConfigId: 'cfg-a',
           runTaskId: 'task-b',
+          persistent: true,
+          ptyId: 'pty-a',
+          connectionId: 'conn-a',
         },
       ],
       activeTerminalByProject: { p1: 'term1' },
@@ -254,5 +297,10 @@ describe('localStorage roundtrip', () => {
     expect(localStorage.getItem(WORKSPACE_SESSION_KEY)).toBeTruthy()
     expect(loadWorkspaceSession()).toEqual(snapshot)
     expect(loadWorkspaceSession()!.projects.p1.terminals[0].runConfigId).toBe('cfg-a')
+    expect(loadWorkspaceSession()!.projects.p1.terminals[0]).toMatchObject({
+      persistent: true,
+      ptyId: 'pty-a',
+      connectionId: 'conn-a',
+    })
   })
 })

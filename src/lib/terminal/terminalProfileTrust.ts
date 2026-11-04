@@ -68,12 +68,6 @@ export function trustTerminalProfile(profile: Pick<TerminalProfile, 'id' | 'comm
   writeStore({ entries: next })
 }
 
-export function untrustTerminalProfile(profileId: string): void {
-  const store = readStore()
-  const next = store.entries.filter(entry => entry.profileId !== profileId)
-  if (next.length === store.entries.length) return
-  writeStore({ entries: next })
-}
 
 /**
  * First-run confirmation before executing a custom terminal profile command.

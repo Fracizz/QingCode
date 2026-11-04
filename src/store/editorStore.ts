@@ -1,7 +1,10 @@
+import { getFileStat } from '../lib/fileIpc'
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
 import { save } from '@tauri-apps/plugin-dialog'
-import { safeInvoke, isTauri } from '../lib/tauri'
-import { parseOpenFileError, tabNeedsDiskContent } from '../lib/openFileError'
+import { safeInvoke } from '../lib/tauri'
+import { parseOpenFileError, tabNeedsDiskContent, isNonEditableViewMode } from '../lib/openFileError'
+import { IMAGE_MAX_BYTES, isImagePath } from '../lib/imageFiles'
 import {
   EDIT_DEGRADED_BYTES,
   EDIT_WARN_BYTES,
@@ -75,8 +78,6 @@ function resolveTabContent(tab: EditorTab): string | undefined {
   return getLiveEditorContent(tab.id) ?? tab.content
 }
 
-type FileStat = { size: number; is_dir: boolean }
-
 /**
  * Stat → tier → edit (`read_file`) or view-only tab. Shared by open / retry / restore.
  */
@@ -84,11 +85,43 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
   const get = () => useEditorStore.getState()
   const set = useEditorStore.setState
 
-  const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path })
+  const stat = await getFileStat({ path })
   if (!get().findTab(id)) return
 
   if (stat.is_dir) {
     throw new Error(`无法打开文件夹：${tabNameFromPath(path)}`)
+  }
+
+  // Images render in ImageViewer; the component reads bytes itself, so the
+  // store only records metadata (size/mtime) and the view mode.
+  if (isImagePath(path)) {
+    if (stat.size > IMAGE_MAX_BYTES) {
+      throw new Error(`图片过大（${formatFileSize(stat.size)}），超过 64MB 上限`)
+    }
+    let mtime: number | null = null
+    try {
+      mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path })
+    } catch {
+      mtime = null
+    }
+    if (!get().findTab(id)) return
+    set(s => {
+      const next = mapTabEverywhere(s, id, t => ({
+        ...t,
+        content: undefined,
+        viewMode: 'image' as const,
+        fileSize: stat.size,
+        loading: false,
+        dirty: false,
+        openError: undefined,
+        openErrorKind: undefined,
+        diskMtime: mtime,
+        language: guessLanguage(path),
+      }))
+      if (!next) return s
+      return { ...next, pendingReveal: null }
+    })
+    return
   }
 
   const editMaxBytes = resolveEditMaxBytes(path)
@@ -236,7 +269,6 @@ interface EditorState {
   goForward: () => Promise<void>
   canGoBack: () => boolean
   canGoForward: () => boolean
-  clearNavigationHistory: () => void
   closeTab: (id: string) => void
   closeOtherTabs: (id: string) => void
   closeTabsToRight: (id: string) => void
@@ -255,8 +287,6 @@ interface EditorState {
   saveFile: (id: string) => Promise<void>
   saveAs: (id: string) => Promise<void>
   closeAllTabs: () => void
-  /** @deprecated Prefer activateProjectSession — kept for callers that only filter by path. */
-  closeTabsOutsideProject: (projectPath: string) => void
   /**
    * Stash the current project's editor UI into `projectSessions` and restore
    * the target project's session. Pinned settings tabs stay visible.
@@ -346,7 +376,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   canGoBack: () => canNavigateBack(get().navigationHistory),
   canGoForward: () => canNavigateForward(get().navigationHistory),
-  clearNavigationHistory: () => set({ navigationHistory: EMPTY_NAVIGATION_HISTORY }),
 
   goBack: async () => {
     const current = snapshotEditorLocation()
@@ -442,7 +471,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         } catch (e) {
           console.error('openFile failed:', e)
           if (!get().findTab(existing.id)) return
-          const { message, kind } = parseOpenFileError(e)
+          const { message, kind } = parseOpenFileError(e, path)
           set(s => {
             const next = mapTabEverywhere(s, existing.id, t => ({
               ...t,
@@ -493,7 +522,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('openFile failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -526,7 +555,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('retryOpenFile failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, tab.path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -552,7 +581,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return next ?? s
     })
     try {
-      const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: tab.path })
+      const stat = await getFileStat({ path: tab.path })
       if (!get().findTab(id)) return
       if (stat.is_dir) throw new Error(`无法打开文件夹：${tabNameFromPath(tab.path)}`)
       if (fileOpenTier(stat.size) === 'reject') {
@@ -588,7 +617,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('previewAnywayFromError failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, tab.path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -705,7 +734,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!ensureOpenTabCapacity()) return
     try {
       try {
-        const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: absolutePath })
+        const stat = await getFileStat({ path: absolutePath })
         if (stat.is_dir) {
           useProjectStore.getState().pushToast('info', translate('无法在文本编辑器中打开文件夹。'))
           return
@@ -745,6 +774,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   setTabContent: (id: string, content: string) => {
+    // Session persistence flushes cached/live buffers. An unchanged flush must
+    // not notify subscribers and schedule another persistence/watch cycle.
+    const tab = get().findTab(id)
+    if (!tab || tab.openError || tab.content === content) return
     set(s => {
       const next = mapTabEverywhere(s, id, t => (t.openError ? t : { ...t, content }))
       return next ?? s
@@ -789,9 +822,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   reopenWithEncoding: async (id, requestedEncoding) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || isNonEditableViewMode(tab))
       return
-    if (!isTauri()) {
+    if (!hasBackend()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法重新打开文件'))
       return
     }
@@ -875,7 +908,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (!initial) return
         try {
           // Draft-restored buffers already have content; only refresh mtime.
-          if (initial.content !== undefined && initial.viewMode !== 'view') {
+          if (initial.content !== undefined && !isNonEditableViewMode(initial)) {
             let mtime: number | null = null
             try {
               mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
@@ -900,7 +933,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         } catch (e) {
           console.error('loadMissingTabContents failed:', e)
           if (!get().findTab(id)) return
-          const { message, kind } = parseOpenFileError(e)
+          const { message, kind } = parseOpenFileError(e, initial.path)
           set(s => {
             const next = mapTabEverywhere(s, id, t => ({
               ...t,
@@ -936,7 +969,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || isNonEditableViewMode(tab))
       return
     // Format-on-save before reading the buffer for write (quiet: no success spam).
     try {
@@ -953,7 +986,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       afterFormat.kind === 'diff' ||
       afterFormat.openError ||
       afterFormat.loading ||
-      afterFormat.viewMode === 'view'
+      isNonEditableViewMode(afterFormat)
     ) {
       return
     }
@@ -962,7 +995,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const content = prepareContentForSave(raw, getEditorPreferences())
     if (!(await confirmOutsideSymlinkWrite(afterFormat.path))) return
     try {
-      if (isTauri()) {
+      if (hasBackend()) {
         try {
           await safeInvoke('抑制监视', 'suppress_fs_watch', { path: afterFormat.path })
         } catch {
@@ -1045,7 +1078,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!tab || tab.kind === 'diff' || tab.openError || tab.loading) return
     const content = resolveTabContent(tab)
     if (content === undefined) return
-    if (!isTauri()) {
+    if (!hasBackend()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法另存为'))
       return
     }
@@ -1115,22 +1148,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
-  closeTabsOutsideProject: (projectPath: string) =>
-    set(s => {
-      const closed = s.tabs
-        .filter(tab => !isDescendantOf(tab.path, projectPath) && !isPinnedSettingsTab(tab.path))
-        .map(tab => tab.id)
-      disposeEditorSessions(closed)
-      const tabs = s.tabs.filter(
-        tab => isDescendantOf(tab.path, projectPath) || isPinnedSettingsTab(tab.path)
-      )
-      return {
-        tabs,
-        activeTabId: tabs.some(tab => tab.id === s.activeTabId)
-          ? s.activeTabId
-          : (tabs[0]?.id ?? null),
-      }
-    }),
 
   activateProjectSession: (fromProjectId, toProjectId) => {
     if (fromProjectId === toProjectId) return

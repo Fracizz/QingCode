@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Default)]
 pub(crate) struct AllowlistState {
@@ -58,8 +58,9 @@ impl PathAllowlist {
 
     /// Explicit grants (Save As / Open with / symlink confirm). Rejects relative paths
     /// and filesystem roots; caps growth so a compromised frontend cannot flood memory.
-    pub fn authorize_paths(&self, paths: Vec<String>) {
+    pub fn authorize_paths(&self, paths: Vec<String>) -> Vec<PathBuf> {
         const MAX_AUTHORIZED: usize = 256;
+        let mut granted = Vec::new();
         if let Ok(mut state) = self.inner.lock() {
             for path in paths {
                 if state.authorized.len() >= MAX_AUTHORIZED {
@@ -70,10 +71,12 @@ impl PathAllowlist {
                     continue;
                 }
                 if !state.authorized.iter().any(|existing| existing == &buf) {
-                    state.authorized.push(buf);
+                    state.authorized.push(buf.clone());
                 }
+                granted.push(buf);
             }
         }
+        granted
     }
 
     pub fn ensure_allowed(&self, path: &str) -> Result<(), String> {
@@ -255,7 +258,20 @@ fn normalize_key(path: &Path) -> String {
     s
 }
 
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+/// Reject empty / `.` / `..` / path-separator names for create/rename targets.
+///
+/// Single copy shared by the local file commands, the remote SFTP mutation
+/// commands, and the transfers module — they previously each had an identical
+/// private duplicate.
+pub(crate) fn validate_entry_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        Err("名称不能为空或包含路径分隔符".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
         let raw = path.to_string_lossy();
@@ -266,7 +282,7 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
-fn display_path(path: &Path) -> String {
+pub(crate) fn display_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     #[cfg(windows)]
     {
@@ -278,20 +294,9 @@ fn display_path(path: &Path) -> String {
 }
 
 /// App-owned settings directory (global default-settings.json) is always allowed.
-fn app_settings_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let project_root = manifest.parent().expect("CARGO_MANIFEST_DIR has no parent");
-        project_root.join(".dev")
-    } else {
-        dirs::data_dir()
-            .expect("no data dir")
-            .join("com.qingcode.app")
-    }
-}
-
+/// Delegates to the single `app_data_dir` implementation in `app_paths`.
 fn is_under_app_settings_dir(resolved: &Path) -> bool {
-    let dir = app_settings_dir();
+    let dir = crate::app_paths::app_data_dir();
     if let Ok(canon) = fs::canonicalize(&dir) {
         return path_is_within(resolved, &strip_verbatim_prefix(canon));
     }
@@ -354,8 +359,19 @@ pub fn sync_trusted_roots(roots: Vec<String>, allowlist: State<'_, PathAllowlist
 }
 
 #[tauri::command]
-pub fn authorize_paths(paths: Vec<String>, allowlist: State<'_, PathAllowlist>) {
-    allowlist.authorize_paths(paths);
+pub fn authorize_paths(
+    paths: Vec<String>,
+    allowlist: State<'_, PathAllowlist>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let granted = allowlist.authorize_paths(paths);
+    let asset_scope = app.asset_protocol_scope();
+    for path in granted {
+        asset_scope
+            .allow_file(&path)
+            .map_err(|error| format!("无法授权本地资源 {}: {error}", display_path(&path)))?;
+    }
+    Ok(())
 }
 
 /// Build a test allowlist state (unit tests only).

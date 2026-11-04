@@ -1,0 +1,94 @@
+/* Layout follows each editor column, including font changes and terminal splits. */
+.settings-shell { container: settings / inline-size; }
+.empty-editor { container: empty-editor / inline-size; }
+.project-manager { container: project-manager / inline-size; }
+.project-overflow-action { display: none; }
+
+@container project-manager (max-width: 880px) {
+  .project-manager-table { min-width: 0; }
+  .project-manager-table colgroup { display: none; }
+  .project-manager-table thead { display: block; }
+  .project-manager-table thead tr { display: grid; grid-template-columns: 40px minmax(0, 1fr); }
+  .project-manager-table th:not(:first-child):not(:nth-child(2)) { display: none; }
+  .project-manager-table tbody { display: block; }
+  .project-manager-table tbody tr { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: center; padding-block: 4px; }
+  .project-manager-table td { min-width: 0; padding-block: 4px; }
+  .project-selection-cell { grid-column: 1; grid-row: 1; }
+  .project-name-cell { grid-column: 2; grid-row: 1; }
+  .project-name-cell .project-name-label { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .project-name-cell .project-name-value { flex: initial; max-width: 100%; }
+  .project-name-cell .project-source-badge { max-width: 100%; }
+  .project-path-cell { grid-column: 2; grid-row: 2; }
+  .project-time-cell { display: none; }
+  .project-actions-cell { grid-column: 3; grid-row: 1 / span 2; padding-inline: 4px !important; }
+  .project-inline-actions { display: none; }
+  .project-overflow-action { display: inline-flex; }
+}
+
+@container settings (min-width: 760px) {
+  .settings-item-row { flex-direction: row; align-items: flex-start; gap: 24px; }
+  .settings-item-copy { min-width: 12rem; }
+  .settings-item-control { width: auto; max-width: 320px; flex-shrink: 0; }
+}
+
+/* Multi-part settings need the full content column, including on wide screens. */
+.settings-item-row.settings-item-stacked { flex-direction: column; align-items: stretch; gap: 12px; }
+.settings-item-stacked > .settings-item-copy { min-width: 0; flex: none; }
+.settings-item-stacked > .settings-item-control { width: 100%; max-width: none; }
+
+@container settings (max-width: 680px) {
+  .settings-search-spacer { display: none; }
+  /* Keep categories vertical when terminal splits narrow the settings column. */
+  .settings-nav {
+    width: 140px;
+    max-width: 35%;
+    overflow-x: hidden;
+  }
+  .settings-nav > button {
+    padding-left: 12px;
+    padding-right: 12px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .settings-content-padding { padding-left: 16px; padding-right: 16px; }
+  .settings-item-control .setting-control { min-width: 0; width: 100%; }
+  .settings-item-control .setting-input { min-width: 0; max-width: 100%; }
+  .settings-item-control button { white-space: normal; height: auto; min-height: var(--ui-control-height); overflow-wrap: anywhere; }
+  .settings-item-control > div { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .settings-content-padding .font-mono { overflow-wrap: anywhere; }
+}
+
+@container empty-editor (max-width: 540px) {
+  .empty-editor-actions { flex-direction: column; align-items: stretch; }
+  .empty-editor-actions > button { justify-content: center; flex-wrap: wrap; }
+}
+
+.title-bar-shell { container: title-bar / inline-size; }
+@container title-bar (max-width: 1050px) {
+  .title-drag-spacer { width: 28px; }
+  .title-layout-detail { display: none; }
+}
+@container title-bar (max-width: 760px) {
+  .title-product-name { display: none; }
+  .title-drag-spacer { width: 16px; }
+}
+
+.status-bar-shell { container: status-bar / inline-size; }
+.status-branch { min-width: 0; max-width: 32ch; flex-shrink: 1; overflow: hidden; }
+.status-file-meta { display: inline-flex; align-items: center; }
+/* em thresholds respond to the footer font as well as the available width. */
+@container status-bar (max-width: 80.8em) {
+  .status-app-meta { display: none; }
+}
+@container status-bar (max-width: 58.5em) {
+  .status-terminal-name { display: none; }
+  .status-cursor { display: none; }
+  .status-branch { max-width: 12ch; }
+  .status-bar-shell .status-connection { max-width: 34cqi; }
+}
+
+@container status-bar (max-width: 43.1em) {
+  .status-file-meta { display: none; }
+  .status-branch { max-width: 8ch; }
+  .status-bar-shell .status-connection { max-width: 30cqi; }
+}

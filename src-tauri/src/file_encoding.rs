@@ -92,8 +92,8 @@ fn detect_utf16_without_bom(bytes: &[u8]) -> Option<FileEncoding> {
     }
     let mut even_zeros: u32 = 0;
     let mut odd_zeros: u32 = 0;
-    let mut chunks = bytes.chunks_exact(2);
-    for pair in chunks.by_ref() {
+    let (pairs, _) = bytes.as_chunks::<2>();
+    for pair in pairs {
         if pair[0] == 0 {
             even_zeros += 1;
         }
@@ -101,8 +101,7 @@ fn detect_utf16_without_bom(bytes: &[u8]) -> Option<FileEncoding> {
             odd_zeros += 1;
         }
     }
-    // Account for a trailing odd byte (cannot form a NUL pair on the odd side).
-    let _ = chunks.remainder();
+    // A trailing odd byte is left for the decode validation below.
 
     let candidate = if odd_zeros >= 4 && odd_zeros > even_zeros.saturating_mul(10) {
         FileEncoding::Utf16Le
@@ -359,6 +358,16 @@ mod tests {
         assert!(bytes.contains(&0));
         assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf16Be);
         assert_eq!(decode(&bytes, FileEncoding::Auto).unwrap(), text);
+    }
+
+    #[test]
+    fn detect_rejects_bomless_utf16_with_a_trailing_odd_byte() {
+        for pair in [[b'A', 0], [0, b'A']] {
+            let mut bytes = pair.repeat(20);
+            bytes.push(b'B');
+            assert!(detect_utf16_without_bom(&bytes).is_none());
+            assert!(detect(&bytes).is_err());
+        }
     }
 
     #[test]

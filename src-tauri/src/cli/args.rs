@@ -3,6 +3,20 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
+    SettingsReset {
+        scope: String,
+        project: Option<String>,
+    },
+    SettingsExport {
+        scope: String,
+        project: Option<String>,
+        output: Option<String>,
+    },
+    SettingsImport {
+        scope: String,
+        project: Option<String>,
+        json_source: String,
+    },
     ProjectList,
     ProjectAdd {
         paths: Vec<String>,
@@ -47,7 +61,7 @@ pub enum Command {
     },
 }
 
-const ROOT_COMMANDS: &[&str] = &["project", "run", "trust", "open", "help"];
+const ROOT_COMMANDS: &[&str] = &["project", "run", "settings", "trust", "open", "help"];
 
 /// Returns `Some` when argv is a CLI invocation (not plain GUI / open-with files).
 pub fn parse(args: &[String]) -> Option<Result<Command, String>> {
@@ -70,6 +84,7 @@ fn parse_command(rest: &[&str]) -> Result<Command, String> {
         "help" => Ok(Command::Help),
         "project" => parse_project(&rest[1..]),
         "run" => parse_run(&rest[1..]),
+        "settings" => parse_settings(&rest[1..]),
         "trust" => parse_trust(&rest[1..]),
         "open" => {
             let targets: Vec<String> = rest[1..]
@@ -84,6 +99,71 @@ fn parse_command(rest: &[&str]) -> Result<Command, String> {
             }
         }
         other => Err(format!("unknown command: {other}")),
+    }
+}
+
+fn parse_settings(args: &[&str]) -> Result<Command, String> {
+    if args.contains(&"--help") || args.contains(&"-h") {
+        return Ok(Command::Help);
+    }
+    let Some(sub) = args.first().copied() else {
+        return Err(
+            "usage: settings <export|import|reset> [--scope user|workspace] [--project ...]".into(),
+        );
+    };
+    let mut scope = "user".to_string();
+    let mut project = None;
+    let mut output = None;
+    let mut json_source = None;
+    let mut seen = std::collections::HashSet::new();
+    let mut confirmed = false;
+    let mut i = 1;
+    while i < args.len() {
+        let flag = args[i];
+        if flag == "--yes" {
+            if !seen.insert(flag) {
+                return Err("duplicate settings option: --yes".into());
+            }
+            confirmed = true;
+            i += 1;
+            continue;
+        }
+        if !["--scope", "--project", "--output", "--json"].contains(&flag) || !seen.insert(flag) {
+            return Err(format!("unknown or duplicate settings option: {flag}"));
+        }
+        let value = args
+            .get(i + 1)
+            .filter(|v| !v.starts_with('-') || **v == "-")
+            .ok_or_else(|| format!("missing value for {flag}"))?
+            .to_string();
+        match flag {
+            "--scope" => scope = value,
+            "--project" => project = Some(value),
+            "--output" => output = Some(value),
+            "--json" => json_source = Some(value),
+            _ => unreachable!(),
+        }
+        i += 2;
+    }
+    if !["user", "workspace"].contains(&scope.as_str()) || (scope == "user" && project.is_some()) {
+        return Err("use --scope user, or --scope workspace [--project <id|path|name>]".into());
+    }
+    match sub {
+        "export" if json_source.is_none() && !confirmed => Ok(Command::SettingsExport {
+            scope,
+            project,
+            output,
+        }),
+        "import" if output.is_none() && !confirmed => Ok(Command::SettingsImport {
+            scope,
+            project,
+            json_source: json_source
+                .ok_or_else(|| "usage: settings import --json <file|->".to_string())?,
+        }),
+        "reset" if confirmed && output.is_none() && json_source.is_none() => Ok(Command::SettingsReset { scope, project }),
+        _ => {
+            Err("usage: settings export [--output <file>] | settings import --json <file|-> | settings reset --yes".into())
+        }
     }
 }
 
@@ -230,6 +310,89 @@ mod tests {
     #[test]
     fn plain_file_args_are_not_cli() {
         assert!(parse(&args(&["D:\\a.ts"])).is_none());
+    }
+
+    #[test]
+    fn settings_reset_requires_explicit_confirmation() {
+        assert!(parse(&args(&["settings", "reset"])).unwrap().is_err());
+        assert_eq!(
+            parse(&args(&[
+                "settings",
+                "reset",
+                "--yes",
+                "--scope",
+                "workspace",
+                "--project",
+                "D:\\a"
+            ]))
+            .unwrap()
+            .unwrap(),
+            Command::SettingsReset {
+                scope: "workspace".into(),
+                project: Some("D:\\a".into())
+            }
+        );
+        for parts in [
+            vec!["settings", "reset", "--yes", "--yes"],
+            vec!["settings", "reset", "--yes", "--json", "-"],
+            vec!["settings", "reset", "--yes", "--output", "a"],
+            vec!["settings", "export", "--yes"],
+        ] {
+            assert!(parse(&args(&parts)).unwrap().is_err(), "{parts:?}");
+        }
+    }
+
+    #[test]
+    fn parses_settings_export_and_import() {
+        assert_eq!(
+            parse(&args(&["settings", "export"])).unwrap().unwrap(),
+            Command::SettingsExport {
+                scope: "user".into(),
+                project: None,
+                output: None
+            }
+        );
+        assert_eq!(
+            parse(&args(&[
+                "settings",
+                "import",
+                "--scope",
+                "workspace",
+                "--project",
+                "D:\\a",
+                "--json",
+                "-"
+            ]))
+            .unwrap()
+            .unwrap(),
+            Command::SettingsImport {
+                scope: "workspace".into(),
+                project: Some("D:\\a".into()),
+                json_source: "-".into()
+            }
+        );
+    }
+
+    #[test]
+    fn settings_rejects_ambiguous_or_invalid_arguments() {
+        for parts in [
+            vec!["settings", "import"],
+            vec!["settings", "export", "--scope", "global"],
+            vec!["settings", "export", "--project", "a"],
+            vec!["settings", "import", "--json", "-", "--output", "a"],
+            vec!["settings", "export", "--unknown", "a"],
+            vec![
+                "settings",
+                "export",
+                "--scope",
+                "user",
+                "--scope",
+                "workspace",
+            ],
+            vec!["settings", "export", "--output"],
+        ] {
+            assert!(parse(&args(&parts)).unwrap().is_err(), "{parts:?}");
+        }
     }
 
     #[test]

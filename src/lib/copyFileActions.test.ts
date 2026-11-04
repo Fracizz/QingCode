@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const pushToast = vi.fn()
@@ -51,7 +53,11 @@ vi.mock('../utils/fileReferences', async () => {
 })
 
 import {
+  COPY_PATH_FOCUS_ATTR,
+  COPY_REFERENCE_FOCUS_ATTR,
+  COPY_REFERENCE_LINE_ATTR,
   copyActivePathAction,
+  copyActiveFileReferenceAction,
   copyFileReferenceAction,
   copyPathAction,
   copyRelativePathAction,
@@ -66,6 +72,7 @@ describe('copyFileActions', () => {
     getEditorView.mockReset()
     explorerPathsForCopyShortcut.mockReset()
     explorerPathsForCopyShortcut.mockReturnValue([])
+    document.body.innerHTML = ''
     copyToClipboard.mockResolvedValue(undefined)
     findProjectForPath.mockReturnValue({ id: 'p1', name: 'App', path: 'D:/work/app' })
     formatFileReference.mockReturnValue('@App/src/a.ts#L1')
@@ -75,6 +82,11 @@ describe('copyFileActions', () => {
     await copyPathAction('D:/work/app/src/a.ts')
     expect(copyToClipboard).toHaveBeenCalledWith('D:/work/app/src/a.ts')
     expect(pushToast).toHaveBeenCalledWith('success', '路径已复制')
+  })
+
+  it('copyPathAction writes the remote filesystem path for ssh resources', async () => {
+    await copyPathAction('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode')
+    expect(copyToClipboard).toHaveBeenCalledWith('D:/code/qingcode')
   })
 
   it('copyPathAction joins multiple paths with newlines', async () => {
@@ -111,5 +123,48 @@ describe('copyFileActions', () => {
     await copyActivePathAction()
     expect(copyToClipboard).toHaveBeenCalledWith('D:/work/app/a.svg\nD:/work/app/b.svg')
     expect(pushToast).toHaveBeenCalledWith('success', '已复制 {count} 个路径')
+  })
+
+  it('copyActivePathAction prefers a focused project chip path', async () => {
+    const chip = document.createElement('div')
+    chip.tabIndex = 0
+    chip.setAttribute(COPY_PATH_FOCUS_ATTR, 'D:/work/project-selected')
+    document.body.appendChild(chip)
+    chip.focus()
+
+    await copyActivePathAction()
+
+    expect(copyToClipboard).toHaveBeenCalledWith('D:/work/project-selected')
+    expect(explorerPathsForCopyShortcut).not.toHaveBeenCalled()
+  })
+
+  it('Alt+C copies the focused Markdown link target instead of the source tab', async () => {
+    const link = document.createElement('a')
+    link.href = 'D:/work/app/src/a.ts'
+    link.setAttribute(COPY_REFERENCE_FOCUS_ATTR, 'D:/work/app/src/a.ts')
+    document.body.appendChild(link)
+    link.focus()
+
+    await copyActiveFileReferenceAction()
+
+    expect(formatFileReference).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'App' }), 'D:/work/app/src/a.ts', 1, 1,
+    )
+    expect(copyToClipboard).toHaveBeenCalledWith('@App/src/a.ts#L1')
+  })
+
+  it('Alt+C preserves the linked target line', async () => {
+    const link = document.createElement('a')
+    link.href = 'D:/work/app/src/a.ts'
+    link.setAttribute(COPY_REFERENCE_FOCUS_ATTR, 'D:/work/app/src/a.ts')
+    link.setAttribute(COPY_REFERENCE_LINE_ATTR, '21')
+    document.body.appendChild(link)
+    link.focus()
+
+    await copyActiveFileReferenceAction()
+
+    expect(formatFileReference).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'App' }), 'D:/work/app/src/a.ts', 21, 21,
+    )
   })
 })

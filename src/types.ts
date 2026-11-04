@@ -14,12 +14,49 @@ export interface Project {
   sort_order?: number
   /** In-memory only; not persisted to the projects table and lost on restart. */
   ephemeral?: boolean
+  /** Local filesystem, WSL, or an SSH-backed workspace. Missing means local for legacy rows. */
+  kind?: 'local' | 'ssh' | 'wsl'
+  /** SSH connection row used by remote projects. */
+  connection_id?: string
+  /** Provider-native root path (`/home/user/project` for SSH). */
+  root_path?: string
+}
+
+/** SSH 工作区模式：Server（部署 qingcode-server）或 SSH（全部直连）。 */
+export type SshConnectionMode = 'server' | 'ssh'
+
+export interface SshConnection {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  auth_kind: 'privateKey' | 'password'
+  private_key_path?: string
+  host_key_fingerprint: string
+  created_at: number
+  updated_at: number
+  /** 连接配置的模式；旧版行为 null，读取时按全局默认解析。 */
+  mode?: SshConnectionMode | null
+  /** Native Agent endpoint metadata for display only; never persisted to the SSH row. */
+  agentEndpoint?: { host: string; port: number }
 }
 
 export interface RecentFile {
   project_id: string
   path: string
   opened_at: number
+}
+
+export interface FavoriteItem {
+  projectId: string
+  /** Project-relative path using `/` separators. */
+  relativePath: string
+  kind: 'file' | 'directory'
+  sortOrder: number
+  createdAt: number
+  /** Transient filesystem probe result; unavailable items remain bookmarked. */
+  available: boolean
 }
 
 export interface EditorTab {
@@ -31,9 +68,10 @@ export interface EditorTab {
   language?: string
   /**
    * `view` = read-only slice viewer for files above the plain-edit cap (100–500MB).
+   * `image` = rendered image viewer (see src/lib/imageFiles.ts whitelist).
    * Default / omitted = CodeMirror edit (full / degraded / plain by size).
    */
-  viewMode?: 'edit' | 'view'
+  viewMode?: 'edit' | 'view' | 'image'
   /** On-disk size in bytes when known (used by large-file viewer). */
   fileSize?: number
   /** Session encoding used for read/write (from files.encoding at open). */
@@ -62,6 +100,8 @@ export interface TerminalTab {
   launchCommand: string
   /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
+  /** OS and transport selected when this run task was started. */
+  runEnvironment?: import('./lib/runEnvironment').RunEnvironment
   env?: Record<string, string>
   /** Preferred host shell for profile terminals; `auto` resolves in the Rust backend. */
   shell?: TerminalShellId
@@ -76,8 +116,24 @@ export interface TerminalTab {
   pane?: 'primary' | 'secondary' | 'bl' | 'br'
   /** Legacy flag; OSC follow is decided by shellKind + generic-title filter. */
   allowTitleRename?: boolean
-  status: 'starting' | 'running' | 'exited'
+  status: 'starting' | 'running' | 'reconnecting' | 'exited'
   exitCode: number | null
+  /** A confirmed ended session must never be silently resurrected on mount/reload. */
+  endedAt?: number
+  /** Restore failed without proof of process death; retry must attach, never kill/create. */
+  restoreUnavailable?: boolean
+  /** SSH terminal hosted by the remote daemon; survives transport reconnects. */
+  persistent?: boolean
+  /** Daemon-owned PTY id used to reattach after the app restarts. */
+  ptyId?: string
+  /** SSH connection that owns `ptyId`; persisted with the tab for restart restore. */
+  connectionId?: string
+  /** Why the backend fell back to a non-persistent SSH terminal, when known. */
+  persistentFallbackReason?: string
+  /** Latest transport disconnect reason shown in tab tooltips. */
+  disconnectReason?: string | null
+  /** Current persistent reconnect attempt reported by the backend. */
+  connectionAttempt?: number
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
   /**

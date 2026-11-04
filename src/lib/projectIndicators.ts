@@ -1,7 +1,8 @@
 import type { EditorTab, Project, TerminalTab } from '../types'
-
-export const PROJECT_GIT_REFRESH_MIN_MS = 60_000
-export const PROJECT_GIT_REFRESH_MAX_MS = 90_000
+import {
+  DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  parseGitRefreshIntervalStartMinutes,
+} from './gitRefreshSettings'
 
 /** Fired when the active-project Git dirty count is known (SCM store / workdir refresh). */
 export const GIT_DIRTY_COUNT_EVENT = 'qingcode:git-dirty-count'
@@ -15,12 +16,28 @@ type ProjectEditorSessionLike = {
   tabs: EditorTab[]
 }
 
-export function projectGitRefreshDelay(randomValue = Math.random()): number {
-  const normalized = Math.max(0, Math.min(1, randomValue))
-  return Math.round(
-    PROJECT_GIT_REFRESH_MIN_MS +
-      normalized * (PROJECT_GIT_REFRESH_MAX_MS - PROJECT_GIT_REFRESH_MIN_MS)
+/**
+ * SSH 项目后台角标的轮询倍率。
+ *
+ * 本地一次刷新是一个 `git status` 子进程；SSH 一次刷新是一次远程往返 + 远端全量
+ * `git status`，代价高一个数量级，因此拉长周期而不是与本地同频。
+ */
+export const SSH_PROJECT_GIT_REFRESH_MULTIPLIER = 4
+
+export function projectGitRefreshDelay(
+  intervalStartMinutes = DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  randomValue = Math.random(),
+  isSshProject = false
+): number {
+  const startMinutes = parseGitRefreshIntervalStartMinutes(intervalStartMinutes)
+  const spreadMinutes = Math.max(1, Math.ceil(startMinutes / 2))
+  const normalizedRandom = Math.max(0, Math.min(1, randomValue))
+  const randomOffsetMinutes = Math.min(
+    spreadMinutes,
+    Math.floor(normalizedRandom * (spreadMinutes + 1))
   )
+  const scale = isSshProject ? SSH_PROJECT_GIT_REFRESH_MULTIPLIER : 1
+  return (startMinutes + randomOffsetMinutes) * 60_000 * scale
 }
 
 export function normalizedProjectPath(path: string): string {
@@ -34,6 +51,21 @@ function normalizedPath(path: string): string {
 
 export function projectPathsMatch(a: string, b: string): boolean {
   return normalizedProjectPath(a) === normalizedProjectPath(b)
+}
+
+/**
+ * Git 更改数归属：状态库还停留在别的项目时返回 0。
+ *
+ * 切项目会立刻发起一次 Git 读取，但快照返回前 `dirtyCount` 仍是上一个项目的数字；
+ * 直接读它会把这个数字挂到新项目上（页面徽标 / 活动栏 / 状态栏都会跳一下）。
+ */
+export function gitDirtyCountForProject(
+  projectPath: string | null | undefined,
+  storeProjectPath: string | null | undefined,
+  storeDirtyCount: number
+): number {
+  if (!projectPath || !storeProjectPath) return 0
+  return projectPathsMatch(projectPath, storeProjectPath) ? storeDirtyCount : 0
 }
 
 /** Keep project-tab Git badges in lockstep with the activity-bar SCM badge. */

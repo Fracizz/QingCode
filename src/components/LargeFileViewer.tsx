@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
   useEffect,
@@ -8,9 +9,10 @@ import {
 } from 'react'
 import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { safeInvoke } from '../lib/tauri'
+import { isSshResource } from '../lib/tauri'
+import { readFileSlice, findLineOffset, type FileSlice } from '../lib/fileIpc'
 import { formatFileSize, isOversizeSlicePreview } from '../lib/fileSizePolicy'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction } from '../lib/copyFileActions'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
@@ -25,22 +27,6 @@ type LineIndex = {
   offsets: number[] // 每行的字节偏移
   totalLines: number
   fileSize: number
-}
-
-type FileSlice = {
-  offset: number
-  len: number
-  text: string
-  eof: boolean
-  file_size: number
-}
-
-type LineOffsetResult = {
-  line: number
-  offset: number
-  found: boolean
-  total_lines: number
-  file_size: number
 }
 
 interface Props {
@@ -126,7 +112,7 @@ export default function LargeFileViewer({ tab }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+        const slice = await readFileSlice({
           path: tab.path,
           offset: nextOffset,
           maxBytes: CHUNK_BYTES,
@@ -179,7 +165,7 @@ export default function LargeFileViewer({ tab }: Props) {
     const el = preRef.current?.querySelector<HTMLElement>(
       `[data-search-match-index="${activeMatch}"]`,
     )
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'center', behavior: preferredScrollBehavior() })
   }, [activeMatch, text, searchQuery])
 
   const windowEnd = Math.min(offset + sliceLen, fileSize)
@@ -212,7 +198,7 @@ export default function LargeFileViewer({ tab }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const result = await safeInvoke<LineOffsetResult>('定位行偏移', 'find_line_offset', {
+      const result = await findLineOffset({
         path: tab.path,
         line,
       })
@@ -250,7 +236,7 @@ export default function LargeFileViewer({ tab }: Props) {
       let cursorOffset = 0
       let currentEof = false
       while (!currentEof && offsets.length < 10_000_000) {
-        const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+        const slice = await readFileSlice({
           path: tab.path,
           offset: cursorOffset,
           maxBytes: CHUNK_BYTES,
@@ -305,7 +291,7 @@ export default function LargeFileViewer({ tab }: Props) {
           : index.offsets.slice(0, startLine).reverse()
         for (let i = 0; i < Math.min(linesToCheck.length, MAX_SEARCH_CHUNKS * 100); i++) {
           const lineOffset = linesToCheck[i]
-          const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+          const slice = await readFileSlice({
             path: tab.path,
             offset: lineOffset,
             maxBytes: CHUNK_BYTES,
@@ -351,20 +337,9 @@ export default function LargeFileViewer({ tab }: Props) {
     useProjectStore.getState().pushToast('info', t('未找到匹配项'))
   }
 
-  const copyPath = async () => {
-    try {
-      await copyToClipboard(tab.path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg">
-      <div className="flex h-8 flex-shrink-0 items-center gap-2 border-b border-border px-3 text-[11px] text-fg-muted">
+      <div className="flex h-8 flex-shrink-0 items-center gap-2 border-b border-border px-3 text-ui-xs text-fg-muted">
         <Eye size={12} className="text-accent flex-shrink-0" aria-hidden />
         <span className="truncate">
           {t('只读预览')} · {formatFileSize(displayedFileSize)} · {previewDescription}
@@ -380,7 +355,7 @@ export default function LargeFileViewer({ tab }: Props) {
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
           disabled={loading || offset <= 0}
           onClick={goPrev}
         >
@@ -388,7 +363,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </button>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
           disabled={loading || eof}
           onClick={goNext}
         >
@@ -399,7 +374,7 @@ export default function LargeFileViewer({ tab }: Props) {
           <button
             key={pct}
             type="button"
-            className="rounded px-1.5 py-0.5 font-mono text-[11px] text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+            className="rounded px-1.5 py-0.5 font-mono text-ui-xs text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
             disabled={loading || fileSize <= 0}
             onClick={() => jumpPercent(pct === 100 ? 99 : pct)}
           >
@@ -407,12 +382,12 @@ export default function LargeFileViewer({ tab }: Props) {
           </button>
         ))}
         <div className="mx-1 h-3 w-px bg-border" />
-        <label className="flex items-center gap-1 text-[11px] text-fg-muted">
+        <label className="flex items-center gap-1 text-ui-xs text-fg-muted">
           <span className="flex-shrink-0">{t('行号')}</span>
           <input
             type="number"
             min={1}
-            className="w-20 rounded border border-border bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+            className="w-20 rounded border border-border bg-bg-elevated px-1.5 py-0.5 font-mono text-ui-xs text-fg outline-none focus:border-accent"
             value={lineInput}
             disabled={loading}
             onChange={e => setLineInput(e.target.value)}
@@ -427,18 +402,18 @@ export default function LargeFileViewer({ tab }: Props) {
         </label>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
           disabled={loading || !lineInput.trim()}
           onClick={() => void jumpToLine()}
         >
           {t('跳转')}
         </button>
         <div className="mx-1 h-3 w-px bg-border" />
-        <label className="flex min-w-0 items-center gap-1 text-[11px] text-fg-muted">
+        <label className="flex min-w-0 items-center gap-1 text-ui-xs text-fg-muted">
           <Search size={12} className="flex-shrink-0 text-fg-dim" aria-hidden />
           <input
             type="search"
-            className="w-36 min-w-0 rounded border border-border bg-bg-elevated px-1.5 py-0.5 text-[11px] text-fg outline-none focus:border-accent"
+            className="w-36 min-w-0 rounded border border-border bg-bg-elevated px-1.5 py-0.5 text-ui-xs text-fg outline-none focus:border-accent"
             value={searchInput}
             disabled={loading}
             onChange={e => setSearchInput(e.target.value)}
@@ -453,7 +428,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </label>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
           disabled={loading || !searchInput.trim()}
           onClick={() => void findInDirection(1)}
         >
@@ -461,7 +436,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </button>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
           disabled={loading || !searchInput.trim()}
           onClick={() => void findInDirection(-1)}
         >
@@ -484,27 +459,29 @@ export default function LargeFileViewer({ tab }: Props) {
             <LocateFixed size={12} />
             {t('在资源管理器中定位')}
           </button>
+          {!isSshResource(tab.path) && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-accent hover:underline"
+              onClick={() =>
+                void revealItemInDir(tab.path).catch(error => {
+                  useProjectStore
+                    .getState()
+                    .pushToast(
+                      'error',
+                      t('在文件管理器中显示失败: {error}', { error: String(error) }),
+                    )
+                })
+              }
+            >
+              <ExternalLink size={12} />
+              {t('在文件管理器中显示')}
+            </button>
+          )}
           <button
             type="button"
             className="inline-flex items-center gap-1 text-accent hover:underline"
-            onClick={() =>
-              void revealItemInDir(tab.path).catch(error => {
-                useProjectStore
-                  .getState()
-                  .pushToast(
-                    'error',
-                    t('在文件管理器中显示失败: {error}', { error: String(error) }),
-                  )
-              })
-            }
-          >
-            <ExternalLink size={12} />
-            {t('在文件管理器中显示')}
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-accent hover:underline"
-            onClick={() => void copyPath()}
+            onClick={() => void copyPathAction(tab.path)}
           >
             <Copy size={12} />
             {t('复制路径')}
@@ -519,11 +496,12 @@ export default function LargeFileViewer({ tab }: Props) {
           </div>
         )}
         {error ? (
-          <div className="p-6 text-sm text-warn">{error}</div>
+          <div className="p-6 text-ui-lg text-warn">{error}</div>
         ) : (
           <pre
             ref={preRef}
-            className="m-0 whitespace-pre-wrap break-all p-4 font-mono text-[12px] leading-5 text-fg"
+            className="m-0 whitespace-pre-wrap break-all p-4 font-mono text-fg"
+            style={{ fontSize: 'var(--editor-font-size)', lineHeight: 1.6 }}
           >
             {text
               ? renderHighlighted(text, searchQuery, activeMatch)

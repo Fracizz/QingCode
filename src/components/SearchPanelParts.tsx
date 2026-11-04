@@ -18,6 +18,7 @@ export type SearchContextTarget =
 export interface SearchRowProps {
   rows: Row[]
   activeIndex: number
+  onLoadMore: () => void
   onToggleFile: (path: string) => void
   onOpenMatch: (path: string, line: number) => void
   onOpenFilename: (path: string, isDir: boolean) => void
@@ -36,6 +37,7 @@ export function SearchResultRow(props: {
     style,
     rows,
     activeIndex,
+    onLoadMore,
     onToggleFile,
     onOpenMatch,
     onOpenFilename,
@@ -51,7 +53,7 @@ export function SearchResultRow(props: {
     return (
       <div
         style={style}
-        className={`${baseCls} px-3 text-[11px] font-semibold tracking-wide text-fg-muted border-b border-border/60`}
+        className={`${baseCls} px-3 text-ui-xs font-semibold tracking-wide text-fg-muted border-b border-border/60`}
       >
         <span className="truncate">{row.label}</span>
       </div>
@@ -60,20 +62,27 @@ export function SearchResultRow(props: {
 
   if (row.kind === 'footer') {
     return (
-      <div
-        style={style}
-        className={`${baseCls} px-4 text-[11px] text-fg-dim gap-1.5`}
-        aria-hidden={!row.loading && row.hasMore}
-      >
+      <div style={style} className={`${baseCls} px-3 text-ui-xs text-fg-dim`}>
         {row.loading ? (
-          <>
+          <div className="flex w-full items-center justify-center gap-1.5">
             <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" />
             <span>{t('正在加载更多结果…')}</span>
-          </>
+          </div>
         ) : row.hasMore ? (
-          <span className="opacity-0">·</span>
+          <button
+            type="button"
+            className="flex h-full w-full items-center justify-center gap-1 rounded text-accent transition-colors hover:bg-bg-hover hover:text-fg"
+            onClick={onLoadMore}
+          >
+            <ChevronDown size={12} />
+            <span>{t('显示更多结果')}</span>
+          </button>
+        ) : row.limitReached ? (
+          <span className="w-full truncate text-center">
+            {t('已达到结果展示上限，请缩小搜索范围')}
+          </span>
         ) : (
-          <span>{t('已加载全部结果')}</span>
+          <span className="w-full text-center">{t('已加载全部结果')}</span>
         )}
       </div>
     )
@@ -81,7 +90,7 @@ export function SearchResultRow(props: {
 
   if (row.kind === 'file') {
     return (
-      <div style={style} className={`${baseCls} ${activeCls} px-3 text-[12px]`}>
+      <div style={style} className={`${baseCls} ${activeCls} px-3 text-ui-sm`}>
         <button
           {...ariaAttributes}
           className="w-full flex items-center gap-1 h-full text-left hover:bg-bg-hover"
@@ -90,11 +99,10 @@ export function SearchResultRow(props: {
             onOpenContextMenu?.(event, { kind: 'file', path: row.path, name: row.name })
           }
         >
-          {row.collapsed ? (
-            <ChevronRight size={13} className="text-fg-dim flex-shrink-0" />
-          ) : (
-            <ChevronDown size={13} className="text-fg-dim flex-shrink-0" />
-          )}
+          <ChevronRight
+            size={13}
+            className={`text-fg-dim flex-shrink-0 chevron-transition ${!row.collapsed ? 'rotate-90 text-fg' : ''}`}
+          />
           <FileIcon size={13} className="text-fg-muted flex-shrink-0" />
           <span className="truncate font-medium">{row.name}</span>
           {row.dir && (
@@ -125,7 +133,7 @@ export function SearchResultRow(props: {
             line: row.line,
           })
         }
-        className={`${baseCls} ${activeCls} pl-9 pr-3 gap-2 text-[12px] text-left hover:bg-bg-hover`}
+        className={`${baseCls} ${activeCls} pl-9 pr-3 gap-2 text-ui-sm text-left hover:bg-bg-hover`}
       >
         <span className="w-8 flex-shrink-0 text-right text-fg-dim tabular-nums">
           {row.line}
@@ -168,7 +176,7 @@ export function SearchResultRow(props: {
           isDir: row.hit.is_dir,
         })
       }
-      className={`${baseCls} ${activeCls} pl-6 pr-3 gap-1.5 text-[13px] text-left hover:bg-bg-hover`}
+      className={`${baseCls} ${activeCls} pl-6 pr-3 gap-1.5 text-ui text-left hover:bg-bg-hover`}
     >
       {row.hit.is_dir ? (
         <Folder size={14} className="text-accent flex-shrink-0" />
@@ -224,7 +232,7 @@ export function SearchToggle({
     <Tooltip label={tooltipLabel} side="bottom">
       <button
         onClick={onClick}
-        className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
+        className={`flex items-center gap-1 px-1.5 py-0.5 text-ui-xs rounded border transition-colors
           ${active
             ? 'bg-bg-active text-fg border-border-strong'
             : 'bg-bg-deep text-fg-muted border-border hover:text-fg'}

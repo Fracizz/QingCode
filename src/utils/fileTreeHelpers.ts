@@ -1,14 +1,14 @@
-/** Shared file-tree node shape used by the project store and sidebar. */
-export interface FileNode {
-  name: string
-  path: string
-  is_dir: boolean
+import type { FileNode as WireFileNode } from '../lib/generated/fileIpc'
+
+/** Wire data plus frontend-only lazy loading state. */
+export interface FileNode extends WireFileNode {
   children?: FileNode[]
   loaded?: boolean
 }
 
 export function normalizeProjectPath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()
 }
 
 function pathsMatch(a: string, b: string) {
@@ -31,7 +31,7 @@ export function findNodeByPath(nodes: FileNode[], targetPath: string): FileNode 
 export function patchTree(
   nodes: FileNode[],
   targetPath: string,
-  updater: (existing: FileNode[] | undefined) => FileNode[],
+  updater: (existing: FileNode[] | undefined) => FileNode[]
 ): FileNode[] {
   return nodes.map(n => {
     if (pathsMatch(n.path, targetPath)) {
@@ -49,11 +49,7 @@ export function patchTree(
 export function removeNodeFromTree(nodes: FileNode[], targetPath: string): FileNode[] {
   return nodes
     .filter(n => !pathsMatch(n.path, targetPath))
-    .map(n =>
-      n.children
-        ? { ...n, children: removeNodeFromTree(n.children, targetPath) }
-        : n,
-    )
+    .map(n => (n.children ? { ...n, children: removeNodeFromTree(n.children, targetPath) } : n))
 }
 
 export function baseName(path: string): string {

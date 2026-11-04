@@ -1,0 +1,36 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.qingcode.companion"
+    android:versionCode="1"
+    android:versionName="0.0.0">
+    <!-- versionCode / versionName are replaced from package.json by scripts/build-android.ps1. -->
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Requested only when the user taps "扫码添加" to read the desktop pairing QR code. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_qingcode"
+        android:label="QingCode"
+        android:theme="@style/QingCodeTheme"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|density|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- System camera / QR apps open qingcode://pair?... links from the desktop QR code. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="qingcode" android:host="pair" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

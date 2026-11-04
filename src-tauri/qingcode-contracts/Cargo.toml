@@ -1,0 +1,17 @@
+[package]
+name = "qingcode-contracts"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+export = ["dep:ts-rs"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ts-rs = { version = "11", optional = true, features = ["no-serde-warnings"] }
+
+[[bin]]
+name = "export-file-ipc"
+path = "src/bin/export-file-ipc.rs"
+required-features = ["export"]

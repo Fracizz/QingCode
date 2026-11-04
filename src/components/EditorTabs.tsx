@@ -1,10 +1,11 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useLayoutEffect,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
+import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, FileIcon, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -15,6 +16,7 @@ import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { safeInvoke } from '../lib/tauri'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
+import { openWorkingTreeFile } from '@/lib/git/openWorkingTreeFile'
 import { copyToClipboard } from '../utils/fileReferences'
 import { gitStatusColorClass, gitStatusGlyph } from '@/lib/git/gitStatus'
 import {
@@ -25,6 +27,7 @@ import {
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { EditorTab } from '../types'
@@ -41,7 +44,16 @@ function fileName(path: string) {
   return separator >= 0 ? path.slice(separator + 1) : path
 }
 
-function TabChrome({ tab }: { tab: EditorTab }) {
+function TabChrome({
+  tab,
+  active,
+  onClose,
+}: {
+  tab: EditorTab
+  active: boolean
+  onClose: () => void
+}) {
+  const { t } = useI18n()
   const loading = isLoadingTab(tab)
   const viewOnly = isViewOnlyTab(tab)
   const gitStatus = useGitStatusStore.getState().statusFor(tab.path)
@@ -68,18 +80,67 @@ function TabChrome({ tab }: { tab: EditorTab }) {
     <>
       {Icon && <Icon size={15} className={iconClass} />}
       <span
-        className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
+        className={`text-ui truncate ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
       >
         {tab.name}
       </span>
       {tab.kind !== 'diff' && gitGlyph && (
-        <span className={`text-[11px] font-medium ${gitColor}`}>{gitGlyph}</span>
+        <span className={`text-ui-xs font-medium ${gitColor}`}>{gitGlyph}</span>
       )}
+      <div className="relative flex h-6 w-5 items-center justify-center ml-0.5 flex-shrink-0">
+        {tab.dirty ? (
+          <>
+            <span
+              role="img"
+              aria-label={t('未保存的更改')}
+              className="group-hover:hidden group-focus-within:hidden flex h-4 w-3 items-center justify-center text-warn"
+            >
+              <Circle size={8} fill="currentColor" aria-hidden="true" />
+            </span>
+            <Tooltip
+              label={t('关闭文件')}
+              side="bottom"
+              wrapperClassName="hidden group-hover:inline-flex group-focus-within:inline-flex shrink-0"
+            >
+              <button
+                type="button"
+                aria-label={t('关闭文件')}
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+                onClick={e => {
+                  e.stopPropagation()
+                  onClose()
+                }}
+              >
+                <X size={13} />
+              </button>
+            </Tooltip>
+          </>
+        ) : (
+          <Tooltip
+            label={t('关闭文件')}
+            side="bottom"
+            wrapperClassName={`inline-flex shrink-0 ${active ? 'opacity-50 group-hover:opacity-100 group-focus-within:opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-within:opacity-100'} hover:!opacity-100 transition-opacity`}
+          >
+            <button
+              type="button"
+              aria-label={t('关闭文件')}
+              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+              onClick={e => {
+                e.stopPropagation()
+                onClose()
+              }}
+            >
+              <X size={13} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
     </>
   )
 }
 
 export default function EditorTabs() {
+  const { fontSize } = useInterfaceMetrics()
   const { t } = useI18n()
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
@@ -135,8 +196,9 @@ export default function EditorTabs() {
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(strip)
+    measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [tabs, activeTabId])
+  }, [tabs, activeTabId, fontSize])
 
   if (tabs.length === 0) return null
 
@@ -150,6 +212,10 @@ export default function EditorTabs() {
   }
 
   const revealPath = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(path)
     } catch (e) {
@@ -245,7 +311,13 @@ export default function EditorTabs() {
       action: () => revealInSidebar(tab.path),
     },
     ...(tab.kind === 'diff'
-      ? []
+      ? [
+          {
+            label: t('打开文件'),
+            icon: <FileIcon size={14} />,
+            action: () => void openWorkingTreeFile({ absolutePath: tab.path }),
+          } satisfies ContextMenuItem,
+        ]
       : [
           {
             label: t('与 Git HEAD 比较'),
@@ -273,6 +345,7 @@ export default function EditorTabs() {
     {
       label: t('在文件管理器中显示'),
       icon: <ExternalLink size={14} />,
+      disabled: isSshResource(tab.path),
       action: () => void revealPath(tab.path),
     },
     ...(tab.kind === 'diff'
@@ -330,12 +403,13 @@ export default function EditorTabs() {
                 tabIndex={active ? 0 : -1}
                 aria-selected={active}
                 draggable
-                className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
+                className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded px-1.5 text-ui transition-colors
                 ${active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
                 onKeyDown={event => {
+                  if (event.target !== event.currentTarget) return
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
                     setActiveTab(tab.id)
@@ -380,64 +454,40 @@ export default function EditorTabs() {
               >
                 {active && (
                   <span
-                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
+                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded-full bg-brand shadow-[0_0_6px_var(--color-brand)]"
                     aria-hidden="true"
                   />
                 )}
-                <TabChrome tab={tab} />
-                <button
-                  type="button"
-                  aria-label={t('关闭文件')}
-                  className="ml-1 flex h-4 w-4 items-center justify-center rounded hover:bg-bg-active"
-                  onClick={e => {
-                    e.stopPropagation()
-                    void closeOne(tab)
-                  }}
-                >
-                  {tab.dirty ? (
-                    <Circle size={9} className="dirty-pulse text-warn group-hover:hidden" fill="currentColor" />
-                  ) : null}
-                  <X
-                    size={14}
-                    className={tab.dirty ? 'hidden group-hover:block' : 'opacity-60 group-hover:opacity-100'}
-                  />
-                </button>
+                <TabChrome tab={tab} active={active} onClose={() => void closeOne(tab)} />
               </div>
             )
           })}
         </div>
-        <Tooltip
-          label={
-            hiddenCount > 0
-              ? t('显示所有打开的文件（{hidden} 个已折叠，最多 {max}）', {
-                  hidden: hiddenCount,
-                  max: MAX_OPEN_EDITOR_TABS,
-                })
-              : t('显示所有打开的文件（最多 {max} 个）', { max: MAX_OPEN_EDITOR_TABS })
-          }
-          side="bottom"
-        >
-          <button
-            type="button"
-            aria-label={t('显示所有打开的文件')}
-            className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
-            onClick={event => {
-              const rect = event.currentTarget.getBoundingClientRect()
-              setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
-            }}
+        {hiddenCount > 0 && (
+          <Tooltip
+            label={t('显示所有打开的文件（{hidden} 个已折叠，最多 {max}）', {
+              hidden: hiddenCount,
+              max: MAX_OPEN_EDITOR_TABS,
+            })}
+            side="bottom"
+            wrapperClassName="inline-flex h-full shrink-0 items-center pr-1"
           >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
-            />
-            <ChevronDown size={14} />
-            {hiddenCount > 0 && (
-              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-accent px-0.5 text-center text-[9px] font-semibold leading-[12px] text-white">
+            <button
+              type="button"
+              aria-label={t('显示所有打开的文件')}
+              className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+              onClick={event => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
+              }}
+            >
+              <ChevronDown size={14} />
+              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
                 {hiddenCount > 99 ? '99+' : hiddenCount}
               </span>
-            )}
-          </button>
-        </Tooltip>
+            </button>
+          </Tooltip>
+        )}
 
         {/* Hidden measure layer: natural tab widths for overflow fitting. */}
         <div
@@ -449,10 +499,9 @@ export default function EditorTabs() {
             <div
               key={`measure-${tab.id}`}
               data-tab-measure-id={tab.id}
-              className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1"
+              className="flex ui-chip h-6 items-center gap-1 whitespace-nowrap rounded px-1.5"
             >
-              <TabChrome tab={tab} />
-              <span className="ml-1 h-4 w-4 flex-shrink-0" />
+              <TabChrome tab={tab} active={false} onClose={() => {}} />
             </div>
           ))}
         </div>

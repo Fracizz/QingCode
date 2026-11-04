@@ -1,23 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   FolderPlus,
   Terminal as TerminalIcon,
   Pencil,
   LocateFixed,
-  Trash2,
+  FolderMinus,
   EyeOff,
   Eye,
   Check,
   X,
   ArrowUp,
   ArrowDown,
-  Folder,
   Folders,
   AlertTriangle,
   ShieldOff,
   ShieldCheck,
   ShieldAlert,
   Layers,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  MoreHorizontal,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -40,10 +43,17 @@ import {
 } from '../utils/projectActions'
 import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
 import ModalOverlay from './ModalOverlay'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { buildProjectFilterData } from '../lib/projectManagerFilters'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -56,7 +66,10 @@ const SORT_LABELS: Record<SortKey, string> = {
   created_at: '创建时间',
 }
 
-function timeAgo(ts: number, t: (source: string, values?: Record<string, string | number>) => string): string {
+function timeAgo(
+  ts: number,
+  t: (source: string, values?: Record<string, string | number>) => string
+): string {
   const diff = Date.now() - ts
   const day = 24 * 60 * 60 * 1000
   if (diff < 60 * 1000) return t('刚刚')
@@ -72,19 +85,40 @@ export default function ProjectManager() {
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => allProjects.filter(p => !p.ephemeral), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const unhideProject = useProjectStore(s => s.unhideProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
+  const openCreateProject = useUIStore(s => s.openCreateProject)
   const closeProjectManager = useUIStore(s => s.closeProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
 
   const [sortKey, setSortKey] = useState<SortKey>('last_opened_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [sourceFilter, setSourceFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  const normalizedSearch = search.trim().toLowerCase()
+  const [pageSize, setPageSize] = useState(10)
+  const [page, setPage] = useState(1)
+  const listRef = useRef<HTMLDivElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [trustTick, setTrustTick] = useState(0)
+  const [actionMenu, setActionMenu] = useState<{ projectId: string; x: number; y: number } | null>(null)
+  const localLabel = t('本机')
+  const filterData = useMemo(
+    () => buildProjectFilterData(projects, sshConnections, projectLabels, localLabel),
+    [projects, sshConnections, projectLabels, localLabel]
+  )
+  const sourceOptions = useMemo(() => {
+    const sources = new Map([...filterData.values()].map(data => [data.source, data]))
+    return [...sources.values()].sort((a, b) =>
+      a.sourceLabel.localeCompare(b.sourceLabel, language)
+    )
+  }, [filterData, language])
 
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)
@@ -96,15 +130,38 @@ export default function ProjectManager() {
     let list = projects
     if (filter === 'visible') list = list.filter(p => !p.hidden)
     else if (filter === 'hidden') list = list.filter(p => p.hidden)
+    if (sourceFilter !== 'all') {
+      list = list.filter(p => {
+        const data = filterData.get(p.id)
+        return data?.kind === sourceFilter || data?.source === sourceFilter
+      })
+    }
+    if (normalizedSearch) {
+      list = list.filter(p => filterData.get(p.id)?.searchText.includes(normalizedSearch))
+    }
     const dir = sortDir === 'asc' ? 1 : -1
     return [...list].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortKey === 'name') cmp = a.name.localeCompare(b.name, language)
       else if (sortKey === 'path') cmp = a.path.localeCompare(b.path)
       else cmp = a[sortKey] - b[sortKey]
       return cmp * dir
     })
-  }, [projects, sortKey, sortDir, filter, language])
+  }, [projects, sortKey, sortDir, filter, sourceFilter, filterData, language, normalizedSearch])
+
+  const pageCount = Math.max(1, Math.ceil(sortedProjects.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const pageStart = (currentPage - 1) * pageSize
+  const pageProjects = sortedProjects.slice(pageStart, pageStart + pageSize)
+
+  useEffect(() => {
+    // Deleting or hiding the last row on a page must leave a valid page selected.
+    queueMicrotask(() => setPage(previous => Math.min(previous, pageCount)))
+  }, [pageCount])
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [currentPage, pageSize, filter, sourceFilter, sortKey, sortDir, normalizedSearch])
 
   // Drop selections for projects that no longer exist (deleted/filtered out).
   useEffect(() => {
@@ -119,11 +176,11 @@ export default function ProjectManager() {
           else changed = true
         }
         return changed ? next : prev
-      }),
+      })
     )
   }, [sortedProjects])
 
-  const selectableIds = useMemo(() => sortedProjects.map(p => p.id), [sortedProjects])
+  const selectableIds = pageProjects.map(p => p.id)
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
   const someSelected = !allSelected && selectableIds.some(id => selectedIds.has(id))
 
@@ -138,24 +195,27 @@ export default function ProjectManager() {
 
   const toggleAll = () => {
     setSelectedIds(prev => {
-      if (selectableIds.length > 0 && selectableIds.every(id => prev.has(id))) {
-        return new Set()
+      const next = new Set(prev)
+      const deselect = selectableIds.every(id => prev.has(id))
+      for (const id of selectableIds) {
+        if (deselect) next.delete(id)
+        else next.add(id)
       }
-      return new Set(selectableIds)
+      return next
     })
   }
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const handleBatchDelete = async () => {
+  const handleBatchRemove = async () => {
     const targets = sortedProjects.filter(p => selectedIds.has(p.id))
     if (targets.length === 0) return
     const ok = await confirmDialog({
-      title: t('批量删除项目'),
-      message: t('确定永久删除选中的 {count} 个项目？', { count: targets.length }),
+      title: t('批量移除项目'),
+      message: t('确定从项目列表移除选中的 {count} 个项目？', { count: targets.length }),
       detail: t('将移除工作区记录并关闭相关终端与标签页，不会删除磁盘上的项目文件。'),
-      kind: 'danger',
-      confirmLabel: t('永久删除'),
+      kind: 'warning',
+      confirmLabel: t('移除'),
       cancelLabel: t('取消'),
     })
     if (!ok) return
@@ -166,21 +226,17 @@ export default function ProjectManager() {
         useEditorStore.getState().discardProjectSession(p.id)
         await useProjectStore.getState().removeProject(p.id)
       } catch (e) {
-        useProjectStore.getState().pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
+        useProjectStore
+          .getState()
+          .pushToast('error', t('移除「{name}」失败: {error}', { name: p.name, error: String(e) }))
       }
     }
     setSelectedIds(new Set())
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeProjectManager()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [closeProjectManager])
 
   const cycleSort = (key: SortKey) => {
+    setPage(1)
     if (sortKey === key) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     } else {
@@ -189,11 +245,16 @@ export default function ProjectManager() {
     }
   }
 
-  const handleDelete = (project: Project) => {
+  const handleRemove = (project: Project) => {
     void removeProjectWithConfirm(project.id, project.name, project.path)
   }
 
   const handleRelocate = (project: Project) => {
+    if (project.kind === 'ssh') {
+      closeProjectManager()
+      requestSshReconnect(project)
+      return
+    }
     void relocateProjectWithDialog(project.id)
   }
 
@@ -210,6 +271,22 @@ export default function ProjectManager() {
 
   const visibleCount = projects.filter(p => !p.hidden).length
   const hiddenCount = projects.length - visibleCount
+  const menuProject = projects.find(project => project.id === actionMenu?.projectId)
+  const projectActions = (project: Project): ContextMenuItem[] => {
+    const level = getWorkspaceTrust(project)
+    const changeTrust = (change: () => void) => {
+      change()
+      void pushTrustedRootsToNative(allProjects)
+    }
+    return [
+      { label: t(project.hidden ? '恢复显示' : '从顶栏隐藏'), action: () => project.hidden ? unhideProject(project.id) : hideProject(project.id) },
+      ...(level === 'trusted' ? [{ label: t('切换为受限模式'), action: () => changeTrust(() => restrictProject(project)) }] : [{ label: t('信任此项目'), action: () => changeTrust(() => trustProject(project)) }]),
+      ...(level === 'trusted' || level === 'restricted' ? [{ label: t('清除信任决定'), action: () => changeTrust(() => untrustProject(project)) }] : []),
+      { label: t('重命名'), action: () => handleRename(project) },
+      { label: t(project.kind === 'ssh' ? '重新连接' : '重新定位'), action: () => handleRelocate(project) },
+      { label: t('移除项目'), danger: true, separatorBefore: true, action: () => handleRemove(project) },
+    ]
+  }
 
   return (
     <ModalOverlay onDismiss={closeProjectManager}>
@@ -218,16 +295,20 @@ export default function ProjectManager() {
         aria-modal="true"
         aria-labelledby="project-manager-title"
         aria-describedby="project-manager-description"
-        className="ui-font-scaled modal-content-enter relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="project-manager ui-font-scaled modal-content-enter relative w-[94vw] max-w-[1200px] max-h-[85vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+          <div className="flex items-center gap-2 text-ui-lg font-semibold text-fg">
             <Folders size={16} className="text-fg-muted" />
             <h2 id="project-manager-title">{t('项目管理')}</h2>
             <span id="project-manager-description" className="text-ui-sm font-normal text-fg-muted">
-              {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', { total: projects.length, visible: visibleCount, hidden: hiddenCount })}
+              {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', {
+                total: projects.length,
+                visible: visibleCount,
+                hidden: hiddenCount,
+              })}
             </span>
           </div>
           <button
@@ -244,15 +325,15 @@ export default function ProjectManager() {
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 flex-wrap">
           <button
             type="button"
-            onClick={() => void addProjectFromDialog()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            onClick={openCreateProject}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
-            <FolderPlus size={13} /> {t('添加文件夹')}
+            <FolderPlus size={13} /> {t('新建项目')}
           </button>
           <button
             type="button"
             onClick={() => void addTerminalProjectWithPrompt()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
             <TerminalIcon size={13} /> {t('新建草稿项目')}
           </button>
@@ -262,69 +343,141 @@ export default function ProjectManager() {
               closeProjectManager()
               openWorkspaceManager()
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
             <Layers size={13} /> {t('多项目工作区')}
           </button>
 
-          <SegmentedControl<FilterMode>
-            className="ml-auto"
-            ariaLabel={t('筛选项目')}
-            options={[
-              { value: 'all', label: t('全部') },
-              { value: 'visible', label: t('已显示') },
-              { value: 'hidden', label: t('已隐藏') },
-            ]}
-            value={filter}
-            onChange={setFilter}
-          />
-
-          <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
-            {t('排序')}
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <div className="flex min-w-[180px] flex-1 items-center gap-1.5 rounded border border-border-strong bg-bg-active px-2 py-1 focus-within:border-accent">
+              <Search size={13} className="flex-shrink-0 text-fg-muted" />
+              <input
+                ref={searchRef}
+                type="text"
+                aria-label={t('搜索项目名称、路径或来源')}
+                placeholder={t('搜索项目名称、路径或来源…')}
+                value={search}
+                onChange={event => {
+                  setSearch(event.target.value)
+                  setPage(1)
+                }}
+                className="min-w-0 flex-1 bg-transparent text-ui-sm text-fg placeholder:text-fg-dim outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  aria-label={t('清除搜索')}
+                  onClick={() => {
+                    setSearch('')
+                    setPage(1)
+                    searchRef.current?.focus()
+                  }}
+                  className="flex-shrink-0 rounded p-0.5 text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
             <select
-              value={sortKey}
-              onChange={e => setSortKey(e.target.value as SortKey)}
-              className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-[12px] text-fg outline-none focus:border-accent"
+              aria-label={t('筛选项目来源')}
+              value={sourceFilter}
+              onChange={event => {
+                setSourceFilter(event.target.value)
+                setPage(1)
+              }}
+              className="max-w-[240px] min-w-0 rounded border border-border-strong bg-bg-active px-1.5 py-1 text-ui-sm text-fg outline-none focus:border-accent"
             >
-              {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
-                <option key={k} value={k}>
-                  {t(SORT_LABELS[k])}
-                </option>
-              ))}
+              <option value="all">{t('全部来源')}</option>
+              <option value="local">{t('本机')}</option>
+              <option value="wsl">WSL</option>
+              <option value="ssh">SSH</option>
+              {(['wsl', 'ssh'] as const).map(kind => {
+                const options = sourceOptions.filter(
+                  data => data.kind === kind && data.source !== kind
+                )
+                return (
+                  options.length > 0 && (
+                    <optgroup key={kind} label={t(kind === 'wsl' ? 'WSL 发行版' : 'SSH 连接')}>
+                      {options.map(data => (
+                        <option key={data.source} value={data.source}>
+                          {data.sourceLabel}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )
+                )
+              })}
             </select>
-            <button
-              type="button"
-              aria-label={t('切换排序方向')}
-              onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
-              className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
-            >
-              {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-            </button>
+            <SegmentedControl<FilterMode>
+              ariaLabel={t('筛选项目')}
+              options={[
+                { value: 'all', label: t('全部') },
+                { value: 'visible', label: t('已显示') },
+                { value: 'hidden', label: t('已隐藏') },
+              ]}
+              value={filter}
+              onChange={value => {
+                setFilter(value)
+                setPage(1)
+              }}
+            />
+
+            <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
+              {t('排序')}
+              <select
+                aria-label={t('项目排序')}
+                value={sortKey}
+                onChange={e => {
+                  setSortKey(e.target.value as SortKey)
+                  setPage(1)
+                }}
+                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+              >
+                {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
+                  <option key={k} value={k}>
+                    {t(SORT_LABELS[k])}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                aria-label={t('切换排序方向')}
+                onClick={() => {
+                  setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+                  setPage(1)
+                }}
+                className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              >
+                {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Selection action bar — only visible while rows are checked. */}
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border flex-shrink-0 bg-bg-active/40">
-            <span className="text-ui-sm text-fg-muted">{t('已选 {count} 项', { count: selectedIds.size })}</span>
+            <span className="text-ui-sm text-fg-muted">
+              {t('已选 {count} 项', { count: selectedIds.size })}
+            </span>
             <button
               type="button"
-              onClick={() => void handleBatchDelete()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
+              onClick={() => void handleBatchRemove()}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
             >
-              <Trash2 size={13} /> {t('批量删除')}
+              <FolderMinus size={13} /> {t('批量移除')}
             </button>
             <button
               type="button"
               onClick={() => void saveSelectedProjectsAsWorkspace([...selectedIds])}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
             >
               <Layers size={13} /> {t('保存选中为多项目工作区')}
             </button>
             <button
               type="button"
               onClick={clearSelection}
-              className="ml-auto px-2 py-1 text-[12px] rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              className="ml-auto px-2 py-1 text-ui-sm rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             >
               {t('取消选择')}
             </button>
@@ -332,13 +485,20 @@ export default function ProjectManager() {
         )}
 
         {/* List */}
-        <div className="flex-1 overflow-auto">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-auto">
           {sortedProjects.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-fg-muted">
-              {t('暂无项目。点击上方按钮添加。')}
+            <div className="px-4 py-10 text-center text-ui text-fg-muted">
+              {t(projects.length === 0 ? '暂无项目。点击上方按钮添加。' : '没有匹配的项目')}
             </div>
           ) : (
-            <table className="w-full text-[13px]">
+            <table className="project-manager-table w-full min-w-[720px] table-fixed text-ui">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-[28%]" />
+                <col />
+                <col className="w-[9em]" />
+                <col className="w-44" />
+              </colgroup>
               <thead className="sticky top-0 bg-bg-elevated border-b border-border-strong text-fg-muted">
                 <tr className="text-left">
                   <th className="px-3 py-1.5 w-8">
@@ -346,7 +506,7 @@ export default function ProjectManager() {
                       checked={allSelected}
                       indeterminate={someSelected}
                       onChange={toggleAll}
-                      ariaLabel={t('全选当前列表')}
+                      ariaLabel={t('全选当前页')}
                     />
                   </th>
                   <Th onClick={() => cycleSort('name')} active={sortKey === 'name'} dir={sortDir}>
@@ -355,17 +515,22 @@ export default function ProjectManager() {
                   <Th onClick={() => cycleSort('path')} active={sortKey === 'path'} dir={sortDir}>
                     {t('路径')}
                   </Th>
-                  <Th onClick={() => cycleSort('last_opened_at')} active={sortKey === 'last_opened_at'} dir={sortDir}>
+                  <Th
+                    onClick={() => cycleSort('last_opened_at')}
+                    active={sortKey === 'last_opened_at'}
+                    dir={sortDir}
+                  >
                     {t('最近打开')}
                   </Th>
                   <th className="px-3 py-1.5 font-medium text-right">{t('操作')}</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedProjects.map(project => {
+                {pageProjects.map(project => {
                   const unavailable = unavailableProjectIds.includes(project.id)
                   const isCurrent = currentProject?.id === project.id
                   const checked = selectedIds.has(project.id)
+                  const location = sshProjectDisplayPath(project, null, sshConnections)
                   // trustTick invalidates this read when localStorage trust changes.
                   const trustLevel = trustTick >= 0 ? getWorkspaceTrust(project) : 'undecided'
                   const trusted = trustLevel === 'trusted'
@@ -374,74 +539,110 @@ export default function ProjectManager() {
                     <tr
                       key={project.id}
                       className={`border-b border-border/60 group ${
-                        checked ? 'bg-accent/10' : isCurrent ? 'bg-bg-active/40' : 'hover:bg-bg-hover/60'
+                        checked
+                          ? 'bg-accent/10'
+                          : isCurrent
+                            ? 'bg-bg-active'
+                            : 'hover:bg-bg-hover/60'
                       }`}
                     >
-                      <td className="px-3 py-2 align-middle">
+                      <td className="project-selection-cell px-3 py-2 align-middle">
                         <Checkbox
                           checked={checked}
                           onChange={() => toggleOne(project.id)}
-                          ariaLabel={t('选择 {name}', { name: project.name })}
+                          ariaLabel={t('选择 {name}', {
+                            name: projectLabels.get(project.id)?.text ?? project.name,
+                          })}
                         />
                       </td>
-                      <td className="px-3 py-2 align-middle">
-                        <div className="flex items-center gap-1.5">
+                      <td className="project-name-cell px-3 py-2 align-middle">
+                        <div className="flex min-w-0 items-center gap-1.5">
                           {unavailable ? (
                             <AlertTriangle size={13} className="text-warn flex-shrink-0" />
                           ) : project.hidden ? (
                             <EyeOff size={13} className="text-fg-dim flex-shrink-0" />
                           ) : (
-                            <Folder size={13} className="text-accent flex-shrink-0" />
+                            <ProjectKindIcon
+                              project={project}
+                              size={13}
+                              className={`${isCurrent ? 'text-brand' : 'text-fg-muted'} flex-shrink-0`}
+                            />
                           )}
                           <Tooltip
-                            label={unavailable ? t('目录不可用，请重新定位') : project.name}
+                            label={
+                              unavailable
+                                ? t('目录不可用，请重新定位')
+                                : projectChipTooltipLabel(project, sshConnections, t)
+                            }
                             side="bottom"
-                            onlyWhenOverflow={!unavailable}
-                            wrapperClassName="max-w-[160px] min-w-0"
+                            wrapperClassName="min-w-0 flex-1"
                           >
                             <button
                               type="button"
                               onClick={() => void handleActivate(project)}
                               disabled={unavailable}
-                              className={`truncate max-w-[160px] text-left ${
+                              aria-label={projectLabels.get(project.id)?.text ?? project.name}
+                              className={`flex w-full min-w-0 items-center text-left ${
                                 unavailable
                                   ? 'text-fg-dim cursor-default'
                                   : isCurrent
-                                  ? 'text-fg font-medium'
-                                  : 'text-fg hover:text-accent'
+                                    ? 'text-fg font-medium'
+                                    : 'text-fg hover:text-accent'
                               }`}
                             >
-                              {project.name}
+                              <ProjectName
+                                name={project.name}
+                                label={projectLabels.get(project.id)}
+                              />
                               {isCurrent && (
-                                <Check size={11} className="inline-block ml-1 text-accent align-middle" />
+                                <Check size={13} className="ml-1 shrink-0 text-brand" />
                               )}
                             </button>
                           </Tooltip>
+                          <ProjectKindBadge project={project} />
                         </div>
                       </td>
-                      <td className="px-3 py-2 align-middle">
+                      <td className="project-path-cell px-3 py-2 align-middle">
                         <Tooltip
-                          label={project.path}
+                          label={location}
                           side="bottom"
                           onlyWhenOverflow
-                          wrapperClassName="block truncate max-w-[260px]"
+                          wrapperClassName="block min-w-0 truncate"
                         >
-                          <span className="block truncate max-w-[260px] text-fg-muted">
-                            {project.path}
+                          <span className="block truncate font-mono text-ui-sm text-fg-muted">
+                            {location}
                           </span>
                         </Tooltip>
                       </td>
-                      <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-[12px]">
+                      <td className="project-time-cell px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-ui-sm">
                         {timeAgo(project.last_opened_at, t)}
                       </td>
-                      <td className="px-3 py-2 align-middle">
-                        <div className="flex items-center justify-end gap-0.5">
+                      <td className="project-actions-cell px-3 py-2 align-middle">
+                        <button
+                          type="button"
+                          aria-label={t('项目操作：{name}', { name: projectLabels.get(project.id)?.text ?? project.name })}
+                          aria-haspopup="menu"
+                          aria-expanded={actionMenu?.projectId === project.id}
+                          className="project-overflow-action rounded p-1.5 text-fg-muted hover:bg-bg-hover hover:text-fg focus:bg-bg-hover"
+                          onClick={event => {
+                            event.currentTarget.focus()
+                            const rect = event.currentTarget.getBoundingClientRect()
+                            setActionMenu({ projectId: project.id, x: rect.right - 180, y: rect.bottom + 4 })
+                          }}
+                        ><MoreHorizontal size={16} /></button>
+                        <div className="project-inline-actions flex items-center justify-end gap-0.5">
                           {project.hidden ? (
-                            <ActBtn label={t('恢复显示')} onClick={() => void unhideProject(project.id)}>
+                            <ActBtn
+                              label={t('恢复显示')}
+                              onClick={() => void unhideProject(project.id)}
+                            >
                               <Eye size={14} />
                             </ActBtn>
                           ) : (
-                            <ActBtn label={t('从顶栏隐藏')} onClick={() => void hideProject(project.id)}>
+                            <ActBtn
+                              label={t('从顶栏隐藏')}
+                              onClick={() => void hideProject(project.id)}
+                            >
                               <EyeOff size={14} />
                             </ActBtn>
                           )}
@@ -481,11 +682,14 @@ export default function ProjectManager() {
                           <ActBtn label={t('重命名')} onClick={() => handleRename(project)}>
                             <Pencil size={14} />
                           </ActBtn>
-                          <ActBtn label={t('重新定位')} onClick={() => handleRelocate(project)}>
+                          <ActBtn
+                            label={project.kind === 'ssh' ? t('重新连接') : t('重新定位')}
+                            onClick={() => handleRelocate(project)}
+                          >
                             <LocateFixed size={14} />
                           </ActBtn>
-                          <ActBtn label={t('永久删除')} danger onClick={() => handleDelete(project)}>
-                            <Trash2 size={14} />
+                          <ActBtn label={t('移除项目')} onClick={() => handleRemove(project)}>
+                            <FolderMinus size={14} />
                           </ActBtn>
                         </div>
                       </td>
@@ -497,20 +701,73 @@ export default function ProjectManager() {
           )}
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 border-t border-border flex-shrink-0 text-ui-sm text-fg-muted">
+          <span role="status">
+            {t('显示 {start}-{end} 项，共 {total} 项', {
+              start: sortedProjects.length === 0 ? 0 : pageStart + 1,
+              end: Math.min(pageStart + pageSize, sortedProjects.length),
+              total: sortedProjects.length,
+            })}
+          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1.5">
+              {t('每页显示')}
+              <select
+                value={pageSize}
+                onChange={event => {
+                  setPageSize(Number(event.target.value))
+                  setPage(1)
+                }}
+                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+              >
+                {[10, 20, 50].map(size => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <nav aria-label={t('项目分页')} className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label={t('上一页')}
+                disabled={currentPage === 1}
+                onClick={() => setPage(currentPage - 1)}
+                className="p-1 rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="whitespace-nowrap">
+                {t('第 {page} / {total} 页', { page: currentPage, total: pageCount })}
+              </span>
+              <button
+                type="button"
+                aria-label={t('下一页')}
+                disabled={currentPage === pageCount}
+                onClick={() => setPage(currentPage + 1)}
+                className="p-1 rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </nav>
+          </div>
+        </div>
+
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-strong flex-shrink-0">
-          <span className="text-ui-sm text-fg-muted">
-            {t('顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录')}
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border-strong flex-shrink-0">
+          <span className="min-w-0 text-ui-sm leading-relaxed text-fg-muted">
+            {t('从顶栏隐藏后，项目仍保留在列表中。移除项目不会删除磁盘文件。')}
           </span>
           <button
             type="button"
             onClick={closeProjectManager}
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="flex-shrink-0 px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>
         </div>
       </div>
+      {actionMenu && menuProject && <ContextMenu x={actionMenu.x} y={actionMenu.y} items={projectActions(menuProject)} onClose={() => setActionMenu(null)} />}
     </ModalOverlay>
   )
 }
@@ -536,8 +793,7 @@ function Th({
         }`}
       >
         {children}
-        {active &&
-          (dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+        {active && (dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
       </button>
     </th>
   )
@@ -561,9 +817,11 @@ function ActBtn({
         aria-label={label}
         onClick={onClick}
         className={`p-1 rounded transition-colors
-          ${danger
-            ? 'text-fg-dim hover:text-danger'
-            : 'text-fg-dim hover:text-fg hover:bg-bg-active'}`}
+          ${
+            danger
+              ? 'text-fg-dim hover:text-danger'
+              : 'text-fg-dim hover:text-fg hover:bg-bg-active'
+          }`}
       >
         {children}
       </button>
@@ -593,9 +851,11 @@ function Checkbox({
         onChange()
       }}
       className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors
-        ${checked || indeterminate
-          ? 'bg-accent border-accent text-white'
-          : 'border-border-strong text-transparent hover:border-accent'}`}
+        ${
+          checked || indeterminate
+            ? 'bg-action border-accent text-on-action'
+            : 'border-border-strong text-transparent hover:border-accent'
+        }`}
     >
       {indeterminate ? (
         <span className="block h-[2px] w-2 bg-current" />

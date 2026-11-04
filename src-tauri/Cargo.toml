@@ -1,20 +1,13 @@
 [package]
 name = "qingcode"
-version = "0.1.11"
+version = "0.1.15"
 description = "QingCode — a lightweight multi-project code editor"
 authors = ["Franciz"]
 license = "MIT"
 edition = "2021"
 
 [workspace]
-members = [
-  ".",
-  "language-components/typescript",
-  "language-components/python",
-  "language-components/java",
-  "language-components/rust",
-  "language-components/go",
-]
+members = [".", "qingcode-server", "qingcode-contracts"]
 default-members = ["."]
 resolver = "2"
 
@@ -39,14 +32,16 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+base64 = "0.22"
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-json5 = "0.4"
 dirs = "6"
+glob = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 sysinfo = "0.33"
@@ -60,30 +55,50 @@ notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # Sync HTTP for release checks only (avoid pulling reqwest/tokio net).
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
-# OS file clipboard (CF_HDROP / NSPasteboard file URLs). No image feature.
+# sha256 for verifying downloaded remote-server binaries (see remote_ssh/server.rs).
+sha2 = "0.10"
+# OS file clipboard; Windows screenshots use the native PNG/DIB reader.
 arboard = { version = "3.6", default-features = false }
-tree-sitter-tags = "0.26.11"
-tree-sitter = "0.26.11"
-tree-sitter-language = "0.1.7"
-libloading = "0.8"
+russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "2.4.0"
+# SSH 远端代理（qingcode-server）的协议契约：帧编解码与消息类型两端共用，避免漂移。
+qingcode-server = { path = "qingcode-server" }
+qingcode-contracts = { path = "qingcode-contracts" }
+tokio = { version = "1", features = ["io-util", "sync", "time"] }
+# Independent Agent transport; use the same ring TLS provider as SSH.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", features = ["sink"] }
+url = "2"
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+ring = "0.17"
+subtle = "2"
+qrcode = { version = "0.14", default-features = false }
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
 
+# 与 qingcode-server 共用终端解析器，移动接回只导出最新屏幕。
+vt100 = "0.18"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
-[dev-dependencies]
-# Tests use in-process grammars; release binaries load the same grammars from
-# independently installable language-component dynamic libraries.
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-rust = "0.24.2"
-tree-sitter-python = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-java = "0.23.5"
+[target.'cfg(not(windows))'.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+png = "0.18"
+
+[patch.crates-io]
+# Windows event-loop callback double-free (HEAP_FAILURE_BLOCK_NOT_BUSY).
+# See vendor/tao/QINGCODE.md.
+tao = { path = "vendor/tao" }
 
 # 面向构建速度优化的 release profile：
 # - opt-level 3 → 2：跳过最昂贵的 LLVM 向量化/内联 pass，编译提速最明显，运行时几乎无感
@@ -100,3 +115,12 @@ panic = "abort"
 debug = false
 # 开启 release 增量编译：仅改少量 Rust 文件时 package:exe 明显更快（体积略增，运行时几乎无感）
 incremental = true
+
+# 远端代理 qingcode-server 专用：同 release，但 panic 走 unwind。
+# daemon 是常驻进程、承载全部远端终端，panic=abort 时任一终端的 vt100 解析 panic
+# 都会整进程崩溃、所有终端进程随之丢失。unwind 下 pty.rs 用 catch_unwind 只重建
+# 该终端的解析器；其余位置的 panic 仍由 daemon 的 panic hook 记日志后 abort。
+# Cargo 不允许按包覆盖 panic，所以单独成 profile：`cargo build -p qingcode-server --profile server-release`。
+[profile.server-release]
+inherits = "release"
+panic = "unwind"

@@ -8,6 +8,7 @@ import {
   isGlobPattern,
   isNavigable,
   nextSearchBudget,
+  normalizeTypeFilterExtension,
   rowHeightOf,
   SEARCH_RESULT_BUDGETS,
   trimContentFiles,
@@ -22,6 +23,12 @@ describe('type filters', () => {
     expect(typeFilterLabel({ kind: 'star', exts: ['md', 'txt'] })).toBe('*')
     expect(typeFilterExtensions({ kind: 'ext', ext: 'rs' })).toEqual(['rs'])
     expect(typeFilterExtensions({ kind: 'star', exts: ['a', 'b'] })).toEqual(['a', 'b'])
+  })
+
+  it('normalizes a custom extension', () => {
+    expect(normalizeTypeFilterExtension(' .Vue ')).toBe('vue')
+    expect(normalizeTypeFilterExtension('...PY')).toBe('py')
+    expect(normalizeTypeFilterExtension('  ')).toBeNull()
   })
 })
 
@@ -77,8 +84,11 @@ describe('filterFilenameHits', () => {
 
   it('steps search budgets for load-more', () => {
     expect(nextSearchBudget(SEARCH_RESULT_BUDGETS[0])).toBe(500)
-    expect(nextSearchBudget(2000)).toBeNull()
-    expect(rowHeightOf({ kind: 'footer', loading: false, hasMore: false })).toBe(22)
+    expect(nextSearchBudget(2000)).toBe(5000)
+    expect(nextSearchBudget(10_000)).toBeNull()
+    expect(
+      rowHeightOf({ kind: 'footer', loading: false, hasMore: false, limitReached: true }),
+    ).toBe(28)
   })
 })
 

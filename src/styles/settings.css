@@ -1,15 +1,19 @@
 /* Shared text-input chrome (border/background/focus). Layout (padding, width,
    font-size) stays on Tailwind classes at the call site so icon slots still work. */
 .setting-input {
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  background-color: var(--color-bg-deep);
+  min-height: var(--ui-control-height);
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-border-strong);
+  background-color: var(--color-bg-input);
   color: var(--color-fg);
   outline: none;
   transition: border-color 120ms ease;
 }
 .setting-input::placeholder {
   color: var(--color-fg-dim);
+}
+.setting-input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--color-fg-muted) 55%, var(--color-border-strong));
 }
 .setting-input:focus,
 .setting-input:focus-visible {
@@ -21,14 +25,14 @@
 .setting-control {
   min-width: 120px;
   max-width: 100%;
-  height: 26px;
-  border-radius: 2px;
+  height: var(--ui-control-height);
+  border-radius: var(--radius-sm, 4px);
   border: 1px solid var(--color-border-strong);
-  background-color: var(--color-bg-deep);
+  background-color: var(--color-bg-input);
   color: var(--color-fg);
   padding: 0 8px;
-  font-size: 13px;
-  line-height: 24px;
+  font-size: var(--ui-font-size);
+  line-height: calc(var(--ui-control-height) - 2px);
   outline: none;
   box-shadow: none;
   color-scheme: dark;
@@ -39,23 +43,57 @@ html[data-theme='light'] .setting-control {
   color-scheme: light;
 }
 
+html[data-theme='light'] .setting-input {
+  border-color: var(--color-border-strong);
+}
+html[data-theme='light'] .setting-input:focus,
+html[data-theme='light'] .setting-input:focus-visible {
+  border-color: var(--color-accent);
+}
+
+html[data-theme='olive'] .setting-control,
 html[data-theme='forest'] .setting-control {
   color-scheme: dark;
 }
 
-.setting-control:hover:not(:disabled) {
+.setting-control:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: color-mix(in srgb, var(--color-fg-muted) 55%, var(--color-border-strong));
 }
 
 .setting-control:focus,
-.setting-control:focus-visible {
+.setting-control:focus-visible,
+.setting-number-with-unit:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
-.setting-control:disabled {
+.setting-control:disabled,
+.setting-control[aria-disabled='true'] {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Keep the value and unit in separate slots, including at larger UI font sizes. */
+.setting-number-with-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: max(120px, 8.5em);
+}
+
+.setting-number-with-unit-input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  outline: none;
+  box-shadow: none;
 }
 
 .setting-control-wide {
@@ -72,8 +110,8 @@ html[data-theme='forest'] .setting-control {
     linear-gradient(45deg, transparent 50%, var(--color-fg-muted) 50%),
     linear-gradient(135deg, var(--color-fg-muted) 50%, transparent 50%);
   background-position:
-    calc(100% - 14px) 11px,
-    calc(100% - 9px) 11px;
+    calc(100% - 14px) center,
+    calc(100% - 9px) center;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
 }
@@ -122,4 +160,106 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
 .setting-control optgroup {
   background: var(--color-bg-elevated);
   color: var(--color-fg);
+}
+
+/* Mobile connection uses its own width and font size, including in split editors. */
+.mobile-connection-settings { container: mobile-connection / inline-size; }
+.mobile-connection-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.mobile-connection-pairing-container { min-width: 0; container: mobile-pairing / inline-size; }
+.mobile-connection-pairing { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.mobile-connection-qr { justify-self: center; }
+.mobile-connection-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.mobile-connection-device { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.mobile-connection-device-status { grid-column: 2; grid-row: 2; }
+.mobile-connection-device-remove { grid-column: 3; grid-row: 1 / span 2; }
+@container mobile-connection (min-width: 40em) {
+  .mobile-connection-device { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .mobile-connection-device-status { grid-column: 3; grid-row: 1; }
+  .mobile-connection-device-remove { grid-column: 4; grid-row: 1; }
+}
+@container mobile-connection (min-width: 64em) {
+  .mobile-connection-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+@container mobile-pairing (min-width: 34em) {
+  .mobile-connection-pairing { grid-template-columns: 160px minmax(0, 1fr); }
+  .mobile-connection-qr { justify-self: start; }
+}
+
+/* Terminal profiles respond to the settings column, including side-terminal layouts. */
+.terminal-profiles {
+  container-type: inline-size;
+}
+.terminal-profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.terminal-profile-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px;
+  border-radius: var(--radius-sm, 4px);
+}
+.terminal-profile-toggle:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+.terminal-profile-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+.terminal-profile-default,
+.terminal-profile-add,
+.terminal-profile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: var(--ui-control-height);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0 6px;
+  font-size: var(--ui-font-size-sm);
+}
+.terminal-profile-add {
+  border: 1px solid var(--color-border-strong);
+}
+.terminal-profile-add:hover,
+.terminal-profile-icon:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg);
+}
+.terminal-profile-icon {
+  width: var(--ui-control-height);
+  color: var(--color-fg-muted);
+}
+.terminal-profile-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-deep);
+}
+.terminal-profile-command {
+  grid-column: 1 / -1;
+}
+@container (max-width: 420px) {
+  .terminal-profile-summary {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .terminal-profile-toggle {
+    flex-basis: 100%;
+  }
+  .terminal-profile-actions {
+    margin-left: auto;
+  }
+  .terminal-profile-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

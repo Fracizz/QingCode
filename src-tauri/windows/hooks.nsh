@@ -10,6 +10,7 @@
 !define QING_WEBVIEW2_BOOTSTRAPPER_URL "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 ; Product page (offline installers / docs) if the bootstrapper link is blocked.
 !define QING_WEBVIEW2_PAGE_URL "https://developer.microsoft.com/microsoft-edge/webview2/"
+!define QING_CLOSE_APP_SCRIPT "${__FILEDIR__}\close-running-app.ps1"
 
 !macro QingReadWebView2Version
   StrCpy $R9 ""
@@ -30,7 +31,7 @@
   Pop $0
   ${If} $0 == "success"
     DetailPrint "Installing WebView2..."
-    ExecWait '"$TEMP\MicrosoftEdgeWebview2Setup.exe" /install' $1
+    ExecWait '"$TEMP\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
     ${If} $1 = 0
       !insertmacro QingReadWebView2Version
       ${If} $R9 != ""
@@ -43,6 +44,41 @@
     ${EndIf}
   ${Else}
     DetailPrint "WebView2 download failed: $0"
+  ${EndIf}
+!macroend
+
+; Detect without closing any windows. Only force-close this installation after
+; explicit confirmation; refusal, silent mode, or failure must stop installation.
+!macro QingCloseRunningApp
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\close-running-app.ps1" "${QING_CLOSE_APP_SCRIPT}"
+  ; NSIS is 32-bit. Native PowerShell can read the paths of 64-bit editors;
+  ; redirected 32-bit Get-Process may return an empty Path and miss them.
+  StrCpy $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${RunningX64}
+    StrCpy $2 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  nsExec::ExecToStack '"$2" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -CheckOnly'
+  Pop $0
+  Pop $1
+  ${If} $0 == 2
+    ${If} ${Silent}
+      SetErrorLevel 2
+      Abort "QingCode is running. Close QingCode and run setup again."
+    ${EndIf}
+    BringToFront
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(qingConfirmForceClose)" IDYES qing_force_close
+    SetErrorLevel 2
+    Abort "$(qingCloseCancelled)"
+    qing_force_close:
+      nsExec::ExecToStack '"$2" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -Force -TimeoutSeconds 10'
+      Pop $0
+      Pop $1
+  ${EndIf}
+  ${If} $0 != 0
+    DetailPrint "$1"
+    SetErrorLevel 2
+    Abort "$(qingCloseFailed)"
   ${EndIf}
 !macroend
 
@@ -64,6 +100,25 @@
     Abort
 !macroend
 
+; Remove only the files shipped by the retired navigation components.
+; Non-recursive RMDir preserves any additional files in these directories.
+!macro QingRemoveLegacyNavigationComponent ID
+  Delete "$INSTDIR\language-components\${ID}\qingcode_language_${ID}.dll"
+  Delete "$INSTDIR\language-components\${ID}\component.json"
+  RMDir "$INSTDIR\language-components\${ID}"
+!macroend
+
+!macro QingRemoveLegacyNavigationComponents
+  !insertmacro QingRemoveLegacyNavigationComponent "typescript"
+  !insertmacro QingRemoveLegacyNavigationComponent "python"
+  !insertmacro QingRemoveLegacyNavigationComponent "java"
+  !insertmacro QingRemoveLegacyNavigationComponent "rust"
+  !insertmacro QingRemoveLegacyNavigationComponent "go"
+  RMDir "$INSTDIR\language-components"
+  ; Missing legacy files are expected on clean installs.
+  ClearErrors
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro QingReadWebView2Version
   ${If} $R9 == ""
@@ -72,4 +127,10 @@
       !insertmacro QingOfferWebView2Download
     ${EndIf}
   ${EndIf}
+  !insertmacro QingCloseRunningApp
+  !insertmacro QingRemoveLegacyNavigationComponents
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro QingRemoveLegacyNavigationComponents
 !macroend

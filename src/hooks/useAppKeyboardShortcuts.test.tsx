@@ -1,22 +1,36 @@
 // @vitest-environment jsdom
 
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SHORTCUTS } from '../lib/shortcuts'
 import { useAppKeyboardShortcuts } from './useAppKeyboardShortcuts'
 
 const mocks = vi.hoisted(() => ({
-  findUsagesAtActiveEditor: vi.fn(),
+  openSymbolPicker: vi.fn(),
   requestGlobalSearch: vi.fn(),
+  requestSearch: vi.fn(),
+  explorerDirectoryForSearchShortcut: vi.fn<() => string | null>(() => null),
   activeEditorSelectionSeed: vi.fn(() => 'selectedName'),
+  openFileFromDialog: vi.fn(),
+  copyActivePathAction: vi.fn(),
 }))
 
-vi.mock('../lib/symbolNavigation', () => ({
-  findUsagesAtActiveEditor: mocks.findUsagesAtActiveEditor,
+vi.mock('../lib/copyFileActions', () => ({
+  copyActiveFileReferenceAction: vi.fn(),
+  copyActivePathAction: mocks.copyActivePathAction,
+  copyActiveRelativePathAction: vi.fn(),
 }))
 
 vi.mock('../lib/editorSelectionSeed', () => ({
   activeEditorSelectionSeed: mocks.activeEditorSelectionSeed,
+}))
+
+vi.mock('../lib/openFileDialog', () => ({
+  openFileFromDialog: mocks.openFileFromDialog,
+}))
+
+vi.mock('../lib/explorerSelection', () => ({
+  explorerDirectoryForSearchShortcut: mocks.explorerDirectoryForSearchShortcut,
 }))
 
 vi.mock('../store/uiStore', () => ({
@@ -25,6 +39,7 @@ vi.mock('../store/uiStore', () => ({
     {
       getState: () => ({
         requestGlobalSearch: mocks.requestGlobalSearch,
+        requestSearch: mocks.requestSearch,
         openTerminalPanel: vi.fn(),
         requestToggleTerminal: vi.fn(),
       }),
@@ -37,35 +52,24 @@ function ShortcutHarness() {
     shortcuts: DEFAULT_SHORTCUTS,
     setView: vi.fn(),
     openPalette: vi.fn(),
-    openSymbolPicker: vi.fn(),
-    openWorkspaceSymbolPicker: vi.fn(),
+    openSymbolPicker: mocks.openSymbolPicker,
   })
   return null
 }
 
 afterEach(() => {
-  mocks.findUsagesAtActiveEditor.mockReset()
+  mocks.openSymbolPicker.mockReset()
   mocks.requestGlobalSearch.mockReset()
+  mocks.requestSearch.mockReset()
+  mocks.explorerDirectoryForSearchShortcut.mockReset()
+  mocks.explorerDirectoryForSearchShortcut.mockReturnValue(null)
   mocks.activeEditorSelectionSeed.mockReset()
   mocks.activeEditorSelectionSeed.mockReturnValue('selectedName')
+  mocks.openFileFromDialog.mockReset()
+  mocks.copyActivePathAction.mockReset()
 })
 
 describe('useAppKeyboardShortcuts', () => {
-  it('runs Shift+F12 even when a WebView guard already prevented the event', () => {
-    render(<ShortcutHarness />)
-    const event = new KeyboardEvent('keydown', {
-      key: 'F12',
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    event.preventDefault()
-
-    window.dispatchEvent(event)
-
-    expect(mocks.findUsagesAtActiveEditor).toHaveBeenCalledOnce()
-  })
-
   it('opens global search with the editor selection on Ctrl+Shift+F', () => {
     render(<ShortcutHarness />)
     const event = new KeyboardEvent('keydown', {
@@ -104,5 +108,71 @@ describe('useAppKeyboardShortcuts', () => {
 
     expect(mocks.requestGlobalSearch).toHaveBeenCalledWith('selectedName')
     input.remove()
+  })
+
+  it('scopes Ctrl+Shift+F to the selected explorer directory', () => {
+    mocks.explorerDirectoryForSearchShortcut.mockReturnValue('D:/proj/src')
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.requestSearch).toHaveBeenCalledWith('D:/proj/src', 'selectedName')
+    expect(mocks.requestGlobalSearch).not.toHaveBeenCalled()
+  })
+
+  it('opens the system file picker once on Ctrl+O', () => {
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'o',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.openFileFromDialog).toHaveBeenCalledOnce()
+  })
+
+  it('opens the current file outline on Ctrl+Shift+O without opening the file picker', () => {
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'o',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.openFileFromDialog).not.toHaveBeenCalled()
+    expect(mocks.openSymbolPicker).toHaveBeenCalledOnce()
+  })
+
+  it('lets an open context menu own its displayed copy-path shortcut', () => {
+    render(<ShortcutHarness />)
+    const menu = document.createElement('div')
+    menu.setAttribute('data-qingcode-context-menu', '')
+    const item = document.createElement('button')
+    menu.appendChild(item)
+    document.body.appendChild(menu)
+    item.focus()
+
+    fireEvent.keyDown(item, {
+      key: 'c',
+      ctrlKey: true,
+      shiftKey: true,
+    })
+
+    expect(mocks.copyActivePathAction).not.toHaveBeenCalled()
+    menu.remove()
   })
 })

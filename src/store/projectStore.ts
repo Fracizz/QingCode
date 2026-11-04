@@ -1,8 +1,10 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
+import { createToastTimers, toastDuration } from '../lib/toastTimers'
 import { create } from 'zustand'
 import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
-import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
-import type { Project, RecentFile } from '../types'
+import { safeInvoke, NotInTauriError } from '../lib/tauri'
+import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import {
   activateProjectSession,
@@ -10,6 +12,7 @@ import {
   renameEditorPaths,
 } from './editorSessionBridge'
 import { translate } from '../lib/i18n'
+import { enrichDirectAgentConnections } from '../lib/directAgent'
 import {
   formatExpandDirErrorToast,
   formatReadDirErrorToast,
@@ -19,7 +22,10 @@ import {
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 import {
   deleteProjectRows,
+  deleteSshConnectionRow,
   insertProject,
+  insertSshProject,
+  listSshConnections,
   loadProjectsFromDb,
   persistProjectsToUserSettings,
   relocateProjectRows,
@@ -29,8 +35,12 @@ import {
   setProjectsSortOrders,
   touchAndLoadRecentFiles,
   upsertRecentFile,
+  upsertSshConnection,
 } from '../lib/projectRepository'
-import { durableSortOrders, reorderVisibleProjects as reorderVisibleProjectsList } from '../lib/projectChipOrder'
+import {
+  durableSortOrders,
+  reorderVisibleProjects as reorderVisibleProjectsList,
+} from '../lib/projectChipOrder'
 import {
   buildExpandedProjectsMap,
   createEphemeralProject,
@@ -53,6 +63,24 @@ import {
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
 import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
+import { pushSshServerSettingsToNative, loadEffectiveSshServerEnabled } from '../lib/sshServerSettings'
+import {
+  connectSshWorkspace,
+  activateSshWorkspace,
+  ensureSshWorkspaceConnected,
+  findSshProject,
+  isSshProject,
+  isSshSharedServerReady,
+  isSshWorkspaceReady,
+  prepareSshWorkspace,
+  requestSshReconnect,
+  sshRootUri,
+  SSH_CONNECTIONS_CHANGED_EVENT,
+  waitForSshWorkspaceConnection,
+  type SshSessionSecrets,
+} from '../lib/sshWorkspace'
+import { runSshOpening, SshPreparationError } from './sshOpeningStore'
+import { beginSshForeground, cancelSshWarmup, takeSshWarmup } from './sshWarmupStore'
 
 export type { FileNode }
 
@@ -75,6 +103,8 @@ interface ProjectState {
   fileTree: FileNode[]
   /** Root file tree per project, so multiple projects can be shown at once. */
   projectTrees: Record<string, FileNode[]>
+  /** Last failed root scan, kept visible after its toast expires. */
+  projectTreeErrors: Record<string, string>
   /** Which project rows are expanded in the sidebar (defaults to true). */
   expandedProjects: Record<string, boolean>
   /** File path to reveal/highlight in the sidebar tree. */
@@ -82,19 +112,28 @@ interface ProjectState {
   /** Increments on every reveal so Sidebar can re-scroll/expand even for the same path. */
   treeRevealSeq: number
   unavailableProjectIds: string[]
+  sshConnections: SshConnection[]
   loading: boolean
   toasts: Toast[]
 
-  loadProjects: () => Promise<void>
-  addProject: (path: string) => Promise<boolean>
+  loadProjects: (options?: { restoreCurrent?: boolean; syncFromSettings?: boolean }) => Promise<void>
+  loadSshConnections: () => Promise<void>
+  saveSshConnection: (connection: SshConnection) => Promise<void>
+  deleteSshConnection: (id: string) => Promise<void>
+  /** `name` 为空时使用目录名。 */
+  addProject: (path: string, name?: string) => Promise<boolean>
+  addSshProject: (
+    connection: SshConnection,
+    rootPath: string,
+    name: string,
+    secrets?: SshSessionSecrets
+  ) => Promise<boolean>
   addProjectFromDialog: () => Promise<void>
   addEmptyProject: () => Promise<boolean>
   removeProject: (id: string) => Promise<void>
   hideProject: (id: string) => Promise<void>
   /** Hide the given project ids from the title bar (batch). Prefer switching to `keepId` if current is hidden. */
   hideProjectsByIds: (ids: string[], keepId?: string) => Promise<void>
-  /** Hide every visible title-bar project except `keepId`. */
-  hideOtherProjects: (keepId: string) => Promise<void>
   unhideProject: (id: string) => Promise<void>
   /** Persist a manual sort order for a project (used by the project manager). */
   setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
@@ -117,10 +156,13 @@ interface ProjectState {
   ) => Promise<void>
   revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
   pushToast: (kind: ToastKind, text: string, detail?: string, action?: Toast['action']) => void
+  pauseToast: (id: string, reason: string) => void
+  resumeToast: (id: string, reason: string) => void
   dismissToast: (id: string) => void
 }
 
 /** Latest refresh request per project; older scans must not overwrite newer state. */
+const toastTimers = createToastTimers()
 const projectTreeRefreshSequences = new Map<string, number>()
 
 function nextProjectTreeRefreshSequence(projectId: string): number {
@@ -133,10 +175,72 @@ function isLatestProjectTreeRefresh(projectId: string, sequence: number): boolea
   return projectTreeRefreshSequences.get(projectId) === sequence
 }
 
+const SSH_DIRECTORY_UNAVAILABLE_RE =
+  /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
+/** 远端没响应不是凭据问题，弹重新认证对话框没用，直接报错。 */
+const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
+let projectSwitchPending = false
+
+function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
+  return runSshOpening(project, async (signal, report) => {
+    const pendingWarmup = takeSshWarmup(project.path)
+    let warmedTree: FileNode[] | null | undefined
+    if (pendingWarmup) {
+      report('service')
+      try { warmedTree = await pendingWarmup } catch { /* Foreground owns retry and diagnostics. */ }
+      signal.throwIfAborted()
+    }
+    const sharedReady = await isSshSharedServerReady(project.path)
+    signal.throwIfAborted()
+    if (sharedReady) report('mounting')
+    await ensureSshWorkspaceConnected(project)
+    signal.throwIfAborted()
+    report('service')
+    try {
+      await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
+      signal.throwIfAborted()
+      report('files')
+      // Verify a real directory read before exposing editor/terminal actions.
+      const fresh = warmedTree ?? await loadProjectRootTree(project)
+      signal.throwIfAborted()
+      const tree = previousTree ? await reloadLoadedChildren(fresh, previousTree, project.path) : fresh
+      signal.throwIfAborted()
+      const recentFiles = await touchAndLoadRecentFiles(project.id)
+      signal.throwIfAborted()
+      await activateSshWorkspace(project.path)
+      signal.throwIfAborted()
+      return { tree, recentFiles, warmed: warmedTree != null }
+    } catch (error) {
+      signal.throwIfAborted()
+      throw new SshPreparationError(String(error))
+    }
+  })
+}
+
+/**
+ * 模式已是连接配置属性，不再随项目推送；但 autoDownload / offlineDir 仍可被项目设置
+ * 覆盖，连接（可能触发部署/下载）前按当前项目重算并推给后端。
+ */
+async function syncSshServerSettingsForProject(project: Project): Promise<void> {
+  // Remote preparation carries its own settings snapshot after SFTP registration.
+  if (isSshProject(project)) return
+  try {
+    await loadEffectiveSshServerEnabled(project)
+    await pushSshServerSettingsToNative()
+  } catch (e) {
+    console.warn('sync ssh server setting failed:', e)
+  }
+}
+
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
     await syncRootsFromProjects(projects)
     await pushTrustedRootsToNative(projects)
+    // SSH 远端服务开关随项目列表一起在启动时同步到后端（常驻进程需要即时生效）。
+    // 必须先按设置文件重算再推送：模块缓存初值来自默认值，直接推送会把用户
+    // 显式关闭的开关/自动下载短暂置回默认，恰好赶上启动后的首次连接部署。
+    await loadEffectiveSshServerEnabled(null)
+    await pushSshServerSettingsToNative()
   } catch (error) {
     console.warn('sync project roots to path allowlist failed:', error)
   }
@@ -161,6 +265,10 @@ async function validateDirectoryWithRetry(path: string): Promise<boolean> {
   return false
 }
 
+async function validateProjectWithRetry(project: Project): Promise<boolean> {
+  return validateDirectoryWithRetry(project.path)
+}
+
 function withUnavailableProject(ids: string[], projectId: string, unavailable: boolean): string[] {
   if (unavailable) {
     return ids.includes(projectId) ? ids : [...ids, projectId]
@@ -175,12 +283,8 @@ function withUnavailableProject(ids: string[], projectId: string, unavailable: b
  */
 function clearCurrentProjectSession(
   get: () => { currentProject: Project | null },
-  set: (partial: {
-    currentProject: null
-    recentFiles: []
-    fileTree?: []
-  }) => void,
-  options?: { clearFileTree?: boolean },
+  set: (partial: { currentProject: null; recentFiles: []; fileTree?: [] }) => void,
+  options?: { clearFileTree?: boolean }
 ) {
   const currentId = get().currentProject?.id ?? null
   if (currentId) deactivateProjectSession(currentId)
@@ -197,10 +301,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   recentFiles: [],
   fileTree: [],
   projectTrees: {},
+  projectTreeErrors: {},
   expandedProjects: {},
   treeRevealPath: null,
   treeRevealSeq: 0,
   unavailableProjectIds: [],
+  sshConnections: [],
   loading: false,
   toasts: [],
 
@@ -215,13 +321,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set(s => ({
       toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail, action }],
     }))
-    setTimeout(() => get().dismissToast(id), action ? 8000 : normalizedDetail ? 6000 : 4000)
+    toastTimers.start(id, toastDuration({ kind, detail: normalizedDetail, action }), () => get().dismissToast(id))
   },
-  dismissToast: id => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })),
+  pauseToast: (id, reason) => toastTimers.pause(id, reason),
+  resumeToast: (id, reason) => toastTimers.resume(id, reason),
+  dismissToast: id => {
+    toastTimers.clear(id)
+    set(s => ({ toasts: s.toasts.filter(t => t.id !== id) }))
+  },
 
-  loadProjects: async () => {
+  loadProjects: async options => {
     try {
-      const { migrated, projects, importedFromSettings } = await loadProjectsFromDb()
+      const { migrated, projects, importedFromSettings } = await loadProjectsFromDb({
+        syncFromSettings: options?.syncFromSettings,
+      })
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
       if (importedFromSettings > 0) {
         get().pushToast(
@@ -242,21 +355,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
       // Await so draft recovery / tree load do not race an empty allowlist.
       await syncAllowlistRoots(merged)
+      await get().loadSshConnections()
 
       // Main window: open the most recent project immediately so the UI is not
       // gated on validating every path. Fresh windows (File → New Window) stay
       // empty — no inherited currentProject / explorer / auto terminal.
       const restoreWorkspace = shouldRestoreWorkspace()
-      if (restoreWorkspace && !get().currentProject) {
+      if (options?.restoreCurrent !== false && restoreWorkspace && !get().currentProject) {
         const candidate = pickRestoreCandidate(projects, ephemeralProjects)
-        if (candidate) void get().switchProject(candidate)
+        // Startup files must be opened only after the initial editor session is active;
+        // otherwise activateProjectSession replaces the just-opened standalone tab.
+        if (candidate) await get().switchProject(candidate)
       }
 
       void (async () => {
         const results = await Promise.all(
-          projects.map(async project => ({
+          projects.filter(project => !isSshProject(project)).map(async project => ({
             id: project.id,
-            ok: await validateDirectoryWithRetry(project.path),
+            ok: await validateProjectWithRetry(project),
           }))
         )
 
@@ -295,10 +411,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  addProject: async (path: string) => {
+  loadSshConnections: async () => {
+    try {
+      set({ sshConnections: await enrichDirectAgentConnections(await listSshConnections()) })
+    } catch (error) {
+      if (error instanceof NotInTauriError) {
+        set({ sshConnections: [] })
+        return
+      }
+      console.error('loadSshConnections failed:', error)
+      set({ sshConnections: [] })
+    }
+  },
+
+  saveSshConnection: async connection => {
+    await upsertSshConnection(connection)
+    await get().loadSshConnections()
+    window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
+  },
+
+  deleteSshConnection: async id => {
+    await deleteSshConnectionRow(id)
+    await get().loadSshConnections()
+    window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
+  },
+
+  addProject: async (path: string, requestedName?: string) => {
     try {
       await safeInvoke('检查项目目录', 'validate_directory', { path })
-      const name = baseName(path)
+      const name = requestedName?.trim() || baseName(path)
       const id = crypto.randomUUID()
       const now = Date.now()
       // Ask trust before writing the project into the list / top bar.
@@ -323,9 +464,51 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  addSshProject: async (connection, rootPath, requestedName, secrets = {}) => {
+    const existing = findSshProject(get().projects, connection.id, rootPath)
+    if (existing) {
+      const switched = await get().switchProject(existing)
+      if (switched) get().pushToast('info', '该 SSH 项目已存在，已切换过去')
+      return switched
+    }
+    const id = crypto.randomUUID()
+    const path = sshRootUri(connection.id, rootPath)
+    const name = requestedName.trim() || baseName(rootPath)
+    const now = Date.now()
+    const project: Project = {
+      id,
+      name,
+      path,
+      kind: 'ssh',
+      connection_id: connection.id,
+      root_path: rootPath,
+      created_at: now,
+      last_opened_at: now,
+    }
+    try {
+      const trust = await ensureWorkspaceTrust(project)
+      if (trust === false) return false
+      await upsertSshConnection(connection)
+      await get().loadSshConnections()
+      await connectSshWorkspace(project, connection, secrets)
+      await safeInvoke('检查 SSH 项目目录', 'validate_directory', { path })
+      await insertSshProject(project, now)
+      await get().loadProjects()
+      const created = get().projects.find(candidate => candidate.id === id)
+      if (created && !(await get().switchProject(created))) return false
+      get().pushToast('success', `已添加 SSH 项目: ${name}`)
+      return true
+    } catch (error) {
+      console.error('addSshProject failed:', error)
+      await get().loadSshConnections()
+      get().pushToast('error', `添加 SSH 项目失败: ${String(error)}`)
+      return false
+    }
+  },
+
   addProjectFromDialog: async () => {
     try {
-      if (!isTauri()) throw new NotInTauriError('打开目录选择器')
+      if (!hasBackend()) throw new NotInTauriError('打开目录选择器')
       const selected = await open({ directory: true, multiple: true })
       const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
       if (paths.length === 0) return
@@ -339,7 +522,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   addEmptyProject: async () => {
-    if (!isTauri()) throw new NotInTauriError('新建临时项目')
+    if (!hasBackend()) throw new NotInTauriError('新建草稿项目')
     try {
       const temp = await tempDir()
       const id = crypto.randomUUID()
@@ -347,7 +530,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const separator = temp.includes('\\') && !temp.includes('/') ? '\\' : '/'
       const intended = `${temp.replace(/[\\/]+$/, '')}${separator}${dirName}`
       await authorizePaths([intended, temp])
-      const path = await safeInvoke<string>('创建临时项目目录', 'create_directory', {
+      const path = await safeInvoke<string>('创建草稿项目目录', 'create_directory', {
         parent: temp,
         name: dirName,
       })
@@ -371,12 +554,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       void get().ensureProjectTree(project)
       get().pushToast(
         'success',
-        `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`
+        `已新建草稿项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`
       )
       return true
     } catch (e) {
       console.error('addEmptyProject failed:', e)
-      get().pushToast('error', `新建临时项目失败: ${String(e)}`)
+      get().pushToast('error', `新建草稿项目失败: ${String(e)}`)
       return false
     }
   },
@@ -400,10 +583,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
       })
       void syncAllowlistRoots(get().projects)
-      get().pushToast('info', '已从列表移除临时项目；文件保留在系统临时目录')
+      get().pushToast('info', '已从列表移除草稿项目；文件保留在系统临时目录')
       return
     }
     try {
+      if (target && isSshProject(target)) {
+        cancelSshWarmup(target.path)
+        await waitForSshWorkspaceConnection(target)
+        await safeInvoke('注销 SSH 项目', 'ssh_forget_workspace_root', {
+          rootUri: target.path,
+        })
+      }
       await deleteProjectRows(id)
       const wasCurrent = get().currentProject?.id === id
       set(s => {
@@ -419,8 +609,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           expandedProjects,
         }
       })
-      await get().loadProjects()
-      void persistProjectsToUserSettings()
+      // Update the portable seed before reloading, or startup sync would reinsert
+      // the project with a new id. This reload reads only the authoritative DB.
+      await persistProjectsToUserSettings()
+      await get().loadProjects({ syncFromSettings: false })
       get().pushToast('info', '已移除项目')
     } catch (e) {
       console.error('removeProject failed:', e)
@@ -519,7 +711,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         'info',
         ephemeralIds.size === targets.length
           ? translate('已关闭其他项目')
-          : translate('已关闭其他项目，可在项目管理中恢复'),
+          : translate('已关闭其他项目，可在项目管理中恢复')
       )
     } catch (e) {
       console.error('hideProjectsByIds failed:', e)
@@ -527,12 +719,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  hideOtherProjects: async (keepId: string) => {
-    const others = get().projects
-      .filter(p => !p.hidden && p.id !== keepId)
-      .map(p => p.id)
-    await get().hideProjectsByIds(others, keepId)
-  },
 
   unhideProject: async (id: string) => {
     const target = get().projects.find(p => p.id === id)
@@ -665,12 +851,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   switchProject: async (project: Project) => {
+    // A second click must not enqueue another connection or steal activation.
+    if (projectSwitchPending) return false
+    projectSwitchPending = true
+    const endForeground = beginSshForeground()
+    let sshConnectionAttempted = false
+    let sshWorkspaceConnected = false
     try {
       const currentProject = get().currentProject
       if (currentProject?.id === project.id) {
+        if (isSshProject(project)) {
+          sshConnectionAttempted = true
+          const prepared = await prepareRemoteProject(project, get().projectTrees[project.id])
+          set(s => ({
+            fileTree: prepared.tree,
+            unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+            projectTrees: { ...s.projectTrees, [project.id]: preserveLoadedChildren(
+              prepared.tree, s.projectTrees[project.id] ?? []
+            ) },
+            projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
+          }))
+          return true
+        }
         // Fast re-click: still refresh so inactive-window tree drift is visible.
-        if (project.ephemeral) void get().ensureProjectTree(project)
-        else void get().refreshProjectTree(project)
+        if (project.ephemeral) await get().ensureProjectTree(project)
+        else await get().refreshProjectTree(project)
         return true
       }
 
@@ -680,16 +885,40 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
+      // 本会话已成功打开过、连接仍在的远程项目：直接用缓存目录树切换，
+      // 不再弹打开对话框、不阻塞在远端设置读取与整棵树重扫上，校验与刷新转后台。
+      const cachedSshTree = isSshProject(project) ? get().projectTrees[project.id] : undefined
+      if (cachedSshTree && await isSshWorkspaceReady(project.path)) {
+        const recentFiles = await touchAndLoadRecentFiles(project.id)
+        const previousId = currentProject?.id ?? null
+        set(s => ({
+          currentProject: project,
+          recentFiles,
+          fileTree: cachedSshTree,
+          unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+          expandedProjects: { ...s.expandedProjects, [project.id]: true },
+        }))
+        activateProjectSession(previousId, project.id)
+        void syncSshServerSettingsForProject(project).then(() => get().refreshProjectTree(project))
+        return true
+      }
+
+      await syncSshServerSettingsForProject(project)
+
+      sshConnectionAttempted = true
+      const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
+      sshWorkspaceConnected = true
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
       // activation on validate so terminals remain usable.
-      if (!project.ephemeral) {
+      if (!project.ephemeral && !prepared) {
         await safeInvoke('检查项目目录', 'validate_directory', {
           path: project.path,
         })
       }
       let recentFiles: RecentFile[] = []
-      if (!project.ephemeral) {
+      if (prepared) recentFiles = prepared.recentFiles
+      else if (!project.ephemeral) {
         recentFiles = await touchAndLoadRecentFiles(project.id)
       }
       const previousId = currentProject?.id ?? null
@@ -698,15 +927,42 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         recentFiles,
         unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
         expandedProjects: { ...s.expandedProjects, [project.id]: true },
+        ...(prepared ? {
+          fileTree: prepared.tree,
+          projectTrees: { ...s.projectTrees, [project.id]: prepared.tree },
+          projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
+        } : {}),
       }))
       // Keep the previous project's tabs/drafts/CM state; restore the target's.
       activateProjectSession(previousId, project.id)
+      if (prepared?.warmed) void get().refreshProjectTree(project)
       // Refresh on switch — inactive durable projects have no root watcher.
-      if (project.ephemeral) void get().ensureProjectTree(project)
-      else void get().refreshProjectTree(project)
+      if (!prepared) {
+        if (project.ephemeral) void get().ensureProjectTree(project)
+        else void get().refreshProjectTree(project)
+      }
       return true
     } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return false
+      // The opening dialog retains diagnostics and offers retry/close.
+      if (e instanceof SshPreparationError) return false
       console.error('switchProject failed:', e)
+      if (isSshProject(project)) {
+        const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
+        const remoteTimedOut = SSH_TIMEOUT_RE.test(String(e))
+        if (
+          sshWorkspaceConnected ||
+          !sshConnectionAttempted ||
+          remoteDirectoryFailed ||
+          remoteTimedOut
+        ) {
+          get().pushToast('error', `切换 SSH 项目失败: ${String(e)}`)
+        } else {
+          requestSshReconnect(project)
+          get().pushToast('info', 'SSH 连接已断开，请重新认证')
+        }
+        return false
+      }
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
@@ -714,6 +970,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
       get().pushToast('error', `切换项目失败: ${String(e)}`)
       return false
+    } finally {
+      projectSwitchPending = false
+      endForeground()
     }
   },
 
@@ -746,7 +1005,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('loadFileTree failed:', e)
-      if (isDirectoryUnavailableError(e)) {
+      if (!isSshProject(proj) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, proj.id, true),
         }))
@@ -778,6 +1037,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   ensureProjectTree: async (project: Project) => {
     if (get().projectTrees[project.id]) return
+    set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' } }))
     try {
       const tree = await loadProjectRootTree(project)
       set(s => ({
@@ -785,11 +1045,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ...s.projectTrees,
           [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
+        projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
         unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, false),
       }))
     } catch (e) {
       console.error('ensureProjectTree failed:', e)
-      if (isDirectoryUnavailableError(e)) {
+      set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: String(e) } }))
+      if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
@@ -800,6 +1062,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   refreshProjectTree: async (project: Project) => {
     const sequence = nextProjectTreeRefreshSequence(project.id)
+    set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' } }))
     try {
       const tree = await loadProjectRootTree(project)
       if (!isLatestProjectTreeRefresh(project.id, sequence)) return
@@ -813,9 +1076,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         projectTrees: {
           ...s.projectTrees,
           ...(isLatestProjectTreeRefresh(project.id, sequence)
-            ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? []) }
+            ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? [], existing) }
             : {}),
         },
+        projectTreeErrors: isLatestProjectTreeRefresh(project.id, sequence)
+          ? { ...s.projectTreeErrors, [project.id]: '' }
+          : s.projectTreeErrors,
         unavailableProjectIds: isLatestProjectTreeRefresh(project.id, sequence)
           ? withUnavailableProject(s.unavailableProjectIds, project.id, false)
           : s.unavailableProjectIds,
@@ -823,7 +1089,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
       if (!isLatestProjectTreeRefresh(project.id, sequence)) return
-      if (isDirectoryUnavailableError(e)) {
+      set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: String(e) } }))
+      if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))

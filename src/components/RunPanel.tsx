@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play,
   Square,
@@ -9,6 +9,7 @@ import {
   FileCode2,
   ShieldCheck,
   ShieldOff,
+  Search,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import {
@@ -22,7 +23,7 @@ import {
 import {
   activeTerminalsForConfig,
   rehydrateRunTerminals,
-  removeRunConfig,
+  removeRunConfigs,
   runConfig,
   stopConfig,
 } from '../lib/runConfigRuntime'
@@ -37,6 +38,7 @@ import {
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
 import RunConfigEditor from './RunConfigEditor'
+import RunConfigDiscovery from './RunConfigDiscovery'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { confirmDialog } from '../store/confirmStore'
@@ -62,6 +64,12 @@ function taskOverview(tasks: RunTask[], t: (source: string) => string): string {
 }
 
 export default function RunPanel() {
+  const projectId = useProjectStore(s => s.currentProject?.id)
+  // Selection and editor state belong to the visible project only.
+  return <RunPanelContent key={projectId} />
+}
+
+function RunPanelContent() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const configsByProject = useRunConfigStore(s => s.configsByProject)
@@ -72,16 +80,22 @@ export default function RunPanel() {
   const projects = useProjectStore(s => s.projects)
   const [editing, setEditing] = useState<RunConfig | null>(null)
   const [creating, setCreating] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
   const [projectTrusted, setProjectTrusted] = useState(false)
   const [projectRestricted, setProjectRestricted] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [removing, setRemoving] = useState(false)
+  const removingRef = useRef(false)
 
   useEffect(() => {
     if (!currentProject) return
-    void loadConfigs(currentProject).then(configs => {
-      // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
-      // rebuild running maps so Stop / 「运行中」 match live terminals.
-      rehydrateRunTerminals(configs)
-    })
+    void loadConfigs(currentProject)
+      .then(configs => {
+        // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
+        // rebuild running maps so Stop / 「运行中」 match live terminals.
+        rehydrateRunTerminals(configs, currentProject.id)
+      })
+      .catch(() => undefined)
   }, [currentProject?.id, loadConfigs, currentProject])
 
   useEffect(() => {
@@ -102,36 +116,69 @@ export default function RunPanel() {
     [configsByProject, currentProject]
   )
 
-  const requestRemove = async (config: RunConfig) => {
-    if (!currentProject) return
-    const confirmed = await confirmDialog({
-      title: t('删除运行配置？'),
-      message: t('将删除「{name}」及其任务定义。', { name: config.name }),
-      detail:
-        activeTerminalsForConfig(config.id, terminals).length > 0
-          ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
-          : t('删除后可在短时间内撤销。'),
-      kind: 'danger',
-      confirmLabel: t('删除'),
+  const selectedConfigs = configs.filter(config => selectedIds.has(config.id))
+  const allSelected = configs.length > 0 && selectedConfigs.length === configs.length
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
     })
-    if (!confirmed) return
-    await removeRunConfig(currentProject, config.id)
+  }
+
+  const requestRemove = async (targets: RunConfig[]) => {
+    if (!currentProject || targets.length === 0 || removingRef.current) return
+    removingRef.current = true
+    setRemoving(true)
+    try {
+      const running = targets.some(
+        config => activeTerminalsForConfig(config.id, terminals, currentProject.id).length > 0
+      )
+      const confirmed = await confirmDialog({
+        title: t('删除运行配置？'),
+        message:
+          targets.length === 1
+            ? t('将删除「{name}」及其任务定义。', { name: targets[0].name })
+            : t('将删除选中的 {count} 个运行配置及其任务定义。', { count: targets.length }),
+        detail: [
+          ...(targets.length > 1 ? [targets.map(config => config.name).join('\n')] : []),
+          running
+            ? targets.length === 1
+              ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+              : t('所选配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+            : t('删除后可在短时间内撤销。'),
+        ].join('\n\n'),
+        kind: 'danger',
+        confirmLabel: t('删除'),
+      })
+      if (!confirmed) return
+      const ids = targets.map(config => config.id)
+      await removeRunConfigs(currentProject, ids)
+      setSelectedIds(previous => new Set([...previous].filter(id => !ids.includes(id))))
+    } catch {
+      // saveConfigs already reports the error; keep the selection for retry.
+    } finally {
+      removingRef.current = false
+      setRemoving(false)
+    }
   }
 
   const runningTerminalsByConfig = useMemo(() => {
     const map = new Map<string, string[]>()
     for (const config of configs) {
-      const tids = activeTerminalsForConfig(config.id, terminals)
+      const tids = activeTerminalsForConfig(config.id, terminals, currentProject?.id)
       if (tids.length > 0) map.set(config.id, tids)
     }
     return map
-  }, [configs, terminals])
+  }, [configs, terminals, currentProject?.id])
 
   if (!currentProject) {
     return (
       <div className="h-full flex flex-col bg-bg-sidebar text-fg">
         <Header title={t('运行配置')} />
-        <div className="px-4 py-6 text-[13px] text-fg-muted">{t('请先选择或添加项目')}</div>
+        <div className="px-4 py-6 text-ui text-fg-muted">{t('请先选择或添加项目')}</div>
       </div>
     )
   }
@@ -141,6 +188,7 @@ export default function RunPanel() {
       <Header
         title={`${t('运行配置')} · ${currentProject.name}`}
         onAdd={() => setCreating(true)}
+        onDiscover={() => setDiscovering(true)}
         trusted={projectTrusted}
         restricted={projectRestricted}
         onRestrict={() => {
@@ -178,14 +226,57 @@ export default function RunPanel() {
         )}
       </div>
 
+      {configs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-ui-sm flex-shrink-0">
+          <label className="inline-flex items-center gap-1.5 text-fg-muted">
+            <input
+              type="checkbox"
+              aria-label={t('全选运行配置')}
+              checked={allSelected}
+              ref={node => {
+                if (node) node.indeterminate = selectedConfigs.length > 0 && !allSelected
+              }}
+              disabled={removing}
+              onChange={() => setSelectedIds(new Set(allSelected ? [] : configs.map(c => c.id)))}
+              className="h-3.5 w-3.5 accent-accent"
+            />
+            {t('全选')}
+          </label>
+          <span className="text-fg-dim" aria-live="polite">
+            {t('已选 {count} 项', { count: selectedConfigs.length })}
+          </span>
+          {selectedConfigs.length > 0 && (
+            <>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => void requestRemove(selectedConfigs)}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-danger hover:bg-bg-hover disabled:opacity-50"
+              >
+                <Trash2 size={13} />
+                {t('批量删除')}
+              </button>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => setSelectedIds(new Set())}
+                className="rounded px-1.5 py-1 text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-50"
+              >
+                {t('取消选择')}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
+            <p className="text-ui text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
               <Plus size={14} /> {t('新建配置')}
             </button>
@@ -194,12 +285,45 @@ export default function RunPanel() {
           configs.map(config => {
             const runningTids = runningTerminalsByConfig.get(config.id) ?? []
             const running = runningTids.length > 0
+            const liveTasks = terminals.filter(terminal => runningTids.includes(terminal.id))
+            const environment = liveTasks.find(terminal => terminal.runEnvironment)?.runEnvironment
+            const environmentLabel = environment
+              ? `${environment.os === 'macos' ? 'macOS' : environment.os === 'windows' ? 'Windows' : 'Linux'}${environment.kind === 'wsl' ? ` · WSL ${environment.distro ?? ''}` : environment.kind === 'ssh' ? ' · SSH' : ''}`
+              : ''
+            const overview = taskOverview(
+              config.tasks.map(task => {
+                const terminal = liveTasks.find(candidate => candidate.runTaskId === task.id)
+                return terminal
+                  ? {
+                      ...task,
+                      type:
+                        terminal.shellKind === 'interactive'
+                          ? task.type
+                          : (terminal.shellKind ?? task.type),
+                      target: terminal.launchCommand,
+                    }
+                  : task
+              }),
+              t
+            )
             return (
               <div
                 key={config.id}
-                className="group mx-2 my-1 rounded-md border border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40 transition-colors"
+                className={`group mx-2 my-1 rounded-md border transition-colors ${
+                  selectedIds.has(config.id)
+                    ? 'border-accent bg-bg-active'
+                    : 'border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40'
+                }`}
               >
                 <div className="flex items-center gap-2 px-2 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label={t('选择运行配置「{name}」', { name: config.name })}
+                    checked={selectedIds.has(config.id)}
+                    disabled={removing}
+                    onChange={() => toggleSelection(config.id)}
+                    className="h-3.5 w-3.5 flex-shrink-0 accent-accent"
+                  />
                   <Tooltip label={running ? t('停止') : t('运行')} side="bottom">
                     <button
                       type="button"
@@ -209,7 +333,9 @@ export default function RunPanel() {
                           : t('运行「{name}」', { name: config.name })
                       }
                       onClick={() =>
-                        running ? void stopConfig(config) : void runConfig(currentProject, config)
+                        running
+                          ? void stopConfig(config, currentProject.id).catch(() => undefined)
+                          : void runConfig(currentProject, config)
                       }
                       className={`w-7 h-7 flex items-center justify-center rounded-md flex-shrink-0 transition-colors
                         ${
@@ -223,22 +349,19 @@ export default function RunPanel() {
                   </Tooltip>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium truncate">{config.name}</span>
+                      <span className="text-ui font-medium truncate">{config.name}</span>
                       <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0
+                        className={`text-ui-sm px-1.5 py-0.5 rounded-full flex-shrink-0
                           ${running ? 'bg-ok/15 text-ok' : 'bg-bg-deep text-fg-dim'}`}
                       >
                         {running ? t('运行中 · {count}', { count: runningTids.length }) : t('空闲')}
                       </span>
+                      {environmentLabel && (
+                        <span className="text-ui-sm text-fg-dim">{environmentLabel}</span>
+                      )}
                     </div>
-                    <Tooltip
-                      label={taskOverview(config.tasks, t)}
-                      side="bottom"
-                      wrapperClassName="block min-w-0 w-full"
-                    >
-                      <div className="text-ui-sm mt-0.5 truncate text-fg-dim">
-                        {taskOverview(config.tasks, t)}
-                      </div>
+                    <Tooltip label={overview} side="bottom" wrapperClassName="block min-w-0 w-full">
+                      <div className="text-ui-sm mt-0.5 truncate text-fg-dim">{overview}</div>
                     </Tooltip>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
@@ -256,8 +379,9 @@ export default function RunPanel() {
                       <button
                         type="button"
                         aria-label={t('删除运行配置「{name}」', { name: config.name })}
-                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-                        onClick={() => void requestRemove(config)}
+                        disabled={removing}
+                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover disabled:opacity-50"
+                        onClick={() => void requestRemove([config])}
                       >
                         <Trash2 size={13} />
                       </button>
@@ -273,7 +397,7 @@ export default function RunPanel() {
                         <Tooltip key={tid} label={term.cwd} side="bottom">
                           <button
                             onClick={() => setActiveTerminal(tid)}
-                            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
+                            className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
                           >
                             <FileCode2 size={11} className="text-accent" />
                             <span className="truncate max-w-[160px]">{term.name}</span>
@@ -289,8 +413,10 @@ export default function RunPanel() {
         )}
       </div>
 
+      {discovering && <RunConfigDiscovery project={currentProject} onClose={() => setDiscovering(false)} />}
       {(editing || creating) && (
         <RunConfigEditor
+          key={editing?.id ?? "new"}
           project={currentProject}
           initial={editing}
           onClose={() => {
@@ -306,6 +432,7 @@ export default function RunPanel() {
 function Header({
   title,
   onAdd,
+  onDiscover,
   trusted,
   restricted,
   onRestrict,
@@ -313,6 +440,7 @@ function Header({
 }: {
   title: string
   onAdd?: () => void
+  onDiscover?: () => void
   trusted?: boolean
   restricted?: boolean
   onRestrict?: () => void
@@ -320,12 +448,18 @@ function Header({
 }) {
   const { t } = useI18n()
   return (
-    <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
+    <div className="px-4 h-9 flex items-center justify-between text-ui-xs font-semibold tracking-wide text-fg-muted flex-shrink-0">
       <span className="flex items-center gap-2 min-w-0">
         <BugPlay size={13} className="flex-shrink-0 text-brand" />
         <span className="truncate">{title}</span>
       </span>
       <span className="flex items-center gap-0.5 flex-shrink-0">
+        {onDiscover && (
+          <Tooltip label={t('发现运行配置')} side="bottom">
+            <button type="button" aria-label={t('发现运行配置')} onClick={onDiscover}
+              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"><Search size={14} /></button>
+          </Tooltip>
+        )}
         {trusted && onRestrict && (
           <Tooltip label={t('切换为受限模式')} side="bottom">
             <button

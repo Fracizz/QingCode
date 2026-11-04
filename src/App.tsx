@@ -8,16 +8,17 @@ import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
+import DirectServerUpdateDialog from './components/DirectServerUpdateDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
 import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
+import SshReconnectDialog from './components/SshReconnectDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
-import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
-import DefinitionPicker from './components/DefinitionPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
+import ProjectIdleEditor from './components/ProjectIdleEditor'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -26,25 +27,35 @@ import { useUIStore } from './store/uiStore'
 import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
-import { useWorkspaceSymbolPickerStore } from './store/workspaceSymbolPickerStore'
 import { isTauri } from './lib/tauri'
+import { hasBackend } from './lib/runtimeCapabilities'
+import { isWebTest } from './lib/webTestMode'
+import {
+  editorSurface,
+  isProjectWelcomePending,
+  noteProjectEditorOpened,
+} from './lib/editorSurface'
+import { isPinnedSettingsTab } from './utils/editorHelpers'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
-import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
-import { listenForCliRequests } from './lib/cliBridge'
+import { applyEffectiveSettings } from './lib/effectiveSettings'
 import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
-import { useSemanticIndex } from './hooks/useSemanticIndex'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
+import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from './lib/panelLayout'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
+import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
+import { listenForMobileRequests } from './lib/mobileBridge'
+import { useSshWarmup } from './hooks/useSshWarmup'
+import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
@@ -65,12 +76,24 @@ const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const SourceControlPanel = lazy(() => import('./components/SourceControlPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
+const RemoteConnectionsManager = lazy(() => import('./components/RemoteConnectionsManager'))
+const CreateProjectDialog = lazy(() => import('./components/CreateProjectDialog'))
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
 
 migrateLegacySettings()
 void import('./lib/minimapSettings').then(m => m.migrateLegacyMinimapSetting())
+
+let seenEditorTabs = useEditorStore.getState().tabs
+useEditorStore.subscribe(state => {
+  if (state.tabs === seenEditorTabs) return
+  seenEditorTabs = state.tabs
+  const projectId = useProjectStore.getState().currentProject?.id ?? null
+  if (projectId && state.tabs.some(tab => !isPinnedSettingsTab(tab.path))) {
+    noteProjectEditorOpened(projectId)
+  }
+})
 
 function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
   return <div className={className} aria-hidden="true" />
@@ -100,14 +123,19 @@ function App() {
   const { t } = useI18n()
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
+  const syncDetachedTerminals = useTerminalStore(s => s.syncDetachedTerminals)
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
   const loadRunConfigs = useRunConfigStore(s => s.loadConfigs)
   const loadMissingTabContents = useEditorStore(s => s.loadMissingTabContents)
   const currentProject = useProjectStore(s => s.currentProject)
   const projects = useProjectStore(s => s.projects)
   const loadProjects = useProjectStore(s => s.loadProjects)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const [trustTick, setTrustTick] = useState(0)
+  // 运行时设置必须在 App 层加载：欢迎页或收起编辑器时 Editor 不挂载，
+  // 否则终端滚动缓冲、SSH 粘贴上传等设置会一直停留在默认值。
+  useEffect(() => {
+    void applyEffectiveSettings(currentProject)
+  }, [currentProject])
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
@@ -123,6 +151,12 @@ function App() {
     !!currentProject &&
     (currentProject.ephemeral || isProjectTrusted(currentProject))
   const activeTabId = useEditorStore(s => s.activeTabId)
+  const openPathsKey = useEditorStore(s =>
+    s.tabs
+      .filter(tab => tab.kind !== 'diff')
+      .map(tab => tab.path)
+      .join('\0')
+  )
   const view = useUIStore(s => s.view)
   const sidebarOpen = useUIStore(s => s.sidebarOpen)
   const setView = useUIStore(s => s.setView)
@@ -136,16 +170,16 @@ function App() {
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
+  const remoteConnectionsOpen = useUIStore(s => s.remoteConnectionsOpen)
+  const createProjectOpen = useUIStore(s => s.createProjectOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const openPalette = useCommandPaletteStore(s => s.openPalette)
   const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
-  const openWorkspaceSymbolPicker = useWorkspaceSymbolPickerStore(s => s.openPicker)
 
   useAutoSave()
   useDraftRecovery()
   useFileWatcher()
-  useSemanticIndex()
   useAppUpdateCheck()
   const fileCompare = useCompareStore(s => s.request)
 
@@ -153,8 +187,11 @@ function App() {
     terminalOpen,
     setTerminalOpen,
     terminalHeight,
+    setTerminalHeight,
     terminalWidth,
+    setTerminalWidth,
     sideSplit,
+    setSideSplit,
     isTerminalResizing,
     onResizerPointerDown,
     onWidthResizerPointerDown,
@@ -164,11 +201,20 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
-  const sideEditorSlotVisible = panelLayout !== 'sideTerminal' || sideEditorVisible
+  // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
+  const sideEditorSlotVisible =
+    panelLayout !== 'sideTerminal' || sideEditorVisible || !terminalOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const sidebarSlotVisible =
     sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
+  const editorBody = editorSurface({
+    activeTabId,
+    hasProject: currentProject !== null,
+    projectsReady,
+    editorVisible: sideEditorSlotVisible,
+    projectWelcome: isProjectWelcomePending(currentProject?.id ?? null),
+  })
 
   useLayoutEffect(() => {
     if (!panelLayoutSwitching) return
@@ -189,8 +235,17 @@ function App() {
     setView,
     openPalette,
     openSymbolPicker,
-    openWorkspaceSymbolPicker,
   })
+  useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
+  useEffect(() => {
+    if (!projectsReady) return
+    const listener = listenForMobileRequests().catch(error => {
+      console.warn('Mobile bridge listener failed', error)
+    })
+    return () => { void listener.then(unlisten => unlisten?.()) }
+  }, [projectsReady])
+  useSshWarmup(projectsReady)
+  useStartupServerUpdates(projectsReady)
 
   useEffect(() => {
     let cancelled = false
@@ -214,28 +269,6 @@ function App() {
     dismissStartupSplash()
   }, [])
 
-  // Explorer "Open with" / CLI file paths — open after first paint.
-  useEffect(() => {
-    if (!isTauri()) return
-    let cancelled = false
-    let unlistenOpen: (() => void) | undefined
-    let unlistenCli: (() => void) | undefined
-    void listenForOpenFileRequests().then(fn => {
-      if (cancelled) fn()
-      else unlistenOpen = fn
-    })
-    void listenForCliRequests().then(fn => {
-      if (cancelled) fn()
-      else unlistenCli = fn
-    })
-    void openLaunchFiles()
-    return () => {
-      cancelled = true
-      unlistenOpen?.()
-      unlistenCli?.()
-    }
-  }, [])
-
   useEffect(() => {
     saveSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
@@ -256,7 +289,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     initializeTerminalEvents().then(fn => {
@@ -277,25 +310,29 @@ function App() {
     void loadMissingTabContents()
   }, [currentProject, tabsNeedContentLoad, loadMissingTabContents])
 
-  // When the current project already has terminal tabs, apply each run config's
-  // restore policy before spawning restored PTYs. Do not auto-create a terminal
-  // just because the project has none.
+  // Once an SSH workspace is ready, surface detached daemons even when the
+  // project has no restored tabs. Existing tabs still honor run-config policy
+  // before their first attach/spawn attempt.
   useEffect(() => {
     if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
-    if (!useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
-      return
-    }
     activateProject(projectId)
     let cancelled = false
     const cancelDeferred = scheduleDeferredWork(() => {
       void (async () => {
+        await syncDetachedTerminals(projectId)
+        if (cancelled) return
+        if (!useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
+          return
+        }
         const configs = await loadRunConfigs(currentProject)
         if (cancelled) return
         await applyRunConfigSessionRestorePolicy(projectId, configs)
         if (cancelled || !terminalOpen) return
         await spawnRestoredTerminals(projectId)
-      })()
+      })().catch(() => {
+        // Invalid run.json is already reported; never respawn cached commands after a parse error.
+      })
     })
     return () => {
       cancelled = true
@@ -307,12 +344,12 @@ function App() {
     loadRunConfigs,
     projectTrusted,
     spawnRestoredTerminals,
+    syncDetachedTerminals,
     terminalOpen,
   ])
 
   const handleAddProject = () => {
-    setView('explorer')
-    addProjectFromDialog()
+    useUIStore.getState().openCreateProject()
   }
 
   const inTauri = isTauri()
@@ -320,8 +357,13 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-bg text-fg">
       <TitleBar terminalOpen={terminalOpen} />
-      {!inTauri && (
-        <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-amber-500/10 border-b border-amber-500/30 text-amber-200">
+      {isWebTest() && (
+        <div className="flex-shrink-0 px-4 py-2 text-[12px] bg-brand/10 border-b border-border text-fg" role="status">
+          {t('Web 测试环境 · 文件：模拟 · 数据库：浏览器 SQLite · 终端：模拟 · SSH：模拟')}
+        </div>
+      )}
+      {!inTauri && !isWebTest() && (
+        <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-warn/10 border-b border-warn/30 text-warn">
           {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
           <code className="px-1 py-0.5 rounded bg-black/20">pnpm tauri dev</code>{' '}
           {t('启动，并在弹出的桌面窗口中操作。')}
@@ -402,6 +444,13 @@ function App() {
               layoutSwitching={panelLayoutSwitching}
               onResizerPointerDown={onResizerPointerDown}
               onWidthResizerPointerDown={onWidthResizerPointerDown}
+              onHeightChange={value => setTerminalHeight(Math.min(getTerminalMaxHeight(), Math.max(TERMINAL_MIN_HEIGHT, value)))}
+              onWidthChange={value => {
+                setTerminalWidth(clampTerminalWidth(value))
+                setSideSplit('custom')
+              }}
+              onHeightReset={() => setTerminalHeight(Math.min(getTerminalMaxHeight(), 260))}
+              onWidthReset={() => setSideSplit('equal')}
               terminalPanelRef={terminalPanelRef}
             />
           </Suspense>
@@ -423,13 +472,13 @@ function App() {
                 <EditorTabs />
                 <EditorBreadcrumbs />
                 {projectRestricted && currentProject && (
-                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
+                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-warn/10 border-b border-warn/30 text-warn">
                     <span className="min-w-0 flex-1">
                       {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
                     </span>
                     <button
                       type="button"
-                      className="flex-shrink-0 px-2 py-0.5 rounded bg-accent/90 hover:bg-accent text-white text-[12px]"
+                      className="flex-shrink-0 px-2 py-0.5 rounded bg-action/90 hover:bg-action text-on-action text-[12px]"
                       onClick={() => {
                         trustProject(currentProject)
                         void pushTrustedRootsToNative(projects)
@@ -439,12 +488,16 @@ function App() {
                     </button>
                   </div>
                 )}
-                {activeTabId ? (
+                {editorBody === 'editor' ? (
                   <Suspense fallback={<LazyFallback />}>
                     <Editor />
                   </Suspense>
-                ) : (
+                ) : editorBody === 'welcome' ? (
                   <EmptyEditor />
+                ) : editorBody === 'projectIdle' ? (
+                  <ProjectIdleEditor />
+                ) : (
+                  <div className="min-h-0 flex-1 bg-bg" />
                 )}
               </>
             )}
@@ -454,15 +507,15 @@ function App() {
 
       <StatusBar />
       <Toaster />
+      <RemoteServerUpdate />
       <ConfirmDialog />
       <ChoiceDialog />
       <PromptDialog />
       <ExplorerConflictDialog />
       <PropertiesDialog />
+      <SshReconnectDialog />
       <CommandPalette />
       <SymbolPicker />
-      <WorkspaceSymbolPicker />
-      <DefinitionPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>
@@ -474,8 +527,30 @@ function App() {
           <WorkspaceManager />
         </Suspense>
       )}
+      {createProjectOpen && (
+        <Suspense fallback={null}>
+          <CreateProjectDialog
+            open
+            onClose={() => useUIStore.getState().closeCreateProject()}
+            onCreated={() => {
+              useUIStore.getState().closeCreateProject()
+              useUIStore.getState().setView('explorer')
+            }}
+          />
+        </Suspense>
+      )}
+      {remoteConnectionsOpen && (
+        <Suspense fallback={null}>
+          <RemoteConnectionsManager />
+        </Suspense>
+      )}
     </div>
   )
+}
+
+function RemoteServerUpdate() {
+  const rootUri = useUIStore(state => state.serverUpdateRootUri)
+  return rootUri ? <DirectServerUpdateDialog key={rootUri} rootUri={rootUri} /> : null
 }
 
 export default App

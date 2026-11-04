@@ -12,9 +12,8 @@ export type ContextMenuPositionOptions = {
 /**
  * Convert viewport-space anchor coords into `position: fixed` style coords.
  *
- * `.ui-font-scaled` applies CSS `zoom`, which multiplies `left`/`top`. Callers
- * pass viewport coordinates (e.g. from `getBoundingClientRect`); this returns
- * pre-zoom style values so the menu stays on-screen when interface font scale ≠ 1.
+ * Callers pass viewport coordinates (e.g. from `getBoundingClientRect`).
+ * Explicit CSS zoom, if present, is accounted for; UI font changes do not zoom.
  */
 export function getContextMenuStylePosition(
   x: number,
