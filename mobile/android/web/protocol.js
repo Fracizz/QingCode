@@ -53,6 +53,29 @@ export function outputChunk(chunk) {
   return { screen: true, data: String(chunk.data), cols: chunk.cols, rows: chunk.rows };
 }
 
+/**
+ * 把一次轮询返回的块整理成写入批次：相邻字节块拼成一次写入，屏幕快照单独成批。
+ * 一次写入只渲染最终画面，避免连续多帧动画挤在一起刷新或露出半帧。
+ */
+export function outputBatches(chunks) {
+  const batches = [];
+  let parts = [];
+  const flush = () => {
+    if (!parts.length) return;
+    const data = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));
+    let offset = 0;
+    for (const part of parts) { data.set(part, offset); offset += part.length; }
+    batches.push({ screen: false, data });
+    parts = [];
+  };
+  for (const raw of chunks) {
+    const chunk = outputChunk(raw);
+    if (chunk.screen) { flush(); batches.push(chunk); } else parts.push(chunk.data);
+  }
+  flush();
+  return batches;
+}
+
 /** 按 UTF-16 长度切片，不拆开代理对。 */
 export function splitInput(text, size = INPUT_SLICE) {
   const parts = [];

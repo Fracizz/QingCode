@@ -73,12 +73,12 @@ try {
     const composer = document.querySelector('#compose-form').getBoundingClientRect();
     return style.paddingLeft === '8px' && style.paddingRight === '8px' && style.paddingBottom === '22px'
       && composer.left === 8 && composer.right === innerWidth - 8 && composer.bottom <= innerHeight - 22
-      && keys.scrollWidth <= keys.clientWidth && ${terminalFits};
+      && keys.getBoundingClientRect().right <= innerWidth - 8 && ${terminalFits};
   })()`
   check('390px rounded screen uses full-width keys and only bottom clearance', roundedToolsFit)
   capture('06-rounded-terminal-390')
   run('set', 'viewport', '320', '740')
-  check('320px rounded screen keeps all six key columns visible', roundedToolsFit)
+  check('320px rounded screen keeps the single key row inside the toolbar', roundedToolsFit)
   capture('06-rounded-terminal-320')
   run('set', 'viewport', '390', '430')
   check('compressed viewport still respects bottom corner clearance', `getComputedStyle(document.querySelector('#terminal-tools')).paddingBottom === '22px' && ${terminalFits}`)
@@ -104,10 +104,11 @@ try {
   run('click', '#more-keys')
   run('wait', '300')
   run('click', '#keys-dialog [data-key="alt"]')
-  run('click', '#keys-dialog [data-key="interrupt"]')
-  check('Ctrl+C in More interrupts without an accidental Alt prefix', `window.__mobileFixture.state.inputs.at(-1) === String.fromCharCode(3) && document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed') === 'false'`)
+  evaluate(`document.querySelector('#keys-dialog').close()`)
+  run('click', '#special-keys [data-key="interrupt"]')
+  check('common-row Ctrl+C interrupts without an accidental Alt prefix', `window.__mobileFixture.state.inputs.at(-1) === String.fromCharCode(3) && document.querySelector('#keys-dialog [data-key="alt"]').getAttribute('aria-pressed') === 'false'`)
   check('a single session leaves the tab rail hidden for more terminal rows', `document.querySelector('#session-rail').hidden`)
-  check('portrait key bar shows two rows of six AI coding keys without scrolling', `(() => { const keys = document.querySelector('#special-keys'); return keys.children.length === 12 && keys.scrollWidth <= keys.clientWidth && new Set([...keys.children].map(key => Math.round(key.getBoundingClientRect().top))).size === 2; })()`)
+  check('portrait key bar is one frequency-ordered row with Esc, Tab, Ctrl+C first and 更多 pinned right', `(() => { const keys = document.querySelector('#special-keys'); const buttons = [...keys.children]; const more = document.querySelector('#more-keys').getBoundingClientRect(); return buttons.length === 11 && buttons.slice(0, 3).map(key => key.dataset.key).join() === 'esc,tab,interrupt' && new Set(buttons.map(key => Math.round(key.getBoundingClientRect().top))).size === 1 && Math.round(more.right) === Math.round(keys.getBoundingClientRect().right); })()`)
   run('click', '#more-keys')
   run('wait', '300')
   run('click', '#keys-dialog [data-text="|"]')
@@ -119,7 +120,8 @@ try {
   run('click', '#keys-dialog [data-text="/"]')
   run('click', '#more-keys')
   run('wait', '300')
-  run('click', '#keys-dialog [data-key="interrupt"]')
+  evaluate(`document.querySelector('#keys-dialog').close()`)
+  run('click', '#special-keys [data-key="interrupt"]')
   check('locked Alt persists across keys while Ctrl+C stays unprefixed', `window.__mobileFixture.state.inputs.join('').endsWith(String.fromCharCode(27) + '/' + String.fromCharCode(3)) && document.querySelector('#keys-dialog [data-key="alt"]').dataset.locked === 'true'`)
   run('click', '#more-keys')
   run('wait', '300')

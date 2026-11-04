@@ -1,5 +1,5 @@
 /** Paged history replaces the viewport while the live terminal keeps receiving output. */
-export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} }) {
+export function attachTerminalHistory({ term, get, loadPage, onClose = () => {}, touchToProgram = () => false }) {
   const panel = get('terminal-history');
   const scroll = get('history-scroll');
   const content = get('history-content');
@@ -169,8 +169,16 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {} 
       queueMotion(event.deltaY);
       return;
     }
-    if (event.deltaY >= 0 || !available) return;
     const ordinary = term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none';
+    // 全屏程序（Codex / OpenCode 等）默认不把手指滑动发给程序，防止误触改变程序界面：
+    // 向上滑只打开手机端只读历史，其余方向直接吞掉。「触摸发给程序」开启时沿用原行为。
+    if (event.qingTouch && !ordinary && !touchToProgram()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.deltaY < 0 && available) open(event.deltaY);
+      return;
+    }
+    if (event.deltaY >= 0 || !available) return;
     if ((!ordinary && !event.qingTouch) || (ordinary && term.buffer.active.viewportY > 0)) return;
     event.preventDefault();
     event.stopImmediatePropagation();

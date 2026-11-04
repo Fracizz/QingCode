@@ -4,16 +4,18 @@ export function isSlashDraft(value) {
 }
 
 /** 交互输入不带回车，让终端显示自己的候选，用户另行确认。 */
-export function composerInput(value, action, bracketedPaste = false) {
+export function composerInput(value, action, bracketedPaste = false, { autoEnter = false } = {}) {
   if (action === 'slash' || action === 'complete' || action === 'preview') {
     // 多行草稿不能作为补全前缀发送，保留在命令栏中。
     if (/[\r\n]/.test(value)) return null;
     const prefix = action === 'slash' && !value.startsWith('/') ? '/' : '';
     return { data: prefix + value + (action === 'complete' ? '\t' : ''), interactive: true };
   }
-  if (isSlashDraft(value)) return { data: value, interactive: true };
+  if (isSlashDraft(value) && !autoEnter) return { data: value, interactive: true };
   const text = value.replace(/\r?\n/g, '\r');
   const data = text.includes('\r') && bracketedPaste ? '\x1b[200~' + text + '\x1b[201~' : text;
+  // 直接 Enter：回车与文字分两次写入，避免 TUI 把同一突发输入当作粘贴而吞掉回车。
+  if (autoEnter && data) return { data, enter: '\r', interactive: false };
   return { data: data + '\r', interactive: false };
 }
 
