@@ -36,11 +36,6 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></symbol>
-    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path><path d="M8 9h8"></path><path d="M8 13h5"></path></symbol>
-    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"></path></symbol>
-    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"></rect></symbol>
-    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></symbol>
-    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4"></path><path d="M12 17v4"></path><path d="M3 12h4"></path><path d="M17 12h4"></path><path d="m6 6 2.5 2.5"></path><path d="m15.5 15.5 2.5 2.5"></path><path d="m6 18 2.5-2.5"></path><path d="m15.5 8.5 2.5-2.5"></path></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8" cy="8" r="1"></circle><path d="m21 15-5-5L5 21"></path></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
   </svg>
@@ -52,29 +47,7 @@
         <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><svg><use href="#i-chevron"/></svg></button>
       </header>
 
-      <!-- 聊天式 Agent（Claude / Codex / OpenCode）：默认首页，交互见 chat.js。 -->
-      <section id="chat-screen" class="dashboard-page" aria-labelledby="chat-title">
-        <header class="page-heading with-action">
-          <div><h1 id="chat-title">对话</h1><p id="chat-subtitle">用 Claude、Codex、OpenCode 远程写代码。</p></div>
-          <div class="heading-actions">
-            <button id="chat-settings" class="icon-button tonal" type="button" aria-label="各家默认安全选项"><svg><use href="#i-shield"/></svg></button>
-            <button id="chat-new" class="primary compact" type="button"><svg><use href="#i-plus"/></svg> 新对话</button>
-          </div>
-        </header>
-        <button id="chat-quota" class="quota-strip" type="button" aria-label="查看各家使用额度" hidden></button>
-        <p id="chat-error" class="error" role="alert" hidden></p>
-        <div id="chat-list-heading" class="section-heading" hidden><h2>最近对话</h2><button id="chat-manage" class="text-button" type="button">管理</button></div>
-        <div id="chat-list" class="rows" aria-label="对话列表"></div>
-        <div id="chat-empty" class="empty-card" hidden>
-          <span class="tile"><svg><use href="#i-chat"/></svg></span>
-          <h2 id="chat-empty-title">开始一段对话</h2>
-          <p id="chat-empty-text"></p>
-          <button id="chat-empty-action" class="primary" type="button">新对话</button>
-        </div>
-        <button id="chat-terminals" class="secondary wide terminal-entry" type="button" hidden><svg><use href="#i-terminal"/></svg> 终端会话</button>
-      </section>
-
-      <section id="home-screen" class="dashboard-page" hidden aria-labelledby="home-title">
+      <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
         <div id="home-pull" class="pull-indicator" aria-hidden="true"><svg><use href="#i-refresh"/></svg></div>
         <header class="page-heading"><h1 id="home-title">终端</h1><p>接回会话，继续手边的工作。</p></header>
         <div id="home-context" class="context-card" hidden>
@@ -138,7 +111,7 @@
       </section>
 
       <nav id="dashboard-nav" aria-label="主导航">
-        <button type="button" data-page="chat" aria-current="page"><span class="nav-icon"><svg><use href="#i-chat"/></svg></span>对话</button>
+        <button type="button" data-page="home" aria-current="page"><span class="nav-icon"><svg><use href="#i-terminal"/></svg></span>终端</button>
         <button type="button" data-page="project"><span class="nav-icon"><svg><use href="#i-project"/></svg></span>项目</button>
         <button type="button" data-page="connection"><span class="nav-icon"><svg><use href="#i-host"/></svg></span>连接</button>
       </nav>
@@ -200,34 +173,6 @@
         </form>
         <p id="input-hint" class="sr-only" aria-live="polite">命令栏可编辑中文 · 空白发送为回车</p>
       </div>
-    </section>
-    <section id="chat-thread" hidden aria-labelledby="chat-thread-title">
-      <header class="chat-head">
-        <button id="chat-back" class="icon-button" type="button" aria-label="返回对话列表"><svg><use href="#i-back"/></svg></button>
-        <span id="chat-thread-avatar" class="avatar small"></span>
-        <div class="chat-heading"><h1 id="chat-thread-title"></h1><p id="chat-thread-sub"></p></div>
-        <button id="chat-thread-menu" class="icon-button" type="button" aria-label="对话设置"><svg><use href="#i-more"/></svg></button>
-      </header>
-      <div id="chat-scroll" class="chat-scroll">
-        <button id="chat-older" class="text-button" type="button" hidden>加载更早的消息</button>
-        <div id="chat-items" class="chat-items"></div>
-        <div id="chat-typing" class="chat-typing" aria-label="Agent 正在执行" hidden><span></span><span></span><span></span></div>
-      </div>
-      <button id="chat-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg><span>回到最新</span></button>
-      <footer class="chat-composer">
-        <div class="chat-chips">
-          <button id="chat-safety" class="chip" type="button" aria-label="安全选项"><svg><use href="#i-shield"/></svg><span id="chat-safety-label"></span></button>
-          <button id="chat-model" class="chip" type="button" aria-label="模型"><span id="chat-model-label"></span></button>
-          <span id="chat-usage" class="chip-text"></span>
-        </div>
-        <p id="chat-state" role="status" hidden></p>
-        <div id="chat-attachments" class="chat-attachments" hidden></div>
-        <form id="chat-form" class="chat-form">
-          <button id="chat-attach" type="button" class="icon-button" aria-label="添加图片，可多选"><svg><use href="#i-image"/></svg></button>
-          <textarea id="chat-input" rows="1" autocomplete="off" enterkeyhint="enter" aria-label="消息" placeholder="发消息…"></textarea>
-          <button id="chat-send" class="icon-button" type="submit" aria-label="发送" data-mode="send"><svg><use href="#i-send"/></svg></button>
-        </form>
-      </footer>
     </section>
   </main>
 
@@ -427,97 +372,6 @@
     <p>只读快照，最多保留末尾 60 万字符。实时输出不会改变阅读位置；刷新后才更新。</p>
     <div id="reader-scroll"><pre id="reader-content" tabindex="0" aria-label="只读输出"></pre></div>
   </dialog>
-  <dialog id="chat-new-dialog" class="sheet" aria-labelledby="chat-new-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-new-title">新对话</h2>
-    <div id="chat-new-providers" class="provider-choices" role="radiogroup" aria-label="Agent"></div>
-    <label for="chat-new-project">项目</label>
-    <select id="chat-new-project"></select>
-    <p id="chat-new-no-project" class="hint" hidden>没有可用于对话的项目；Windows 远端项目暂只支持终端。</p>
-    <fieldset id="chat-new-safety" class="setting-choices"></fieldset>
-    <p id="chat-new-full" class="warning" hidden>完全访问：Agent 不再请求手机确认，会直接编辑文件和运行命令。</p>
-    <label class="check-row"><input id="chat-new-default" type="checkbox"> 设为该 Agent 的默认安全选项</label>
-    <p id="chat-new-error" class="error" role="alert" hidden></p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-new-dialog">取消</button><button id="chat-new-start" type="button" class="primary">开始对话</button></div>
-  </dialog>
-
-  <dialog id="chat-options-dialog" class="sheet" aria-labelledby="chat-options-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-options-title">对话设置</h2>
-    <p id="chat-options-context"></p>
-    <fieldset id="chat-options-safety" class="setting-choices"></fieldset>
-    <label for="chat-options-model">模型</label>
-    <select id="chat-options-model"></select>
-    <div id="chat-options-effort-field"><label for="chat-options-effort">推理强度</label><select id="chat-options-effort"></select>
-      <p id="chat-options-effort-hint" class="hint">Claude 的推理强度在 Agent 空闲时重启生效，会话上下文自动恢复。</p></div>
-    <div id="chat-options-mode-field"><label for="chat-options-mode">模式</label><select id="chat-options-mode"></select></div>
-    <p id="chat-options-error" class="error" role="alert" hidden></p>
-    <div class="rows terminal-actions chat-option-actions">
-      <button id="chat-options-rename" type="button">重命名</button>
-      <button id="chat-options-terminal" type="button">在终端中打开项目</button>
-      <button id="chat-options-close" type="button">暂停 Agent（结束进程，保留对话）</button>
-      <button id="chat-options-delete" type="button" class="danger">删除对话</button>
-    </div>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-options-dialog">完成</button></div>
-  </dialog>
-
-  <dialog id="chat-settings-dialog" class="sheet" aria-labelledby="chat-settings-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-settings-title">默认安全选项</h2>
-    <p>新对话按这里的选项启动，保存在当前电脑。选择「完全访问」时，Agent 不再向手机请求审批。</p>
-    <div id="chat-settings-list"></div>
-    <p id="chat-settings-status" class="ok" role="status"></p>
-    <p id="chat-settings-error" class="error" role="alert" hidden></p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-settings-dialog">完成</button></div>
-  </dialog>
-
-  <dialog id="chat-quota-dialog" class="sheet" aria-labelledby="chat-quota-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-quota-title">使用额度</h2>
-    <p>读取电脑上已登录的 Claude 与 Codex 账号额度；OpenCode 按所选模型的提供方计费。</p>
-    <div id="chat-quota-list" class="quota-list"></div>
-    <p id="chat-quota-error" class="error" role="alert" hidden></p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-quota-dialog">关闭</button><button id="chat-quota-refresh" type="button" class="primary">刷新</button></div>
-  </dialog>
-
-  <dialog id="chat-project-dialog" class="sheet" aria-labelledby="chat-project-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-project-title"></h2><p id="chat-project-context"></p>
-    <div class="rows terminal-actions">
-      <button type="button" data-provider="claude">与 Claude 对话</button>
-      <button type="button" data-provider="codex">与 Codex 对话</button>
-      <button type="button" data-provider="opencode">与 OpenCode 对话</button>
-      <button id="chat-project-terminal" type="button">打开终端</button>
-    </div>
-    <p id="chat-project-unsupported" class="hint" hidden>Windows 远端项目暂只支持终端；Linux / macOS 远端可以对话。</p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-project-dialog">取消</button></div>
-  </dialog>
-
-  <dialog id="chat-manage-dialog" class="sheet" aria-labelledby="chat-manage-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 id="chat-manage-title">管理对话</h2>
-    <p>Agent 进程 24 小时内既无输入也无输出时自动暂停（手机终端同样 24 小时后结束）。暂停只结束进程，对话保留，再次发送消息时恢复上下文。</p>
-    <div id="chat-manage-list" class="rows manage-list"></div>
-    <p id="chat-manage-empty" class="hint" hidden>还没有对话。</p>
-    <p id="chat-manage-error" class="error" role="alert" hidden></p>
-    <div class="manage-bulk">
-      <button id="chat-manage-pause-all" type="button" class="secondary">暂停全部空闲 Agent</button>
-      <button id="chat-manage-delete-paused" type="button" class="secondary danger">删除已暂停的对话</button>
-    </div>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-manage-dialog">完成</button></div>
-  </dialog>
-
-  <dialog id="chat-rename-dialog" aria-labelledby="chat-rename-title">
-    <form id="chat-rename-form">
-      <h2 id="chat-rename-title">重命名对话</h2>
-      <label for="chat-rename-input">名称</label>
-      <input id="chat-rename-input" maxlength="80" autocomplete="off">
-      <p>留空保存后恢复为自动标题。</p>
-      <p id="chat-rename-error" class="error" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-close="chat-rename-dialog">取消</button><button type="submit" class="primary">保存</button></div>
-    </form>
-  </dialog>
-
   <dialog id="confirm-dialog" aria-labelledby="confirm-title">
     <form method="dialog">
       <h2 id="confirm-title"></h2><p id="confirm-text"></p>

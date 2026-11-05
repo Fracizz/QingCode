@@ -247,7 +247,6 @@ Server 的屏幕快照恢复同时恢复主/备用屏、vt100 支持的鼠标跟
 | `.qingcode/run.json` | 已对齐 | SSH 经 SFTP 读写；CLI 改远程配置需要正在运行的 GUI 会话 |
 | 任务类型 | 部分对齐 | 本地：`command` / `ps1` / `bat` / `sh` / `script`。Linux SSH：仅 `command` / `sh` / `script` |
 | `script` 解释器 | 部分对齐 | SSH：py / js / ts / rb / php / pl / bash / zsh / sh / 可执行文件。不支持远端 `.ps1` / `.bat` / `.cmd` |
-| Android 聊天式 Agent（Claude / Codex / OpenCode） | 部分对齐 | Linux / macOS 远端支持 SSH 直连与 Server 模式：复用终端通道在项目目录启动，PTY 先 `stty raw -echo` 再输出就绪标记并 `exec` Agent，标记前的输出丢弃，电脑端收到标记后才写入。Server 模式沿用持久终端的接回与补发，补发缓冲已淘汰只能拿到快照时提示可能缺少中间过程。需要远端登录 Shell 能找到已登录的 CLI。Windows 远端（ConPTY 改写输出）不支持；额度探测只读电脑本机账号 |
 
 ### 格式化
 

@@ -37,7 +37,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
 
     await step('pasted pairing link fills the form and skips manual fingerprint comparison', async () => {
       await page.evaluate(() => { window.__mobileFixture.state.clipboard = window.__mobileFixture.link('192.168.1.8', 48764) })
-      await page.click('#chat-empty-action', { label: 'add first connection' })
+      await page.click('#home-action', { label: 'add first connection' })
       await page.waitForSelector('#pair-dialog[open]')
       await page.click('#pair-paste', { label: 'paste pairing link' })
       await page.waitForFunction(() => !document.getElementById('pair-link-state').hidden)
@@ -138,7 +138,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
     })
 
     await step('resume card reopens the same session on the new address', async () => {
-      await page.click('#dashboard-nav [data-page="chat"]', { label: 'show chats' }).then(() => page.click('#chat-terminals', { label: 'open home page' }))
+      await page.click('loc=role:button[name="终端"]', { label: 'open home page' })
       await page.click('#resume', { label: 'resume last terminal' })
       await page.waitForFunction(() => document.getElementById('terminal-status').textContent === '会话中')
       assert.match(await terminalText(), /echo after/)

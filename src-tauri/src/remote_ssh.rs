@@ -6392,67 +6392,6 @@ pub async fn ssh_create_terminal(
     Ok(result)
 }
 
-/// 在远端已信任的项目目录中启动手机对话的 Agent（Claude / Codex / OpenCode）。
-/// `script` 由 `agent::process::remote_script` 生成：关闭回显与行规程后输出就绪标记再 `exec`。
-///
-/// 复用终端通道：SSH 模式走直连 PTY，Server 模式由 daemon 托管 PTY，两者都不回退。
-/// 输出与退出照常经 `mobile::deliver_*` 回调到 `agent` 模块；`id` 须带 `mobile-agent-` 前缀。
-/// Windows 远端的 ConPTY 会改写输出，暂不支持。
-pub(crate) async fn ssh_spawn_agent(
-    id: String,
-    cwd: String,
-    script: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    let manager = app.state::<SshManager>();
-    let parsed = parse_remote_uri(&cwd)?;
-    if windows_native_path(&parsed.path).is_some() {
-        return Err("Windows 远端暂不支持对话模式，请使用终端。".into());
-    }
-    let root = manager.root_for_uri(&cwd, true)?;
-    let sftp = manager.open_sftp(&parsed.connection_id).await?;
-    let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
-    // 宽终端避免 Agent 按列宽折行；raw 模式下网格大小不影响 JSON 内容。
-    let (cols, rows) = (250, 50);
-    if manager.server_mode(&parsed.connection_id) {
-        let launch = server::PersistentLaunch {
-            shell: Some("sh".into()),
-            args: vec!["-c".into(), script],
-            env: std::collections::BTreeMap::new(),
-            // 带 mobile- 前缀的名称让桌面端恢复时不把它当成遗留终端。
-            name: Some(id.clone()),
-            resolved_shell: "sh".into(),
-            fallback_from: None,
-        };
-        server::spawn_persistent_terminal(
-            id,
-            root,
-            working_directory,
-            cols,
-            rows,
-            launch,
-            app.clone(),
-            &manager,
-        )
-        .await
-        .map_err(into_server_mode_error)?;
-        return Ok(());
-    }
-    let command = format!("cd -- {} && {script}", shell_quote(&working_directory));
-    spawn_ssh_terminal(
-        id,
-        cwd,
-        Some(cols),
-        Some(rows),
-        app.clone(),
-        &manager,
-        command,
-        None,
-    )
-    .await?;
-    Ok(())
-}
-
 fn remote_script_invocation(target: &str, env_prefix: &str) -> Result<String, String> {
     let quoted = shell_quote(target);
     let extension = target

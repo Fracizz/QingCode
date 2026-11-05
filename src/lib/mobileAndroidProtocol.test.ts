@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
+  formatDuration,
+  idleLabel,
   MODIFIER_LOCK_WINDOW,
   PULL_MAX,
   PULL_THRESHOLD,
@@ -353,5 +355,27 @@ describe('mobile terminal profiles', () => {
     expect(terminalProfileChoices(null)).toEqual(plain)
     expect(terminalProfileChoices([])).toEqual(plain)
     expect(terminalProfileChoices({ error: 'old' })).toEqual(plain)
+  })
+})
+
+describe('Android 终端空闲自动结束提示', () => {
+  const hour = 3600_000
+  it('时长格式', () => {
+    expect(formatDuration(20_000)).toBe('不到 1 分钟')
+    expect(formatDuration(25 * 60_000)).toBe('25 分钟')
+    expect(formatDuration(2 * hour + 15 * 60_000)).toBe('2 小时 15 分')
+    expect(formatDuration(21 * hour + 59 * 60_000)).toBe('21 小时')
+    expect(formatDuration(23 * hour + 59 * 60_000 + 30_000, true)).toBe('24 小时')
+    expect(formatDuration(90_000, true)).toBe('2 分钟')
+  })
+
+  it('显示空闲时长与剩余时间，已结束或旧电脑端不显示', () => {
+    const now = 1_000 * hour
+    expect(idleLabel({ lastActiveAt: now - 3 * hour, idleDeadline: now + 21 * hour }, now)).toBe('空闲 3 小时，21 小时后自动结束')
+    expect(idleLabel({ lastActiveAt: now - 10_000, idleDeadline: now - 10_000 + 24 * hour }, now)).toBe('刚刚有活动，24 小时后自动结束')
+    expect(idleLabel({ lastActiveAt: now - 25 * hour, idleDeadline: now - hour }, now)).toBe('空闲 25 小时，即将自动结束')
+    expect(idleLabel({ idleDeadline: now + hour }, now)).toBe('1 小时后自动结束')
+    expect(idleLabel({ lastActiveAt: now }, now)).toBe('')
+    expect(idleLabel(null, now)).toBe('')
   })
 })

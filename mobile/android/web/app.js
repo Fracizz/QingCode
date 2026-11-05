@@ -1,4 +1,5 @@
 import {
+  idleLabel,
   DEFAULT_PORT,
   applyModifiers,
   avatarFor,
@@ -33,12 +34,10 @@ import { attachTerminalHistory } from './terminalHistory.js';
 import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState, terminalText, searchOffsets } from './workspaceState.js';
-import { createChat } from './chat.js';
-import { idleLabel } from './chatModel.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
-const pages = { chat: get('chat-screen'), home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
+const pages = { home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
 const terminalScreen = get('terminal-screen');
 const compose = get('compose');
 const requests = new Map();
@@ -74,9 +73,7 @@ let project = null;
 let projects = [];
 let loaded = false;
 let profileEpoch = 0;
-let page = 'chat';
-// 聊天式 Agent 界面，初始化见文件末尾。
-let chat = null;
+let page = 'home';
 let sessions = [];
 let selected = null;
 let renamingSession = null;
@@ -129,7 +126,6 @@ window.qingVisibility = visible => {
   clearTimeout(sessionRefreshTimer);
   if (foreground) void refreshSessionDrawer();
   if (!visible) saveDraft();
-  chat?.setForeground(visible === true);
   connectionLatency.setForeground(visible === true);
 };
 
@@ -196,14 +192,12 @@ function message(id, value) {
 function showPage(next) {
   page = next;
   terminalScreen.hidden = true;
-  chat?.hideThread();
   get('dashboard').hidden = false;
   for (const [name, section] of Object.entries(pages)) section.hidden = name !== next;
   for (const button of get('dashboard-nav').querySelectorAll('button')) {
     if (button.dataset.page === next) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
-  chat?.onPage(next);
   syncLatency();
 }
 
@@ -220,15 +214,14 @@ window.qingBack = () => {
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
     return true;
   }
-  if (chat?.back()) return true;
   if (!terminalScreen.hidden) {
     if (terminalSelection?.close()) return true;
     if (terminalHistory?.close()) return true;
     returnToDashboard();
     return true;
   }
-  if (page !== 'chat') {
-    showPage('chat');
+  if (page !== 'home') {
+    showPage('home');
     return true;
   }
   return false;
@@ -331,7 +324,7 @@ function renderConnections() {
     card.dataset.state = state === 'expired' ? 'offline' : state;
     const select = button('connection-main', () => {
       if (state === 'expired') openPair(item);
-      else void activate(item, current ? 'connection' : 'chat');
+      else void activate(item, current ? 'connection' : 'home');
     });
     const detail = button('icon-button', () => openHost(item));
     detail.setAttribute('aria-label', '管理连接 ' + item.name);
@@ -418,7 +411,7 @@ function renderHome() {
   }
   const recentList = recentProjects(projects, projectHistory());
   get('home-projects').hidden = state !== 'online' || !projects.length;
-  get('home-project-list').replaceChildren(...recentList.map(item => projectRow(item, true)));
+  get('home-project-list').replaceChildren(...recentList.map(projectRow));
   get('home-recent-empty').hidden = recentList.length > 0;
   const homeStates = {
     checking: ['正在连接电脑', '正在读取已信任的项目。', '查看连接'],
@@ -435,8 +428,7 @@ function renderHome() {
   get('home-action').textContent = action;
 }
 
-// 点项目打开终端；项目页行尾的「对话」按钮选择 Claude / Codex / OpenCode 新建对话。
-function projectRow(item, direct = false) {
+function projectRow(item) {
   const path = item.kind === 'ssh' ? item.path.replace(/^ssh:\/\/[^/]+/, '') : item.path;
   const row = button('row', () => { void openProject(item); });
   const text = rowText(item.name, projectSourceLabel(item));
@@ -447,24 +439,14 @@ function projectRow(item, direct = false) {
   text.append(location);
   row.dataset.kind = item.kind;
   row.append(tile(item.kind === 'ssh' ? 'host' : 'folder'), text, icon('chevron', 'arrow'));
-  if (direct || !chat) return row;
-  // 外层沿用 .row 便于列表样式与选择器；内层主按钮打开终端，行尾按钮新建对话。
-  row.className = 'row-main';
-  const entry = document.createElement('div');
-  entry.className = 'row project-entry';
-  entry.dataset.kind = item.kind;
-  const talk = button('icon-button project-chat', () => chat.projectActions(item));
-  talk.setAttribute('aria-label', '与 Agent 对话：' + item.name);
-  talk.append(icon('chat'));
-  entry.append(row, talk);
-  return entry;
+  return row;
 }
 
 function renderProjects() {
   const query = get('search').value.trim().toLowerCase();
   const matching = projects.filter(item => matchesProject(item, query));
   const list = get('project-list');
-  list.replaceChildren(...matching.map(item => projectRow(item)));
+  list.replaceChildren(...matching.map(projectRow));
   const checking = hostState(profile) === 'checking';
   list.setAttribute('aria-busy', String(checking));
   get('refresh').disabled = !profile || checking;
@@ -490,7 +472,6 @@ function updateHost(state) {
   renderConnections();
   renderHome();
   renderProjects();
-  chat?.refresh();
 }
 
 async function refreshProjects() {
@@ -515,7 +496,7 @@ async function refreshProjects() {
   }
 }
 
-async function activate(item, next = 'chat') {
+async function activate(item, next = 'home') {
   if (profile?.id !== item.id) {
     leaveTerminal();
     if (profile) {
@@ -2091,7 +2072,6 @@ async function initialize() {
     renderConnections();
     renderHome();
     renderProjects();
-    chat.refresh();
     const link = await rpc('pendingLink');
     if (link) {
       if (item) await activate(item, 'connection');
@@ -2100,9 +2080,8 @@ async function initialize() {
     }
     if (!item) return;
     const resume = localStorage.getItem(prefix + 'open') === item.id;
-    if (await activate(item) && profile?.id === item.id && page === 'chat') {
-      if (await chat.resume()) return;
-      const recent = resume && lastProject();
+    if (await activate(item) && resume && profile?.id === item.id && page === 'home') {
+      const recent = lastProject();
       if (recent) await openProject(recent, true);
     }
   } catch (error) {
@@ -2110,24 +2089,6 @@ async function initialize() {
     message('connection-error', error.message);
   }
 }
-
-chat = createChat({
-  remote: (op, args) => remote(op, args),
-  rpc,
-  profile: () => profile,
-  projects: () => projects,
-  online: () => !!profile && hostState(profile) === 'online',
-  openTerminal: item => { void openProject(item); },
-  connect: () => get('home-action').click(),
-  hasProfiles: () => profiles.length > 0,
-  showPage,
-  confirm: confirmAction,
-  onRevoked: error => {
-    returnToDashboard('connection');
-    updateHost('expired');
-    message('connection-error', error.message);
-  },
-});
 
 void initialize();
 

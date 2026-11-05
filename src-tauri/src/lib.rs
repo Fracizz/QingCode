@@ -32,7 +32,6 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
-mod agent;
 mod mobile;
 mod mobile_screen;
 
