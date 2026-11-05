@@ -625,7 +625,6 @@
     "不能为空": "Cannot be empty",
     "未选择项目": "No project selected",
     "当前 Git 分支": "Current Git branch",
-    "当前 Git 分支 · {count} 个更改": "Current Git branch · {count} change(s)",
     "分离的 HEAD（未在分支上）": "Detached HEAD (not on a branch)",
     "分离 HEAD · {sha}": "HEAD detached · {sha}",
     "与 Git HEAD 比较": "Compare with Git HEAD",
