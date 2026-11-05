@@ -1,6 +1,7 @@
 // 终端输出中的网页链接：识别 http / https 地址（实时终端与「阅读与搜索输出」共用），
 // 把电脑上的 localhost 地址换成手机能访问的电脑局域网地址，并接入 xterm 的链接识别。
 // 纯逻辑在前半部分，Vitest：src/lib/mobileAndroidTerminalLinks.test.ts。
+import { t } from './i18n.js';
 
 const LINK_PATTERN = /https?:\/\/[^\s<>"'`]+/g;
 // 句末标点和未配对的右括号不属于链接。
@@ -31,17 +32,17 @@ const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\])$/i;
  */
 export function phoneLink(url, { computerHost = '', projectKind = 'local' } = {}) {
   let parsed;
-  try { parsed = new URL(url); } catch { return { url, open: null, note: '无法识别的链接，可复制后查看。' }; }
+  try { parsed = new URL(url); } catch { return { url, open: null, note: t('无法识别的链接，可复制后查看。') }; }
   if (!LOOPBACK.test(parsed.hostname)) return { url, open: url, note: '' };
   if (projectKind === 'ssh') {
-    return { url, open: null, note: '这是远端主机上的本地地址，手机无法直接访问。可复制后在远端或通过端口转发打开。' };
+    return { url, open: null, note: t('这是远端主机上的本地地址，手机无法直接访问。可复制后在远端或通过端口转发打开。') };
   }
-  if (!computerHost) return { url, open: null, note: '这是电脑上的本地地址，手机无法直接访问。' };
+  if (!computerHost) return { url, open: null, note: t('这是电脑上的本地地址，手机无法直接访问。') };
   parsed.hostname = computerHost;
   return {
     url,
     open: parsed.toString(),
-    note: '已换成电脑地址。开发服务需监听局域网（例如 --host 0.0.0.0）且电脑防火墙放行该端口，手机才能打开。',
+    note: t('已换成电脑地址。开发服务需监听局域网（例如 --host 0.0.0.0）且电脑防火墙放行该端口，手机才能打开。'),
   };
 }
 

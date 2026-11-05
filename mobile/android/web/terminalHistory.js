@@ -1,4 +1,5 @@
 import { renderHistoryPage, renderScreen } from './historyRender.js';
+import { t } from './i18n.js';
 
 /**
  * 手机本地滚动记录（可见区上方）相当于电脑端历史的多少行：电脑端把自动换行拼回一个逻辑行，
@@ -82,7 +83,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     onClose();
     term.scrollToBottom();
     latestButton.hidden = true;
-    latestButton.querySelector('span').textContent = '回到最新';
+    latestButton.querySelector('span').textContent = t('回到最新');
     anchor = null;
     return true;
   }
@@ -112,7 +113,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     loading = true;
     failed = false;
     moreButton.disabled = true;
-    moreButton.textContent = '正在加载历史…';
+    moreButton.textContent = t('正在加载历史…');
     panel.setAttribute('aria-busy', 'true');
     try {
       const page = await loadPage(cursor === null ? startCursor : cursor);
@@ -123,7 +124,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       cursor = page.before;
       more = page.more === true;
       moreButton.hidden = !more;
-      status.textContent = more ? '继续向上翻看历史' : page.truncated ? '更早输出已超出电脑端缓存' : '已到保留历史起点';
+      status.textContent = more ? t('继续向上翻看历史') : page.truncated ? t('更早输出已超出电脑端缓存') : t('已到保留历史起点');
       scroll.scrollTop = top + scroll.scrollHeight - height;
       rememberAnchor();
       if (motion && motionFrame === null) motionFrame = view.requestAnimationFrame(applyMotion);
@@ -131,12 +132,12 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       if (!active || attempt !== generation) return;
       failed = true;
       motion = 0;
-      status.textContent = error.message;
+      status.textContent = t(error.message);
     } finally {
       if (active && attempt === generation) {
         loading = false;
         moreButton.disabled = false;
-        moreButton.textContent = failed ? '重试加载历史' : '加载更早输出';
+        moreButton.textContent = failed ? t('重试加载历史') : t('加载更早输出');
         panel.setAttribute('aria-busy', 'false');
       }
     }
@@ -159,7 +160,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     moreButton.hidden = false;
     panel.hidden = false;
     latestButton.hidden = false;
-    status.textContent = '正在加载历史…';
+    status.textContent = t('正在加载历史…');
     scroll.scrollTop = scroll.scrollHeight;
     queueMotion(delta);
     void older();

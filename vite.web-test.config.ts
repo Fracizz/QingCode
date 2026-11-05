@@ -36,6 +36,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'cursorDrag.js': ['mobile/android/web/cursorDrag.js', 'text/javascript'],
   'pinchZoom.js': ['mobile/android/web/pinchZoom.js', 'text/javascript'],
   'terminalLinks.js': ['mobile/android/web/terminalLinks.js', 'text/javascript'],
+  'i18n.js': ['mobile/android/web/i18n.js', 'text/javascript'],
   'app.css': ['mobile/android/web/app.css', 'text/css'],
   'xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   'xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],

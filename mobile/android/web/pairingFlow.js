@@ -2,6 +2,7 @@
 import { DEFAULT_PORT, parsePairingLink, validIpv4, validPort } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { get, message, confirmAction } from './dom.js';
+import { t } from './i18n.js';
 
 /**
  * profiles()：已保存的连接；onPaired(paired) 保存并切换到新连接；
@@ -21,7 +22,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     const dialog = get('pair-dialog');
     get('host-dialog').close();
     expectedFingerprint = target?.fingerprint ?? null;
-    get('pair-title').textContent = item ? '重新配对' : '添加连接';
+    get('pair-title').textContent = item ? t('重新配对') : t('添加连接');
     get('pair-name').value = item?.name ?? target?.name ?? '';
     get('pair-host').value = item?.host ?? target?.host ?? '';
     get('pair-port').value = item?.port ?? target?.port ?? String(DEFAULT_PORT);
@@ -65,7 +66,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     try {
       openPairTarget(parsePairingLink(await rpc('clipboard')));
     } catch (error) {
-      message('pair-error', error.message === '这不是 QingCode 配对链接。' ? '剪贴板中没有 QingCode 配对链接。' : error.message);
+      message('pair-error', error.message === t('这不是 QingCode 配对链接。') ? t('剪贴板中没有 QingCode 配对链接。') : error.message);
     }
   });
 
@@ -80,7 +81,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     message('scan-error', '');
     dialog.showModal();
     try {
-      if (!await rpc('camera')) throw new Error('需要相机权限才能扫码。也可以粘贴电脑端复制的配对链接。');
+      if (!await rpc('camera')) throw new Error(t('需要相机权限才能扫码。也可以粘贴电脑端复制的配对链接。'));
       if (epoch !== scanEpoch || !dialog.open) return;
       const stream = await requestScannerCamera(navigator.mediaDevices);
       if (epoch !== scanEpoch || !dialog.open) {
@@ -94,7 +95,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     } catch (error) {
       if (epoch !== scanEpoch) return;
       stopScan();
-      message('scan-error', error.name === 'NotAllowedError' ? '需要相机权限才能扫码。也可以取消后粘贴配对链接。' : error.message || '无法打开相机。');
+      message('scan-error', error.name === 'NotAllowedError' ? t('需要相机权限才能扫码。也可以取消后粘贴配对链接。') : error.message || t('无法打开相机。'));
       return;
     }
     if (epoch !== scanEpoch || !dialog.open) return;
@@ -102,7 +103,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context || typeof window.jsQR !== 'function') {
       stopScan();
-      message('scan-error', '无法加载扫码组件，请取消后重试，或粘贴电脑端复制的配对链接。');
+      message('scan-error', t('无法加载扫码组件，请取消后重试，或粘贴电脑端复制的配对链接。'));
       return;
     }
     const tick = () => {
@@ -119,7 +120,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
           }
         }
       } catch (error) {
-        message('scan-error', error.message || '暂时无法识别，请调整距离和光线后重试。');
+        message('scan-error', error.message || t('暂时无法识别，请调整距离和光线后重试。'));
       }
       scanTimer = setTimeout(tick, 180);
     };
@@ -143,10 +144,10 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     submit.disabled = cancel.disabled = true;
     message('pair-error', '');
     try {
-      if (!name) throw new Error('请输入连接名称。');
-      if (!validIpv4(host) || !validPort(port)) throw new Error('请输入有效的电脑 IPv4 地址和端口。');
+      if (!name) throw new Error(t('请输入连接名称。'));
+      if (!validIpv4(host) || !validPort(port)) throw new Error(t('请输入有效的电脑 IPv4 地址和端口。'));
       if (!/^[!-~]{6,20}$/.test(code)) {
-        throw new Error('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。');
+        throw new Error(t('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。'));
       }
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       const fingerprint = await rpc('probe', { host, port });
@@ -154,10 +155,10 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
       if (expectedFingerprint) {
         // The link came from the desktop screen, so a mismatch means a different or intercepted host.
         if (expectedFingerprint !== fingerprint) {
-          throw new Error('电脑证书与二维码中的指纹不一致，已停止配对。请确认地址，或在电脑端重新生成二维码。');
+          throw new Error(t('电脑证书与二维码中的指纹不一致，已停止配对。请确认地址，或在电脑端重新生成二维码。'));
         }
       } else if (saved && saved.fingerprint !== fingerprint) {
-        throw new Error('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。');
+        throw new Error(t('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。'));
       }
       const paired = await rpc('pair', { name, host, port, code, fingerprint });
       field.value = '';
@@ -179,7 +180,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     try {
       const name = get('host-name').value.trim();
       const port = Number(get('host-port').value);
-      if (!validPort(port)) throw new Error('端口须为 1–65535 之间的整数。');
+      if (!validPort(port)) throw new Error(t('端口须为 1–65535 之间的整数。'));
       let updated = item;
       if (port !== item.port) {
         // The desktop keeps pairings across port switches; only the address changes here.
@@ -201,7 +202,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
   get('repair-host').addEventListener('click', () => openPair(editing));
   get('remove-host').addEventListener('click', async () => {
     const item = editing;
-    if (!await confirmAction('移除 ' + item.name + '？', '此操作会删除手机上保存的配对。要撤销电脑端授权，请在电脑端停止移动连接。', '移除')) return;
+    if (!await confirmAction(t('移除 {name}？', { name: item.name }), t('此操作会删除手机上保存的配对。要撤销电脑端授权，请在电脑端停止移动连接。'), t('移除'))) return;
     try {
       await rpc('forget', { profile: item.id });
       forgetProfile(item);

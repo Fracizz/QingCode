@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** One native request, one result. Expired writes are never retried. */
 export function createNativeRpc(native, { timers = globalThis } = {}) {
   const requests = new Map();
@@ -9,7 +10,7 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
     timers.clearTimeout(request.timer);
     if (result.ok) request.resolve(result.data);
     else {
-      const error = new Error(result.error || '连接失败。');
+      const error = new Error(result.error || t('连接失败。'));
       error.revoked = result.revoked === true;
       error.unsupported = result.unsupported === true;
       request.reject(error);
@@ -28,7 +29,7 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
         if (!pending) return;
         requests.delete(id);
         try { native.cancel?.(id); } catch { /* old bridges may not expose cancellation */ }
-        reject(new Error('请求超时，操作结果未知，请核对电脑端；不会自动重发。'));
+        reject(new Error(t('请求超时，操作结果未知，请核对电脑端；不会自动重发。')));
       }, timeout) : null;
       requests.set(id, { resolve, reject, timer });
       try { native.request(id, JSON.stringify({ op, ...args })); }

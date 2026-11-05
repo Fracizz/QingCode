@@ -109,6 +109,7 @@
           <span class="tile"><svg><use href="#i-host"/></svg></span>
           <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
         </div>
+        <div class="language-setting"><label for="app-language">语言 / Language</label><select id="app-language"><option value="auto">跟随系统</option><option value="zh">中文</option><option value="en">English</option></select></div>
       </section>
 
       <nav id="dashboard-nav" aria-label="主导航">
@@ -209,7 +210,7 @@
       <label for="pair-code">连接密码</label>
       <input id="pair-code" type="password" minlength="6" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6–20 位密码" required>
       <p id="pair-error" class="error" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">连接</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit" data-i18n="action:connect">连接</button></div>
     </form>
   </dialog>
 

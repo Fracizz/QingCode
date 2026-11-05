@@ -1,6 +1,7 @@
 // 全屏程序（Codex、opencode 等）开启鼠标上报时的回弹变速滑块。
 // 程序内部的滚动位置手机端无从得知，所以滑块不表示位置，只表示速度：
 // 按住往上 / 往下拖，离中心越远滚得越快；松手弹回中间并停止。上下箭头各翻一页。
+import { t } from './i18n.js';
 
 /** 中心附近不滚动的比例，避免按下时手抖就开始滚。 */
 export const JOG_DEADZONE = .1;
@@ -40,18 +41,18 @@ export function attachTerminalJog(host, { scroll, page, idleMs = 2500 } = {}) {
   up.className = 'terminal-jog-page';
   up.dataset.direction = 'up';
   up.textContent = '▲';
-  up.setAttribute('aria-label', '向上翻一页');
+  up.setAttribute('aria-label', t('向上翻一页'));
   const track = doc.createElement('div');
   track.className = 'terminal-jog-track';
   track.setAttribute('role', 'slider');
-  track.setAttribute('aria-label', '按住上下拖动滚动，松手停止');
+  track.setAttribute('aria-label', t('按住上下拖动滚动，松手停止'));
   const knob = doc.createElement('div');
   knob.className = 'terminal-jog-knob';
   track.append(knob);
   const down = up.cloneNode();
   down.dataset.direction = 'down';
   down.textContent = '▼';
-  down.setAttribute('aria-label', '向下翻一页');
+  down.setAttribute('aria-label', t('向下翻一页'));
   root.append(up, track, down);
   host.append(root);
 

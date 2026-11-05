@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** Upload sequentially, hold URI handles only, and never insert into a different session. */
 export async function uploadTerminalImages({ rpc, remote, address, id, compression, isCurrent, onProgress, onInsert }) {
   let selection;
@@ -6,7 +7,7 @@ export async function uploadTerminalImages({ rpc, remote, address, id, compressi
     selection = picked?.selection;
     if (!picked || !isCurrent()) return;
     const count = selection ? picked.count : 1;
-    if (!Number.isSafeInteger(count) || count < 1) throw new Error('图片选择已失效，请重新选择。');
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error(t('图片选择已失效，请重新选择。'));
     for (let index = 0; index < count; index++) {
       if (!isCurrent()) return;
       onProgress(index + 1, count);

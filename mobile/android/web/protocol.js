@@ -1,5 +1,6 @@
 // QingCode Android 的纯逻辑：配对链接、终端输出块、输入拆分与按键序列。
 // app.js 与 Vitest（src/lib/mobileAndroidProtocol.test.ts）共用，不得访问 DOM。
+import { t } from './i18n.js';
 
 export const PAIRING_PREFIX = 'qingcode://pair?';
 export const DEFAULT_PORT = 48764;
@@ -17,8 +18,11 @@ export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColu
 export function sessionName(session, fallback = 1) {
   const name = typeof session?.name === 'string' ? session.name.trim() : '';
   // CLI title animations belong in a status icon, never in the session name.
-  return (session?.customName ? name : name.replace(/^[\u2801-\u28ff]\s*/, ''))
-    || '终端 ' + (session?.number ?? fallback);
+  const shown = session?.customName ? name : name.replace(/^[⠁-⣿]\s*/, '');
+  // 电脑端没有程序标题时默认命名为「终端 N」，按手机语言显示；手动名称保持原样。
+  const numbered = !session?.customName && /^终端 (\d+)$/.exec(shown);
+  if (numbered) return t('终端 {n}', { n: numbered[1] });
+  return shown || t('终端 {n}', { n: session?.number ?? fallback });
 }
 
 /** A live PTY alone does not imply that its CLI is working. */
@@ -97,7 +101,7 @@ export function recentProjects(projects, history) {
 
 /** 保留连接名称和实际主机；连接名为 WSL 的 SSH 项目仍使用远端通道。 */
 export function projectSourceLabel(project) {
-  const kind = { local: '本机', wsl: 'WSL', ssh: '远端' }[project.kind] || '项目';
+  const kind = { local: t('本机'), wsl: 'WSL', ssh: t('远端') }[project.kind] || t('项目');
   const parts = project.kind === 'local' ? [kind] : [kind, project.connectionName, project.host];
   return [...new Set(parts.filter(Boolean))].join(' · ');
 }
@@ -119,14 +123,14 @@ export function validPort(port) {
 /** 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。 */
 export function parsePairingLink(text) {
   const value = String(text ?? '').trim();
-  if (!value.startsWith(PAIRING_PREFIX)) throw new Error('这不是 QingCode 配对链接。');
+  if (!value.startsWith(PAIRING_PREFIX)) throw new Error(t('这不是 QingCode 配对链接。'));
   const query = new URLSearchParams(value.slice(PAIRING_PREFIX.length));
-  if (query.get('v') !== '1') throw new Error('配对链接版本不受支持，请升级 QingCode Android。');
+  if (query.get('v') !== '1') throw new Error(t('配对链接版本不受支持，请升级 QingCode Android。'));
   const host = query.get('host') ?? '';
   const port = Number(query.get('port'));
   const fingerprint = (query.get('fp') ?? '').toLowerCase();
-  if (!validIpv4(host) || !validPort(port)) throw new Error('配对链接中的地址无效。');
-  if (!/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error('配对链接中的证书指纹无效。');
+  if (!validIpv4(host) || !validPort(port)) throw new Error(t('配对链接中的地址无效。'));
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error(t('配对链接中的证书指纹无效。'));
   const name = (query.get('name') ?? '').trim().slice(0, 48) || 'Windows';
   return { host, port, fingerprint, name };
 }
@@ -275,10 +279,10 @@ export function terminalProfileChoices(list) {
   for (const item of Array.isArray(list) ? list : []) {
     if (!item || typeof item.id !== 'string' || !item.id || seen.has(item.id)) continue;
     seen.add(item.id);
-    const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : '未命名配置';
+    const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : t('未命名配置');
     choices.push({ id: item.id, name, trusted: item.trusted !== false });
   }
-  return choices.length ? choices : [{ id: null, name: '新建终端', trusted: true }];
+  return choices.length ? choices : [{ id: null, name: t('新建终端'), trusted: true }];
 }
 
 /**
@@ -288,23 +292,23 @@ export function terminalProfileChoices(list) {
 export function formatDuration(ms, ceil = false) {
   const round = ceil ? Math.ceil : Math.floor;
   const minutes = Math.max(0, round(ms / 60000));
-  if (minutes < 1) return '不到 1 分钟';
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return t('不到 1 分钟');
+  if (minutes < 60) return t('{n} 分钟', { n: minutes });
   const rest = minutes % 60;
   const hours = Math.floor(minutes / 60);
-  if (hours < 10 && rest) return `${hours} 小时 ${rest} 分`;
-  return `${ceil && rest ? hours + 1 : hours} 小时`;
+  if (hours < 10 && rest) return t('{h} 小时 {m} 分', { h: hours, m: rest });
+  return t('{h} 小时', { h: ceil && rest ? hours + 1 : hours });
 }
 
 /**
  * 手机终端的空闲与自动结束提示（24 小时无输入也无输出时由电脑端结束）。
  * 没有 `idleDeadline`（已结束或旧版电脑端）时返回空字符串。
  */
-export function idleLabel(item, now = Date.now(), action = '自动结束') {
+export function idleLabel(item, now = Date.now(), action = t('自动结束')) {
   if (!Number.isFinite(item?.idleDeadline)) return '';
   const left = item.idleDeadline - now;
   const idle = Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null;
-  const head = idle === null ? '' : idle < 60000 ? '刚刚有活动' : `空闲 ${formatDuration(idle)}`;
-  const tail = left <= 0 ? `即将${action}` : `${formatDuration(left, true)}后${action}`;
-  return [head, tail].filter(Boolean).join('，');
+  const head = idle === null ? '' : idle < 60000 ? t('刚刚有活动') : t('空闲 {time}', { time: formatDuration(idle) });
+  const tail = left <= 0 ? t('即将{action}', { action }) : t('{time}后{action}', { time: formatDuration(left, true), action });
+  return [head, tail].filter(Boolean).join(t('，'));
 }

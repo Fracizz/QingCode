@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 export const MOBILE_PROTOCOL_VERSION = 1;
 
 /** Capabilities are cached by certificate identity, never by an error from a business write. */
@@ -9,7 +10,7 @@ export function createDesktopProtocol(remote) {
       const pending = remote('capabilities', {}, profile.id).then(value => {
         if (value?.protocolVersion !== MOBILE_PROTOCOL_VERSION || !Array.isArray(value.features)
           || !value.features.every(item => typeof item === 'string')) {
-          throw new Error('电脑端移动协议不兼容，请更新电脑端和 Android APK。');
+          throw new Error(t('电脑端移动协议不兼容，请更新电脑端和 Android APK。'));
         }
         return value;
       }).catch(error => {

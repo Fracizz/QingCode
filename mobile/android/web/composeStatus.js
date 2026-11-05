@@ -3,6 +3,7 @@
 // 重新进入终端时不再回放以前已接收的回执。
 // 发送中、结果未知、手机保存失败会一直显示，便于核对。提交原文仍可在「… → 最近提交与项目草稿」查看。
 import { get } from './dom.js';
+import { t } from './i18n.js';
 
 export const RECEIPT_VISIBLE_MS = 4000;
 
@@ -38,11 +39,11 @@ export function createComposeStatus({ receipts, persistenceFailed }) {
     const visible = failed || (!!latest && !(received && expiredReceipt === latest.id));
     get('submission-state').dataset.visible = String(visible);
     chip.dataset.state = failed ? 'error' : latest?.state ?? '';
-    get('submission-status').textContent = failed ? '⚠ 手机保存失败'
-      : latest?.state === 'sending' ? '正在发送…'
-        : received ? '✓ 电脑已接收 · 查看' : '⚠ 结果未知 · 查看';
-    chip.setAttribute('aria-label', failed ? '手机保存失败，请保留原文'
-      : latest?.state === 'sending' ? '正在发送' : received ? '电脑已接收，查看提交原文' : '提交结果未知，原文已保留，点按查看');
+    get('submission-status').textContent = failed ? t('⚠ 手机保存失败')
+      : latest?.state === 'sending' ? t('正在发送…')
+        : received ? t('✓ 电脑已接收 · 查看') : t('⚠ 结果未知 · 查看');
+    chip.setAttribute('aria-label', failed ? t('手机保存失败，请保留原文')
+      : latest?.state === 'sending' ? t('正在发送') : received ? t('电脑已接收，查看提交原文') : t('提交结果未知，原文已保留，点按查看'));
     renderNotes();
   }
 

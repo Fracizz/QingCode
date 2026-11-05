@@ -11,6 +11,7 @@ import {
   visibleKeys,
 } from './keyLayout.js';
 import { get, button } from './dom.js';
+import { t } from './i18n.js';
 
 export function createShortcutBar({ prefix, onChange }) {
   const storageKey = prefix + 'key-layout';
@@ -55,25 +56,25 @@ export function createShortcutBar({ prefix, onChange }) {
       box.type = 'checkbox';
       box.checked = !hidden;
       box.dataset.role = 'toggle';
-      box.setAttribute('aria-label', '在快捷键栏显示 ' + info.name);
+      box.setAttribute('aria-label', t('在快捷键栏显示 {name}', { name: t(info.name) }));
       box.addEventListener('change', () => save(toggleKeyHidden(layout, key)));
       const cap = document.createElement('span');
       cap.className = 'key-cap';
-      cap.textContent = info.label;
+      cap.textContent = t(info.label);
       const name = document.createElement('span');
       name.className = 'key-name';
-      name.textContent = hidden ? info.name + ' · 在「更多」中' : info.name;
+      name.textContent = hidden ? t('{name} · 在「更多」中', { name: t(info.name) }) : t(info.name);
       toggle.append(box, cap, name);
       const up = button('icon-button key-move', () => save(moveKey(layout, key, -1)));
       up.textContent = '↑';
       up.dataset.role = 'up';
       up.disabled = index === 0;
-      up.setAttribute('aria-label', '上移 ' + info.name);
+      up.setAttribute('aria-label', t('上移 {name}', { name: t(info.name) }));
       const down = button('icon-button key-move', () => save(moveKey(layout, key, 1)));
       down.textContent = '↓';
       down.dataset.role = 'down';
       down.disabled = index === layout.order.length - 1;
-      down.setAttribute('aria-label', '下移 ' + info.name);
+      down.setAttribute('aria-label', t('下移 {name}', { name: t(info.name) }));
       row.append(toggle, up, down);
       return row;
     }));

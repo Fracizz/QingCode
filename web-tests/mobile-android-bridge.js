@@ -1,6 +1,11 @@
 // QingCode Android Web 验收：在浏览器中替代 MainActivity 的 JS 桥与 Windows 端 RPC。
 // 只用于 vite.web-test.config.ts 提供的 /mobile-android/ 页面；数据全部在内存中。
 (() => {
+  // 现有验收按中文断言：未保存语言偏好时固定中文；?lang=en|zh|auto 可显式指定。
+  const lang = new URLSearchParams(location.search).get('lang')
+  if (lang === 'auto') localStorage.removeItem('qingcode:mobile:locale')
+  else if (lang === 'en' || lang === 'zh') localStorage.setItem('qingcode:mobile:locale', lang)
+  else if (!localStorage.getItem('qingcode:mobile:locale')) localStorage.setItem('qingcode:mobile:locale', 'zh')
   const FINGERPRINT = '0123456789abcdef'.repeat(4)
   const CODE = 'A8z2D3'
   const encoder = new TextEncoder()

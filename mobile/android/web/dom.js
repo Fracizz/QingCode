@@ -1,12 +1,13 @@
 // 页面通用 DOM 工具：元素查找、图标与列表行构建、对话框关闭与确认框。
 import { avatarFor } from './protocol.js';
+import { t } from './i18n.js';
 
 export const get = id => document.getElementById(id);
 
 /** 写入提示文字；空字符串时隐藏元素。 */
 export function message(id, value) {
   const target = get(id);
-  target.textContent = value;
+  target.textContent = value ? t(value) : value;
   target.hidden = !value;
 }
 

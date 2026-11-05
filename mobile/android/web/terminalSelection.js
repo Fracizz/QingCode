@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** Touch selection uses xterm's buffer/cell coordinates, including wide CJK cells. */
 export function attachTerminalSelection({ term, container, copyText, onStart = () => {} }) {
   const doc = container.ownerDocument;
@@ -9,7 +10,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   const tools = doc.createElement('div');
   tools.className = 'terminal-selection-tools';
   tools.setAttribute('role', 'toolbar');
-  tools.setAttribute('aria-label', '终端文字选择');
+  tools.setAttribute('aria-label', t('终端文字选择'));
   tools.hidden = true;
   const status = doc.createElement('span');
   status.setAttribute('role', 'status');
@@ -18,7 +19,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     button.type = 'button';
     button.className = 'terminal-selection-handle';
     button.dataset.side = side;
-    button.setAttribute('aria-label', side === 'start' ? '调整选区起点' : '调整选区终点');
+    button.setAttribute('aria-label', side === 'start' ? t('调整选区起点') : t('调整选区终点'));
     layer.append(button);
     return button;
   });
@@ -102,7 +103,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   }
   const copy = doc.createElement('button');
   copy.type = 'button';
-  copy.textContent = '复制';
+  copy.textContent = t('复制');
   copy.addEventListener('click', async () => {
     const text = term.getSelection();
     if (!text || copy.disabled) return;
@@ -110,18 +111,18 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     copy.disabled = true;
     try {
       await copyText(text);
-      if (!disposed && attempt === epoch) { status.textContent = '已复制'; }
+      if (!disposed && attempt === epoch) { status.textContent = t('已复制'); }
     } catch (error) {
-      if (!disposed && attempt === epoch) status.textContent = error.message || '复制失败，请重试';
+      if (!disposed && attempt === epoch) status.textContent = t(t(error.message || '复制失败，请重试'));
     } finally { copy.disabled = false; }
   });
   const all = doc.createElement('button');
   all.type = 'button';
-  all.textContent = '全选';
+  all.textContent = t('全选');
   all.addEventListener('click', () => { term.selectAll(); position(); status.textContent = ''; });
   const dismiss = doc.createElement('button');
   dismiss.type = 'button';
-  dismiss.textContent = '取消';
+  dismiss.textContent = t('取消');
   dismiss.addEventListener('click', close);
   tools.append(copy, all, dismiss, status);
   tools.addEventListener('pointerdown', event => event.preventDefault());

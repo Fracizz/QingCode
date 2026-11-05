@@ -690,3 +690,6 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 }
 #image-compression { width: 100%; min-height: 44px; margin-bottom: 12px; padding: 8px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); font: inherit; color: var(--ink); }
 .session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
+.language-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 4px 8px; }
+.language-setting label { color: var(--muted); font-size: 14px; font-weight: 650; }
+.language-setting select { min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); color: var(--ink); }

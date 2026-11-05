@@ -41,8 +41,17 @@ import { createShortcutBar } from './shortcutBar.js';
 import { attachCursorDrag } from './cursorDrag.js';
 import { attachPinchZoom } from './pinchZoom.js';
 import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
+import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, translateDocument } from './i18n.js';
 
 const native = window.QingCodeNative;
+document.documentElement.lang = initLocale(localStorage, navigator) === 'en' ? 'en' : 'zh-CN';
+translateDocument(document.body);
+// 语言切换：保存偏好后重新加载页面，所有静态与动态文案按新语言重建；会话由电脑端继续托管。
+get('app-language').value = loadLocalePreference(localStorage);
+get('app-language').addEventListener('change', () => {
+  saveLocalePreference(localStorage, get('app-language').value);
+  location.reload();
+});
 const prefix = 'qingcode:mobile:';
 const pages = { home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
 const terminalScreen = get('terminal-screen');
@@ -128,14 +137,14 @@ const terminalInput = createTerminalInput({
   onSuccess: () => {
     if (inputFailed) {
       inputFailed = false;
-      get('terminal-status').textContent = '会话中';
+      get('terminal-status').textContent = t('会话中');
     }
   },
   onError: error => {
     if (error.revoked) handleTerminalError(error);
     else {
       inputFailed = true;
-      get('terminal-status').textContent = '输入提交结果未知，请检查终端输出。';
+      get('terminal-status').textContent = t('输入提交结果未知，请检查终端输出。');
     }
   },
 });
@@ -235,20 +244,20 @@ function syncLatency() {
 function renderLatency() {
   const snapshot = connectionLatency.getSnapshot();
   const value = latencyText(snapshot);
-  get('terminal-latency').textContent = '电脑 ' + value;
-  get('terminal-latency').setAttribute('aria-label', '手机到电脑往返延迟 ' + value);
-  get('home-latency').textContent = profile && hostState(profile) === 'online' ? ' · 电脑 ' + value : '';
+  get('terminal-latency').textContent = t('电脑 {value}', { value });
+  get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));
+  get('home-latency').textContent = profile && hostState(profile) === 'online' ? t(' · 电脑 {value}', { value }) : '';
   const editing = pairing?.editingProfile();
   if (!editing || editing.id !== profile?.id) {
-    get('host-latency').textContent = '延迟仅检测当前连接的电脑。';
+    get('host-latency').textContent = t('延迟仅检测当前连接的电脑。');
     return;
   }
   const state = {
-    idle: '尚未测量。', failed: '本次检测未获得结果。', stale: '结果已过期，等待更新。',
-    unsupported: '当前电脑端不支持延迟检测，请更新电脑端 QingCode。', ready: '',
+    idle: t('尚未测量。'), failed: t('本次检测未获得结果。'), stale: t('结果已过期，等待更新。'),
+    unsupported: t(t('当前电脑端不支持延迟检测，请更新电脑端 QingCode。')), ready: '',
   }[snapshot.state];
-  const time = snapshot.checkedAt === null ? '' : '最近测量 ' + new Date(snapshot.checkedAt).toLocaleTimeString('zh-CN', { hour12: false }) + '。';
-  get('host-latency').textContent = '手机到电脑往返延迟：' + value + '。' + time + state + '不包含电脑到远端及终端程序处理耗时。';
+  const time = snapshot.checkedAt === null ? '' : t('最近测量 {time}。', { time: new Date(snapshot.checkedAt).toLocaleTimeString(dateLocale(), { hour12: false }) });
+  get('host-latency').textContent = t('手机到电脑往返延迟：{value}。', { value }) + time + state + t('不包含电脑到远端及终端程序处理耗时。');
 }
 
 function showPage(next) {
@@ -476,13 +485,13 @@ function setRawKeyboard(enabled) {
   if (selected) inputModes.set(draftKey(selected), nextMode);
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
   get('keyboard').setAttribute('aria-pressed', String(enabled));
-  get('keyboard').setAttribute('aria-label', enabled ? '切回草稿输入' : '切换为直发：按键立即发给终端');
-  get('input-hint').textContent = enabled ? '终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认' : '命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选';
-  get('input-mode').textContent = enabled ? '终端实时输入' : '命令输入';
-  get('terminal-input-mode').textContent = enabled ? '直发' : '草稿';
+  get('keyboard').setAttribute('aria-label', enabled ? t('切回草稿输入') : t('切换为直发：按键立即发给终端'));
+  get('input-hint').textContent = enabled ? t('终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认') : t('命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选');
+  get('input-mode').textContent = enabled ? t('终端实时输入') : t('命令输入');
+  get('terminal-input-mode').textContent = enabled ? t('直发') : t('草稿');
   get('terminal-input-mode').dataset.mode = nextMode;
-  get('keys-target').textContent = '编辑目标：' + (enabled ? '终端实时输入' : '手机草稿');
-  compose.placeholder = enabled ? '直发中 · 按键立即发给终端' : '草稿 · 编辑后点发送';
+  get('keys-target').textContent = t('编辑目标：{target}', { target: enabled ? t('终端实时输入') : t('手机草稿') });
+  compose.placeholder = enabled ? t('直发中 · 按键立即发给终端') : t('草稿 · 编辑后点发送');
   get('compose-form').dataset.mode = nextMode;
   get('input-mode').dataset.mode = nextMode;
   updateComposerActions();
@@ -528,7 +537,7 @@ function saveDraft() {
   if (compose.value) drafts.set(key, compose.value);
   else drafts.delete(key);
   if (persistenceFailed) {
-    get('expanded-save-status').textContent = '手机保存失败，请复制并保留原文。';
+    get('expanded-save-status').textContent = t('手机保存失败，请复制并保留原文。');
     get('expanded-save-status').dataset.error = 'true';
     composeStatus.renderSubmission();
   }
@@ -559,12 +568,12 @@ function showSubmissions() {
   };
   const key = selected && draftKey(selected);
   for (const receipt of workspace.recent(key)) {
-    const state = { sending: '发送中', received: '电脑已接收', unknown: '提交结果未知' }[receipt.state];
+    const state = { sending: t('发送中'), received: t('电脑已接收'), unknown: t('提交结果未知') }[receipt.state];
     add(state + ' ' + new Date(receipt.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), receipt.text);
   }
   for (const room of workspace.recoverable(profile.id, project.id, key)) {
-    if (room.draft) add('本项目其他会话草稿', room.draft);
-    for (const receipt of [...room.receipts].reverse()) add('本项目其他会话提交 · ' + ({ sending: '发送中', received: '电脑已接收', unknown: '结果未知' }[receipt.state]), receipt.text);
+    if (room.draft) add(t('本项目其他会话草稿'), room.draft);
+    for (const receipt of [...room.receipts].reverse()) add(t('本项目其他会话提交 · {state}', { state: { sending: t('发送中'), received: t('电脑已接收'), unknown: t('结果未知') }[receipt.state] }), receipt.text);
   }
   get('submissions-dialog').showModal();
 }
@@ -602,8 +611,8 @@ get('restore-submission').addEventListener('click', () => {
 });
 get('copy-submission').addEventListener('click', async () => {
   if (!get('submission-preview').value) return;
-  try { await rpc('copy', { text: get('submission-preview').value }); get('submission-feedback').textContent = '原文已复制'; }
-  catch (error) { get('submission-feedback').textContent = error.message; }
+  try { await rpc('copy', { text: get('submission-preview').value }); get('submission-feedback').textContent = t('原文已复制'); }
+  catch (error) { get('submission-feedback').textContent = t(error.message); }
 });
 
 function terminalControls() {
@@ -613,10 +622,10 @@ function terminalControls() {
 function updateComposerActions() {
   const raw = inputMode === 'raw';
   const slash = !raw && settings.sendMode() !== 'enter' && isSlashDraft(compose.value);
-  get('send').setAttribute('aria-label', raw ? '确认终端中的选择或命令' : slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : '发送回车');
+  get('send').setAttribute('aria-label', raw ? t('确认终端中的选择或命令') : slash ? t('查看命令或技能候选，不发送回车') : compose.value ? t('发送并回车') : t('发送回车'));
   get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
-  get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
-  get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
+  get('send-label').textContent = raw ? t('确认') : slash ? t('候选') : t('发送');
+  get('completion-help').textContent = slash ? t('先查看候选，再确认') : t('↑↓ 选择 · ↵ 确认');
   composeStatus.renderNotes();
   for (const control of terminalControls()) {
     control.disabled = !terminalReady || composing || editorComposing || (['attach-image', 'expanded-attach'].includes(control.id) && sendingImage)
@@ -664,7 +673,7 @@ function renderShortcutVisibility() {
   cancelKeyRepeats();
   get('special-keys').hidden = collapsed;
   get('toggle-keys').setAttribute('aria-expanded', String(!collapsed));
-  get('toggle-keys').querySelector('span').textContent = collapsed ? '展开按键' : '收起按键';
+  get('toggle-keys').querySelector('span').textContent = collapsed ? t('展开按键') : t('收起按键');
   terminalScreen.dataset.keysCollapsed = String(collapsed);
   if (collapsed) clearModifiers();
 }
@@ -684,7 +693,7 @@ async function setTerminalFullscreen(enabled) {
   } catch (error) {
     if (epoch !== fullscreenEpoch) return;
     renderFullscreen(false);
-    get('terminal-status').textContent = error.message;
+    get('terminal-status').textContent = t(error.message);
   }
 }
 
@@ -801,12 +810,12 @@ function makeTerminal() {
     onUnsupportedScroll: gesture => {
       if (gesture !== undefined && gesture === unsupportedScrollGesture) return;
       unsupportedScrollGesture = gesture;
-      showTerminalToast('此全屏程序未开启鼠标滚动，可用 PgUp / PgDn 翻页', 2200);
+      showTerminalToast(t('此全屏程序未开启鼠标滚动，可用 PgUp / PgDn 翻页'), 2200);
     },
     loadPage: async before => {
       // formatted：新版电脑端返回带基本颜色的历史；旧版忽略该参数，仍返回纯文本。
       const data = await remote('history', { id: historySession, before, formatted: true });
-      if (historyEpoch !== viewEpoch) throw new Error('会话已切换');
+      if (historyEpoch !== viewEpoch) throw new Error(t('会话已切换'));
       return data;
     },
   });
@@ -883,7 +892,7 @@ function openTerminalLink(url) {
   linkTarget = phoneLink(url, { computerHost: profile?.host, projectKind: project.kind });
   const rewritten = !!linkTarget.open && linkTarget.open !== linkTarget.url;
   get('link-url').textContent = linkTarget.open ?? linkTarget.url;
-  get('link-original').textContent = rewritten ? '终端中为 ' + linkTarget.url : '';
+  get('link-original').textContent = rewritten ? t('终端中为 {url}', { url: linkTarget.url }) : '';
   get('link-original').hidden = !rewritten;
   message('link-note', linkTarget.note);
   get('link-open').hidden = !linkTarget.open;
@@ -898,16 +907,16 @@ get('link-open').addEventListener('click', async () => {
     await rpc('open_link', { url: linkTarget.open });
     get('link-dialog').close();
   } catch (error) {
-    get('link-status').textContent = error.message;
+    get('link-status').textContent = t(error.message);
   }
 });
 get('link-copy').addEventListener('click', async () => {
   if (!linkTarget) return;
   try {
     await rpc('copy', { text: linkTarget.open ?? linkTarget.url });
-    get('link-status').textContent = '链接已复制';
+    get('link-status').textContent = t('链接已复制');
   } catch (error) {
-    get('link-status').textContent = error.message;
+    get('link-status').textContent = t(error.message);
   }
 });
 
@@ -993,7 +1002,7 @@ new ResizeObserver(() => {
 
 /** 双指缩放时在输出区上方短暂显示当前字号。 */
 function showFontToast(size) {
-  showTerminalToast('字号 ' + size + 'px');
+  showTerminalToast(t('字号 {size}px', { size }));
 }
 
 /** 输出区上方的短提示；delay 毫秒后自动隐藏（0 表示由调用方隐藏）。 */
@@ -1041,7 +1050,7 @@ function terminalState(text, state = 'idle', retry = false) {
   inputFailed = false;
   terminalReady = state === 'online';
   get('expanded-send').disabled = !terminalReady;
-  get('terminal-status').textContent = text;
+  get('terminal-status').textContent = t(text);
   get('terminal-dot').dataset.state = state;
   get('terminal-retry').hidden = !retry;
   for (const control of terminalControls()) {
@@ -1057,7 +1066,7 @@ function handleTerminalError(error, retry = true) {
     updateHost('expired');
     message('connection-error', error.message);
   } else {
-    terminalState(error.message, 'offline', retry);
+    terminalState(t(error.message), 'offline', retry);
   }
 }
 
@@ -1078,7 +1087,7 @@ async function openProject(item, resumeOnly = false) {
   makeTerminal();
   drawer.render();
   renderInputTip();
-  terminalState('正在连接终端…');
+  terminalState(t('正在连接终端…'));
   try {
     const list = await remote('sessions', { project: item.id });
     if (epoch !== viewEpoch) return;
@@ -1100,7 +1109,7 @@ async function openProject(item, resumeOnly = false) {
 
 // 进入没有终端的项目时不再自动新建，只显示空状态，由用户点「新建终端」。
 function showEmptyProject() {
-  terminalState('暂无终端');
+  terminalState(t('暂无终端'));
   get('terminal-empty').hidden = false;
 }
 
@@ -1122,22 +1131,22 @@ function renderTerminalProfiles(choices, state = '') {
     option.className = 'secondary';
     if (choice.id) option.dataset.profile = choice.id;
     const name = document.createElement('span');
-    name.textContent = choice.name;
+    name.textContent = t(choice.name);
     option.append(name);
     if (!choice.trusted) {
       const hint = document.createElement('small');
-      hint.textContent = '需先在电脑上信任';
+      hint.textContent = t('需先在电脑上信任');
       option.append(hint);
     }
     option.addEventListener('click', () => {
       // 电脑端创建时仍会校验信任；这里提前提示，避免关闭弹窗后才报错。
-      if (!choice.trusted) message('terminal-profiles-error', `请先在电脑上新建一次「${choice.name}」终端并选择「信任此配置」。`);
+      if (!choice.trusted) message('terminal-profiles-error', t('请先在电脑上新建一次「{name}」终端并选择「信任此配置」。', { name: choice.name }));
       else void newSession(choice.id);
     });
     return option;
   }));
   list.setAttribute('aria-busy', String(state === 'loading'));
-  message('terminal-profiles-error', state === 'error' ? '无法读取电脑端终端配置，已仅显示普通终端。' : '');
+  message('terminal-profiles-error', state === 'error' ? t(t('无法读取电脑端终端配置，已仅显示普通终端。')) : '');
 }
 
 async function openNewSessionDialog() {
@@ -1179,7 +1188,7 @@ function selectSession(session) {
   makeTerminal();
   drawer.render();
   renderInputTip();
-  terminalState('正在接入终端…');
+  terminalState(t('正在接入终端…'));
   composeStatus.renderSubmission();
   void poll(session, viewEpoch);
 }
@@ -1213,7 +1222,7 @@ async function poll(session, epoch) {
       next = data.next;
       if (data.reset) {
         term.reset();
-        term.writeln('[较早的输出已超出电脑端缓存]');
+        term.writeln(t('[较早的输出已超出电脑端缓存]'));
       }
       // 相邻字节块合并成一次写入：一批动画帧只渲染最后的画面。
       for (const chunk of outputBatches(data.chunks)) {
@@ -1236,7 +1245,7 @@ async function poll(session, epoch) {
         if (chunk.screen && epoch === viewEpoch) fitTerminal();
       }
       if (data.chunks.length && readingBack()) {
-        get('scroll-bottom').querySelector('span').textContent = '有新输出 · 回到最新';
+        get('scroll-bottom').querySelector('span').textContent = t('有新输出 · 回到最新');
       }
       if (epoch !== viewEpoch) return;
       if (data.exit) {
@@ -1244,12 +1253,12 @@ async function poll(session, epoch) {
           current.exit = data.exit;
           drawer.render();
         }
-        terminalState(data.exit.disconnected ? '电脑到远端的终端连接已中断' : '会话已结束 · 退出码 ' + data.exit.exitCode);
+        terminalState(data.exit.disconnected ? t('电脑到远端的终端连接已中断') : t('会话已结束 · 退出码 {code}', { code: data.exit.exitCode }));
         if (data.more) continue;
         return;
       }
       if (!terminalReady) {
-        terminalState('会话中', 'online');
+        terminalState(t('会话中'), 'online');
         if (hostState(profile) !== 'online') updateHost('online');
         sendSize();
       }
@@ -1264,10 +1273,10 @@ async function poll(session, epoch) {
         saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
         drawer.render();
-        terminalState('原会话已不存在 · 草稿保留，可新建终端恢复', 'offline');
+        terminalState(t('原会话已不存在 · 草稿保留，可新建终端恢复'), 'offline');
         return;
       }
-      terminalState('连接中断，正在接回会话…', 'offline');
+      terminalState(t('连接中断，正在接回会话…'), 'offline');
       latest = true;
       if (hostState(profile) !== 'offline') updateHost('offline');
       await new Promise(resolve => setTimeout(resolve, backoff));
@@ -1283,7 +1292,7 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
     consumeModifiers();
   }
   if (!terminalInput.enqueue(value, { id: selected, address: profile?.id, epoch: viewEpoch }, { enter, onComplete })) {
-    get('terminal-status').textContent = '输入过长，请分段粘贴。';
+    get('terminal-status').textContent = t('输入过长，请分段粘贴。');
     return false;
   }
   return true;
@@ -1304,7 +1313,7 @@ async function newSession(terminalProfile) {
   busy = true;
   const epoch = viewEpoch;
   const wasReady = terminalReady;
-  if (!selected) terminalState('正在新建终端…');
+  if (!selected) terminalState(t('正在新建终端…'));
   try {
     // Pick up sessions whose creation response may have been lost.
     const list = await remote('sessions', { project: project.id });
@@ -1315,7 +1324,7 @@ async function newSession(terminalProfile) {
     await createSession(epoch, terminalProfile);
   } catch (error) {
     if (epoch === viewEpoch) {
-      if (wasReady && !error.revoked) get('terminal-status').textContent = error.message;
+      if (wasReady && !error.revoked) get('terminal-status').textContent = t(error.message);
       else handleTerminalError(error);
     }
   } finally {
@@ -1334,8 +1343,8 @@ async function endSession(id) {
   message('session-error', '');
   drawer.render();
   try {
-    if (!await confirmAction(ended ? '移除会话？' : '关闭会话？',
-      `「${sessionName(target)}」` + (ended ? '的输出将从列表中移除。' : '中的 Shell 和前台任务将被关闭。'), ended ? '移除' : '关闭')) return;
+    if (!await confirmAction(ended ? t('移除会话？') : t('关闭会话？'),
+      t(ended ? '「{name}」的输出将从列表中移除。' : '「{name}」中的 Shell 和前台任务将被关闭。', { name: sessionName(target) }), ended ? t('移除') : t('关闭'))) return;
     if (epoch !== viewEpoch) return;
     await remote('end', { id }, address);
     if (epoch !== viewEpoch) return;
@@ -1387,14 +1396,14 @@ get('end-all-sessions').addEventListener('click', async () => {
       returnToDashboard('home');
       return;
     }
-    if (!await confirmAction('结束全部会话？',
-      `将结束「${profile.name} / ${project.name}」的全部 ${targets.length} 个手机会话，关闭其中的 Shell 和前台任务，并移除会话输出。其他项目和桌面终端不受影响。`, '结束全部')) return;
+    if (!await confirmAction(t('结束全部会话？'),
+      t('将结束「{host} / {project}」的全部 {n} 个手机会话，关闭其中的 Shell 和前台任务，并移除会话输出。其他项目和桌面终端不受影响。', { host: profile.name, project: project.name, n: targets.length }), t('结束全部'))) return;
     if (epoch !== viewEpoch) return;
     get('session-drawer').close();
     // Pause polling and input while the confirmed terminals are being closed.
     leaveTerminal({ preserveFullscreen: true });
     epoch = viewEpoch;
-    terminalState('正在结束全部会话…');
+    terminalState(t('正在结束全部会话…'));
     const ended = new Set();
     const failed = [];
     for (const item of targets) {
@@ -1414,7 +1423,7 @@ get('end-all-sessions').addEventListener('click', async () => {
       returnToDashboard('home');
     } else {
       selectSession(sessions.find(item => item.id === previous) ?? sessions.find(item => !item.exit) ?? sessions[0]);
-      message('session-error', `已结束 ${ended.size} 个会话，${failed.length} 个未确认结束，请核对后重试。`);
+      message('session-error', t('已结束 {ended} 个会话，{failed} 个未确认结束，请核对后重试。', { ended: ended.size, failed: failed.length }));
       get('session-drawer').showModal();
       get('show-sessions').setAttribute('aria-expanded', 'true');
     }
@@ -1623,14 +1632,14 @@ async function sendImage() {
   const current = () => epoch === viewEpoch && selected === id && attempt === imageEpoch;
   try {
     const capabilities = await desktopProtocol.capabilities(profile);
-    if (capabilities && !capabilities.features.includes('images')) throw new Error('电脑端不支持图片上传，请更新电脑端 QingCode。');
+    if (capabilities && !capabilities.features.includes('images')) throw new Error(t('电脑端不支持图片上传，请更新电脑端 QingCode。'));
     if (!current()) return;
     await uploadTerminalImages({
       rpc, remote, address, id, compression: settings.compression(), isCurrent: current,
       onProgress: (index, total) => {
         count = total;
-        get('choose-image').textContent = '正在上传…';
-        composeStatus.setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index}/${count}`);
+        get('choose-image').textContent = t('正在上传…');
+        composeStatus.setImageNote(count === 1 ? t('图片上传中…') : t('图片上传中… {index}/{count}', { index, count }));
       },
       onInsert: path => {
         compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + path + ' ';
@@ -1642,16 +1651,16 @@ async function sendImage() {
     });
     if (!current() || !count) return;
     if (get('image-dialog').open) get('image-dialog').close();
-    composeStatus.setImageNote(count === 1 ? '✓ 图片已插入' : `✓ 已插入 ${inserted} 张图片`, { state: 'done', ttl: 2500 });
+    composeStatus.setImageNote(count === 1 ? t('✓ 图片已插入') : t('✓ 已插入 {n} 张图片', { n: inserted }), { state: 'done', ttl: 2500 });
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
       else {
-        composeStatus.setImageNote('⚠ 图片上传失败', { state: 'error', ttl: 6000 });
+        composeStatus.setImageNote(t('⚠ 图片上传失败'), { state: 'error', ttl: 6000 });
         message('image-error', count > 1
-          ? `已插入 ${inserted}/${count} 张图片。${error.message} 请重新选择剩余未上传的图片。`
-          : error.message);
+          ? t('已插入 {inserted}/{count} 张图片。{error} 请重新选择剩余未上传的图片。', { inserted, count, error: t(error.message) })
+          : t(error.message));
         if (!get('image-dialog').open) get('image-dialog').showModal();
       }
     }
@@ -1661,7 +1670,7 @@ async function sendImage() {
     get('attach-image').disabled = !terminalReady;
     get('attach-image').removeAttribute('aria-busy');
     get('choose-image').disabled = false;
-    get('choose-image').textContent = '选择图片';
+    get('choose-image').textContent = t('选择图片');
     updateComposerActions();
   }
 }

@@ -285,3 +285,5 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 截图、JSON 与 HTML 报告位于 `.dev/web-tests/settings-categories/`。
 
 AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-browser.mjs`，验证两排六列、单行输入候选、明确的手机草稿与实时输入目标、中文与 emoji 退格、选区删除、换行、删词、删至行首、只清空本地、键盘收起后远端删除、保留另一份草稿、Tab / Shift+Tab 的原始序列、长按松手停止和跨会话取消。覆盖 320px / 390px、软键盘高度和横屏，截图与业务结果位于 `.dev/web-tests/mobile-ai-keys/`。内存桥只证明输入序列与页面行为，真实 Claude / OpenCode 的候选、定制快捷键及手机 IME 仍需真机与 PTY 验收。
+
+安卓中英文界面：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-i18n.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；窗口不渲染时改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。以 `?lang=en` 打开 `/mobile-android/`，检查首页、连接页语言选择、配对弹窗与电脑端错误翻译、项目列表、终端、设置/按键/菜单/快捷键栏弹层和会话侧栏不残留中文界面文案，并验证切回中文后重新加载。测试桥未保存语言偏好时固定中文，现有中文断言不受系统语言影响。截图与 JSON 位于 `.dev/web-tests/mobile-i18n/`；词典覆盖由 `mobileAndroidI18n.test.ts` 检查，不替代 Android 真机系统语言验收。

@@ -1,5 +1,6 @@
 // 只读历史面板的渲染：电脑端历史为带基本颜色的文本行，可见行从 xterm 缓冲区带颜色复制。
 // 纯函数，不依赖全局状态，便于 Vitest 覆盖。
+import { t } from './i18n.js';
 
 /** 旧版电脑端为全屏程序采样画面插入的标记行；新版不再采样，保留解析以兼容旧电脑端。 */
 export const TUI_FRAME_MARKER = '── 全屏画面历史 ──';
@@ -184,7 +185,7 @@ export function historyItems(lines) {
     if (line === TUI_FRAME_MARKER) {
       // 分隔条自带间距，去掉它前面的空行。
       if (items.length && items[items.length - 1].kind === 'text' && !items[items.length - 1].text.trim()) items.pop();
-      items.push({ kind: 'divider', text: '全屏画面' });
+      items.push({ kind: 'divider', text: t('全屏画面') });
       blank = true;
       continue;
     }

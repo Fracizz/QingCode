@@ -2,6 +2,7 @@
 import { get, button } from './dom.js';
 import { terminalText, searchOffsets } from './workspaceState.js';
 import { findLinks } from './terminalLinks.js';
+import { t } from './i18n.js';
 
 /** terminal() 返回当前 xterm 实例；historyOpen() 表示是否正在看只读历史。 */
 export function createOutputReader({ rpc, terminal, historyOpen }) {
@@ -12,7 +13,7 @@ export function createOutputReader({ rpc, terminal, historyOpen }) {
   function refresh() {
     const term = terminal();
     readerText = get('reader-source').value === 'history' ? get('history-content').textContent.slice(-600_000) : term ? terminalText(term) : '';
-    get('reader-refresh').textContent = '刷新内容';
+    get('reader-refresh').textContent = t('刷新内容');
     render();
     get('reader-scroll').scrollTop = 0;
   }
@@ -54,7 +55,7 @@ export function createOutputReader({ rpc, terminal, historyOpen }) {
       parent.append(document.createTextNode(text.slice(position, start)));
       const link = button('reader-link', async () => {
         try { await rpc('open_link', { url }); }
-        catch (error) { get('reader-status').textContent = error.message; }
+        catch (error) { get('reader-status').textContent = t(error.message); }
       });
       link.textContent = url;
       link.setAttribute('role', 'link');
@@ -67,8 +68,8 @@ export function createOutputReader({ rpc, terminal, historyOpen }) {
   function updateMatch(scroll = true) {
     for (const mark of get('reader-content').querySelectorAll('mark')) mark.dataset.active = String(Number(mark.dataset.match) === readerIndex);
     get('reader-status').textContent = get('reader-query').value
-      ? readerMatches.length ? (readerIndex + 1) + ' / ' + readerMatches.length + (readerMatches.length === 500 ? '（最多 500 处）' : '') : '未找到'
-      : readerText ? '只读快照' : '此范围暂无输出';
+      ? readerMatches.length ? (readerIndex + 1) + ' / ' + readerMatches.length + (readerMatches.length === 500 ? t('（最多 500 处）') : '') : t('未找到')
+      : readerText ? t('只读快照') : t('此范围暂无输出');
     if (scroll) get('reader-content').querySelector('mark[data-active="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' });
   }
 
@@ -82,8 +83,8 @@ export function createOutputReader({ rpc, terminal, historyOpen }) {
   });
   get('reader-wrap').addEventListener('change', () => { get('reader-content').dataset.wrap = String(get('reader-wrap').checked); });
   get('reader-copy').addEventListener('click', async () => {
-    try { await rpc('copy', { text: readerText }); get('reader-status').textContent = '输出已复制'; }
-    catch (error) { get('reader-status').textContent = error.message; }
+    try { await rpc('copy', { text: readerText }); get('reader-status').textContent = t('输出已复制'); }
+    catch (error) { get('reader-status').textContent = t(error.message); }
   });
 
   return {
@@ -94,7 +95,7 @@ export function createOutputReader({ rpc, terminal, historyOpen }) {
     },
     /** 阅读时有新输出只提示刷新，不替换正在阅读的快照。 */
     notifyOutput() {
-      if (get('reader-dialog').open) get('reader-refresh').textContent = '刷新内容（有新输出）';
+      if (get('reader-dialog').open) get('reader-refresh').textContent = t('刷新内容（有新输出）');
     },
   };
 }

@@ -12,6 +12,7 @@ import {
 } from './protocol.js';
 import { attachLongPress } from './gestures.js';
 import { get, message, icon, rowText, button } from './dom.js';
+import { t } from './i18n.js';
 
 const REFRESH_INTERVAL = 1500;
 
@@ -60,7 +61,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const project = state.project();
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
-    get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? '终端';
+    get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? t('终端');
     get('terminal-host').textContent = project ? project.name + ' · ' + projectSourceLabel({ ...project, host: '' }) : '';
     get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
@@ -81,19 +82,19 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       row.dataset.running = String(running);
       const option = row.querySelector('.row');
       option.disabled = busy;
-      option.setAttribute('aria-label', '切换到 ' + label);
-      const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
-      const identity = '终端 ' + (session.number ?? index + 1);
+      option.setAttribute('aria-label', t('切换到 {name}', { name: label }));
+      const status = session.exit ? t('已结束') : [running ? t('运行中') : '', session.id === selected ? t('当前会话') : t('可接入')].filter(Boolean).join(' · ');
+      const identity = t('终端 {n}', { n: session.number ?? index + 1 });
       row.querySelector('.session-label').textContent = label;
-      row.querySelector('small').textContent = [pinned.has(session.id) ? '已置顶' : '', label === identity ? '' : identity, status]
+      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status]
         .filter(Boolean).join(' · ');
       const idle = row.querySelector('.session-idle');
       idle.textContent = session.exit ? '' : idleLabel(session);
       idle.hidden = !idle.textContent;
-      row.querySelector('.session-more').setAttribute('aria-label', label + ' 的更多操作');
+      row.querySelector('.session-more').setAttribute('aria-label', t('{name} 的更多操作', { name: label }));
       row.querySelector('.session-more').disabled = busy;
       const close = row.querySelector('.session-close');
-      close.setAttribute('aria-label', (session.exit ? '移除 ' : '关闭 ') + label);
+      close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
       close.disabled = busy;
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
@@ -198,10 +199,10 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const pinned = pins().includes(session.id);
     get('session-actions-title').textContent = sessionName(session, index + 1);
     get('session-actions-context').textContent = state.profile().name + ' / ' + state.project().name;
-    get('session-action-pin').textContent = pinned ? '取消置顶' : '置顶';
+    get('session-action-pin').textContent = pinned ? t('取消置顶') : t('置顶');
     get('session-action-rename').disabled = !Number.isFinite(session.nameRevision);
-    get('session-action-rename').textContent = Number.isFinite(session.nameRevision) ? '重命名' : '重命名（需更新电脑端）';
-    get('session-action-end').textContent = session.exit ? '移除已结束会话' : session.id === state.selected() ? '结束当前会话' : '结束会话';
+    get('session-action-rename').textContent = Number.isFinite(session.nameRevision) ? t('重命名') : t('重命名（需更新电脑端）');
+    get('session-action-end').textContent = session.exit ? t('移除已结束会话') : session.id === state.selected() ? t('结束当前会话') : t('结束会话');
     get('session-actions-dialog').showModal();
   }
 
