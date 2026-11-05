@@ -105,7 +105,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       if (!active || attempt !== generation) return;
       const height = scroll.scrollHeight;
       const top = scroll.scrollTop;
-      content.prepend(renderHistoryPage(content.ownerDocument, page.lines));
+      content.prepend(renderHistoryPage(content.ownerDocument, page.lines, term.options.theme ?? {}));
       cursor = page.before;
       more = page.more === true;
       moreButton.hidden = !more;

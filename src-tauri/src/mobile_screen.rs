@@ -11,7 +11,22 @@ const MAX_HISTORY_LINES: usize = 5000;
 const PAGE_LINES: usize = 120;
 const PAGE_BYTES: usize = 64 * 1024;
 const TUI_FRAME_INTERVAL: Duration = Duration::from_secs(1);
+/// 自动换行拼回的单个逻辑行上限，避免超长输出变成一行无法分页。
+const MAX_JOINED_LINE_BYTES: usize = 16 * 1024;
+/// 相邻全屏画面对齐时，允许旧画面末尾若干行被新内容改写（流式输出、计时器等）。
+const FRAME_TAIL_TOLERANCE: usize = 3;
+pub(super) const TUI_FRAME_MARKER: &str = "── 全屏画面历史 ──";
+/// 退出备用屏的控制序列：遇到时强制采样，保留全屏程序退出前的最后画面。
+const LEAVE_ALTERNATE: [&[u8]; 3] = [b"\x1b[?1049l", b"\x1b[?1047l", b"\x1b[?47l"];
 
+/// 全屏画面中的一行：`plain` 用于对齐比较，`formatted` 带基本 SGR 颜色，供手机端渲染。
+#[derive(Clone, Default)]
+struct FrameRow {
+    plain: String,
+    formatted: String,
+}
+
+/// 历史行以「基本格式」保存（文字 + SGR 颜色序列），每行从默认属性开始，可单独渲染。
 #[derive(Default)]
 struct History {
     lines: VecDeque<(u64, String)>,
@@ -21,6 +36,16 @@ struct History {
     title: Option<String>,
     tui_sampled_at: Option<Instant>,
     last_tui_frame: String,
+    /// 只用于判断上一行是否自动换行（vt100 在下一行开头写 `\n` 表示上一行未换行）。
+    wrap_state: BasicFormattedCaptureState,
+    /// 最近一次由普通滚动写入的行 id；自动换行的后续行拼接到这一行。
+    last_scroll_line: Option<u64>,
+    /// 最近采样、尚未提交的全屏画面；滚出画面的部分才写入历史，其余与当前画面重复。
+    pending_frame: Vec<FrameRow>,
+    /// 当前全屏场景是否已写入分隔标记和固定头部。
+    scene_open: bool,
+    /// 当前场景已写入的固定头部（纯文本），退出时提交最后画面不再重复。
+    scene_header: Vec<String>,
 }
 
 impl vt100::Callbacks for History {
@@ -36,12 +61,132 @@ impl vt100::Callbacks for History {
         if alternate {
             return;
         }
+        let mut probe = String::new();
+        let _ = row.write_formatted_basic(&mut probe, &mut self.wrap_state);
+        let continues_previous = !probe.starts_with('\n');
         let mut formatted = String::new();
         let _ =
             row.write_formatted_basic(&mut formatted, &mut BasicFormattedCaptureState::default());
-        let text = basic_formatted_to_plain(&formatted).collect::<String>();
-        self.push_line(text);
+        // 终端按宽度自动换行的行拼回一个逻辑行，手机按自己的宽度重新排版。
+        if continues_previous {
+            if let Some((id, line)) = self.lines.back_mut() {
+                if Some(*id) == self.last_scroll_line && line.len() < MAX_JOINED_LINE_BYTES {
+                    self.bytes += formatted.len();
+                    line.push_str(&formatted);
+                    self.evict();
+                    return;
+                }
+            }
+        }
+        self.push_line(formatted);
+        self.last_scroll_line = Some(self.next - 1);
     }
+}
+
+fn plain(formatted: &str) -> String {
+    basic_formatted_to_plain(formatted).collect()
+}
+
+fn sgr_color(params: &mut Vec<String>, color: vt100::Color, base: u8, bright: u8, extended: u8) {
+    match color {
+        vt100::Color::Default => {}
+        vt100::Color::Idx(index) if index < 8 => params.push((base + index).to_string()),
+        vt100::Color::Idx(index) if index < 16 => params.push((bright + index - 8).to_string()),
+        vt100::Color::Idx(index) => params.push(format!("{extended};5;{index}")),
+        vt100::Color::Rgb(r, g, b) => params.push(format!("{extended};2;{r};{g};{b}")),
+    }
+}
+
+/// 按单元格生成全屏画面的行：每行从默认属性开始，只在属性变化时写 SGR。
+fn frame_rows(screen: &vt100::Screen) -> Vec<FrameRow> {
+    let (rows, cols) = screen.size();
+    (0..rows.get())
+        .map(|row| {
+            let mut result = FrameRow::default();
+            let mut current = String::new();
+            let mut spaces = 0;
+            for col in 0..cols.get() {
+                let Some(cell) = screen.cell(row, col) else {
+                    continue;
+                };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let mut params = Vec::new();
+                for (enabled, code) in [
+                    (cell.bold(), "1"),
+                    (cell.dim(), "2"),
+                    (cell.italic(), "3"),
+                    (cell.underline(), "4"),
+                    (cell.inverse(), "7"),
+                ] {
+                    if enabled {
+                        params.push(code.to_string());
+                    }
+                }
+                sgr_color(&mut params, cell.fgcolor(), 30, 90, 38);
+                sgr_color(&mut params, cell.bgcolor(), 40, 100, 48);
+                let attrs = params.join(";");
+                let text = if cell.has_contents() {
+                    cell.contents()
+                } else {
+                    " "
+                };
+                if text == " " && attrs.is_empty() {
+                    spaces += 1;
+                    continue;
+                }
+                if spaces > 0 {
+                    if !current.is_empty() {
+                        result.formatted.push_str("\x1b[m");
+                        current.clear();
+                    }
+                    let gap = " ".repeat(std::mem::take(&mut spaces));
+                    result.plain.push_str(&gap);
+                    result.formatted.push_str(&gap);
+                }
+                if attrs != current {
+                    if attrs.is_empty() {
+                        result.formatted.push_str("\x1b[m");
+                    } else {
+                        result.formatted.push_str(&format!("\x1b[0;{attrs}m"));
+                    }
+                    current = attrs;
+                }
+                result.plain.push_str(text);
+                result.formatted.push_str(text);
+            }
+            result
+        })
+        .collect()
+}
+
+fn trim_blank_tail(rows: &[FrameRow]) -> &[FrameRow] {
+    let end = rows
+        .iter()
+        .rposition(|row| !row.plain.trim().is_empty())
+        .map_or(0, |index| index + 1);
+    &rows[..end]
+}
+
+/// 新画面的开头与旧画面的哪一行对齐：返回旧画面已滚出的行数。
+/// 允许旧画面末尾至多 `FRAME_TAIL_TOLERANCE` 行被改写；找不到时说明画面整体切换。
+fn scroll_offset(previous: &[FrameRow], current: &[FrameRow]) -> Option<usize> {
+    if previous.is_empty() {
+        return Some(0);
+    }
+    (0..previous.len()).find(|&start| {
+        let matched = previous[start..]
+            .iter()
+            .zip(current)
+            .take_while(|(old, new)| old.plain == new.plain)
+            .count();
+        let reaches_tail = start + matched + FRAME_TAIL_TOLERANCE >= previous.len();
+        let meaningful = previous[start..start + matched]
+            .iter()
+            .any(|row| !row.plain.trim().is_empty());
+        matched > 0 && meaningful && reaches_tail
+    })
 }
 
 impl History {
@@ -49,12 +194,95 @@ impl History {
         self.bytes += text.len();
         self.lines.push_back((self.next, text));
         self.next += 1;
+        self.evict();
+    }
+
+    fn evict(&mut self) {
         while self.bytes > MAX_HISTORY_BYTES || self.lines.len() > MAX_HISTORY_LINES {
             if let Some((_, removed)) = self.lines.pop_front() {
                 self.bytes -= removed.len();
                 self.truncated = true;
             }
         }
+    }
+
+    fn open_scene(&mut self, header: &[FrameRow]) {
+        if self.scene_open {
+            return;
+        }
+        self.scene_open = true;
+        self.push_line(TUI_FRAME_MARKER.to_string());
+        let header = trim_blank_tail(header);
+        self.scene_header = header.iter().map(|row| row.plain.clone()).collect();
+        for row in header {
+            self.push_line(row.formatted.clone());
+        }
+    }
+
+    fn commit_rows(&mut self, header: &[FrameRow], rows: &[FrameRow]) {
+        let rows = trim_blank_tail(rows);
+        if rows.is_empty() {
+            return;
+        }
+        self.open_scene(header);
+        for row in rows {
+            self.push_line(row.formatted.clone());
+        }
+    }
+
+    /// 把采样到的全屏画面并入历史：固定的头部/底部（标题栏、输入框、状态栏）只保留一次，
+    /// 内容滚动时只提交滚出画面的行；画面整体切换时提交整屏并开始新场景。
+    fn merge_frame(&mut self, current: Vec<FrameRow>) {
+        let previous = std::mem::replace(&mut self.pending_frame, current);
+        if previous.is_empty() {
+            return;
+        }
+        let current = &self.pending_frame;
+        let shared = previous.len().min(current.len());
+        let header = previous
+            .iter()
+            .zip(current)
+            .take_while(|(old, new)| old.plain == new.plain)
+            .count();
+        let footer = previous
+            .iter()
+            .rev()
+            .zip(current.iter().rev())
+            .take(shared - header)
+            .take_while(|(old, new)| old.plain == new.plain)
+            .count();
+        let old_body = trim_blank_tail(&previous[header..previous.len() - footer]);
+        let new_body = trim_blank_tail(&current[header..current.len() - footer]);
+        match scroll_offset(old_body, new_body) {
+            Some(scrolled) => {
+                let scrolled = old_body[..scrolled].to_vec();
+                self.commit_rows(&previous[..header], &scrolled);
+            }
+            None => {
+                let rows = previous[header..previous.len() - footer].to_vec();
+                self.commit_rows(&previous[..header], &rows);
+                self.scene_open = false;
+            }
+        }
+    }
+
+    /// 离开全屏程序：最后一次采样的画面整体提交，下一次进入全屏时开始新场景。
+    fn flush_frame(&mut self) {
+        let rows = std::mem::take(&mut self.pending_frame);
+        let skip = if self.scene_open
+            && rows.len() >= self.scene_header.len()
+            && rows
+                .iter()
+                .zip(&self.scene_header)
+                .all(|(row, header)| &row.plain == header)
+        {
+            self.scene_header.len()
+        } else {
+            self.scene_open = false;
+            0
+        };
+        self.commit_rows(&[], &rows[skip..]);
+        self.scene_open = false;
     }
 
     fn update_title(&mut self, title: &[u8]) {
@@ -96,6 +324,8 @@ impl History {
     }
 }
 
+type TuiSample = (Instant, String, Vec<FrameRow>);
+
 pub(super) struct MobileScreen {
     parser: vt100::Parser<History>,
 }
@@ -125,29 +355,43 @@ impl MobileScreen {
     }
 
     fn process_at(&mut self, data: &[u8], now: Instant) {
-        let previous = self.take_tui_frame(now);
+        let was_alternate = self.parser.screen().alternate_screen();
+        let leaving = LEAVE_ALTERNATE.iter().any(|sequence| {
+            data.windows(sequence.len())
+                .any(|window| window == *sequence)
+        });
+        let previous = self.take_tui_frame(now, leaving);
         self.parser.process(data);
         self.retain_tui_frame(previous);
+        self.flush_after_leaving(was_alternate);
+    }
+
+    fn flush_after_leaving(&mut self, was_alternate: bool) {
+        if was_alternate && !self.parser.screen().alternate_screen() {
+            self.parser.callbacks_mut().flush_frame();
+        }
     }
 
     // TUI applications repaint instead of scrolling normal terminal lines. Sample the
-    // screen they are replacing, as plain text; never replay it into the live terminal.
-    fn take_tui_frame(&mut self, now: Instant) -> Option<(Instant, String)> {
+    // screen they are replacing (with basic colors); never replay it into the live terminal.
+    fn take_tui_frame(&mut self, now: Instant, force: bool) -> Option<TuiSample> {
         if !self.parser.screen().alternate_screen() {
             return None;
         }
         let history = self.parser.callbacks_mut();
-        if history
-            .tui_sampled_at
-            .is_some_and(|last| now.saturating_duration_since(last) < TUI_FRAME_INTERVAL)
+        if !force
+            && history
+                .tui_sampled_at
+                .is_some_and(|last| now.saturating_duration_since(last) < TUI_FRAME_INTERVAL)
         {
             return None;
         }
-        Some((now, self.parser.screen().contents()))
+        let screen = self.parser.screen();
+        Some((now, screen.contents(), frame_rows(screen)))
     }
 
-    fn retain_tui_frame(&mut self, previous: Option<(Instant, String)>) {
-        let Some((now, previous)) = previous else {
+    fn retain_tui_frame(&mut self, previous: Option<TuiSample>) {
+        let Some((now, previous, rows)) = previous else {
             return;
         };
         if previous.trim().is_empty() || previous == self.parser.screen().contents() {
@@ -158,10 +402,7 @@ impl MobileScreen {
             return;
         }
         history.tui_sampled_at = Some(now);
-        history.push_line("── 全屏画面历史 ──".to_string());
-        for line in previous.trim_end().lines() {
-            history.push_line(line.to_string());
-        }
+        history.merge_frame(rows);
         history.last_tui_frame = previous;
     }
 
@@ -171,7 +412,8 @@ impl MobileScreen {
     }
 
     pub(super) fn replace(&mut self, data: &str, cols: u16, rows: u16) {
-        let previous = self.take_tui_frame(Instant::now());
+        let was_alternate = self.parser.screen().alternate_screen();
+        let previous = self.take_tui_frame(Instant::now(), true);
         let history = std::mem::take(self.parser.callbacks_mut());
         self.parser = vt100::Parser::new_with_callbacks(
             nonzero(rows.clamp(2, 150)),
@@ -181,6 +423,7 @@ impl MobileScreen {
         );
         self.process(data.as_bytes());
         self.retain_tui_frame(previous);
+        self.flush_after_leaving(was_alternate);
     }
 
     pub(super) fn snapshot(&self) -> Value {
@@ -204,7 +447,14 @@ impl MobileScreen {
         !self.parser.callbacks().lines.is_empty()
     }
 
+    /// 纯文本历史，兼容旧版手机端。
+    #[cfg(test)]
     pub(super) fn history(&self, before: u64) -> Value {
+        self.history_page(before, false)
+    }
+
+    /// `formatted` 为 true 时保留基本 SGR 颜色序列（只有颜色与字形，不含其他控制序列）。
+    pub(super) fn history_page(&self, before: u64, formatted: bool) -> Value {
         let history = self.parser.callbacks();
         let end = before.min(history.next);
         let mut bytes = 0;
@@ -226,7 +476,10 @@ impl MobileScreen {
         let cursor = page.first().map_or(end, |(id, _)| *id);
         let more = history.lines.front().is_some_and(|(id, _)| *id < cursor);
         json!({
-            "lines": page.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+            "lines": page
+                .iter()
+                .map(|(_, text)| if formatted { (*text).to_string() } else { plain(text) })
+                .collect::<Vec<_>>(),
             "before": cursor, "more": more, "truncated": history.truncated && !more,
         })
     }
@@ -333,6 +586,17 @@ mod tests {
         assert!(!retained.contains("52;c"));
     }
 
+    fn pending_text(screen: &MobileScreen) -> String {
+        screen
+            .parser
+            .callbacks()
+            .pending_frame
+            .iter()
+            .map(|row| row.plain.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn tui_repaints_are_sampled_and_do_not_duplicate_unchanged_screens() {
         let mut screen = MobileScreen::new();
@@ -340,25 +604,28 @@ mod tests {
         let now = Instant::now();
         screen.process_at(b"\x1b[?1049h\x1b[2J\x1b[Hfirst answer", now);
         screen.process_at(b"\x1b[2J\x1b[Hsecond answer", now + Duration::from_secs(1));
-        let first = screen.history_before();
-        assert!(first > 0);
+        // 最近一次采样先暂存（与当前画面基本重复），尚未写入历史。
+        assert_eq!(screen.history_before(), 0);
+        assert!(pending_text(&screen).contains("first answer"));
         screen.process_at(
             b"\x1b[2J\x1b[Hthird answer",
             now + Duration::from_millis(1100),
         );
-        assert_eq!(screen.history_before(), first);
         screen.process_at(b"\x1b[H", now + Duration::from_secs(2));
-        assert_eq!(screen.history_before(), first);
+        assert_eq!(screen.history_before(), 0);
         screen.process_at(b"\x1b[2J\x1b[Hfourth answer", now + Duration::from_secs(3));
+        // 画面整体切换：上一张采样提交为一个场景。
         let retained = screen.history(screen.history_before()).to_string();
         assert!(retained.contains("first answer"));
-        assert!(retained.contains("third answer"));
         assert!(!retained.contains("second answer"));
-        assert!(!retained.contains("fourth answer"));
-        assert!(screen.snapshot()["data"]
-            .as_str()
-            .unwrap()
-            .contains("fourth answer"));
+        assert!(!retained.contains("third answer"));
+        // 退出全屏程序时提交最后的画面。
+        screen.process_at(b"\x1b[?1049lprompt", now + Duration::from_millis(3100));
+        let retained = screen.history(screen.history_before()).to_string();
+        assert!(retained.contains("third answer"));
+        assert!(retained.contains("fourth answer"));
+        assert!(!retained.contains("second answer"));
+        assert_eq!(retained.matches(TUI_FRAME_MARKER).count(), 3);
     }
 
     #[test]
@@ -367,13 +634,96 @@ mod tests {
         let now = Instant::now();
         screen.process_at(b"\x1b[?1049hfirst answer", now);
         screen.process_at(b"\x1b[H\x1b[", now);
-        assert!(!screen.has_history());
+        assert!(pending_text(&screen).is_empty());
         screen.process_at(b"2J\x1b[Hsecond answer", now + Duration::from_millis(10));
-        assert!(screen.has_history());
-        assert!(screen
-            .history(screen.history_before())
-            .to_string()
-            .contains("first answer"));
+        assert!(pending_text(&screen).contains("first answer"));
+    }
+
+    #[test]
+    fn scrolling_tui_keeps_each_line_once_and_drops_fixed_header_and_footer() {
+        let mut screen = MobileScreen::new();
+        screen.resize(30, 6);
+        let now = Instant::now();
+        let frame = |lines: &[&str]| {
+            let mut data = String::from("\x1b[2J\x1b[H\x1b[1mHEADER\x1b[m");
+            for (index, line) in lines.iter().enumerate() {
+                data.push_str(&format!("\x1b[{};1H{line}", index + 2));
+            }
+            data.push_str("\x1b[5;1H\x1b[32m> Ask anything\x1b[m\x1b[6;1Hstatus bar");
+            data
+        };
+        screen.process_at(
+            format!("\x1b[?1049h{}", frame(&["one", "two", "three"])).as_bytes(),
+            now,
+        );
+        for (step, lines) in [
+            ["two", "three", "four"],
+            ["three", "four", "five"],
+            ["five", "six", "seven"],
+        ]
+        .iter()
+        .enumerate()
+        {
+            screen.process_at(
+                frame(lines).as_bytes(),
+                now + Duration::from_secs(step as u64 + 1),
+            );
+        }
+        screen.process_at(b"\x1b[?1049l$ ", now + Duration::from_secs(9));
+        let page = screen.history(screen.history_before());
+        let lines: Vec<&str> = page["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line.as_str().unwrap())
+            .collect();
+        for word in ["one", "two", "three", "four", "five", "six", "seven"] {
+            assert_eq!(
+                lines.iter().filter(|line| **line == word).count(),
+                1,
+                "{word} in {lines:?}"
+            );
+        }
+        assert_eq!(lines.iter().filter(|line| **line == "HEADER").count(), 1);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| **line == TUI_FRAME_MARKER)
+                .count(),
+            1
+        );
+        // 输入框与状态栏只在退出时的最后画面出现一次。
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("Ask anything"))
+                .count(),
+            1
+        );
+        let formatted = screen.history_page(screen.history_before(), true);
+        let formatted: Vec<&str> = formatted["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line.as_str().unwrap())
+            .collect();
+        assert!(formatted.contains(&"\x1b[0;1mHEADER"));
+        assert!(formatted.contains(&"\x1b[0;32m> Ask anything"));
+    }
+
+    #[test]
+    fn scrollback_keeps_basic_colors_and_rejoins_wrapped_rows() {
+        let mut screen = MobileScreen::new();
+        screen.resize(10, 2);
+        screen.process(b"\x1b[31mred\x1b[m plain\r\n0123456789abcdefghij\r\nnext\r\nlast\r\n");
+        let plain = screen.history(screen.history_before());
+        let lines = plain["lines"].as_array().unwrap();
+        assert_eq!(lines[0], "red plain");
+        assert_eq!(lines[1], "0123456789abcdefghij");
+        let formatted = screen.history_page(screen.history_before(), true);
+        let first = formatted["lines"][0].as_str().unwrap();
+        assert!(first.starts_with("\x1b[31mred"));
+        assert!(!first.contains("\x1b]"));
     }
 
     #[test]

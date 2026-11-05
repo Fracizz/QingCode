@@ -535,6 +535,9 @@ enum Operation {
     History {
         id: String,
         before: u64,
+        /// 新版手机端请求带颜色的历史；旧版不传，仍收到纯文本。
+        #[serde(default)]
+        formatted: bool,
     },
     Input {
         id: String,
@@ -1459,10 +1462,14 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             )
             .await
         }
-        Operation::History { id, before } => {
+        Operation::History {
+            id,
+            before,
+            formatted,
+        } => {
             let inner = hub.inner.lock().unwrap();
             let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
-            Ok(session.screen.history(before))
+            Ok(session.screen.history_page(before, formatted))
         }
         Operation::Poll {
             id,

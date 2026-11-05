@@ -782,7 +782,8 @@ function makeTerminal() {
     onClose: () => disposeTouchScroll?.cancel?.(),
     touchToProgram: () => settings.touchMode() === 'program',
     loadPage: async before => {
-      const data = await remote('history', { id: historySession, before });
+      // formatted：新版电脑端返回带基本颜色的历史；旧版忽略该参数，仍返回纯文本。
+      const data = await remote('history', { id: historySession, before, formatted: true });
       if (historyEpoch !== viewEpoch) throw new Error('会话已切换');
       return data;
     },
