@@ -12,7 +12,6 @@ import { isTauri, safeInvoke } from '../lib/tauri'
 import { getGitHead, type GitHeadInfo } from '../lib/ipc/git'
 import { isProjectRestricted, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { useActiveGitDirtyCount } from '../hooks/useActiveGitDirtyCount'
 import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
@@ -85,7 +84,6 @@ export default function StatusBar() {
   const [memoryTipOpen, setMemoryTipOpen] = useState(false)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
-  const gitDirtyCount = useActiveGitDirtyCount()
   const [encodingMenu, setEncodingMenu] = useState<{
     x: number
     y: number
@@ -459,11 +457,7 @@ export default function StatusBar() {
               <StatusTip
                 wrapperClassName="status-branch"
                 label={`${gitHead.name}\n${
-                  gitHead.detached
-                    ? t('分离的 HEAD（未在分支上）')
-                    : gitDirtyCount > 0
-                      ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
-                      : t('当前 Git 分支')
+                  gitHead.detached ? t('分离的 HEAD（未在分支上）') : t('当前 Git 分支')
                 }`}
               >
                 <button
@@ -477,9 +471,6 @@ export default function StatusBar() {
                       ? t('分离 HEAD · {sha}', { sha: gitHead.name })
                       : gitHead.name}
                   </span>
-                  {gitDirtyCount > 0 && (
-                    <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
-                  )}
                 </button>
               </StatusTip>
             </>
