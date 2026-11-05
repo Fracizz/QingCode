@@ -14,6 +14,7 @@ const help = `Local packaging (never publishes):
                      [--jobs 3] [--skip-frontend] [--skip-icons] [--skip-server] [--plan]
   pnpm package:local status <run-id>
   pnpm package:local cancel <run-id> [--task apk]
+Default: installer only (versioned NSIS setup; no QingCode-setup.exe alias).
 run is foreground (Ctrl+C cancels its process trees); start runs in the background.
 Logs and JSON status: .dev/package-runs/<run-id>/
 Only independent stages run in parallel; exe and installer share a Cargo target and run sequentially.`
@@ -36,20 +37,24 @@ function runPath(id) {
 }
 
 export function buildPlan(options = {}) {
-  const only = options.only ?? 'all'
+  const only = options.only ?? 'installer'
   if (!['all', 'desktop', 'exe', 'installer', 'server', 'apk'].includes(only)) throw new Error('Invalid --only component.')
   const desktop = ['all', 'desktop', 'exe', 'installer'].includes(only)
   const apk = ['all', 'apk'].includes(only)
+  const server = ['all', 'desktop', 'exe', 'server'].includes(only)
   const tasks = []
   const add = (id, script, args = [], needs = []) => tasks.push({ id, command: 'pwsh', args: ['-NoProfile', '-File', `scripts/${script}`, ...args], needs })
   if (desktop && !options.skipFrontend) add('frontend', 'package-stage.ps1', ['-Stage', 'frontend'])
   if ((desktop || apk) && !options.skipIcons) add('icons', 'package-stage.ps1', ['-Stage', 'icons'])
-  if (desktop || only === 'server') add('server', 'package-stage.ps1', ['-Stage', 'server', ...(options.skipServer ? ['-SkipServer'] : [])])
+  if (server) add('server', 'package-stage.ps1', ['-Stage', 'server', ...(options.skipServer ? ['-SkipServer'] : [])])
   const desktopNeeds = tasks.filter(task => ['frontend', 'icons', 'server'].includes(task.id)).map(task => task.id)
   if (desktop) add('embed', 'package-stage.ps1', ['-Stage', 'embed'], desktopNeeds)
   const flags = ['-SkipFrontend', '-SkipIcons', '-SkipServer', '-SkipAndroid', '-SkipServerPack']
-  if (desktop && only !== 'installer') add('exe', 'package-exe.ps1', flags, ['embed'])
-  if (desktop && only !== 'exe') add('installer', 'package-installer.ps1', flags, tasks.some(task => task.id === 'exe') ? ['exe'] : ['embed'])
+  if (desktop && ['all', 'desktop', 'exe'].includes(only)) add('exe', 'package-exe.ps1', flags, ['embed'])
+  if (desktop && ['all', 'desktop', 'installer'].includes(only)) {
+    const installerFlags = only === 'installer' ? [...flags, '-SkipLatestAlias'] : flags
+    add('installer', 'package-installer.ps1', installerFlags, tasks.some(task => task.id === 'exe') ? ['exe'] : ['embed'])
+  }
   if (apk) add('apk', 'package-android-if-needed.ps1', [], tasks.some(task => task.id === 'icons') ? ['icons'] : [])
   return tasks
 }

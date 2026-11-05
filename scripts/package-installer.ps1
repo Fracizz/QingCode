@@ -1,5 +1,5 @@
 # Build QingCode Windows NSIS installer (.exe setup) via Tauri.
-# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer]
+# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer] [-SkipLatestAlias]
 [CmdletBinding()]
 param(
   [switch]$Force,
@@ -9,6 +9,8 @@ param(
   [switch]$SkipServer,
   [switch]$SkipAndroid,
   [switch]$SkipServerPack,
+  # Keep only the versioned setup artifact for local installer-only runs.
+  [switch]$SkipLatestAlias,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -82,11 +84,17 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # 安装包不内置 Server；离线包单独写入 release/servers/ 和
-  # release/QingCode-servers.zip，安装器保持轻量，运行时按本地目录或在线下载发现。
-  Write-Step 'SSH server binaries (not bundled)'
-  Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
-  if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
+  # 安装包不内置 Server。统一 CLI 的安装器专用流程会同时传入
+  # -SkipServer 和 -SkipServerPack，此时完全跳过 Server 构建与校验。
+  if ($SkipServer -and $SkipServerPack) {
+    Write-Step 'SSH server binaries (skipped for installer-only build)'
+  } else {
+    # 离线包单独写入 release/servers/ 和 release/QingCode-servers.zip，
+    # 安装器保持轻量，运行时按本地目录或在线下载发现。
+    Write-Step 'SSH server binaries (not bundled)'
+    Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
+    if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
+  }
 
   $frontendRebuilt = $false
   if ($SkipFrontend) {
@@ -178,14 +186,20 @@ try {
   }
 
   Copy-Item $setup.FullName $versioned -Force
-  Copy-Item $setup.FullName $latest -Force
+  if (-not $SkipLatestAlias) {
+    Copy-Item $setup.FullName $latest -Force
+  }
 
   Write-Host ""
   if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
-  Write-Host "  $latest"
-  Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack; not inside the installer)"
+  if (-not $SkipLatestAlias) {
+    Write-Host "  $latest"
+  }
+  if (-not ($SkipServer -and $SkipServerPack)) {
+    Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack; not inside the installer)"
+  }
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""

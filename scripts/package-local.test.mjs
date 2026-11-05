@@ -25,11 +25,23 @@ test('a transient Windows replacement lock preserves and then updates the JSON s
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
 
-test('desktop stages share preparation and serialize the Cargo output; APK stays independent', () => {
+test('default plan builds only the NSIS installer without Server, portable exe or APK', () => {
   const tasks = buildPlan()
+  assert.deepEqual(tasks.map(task => task.id), ['frontend', 'icons', 'embed', 'installer'])
+  assert.deepEqual(tasks.find(task => task.id === 'embed').needs, ['frontend', 'icons'])
+  assert.deepEqual(tasks.find(task => task.id === 'installer').needs, ['embed'])
+  const installerArgs = tasks.find(task => task.id === 'installer').args
+  assert.ok(installerArgs.includes('-SkipServerPack'))
+  assert.ok(installerArgs.includes('-SkipLatestAlias'))
+  assert.deepEqual(buildPlan(), buildPlan({ only: 'installer' }))
+})
+
+test('desktop stages share preparation and serialize the Cargo output; APK stays independent', () => {
+  const tasks = buildPlan({ only: 'all' })
   assert.deepEqual(tasks.find(task => task.id === 'embed').needs, ['frontend', 'icons', 'server'])
   assert.deepEqual(tasks.find(task => task.id === 'exe').needs, ['embed'])
   assert.deepEqual(tasks.find(task => task.id === 'installer').needs, ['exe'])
+  assert.ok(!tasks.find(task => task.id === 'installer').args.includes('-SkipLatestAlias'))
   assert.deepEqual(tasks.find(task => task.id === 'apk').needs, ['icons'])
   assert.deepEqual(buildPlan({ only: 'apk', skipIcons: true }).map(task => task.id), ['apk'])
   assert.ok(!buildPlan({ only: 'desktop' }).some(task => task.id === 'apk'))
