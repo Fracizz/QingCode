@@ -1,17 +1,15 @@
-// 命令输入框内的单行短状态：图片进度 > 待处理的提交状态 > 补全提示 > 已接收。
-// 「电脑已接收」只对本次界面上看着发出的提交短暂显示约 4 秒，随后整行消失，输入框不再常驻勾号；
+// 状态行里的输入短状态图标：图片进度 > 提交状态（发送中 / 已接收 / 结果未知）。
+// 「电脑已接收」只对本次界面上看着发出的提交短暂显示约 4 秒，随后图标消失，不常驻勾号；
 // 重新进入终端时不再回放以前已接收的回执。
 // 发送中、结果未知、手机保存失败会一直显示，便于核对。提交原文仍可在「… → 最近提交与项目草稿」查看。
 import { get } from './dom.js';
-import { isSlashDraft } from './composer.js';
 
 export const RECEIPT_VISIBLE_MS = 4000;
 
 /**
- * receipts()：当前会话最近的提交回执（新到旧）；persistenceFailed()：手机存储是否失败；
- * rawInput()：是否处于终端实时输入；draft()：当前命令栏文字。
+ * receipts()：当前会话最近的提交回执（新到旧）；persistenceFailed()：手机存储是否失败。
  */
-export function createComposeStatus({ receipts, persistenceFailed, rawInput, draft }) {
+export function createComposeStatus({ receipts, persistenceFailed }) {
   let imageNote = null;
   let imageNoteTimer = null;
   // 本次界面中出现过「发送中」的回执；只有它们在被接收时短暂提示。
@@ -57,18 +55,14 @@ export function createComposeStatus({ receipts, persistenceFailed, rawInput, dra
 
   /** 同一时间只显示一项状态；无状态时整行不占高度。 */
   function renderNotes() {
-    const raw = rawInput();
-    const chip = get('review-submission');
     const submission = get('submission-state').dataset.visible === 'true';
-    const settled = submission && chip.dataset.state === 'received';
     const image = get('image-state');
     image.textContent = imageNote?.text ?? '';
     image.dataset.state = imageNote?.state ?? '';
     image.hidden = !imageNote;
-    const urgentSubmission = submission && !settled && !imageNote;
-    const help = get('completion-help');
-    help.hidden = !!imageNote || urgentSubmission || !(raw || isSlashDraft(draft()));
-    get('submission-state').hidden = !submission || !!imageNote || (settled && !help.hidden);
+    // 补全提示不再占用状态行，只保留图片与提交两类图标。
+    get('completion-help').hidden = true;
+    get('submission-state').hidden = !submission || !!imageNote;
   }
 
   function reset() {

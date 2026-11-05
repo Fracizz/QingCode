@@ -141,6 +141,12 @@
         <div class="terminal-state">
           <span id="terminal-dot" class="dot"></span><p id="terminal-status" role="status"></p>
           <button id="terminal-retry" class="text-button" type="button" hidden>重试</button>
+          <!-- 输入相关的单行短状态（图片进度 / 提交回执 / 补全提示），放在状态行而非输入框内。 -->
+          <span class="compose-notes">
+            <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
+            <span id="image-state" class="compose-note" role="status" hidden></span>
+            <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
+          </span>
           <!-- 常驻文字标明编辑目标：草稿先在手机编辑，直发把按键立即发给终端。读屏使用 #input-mode。 -->
           <span id="terminal-input-mode" data-mode="compose" aria-hidden="true">草稿</span>
           <span id="terminal-latency" aria-label="手机到电脑往返延迟">电脑 --</span>
@@ -168,13 +174,8 @@
           <button type="button" id="more-keys" aria-haspopup="dialog" aria-controls="keys-dialog">更多</button>
         </div>
         <form id="compose-form">
-          <!-- 编辑目标由实时输入配色和占位文字表达；短状态在框内独立一行，避免压住边框或按钮。 -->
+          <!-- 编辑目标由实时输入配色和占位文字表达；短状态放在上方状态行，输入框保持完整。 -->
           <span id="input-mode" class="sr-only">命令输入</span>
-          <span class="compose-notes">
-            <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
-            <span id="image-state" class="compose-note" role="status" hidden></span>
-            <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
-          </span>
           <button type="button" id="keyboard" class="icon-button" aria-label="打开实时输入键盘" aria-pressed="false"><svg><use href="#i-keyboard"/></svg></button>
           <button type="button" id="attach-image" class="icon-button" aria-label="选择图片插入草稿，可多选"><svg><use href="#i-image"/></svg></button>
           <textarea id="compose" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" aria-label="输入终端命令" aria-describedby="input-hint" placeholder="输入命令…"></textarea>

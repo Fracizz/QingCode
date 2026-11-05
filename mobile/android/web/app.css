@@ -428,16 +428,21 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #compose-form #send:is(:active, :focus-visible) { background: var(--accent); filter: brightness(1.08); }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }
 #compose-form #keyboard[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-/* 状态放在框内上方，不再使用截断边框的悬浮标签；无状态时不占高度。 */
-.compose-notes { grid-column: 1 / -1; display: flex; align-items: center; min-width: 0; padding: 0 6px; }
+/* 输入短状态放在上方状态行，只显示一个小图标：进行中为转圈、完成为 ✓、异常为 !。
+   文字仍保留在 DOM 中（字号为 0）供读屏和测试读取；补全提示不再显示。 */
+.compose-notes { flex: none; display: flex; align-items: center; }
 .compose-notes:not(:has(> :not([hidden]))) { display: none; }
-.compose-note { min-width: 0; overflow: hidden; padding: 0; color: var(--muted); font: 11px/20px system-ui, sans-serif; white-space: nowrap; text-overflow: ellipsis; }
-#image-state[data-state="done"] { color: var(--accent); }
-#image-state[data-state="error"] { color: var(--error); }
-#submission-state { display: flex; min-width: 0; }
-.compose-chip { min-height: 24px; padding: 0 4px; border: 0; color: var(--accent); text-align: left; }
-.compose-chip[data-state="unknown"], .compose-chip[data-state="error"] { color: var(--error); }
-.compose-chip[data-state="sending"] { color: var(--muted); }
+#completion-help { display: none; }
+.compose-note { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; overflow: hidden; color: var(--accent); font-size: 0; white-space: nowrap; }
+.compose-note::before { content: '✓'; font: 700 14px/1 system-ui, sans-serif; }
+:is(#image-state[data-state="error"], .compose-chip:is([data-state="unknown"], [data-state="error"])) { color: var(--error); }
+:is(#image-state[data-state="error"], .compose-chip:is([data-state="unknown"], [data-state="error"]))::before { content: '!'; display: grid; place-items: center; width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 50%; font-size: 10px; }
+:is(#image-state[data-state="busy"], .compose-chip[data-state="sending"]) { color: var(--muted); }
+:is(#image-state[data-state="busy"], .compose-chip[data-state="sending"])::before { content: ''; width: 10px; height: 10px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: compose-spin 800ms linear infinite; }
+@keyframes compose-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .compose-note::before { animation: none !important; } }
+#submission-state { display: flex; }
+.compose-chip { background: transparent; }
 #slash-command, #attach-image { color: var(--accent); }
 #more-keys { grid-column: span 2; }
 #special-keys .icon-button { width: auto; }

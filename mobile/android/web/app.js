@@ -185,8 +185,6 @@ const settings = createTerminalSettings({
 const composeStatus = createComposeStatus({
   receipts: () => selected && profile ? workspace.recent(draftKey(selected)) : [],
   persistenceFailed: () => persistenceFailed,
-  rawInput: () => inputMode === 'raw',
-  draft: () => compose.value,
 });
 
 const drawer = createSessionDrawer({
