@@ -434,6 +434,24 @@ impl Session {
         })
     }
 
+    /// 支持 `tail` 的手机端落后太多时改发最新画面：游标已被淘汰，或积压超过一次轮询的上限。
+    /// 全屏程序（如 OpenCode 加载长会话）瞬间重绘大量中间帧，逐帧回放会让手机 WebView 长时间卡死；
+    /// 跳过的普通输出仍保留在 `MobileScreen` 历史里，可在只读历史中查看。
+    fn should_send_latest(&self, from: u64) -> bool {
+        let base = self.next - self.output.len() as u64;
+        if from < base || from > self.next {
+            return true;
+        }
+        let mut pending = 0;
+        for chunk in self.output.iter().skip((from - base) as usize) {
+            pending += chunk.encoded_len();
+            if pending > MAX_POLL_BYTES {
+                return true;
+            }
+        }
+        false
+    }
+
     fn latest(&self) -> Value {
         let exit = self
             .exit
@@ -1455,8 +1473,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             let wait = {
                 let inner = hub.inner.lock().unwrap();
                 let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
-                let base = session.next - session.output.len() as u64;
-                if latest || (tail && (from < base || from > session.next)) {
+                if latest || (tail && session.should_send_latest(from)) {
                     return Ok(session.latest());
                 }
                 if from != session.next
@@ -1476,8 +1493,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             }
             let inner = hub.inner.lock().unwrap();
             let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
-            let base = session.next - session.output.len() as u64;
-            Ok(if tail && from < base {
+            Ok(if tail && session.should_send_latest(from) {
                 session.latest()
             } else {
                 session.read(from)
@@ -2197,6 +2213,42 @@ mod tests {
         assert_eq!(follow["chunks"].as_array().unwrap().len(), 1);
         assert_eq!(follow["next"], 1001);
         assert_eq!(follow["reset"], false);
+    }
+
+    #[test]
+    fn tail_poll_skips_a_redraw_burst_larger_than_one_page() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.screen.resize(40, 4);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode(b"prompt"),
+        ));
+        let caught_up = session.next;
+        assert!(!session.should_send_latest(caught_up));
+        // 小量新输出照常逐字节回放。
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode(b"small"),
+        ));
+        assert!(!session.should_send_latest(caught_up));
+        // 模拟全屏程序瞬间重绘大量中间帧：积压超过一次轮询上限即改发最新画面。
+        let frame = "\x1b[H".to_string() + &"x".repeat(4096);
+        for index in 0..64 {
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!("{frame}{index}")),
+            ));
+        }
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode(b"\x1b[2J\x1b[HFINAL FRAME"),
+        ));
+        assert!(session.should_send_latest(caught_up));
+        let latest = session.latest();
+        assert_eq!(latest["next"], session.next);
+        assert!(latest["chunks"][0]["data"]
+            .as_str()
+            .unwrap()
+            .contains("FINAL FRAME"));
+        // 游标越界（已淘汰或来自未来）仍改发最新画面；已追平则不需要。
+        assert!(session.should_send_latest(session.next + 1));
+        assert!(!session.should_send_latest(session.next));
     }
 
     #[test]
