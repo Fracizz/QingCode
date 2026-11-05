@@ -87,6 +87,10 @@ import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSe
 import { terminalContent } from '../lib/terminal/terminalContent'
 import { exportTerminalContent } from '../lib/terminal/terminalExport'
 import {
+  isTerminalNewlineShortcut,
+  TERMINAL_NEWLINE_INPUT,
+} from '../lib/terminal/terminalNewline'
+import {
   isSameTerminalSession,
   prepareTerminalAttachments,
   storeAttachmentFiles,
@@ -382,6 +386,11 @@ export default function TerminalView({
     resetSearchMatch()
   }, [resetSearchMatch])
 
+  const insertTerminalNewline = useCallback(() => {
+    if (!isTerminalWritable()) return
+    void writeToTerminal(terminalId, TERMINAL_NEWLINE_INPUT)
+  }, [isTerminalWritable, terminalId, writeToTerminal])
+
   const closeSearch = useCallback(() => {
     searchAddonRef.current?.clearDecorations()
     setSearchOpen(false)
@@ -449,6 +458,12 @@ export default function TerminalView({
       },
     },
     {
+      label: translate('换行'),
+      shortcut: 'Ctrl+Enter',
+      disabled: !isTerminalWritable(),
+      action: insertTerminalNewline,
+    },
+    {
       label: translate('编辑长文本'),
       disabled: !isTerminalWritable(),
       action: () => setComposerOpen(true),
@@ -488,7 +503,16 @@ export default function TerminalView({
           },
         ]
       : []),
-  ], [clearBuffer, copySelection, isTerminalWritable, openSearch, pasteFromClipboard, selectAll, terminalId])
+  ], [
+    clearBuffer,
+    copySelection,
+    insertTerminalNewline,
+    isTerminalWritable,
+    openSearch,
+    pasteFromClipboard,
+    selectAll,
+    terminalId,
+  ])
 
   const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
@@ -832,6 +856,11 @@ export default function TerminalView({
       if (mod && event.shiftKey && !event.altKey && key === 'k') {
         event.preventDefault()
         clearBuffer()
+        return false
+      }
+      if (isTerminalNewlineShortcut(event)) {
+        event.preventDefault()
+        if (!event.repeat) insertTerminalNewline()
         return false
       }
       if (mod && !event.altKey && key === 'c') {
@@ -1193,6 +1222,7 @@ export default function TerminalView({
     contextMenuItems,
     fitSettledPanelGrid,
     flushPendingPtyResize,
+    insertTerminalNewline,
     isTerminalWritable,
     openSearch,
     pasteFromClipboard,

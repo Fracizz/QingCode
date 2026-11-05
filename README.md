@@ -9,7 +9,7 @@
 
 ## 界面预览
 
-以下为中文界面实拍，保留原始 PNG，点击图片可查看原图。截图中的版本号为拍摄时版本。
+以下为中文界面实拍，点击图片可查看原图；桌面截图为原始 PNG，手机截图为原始 JPEG。截图中的版本号为拍摄时版本，手机截图中的网络地址已打码。
 
 ### 欢迎页与项目入口
 
@@ -52,6 +52,33 @@
 搜索项目名称或路径，按显示状态筛选与排序，集中添加、隐藏或移除项目记录。
 
 [![项目搜索、筛选与管理](./docs/screenshots/zh-07-manage-projects.png)](./docs/screenshots/zh-07-manage-projects.png)
+
+### 手机版（Android）
+
+从连接电脑、搜索项目和终端会话，到接回电脑上的 AI CLI，手机端保留完整的终端操作现场。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-01-connections.jpg"><img src="./docs/screenshots/zh-mobile-01-connections.jpg" width="280" alt="手机版连接页"></a><br>
+      <sub>连接：扫码配对并切换已保存的电脑</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-02-projects.jpg"><img src="./docs/screenshots/zh-mobile-02-projects.jpg" width="280" alt="手机版项目列表"></a><br>
+      <sub>项目：搜索电脑上已信任的本机、WSL 与远端项目</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-03-terminal.jpg"><img src="./docs/screenshots/zh-mobile-03-terminal.jpg" width="280" alt="手机版终端页面"></a><br>
+      <sub>终端：接回同一 AI CLI 会话，继续输入或查看输出</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-04-sessions.jpg"><img src="./docs/screenshots/zh-mobile-04-sessions.jpg" width="280" alt="手机版终端会话侧栏"></a><br>
+      <sub>会话：在侧栏切换、重命名或结束手机终端</sub>
+    </td>
+  </tr>
+</table>
 
 ## 为什么做 QingCode
 

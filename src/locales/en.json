@@ -1631,6 +1631,7 @@
     "连接中断，请检查网络或主机后重新连接。": "Connection interrupted. Check the network or host, then reconnect.",
     "附件不能超过 100MB": "Attachments must not exceed 100 MB",
     "保存终端附件": "Save terminal attachment",
+    "换行": "New line",
     "编辑长文本": "Compose text",
     "填入终端：{name}": "Target terminal: {name}",
     "长文本内容": "Text to insert",

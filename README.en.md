@@ -9,7 +9,7 @@ It is not another VS Code or Zed — it focuses on keeping local and remote proj
 
 ## Screenshots
 
-These original PNG screenshots show the Simplified Chinese UI; English is also available in Settings. Click an image to view it at full resolution. Version numbers reflect the build used when the screenshots were taken.
+These screenshots show the Simplified Chinese UI; English is also available in Settings. Click an image to view it at full resolution. Desktop captures are original PNGs and phone captures are original JPEGs; IP addresses in the phone captures are redacted. Version numbers reflect the build used when the screenshots were taken.
 
 ### Welcome screen and project entry points
 
@@ -52,6 +52,33 @@ Arrange terminals in a 2×2 grid alongside Settings or the editor to monitor sev
 Search projects by name or path, filter and sort by visibility, and add, hide, or remove project records in one place.
 
 [![Project search, filters, and management](./docs/screenshots/zh-07-manage-projects.png)](./docs/screenshots/zh-07-manage-projects.png)
+
+### Android app
+
+From pairing with a computer and finding a project to rejoining a terminal session, the phone keeps the full terminal workspace within reach.
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-01-connections.jpg"><img src="./docs/screenshots/zh-mobile-01-connections.jpg" width="280" alt="Android connections screen"></a><br>
+      <sub>Connections: pair by QR code and switch between saved computers</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-02-projects.jpg"><img src="./docs/screenshots/zh-mobile-02-projects.jpg" width="280" alt="Android project list"></a><br>
+      <sub>Projects: search trusted local, WSL, and remote projects on the desktop</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-03-terminal.jpg"><img src="./docs/screenshots/zh-mobile-03-terminal.jpg" width="280" alt="Android terminal screen"></a><br>
+      <sub>Terminal: rejoin the same AI CLI session and keep typing or reading output</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./docs/screenshots/zh-mobile-04-sessions.jpg"><img src="./docs/screenshots/zh-mobile-04-sessions.jpg" width="280" alt="Android terminal sessions drawer"></a><br>
+      <sub>Sessions: switch, rename, or close phone terminals from the drawer</sub>
+    </td>
+  </tr>
+</table>
 
 ## Why QingCode
 

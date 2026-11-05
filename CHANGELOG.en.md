@@ -8,6 +8,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [0.1.15-beta.3] - 2026-11-05
 
+### Added
+
+- The terminal supports `Ctrl+Enter` (`Cmd+Enter` on macOS) to send a newline, also available from the context menu.
+
 ### Changed
 
 - Enlarged the terminal multi-line input area for easier review and editing of longer requests.
