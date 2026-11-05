@@ -1783,6 +1783,14 @@
     "退出后从项目列表移除；文件保留在系统临时目录": "Removed from the project list on exit; files remain in the system temporary directory",
     "项目操作：{name}": "Project actions: {name}",
     "新建终端（无项目时将创建草稿项目）": "New terminal (creates a scratch project if no project is open)",
-    "作用于所有项目": "Applies to all projects"
+    "作用于所有项目": "Applies to all projects",
+    "粘贴大段文本": "Paste large text",
+    "将粘贴 {lines} 行、约 {size} 文本。": "About to paste {lines} lines (about {size}).",
+    "直接粘贴会让 Claude Code 等终端程序卡住一段时间；存为文件后只粘贴文件路径，程序可读取完整内容。": "Pasting directly can freeze terminal programs such as Claude Code for a while. Saving it as a file pastes only the path, and the program can still read the full content.",
+    "存为文件并粘贴路径": "Save as file and paste path",
+    "仍然直接粘贴": "Paste directly anyway",
+    "终端 › 集成: 大段粘贴存为文件": "Terminal › Integrated: Save Large Pastes as Files",
+    "粘贴超过 32KB 或 500 行的文本时，不再询问，直接存为文件并只粘贴文件路径，避免 Claude Code 等终端程序卡顿。关闭时每次询问。SSH 终端需同时开启粘贴上传。": "When pasting more than 32 KB or 500 lines of text, save it as a file and paste only its path without asking, so terminal programs such as Claude Code do not freeze. When off, you are asked each time. SSH terminals also need paste upload enabled.",
+    "保存大段粘贴设置失败: {error}": "Failed to save large paste setting: {error}"
   }
 }

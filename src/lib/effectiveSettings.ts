@@ -37,6 +37,9 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     import('./terminal/terminalSshUploadSettings').then(mod =>
       mod.loadEffectiveTerminalSshUploadOnPaste(project),
     ),
+    import('./terminal/terminalLargePasteSettings').then(mod =>
+      mod.loadEffectiveTerminalLargePasteAsFile(project),
+    ),
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)

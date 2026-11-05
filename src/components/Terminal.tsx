@@ -84,6 +84,7 @@ import { translate } from '../lib/i18n'
 import { isSshResource, isTauri } from '../lib/tauri'
 import { TERMINAL_DROP_ATTR, confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
+import { getTerminalLargePasteAsFile } from '../lib/terminal/terminalLargePasteSettings'
 import { terminalContent } from '../lib/terminal/terminalContent'
 import { exportTerminalContent } from '../lib/terminal/terminalExport'
 import {
@@ -96,6 +97,8 @@ import {
   storeAttachmentFiles,
   terminalClipboardPaths,
 } from '../lib/terminal/terminalAttachments'
+import { formatPasteSize, largePasteFileName, largePasteStats } from '../lib/terminal/largePaste'
+import { confirmDialog } from '../store/confirmStore'
 import { copyToClipboard } from '../utils/fileReferences'
 import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -337,16 +340,43 @@ export default function TerminalView({
           }
         }
         const pastedText = text || (await navigator.clipboard.readText())
-        if (
-          pastedText &&
-          tab &&
+        const stillSameSession = () =>
+          !!tab &&
           xtermRef.current === term &&
           isSameTerminalSession(
             tab,
             useTerminalStore.getState().terminals.find(item => item.id === terminalId)
           )
-        )
-          term.paste(pastedText)
+        if (!pastedText || !stillSameSession()) return
+        // 超大文本一次灌进 Claude Code 等 TUI 会卡住数秒；询问是否存为文件、只粘贴路径。
+        // SSH 未开启粘贴上传时无法把文件送到远端，保持直接粘贴。
+        const large = largePasteStats(pastedText)
+        if (large && tab && (!isSshResource(tab.cwd) || getTerminalSshUploadOnPaste())) {
+          // 设置「大段粘贴存为文件」开启时不再询问，直接存文件。
+          const choice = getTerminalLargePasteAsFile() ? true : await confirmDialog({
+            title: translate('粘贴大段文本'),
+            message: translate('将粘贴 {lines} 行、约 {size} 文本。', {
+              lines: large.lines,
+              size: formatPasteSize(large.chars),
+            }),
+            detail: translate(
+              '直接粘贴会让 Claude Code 等终端程序卡住一段时间；存为文件后只粘贴文件路径，程序可读取完整内容。'
+            ),
+            kind: 'info',
+            confirmLabel: translate('存为文件并粘贴路径'),
+            altLabel: translate('仍然直接粘贴'),
+          })
+          if (choice === true) {
+            const file = new File([pastedText], largePasteFileName(), { type: 'text/plain' })
+            const attachment = await prepareTerminalAttachments(tab, await storeAttachmentFiles([file]))
+            if (attachment && stillSameSession()) term.paste(attachment)
+          } else if (choice === 'alt' && stillSameSession()) {
+            term.paste(pastedText)
+          }
+          if (xtermRef.current === term) term.focus()
+          return
+        }
+        term.paste(pastedText)
       } catch (error) {
         useProjectStore
           .getState()

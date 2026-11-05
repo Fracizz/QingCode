@@ -89,6 +89,11 @@ import {
   loadScopedTerminalSshUploadOnPaste,
   saveScopedTerminalSshUploadOnPaste,
 } from '../lib/terminal/terminalSshUploadSettings'
+import {
+  getTerminalLargePasteAsFile,
+  loadScopedTerminalLargePasteAsFile,
+  saveScopedTerminalLargePasteAsFile,
+} from '../lib/terminal/terminalLargePasteSettings'
 import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import {
   loadEffectiveSshServerEnabled,
@@ -210,6 +215,7 @@ export default function SettingsEditor() {
   )
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
+  const [largePasteAsFile, setLargePasteAsFile] = useState(getTerminalLargePasteAsFile)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
@@ -349,6 +355,9 @@ export default function SettingsEditor() {
     void loadScopedTerminalSshUploadOnPaste(settingsScope, currentProject).then(
       setSshUploadOnPaste,
     )
+    void loadScopedTerminalLargePasteAsFile(settingsScope, currentProject).then(
+      setLargePasteAsFile,
+    )
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -472,6 +481,17 @@ export default function SettingsEditor() {
       await saveScopedTerminalSshUploadOnPaste(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存 SSH 终端粘贴上传设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateLargePasteAsFile = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setLargePasteAsFile(enabled)
+    try {
+      await saveScopedTerminalLargePasteAsFile(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存大段粘贴设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -1110,6 +1130,27 @@ export default function SettingsEditor() {
                       onChange={e => void updateSshUploadOnPaste(e.target.value === 'on')}
                       className="setting-control setting-select"
                       aria-label={t('终端 › 集成: SSH 粘贴上传')}
+                    >
+                      <option value="off">{t('关闭')}</option>
+                      <option value="on">{t('开启')}</option>
+                    </select>
+                  </SettingItem>
+                )}
+                {match('粘贴', '大段', '文件', 'largePasteAsFile') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 大段粘贴存为文件')}
+                    description={t(
+                      '粘贴超过 32KB 或 500 行的文本时，不再询问，直接存为文件并只粘贴文件路径，避免 Claude Code 等终端程序卡顿。关闭时每次询问。SSH 终端需同时开启粘贴上传。',
+                    )}
+                    modified={
+                      largePasteAsFile !== DEFAULT_GLOBAL_SETTINGS['terminal.integrated.largePasteAsFile']
+                    }
+                  >
+                    <select
+                      value={largePasteAsFile ? 'on' : 'off'}
+                      onChange={e => void updateLargePasteAsFile(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('终端 › 集成: 大段粘贴存为文件')}
                     >
                       <option value="off">{t('关闭')}</option>
                       <option value="on">{t('开启')}</option>
