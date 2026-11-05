@@ -329,6 +329,12 @@
       const term = terminals.at(-1)
       return term ? { cols: term.cols, rows: term.rows } : null
     },
+    terminal() {
+      return terminals.at(-1) ?? null
+    },
+    terminalFontSize() {
+      return terminals.at(-1)?.options.fontSize ?? null
+    },
     terminalText() {
       const term = terminals.at(-1)
       if (!term) return ''

@@ -358,6 +358,18 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-latency { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #terminal-retry { min-height: 24px; }
 #terminal-size { flex: none; color: var(--muted); font: 10px var(--mono); font-variant-numeric: tabular-nums; }
+/* 编辑目标常驻文字：草稿为辅助色，直发为强调色；只是纯文字，不做徽章。 */
+#terminal-input-mode { flex: none; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+#terminal-input-mode[data-mode="raw"] { color: var(--accent); }
+/* 首次说明：在快捷键上方，一段文字加「知道了」，不遮挡输入框。 */
+#input-tip { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 8px 6px 8px 12px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
+#input-tip[hidden] { display: none; }
+#input-tip p { flex: 1; min-width: 0; color: var(--ink); font-size: 12px; line-height: 1.5; }
+#input-tip strong { color: var(--accent); font-weight: 650; }
+#input-tip-dismiss { flex: none; min-height: 44px; }
+/* 双指缩放时的字号提示，居中浮在输出区上方，不拦截触摸。 */
+#font-toast { position: absolute; z-index: 5; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; pointer-events: none; box-shadow: 0 6px 20px #0008; }
+#font-toast[hidden] { display: none; }
 #toggle-keys { flex: none; display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 6px; font-size: 12px; color: var(--muted); }
 #toggle-keys svg { width: 16px; height: 16px; }
 #toggle-keys[aria-expanded="false"] svg { transform: rotate(180deg); }
@@ -386,6 +398,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   color: var(--ink);
 }
 #special-keys > button { min-width: 44px; }
+/* 「更多」弹层底色与按键同为 surface，按键改用更深的底色，看得出是可点的键。 */
+.extra-keys button { background: var(--paper); }
 :is(#special-keys, .extra-keys) button:active:not(:disabled), :is(#special-keys, .extra-keys) button:focus-visible { background: var(--raised); transform: scale(.96); }
 #special-keys [data-key="text"] { font-size: 16px; }
 #special-keys :is([data-key="up"], [data-key="down"], [data-key="left"], [data-key="right"]) { font-size: 16px; }
@@ -401,6 +415,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #compose-form { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 48px; align-items: end; column-gap: 2px; row-gap: 4px; margin-top: 8px; padding: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease, background-color 120ms ease; }
 #compose-form:focus-within { border-color: var(--accent-border); }
 #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
+/* 横向拖动移动光标时用虚线强调色边框提示「触控板」状态。 */
+#compose-form[data-dragging="true"] { border-style: dashed; border-color: var(--accent); }
+#compose-form[data-dragging="true"] #compose { caret-color: var(--accent); }
 #compose { width: 100%; min-height: 44px; resize: none; padding: 11px 6px; border: 0; border-radius: var(--control-radius); background: transparent; font: 15px/22px var(--mono); }
 #compose:focus-visible { outline: none; }
 #compose::placeholder { font-family: system-ui, sans-serif; font-size: 14px; }
@@ -429,6 +446,18 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #send-label { font: 11px/1.2 system-ui, sans-serif; }
 .extra-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-block: 12px; }
 #keys-target { color: var(--muted); }
+#overflow-keys-section h3 { margin-top: 12px; font-size: 13px; font-weight: 650; color: var(--muted); }
+#overflow-keys-section .extra-keys { margin-block: 8px 4px; }
+/* 快捷键栏编辑：每行一个键，勾选显示，右侧上移 / 下移按钮（至少 44px）。 */
+.key-layout-list { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--group-radius); overflow: hidden; }
+.key-layout-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; align-items: center; gap: 2px; padding-right: 4px; background: var(--paper); }
+.key-layout-row + .key-layout-row { border-top: 1px solid var(--divider); }
+.key-layout-row label { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0; padding: 0 12px; font-weight: 400; cursor: pointer; }
+.key-layout-row input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
+.key-layout-row .key-cap { flex: none; display: inline-grid; place-items: center; min-width: 44px; height: 32px; padding: 0 6px; border-radius: var(--control-radius); background: var(--surface); font: 13px var(--mono); }
+.key-layout-row .key-name { min-width: 0; color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
+.key-layout-row[data-hidden="true"] :is(.key-cap, .key-name) { color: var(--muted); }
+.key-layout-row .key-move { width: 44px; height: 44px; color: var(--accent); font-size: 16px; }
 .font-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--divider); }
 .font-setting strong { font-size: 14px; }
 .font-setting p { margin-top: 3px; font-size: 12px; }

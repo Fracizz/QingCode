@@ -1,71 +1,64 @@
+// QingCode Android 入口：连接与项目状态、终端生命周期、输入分发和会话增删。
+// 视图与弹窗拆在独立模块：dashboardView / pairingFlow / sessionDrawer / outputReader /
+// composeStatus / terminalSettings / shortcutBar；纯逻辑放在 protocol / composer / keyLayout 等文件并有 Vitest 覆盖。
 import {
-  idleLabel,
-  DEFAULT_PORT,
   applyModifiers,
-  avatarFor,
   consumeModifier,
   keySequence,
-  matchesProject,
+  mergeSessionName,
   nextModifierState,
-  orderSessions,
   outputBatches,
   parsePairingLink,
-  parseSessionPins,
-  prunedSessionPins,
   projectSourceLabel,
-  recentProjects,
   rememberProject,
   renameProfileKeys,
   sessionName,
-  sessionRunning,
-  mergeSessionName,
   terminalGridSize,
   terminalProfileChoices,
-  toggleSessionPin,
-  validIpv4,
-  validPort,
 } from './protocol.js';
-import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard } from './terminalTouch.js';
-import { attachKeyRepeat, attachLongPress, attachPullToRefresh, attachSheetDrag } from './gestures.js';
+import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
 import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
-import { createWorkspaceState, terminalText, searchOffsets } from './workspaceState.js';
+import { createWorkspaceState } from './workspaceState.js';
 import { createNativeRpc } from './nativeRpc.js';
 import { createTerminalInput } from './terminalInput.js';
 import { createDesktopProtocol } from './desktopProtocol.js';
 import { uploadTerminalImages } from './terminalImages.js';
+import { get, message, setupDialogs, confirmAction } from './dom.js';
+import { createDashboardView } from './dashboardView.js';
+import { createPairingFlow } from './pairingFlow.js';
+import { createOutputReader } from './outputReader.js';
+import { createComposeStatus } from './composeStatus.js';
+import { createSessionDrawer } from './sessionDrawer.js';
+import { createTerminalSettings } from './terminalSettings.js';
+import { createShortcutBar } from './shortcutBar.js';
+import { attachCursorDrag } from './cursorDrag.js';
+import { attachPinchZoom } from './pinchZoom.js';
+import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
 
-const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
+const prefix = 'qingcode:mobile:';
 const pages = { home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
 const terminalScreen = get('terminal-screen');
 const compose = get('compose');
 const nativeRpc = createNativeRpc(native);
+const rpc = nativeRpc.request;
+window.qingReply = nativeRpc.receive;
 const health = new Map();
 let persistenceFailed = false;
 const workspace = createWorkspaceState({ storage: localStorage, onError: () => { persistenceFailed = true; } });
 const drafts = workspace.drafts;
 const inputModes = new Map();
 let inputMode = 'compose';
-// 全屏程序中的触摸：view 只看手机端历史、不向程序发鼠标事件（默认）；program 把滑动和点按发给程序。
-let touchMode = localStorage.getItem('qingcode:mobile:touch-mode') === 'program' ? 'program' : 'view';
 let disposeTouchGuard;
-// 输入框上边框右侧的短提示：图片进度只在上传期间和插入后短暂显示，「已接收」几秒后收成 ✓。
-let imageNote = null;
-let imageNoteTimer = null;
-let compactReceipt = null;
-let compactReceiptTimer = null;
 const keyRepeats = [];
-const prefix = 'qingcode:mobile:';
 const landscape = window.matchMedia('(orientation: landscape) and (min-width: 600px)');
 let deviceLandscape = landscape.matches;
 let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
-// 发送按键：default 保持原行为；enter 为文字送达后单独补发回车。
-let sendMode = localStorage.getItem(prefix + 'send-mode') === 'enter' ? 'enter' : 'default';
 let fullscreen = false;
 let fullscreenEpoch = 0;
 let profiles = [];
@@ -77,10 +70,6 @@ let profileEpoch = 0;
 let page = 'home';
 let sessions = [];
 let selected = null;
-let renamingSession = null;
-let sessionDrawerEpoch = 0;
-let sessionRefreshTimer;
-let sessionRefreshing = false;
 let foreground = true;
 // 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
 const terminalProfiles = new Map();
@@ -91,6 +80,9 @@ let fit;
 let disposeTouchScroll;
 let terminalHistory;
 let terminalSelection;
+let terminalLinks;
+// 链接弹层当前显示的目标：{ url, open, note }。
+let linkTarget = null;
 let terminalReady = false;
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
 const modifiers = { ctrl: 'off', alt: 'off' };
@@ -98,60 +90,20 @@ const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
 let inputFailed = false;
 let resizing = null;
-let editing = null;
 let composing = false;
 let editorComposing = false;
-let readerText = '';
-let readerMatches = [];
-let readerIndex = 0;
-const savedColumns = localStorage.getItem('qingcode:mobile:columns');
-let terminalColumns = ['80', '100'].includes(savedColumns) ? Number(savedColumns) : 0;
 let fitting = null;
-// Fingerprint from a scanned or pasted pairing link; skips manual comparison when it matches.
-let expectedFingerprint = null;
-let scanStream = null;
-let scanTimer = null;
-let scanEpoch = 0;
-const savedFontSize = Number(localStorage.getItem(prefix + 'font-size'));
-let terminalFontSize = Number.isInteger(savedFontSize) && savedFontSize >= 11 && savedFontSize <= 20 ? savedFontSize : 13;
+let sendingImage = false;
+let imageEpoch = 0;
+let fontToastTimer = null;
+const inputTipKey = prefix + 'input-tip-seen';
+// 配对与连接详情弹窗；在下方创建，视图回调中延迟读取。
+let pairing = null;
+
 const connectionLatency = createConnectionLatency({
   measure: address => rpc('latency', { profile: address }),
   onChange: renderLatency,
 });
-window.qingVisibility = visible => {
-  foreground = visible === true;
-  clearTimeout(sessionRefreshTimer);
-  if (foreground) void refreshSessionDrawer();
-  if (!visible) saveDraft();
-  connectionLatency.setForeground(visible === true);
-};
-
-function syncLatency() {
-  connectionLatency.setTarget(profile && hostState(profile) === 'online' ? profile : null,
-    terminalScreen.hidden ? HOME_LATENCY_INTERVAL : TERMINAL_LATENCY_INTERVAL);
-  renderLatency();
-}
-
-function renderLatency() {
-  const snapshot = connectionLatency.getSnapshot();
-  const value = latencyText(snapshot);
-  get('terminal-latency').textContent = '电脑 ' + value;
-  get('terminal-latency').setAttribute('aria-label', '手机到电脑往返延迟 ' + value);
-  get('home-latency').textContent = profile && hostState(profile) === 'online' ? ' · 电脑 ' + value : '';
-  if (!editing || editing.id !== profile?.id) {
-    get('host-latency').textContent = '延迟仅检测当前连接的电脑。';
-    return;
-  }
-  const state = {
-    idle: '尚未测量。', failed: '本次检测未获得结果。', stale: '结果已过期，等待更新。',
-    unsupported: '当前电脑端不支持延迟检测，请更新电脑端 QingCode。', ready: '',
-  }[snapshot.state];
-  const time = snapshot.checkedAt === null ? '' : '最近测量 ' + new Date(snapshot.checkedAt).toLocaleTimeString('zh-CN', { hour12: false }) + '。';
-  get('host-latency').textContent = '手机到电脑往返延迟：' + value + '。' + time + state + '不包含电脑到远端及终端程序处理耗时。';
-}
-
-const rpc = nativeRpc.request;
-window.qingReply = nativeRpc.receive;
 
 function remote(op, args = {}, address = profile?.id) {
   return rpc(op, { ...args, profile: address });
@@ -176,10 +128,117 @@ const terminalInput = createTerminalInput({
   },
 });
 
-function message(id, value) {
-  const target = get(id);
-  target.textContent = value;
-  target.hidden = !value;
+setupDialogs(dialog => dialog.id !== 'pair-dialog' || !get('pair-submit').disabled);
+
+const dashboard = createDashboardView({
+  state: {
+    profile: () => profile,
+    profiles: () => profiles,
+    projects: () => projects,
+    loaded: () => loaded,
+    hostState,
+  },
+  lastProject,
+  projectHistory,
+  syncLatency,
+  activate,
+  openPair: (...args) => pairing.openPair(...args),
+  openHost: item => pairing.openHost(item),
+  openProject,
+});
+
+pairing = createPairingFlow({
+  rpc,
+  profiles: () => profiles,
+  onPaired: async paired => {
+    desktopProtocol.invalidate(paired);
+    connectionLatency.invalidate(paired.id);
+    putProfile(paired);
+    await activate(paired);
+  },
+  moveProfile,
+  putProfile,
+  afterHostSaved: (updated, portChanged) => {
+    if (profile?.id === updated.id && portChanged) void refreshProjects();
+    dashboard.renderAll();
+  },
+  forgetProfile,
+  renderLatency,
+});
+
+const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () => !!terminalHistory?.isOpen() });
+
+const settings = createTerminalSettings({
+  prefix,
+  onFontSize: size => {
+    if (term) {
+      term.options.fontSize = size;
+      fitTerminal();
+    }
+    // 只读历史沿用终端字号，缩放后同步。
+    get('history-content').style.fontSize = size + 'px';
+  },
+  onColumns: () => fitTerminal(),
+  onSendMode: () => updateComposerActions(),
+});
+
+const composeStatus = createComposeStatus({
+  receipts: () => selected && profile ? workspace.recent(draftKey(selected)) : [],
+  persistenceFailed: () => persistenceFailed,
+  rawInput: () => inputMode === 'raw',
+  draft: () => compose.value,
+});
+
+const drawer = createSessionDrawer({
+  prefix,
+  remote,
+  state: {
+    profile: () => profile,
+    project: () => project,
+    sessions: () => sessions,
+    selected: () => selected,
+    busy: () => busy,
+    viewEpoch: () => viewEpoch,
+    foreground: () => foreground,
+  },
+  setSessions: list => { sessions = list; },
+  selectSession,
+  endSession,
+});
+
+createShortcutBar({ prefix, onChange: () => updateComposerActions() });
+
+window.qingVisibility = visible => {
+  foreground = visible === true;
+  if (foreground) drawer.wake();
+  else drawer.sleep();
+  if (!visible) saveDraft();
+  connectionLatency.setForeground(visible === true);
+};
+
+function syncLatency() {
+  connectionLatency.setTarget(profile && hostState(profile) === 'online' ? profile : null,
+    terminalScreen.hidden ? HOME_LATENCY_INTERVAL : TERMINAL_LATENCY_INTERVAL);
+  renderLatency();
+}
+
+function renderLatency() {
+  const snapshot = connectionLatency.getSnapshot();
+  const value = latencyText(snapshot);
+  get('terminal-latency').textContent = '电脑 ' + value;
+  get('terminal-latency').setAttribute('aria-label', '手机到电脑往返延迟 ' + value);
+  get('home-latency').textContent = profile && hostState(profile) === 'online' ? ' · 电脑 ' + value : '';
+  const editing = pairing?.editingProfile();
+  if (!editing || editing.id !== profile?.id) {
+    get('host-latency').textContent = '延迟仅检测当前连接的电脑。';
+    return;
+  }
+  const state = {
+    idle: '尚未测量。', failed: '本次检测未获得结果。', stale: '结果已过期，等待更新。',
+    unsupported: '当前电脑端不支持延迟检测，请更新电脑端 QingCode。', ready: '',
+  }[snapshot.state];
+  const time = snapshot.checkedAt === null ? '' : '最近测量 ' + new Date(snapshot.checkedAt).toLocaleTimeString('zh-CN', { hour12: false }) + '。';
+  get('host-latency').textContent = '手机到电脑往返延迟：' + value + '。' + time + state + '不包含电脑到远端及终端程序处理耗时。';
 }
 
 function showPage(next) {
@@ -187,9 +246,9 @@ function showPage(next) {
   terminalScreen.hidden = true;
   get('dashboard').hidden = false;
   for (const [name, section] of Object.entries(pages)) section.hidden = name !== next;
-  for (const button of get('dashboard-nav').querySelectorAll('button')) {
-    if (button.dataset.page === next) button.setAttribute('aria-current', 'page');
-    else button.removeAttribute('aria-current');
+  for (const navButton of get('dashboard-nav').querySelectorAll('button')) {
+    if (navButton.dataset.page === next) navButton.setAttribute('aria-current', 'page');
+    else navButton.removeAttribute('aria-current');
   }
   syncLatency();
 }
@@ -201,7 +260,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -220,151 +279,12 @@ window.qingBack = () => {
   return false;
 };
 
-for (const button of document.querySelectorAll('[data-close]')) {
-  button.addEventListener('click', () => get(button.dataset.close).close('cancel'));
-}
-
-// A backdrop tap cancels only when both ends of the gesture are outside the panel.
-for (const dialog of document.querySelectorAll('dialog')) {
-  let backdropDown = false;
-  const outside = event => {
-    const bounds = dialog.getBoundingClientRect();
-    return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
-  };
-  dialog.addEventListener('pointerdown', event => { backdropDown = outside(event); });
-  dialog.addEventListener('pointerup', event => {
-    if (backdropDown && outside(event) && (dialog.id !== 'pair-dialog' || !get('pair-submit').disabled)) dialog.close('cancel');
-    backdropDown = false;
-  });
-}
-
-function ask(dialog) {
-  dialog.returnValue = 'cancel';
-  return new Promise(resolve => {
-    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
-    dialog.showModal();
-  });
-}
-
-function confirmAction(title, description, action) {
-  get('confirm-title').textContent = title;
-  get('confirm-text').textContent = description;
-  get('confirm-action').textContent = action;
-  return ask(get('confirm-dialog'));
-}
-
-function icon(name, className) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  const use = document.createElementNS(svg.namespaceURI, 'use');
-  use.setAttribute('href', '#i-' + name);
-  svg.setAttribute('aria-hidden', 'true');
-  if (className) svg.setAttribute('class', className);
-  svg.append(use);
-  return svg;
-}
-
-function rowText(title, subtitle) {
-  const text = document.createElement('span');
-  text.className = 'row-text';
-  const strong = document.createElement('strong');
-  strong.textContent = title;
-  const small = document.createElement('small');
-  small.textContent = subtitle;
-  text.append(strong, small);
-  return text;
-}
-
-function tile(name) {
-  const element = document.createElement('span');
-  element.className = 'tile';
-  element.append(icon(name));
-  return element;
-}
-
-function button(className, action) {
-  const element = document.createElement('button');
-  element.type = 'button';
-  element.className = className;
-  element.addEventListener('click', action);
-  return element;
-}
-
-function avatar(name) {
-  const { initials, hue } = avatarFor(name);
-  const element = document.createElement('span');
-  element.className = 'avatar';
-  element.dataset.hue = String(hue);
-  element.textContent = initials;
-  element.setAttribute('aria-hidden', 'true');
-  return element;
-}
-
 function hostState(item) {
   return health.get(item?.id) ?? 'saved';
 }
 
-function renderConnections() {
-  const list = get('connection-list');
-  list.replaceChildren();
-  get('connection-empty').hidden = profiles.length > 0;
-  for (const item of [...profiles].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || a.id.localeCompare(b.id))) {
-    const current = item.id === profile?.id;
-    const state = hostState(item);
-    const labels = { saved: '已配对', checking: '连接中…', online: '已连接', offline: '连接失败', expired: '需要重新配对' };
-    const card = document.createElement('div');
-    card.className = 'connection-card';
-    card.dataset.current = String(current);
-    card.dataset.state = state === 'expired' ? 'offline' : state;
-    const select = button('connection-main', () => {
-      if (state === 'expired') openPair(item);
-      else void activate(item, current ? 'connection' : 'home');
-    });
-    const detail = button('icon-button', () => openHost(item));
-    detail.setAttribute('aria-label', '管理连接 ' + item.name);
-    detail.append(icon('more'));
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    const text = rowText(item.name, item.id);
-    const status = document.createElement('small');
-    status.className = 'connection-state';
-    status.textContent = labels[state] + (current ? ' · 当前电脑' : '');
-    text.append(status);
-    select.append(avatar(item.name), text, dot);
-    card.append(select, detail);
-    list.append(card);
-  }
-  get('active-host-name').textContent = profile?.name ?? '未连接';
-  const state = hostState(profile);
-  get('active-host').dataset.state = state === 'expired' ? 'offline' : state;
-  get('active-host').setAttribute('aria-label', profile ? '切换连接，当前为 ' + profile.name : '管理连接');
-  syncLatency();
-}
-
 function sessionKey(projectId) {
   return prefix + 'session:' + profile.id + ':' + projectId;
-}
-
-function sessionPinsKey(projectId) {
-  return prefix + 'session-pins:' + profile.id + ':' + projectId;
-}
-
-function sessionPins() {
-  return profile && project ? parseSessionPins(localStorage.getItem(sessionPinsKey(project.id))) : [];
-}
-
-function saveSessionPins(pins) {
-  if (!profile || !project) return;
-  try {
-    if (pins.length) localStorage.setItem(sessionPinsKey(project.id), JSON.stringify(pins));
-    else localStorage.removeItem(sessionPinsKey(project.id));
-  } catch { /* 置顶只是显示偏好，保存失败不影响终端与草稿。 */ }
-}
-
-/** 拿到完整会话列表后清理已不存在会话的置顶记录。 */
-function pruneSessionPins(list) {
-  const pins = sessionPins();
-  const next = prunedSessionPins(pins, list);
-  if (next.length !== pins.length) saveSessionPins(next);
 }
 
 function lastProject() {
@@ -382,89 +302,9 @@ function projectHistory() {
   return previous ? [{ id: previous.id, openedAt: 1 }] : [];
 }
 
-function renderHome() {
-  const recent = lastProject();
-  const state = hostState(profile);
-  const canResume = !!recent && state === 'online';
-  get('resume').hidden = !canResume;
-  get('browse-projects').hidden = !canResume;
-  get('home-empty').hidden = canResume;
-  get('home-guide').hidden = profiles.length > 0;
-  get('home-context').hidden = !profile;
-  get('home-context').dataset.state = state === 'expired' ? 'offline' : state;
-  get('home-context-name').textContent = profile?.name ?? '';
-  get('home-context-state').textContent = {
-    online: projects.length + ' 个已信任项目 · 可以打开终端',
-    checking: '正在读取项目…', offline: '电脑暂时不可达', expired: '配对已失效', saved: '等待连接',
-  }[state];
-  get('home-reconnect').hidden = state !== 'offline';
-  if (canResume) {
-    get('resume-name').textContent = recent.name;
-    get('resume-host').textContent = profile.name + ' / ' + projectSourceLabel(recent);
-  }
-  const recentList = recentProjects(projects, projectHistory());
-  get('home-projects').hidden = state !== 'online' || !projects.length;
-  get('home-project-list').replaceChildren(...recentList.map(projectRow));
-  get('home-recent-empty').hidden = recentList.length > 0;
-  const homeStates = {
-    checking: ['正在连接电脑', '正在读取已信任的项目。', '查看连接'],
-    offline: ['电脑暂时不可达', '检查手机和电脑的网络后重试。', '重新连接'],
-    expired: ['配对已失效', '请在电脑端重新启用 Android 移动连接。', '重新配对'],
-    online: ['打开终端', '选择已信任的项目，接回已有会话或启动 Shell。', '选择项目'],
-    saved: profiles.length
-      ? ['选择一台电脑', '从已配对的电脑进入终端。', '查看连接']
-      : ['连接一台 QingCode', '配对电脑后，就能在这里打开远程终端。', '添加连接'],
-  };
-  const [title, description, action] = homeStates[state];
-  get('home-empty-title').textContent = title;
-  get('home-empty-text').textContent = description;
-  get('home-action').textContent = action;
-}
-
-function projectRow(item) {
-  const path = item.kind === 'ssh' ? item.path.replace(/^ssh:\/\/[^/]+/, '') : item.path;
-  const row = button('row', () => { void openProject(item); });
-  const text = rowText(item.name, projectSourceLabel(item));
-  text.lastElementChild.className = 'project-source';
-  const location = document.createElement('small');
-  location.className = 'project-path';
-  location.textContent = path;
-  text.append(location);
-  row.dataset.kind = item.kind;
-  row.append(tile(item.kind === 'ssh' ? 'host' : 'folder'), text, icon('chevron', 'arrow'));
-  return row;
-}
-
-function renderProjects() {
-  const query = get('search').value.trim().toLowerCase();
-  const matching = projects.filter(item => matchesProject(item, query));
-  const list = get('project-list');
-  list.replaceChildren(...matching.map(projectRow));
-  const checking = hostState(profile) === 'checking';
-  list.setAttribute('aria-busy', String(checking));
-  get('refresh').disabled = !profile || checking;
-  get('refresh').dataset.busy = String(checking);
-  get('refresh').setAttribute('aria-label', checking ? '正在读取项目' : '刷新项目');
-  get('project-filters').hidden = !profile;
-  get('project-subtitle').textContent = profile ? profile.name + ' · 已信任项目' : '请先在「连接」中配对电脑。';
-  get('list-label').textContent = matching.length ? matching.length + ' 个项目'
-    : loaded ? (query ? '没有匹配的项目' : '没有已信任的项目')
-      : hostState(profile) === 'checking' ? '正在读取项目…' : '';
-  const empty = !matching.length && !checking;
-  get('project-empty').hidden = !empty;
-  const filtered = !!query;
-  get('project-empty-title').textContent = !profile ? '先连接一台电脑' : filtered ? '没有匹配的项目' : '暂无可用项目';
-  get('project-empty-text').textContent = !profile ? '配对后即可查看电脑上的已信任项目。'
-    : filtered ? '试试其他关键词，或清除搜索查看全部项目。'
-    : loaded ? '在电脑端添加并信任项目，再回到这里刷新。' : '检查电脑连接后重新读取项目。';
-  get('project-empty-action').textContent = !profile ? '前往连接' : filtered ? '清除搜索' : '重新读取';
-}
-
 function updateHost(state) {
   if (profile) health.set(profile.id, state);
-  renderConnections();
-  renderHome();
-  renderProjects();
+  dashboard.renderAll();
 }
 
 async function refreshProjects() {
@@ -511,35 +351,12 @@ function putProfile(item) {
   if (profile?.id === item.id) profile = item;
 }
 
-function openPair(item, target = null) {
-  const dialog = get('pair-dialog');
-  get('host-dialog').close();
-  expectedFingerprint = target?.fingerprint ?? null;
-  get('pair-title').textContent = item ? '重新配对' : '添加连接';
-  get('pair-name').value = item?.name ?? target?.name ?? '';
-  get('pair-host').value = item?.host ?? target?.host ?? '';
-  get('pair-port').value = item?.port ?? target?.port ?? String(DEFAULT_PORT);
-  get('pair-code').value = '';
-  get('pair-host').readOnly = !!item;
-  get('pair-port').readOnly = !!item;
-  get('pair-link-state').hidden = !expectedFingerprint;
-  get('pair-link-tools').hidden = !!item;
-  message('pair-error', '');
-  if (!dialog.open) dialog.showModal();
-  if (target) get('pair-code').focus();
-}
-
-function openPairTarget(target) {
-  const saved = profiles.find(item => item.id === target.host + ':' + target.port);
-  openPair(saved && saved.fingerprint === target.fingerprint ? saved : null, target);
-}
-
 window.qingLink = text => {
   try {
     const target = parsePairingLink(text);
     if (!terminalScreen.hidden) returnToDashboard('connection');
     else showPage('connection');
-    openPairTarget(target);
+    pairing.openPairTarget(target);
   } catch (error) {
     if (!terminalScreen.hidden) returnToDashboard('connection');
     else showPage('connection');
@@ -547,205 +364,31 @@ window.qingLink = text => {
   }
 };
 
-get('pair-paste').addEventListener('click', async () => {
-  message('pair-error', '');
-  try {
-    openPairTarget(parsePairingLink(await rpc('clipboard')));
-  } catch (error) {
-    message('pair-error', error.message === '这不是 QingCode 配对链接。' ? '剪贴板中没有 QingCode 配对链接。' : error.message);
+/** 移除连接后清理手机上与这台电脑相关的全部记录。 */
+function forgetProfile(item) {
+  if (profile?.id === item.id) leaveTerminal();
+  profiles = profiles.filter(saved => saved.id !== item.id);
+  health.delete(item.id);
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':')) {
+      localStorage.removeItem(key);
+    }
   }
-});
-
-function stopScan() {
-  scanEpoch += 1;
-  clearTimeout(scanTimer);
-  scanTimer = null;
-  for (const track of scanStream?.getTracks() ?? []) track.stop();
-  scanStream = null;
-  get('scan-video').srcObject = null;
+  workspace.removeHost(item.id);
+  localStorage.removeItem(prefix + 'project:' + item.id);
+  localStorage.removeItem(prefix + 'recent-projects:' + item.id);
+  if (profile?.id === item.id) {
+    profileEpoch += 1;
+    profile = null;
+    projects = [];
+    loaded = false;
+    localStorage.setItem(prefix + 'active', '');
+    localStorage.removeItem(prefix + 'open');
+    message('project-error', '');
+    message('connection-error', '');
+  }
+  dashboard.renderAll();
 }
-
-get('scan-dialog').addEventListener('close', stopScan);
-
-get('pair-scan').addEventListener('click', async () => {
-  stopScan();
-  const epoch = scanEpoch;
-  const dialog = get('scan-dialog');
-  const video = get('scan-video');
-  message('pair-error', '');
-  message('scan-error', '');
-  dialog.showModal();
-  try {
-    if (!await rpc('camera')) throw new Error('需要相机权限才能扫码。也可以粘贴电脑端复制的配对链接。');
-    if (epoch !== scanEpoch || !dialog.open) return;
-    const stream = await requestScannerCamera(navigator.mediaDevices);
-    if (epoch !== scanEpoch || !dialog.open) {
-      for (const track of stream.getTracks()) track.stop();
-      return;
-    }
-    scanStream = stream;
-    void focusScannerCamera(stream);
-    video.srcObject = stream;
-    await video.play();
-  } catch (error) {
-    if (epoch !== scanEpoch) return;
-    stopScan();
-    message('scan-error', error.name === 'NotAllowedError' ? '需要相机权限才能扫码。也可以取消后粘贴配对链接。' : error.message || '无法打开相机。');
-    return;
-  }
-  if (epoch !== scanEpoch || !dialog.open) return;
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context || typeof window.jsQR !== 'function') {
-    stopScan();
-    message('scan-error', '无法加载扫码组件，请取消后重试，或粘贴电脑端复制的配对链接。');
-    return;
-  }
-  const tick = () => {
-    if (!scanStream || epoch !== scanEpoch || !dialog.open) return;
-    try {
-      if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
-        const text = decodeScannerFrame(video, canvas, context, window.jsQR);
-        if (text) {
-          const target = parsePairingLink(text);
-          dialog.close();
-          stopScan();
-          openPairTarget(target);
-          return;
-        }
-      }
-    } catch (error) {
-      message('scan-error', error.message || '暂时无法识别，请调整距离和光线后重试。');
-    }
-    scanTimer = setTimeout(tick, 180);
-  };
-  tick();
-});
-
-get('pair-dialog').addEventListener('cancel', event => {
-  if (get('pair-submit').disabled) event.preventDefault();
-});
-
-get('pair-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const submit = get('pair-submit');
-  if (submit.disabled) return;
-  const cancel = get('pair-form').querySelector('[data-close]');
-  const field = get('pair-code');
-  const name = get('pair-name').value.trim();
-  const host = get('pair-host').value.trim();
-  const port = Number(get('pair-port').value);
-  const code = field.value;
-  submit.disabled = cancel.disabled = true;
-  message('pair-error', '');
-  try {
-    if (!name) throw new Error('请输入连接名称。');
-    if (!validIpv4(host) || !validPort(port)) throw new Error('请输入有效的电脑 IPv4 地址和端口。');
-    if (!/^[!-~]{6,20}$/.test(code)) {
-      throw new Error('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。');
-    }
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const fingerprint = await rpc('probe', { host, port });
-    const saved = profiles.find(item => item.id === host + ':' + port);
-    if (expectedFingerprint) {
-      // The link came from the desktop screen, so a mismatch means a different or intercepted host.
-      if (expectedFingerprint !== fingerprint) {
-        throw new Error('电脑证书与二维码中的指纹不一致，已停止配对。请确认地址，或在电脑端重新生成二维码。');
-      }
-    } else if (saved && saved.fingerprint !== fingerprint) {
-      throw new Error('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。');
-    }
-    const paired = await rpc('pair', { name, host, port, code, fingerprint });
-    desktopProtocol.invalidate(paired);
-    connectionLatency.invalidate(paired.id);
-    field.value = '';
-    putProfile(paired);
-    get('pair-dialog').close();
-    await activate(paired);
-  } catch (error) {
-    message('pair-error', error.message);
-  } finally {
-    submit.disabled = cancel.disabled = false;
-  }
-});
-
-function openHost(item) {
-  editing = item;
-  get('host-address').textContent = item.id;
-  get('host-fingerprint').textContent = item.fingerprint;
-  get('host-name').value = item.name;
-  get('host-port').value = item.port;
-  message('host-error', '');
-  renderLatency();
-  get('host-dialog').showModal();
-}
-
-get('host-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const item = editing;
-  const submit = event.submitter ?? get('host-form').querySelector('[type="submit"]');
-  if (submit.disabled) return;
-  submit.disabled = true;
-  try {
-    const name = get('host-name').value.trim();
-    const port = Number(get('host-port').value);
-    if (!validPort(port)) throw new Error('端口须为 1–65535 之间的整数。');
-    let updated = item;
-    if (port !== item.port) {
-      // The desktop keeps pairings across port switches; only the address changes here.
-      updated = await rpc('readdress', { profile: item.id, port });
-      moveProfile(item, updated);
-    }
-    if (name !== updated.name) updated = await rpc('rename', { profile: updated.id, name });
-    putProfile(updated);
-    editing = updated;
-    if (profile?.id === updated.id && port !== item.port) void refreshProjects();
-    renderConnections();
-    renderHome();
-    renderProjects();
-    get('host-dialog').close();
-  } catch (error) {
-    message('host-error', error.message);
-  } finally {
-    submit.disabled = false;
-  }
-});
-
-get('repair-host').addEventListener('click', () => openPair(editing));
-get('remove-host').addEventListener('click', async () => {
-  const item = editing;
-  if (!await confirmAction('移除 ' + item.name + '？', '此操作会删除手机上保存的配对。要撤销电脑端授权，请在电脑端停止移动连接。', '移除')) return;
-  try {
-    await rpc('forget', { profile: item.id });
-    if (profile?.id === item.id) leaveTerminal();
-    profiles = profiles.filter(saved => saved.id !== item.id);
-    health.delete(item.id);
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':')) {
-        localStorage.removeItem(key);
-      }
-    }
-    workspace.removeHost(item.id);
-    localStorage.removeItem(prefix + 'project:' + item.id);
-    localStorage.removeItem(prefix + 'recent-projects:' + item.id);
-    get('host-dialog').close();
-    if (profile?.id === item.id) {
-      profileEpoch += 1;
-      profile = null;
-      projects = [];
-      loaded = false;
-      localStorage.setItem(prefix + 'active', '');
-      localStorage.removeItem(prefix + 'open');
-      message('project-error', '');
-      message('connection-error', '');
-    }
-    renderConnections();
-    renderHome();
-    renderProjects();
-  } catch (error) {
-    message('host-error', error.message);
-  }
-});
 
 function moveProfile(from, to) {
   for (const [old, next] of renameProfileKeys(Object.keys(localStorage), prefix, from.id, to.id)) {
@@ -767,9 +410,9 @@ function moveProfile(from, to) {
 }
 
 get('active-host').addEventListener('click', () => showPage('connection'));
-get('add-host').addEventListener('click', () => openPair());
+get('add-host').addEventListener('click', () => pairing.openPair());
 get('refresh').addEventListener('click', () => { void refreshProjects(); });
-get('search').addEventListener('input', renderProjects);
+get('search').addEventListener('input', () => dashboard.renderProjects());
 get('resume').addEventListener('click', () => { void openProject(lastProject()); });
 get('browse-projects').addEventListener('click', () => showPage('project'));
 get('home-all-projects').addEventListener('click', () => showPage('project'));
@@ -778,21 +421,22 @@ get('project-empty-action').addEventListener('click', () => {
   if (!profile) showPage('connection');
   else if (get('search').value.trim()) {
     get('search').value = '';
-    renderProjects();
+    dashboard.renderProjects();
   } else void refreshProjects();
 });
 get('home-action').addEventListener('click', () => {
   const state = hostState(profile);
   if (!profile) {
     if (profiles.length) showPage('connection');
-    else openPair();
-  } else if (state === 'expired') openPair(profile);
+    else pairing.openPair();
+  } else if (state === 'expired') pairing.openPair(profile);
   else if (state === 'offline') void refreshProjects();
   else showPage(state === 'online' ? 'project' : 'connection');
 });
 for (const item of get('dashboard-nav').querySelectorAll('button')) {
   item.addEventListener('click', () => showPage(item.dataset.page));
 }
+
 function setModifier(name, state) {
   modifiers[name] = state;
   const key = get('keys-dialog').querySelector('[data-key="' + name + '"]');
@@ -811,6 +455,10 @@ function consumeModifiers() {
   setModifier('alt', consumeModifier(modifiers.alt));
 }
 
+/**
+ * 两种编辑目标：草稿（compose）先在手机编辑，点发送才提交；直发（raw）把每个按键立即发给终端。
+ * 状态行用文字「草稿 / 直发」常驻标明，输入框配色、占位文字与键盘按钮选中态同步。
+ */
 function setRawKeyboard(enabled) {
   const nextMode = enabled ? 'raw' : 'compose';
   if (inputMode !== nextMode) cancelKeyRepeats();
@@ -818,13 +466,15 @@ function setRawKeyboard(enabled) {
   if (selected) inputModes.set(draftKey(selected), nextMode);
   if (term?.textarea) term.textarea.inputMode = enabled ? 'text' : 'none';
   get('keyboard').setAttribute('aria-pressed', String(enabled));
-  get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
+  get('keyboard').setAttribute('aria-label', enabled ? '切回草稿输入' : '切换为直发：按键立即发给终端');
   get('input-hint').textContent = enabled ? '终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认' : '命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选';
   get('input-mode').textContent = enabled ? '终端实时输入' : '命令输入';
+  get('terminal-input-mode').textContent = enabled ? '直发' : '草稿';
+  get('terminal-input-mode').dataset.mode = nextMode;
   get('keys-target').textContent = '编辑目标：' + (enabled ? '终端实时输入' : '手机草稿');
-  compose.placeholder = enabled ? '实时输入中…' : '输入命令…';
-  get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
-  get('input-mode').dataset.mode = enabled ? 'raw' : 'compose';
+  compose.placeholder = enabled ? '直发中 · 按键立即发给终端' : '草稿 · 编辑后点发送';
+  get('compose-form').dataset.mode = nextMode;
+  get('input-mode').dataset.mode = nextMode;
   updateComposerActions();
 }
 
@@ -835,6 +485,20 @@ function focusRawKeyboard() {
   setRawKeyboard(true);
   term.focus();
 }
+
+/** 首次进入终端时说明草稿 / 直发和新手势；点「知道了」或主动切换一次模式后不再显示。 */
+function renderInputTip() {
+  let seen = true;
+  try { seen = localStorage.getItem(inputTipKey) === 'true'; } catch { /* 读不到时不打扰。 */ }
+  get('input-tip').hidden = seen || terminalScreen.hidden;
+}
+
+function dismissInputTip() {
+  if (get('input-tip').hidden) return;
+  try { localStorage.setItem(inputTipKey, 'true'); } catch { /* 本次仍然关闭。 */ }
+  get('input-tip').hidden = true;
+}
+get('input-tip-dismiss').addEventListener('click', dismissInputTip);
 
 function draftKey(id) {
   return profile.id + '/' + id;
@@ -856,56 +520,8 @@ function saveDraft() {
   if (persistenceFailed) {
     get('expanded-save-status').textContent = '手机保存失败，请复制并保留原文。';
     get('expanded-save-status').dataset.error = 'true';
-    renderSubmissionState();
+    composeStatus.renderSubmission();
   }
-}
-
-function renderSubmissionState() {
-  const latest = selected ? workspace.recent(draftKey(selected))[0] : null;
-  const chip = get('review-submission');
-  const received = !persistenceFailed && latest?.state === 'received';
-  if (received && compactReceipt?.id !== latest.id) {
-    // 新的接收回执先完整显示，几秒后收成 ✓，仍可点开查看原文。
-    clearTimeout(compactReceiptTimer);
-    compactReceipt = { id: latest.id, compact: false };
-    compactReceiptTimer = setTimeout(() => {
-      if (compactReceipt?.id === latest.id) compactReceipt.compact = true;
-      renderSubmissionState();
-    }, 4000);
-  }
-  const compact = received && compactReceipt?.compact;
-  get('submission-state').dataset.visible = String(!!latest || persistenceFailed);
-  chip.dataset.state = persistenceFailed ? 'error' : latest?.state ?? '';
-  chip.dataset.compact = String(!!compact);
-  get('submission-status').textContent = persistenceFailed ? '⚠ 手机保存失败'
-    : latest?.state === 'sending' ? '正在发送…'
-      : received ? (compact ? '✓' : '✓ 电脑已接收 · 查看') : '⚠ 结果未知 · 查看';
-  chip.setAttribute('aria-label', persistenceFailed ? '手机保存失败，请保留原文'
-    : latest?.state === 'sending' ? '正在发送' : received ? '电脑已接收，查看提交原文' : '提交结果未知，原文已保留，点按查看');
-  renderComposeNotes();
-}
-
-function setImageNote(text, { state = 'busy', ttl = 0 } = {}) {
-  clearTimeout(imageNoteTimer);
-  imageNote = text ? { text, state } : null;
-  if (text && ttl) imageNoteTimer = setTimeout(() => { imageNote = null; renderComposeNotes(); }, ttl);
-  renderComposeNotes();
-}
-
-/** 输入框内同一时间只显示一项：图片进度 > 待处理的提交状态 > 补全提示 > 已接收 ✓。 */
-function renderComposeNotes() {
-  const raw = inputMode === 'raw';
-  const chip = get('review-submission');
-  const submission = get('submission-state').dataset.visible === 'true';
-  const settled = submission && chip.dataset.state === 'received';
-  const image = get('image-state');
-  image.textContent = imageNote?.text ?? '';
-  image.dataset.state = imageNote?.state ?? '';
-  image.hidden = !imageNote;
-  const urgentSubmission = submission && !settled && !imageNote;
-  const help = get('completion-help');
-  help.hidden = !!imageNote || urgentSubmission || !(raw || isSlashDraft(compose.value));
-  get('submission-state').hidden = !submission || !!imageNote || (settled && !help.hidden);
 }
 
 function openEditor() {
@@ -924,7 +540,9 @@ function showSubmissions() {
   get('submission-preview').value = '';
   get('submission-feedback').textContent = '';
   const add = (label, text) => {
-    const item = button('', () => { get('submission-preview').value = text; });
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.addEventListener('click', () => { get('submission-preview').value = text; });
     item.textContent = label + ' · ' + text.slice(0, 60).replace(/\s+/g, ' ');
     list.append(item);
     if (!get('submission-preview').value) get('submission-preview').value = text;
@@ -941,69 +559,6 @@ function showSubmissions() {
   get('submissions-dialog').showModal();
 }
 
-function refreshReader() {
-  readerText = get('reader-source').value === 'history' ? get('history-content').textContent.slice(-600_000) : term ? terminalText(term) : '';
-  get('reader-refresh').textContent = '刷新内容';
-  renderReader();
-  get('reader-scroll').scrollTop = 0;
-}
-
-function renderReader() {
-  readerMatches = searchOffsets(readerText, get('reader-query').value);
-  readerIndex = 0;
-  const content = get('reader-content');
-  const fragment = document.createDocumentFragment();
-  let offset = 0;
-  let matchIndex = 0;
-  for (const line of readerText.split('\n')) {
-    const span = document.createElement('span');
-    if (line.startsWith('+')) span.className = 'diff-added';
-    if (line.startsWith('-')) span.className = 'diff-removed';
-    let position = 0;
-    while (matchIndex < readerMatches.length && readerMatches[matchIndex].start < offset + line.length) {
-      const match = readerMatches[matchIndex];
-      appendReaderText(span, line.slice(position, Math.max(0, match.start - offset)));
-      const mark = document.createElement('mark');
-      mark.dataset.match = String(matchIndex);
-      mark.textContent = line.slice(Math.max(0, match.start - offset), match.end - offset);
-      span.append(mark);
-      position = Math.min(line.length, match.end - offset);
-      if (match.end > offset + line.length) break;
-      matchIndex += 1;
-    }
-    appendReaderText(span, line.slice(position) + '\n');
-    fragment.append(span);
-    offset += line.length + 1;
-  }
-  content.replaceChildren(fragment);
-  updateReaderMatch(false);
-}
-
-function appendReaderText(parent, text) {
-  let position = 0;
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
-    const url = match[0].replace(/[.,;，。；）)]+$/u, '');
-    parent.append(document.createTextNode(text.slice(position, match.index)));
-    const link = button('reader-link', async () => {
-      try { await rpc('open_link', { url }); }
-      catch (error) { get('reader-status').textContent = error.message; }
-    });
-    link.textContent = url;
-    link.setAttribute('role', 'link');
-    parent.append(link);
-    position = match.index + url.length;
-  }
-  parent.append(document.createTextNode(text.slice(position)));
-}
-
-function updateReaderMatch(scroll = true) {
-  for (const mark of get('reader-content').querySelectorAll('mark')) mark.dataset.active = String(Number(mark.dataset.match) === readerIndex);
-  get('reader-status').textContent = get('reader-query').value
-    ? readerMatches.length ? (readerIndex + 1) + ' / ' + readerMatches.length + (readerMatches.length === 500 ? '（最多 500 处）' : '') : '未找到'
-    : readerText ? '只读快照' : '此范围暂无输出';
-  if (scroll) get('reader-content').querySelector('mark[data-active="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' });
-}
-
 get('terminal-menu').addEventListener('click', () => {
   get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
   get('terminal-menu-dialog').showModal();
@@ -1011,12 +566,8 @@ get('terminal-menu').addEventListener('click', () => {
 for (const [id, action] of Object.entries({
   'menu-edit': openEditor,
   'menu-submissions': showSubmissions,
-  'menu-read': () => {
-    get('reader-source').value = terminalHistory?.isOpen() ? 'history' : 'terminal';
-    refreshReader();
-    get('reader-dialog').showModal();
-  },
-  'menu-sessions': () => { void openSessionDrawer(); },
+  'menu-read': () => reader.open(),
+  'menu-sessions': () => { void drawer.open(); },
   'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
@@ -1044,43 +595,23 @@ get('copy-submission').addEventListener('click', async () => {
   try { await rpc('copy', { text: get('submission-preview').value }); get('submission-feedback').textContent = '原文已复制'; }
   catch (error) { get('submission-feedback').textContent = error.message; }
 });
-get('reader-refresh').addEventListener('click', refreshReader);
-get('reader-source').addEventListener('change', refreshReader);
-get('reader-query').addEventListener('input', () => { renderReader(); updateReaderMatch(); });
-for (const [id, delta] of [['reader-previous', -1], ['reader-next', 1]]) get(id).addEventListener('click', () => {
-  if (!readerMatches.length) return;
-  readerIndex = (readerIndex + delta + readerMatches.length) % readerMatches.length;
-  updateReaderMatch();
-});
-get('reader-wrap').addEventListener('change', () => { get('reader-content').dataset.wrap = String(get('reader-wrap').checked); });
-get('reader-copy').addEventListener('click', async () => {
-  try { await rpc('copy', { text: readerText }); get('reader-status').textContent = '输出已复制'; }
-  catch (error) { get('reader-status').textContent = error.message; }
-});
-get('terminal-columns').value = String(terminalColumns);
-get('touch-mode').querySelector(`input[value="${touchMode}"]`).checked = true;
-get('touch-mode').addEventListener('change', event => {
-  touchMode = event.target.value === 'program' ? 'program' : 'view';
-  localStorage.setItem('qingcode:mobile:touch-mode', touchMode);
-});
-get('terminal-columns').addEventListener('change', () => {
-  terminalColumns = Number(get('terminal-columns').value);
-  localStorage.setItem('qingcode:mobile:columns', String(terminalColumns));
-  fitTerminal();
-});
+
+function terminalControls() {
+  return document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach');
+}
 
 function updateComposerActions() {
   const raw = inputMode === 'raw';
-  const slash = !raw && sendMode !== 'enter' && isSlashDraft(compose.value);
+  const slash = !raw && settings.sendMode() !== 'enter' && isSlashDraft(compose.value);
   get('send').setAttribute('aria-label', raw ? '确认终端中的选择或命令' : slash ? '查看命令或技能候选，不发送回车' : compose.value ? '发送并回车' : '发送回车');
   get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
   get('send-label').textContent = raw ? '确认' : slash ? '候选' : '发送';
   get('completion-help').textContent = slash ? '先查看候选，再确认' : '↑↓ 选择 · ↵ 确认';
-  renderComposeNotes();
-  for (const button of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach')) {
-    button.disabled = !terminalReady || composing || editorComposing || (['attach-image', 'expanded-attach'].includes(button.id) && sendingImage)
-      || (button.dataset.key === 'clear' && (raw || !compose.value))
-      || (!raw && /[\r\n]/.test(compose.value) && ['slash', 'tab', 'reference'].includes(button.dataset.key));
+  composeStatus.renderNotes();
+  for (const control of terminalControls()) {
+    control.disabled = !terminalReady || composing || editorComposing || (['attach-image', 'expanded-attach'].includes(control.id) && sendingImage)
+      || (control.dataset.key === 'clear' && (raw || !compose.value))
+      || (!raw && /[\r\n]/.test(compose.value) && ['slash', 'tab', 'reference'].includes(control.dataset.key));
   }
 }
 
@@ -1092,18 +623,18 @@ function dispatchComposer(action) {
     value = raw ? '@' : editDraft(value, compose.selectionStart, compose.selectionEnd, 'text', '@').value;
     action = 'preview';
   }
-  const plan = composerInput(value, action, term?.modes.bracketedPasteMode, { autoEnter: action === 'submit' && sendMode === 'enter' });
+  const plan = composerInput(value, action, term?.modes.bracketedPasteMode, { autoEnter: action === 'submit' && settings.sendMode() === 'enter' });
   const key = selected && draftKey(selected);
   const text = raw ? '' : compose.value;
   let receipt;
   const onComplete = text ? state => {
     workspace.settle(key, receipt, state);
-    if (selected && draftKey(selected) === key) renderSubmissionState();
+    if (selected && draftKey(selected) === key) composeStatus.renderSubmission();
   } : undefined;
   if (!plan || !sendInput(plan.data, { raw: plan.interactive, enter: plan.enter, onComplete })) return false;
   if (text) receipt = workspace.submit(key, text);
   // 草稿已提交，图片提示随之结束，不再显示「已就绪」。
-  if (text && imageNote) setImageNote('');
+  if (text && composeStatus.imageNote()) composeStatus.setImageNote('');
   if (!raw) {
     compose.value = '';
     if (selected) drafts.delete(draftKey(selected));
@@ -1114,7 +645,7 @@ function dispatchComposer(action) {
     term?.scrollToBottom();
   }
   resizeComposer();
-  renderSubmissionState();
+  composeStatus.renderSubmission();
   return true;
 }
 
@@ -1180,6 +711,9 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   terminalSelection = undefined;
   terminalHistory?.dispose();
   terminalHistory = undefined;
+  terminalLinks?.dispose();
+  terminalLinks = undefined;
+  if (get('link-dialog').open) get('link-dialog').close();
   terminalReady = false;
   terminalInput.flush();
   if (selected && compose.value) drafts.set(draftKey(selected), compose.value);
@@ -1193,10 +727,10 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   composing = false;
   clearModifiers();
   setRawKeyboard(false);
-  setImageNote('');
-  get('submission-state').dataset.visible = 'false';
-  get('submission-state').hidden = true;
+  composeStatus.reset();
   get('scroll-bottom').hidden = true;
+  get('input-tip').hidden = true;
+  hideFontToast();
   disposeTouchScroll?.();
   disposeTouchScroll = undefined;
   disposeTouchGuard?.();
@@ -1209,7 +743,7 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
 function makeTerminal() {
   term = new window.Terminal({
     allowProposedApi: false,
-    fontSize: terminalFontSize,
+    fontSize: settings.fontSize(),
     lineHeight: 1.2,
     fontFamily: 'monospace',
     scrollback: 2500,
@@ -1247,7 +781,7 @@ function makeTerminal() {
   terminalHistory = attachTerminalHistory({
     term, get,
     onClose: () => disposeTouchScroll?.cancel?.(),
-    touchToProgram: () => touchMode === 'program',
+    touchToProgram: () => settings.touchMode() === 'program',
     loadPage: async before => {
       const data = await remote('history', { id: historySession, before });
       if (historyEpoch !== viewEpoch) throw new Error('会话已切换');
@@ -1263,9 +797,15 @@ function makeTerminal() {
     onLongPress: point => terminalSelection?.start(point),
     canInertia: () => terminalHistory?.isOpen() || (term?.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none'),
   });
+  terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
-    shouldBlock: () => touchMode === 'view' && term?.modes.mouseTrackingMode !== 'none',
-    onTap: () => term?.focus(),
+    shouldBlock: () => settings.touchMode() === 'view' && term?.modes.mouseTrackingMode !== 'none',
+    // 全屏程序拦截了鼠标事件，xterm 收不到点按；按触点坐标查找链接。
+    onTap: event => {
+      const url = event && terminalLinks?.linkAt(event.clientX, event.clientY);
+      if (url) openTerminalLink(url);
+      else term?.focus();
+    },
   });
   setRawKeyboard(!!selected && inputModes.get(draftKey(selected)) === 'raw');
   term.textarea.addEventListener('compositionstart', () => { composing = true; cancelKeyRepeats(); updateComposerActions(); });
@@ -1285,12 +825,47 @@ function makeTerminal() {
   });
 }
 
+/** 点终端里的链接：先弹出底部菜单确认打开或复制，避免点按终端时误跳浏览器。 */
+function openTerminalLink(url) {
+  if (!url || !project || terminalScreen.hidden) return;
+  linkTarget = phoneLink(url, { computerHost: profile?.host, projectKind: project.kind });
+  const rewritten = !!linkTarget.open && linkTarget.open !== linkTarget.url;
+  get('link-url').textContent = linkTarget.open ?? linkTarget.url;
+  get('link-original').textContent = rewritten ? '终端中为 ' + linkTarget.url : '';
+  get('link-original').hidden = !rewritten;
+  message('link-note', linkTarget.note);
+  get('link-open').hidden = !linkTarget.open;
+  get('link-status').textContent = '';
+  term?.textarea?.blur();
+  if (!get('link-dialog').open) get('link-dialog').showModal();
+}
+
+get('link-open').addEventListener('click', async () => {
+  if (!linkTarget?.open) return;
+  try {
+    await rpc('open_link', { url: linkTarget.open });
+    get('link-dialog').close();
+  } catch (error) {
+    get('link-status').textContent = error.message;
+  }
+});
+get('link-copy').addEventListener('click', async () => {
+  if (!linkTarget) return;
+  try {
+    await rpc('copy', { text: linkTarget.open ?? linkTarget.url });
+    get('link-status').textContent = '链接已复制';
+  } catch (error) {
+    get('link-status').textContent = error.message;
+  }
+});
+
 function updateTerminalSize() {
   get('terminal-size').textContent = term ? term.cols + ' × ' + term.rows : '';
 }
 
 function fitTerminal() {
   if (!term || !fit || terminalScreen.hidden) return;
+  const terminalColumns = settings.columns();
   const screen = term.element.querySelector('.xterm-screen');
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;
   const cellHeight = screen?.getBoundingClientRect().height / term.rows;
@@ -1307,34 +882,44 @@ function fitTerminal() {
     cellWidth, cellHeight, terminalColumns,
   );
   if (!size) return;
-  const cols = size.cols;
-  if (cols !== term.cols || size.rows !== term.rows) term.resize(cols, size.rows);
+  if (size.cols !== term.cols || size.rows !== term.rows) term.resize(size.cols, size.rows);
 }
 
-function renderFontSize() {
-  get('font-size').textContent = terminalFontSize + 'px';
-  get('font-smaller').disabled = terminalFontSize <= 11;
-  get('font-larger').disabled = terminalFontSize >= 20;
-}
-
-for (const [id, delta] of [['font-smaller', -1], ['font-larger', 1]]) {
-  get(id).addEventListener('click', () => {
-    terminalFontSize = Math.max(11, Math.min(20, terminalFontSize + delta));
-    localStorage.setItem(prefix + 'font-size', String(terminalFontSize));
-    if (term) {
-      term.options.fontSize = terminalFontSize;
-      fitTerminal();
-    }
-    renderFontSize();
-  });
-}
-renderFontSize();
 get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });
 
 new ResizeObserver(() => {
   clearTimeout(fitting);
   fitting = setTimeout(() => { fitting = null; fitTerminal(); }, 80);
 }).observe(get('viewport'));
+
+/** 双指缩放时在输出区上方短暂显示当前字号。 */
+function showFontToast(size) {
+  clearTimeout(fontToastTimer);
+  const toast = get('font-toast');
+  toast.textContent = '字号 ' + size + 'px';
+  toast.hidden = false;
+}
+
+function hideFontToast(delay = 0) {
+  clearTimeout(fontToastTimer);
+  if (delay) fontToastTimer = setTimeout(() => { get('font-toast').hidden = true; }, delay);
+  else get('font-toast').hidden = true;
+}
+
+attachPinchZoom(get('viewport').parentElement, {
+  enabled: () => !!term && !terminalScreen.hidden,
+  currentSize: () => settings.fontSize(),
+  // 双指落下时停止单指滚动、惯性与长按选字计时，整个手势不发给终端程序。
+  onStart: () => disposeTouchScroll?.cancel?.(),
+  onPreview: size => {
+    settings.setFontSize(size, { persist: false });
+    showFontToast(size);
+  },
+  onCommit: (size, info) => {
+    if (!info?.unchanged) settings.setFontSize(size);
+    hideFontToast(info?.unchanged ? 0 : 900);
+  },
+});
 
 function dimensions() {
   return { cols: term?.cols ?? 80, rows: term?.rows ?? 24 };
@@ -1354,7 +939,7 @@ function terminalState(text, state = 'idle', retry = false) {
   get('terminal-status').textContent = text;
   get('terminal-dot').dataset.state = state;
   get('terminal-retry').hidden = !retry;
-  for (const control of document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach')) {
+  for (const control of terminalControls()) {
     control.disabled = !terminalReady || (['attach-image', 'expanded-attach'].includes(control.id) && sendingImage);
   }
   updateComposerActions();
@@ -1386,13 +971,14 @@ async function openProject(item, resumeOnly = false) {
   terminalScreen.hidden = false;
   void syncTerminalFullscreen();
   makeTerminal();
-  renderSessions();
+  drawer.render();
+  renderInputTip();
   terminalState('正在连接终端…');
   try {
     const list = await remote('sessions', { project: item.id });
     if (epoch !== viewEpoch) return;
     sessions = list;
-    pruneSessionPins(list);
+    drawer.prunePins(list);
     const previous = localStorage.getItem(sessionKey(item.id));
     const existing = sessions.find(session => session.id === previous)
       ?? sessions.find(session => !session.exit)
@@ -1407,185 +993,6 @@ async function openProject(item, resumeOnly = false) {
   }
 }
 
-function renderSessions() {
-  const current = sessions.find(item => item.id === selected);
-  get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? '终端';
-  get('terminal-host').textContent = project ? project.name + ' · ' + projectSourceLabel({ ...project, host: '' }) : '';
-  get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
-  get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
-  const options = get('session-options');
-  const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
-  get('session-count').textContent = String(sessions.length);
-  get('end-all-sessions').disabled = busy || !sessions.length;
-  get('drawer-new-session').disabled = busy;
-  const pins = new Set(sessionPins());
-  for (const [position, { session, index }] of orderSessions(sessions, [...pins]).entries()) {
-    const label = sessionName(session, index + 1);
-    let row = existingRows.get(session.id);
-    if (!row) {
-      row = document.createElement('div');
-      row.className = 'session-option';
-      row.dataset.id = session.id;
-      const latest = () => sessions.find(item => item.id === session.id);
-      const option = button('row', () => {
-        if (!busy && latest()) selectSession(latest());
-      });
-      const text = rowText('', '');
-      const heading = text.querySelector('strong');
-      const name = document.createElement('span');
-      name.className = 'session-label';
-      heading.append(icon('loader-circle', 'session-spinner'), icon('pin', 'session-pin'), name);
-      // 空闲 24 小时无输入也无输出时电脑端自动结束会话。
-      const idle = document.createElement('small');
-      idle.className = 'session-idle';
-      text.append(idle);
-      option.append(text);
-      // 长按整行或点 ⋯ 打开会话操作（置顶、重命名、结束）。
-      attachLongPress(option, () => { if (latest()) openSessionActions(latest()); });
-      const more = button('icon-button session-more', () => { if (latest()) openSessionActions(latest()); });
-      more.append(icon('more'));
-      const close = button('icon-button session-close', () => { void endSession(session.id); });
-      close.append(icon('close'));
-      row.append(option, more, close);
-    }
-    existingRows.delete(session.id);
-    row.dataset.current = String(session.id === selected);
-    row.dataset.pinned = String(pins.has(session.id));
-    const running = sessionRunning(session);
-    row.dataset.running = String(running);
-    const option = row.querySelector('.row');
-    option.disabled = busy;
-    option.setAttribute('aria-label', '切换到 ' + label);
-    const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
-    const identity = '终端 ' + (session.number ?? index + 1);
-    row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = [pins.has(session.id) ? '已置顶' : '', label === identity ? '' : identity, status]
-      .filter(Boolean).join(' · ');
-    const idle = row.querySelector('.session-idle');
-    idle.textContent = session.exit ? '' : idleLabel(session);
-    idle.hidden = !idle.textContent;
-    row.querySelector('.session-more').setAttribute('aria-label', label + ' 的更多操作');
-    row.querySelector('.session-more').disabled = busy;
-    const close = row.querySelector('.session-close');
-    close.setAttribute('aria-label', (session.exit ? '移除 ' : '关闭 ') + label);
-    close.disabled = busy;
-    if (session.id === selected) {
-      option.setAttribute('aria-current', 'true');
-    } else option.removeAttribute('aria-current');
-    if (options.children[position] !== row) options.insertBefore(row, options.children[position] ?? null);
-  }
-  for (const row of existingRows.values()) row.remove();
-}
-
-async function openSessionDrawer() {
-  sessionDrawerEpoch += 1;
-  clearTimeout(sessionRefreshTimer);
-  renderSessions();
-  if (!get('session-drawer').open) get('session-drawer').showModal();
-  get('show-sessions').setAttribute('aria-expanded', 'true');
-  await refreshSessionDrawer();
-}
-
-async function refreshSessionDrawer() {
-  if (busy || sessionRefreshing || !get('session-drawer').open || document.hidden || !foreground) return;
-  sessionRefreshing = true;
-  const epoch = viewEpoch;
-  const drawerEpoch = sessionDrawerEpoch;
-  try {
-    const list = await remote('sessions', { project: project.id });
-    if (epoch !== viewEpoch || drawerEpoch !== sessionDrawerEpoch || !get('session-drawer').open) return;
-    sessions = list.map(item => {
-      const previous = sessions.find(saved => saved.id === item.id);
-      if (previous) {
-        mergeSessionName(item, previous);
-        // An older list response cannot revive a terminal already seen exiting.
-        item.exit ??= previous.exit;
-      }
-      return item;
-    });
-    pruneSessionPins(sessions);
-    message('session-error', '');
-    renderSessions();
-  } catch (error) {
-    if (epoch === viewEpoch && drawerEpoch === sessionDrawerEpoch && get('session-drawer').open) message('session-error', error.message);
-  } finally {
-    sessionRefreshing = false;
-    if (get('session-drawer').open && !document.hidden && foreground) {
-      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
-    }
-  }
-}
-
-let actionSession = null;
-
-function openSessionActions(session) {
-  if (busy) return;
-  actionSession = { id: session.id, address: profile.id, epoch: viewEpoch };
-  const index = sessions.indexOf(session);
-  const pinned = sessionPins().includes(session.id);
-  get('session-actions-title').textContent = sessionName(session, index + 1);
-  get('session-actions-context').textContent = profile.name + ' / ' + project.name;
-  get('session-action-pin').textContent = pinned ? '取消置顶' : '置顶';
-  get('session-action-rename').disabled = !Number.isFinite(session.nameRevision);
-  get('session-action-rename').textContent = Number.isFinite(session.nameRevision) ? '重命名' : '重命名（需更新电脑端）';
-  get('session-action-end').textContent = session.exit ? '移除已结束会话' : session.id === selected ? '结束当前会话' : '结束会话';
-  get('session-actions-dialog').showModal();
-}
-
-/** 操作菜单打开期间会话可能已被移除或切换了连接，这里取回仍然有效的会话。 */
-function takeActionSession() {
-  const target = actionSession;
-  get('session-actions-dialog').close();
-  if (!target || target.epoch !== viewEpoch || profile?.id !== target.address) return null;
-  return sessions.find(item => item.id === target.id) ?? null;
-}
-
-get('session-action-pin').addEventListener('click', () => {
-  const session = takeActionSession();
-  if (!session) return;
-  saveSessionPins(toggleSessionPin(sessionPins(), session.id));
-  renderSessions();
-});
-get('session-action-rename').addEventListener('click', () => {
-  const session = takeActionSession();
-  if (session) openSessionRename(session);
-});
-get('session-action-end').addEventListener('click', () => {
-  const session = takeActionSession();
-  if (session) void endSession(session.id);
-});
-get('session-actions-dialog').addEventListener('close', () => { actionSession = null; });
-
-function openSessionRename(session) {
-  if (busy) return;
-  renamingSession = { id: session.id, address: profile.id, epoch: viewEpoch };
-  get('save-session-name').disabled = false;
-  get('session-name-input').value = session.customName ?? sessionName(session);
-  message('rename-session-error', '');
-  get('rename-session-dialog').showModal();
-  get('session-name-input').select();
-}
-
-get('rename-session-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!renamingSession || get('save-session-name').disabled) return;
-  const target = renamingSession;
-  get('save-session-name').disabled = true;
-  try {
-    const result = await remote('rename_session', { id: target.id, name: get('session-name-input').value.trim() }, target.address);
-    if (target.epoch !== viewEpoch || profile.id !== target.address) return;
-    const session = sessions.find(item => item.id === target.id);
-    if (session) mergeSessionName(session, result);
-    renderSessions();
-    if (renamingSession === target) get('rename-session-dialog').close();
-  } catch (error) {
-    if (target.epoch === viewEpoch && renamingSession === target) message('rename-session-error', error.message);
-  } finally {
-    if (renamingSession === target) get('save-session-name').disabled = false;
-  }
-});
-get('rename-session-dialog').addEventListener('close', () => { renamingSession = null; });
-
 async function createSession(epoch, terminalProfile = null) {
   // 启动命令由电脑端按配置 id 解析并在新会话启动时执行，手机不再向终端输入命令。
   const args = { project: project.id, ...dimensions() };
@@ -1599,24 +1006,24 @@ async function createSession(epoch, terminalProfile = null) {
 function renderTerminalProfiles(choices, state = '') {
   const list = get('terminal-profiles');
   list.replaceChildren(...choices.map(choice => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'secondary';
-    if (choice.id) button.dataset.profile = choice.id;
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'secondary';
+    if (choice.id) option.dataset.profile = choice.id;
     const name = document.createElement('span');
     name.textContent = choice.name;
-    button.append(name);
+    option.append(name);
     if (!choice.trusted) {
       const hint = document.createElement('small');
       hint.textContent = '需先在电脑上信任';
-      button.append(hint);
+      option.append(hint);
     }
-    button.addEventListener('click', () => {
+    option.addEventListener('click', () => {
       // 电脑端创建时仍会校验信任；这里提前提示，避免关闭弹窗后才报错。
       if (!choice.trusted) message('terminal-profiles-error', `请先在电脑上新建一次「${choice.name}」终端并选择「信任此配置」。`);
       else void newSession(choice.id);
     });
-    return button;
+    return option;
   }));
   list.setAttribute('aria-busy', String(state === 'loading'));
   message('terminal-profiles-error', state === 'error' ? '无法读取电脑端终端配置，已仅显示普通终端。' : '');
@@ -1656,11 +1063,12 @@ function selectSession(session) {
       JSON.stringify(rememberProject(projectHistory(), project.id)));
   } catch { /* Terminal access remains available when history cannot be saved. */ }
   localStorage.setItem(prefix + 'open', profile.id);
-  renderHome();
+  dashboard.renderHome();
   makeTerminal();
-  renderSessions();
+  drawer.render();
+  renderInputTip();
   terminalState('正在接入终端…');
-  renderSubmissionState();
+  composeStatus.renderSubmission();
   void poll(session, viewEpoch);
 }
 
@@ -1677,8 +1085,8 @@ async function poll(session, epoch) {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
       const current = sessions.find(item => item.id === session.id);
-      if (current && mergeSessionName(current, data)) renderSessions();
-      if (data.chunks.length && get('reader-dialog').open) get('reader-refresh').textContent = '刷新内容（有新输出）';
+      if (current && mergeSessionName(current, data)) drawer.render();
+      if (data.chunks.length) reader.notifyOutput();
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);
       next = data.next;
@@ -1708,7 +1116,7 @@ async function poll(session, epoch) {
       if (data.exit) {
         if (current && !current.exit) {
           current.exit = data.exit;
-          renderSessions();
+          drawer.render();
         }
         terminalState(data.exit.disconnected ? '电脑到远端的终端连接已中断' : '会话已结束 · 退出码 ' + data.exit.exitCode);
         if (data.more) continue;
@@ -1729,7 +1137,7 @@ async function poll(session, epoch) {
       if (error.message === '终端不存在。') {
         saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
-        renderSessions();
+        drawer.render();
         terminalState('原会话已不存在 · 草稿保留，可新建终端恢复', 'offline');
         return;
       }
@@ -1756,22 +1164,13 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 }
 
 get('back').addEventListener('click', () => returnToDashboard());
-get('show-sessions').addEventListener('click', () => { void openSessionDrawer(); });
+get('show-sessions').addEventListener('click', () => { void drawer.open(); });
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
-get('session-drawer').addEventListener('close', () => {
-  sessionDrawerEpoch += 1;
-  clearTimeout(sessionRefreshTimer);
-  get('show-sessions').setAttribute('aria-expanded', 'false');
-});
-document.addEventListener('visibilitychange', () => {
-  clearTimeout(sessionRefreshTimer);
-  if (!document.hidden) void refreshSessionDrawer();
-});
-get('session-drawer').addEventListener('toggle', () => get('show-sessions').setAttribute('aria-expanded', String(get('session-drawer').open)));
 get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
+
 async function newSession(terminalProfile) {
   if (busy) return;
   busy = true;
@@ -1783,7 +1182,7 @@ async function newSession(terminalProfile) {
     const list = await remote('sessions', { project: project.id });
     if (epoch !== viewEpoch) return;
     sessions = list;
-    renderSessions();
+    drawer.render();
     get('new-session-dialog').close();
     await createSession(epoch, terminalProfile);
   } catch (error) {
@@ -1795,6 +1194,7 @@ async function newSession(terminalProfile) {
     busy = false;
   }
 }
+
 async function endSession(id) {
   const target = sessions.find(item => item.id === id);
   if (busy || !target) return;
@@ -1802,10 +1202,9 @@ async function endSession(id) {
   const address = profile.id;
   const ended = target.exit;
   busy = true;
-  sessionDrawerEpoch += 1;
-  clearTimeout(sessionRefreshTimer);
+  drawer.pause();
   message('session-error', '');
-  renderSessions();
+  drawer.render();
   try {
     if (!await confirmAction(ended ? '移除会话？' : '关闭会话？',
       `「${sessionName(target)}」` + (ended ? '的输出将从列表中移除。' : '中的 Shell 和前台任务将被关闭。'), ended ? '移除' : '关闭')) return;
@@ -1813,7 +1212,7 @@ async function endSession(id) {
     await remote('end', { id }, address);
     if (epoch !== viewEpoch) return;
     sessions = sessions.filter(item => item.id !== id);
-    saveSessionPins(sessionPins().filter(pin => pin !== id));
+    drawer.savePins(drawer.pins().filter(pin => pin !== id));
     if (selected === id) {
       compose.value = '';
       if (sessions.length) {
@@ -1833,11 +1232,8 @@ async function endSession(id) {
     }
   } finally {
     busy = false;
-    renderSessions();
-    if (get('session-drawer').open) {
-      clearTimeout(sessionRefreshTimer);
-      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
-    }
+    drawer.render();
+    drawer.scheduleRefresh();
   }
 }
 
@@ -1848,16 +1244,15 @@ get('end-all-sessions').addEventListener('click', async () => {
   const projectId = project.id;
   const previous = selected;
   busy = true;
-  sessionDrawerEpoch += 1;
-  clearTimeout(sessionRefreshTimer);
+  drawer.pause();
   message('session-error', '');
-  renderSessions();
+  drawer.render();
   try {
     // Refresh before confirmation, then end only the exact sessions shown there.
     const targets = await remote('sessions', { project: projectId }, address);
     if (epoch !== viewEpoch) return;
     sessions = targets;
-    renderSessions();
+    drawer.render();
     if (!targets.length) {
       get('session-drawer').close();
       localStorage.removeItem(sessionKey(projectId));
@@ -1902,11 +1297,8 @@ get('end-all-sessions').addEventListener('click', async () => {
     }
   } finally {
     busy = false;
-    renderSessions();
-    if (get('session-drawer').open) {
-      clearTimeout(sessionRefreshTimer);
-      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
-    }
+    drawer.render();
+    drawer.scheduleRefresh();
   }
 });
 
@@ -1977,6 +1369,31 @@ function pressKey(keyButton) {
     sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }), { raw: literal });
   }
 }
+
+/**
+ * 在输入框上左右拖动移动光标（类似 iOS 空格键触控板）：草稿模式移动手机草稿的光标，
+ * 直发模式向终端发送 ← / →。竖向拖动仍用于滚动多行草稿。
+ */
+attachCursorDrag(compose, {
+  enabled: () => terminalReady && !composing && !editorComposing,
+  step: () => inputMode === 'raw' ? 14 : 10,
+  onStart: () => {
+    cancelKeyRepeats();
+    get('compose-form').dataset.dragging = 'true';
+    if (inputMode === 'compose' && document.activeElement !== compose) compose.focus({ preventScroll: true });
+  },
+  onSteps: steps => {
+    const direction = steps < 0 ? 'left' : 'right';
+    if (inputMode === 'raw') {
+      const sequence = keySequence(direction, { applicationCursor: term?.modes.applicationCursorKeysMode });
+      sendInput(sequence.repeat(Math.abs(steps)), { raw: true });
+    } else {
+      for (let index = 0; index < Math.abs(steps); index += 1) editCompose(direction);
+    }
+  },
+  onEnd: () => { delete get('compose-form').dataset.dragging; },
+});
+
 get('more-keys').addEventListener('click', () => {
   cancelKeyRepeats();
   updateComposerActions();
@@ -1992,6 +1409,8 @@ get('keyboard').addEventListener('pointerdown', event => {
   if (document.activeElement === term?.textarea) event.preventDefault();
 });
 get('keyboard').addEventListener('click', () => {
+  // 主动切换过一次模式，说明用户已了解两种输入方式。
+  dismissInputTip();
   if (get('keyboard').getAttribute('aria-pressed') === 'true') {
     term?.textarea?.blur();
     setRawKeyboard(false);
@@ -2039,9 +1458,7 @@ async function initialize() {
         }
       }
     }
-    renderConnections();
-    renderHome();
-    renderProjects();
+    dashboard.renderAll();
     const link = await rpc('pendingLink');
     if (link) {
       if (item) await activate(item, 'connection');
@@ -2060,21 +1477,6 @@ async function initialize() {
   }
 }
 
-void initialize();
-
-const sendModeSelect = get('send-mode');
-sendModeSelect.value = sendMode;
-sendModeSelect.addEventListener('change', () => {
-  sendMode = sendModeSelect.value === 'enter' ? 'enter' : 'default';
-  localStorage.setItem(prefix + 'send-mode', sendMode);
-  updateComposerActions();
-});
-const compression = get('image-compression');
-const savedCompression = localStorage.getItem(prefix + 'image-compression');
-if (['original', 'low', 'medium', 'high'].includes(savedCompression)) compression.value = savedCompression;
-compression.addEventListener('change', () => localStorage.setItem(prefix + 'image-compression', compression.value));
-let sendingImage = false;
-let imageEpoch = 0;
 get('image-dialog').addEventListener('close', () => { imageEpoch += 1; });
 async function sendImage() {
   if (sendingImage || !terminalReady || !selected) return;
@@ -2096,11 +1498,11 @@ async function sendImage() {
     if (capabilities && !capabilities.features.includes('images')) throw new Error('电脑端不支持图片上传，请更新电脑端 QingCode。');
     if (!current()) return;
     await uploadTerminalImages({
-      rpc, remote, address, id, compression: compression.value, isCurrent: current,
+      rpc, remote, address, id, compression: settings.compression(), isCurrent: current,
       onProgress: (index, total) => {
         count = total;
         get('choose-image').textContent = '正在上传…';
-        setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index}/${count}`);
+        composeStatus.setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index}/${count}`);
       },
       onInsert: path => {
         compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + path + ' ';
@@ -2112,13 +1514,13 @@ async function sendImage() {
     });
     if (!current() || !count) return;
     if (get('image-dialog').open) get('image-dialog').close();
-    setImageNote(count === 1 ? '✓ 图片已插入' : `✓ 已插入 ${inserted} 张图片`, { state: 'done', ttl: 2500 });
+    composeStatus.setImageNote(count === 1 ? '✓ 图片已插入' : `✓ 已插入 ${inserted} 张图片`, { state: 'done', ttl: 2500 });
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
       else {
-        setImageNote('⚠ 图片上传失败', { state: 'error', ttl: 6000 });
+        composeStatus.setImageNote('⚠ 图片上传失败', { state: 'error', ttl: 6000 });
         message('image-error', count > 1
           ? `已插入 ${inserted}/${count} 张图片。${error.message} 请重新选择剩余未上传的图片。`
           : error.message);
@@ -2126,7 +1528,7 @@ async function sendImage() {
       }
     }
   } finally {
-    if (imageNote?.state === 'busy' && attempt === imageEpoch) setImageNote('');
+    if (composeStatus.imageNote()?.state === 'busy' && attempt === imageEpoch) composeStatus.setImageNote('');
     sendingImage = false;
     get('attach-image').disabled = !terminalReady;
     get('attach-image').removeAttribute('aria-busy');
@@ -2138,3 +1540,5 @@ async function sendImage() {
 get('attach-image').addEventListener('click', sendImage);
 get('expanded-attach').addEventListener('click', sendImage);
 get('choose-image').addEventListener('click', sendImage);
+
+void initialize();

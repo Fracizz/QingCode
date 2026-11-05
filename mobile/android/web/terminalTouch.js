@@ -142,7 +142,7 @@ export function attachTouchMouseGuard(container, { shouldBlock, onTap } = {}) {
     const fromTouch = event.sourceCapabilities?.firesTouchEvents === true || view.performance.now() - touchedAt < 800;
     if (!fromTouch || !shouldBlock?.()) return;
     event.stopPropagation();
-    if (event.type === 'mousedown') onTap?.();
+    if (event.type === 'mousedown') onTap?.(event);
   }
   const types = ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
   container.addEventListener('touchstart', touched, { capture: true, passive: true });
