@@ -6,7 +6,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.15-beta.1] - 2026-11-04
+## [0.1.15-beta.2] - 2026-11-04
 
 ### Added
 
@@ -16,6 +16,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Changed
 
+- Android returns to a terminal-first experience with the "Terminal / Projects / Connections" navigation, while conversational agents continue development on a separate branch.
 - Mobile images are stored in the corresponding local, WSL or SSH project's `.qingcode/terminal-paste/` directory, with Linux paths for WSL.
 - The image button stays inside the input bar, with clearer original-image, upload and submission states.
 
