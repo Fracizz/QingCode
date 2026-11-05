@@ -163,6 +163,33 @@ export function quotaWindows(quota, now = Date.now()) {
     }));
 }
 
+/** 选择面板的搜索：空格分隔多个关键词，全部命中（标题 / 说明 / 附加信息，不区分大小写）才保留。 */
+export function filterChoices(choices, query) {
+  const terms = String(query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return choices;
+  return choices.filter(choice => {
+    const text = [choice.label, choice.detail, choice.hint].filter(Boolean).join(' ').toLowerCase();
+    return terms.every(term => text.includes(term));
+  });
+}
+
+export const RECENT_CHAT_PROJECT_LIMIT = 5;
+
+/** 记录最近用于对话的项目（最新在前、去重、限量）。 */
+export function rememberChatProject(recent, id, limit = RECENT_CHAT_PROJECT_LIMIT) {
+  if (!id) return recent ?? [];
+  return [id, ...(recent ?? []).filter(item => item !== id)].slice(0, limit);
+}
+
+export function parseRecentChatProjects(raw) {
+  try {
+    const value = JSON.parse(raw ?? '[]');
+    return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(0, RECENT_CHAT_PROJECT_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function safetyOption(catalog, provider, safety) {
   const entry = catalog?.find?.(item => item.id === provider);
   return entry?.safety?.find(option => option.id === safety) ?? null;

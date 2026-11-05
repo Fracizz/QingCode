@@ -6,13 +6,16 @@ import {
   idleLabel,
   collectAnswers,
   diffLineKind,
+  filterChoices,
   inlineTokens,
   markdownBlocks,
   mergeItems,
+  parseRecentChatProjects,
   prependItems,
   providerInfo,
   quotaWindows,
   relativeTime,
+  rememberChatProject,
   safetyOption,
   sortThreads,
   threadStatus,
@@ -56,6 +59,83 @@ function providerAvatar(provider, small = false) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+const PICKER_SEARCH_MIN = 7;
+
+/**
+ * 贴底选择面板，替代系统原生下拉：选项多时可搜索，可分组，当前值打勾。
+ * choices: [{ id, label, detail?, hint?, group?, kind? }]；返回所选 id，取消返回 null。
+ */
+function pick({ title, choices, value = null, placeholder = '搜索', searchable } = {}) {
+  const dialog = get('picker-dialog');
+  const list = get('picker-list');
+  const search = get('picker-search');
+  const canSearch = searchable ?? choices.length >= PICKER_SEARCH_MIN;
+  get('picker-title').textContent = title;
+  get('picker-search-field').hidden = !canSearch;
+  dialog.dataset.search = String(canSearch);
+  search.value = '';
+  search.placeholder = placeholder;
+  search.setAttribute('aria-label', placeholder);
+  let chosen = null;
+
+  const render = () => {
+    const query = search.value;
+    const matching = filterChoices(choices, query);
+    const nodes = [];
+    let group;
+    for (const choice of matching) {
+      // 搜索时不分组，结果平铺更易扫读。
+      if (!query.trim() && choice.group && choice.group !== group) {
+        group = choice.group;
+        nodes.push(element('p', 'picker-group', group));
+      }
+      const row = element('button', 'picker-option');
+      row.type = 'button';
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(choice.id === value));
+      row.dataset.id = choice.id;
+      if (choice.kind) row.dataset.kind = choice.kind;
+      const text = element('span', 'picker-option-text');
+      text.append(element('strong', '', choice.label));
+      if (choice.detail) text.append(element('small', '', choice.detail));
+      if (choice.hint) text.append(element('small', 'picker-option-hint', choice.hint));
+      row.append(text);
+      if (choice.id === value) row.append(icon('check', 'picker-check'));
+      row.addEventListener('click', () => {
+        chosen = choice.id;
+        dialog.close('confirm');
+      });
+      nodes.push(row);
+    }
+    list.replaceChildren(...nodes);
+    get('picker-empty').hidden = matching.length > 0;
+  };
+
+  search.oninput = render;
+  search.onkeydown = event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const first = filterChoices(choices, search.value)[0];
+    if (first) {
+      chosen = first.id;
+      dialog.close('confirm');
+    }
+  };
+  render();
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => {
+      search.oninput = null;
+      search.onkeydown = null;
+      resolve(chosen);
+    }, { once: true });
+    dialog.returnValue = 'cancel';
+    dialog.showModal();
+    // showModal 会聚焦第一个可聚焦元素（搜索框）并顶起键盘；点选更常用，需要时再点搜索框。
+    if (document.activeElement === search) search.blur();
+    list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'center' });
+  });
+}
+
 /**
  * @param {object} deps
  * @param {(op: string, args?: object) => Promise<any>} deps.remote 当前电脑的 RPC
@@ -92,7 +172,7 @@ export function createChat(deps) {
   let uploading = false;
   let sending = false;
   let hasOlder = false;
-  let newDraft = { provider: null, project: null };
+  let newDraft = { provider: null, project: null, safety: null };
   let projectSheetTarget = null;
   const selections = new Map();
   const others = new Map();
@@ -100,6 +180,7 @@ export function createChat(deps) {
   const draftKey = id => prefix + 'chat-draft:' + (deps.profile()?.id ?? '') + ':' + id;
   const lastProviderKey = () => prefix + 'chat-provider:' + (deps.profile()?.id ?? '');
   const lastProjectKey = () => prefix + 'chat-project:' + (deps.profile()?.id ?? '');
+  const recentProjectsKey = () => prefix + 'chat-projects:' + (deps.profile()?.id ?? '');
 
   function chatProjects() {
     return deps.projects().filter(chatSupported);
@@ -820,8 +901,29 @@ export function createChat(deps) {
     }
   }
 
-  function checkedValue(name) {
-    return document.querySelector(`input[name="${name}"]:checked`)?.value ?? null;
+  function projectChoices(projects) {
+    const recent = recentChatProjects();
+    const recentSet = new Set(recent);
+    const byId = new Map(projects.map(project => [project.id, project]));
+    const choice = (project, group) => ({
+      id: project.id,
+      label: project.name,
+      detail: projectSourceLabel(project),
+      hint: project.kind === 'ssh' ? project.path.replace(/^ssh:\/\/[^/]+/, '') : project.path,
+      kind: project.kind,
+      group,
+    });
+    const recentChoices = recent.map(id => byId.get(id)).filter(Boolean).map(project => choice(project, '最近使用'));
+    const rest = projects.filter(project => !recentSet.has(project.id))
+      .map(project => choice(project, recentChoices.length ? '全部项目' : undefined));
+    return [...recentChoices, ...rest];
+  }
+
+  function recentChatProjects() {
+    const recent = parseRecentChatProjects(localStorage.getItem(recentProjectsKey()));
+    // 兼容旧版本只记录了上次项目的情况。
+    const last = localStorage.getItem(lastProjectKey());
+    return last && !recent.includes(last) ? [last, ...recent] : recent;
   }
 
   function renderNewDialog() {
@@ -836,31 +938,65 @@ export function createChat(deps) {
       radio.checked = entry.id === newDraft.provider;
       radio.addEventListener('change', () => {
         newDraft.provider = entry.id;
+        newDraft.safety = catalog?.find(item => item.id === entry.id)?.defaultSafety ?? null;
         renderNewDialog();
       });
       label.append(radio, providerAvatar(entry.id), element('strong', '', entry.name));
       if (!entry.installed) label.append(element('small', '', '本机未检测到'));
       providers.append(label);
     }
-    const select = get('chat-new-project');
+
     const options = chatProjects();
-    select.replaceChildren(...options.map(project => {
-      const option = element('option', '', project.name + ' · ' + projectSourceLabel(project));
-      option.value = project.id;
-      return option;
-    }));
-    if (newDraft.project && options.some(project => project.id === newDraft.project)) select.value = newDraft.project;
-    newDraft.project = select.value || null;
+    if (!options.some(project => project.id === newDraft.project)) {
+      newDraft.project = projectChoices(options)[0]?.id ?? null;
+    }
+    const project = options.find(item => item.id === newDraft.project);
+    const field = get('chat-new-project');
+    field.disabled = !options.length;
+    field.dataset.kind = project?.kind ?? '';
+    get('chat-new-project-name').textContent = project?.name ?? '选择项目';
+    get('chat-new-project-source').textContent = project ? projectSourceLabel(project) : '';
     get('chat-new-no-project').hidden = options.length > 0;
+
     const entry = catalog?.find(item => item.id === newDraft.provider);
-    safetyChoices(get('chat-new-safety'), newDraft.provider, entry?.defaultSafety, 'chat-new-safety');
-    updateNewFullWarning();
+    const safetyList = entry?.safety ?? [];
+    if (!safetyList.some(option => option.id === newDraft.safety)) newDraft.safety = entry?.defaultSafety ?? safetyList[0]?.id ?? null;
+    const segments = get('chat-new-safety');
+    segments.replaceChildren(...safetyList.map(option => {
+      const segment = element('button', 'safety-segment', option.label);
+      segment.type = 'button';
+      segment.setAttribute('role', 'radio');
+      segment.setAttribute('aria-checked', String(option.id === newDraft.safety));
+      segment.dataset.full = String(!!option.full);
+      segment.addEventListener('click', () => {
+        newDraft.safety = option.id;
+        renderNewDialog();
+      });
+      return segment;
+    }));
+    segments.dataset.count = String(safetyList.length);
+    const chosen = safetyOption(catalog, newDraft.provider, newDraft.safety);
+    get('chat-new-safety-desc').textContent = chosen?.description ?? '';
+    get('chat-new-full').hidden = !chosen?.full;
+    const isDefault = !!chosen && chosen.id === entry?.defaultSafety;
+    get('chat-new-default').closest('label').hidden = isDefault;
+    if (isDefault) get('chat-new-default').checked = false;
     get('chat-new-start').disabled = !newDraft.provider || !newDraft.project;
   }
 
-  function updateNewFullWarning() {
-    const option = safetyOption(catalog, newDraft.provider, checkedValue('chat-new-safety'));
-    get('chat-new-full').hidden = !option?.full;
+  async function chooseNewProject() {
+    const options = chatProjects();
+    if (!options.length) return;
+    const id = await pick({
+      title: '选择项目',
+      choices: projectChoices(options),
+      value: newDraft.project,
+      placeholder: '搜索项目名、路径或主机',
+    });
+    if (id) {
+      newDraft.project = id;
+      renderNewDialog();
+    }
   }
 
   async function openNewDialog({ provider = null, project = null } = {}) {
@@ -871,18 +1007,21 @@ export function createChat(deps) {
       showError('chat-error', error);
       return;
     }
+    const chosenProvider = provider ?? localStorage.getItem(lastProviderKey()) ?? catalog?.find(entry => entry.installed)?.id ?? 'claude';
     newDraft = {
-      provider: provider ?? localStorage.getItem(lastProviderKey()) ?? catalog?.find(entry => entry.installed)?.id ?? 'claude',
-      project: project ?? localStorage.getItem(lastProjectKey()),
+      provider: chosenProvider,
+      project: project ?? recentChatProjects()[0] ?? null,
+      safety: catalog?.find(entry => entry.id === chosenProvider)?.defaultSafety ?? null,
     };
+    get('chat-new-default').checked = false;
     renderNewDialog();
     get('chat-new-dialog').showModal();
   }
 
   async function startNewThread() {
     const provider = newDraft.provider;
-    const projectId = get('chat-new-project').value;
-    const safety = checkedValue('chat-new-safety');
+    const projectId = newDraft.project;
+    const safety = newDraft.safety;
     if (!provider || !projectId) return;
     const start = get('chat-new-start');
     start.disabled = true;
@@ -895,6 +1034,7 @@ export function createChat(deps) {
       const meta = await deps.remote('agent_create', { project: projectId, provider, safety });
       localStorage.setItem(lastProviderKey(), provider);
       localStorage.setItem(lastProjectKey(), projectId);
+      localStorage.setItem(recentProjectsKey(), JSON.stringify(rememberChatProject(recentChatProjects(), projectId)));
       get('chat-new-dialog').close();
       threads = [meta, ...threads.filter(thread => thread.id !== meta.id)];
       await openThread(meta.id, meta);
@@ -910,41 +1050,53 @@ export function createChat(deps) {
 
   // ---------- 对话设置 ----------
 
-  function selectOptions(select, values, currentValue, fallbackLabel) {
-    select.replaceChildren();
-    const empty = element('option', '', fallbackLabel);
-    empty.value = '';
-    select.append(empty);
+  // 选项值可能是字符串或 { id, label, description }；首项为「默认」（空值）。
+  function valueChoices(values, currentValue, fallbackLabel) {
+    const choices = [{ id: '', label: fallbackLabel }];
     for (const value of values ?? []) {
-      const id = typeof value === 'string' ? value : value.id;
+      const id = typeof value === 'string' ? value : value?.id;
       if (!id) continue;
-      const option = element('option', '', typeof value === 'string' ? value : value.label ?? id);
-      option.value = id;
-      select.append(option);
+      const label = typeof value === 'string' ? value : value.label ?? id;
+      choices.push({ id, label, detail: typeof value === 'string' ? undefined : value.description ?? (label !== id ? id : undefined) });
     }
-    if (currentValue && ![...select.options].some(option => option.value === currentValue)) {
-      const option = element('option', '', currentValue);
-      option.value = currentValue;
-      select.append(option);
-    }
-    select.value = currentValue ?? '';
+    if (currentValue && !choices.some(choice => choice.id === currentValue)) choices.push({ id: currentValue, label: currentValue });
+    return choices;
+  }
+
+  function optionLists() {
+    const options = current?.options ?? {};
+    const model = options.models?.find?.(entry => entry.id === current?.model);
+    return {
+      model: { title: '模型', values: options.models, fallback: '默认模型', placeholder: '搜索模型' },
+      effort: { title: '推理强度', values: options.efforts ?? model?.efforts ?? [], fallback: '默认强度' },
+      mode: { title: '模式', values: options.modes, fallback: '默认模式' },
+    };
+  }
+
+  async function chooseOption(key) {
+    if (!current) return;
+    const list = optionLists()[key];
+    const choices = valueChoices(list.values, current[key], list.fallback);
+    const id = await pick({ title: list.title, choices, value: current[key] ?? '', placeholder: list.placeholder ?? '搜索' });
+    if (id === null || id === (current[key] ?? '')) return;
+    await configure(key, id);
   }
 
   function renderOptionsDialog() {
     if (!current) return;
     safetyChoices(get('chat-options-safety'), current.provider, current.safety, 'chat-options-safety');
     const options = current.options ?? {};
-    selectOptions(get('chat-options-model'), options.models, current.model, '默认模型');
-    const model = options.models?.find?.(entry => entry.id === current.model);
-    const efforts = options.efforts ?? model?.efforts ?? [];
-    selectOptions(get('chat-options-effort'), efforts, current.effort, '默认强度');
-    get('chat-options-effort-field').hidden = !efforts.length && !current.effort;
-    selectOptions(get('chat-options-mode'), options.modes, current.mode, '默认模式');
-    get('chat-options-mode-field').hidden = current.provider !== 'opencode';
+    const lists = optionLists();
+    for (const key of ['model', 'effort', 'mode']) {
+      const choice = valueChoices(lists[key].values, current[key], lists[key].fallback).find(item => item.id === (current[key] ?? ''));
+      get('chat-options-' + key + '-value').textContent = choice?.label ?? lists[key].fallback;
+    }
+    get('chat-options-effort').hidden = !lists.effort.values?.length && !current.effort;
+    get('chat-options-mode').hidden = current.provider !== 'opencode';
     const idle = idleLabel(current, Date.now(), '自动暂停');
     get('chat-options-context').textContent = providerInfo(current.provider).name + ' · ' + current.projectName
       + (current.running ? ' · Agent 在线' + (idle ? '（' + idle + '）' : '') : ' · Agent 已暂停，发送消息时恢复');
-    get('chat-options-effort-hint').hidden = current.provider !== 'claude';
+    get('chat-options-effort-hint').hidden = current.provider !== 'claude' || get('chat-options-effort').hidden;
     showError('chat-options-error', null);
   }
 
@@ -956,8 +1108,9 @@ export function createChat(deps) {
       renderHeader();
       renderOptionsDialog();
     } catch (error) {
-      showError('chat-options-error', error);
       renderOptionsDialog();
+      if (get('chat-options-dialog').open) showError('chat-options-error', error);
+      else setState(explain(error), 'error');
     }
   }
 
@@ -1172,8 +1325,7 @@ export function createChat(deps) {
   get('chat-settings').addEventListener('click', () => { void openSettings(); });
   get('chat-quota').addEventListener('click', () => { void openQuota(false); });
   get('chat-quota-refresh').addEventListener('click', () => { void openQuota(true); });
-  get('chat-new-project').addEventListener('change', event => { newDraft.project = event.target.value; });
-  get('chat-new-safety').addEventListener('change', updateNewFullWarning);
+  get('chat-new-project').addEventListener('click', () => { void chooseNewProject(); });
   get('chat-new-start').addEventListener('click', () => { void startNewThread(); });
   get('chat-back').addEventListener('click', () => closeThread());
   get('chat-thread-menu').addEventListener('click', () => {
@@ -1184,11 +1336,8 @@ export function createChat(deps) {
     renderOptionsDialog();
     get('chat-options-dialog').showModal();
   });
-  get('chat-model').addEventListener('click', () => {
-    renderOptionsDialog();
-    get('chat-options-dialog').showModal();
-    get('chat-options-model').focus();
-  });
+  // 模型按钮直接弹出模型选择，不再绕道对话设置。
+  get('chat-model').addEventListener('click', () => { void chooseOption('model'); });
   get('chat-options-safety').addEventListener('change', event => {
     const option = safetyOption(catalog, current?.provider, event.target.value);
     void (async () => {
@@ -1199,9 +1348,9 @@ export function createChat(deps) {
       await configure('safety', event.target.value);
     })();
   });
-  get('chat-options-model').addEventListener('change', event => { void configure('model', event.target.value); });
-  get('chat-options-effort').addEventListener('change', event => { void configure('effort', event.target.value); });
-  get('chat-options-mode').addEventListener('change', event => { void configure('mode', event.target.value); });
+  get('chat-options-model').addEventListener('click', () => { void chooseOption('model'); });
+  get('chat-options-effort').addEventListener('click', () => { void chooseOption('effort'); });
+  get('chat-options-mode').addEventListener('click', () => { void chooseOption('mode'); });
   get('chat-options-rename').addEventListener('click', () => {
     get('chat-options-dialog').close();
     void renameThread();

@@ -859,3 +859,66 @@ dialog label.check-row { display: flex; align-items: center; gap: 10px; min-heig
 @media (prefers-reduced-motion: reduce) {
   .chat-typing span, .chat-tool[data-status="running"] summary svg, .chat-message.assistant.streaming .markdown > :last-child::after { animation: none; }
 }
+
+/* 新对话：项目选择字段、权限分段按钮 */
+dialog p.field-label { margin: 16px 0 6px; color: var(--ink); font-size: 13px; font-weight: 650; }
+.picker-field {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: var(--paper);
+  text-align: left;
+}
+.picker-field .arrow, .option-field .arrow { width: 18px; height: 18px; color: var(--muted); }
+.picker-field[data-kind="ssh"] .tile { color: #a8baff; background: #292e44; }
+.picker-field[data-kind="wsl"] .tile { color: #edcb8d; background: #373126; }
+.picker-field-text { min-width: 0; }
+.picker-field-text strong, .picker-field-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-field-text strong { font-size: 15px; font-weight: 620; }
+.picker-field-text small { color: var(--muted); font-size: 12px; }
+.safety-segments { display: grid; grid-template-columns: repeat(var(--segments, 3), minmax(0, 1fr)); gap: 6px; }
+.safety-segments[data-count="2"] { --segments: 2; }
+.safety-segments[data-count="4"] { --segments: 2; }
+.safety-segment { min-height: 42px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.safety-segment[aria-checked="true"] { border-color: var(--accent-border); background: var(--accent-surface); color: var(--accent); }
+.safety-segment[data-full="true"][aria-checked="true"] { border-color: #6b5a2e; background: #2a261b; color: #edcb8d; }
+dialog p.safety-desc { min-height: 1.5em; margin-top: 6px; }
+
+/* 对话设置：模型 / 推理强度 / 模式 */
+.option-fields { display: grid; margin-top: 14px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); }
+.option-fields > :not([hidden]) ~ :not([hidden]) { border-top: 1px solid var(--divider); }
+.option-field { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; border-radius: 0; background: transparent; text-align: left; }
+.option-field > span { font-size: 14px; }
+.option-field > strong { overflow: hidden; color: var(--muted); font-size: 13.5px; font-weight: 500; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 通用选择面板 */
+dialog.picker-sheet { display: none; }
+dialog.picker-sheet[open] { display: flex; flex-direction: column; overflow: hidden; }
+/* 可搜索时固定高度，避免输入过滤后面板上下跳动。 */
+dialog.picker-sheet[open][data-search="true"] { height: min(640px, calc(100% - 48px - var(--safe-top))); }
+.picker-sheet h2 { flex: none; }
+.picker-sheet .search-field { flex: none; margin-bottom: 8px; }
+.picker-sheet .sheet-handle, .picker-sheet .dialog-actions { flex: none; }
+#picker-search { min-height: 44px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
+#picker-search:focus { border-color: var(--accent-border); }
+.picker-sheet .search-field > svg { top: 13px; }
+.picker-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -6px; }
+.picker-group { margin: 10px 6px 4px; color: var(--muted); font-size: 12px !important; font-weight: 650; }
+.picker-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px 12px; border-radius: var(--control-radius); background: transparent; text-align: left; }
+.picker-option[aria-selected="true"] { background: var(--accent-surface); }
+.picker-option-text { min-width: 0; }
+.picker-option-text strong, .picker-option-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-option-text strong { font-size: 15px; font-weight: 600; }
+.picker-option[aria-selected="true"] strong { color: var(--accent); }
+.picker-option-text small { color: var(--muted); font-size: 12px; }
+.picker-option-text .picker-option-hint { font-family: var(--mono); font-size: 11px; opacity: .8; }
+.picker-option[data-kind="ssh"] .picker-option-text small:first-of-type { color: #a8baff; }
+.picker-option[data-kind="wsl"] .picker-option-text small:first-of-type { color: #edcb8d; }
+.picker-check { width: 18px; height: 18px; color: var(--accent); }
+dialog p.picker-empty { padding: 24px 0; text-align: center; }

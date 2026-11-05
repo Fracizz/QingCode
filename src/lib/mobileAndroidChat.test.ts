@@ -3,6 +3,9 @@ import {
   chatSupported,
   collectAnswers,
   diffLineKind,
+  filterChoices,
+  parseRecentChatProjects,
+  rememberChatProject,
   formatTokens,
   inlineTokens,
   markdownBlocks,
@@ -177,5 +180,30 @@ describe('Android 提问卡片', () => {
     const selections = new Map([['q1', new Set(['A'])]])
     const others = new Map([['q1', ' 自定义 '], ['备注？', '无'], ['q3', '  ']])
     expect(collectAnswers(questions, selections, others)).toEqual({ q1: ['A', '自定义'], '备注？': ['无'] })
+  })
+})
+
+describe('Android 选择面板', () => {
+  const choices = [
+    { id: 'a', label: 'QingCode', detail: '本机', hint: 'D:\code\qingcode' },
+    { id: 'b', label: 'nem-panel', detail: '远端 · WSL · localhost', hint: '/srv/nem' },
+    { id: 'c', label: 'QingCode', detail: 'WSL · Ubuntu', hint: '/home/u/qingcode' },
+  ]
+
+  it('多关键词需全部命中，不区分大小写，空查询保留全部', () => {
+    expect(filterChoices(choices, '')).toBe(choices)
+    expect(filterChoices(choices, 'qingcode').map(choice => choice.id)).toEqual(['a', 'c'])
+    expect(filterChoices(choices, 'qing  ubuntu').map(choice => choice.id)).toEqual(['c'])
+    expect(filterChoices(choices, '/srv').map(choice => choice.id)).toEqual(['b'])
+    expect(filterChoices(choices, 'nothing')).toEqual([])
+  })
+
+  it('最近项目最新在前、去重、限量，异常存储回退为空', () => {
+    expect(rememberChatProject(['a', 'b'], 'b')).toEqual(['b', 'a'])
+    expect(rememberChatProject(['1', '2', '3', '4', '5'], '6')).toEqual(['6', '1', '2', '3', '4'])
+    expect(rememberChatProject(['a'], null)).toEqual(['a'])
+    expect(parseRecentChatProjects('["a",1,"b"]')).toEqual(['a', 'b'])
+    expect(parseRecentChatProjects('{bad')).toEqual([])
+    expect(parseRecentChatProjects(null)).toEqual([])
   })
 })

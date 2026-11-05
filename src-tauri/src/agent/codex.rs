@@ -583,7 +583,9 @@ impl Codex {
             }
             "warning" | "configWarning" | "deprecationNotice" => {
                 if let Some(message) = str_at(params, "/message").or(str_at(params, "/summary")) {
-                    cx.thread.notice("warn", message.to_string());
+                    if !is_startup_noise(message) {
+                        cx.thread.notice("warn", message.to_string());
+                    }
                 }
             }
             _ => {}
@@ -773,6 +775,12 @@ pub fn quota(snapshot: &Value) -> Value {
     })
 }
 
+/// 每次启动 app-server 都会重复下发、与对话无关的本机配置提示；显示在对话里只会干扰阅读，
+/// 用户还会误以为是 Agent 回复的一部分。
+fn is_startup_noise(message: &str) -> bool {
+    message.starts_with("Under-development features enabled")
+}
+
 impl Adapter for Codex {
     fn launch(&self) -> Launch {
         Launch {
@@ -943,6 +951,24 @@ mod tests {
         assert_eq!(thread.data.session.as_deref(), Some("th1"));
         assert_eq!(thread.status, Status::Idle);
         (codex, thread)
+    }
+
+    #[test]
+    fn unstable_features_warning_is_not_shown_in_chat() {
+        let (mut codex, mut thread) = ready();
+        let before = thread.data.items.len();
+        feed(
+            &mut codex,
+            &mut thread,
+            json!({ "method": "configWarning", "params": { "summary": "Under-development features enabled: local_thread_store_compression. Under-development features are incomplete." } }),
+        );
+        assert_eq!(thread.data.items.len(), before);
+        feed(
+            &mut codex,
+            &mut thread,
+            json!({ "method": "warning", "params": { "message": "something else" } }),
+        );
+        assert_eq!(thread.data.items.len(), before + 1);
     }
 
     #[test]
