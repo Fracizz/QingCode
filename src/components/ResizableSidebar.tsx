@@ -26,6 +26,8 @@ export default function ResizableSidebar({ width, onWidthChange, children, class
       maxWidth={clampSidebarWidth(SIDEBAR_MAX_WIDTH)}
       defaultWidth={SIDEBAR_DEFAULT_WIDTH}
       constrainToParent={false}
+      // 侧栏宽度会改变右侧终端尺寸，拖动时需要冻结终端画面防闪烁。
+      freezeTerminals
       onWidthChange={next => onWidthChange(clampSidebarWidth(next))}
       tooltip={sidebarResizerHint(width, t)}
       className={className}

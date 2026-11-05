@@ -4,9 +4,23 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScmResizableColumn from './ScmResizableColumn'
 import ResizableSidebar from './ResizableSidebar'
+import * as panelResize from '../lib/panelResize'
+
+vi.mock('../lib/panelResize', async importOriginal => {
+  const actual = await importOriginal<typeof import('../lib/panelResize')>()
+  return {
+    ...actual,
+    beginPanelResize: vi.fn(actual.beginPanelResize),
+    settlePanelResize: vi.fn(actual.settlePanelResize),
+    endPanelResize: vi.fn(actual.endPanelResize),
+  }
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.mocked(panelResize.beginPanelResize).mockClear()
+  vi.mocked(panelResize.settlePanelResize).mockClear()
+  vi.mocked(panelResize.endPanelResize).mockClear()
   document.body.className = ''
   document.body.removeAttribute('data-panel-resize')
 })
@@ -130,4 +144,26 @@ describe('ScmResizableColumn', () => {
     expect(onWidthChange).toHaveBeenLastCalledWith(300)
   })
 
+  it('freezes terminals and settles when the main sidebar resizes, but not for internal SCM columns', () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    const { unmount } = render(<ResizableSidebar width={300} onWidthChange={vi.fn()}><span>主侧栏</span></ResizableSidebar>)
+    let separator = screen.getByRole('separator')
+    fireEvent(separator, pointerEvent('pointerdown', 300))
+    expect(panelResize.beginPanelResize).toHaveBeenLastCalledWith('vertical', { freezeTerminals: true })
+    fireEvent(separator, pointerEvent('pointerup', 340))
+    expect(panelResize.settlePanelResize).toHaveBeenCalledWith('vertical')
+    expect(panelResize.endPanelResize).not.toHaveBeenCalled()
+    panelResize.endPanelResize('vertical')
+    unmount()
+    vi.mocked(panelResize.endPanelResize).mockClear()
+    vi.mocked(panelResize.settlePanelResize).mockClear()
+
+    render(<ScmResizableColumn width={340} minWidth={220} maxWidth={560} onWidthChange={vi.fn()} tooltip="调整宽度"><span>内部分栏</span></ScmResizableColumn>)
+    separator = screen.getByRole('separator')
+    fireEvent(separator, pointerEvent('pointerdown', 340))
+    expect(panelResize.beginPanelResize).toHaveBeenLastCalledWith('vertical', { freezeTerminals: false })
+    fireEvent(separator, pointerEvent('pointerup', 360))
+    expect(panelResize.endPanelResize).toHaveBeenCalledWith('vertical')
+    expect(panelResize.settlePanelResize).not.toHaveBeenCalled()
+  })
 })

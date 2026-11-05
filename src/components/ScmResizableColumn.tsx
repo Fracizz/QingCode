@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import PanelResizer from './PanelResizer'
-import { beginPanelResize, endPanelResize } from '../lib/panelResize'
+import { beginPanelResize, endPanelResize, settlePanelResize } from '../lib/panelResize'
 
 type Props = {
   width: number
@@ -18,6 +18,11 @@ type Props = {
   onWidthChange: (width: number) => void
   defaultWidth?: number
   tooltip: string
+  /**
+   * 拖动会改变终端尺寸（如主侧栏）时设为 true：拖动中冻结终端快照，松手后
+   * 经 settle 提交最终字符网格，避免 WebGL 终端闪烁。SCM 内部分栏保持 false。
+   */
+  freezeTerminals?: boolean
   children: ReactNode
   className?: string
 }
@@ -33,6 +38,7 @@ export default function ScmResizableColumn({
   onWidthChange,
   defaultWidth,
   tooltip,
+  freezeTerminals = false,
   children,
   className,
 }: Props) {
@@ -130,7 +136,9 @@ export default function ScmResizableColumn({
         }
         dragRef.current = null
         if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId)
-        endPanelResize('vertical')
+        // 冻结了终端时必须走 settle：先让终端按最终宽度 fit 并等待重绘，再移除快照。
+        if (freezeTerminals) settlePanelResize('vertical')
+        else endPanelResize('vertical')
         if (commit && drag) {
           setActive(false)
           onWidthChange(drag.nextWidth)
@@ -145,9 +153,9 @@ export default function ScmResizableColumn({
       handle.addEventListener('pointercancel', onEnd)
       handle.addEventListener('lostpointercapture', onEnd)
       window.addEventListener('blur', onBlur)
-      beginPanelResize('vertical', { freezeTerminals: false })
+      beginPanelResize('vertical', { freezeTerminals })
     },
-    [clampWidth, edge, onWidthChange, width]
+    [clampWidth, edge, freezeTerminals, onWidthChange, width]
   )
 
   const borderClass = edge === 'start' ? 'border-l border-border' : 'border-r border-border'
