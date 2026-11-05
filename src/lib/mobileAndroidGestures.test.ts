@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from '../../mobile/android/web/gestures.js'
+import { attachKeyRepeat, attachLongPress, attachPullToRefresh, attachSheetDrag } from '../../mobile/android/web/gestures.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => {
@@ -188,5 +188,66 @@ describe('Android key auto-repeat', () => {
     button.click()
     expect(fire).not.toHaveBeenCalled()
     expect(click).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Android long press', () => {
+  function fixture() {
+    vi.useFakeTimers()
+    const button = document.createElement('button')
+    document.body.append(button)
+    const longPress = vi.fn()
+    const click = vi.fn()
+    disposers.push(attachLongPress(button, longPress, { delay: 480, slop: 10 }))
+    button.addEventListener('click', click)
+    return { button, longPress, click }
+  }
+
+  it('fires after holding still and swallows the release click', () => {
+    const { button, longPress, click } = fixture()
+    pointer(button, 'pointerdown', 0)
+    vi.advanceTimersByTime(479)
+    expect(longPress).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(longPress).toHaveBeenCalledTimes(1)
+    pointer(button, 'pointerup', 0)
+    button.click()
+    expect(click).not.toHaveBeenCalled()
+    // 下一次普通点按恢复为 click。
+    pointer(button, 'pointerdown', 0)
+    pointer(button, 'pointerup', 0)
+    button.click()
+    expect(click).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps taps and scroll drags from opening the menu', () => {
+    const { button, longPress, click } = fixture()
+    pointer(button, 'pointerdown', 0)
+    vi.advanceTimersByTime(100)
+    pointer(button, 'pointerup', 0)
+    button.click()
+    pointer(button, 'pointerdown', 0)
+    pointer(button, 'pointermove', 30)
+    vi.advanceTimersByTime(1000)
+    pointer(button, 'pointerdown', 0)
+    pointer(button, 'pointercancel', 0)
+    vi.advanceTimersByTime(1000)
+    expect(longPress).not.toHaveBeenCalled()
+    expect(click).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats the system context menu as a single long press', () => {
+    const { button, longPress } = fixture()
+    pointer(button, 'pointerdown', 0)
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    button.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    vi.advanceTimersByTime(1000)
+    button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    expect(longPress).toHaveBeenCalledTimes(1)
+    // 新的一次按下（例如再次右键）重新允许触发。
+    pointer(button, 'pointerdown', 0)
+    button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    expect(longPress).toHaveBeenCalledTimes(2)
   })
 })

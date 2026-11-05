@@ -170,3 +170,65 @@ export function attachKeyRepeat(button, fire, { delay = 420, interval = 70 } = {
   dispose.cancel = stop;
   return dispose;
 }
+
+/**
+ * 长按触发（会话列表的操作菜单）：按住 delay 毫秒且移动不超过 slop 像素时调用 onLongPress。
+ * 系统 contextmenu（WebView 长按、鼠标右键）同样触发并阻止默认菜单；触发后吞掉随后的 click。
+ */
+export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 } = {}) {
+  let timer = null;
+  let origin = null;
+  let fired = false;
+
+  function stop() {
+    clearTimeout(timer);
+    timer = null;
+    origin = null;
+  }
+
+  function fire() {
+    stop();
+    fired = true;
+    navigator.vibrate?.(12);
+    onLongPress();
+  }
+
+  function down(event) {
+    stop();
+    fired = false;
+    // 鼠标右键只走 contextmenu，不计时。
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    origin = { x: event.clientX, y: event.clientY };
+    timer = setTimeout(fire, delay);
+  }
+
+  function move(event) {
+    if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > slop) stop();
+  }
+
+  function context(event) {
+    event.preventDefault();
+    if (!fired) fire();
+  }
+
+  function click(event) {
+    if (!fired) return;
+    fired = false;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+  }
+
+  element.addEventListener('pointerdown', down);
+  element.addEventListener('pointermove', move);
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) element.addEventListener(type, stop);
+  element.addEventListener('contextmenu', context);
+  element.addEventListener('click', click, true);
+  return () => {
+    stop();
+    element.removeEventListener('pointerdown', down);
+    element.removeEventListener('pointermove', move);
+    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) element.removeEventListener(type, stop);
+    element.removeEventListener('contextmenu', context);
+    element.removeEventListener('click', click, true);
+  };
+}

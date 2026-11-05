@@ -11,9 +11,13 @@ import {
   keySequence,
   matchesProject,
   nextModifierState,
+  orderSessions,
   outputBatches,
   outputChunk,
   parsePairingLink,
+  parseSessionPins,
+  prunedSessionPins,
+  SESSION_PIN_LIMIT,
   projectSourceLabel,
   recentProjects,
   rememberProject,
@@ -25,6 +29,7 @@ import {
   splitInput,
   terminalProfileChoices,
   terminalGridSize,
+  toggleSessionPin,
 } from '../../mobile/android/web/protocol.js'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
@@ -236,12 +241,43 @@ describe('Android terminal protocol', () => {
       `${prefix}session:1.2.3.4:487640:p1`,
       `${prefix}active`,
       `${prefix}recent-projects:1.2.3.4:48764`,
+      `${prefix}session-pins:1.2.3.4:48764:p1`,
     ]
     expect(renameProfileKeys(keys, prefix, '1.2.3.4:48764', '1.2.3.4:49000')).toEqual([
       [keys[0], `${prefix}session:1.2.3.4:49000:p1`],
       [keys[1], `${prefix}project:1.2.3.4:49000`],
       [keys[4], `${prefix}recent-projects:1.2.3.4:49000`],
+      [keys[5], `${prefix}session-pins:1.2.3.4:49000:p1`],
     ])
+  })
+})
+
+describe('Android session pins', () => {
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+
+  it('puts pinned sessions first in pin order and keeps desktop order for the rest', () => {
+    expect(orderSessions(list, ['c', 'a']).map(item => [item.session.id, item.index])).toEqual([
+      ['c', 2], ['a', 0], ['b', 1], ['d', 3],
+    ])
+    expect(orderSessions(list).map(item => item.session.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(orderSessions(list, ['gone']).map(item => item.session.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('toggles pins with the newest pin on top', () => {
+    expect(toggleSessionPin([], 'a')).toEqual(['a'])
+    expect(toggleSessionPin(['a'], 'b')).toEqual(['b', 'a'])
+    expect(toggleSessionPin(['b', 'a'], 'b')).toEqual(['a'])
+    const full = Array.from({ length: SESSION_PIN_LIMIT }, (_, index) => String(index))
+    expect(toggleSessionPin(full, 'new')).toHaveLength(SESSION_PIN_LIMIT)
+    expect(toggleSessionPin(full, 'new')[0]).toBe('new')
+  })
+
+  it('reads damaged storage as no pins and drops sessions that no longer exist', () => {
+    expect(parseSessionPins(null)).toEqual([])
+    expect(parseSessionPins('{bad')).toEqual([])
+    expect(parseSessionPins('{"a":1}')).toEqual([])
+    expect(parseSessionPins('["a", 3, "", "a", "b"]')).toEqual(['a', 'b'])
+    expect(prunedSessionPins(['x', 'b', 'a'], list)).toEqual(['b', 'a'])
   })
 })
 

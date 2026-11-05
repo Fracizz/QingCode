@@ -38,6 +38,41 @@ export function mergeSessionName(session, incoming) {
   session.nameRevision = incoming.nameRevision;
   return changed;
 }
+
+// 会话置顶只保存在手机本地（按连接 + 项目），不改变电脑端终端顺序。
+export const SESSION_PIN_LIMIT = 50;
+
+/** 读取本地置顶列表：容错损坏数据，去重并限制数量。 */
+export function parseSessionPins(raw) {
+  try {
+    const value = JSON.parse(raw || '[]');
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.filter(id => typeof id === 'string' && id))].slice(0, SESSION_PIN_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+/** 切换置顶；新置顶的会话排在最前。 */
+export function toggleSessionPin(pins, id) {
+  return pins.includes(id) ? pins.filter(item => item !== id) : [id, ...pins].slice(0, SESSION_PIN_LIMIT);
+}
+
+/** 丢弃电脑端已不存在的会话，只在拿到完整会话列表后调用。 */
+export function prunedSessionPins(pins, sessions) {
+  const live = new Set(sessions.map(session => session.id));
+  return pins.filter(id => live.has(id));
+}
+
+/**
+ * 显示顺序：置顶会话按置顶顺序在前，其余保持电脑端顺序。
+ * 返回 { session, index }，index 是原列表位置，用于「终端 N」兜底名称。
+ */
+export function orderSessions(sessions, pins = []) {
+  const rank = new Map(pins.map((id, index) => [id, index]));
+  return sessions.map((session, index) => ({ session, index }))
+    .sort((a, b) => (rank.get(a.session.id) ?? pins.length) - (rank.get(b.session.id) ?? pins.length) || a.index - b.index);
+}
 export const RECENT_PROJECT_LIMIT = 10;
 
 export function rememberProject(history, id, openedAt = Date.now()) {
@@ -222,7 +257,7 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
 export function renameProfileKeys(keys, prefix, from, to) {
   const moves = [];
   for (const key of keys) {
-    for (const scope of ['session:', 'project:', 'recent-projects:']) {
+    for (const scope of ['session:', 'session-pins:', 'project:', 'recent-projects:']) {
       const old = prefix + scope + from;
       if (key === old || key.startsWith(old + ':')) moves.push([key, prefix + scope + to + key.slice(old.length)]);
     }

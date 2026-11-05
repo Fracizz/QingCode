@@ -17,8 +17,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForSelector('#session-drawer[open]')
     await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
   }
+  // 重命名入口在会话操作菜单（⋯ / 长按）里。
+  const openRename = async (selector, label) => {
+    await page.click(selector + ' .icon-button', { label: label + ' (more actions)' })
+    await page.waitForSelector('#session-actions-dialog[open]')
+    await page.click('#session-action-rename', { label })
+    await page.waitForSelector('#rename-session-dialog[open]')
+  }
   const rename = async value => {
-    await page.click('#session-options .session-option[data-current="true"] .icon-button', { label: 'rename current session' })
+    await openRename('#session-options .session-option[data-current="true"]', 'rename current session')
     await page.fill('#session-name-input', value)
     await page.click('#save-session-name', { label: 'save session name' })
     await page.waitForFunction(() => !document.querySelector('#rename-session-dialog').open)
@@ -69,7 +76,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('failed rename keeps the original name and exposes the error', async () => {
       await drawer()
       await page.evaluate(() => { window.__mobileFixture.state.renameError = '模拟网络失败' })
-      await page.click('#session-options .icon-button', { label: 'edit current name' })
+      await openRename('#session-options .session-option[data-current="true"]', 'edit current name')
       await page.fill('#session-name-input', '不会保存')
       await page.click('#save-session-name', { label: 'try failed rename' })
       await page.waitForFunction(() => !document.querySelector('#rename-session-error').hidden)
@@ -115,7 +122,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await rename('构建和发布验证：很长的中文会话名称也能在侧边栏中正常换行')
       assert.ok(await page.evaluate(() => document.querySelector('#session-options').scrollWidth <= document.querySelector('#session-options').clientWidth
         && document.documentElement.scrollWidth <= innerWidth))
-      await page.click('#session-options .session-option[data-current="true"] .icon-button', { label: 'review session rename' })
+      await openRename('#session-options .session-option[data-current="true"]', 'review session rename')
       await page.evaluate(() => window.qingBack())
       assert.equal(await page.evaluate(() => document.querySelector('#rename-session-dialog').open), false)
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), true)
@@ -145,7 +152,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await drawer()
       await page.waitForFunction(() => !document.querySelector('#session-name-hint').hidden)
-      assert.ok(await page.evaluate(() => [...document.querySelectorAll('#session-options .icon-button')].every(button => button.disabled)))
+      await page.click('#session-options .session-option[data-current="true"] .icon-button', { label: 'open legacy session actions' })
+      await page.waitForSelector('#session-actions-dialog[open]')
+      assert.equal(await page.evaluate(() => document.querySelector('#session-action-rename').disabled), true)
+      await page.evaluate(() => window.qingBack())
       assert.match(await page.evaluate(() => document.querySelector('#terminal-name').textContent), /^终端 \d+$/)
     })
     await recentRegression({ spaceId: task.spaceId, baseUrl, artifactDir: resolve(output, 'recent-batch-regression'), finish: false })

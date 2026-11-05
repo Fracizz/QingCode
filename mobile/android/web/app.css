@@ -491,6 +491,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-label { min-width: 0; }
 .session-spinner { display: none; flex: none; width: 20px; height: 20px; margin-top: 3px; color: var(--accent); animation: spin 1s linear infinite; }
 .session-option[data-running="true"] .session-spinner { display: block; }
+/* 长按打开会话操作：避免系统选中文字或弹出长按菜单。 */
+.session-option .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.session-pin { display: none; flex: none; width: 16px; height: 16px; margin-top: 4px; color: var(--muted); }
+.session-option[data-pinned="true"] .session-pin { display: block; }
 .session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
 .session-option .icon-button { color: var(--muted); }
 .drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; }

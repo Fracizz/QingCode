@@ -6,8 +6,11 @@ import {
   keySequence,
   matchesProject,
   nextModifierState,
+  orderSessions,
   outputBatches,
   parsePairingLink,
+  parseSessionPins,
+  prunedSessionPins,
   projectSourceLabel,
   recentProjects,
   rememberProject,
@@ -18,12 +21,13 @@ import {
   splitInput,
   terminalGridSize,
   terminalProfileChoices,
+  toggleSessionPin,
   validIpv4,
   validPort,
 } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard } from './terminalTouch.js';
-import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
+import { attachKeyRepeat, attachLongPress, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
 import { attachTerminalSelection } from './terminalSelection.js';
@@ -210,7 +214,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -352,6 +356,29 @@ function renderConnections() {
 
 function sessionKey(projectId) {
   return prefix + 'session:' + profile.id + ':' + projectId;
+}
+
+function sessionPinsKey(projectId) {
+  return prefix + 'session-pins:' + profile.id + ':' + projectId;
+}
+
+function sessionPins() {
+  return profile && project ? parseSessionPins(localStorage.getItem(sessionPinsKey(project.id))) : [];
+}
+
+function saveSessionPins(pins) {
+  if (!profile || !project) return;
+  try {
+    if (pins.length) localStorage.setItem(sessionPinsKey(project.id), JSON.stringify(pins));
+    else localStorage.removeItem(sessionPinsKey(project.id));
+  } catch { /* 置顶只是显示偏好，保存失败不影响终端与草稿。 */ }
+}
+
+/** 拿到完整会话列表后清理已不存在会话的置顶记录。 */
+function pruneSessionPins(list) {
+  const pins = sessionPins();
+  const next = prunedSessionPins(pins, list);
+  if (next.length !== pins.length) saveSessionPins(next);
 }
 
 function lastProject() {
@@ -719,7 +746,9 @@ get('remove-host').addEventListener('click', async () => {
     profiles = profiles.filter(saved => saved.id !== item.id);
     health.delete(item.id);
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(prefix + 'session:' + item.id + ':')) localStorage.removeItem(key);
+      if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':')) {
+        localStorage.removeItem(key);
+      }
     }
     workspace.removeHost(item.id);
     localStorage.removeItem(prefix + 'project:' + item.id);
@@ -1390,6 +1419,7 @@ async function openProject(item, resumeOnly = false) {
     const list = await remote('sessions', { project: item.id });
     if (epoch !== viewEpoch) return;
     sessions = list;
+    pruneSessionPins(list);
     const previous = localStorage.getItem(sessionKey(item.id));
     const existing = sessions.find(session => session.id === previous)
       ?? sessions.find(session => !session.exit)
@@ -1415,53 +1445,53 @@ function renderSessions() {
   get('end-session').disabled = !selected;
   get('end-all-sessions').disabled = !sessions.length;
   get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
-  for (const [index, session] of sessions.entries()) {
+  const pins = new Set(sessionPins());
+  for (const [position, { session, index }] of orderSessions(sessions, [...pins]).entries()) {
     const label = sessionName(session, index + 1);
     let row = existingRows.get(session.id);
     if (!row) {
       row = document.createElement('div');
       row.className = 'session-option';
       row.dataset.id = session.id;
+      const latest = () => sessions.find(item => item.id === session.id);
       const option = button('row', () => {
-        const latest = sessions.find(item => item.id === session.id);
-        if (!busy && latest) selectSession(latest);
+        if (!busy && latest()) selectSession(latest());
       });
       const text = rowText('', '');
       const heading = text.querySelector('strong');
       const name = document.createElement('span');
       name.className = 'session-label';
-      heading.append(icon('loader-circle', 'session-spinner'), name);
+      heading.append(icon('loader-circle', 'session-spinner'), icon('pin', 'session-pin'), name);
       // 空闲 24 小时无输入也无输出时电脑端自动结束会话。
       const idle = document.createElement('small');
       idle.className = 'session-idle';
       text.append(idle);
       option.append(text);
-      const rename = button('icon-button', () => {
-        const latest = sessions.find(item => item.id === session.id);
-        if (latest) openSessionRename(latest);
-      });
-      rename.append(icon('edit'));
-      row.append(option, rename);
+      // 长按整行或点 ⋯ 打开会话操作（置顶、重命名、结束）。
+      attachLongPress(option, () => { if (latest()) openSessionActions(latest()); });
+      const more = button('icon-button', () => { if (latest()) openSessionActions(latest()); });
+      more.append(icon('more'));
+      row.append(option, more);
     }
     existingRows.delete(session.id);
     row.dataset.current = String(session.id === selected);
+    row.dataset.pinned = String(pins.has(session.id));
     const running = sessionRunning(session);
     row.dataset.running = String(running);
     const option = row.querySelector('.row');
     const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
     const identity = '终端 ' + (session.number ?? index + 1);
     row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = label === identity ? status : identity + ' · ' + status;
+    row.querySelector('small').textContent = [pins.has(session.id) ? '已置顶' : '', label === identity ? '' : identity, status]
+      .filter(Boolean).join(' · ');
     const idle = row.querySelector('.session-idle');
     idle.textContent = session.exit ? '' : idleLabel(session);
     idle.hidden = !idle.textContent;
-    const rename = row.querySelector('.icon-button');
-    rename.setAttribute('aria-label', '重命名 ' + label);
-    rename.disabled = !Number.isFinite(session.nameRevision) || busy;
+    row.querySelector('.icon-button').setAttribute('aria-label', label + ' 的更多操作');
     if (session.id === selected) {
       option.setAttribute('aria-current', 'true');
     } else option.removeAttribute('aria-current');
-    if (options.children[index] !== row) options.insertBefore(row, options.children[index] ?? null);
+    if (options.children[position] !== row) options.insertBefore(row, options.children[position] ?? null);
   }
   for (const row of existingRows.values()) row.remove();
 }
@@ -1492,6 +1522,7 @@ async function refreshSessionDrawer() {
       }
       return item;
     });
+    pruneSessionPins(sessions);
     message('session-error', '');
     renderSessions();
   } catch (error) {
@@ -1503,6 +1534,46 @@ async function refreshSessionDrawer() {
     }
   }
 }
+
+let actionSession = null;
+
+function openSessionActions(session) {
+  if (busy) return;
+  actionSession = { id: session.id, address: profile.id, epoch: viewEpoch };
+  const index = sessions.indexOf(session);
+  const pinned = sessionPins().includes(session.id);
+  get('session-actions-title').textContent = sessionName(session, index + 1);
+  get('session-actions-context').textContent = profile.name + ' / ' + project.name;
+  get('session-action-pin').textContent = pinned ? '取消置顶' : '置顶';
+  get('session-action-rename').disabled = !Number.isFinite(session.nameRevision);
+  get('session-action-rename').textContent = Number.isFinite(session.nameRevision) ? '重命名' : '重命名（需更新电脑端）';
+  get('session-action-end').textContent = session.exit ? '移除已结束会话' : session.id === selected ? '结束当前会话' : '结束会话';
+  get('session-actions-dialog').showModal();
+}
+
+/** 操作菜单打开期间会话可能已被移除或切换了连接，这里取回仍然有效的会话。 */
+function takeActionSession() {
+  const target = actionSession;
+  get('session-actions-dialog').close();
+  if (!target || target.epoch !== viewEpoch || profile?.id !== target.address) return null;
+  return sessions.find(item => item.id === target.id) ?? null;
+}
+
+get('session-action-pin').addEventListener('click', () => {
+  const session = takeActionSession();
+  if (!session) return;
+  saveSessionPins(toggleSessionPin(sessionPins(), session.id));
+  renderSessions();
+});
+get('session-action-rename').addEventListener('click', () => {
+  const session = takeActionSession();
+  if (session) openSessionRename(session);
+});
+get('session-action-end').addEventListener('click', () => {
+  const session = takeActionSession();
+  if (session) void endSession(session.id);
+});
+get('session-actions-dialog').addEventListener('close', () => { actionSession = null; });
 
 function openSessionRename(session) {
   if (busy) return;
@@ -1787,36 +1858,44 @@ async function newSession(terminalProfile) {
     busy = false;
   }
 }
-get('end-session').addEventListener('click', async () => {
-  if (busy || !selected) return;
-  const id = selected;
+/** 结束（或移除已结束的）指定会话；结束的不是当前会话时留在会话列表。 */
+async function endSession(id) {
+  if (busy || !id) return;
   const epoch = viewEpoch;
+  const current = id === selected;
   const ended = sessions.find(item => item.id === id)?.exit;
-  if (!await confirmAction(ended ? '移除会话？' : '结束当前会话？',
+  if (!await confirmAction(ended ? '移除会话？' : current ? '结束当前会话？' : '结束会话？',
     ended ? '此会话的输出将从列表中移除。' : '该会话中的 Shell 和前台任务将被关闭。', ended ? '移除' : '结束')) return;
-  if (busy || epoch !== viewEpoch) return;
+  if (busy || epoch !== viewEpoch || (current && id !== selected)) return;
   busy = true;
-  get('session-drawer').close();
+  if (current) get('session-drawer').close();
+  else message('session-error', '');
   try {
     await remote('end', { id });
     if (epoch !== viewEpoch) return;
     sessions = sessions.filter(item => item.id !== id);
-    compose.value = '';
     drafts.delete(draftKey(id));
-    if (sessions.length) selectSession(sessions.find(item => !item.exit) ?? sessions[0]);
+    saveSessionPins(sessionPins().filter(pin => pin !== id));
+    if (!current) renderSessions();
     else {
-      localStorage.removeItem(sessionKey(project.id));
-      returnToDashboard('home');
+      compose.value = '';
+      if (sessions.length) selectSession(sessions.find(item => !item.exit) ?? sessions[0]);
+      else {
+        localStorage.removeItem(sessionKey(project.id));
+        returnToDashboard('home');
+      }
     }
   } catch (error) {
     if (epoch === viewEpoch) {
       if (error.revoked) handleTerminalError(error);
-      else get('terminal-status').textContent = error.message;
+      else if (current) get('terminal-status').textContent = error.message;
+      else message('session-error', error.message);
     }
   } finally {
     busy = false;
   }
-});
+}
+get('end-session').addEventListener('click', () => { void endSession(selected); });
 
 get('end-all-sessions').addEventListener('click', async () => {
   if (busy || !project || !sessions.length) return;
