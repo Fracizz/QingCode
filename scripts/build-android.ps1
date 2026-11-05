@@ -102,7 +102,7 @@ $resources = Join-Path $stage 'res'
 $drawables = Join-Path $resources 'drawable-nodpi'
 New-Item -ItemType Directory -Path $classes,$assets,$bytecode,$drawables,(Split-Path -Parent $OutputApk) -Force | Out-Null
 try {
-  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalScrollbar.js', 'historyRender.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js', 'nativeRpc.js', 'terminalInput.js', 'desktopProtocol.js', 'terminalImages.js', 'dom.js', 'dashboardView.js', 'pairingFlow.js', 'outputReader.js', 'composeStatus.js', 'sessionDrawer.js', 'terminalSettings.js', 'shortcutBar.js', 'keyLayout.js', 'cursorDrag.js', 'pinchZoom.js', 'terminalLinks.js')) {
+  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalScrollbar.js', 'terminalJog.js', 'terminalHold.js', 'historyRender.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js', 'nativeRpc.js', 'terminalInput.js', 'desktopProtocol.js', 'terminalImages.js', 'dom.js', 'dashboardView.js', 'pairingFlow.js', 'outputReader.js', 'composeStatus.js', 'sessionDrawer.js', 'terminalSettings.js', 'shortcutBar.js', 'keyLayout.js', 'cursorDrag.js', 'pinchZoom.js', 'terminalLinks.js')) {
     Copy-Item -LiteralPath (Join-Path $source "web/$asset") -Destination $assets
   }
   Copy-Item -LiteralPath (Join-Path $source 'res/values') -Destination $resources -Recurse

@@ -367,6 +367,15 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .touch-scrollbar[hidden] { display: none; }
 .touch-scrollbar-thumb { position: absolute; top: 0; right: 3px; width: 10px; border-radius: 5px; background: #a2aeba80; transition: width .12s, background-color .12s; will-change: transform; }
 .touch-scrollbar.dragging .touch-scrollbar-thumb { right: 2px; width: 14px; border-radius: 7px; background: var(--accent); }
+/* 全屏程序开启鼠标时的回弹变速滑块：不表示位置，按住拖离中心越远滚得越快，松手回中。 */
+.terminal-jog { position: absolute; z-index: 5; top: 50%; right: 2px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 40px; height: min(56%, 300px); min-height: 180px; transform: translateY(-50%); touch-action: none; user-select: none; -webkit-user-select: none; }
+.terminal-jog[hidden] { display: none; }
+.terminal-jog-page { flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 18px; color: var(--muted); font-size: 12px; background: #1d232bcc; }
+.terminal-jog-page:active { color: var(--ink); background: var(--raised); }
+.terminal-jog-track { position: relative; flex: 1; width: 36px; border-radius: 18px; background: #1d232b99; touch-action: none; }
+.terminal-jog-track::before { content: ''; position: absolute; left: 50%; top: 12px; bottom: 12px; border-left: 1px dashed #a2aeba40; }
+.terminal-jog-knob { position: absolute; top: 50%; left: 4px; width: 28px; height: 28px; margin-top: -14px; border-radius: 14px; background: #a2aeba99; transition: transform .18s ease-out, background-color .12s; will-change: transform; }
+.terminal-jog.dragging .terminal-jog-knob { background: var(--accent); transition: background-color .12s; }
 #terminal-tools { flex: none; padding: 0 8px max(8px, var(--safe-bottom), var(--corner-bottom-inset)); border-top: 1px solid var(--divider); background: var(--paper); }
 .terminal-state { display: flex; align-items: center; gap: 7px; min-height: 24px; padding: 0 6px; }
 #terminal-status { flex: 1; min-width: 0; padding: 2px 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }

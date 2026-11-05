@@ -1,5 +1,47 @@
+// 全屏程序开启鼠标上报时，xterm 会把小于 50px 的像素滚动打 3 折，且每个滚轮事件最多只发 1 格，
+// 手机上每帧只有几像素位移，导致上滑很费劲。这里自己按「格」换算，每格派发一个按行的滚轮事件。
+
+/** 手指每滑过一个字符行发几格滚轮（程序通常一格滚 1–3 行）。 */
+export const PROGRAM_WHEEL_GAIN = .5;
+/** 每帧最多派发的格数；超出部分丢弃，避免把输入和画面重绘堆积在电脑端。 */
+export const MAX_WHEEL_TICKS_PER_FRAME = 6;
+
+/** 把像素位移累计成整格滚轮；speed 为手指速度（px/ms），快甩时最多放大到 2.5 倍。 */
+export function wheelTicks(state, deltaPx, cellHeight, speed = 0) {
+  if (!(cellHeight > 0) || !deltaPx) return 0;
+  // 换方向时丢掉上一方向的零头，避免回拉第一下没反应。
+  if (state.remainder && Math.sign(state.remainder) !== Math.sign(deltaPx)) state.remainder = 0;
+  const boost = 1 + Math.min(1.5, Math.max(0, Math.abs(speed) - .5));
+  state.remainder += deltaPx / cellHeight * PROGRAM_WHEEL_GAIN * boost;
+  const ticks = Math.trunc(state.remainder);
+  state.remainder -= ticks;
+  return Math.max(-MAX_WHEEL_TICKS_PER_FRAME, Math.min(MAX_WHEEL_TICKS_PER_FRAME, ticks));
+}
+
+/**
+ * 派发 |ticks| 个按行（DOM_DELTA_LINE）的滚轮事件：xterm 每个事件向程序报告一格，
+ * 编码（SGR / 默认）仍由 xterm 按程序请求的模式生成。ticks 为负表示向上。
+ */
+export function dispatchLineWheel(screen, ticks, point, extra = {}) {
+  const view = screen.ownerDocument.defaultView;
+  const count = Math.min(Math.abs(Math.trunc(ticks)), 64);
+  for (let index = 0; index < count; index += 1) {
+    const wheel = new view.WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(ticks),
+      clientX: point.x, clientY: point.y,
+    });
+    Object.defineProperties(wheel, {
+      wheelDeltaY: { value: undefined }, wheelDeltaX: { value: undefined },
+      qingTouch: { value: true }, qingMomentum: { value: !!extra.momentum },
+      qingGesture: { value: extra.gesture },
+    });
+    screen.dispatchEvent(wheel);
+  }
+  return count;
+}
+
 /** Coalesce finger motion per frame, then coast without sending TUI keys after release. */
-export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress } = {}) {
+export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, onProgramWheel } = {}) {
   const screen = element.querySelector('.xterm-screen');
   if (!screen) return () => {};
   const view = element.ownerDocument.defaultView;
@@ -11,9 +53,20 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   let hold = null;
   let point = { x: 0, y: 0 };
   let gestureId = 0;
+  const wheelState = { remainder: 0 };
 
   function dispatch(deltaY, momentum = false) {
     if (!deltaY) return;
+    // programWheel 返回字符行高（px）时表示程序开了鼠标上报：按格发送。
+    const cell = programWheel?.() || 0;
+    if (cell > 0) {
+      const ticks = wheelTicks(wheelState, deltaY, cell, velocity);
+      if (ticks) {
+        dispatchLineWheel(screen, ticks, point, { momentum, gesture: gestureId });
+        onProgramWheel?.(ticks);
+      }
+      return;
+    }
     const wheel = new view.WheelEvent('wheel', {
       bubbles: true, cancelable: true, deltaMode: 0, deltaY,
       clientX: point.x, clientY: point.y,
@@ -33,6 +86,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     if (coast !== null) view.cancelAnimationFrame(coast);
     frame = coast = null;
     pending = velocity = 0;
+    wheelState.remainder = 0;
     gesture = null;
   }
 

@@ -16,7 +16,9 @@ import {
   terminalGridSize,
   terminalProfileChoices,
 } from './protocol.js';
-import { attachTerminalTouchScroll, attachTouchMouseGuard } from './terminalTouch.js';
+import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel } from './terminalTouch.js';
+import { attachTerminalJog } from './terminalJog.js';
+import { heldTerminalRows, heldRowOffset, keyboardLikelyOpen } from './terminalHold.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
@@ -80,6 +82,11 @@ let term;
 let fit;
 let disposeTouchScroll;
 let terminalScrollbar;
+let terminalJog;
+/** 软键盘打开时保留的终端行数下，实际可见的行数；0 表示没有保留。 */
+let heldVisibleRows = 0;
+/** 当前窗口宽度下见过的最大高度，用来判断软键盘是否打开。 */
+const windowHeights = { width: 0, max: 0 };
 /** 用户正在往上阅读时收到的整屏快照先不重画（重画会清空手机滚动记录），回到底部后再接最新画面。 */
 let deferredLatest = false;
 let unsupportedScrollGesture = null;
@@ -716,6 +723,9 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   terminalHistory = undefined;
   terminalScrollbar?.dispose();
   terminalScrollbar = undefined;
+  terminalJog?.dispose();
+  terminalJog = undefined;
+  heldVisibleRows = 0;
   deferredLatest = false;
   terminalLinks?.dispose();
   terminalLinks = undefined;
@@ -809,6 +819,9 @@ function makeTerminal() {
     onLongPress: point => terminalSelection?.start(point),
     // 惯性同样交给原始终端：普通终端滚本地记录，开了鼠标的全屏程序收到滚轮；不支持滚动的全屏程序不滑行。
     canInertia: () => terminalHistory?.isOpen() || !!term && (term.buffer.active.type === 'normal' || term.modes.mouseTrackingMode !== 'none'),
+    // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
+    programWheel: () => programMouse() ? cellHeight() : 0,
+    onProgramWheel: () => terminalJog?.reveal(),
   });
   terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
@@ -845,6 +858,15 @@ function makeTerminal() {
       if (terminalHistory?.isOpen()) historyScroll.scrollTop = offset;
       else term?.scrollToLine(Math.round(offset));
     },
+  });
+  terminalJog = attachTerminalJog(get('viewport').parentElement, {
+    scroll: ticks => sendProgramWheel(ticks),
+    // 一页约等于三分之一屏的格数（程序一格通常滚 1–3 行）。
+    page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3))),
+  });
+  term.onWriteParsed(() => {
+    terminalJog?.setActive(programMouse());
+    if (heldVisibleRows) placeHeldRows();
   });
   term.onScroll(() => {
     terminalScrollbar?.update();
@@ -889,6 +911,40 @@ get('link-copy').addEventListener('click', async () => {
   }
 });
 
+/** 程序是否开着鼠标上报（Codex、opencode 等全屏程序）：此时滑动作为滚轮交给程序。 */
+function programMouse() {
+  return !!term && term.modes.mouseTrackingMode !== 'none';
+}
+
+function cellHeight() {
+  const screen = term?.element?.querySelector('.xterm-screen');
+  return screen && term.rows ? screen.getBoundingClientRect().height / term.rows : 0;
+}
+
+/** 变速滑块和翻页按钮：在终端画面偏左上处派发按行滚轮（opencode 等按指针所在面板滚动）。 */
+function sendProgramWheel(ticks) {
+  const screen = term?.element?.querySelector('.xterm-screen');
+  if (!screen || !ticks || !terminalReady || !programMouse()) return;
+  const rect = screen.getBoundingClientRect();
+  dispatchLineWheel(screen, ticks, { x: rect.left + rect.width * .4, y: rect.top + rect.height * .4 });
+}
+
+function keyboardOpen() {
+  if (window.innerWidth !== windowHeights.width) {
+    windowHeights.width = window.innerWidth;
+    windowHeights.max = 0;
+  }
+  windowHeights.max = Math.max(windowHeights.max, window.innerHeight);
+  return keyboardLikelyOpen(window.innerHeight, windowHeights.max);
+}
+
+/** 保留行数时把画面上移，露出光标所在行（输入框通常在底部）。 */
+function placeHeldRows() {
+  if (!term?.element) return;
+  const rows = heldRowOffset(term.rows, heldVisibleRows, term.buffer.active.cursorY);
+  term.element.style.marginTop = rows ? -(rows * cellHeight()) + 'px' : '';
+}
+
 function updateTerminalSize() {
   get('terminal-size').textContent = term ? term.cols + ' × ' + term.rows : '';
 }
@@ -912,7 +968,12 @@ function fitTerminal() {
     cellWidth, cellHeight, terminalColumns,
   );
   if (!size) return;
-  if (size.cols !== term.cols || size.rows !== term.rows) term.resize(size.cols, size.rows);
+  // 软键盘弹出、输入框变高时不缩小终端行数：改尺寸会让 Claude Code / Codex 重绘，
+  // 旧画面被挤进滚动记录，历史里出现重复的状态栏和输入框。
+  const rows = heldTerminalRows({ fitRows: size.rows, currentRows: term.rows, sameColumns: size.cols === term.cols, keyboardOpen: keyboardOpen() });
+  heldVisibleRows = rows > size.rows ? size.rows : 0;
+  if (size.cols !== term.cols || rows !== term.rows) term.resize(size.cols, rows);
+  placeHeldRows();
 }
 
 get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });

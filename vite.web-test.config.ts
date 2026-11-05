@@ -14,6 +14,8 @@ const mobileAssets: Record<string, [string, string]> = {
   'composer.js': ['mobile/android/web/composer.js', 'text/javascript'],
   'terminalHistory.js': ['mobile/android/web/terminalHistory.js', 'text/javascript'],
   'terminalScrollbar.js': ['mobile/android/web/terminalScrollbar.js', 'text/javascript'],
+  'terminalJog.js': ['mobile/android/web/terminalJog.js', 'text/javascript'],
+  'terminalHold.js': ['mobile/android/web/terminalHold.js', 'text/javascript'],
   'historyRender.js': ['mobile/android/web/historyRender.js', 'text/javascript'],
   'terminalSelection.js': ['mobile/android/web/terminalSelection.js', 'text/javascript'],
   'connectionLatency.js': ['mobile/android/web/connectionLatency.js', 'text/javascript'],
