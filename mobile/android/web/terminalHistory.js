@@ -23,6 +23,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
   let anchor = null;
   let restoringAnchor = false;
   let anchorFrame = null;
+  let openingGesture = null;
 
   function rememberAnchor() {
     if (panel.hidden) { anchor = null; return; }
@@ -61,6 +62,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     if (motionFrame !== null) view.cancelAnimationFrame(motionFrame);
     motionFrame = null;
     motion = 0;
+    openingGesture = null;
     onClose();
     term.scrollToBottom();
     latestButton.hidden = true;
@@ -125,8 +127,8 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     }
   }
 
-  function open(delta) {
-    if (!active || !available || !panel.hidden) return;
+  function open(delta, allowEmpty = false) {
+    if (!active || (!available && !allowEmpty) || !panel.hidden) return;
     generation += 1;
     const buffer = term.buffer.active;
     const localDepth = buffer.type === 'normal' ? buffer.baseY - buffer.viewportY : 0;
@@ -140,13 +142,13 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;
     content.style.lineHeight = (screenHeight / term.rows) + 'px';
     cursor = null;
-    more = true;
+    more = available;
     failed = false;
     departedBottom = false;
-    moreButton.hidden = false;
+    moreButton.hidden = !more;
     panel.hidden = false;
     latestButton.hidden = false;
-    status.textContent = '正在加载历史…';
+    status.textContent = available ? '正在加载历史…' : '暂无更早的已保留输出，当前画面可只读查看。';
     scroll.scrollTop = scroll.scrollHeight;
     queueMotion(delta);
     void older();
@@ -166,20 +168,25 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     if (!panel.hidden) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      queueMotion(event.deltaY);
+      const direction = event.qingTouch && openingGesture && openingGesture.id === event.qingGesture ? openingGesture.direction : 1;
+      queueMotion(event.deltaY * direction);
       return;
     }
     const ordinary = term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none';
     // 全屏程序（Codex / OpenCode 等）默认不把手指滑动发给程序，防止误触改变程序界面：
-    // 向上滑只打开手机端只读历史，其余方向直接吞掉。「触摸发给程序」开启时沿用原行为。
+    // 两个竖滑方向均可进入只读历史；进入的整次手势继续向历史移动，不能刚打开就退回实时。
+    // 「触摸发给程序」开启时沿用原行为，实体鼠标不改变。
     if (event.qingTouch && !ordinary && !touchToProgram()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (event.deltaY < 0 && available) open(event.deltaY);
+      if (event.deltaY && !event.qingMomentum) {
+        openingGesture = event.qingGesture === undefined ? null : { id: event.qingGesture, direction: event.deltaY > 0 ? -1 : 1 };
+        open(-Math.abs(event.deltaY), true);
+      }
       return;
     }
     if (event.deltaY >= 0 || !available) return;
-    if ((!ordinary && !event.qingTouch) || (ordinary && term.buffer.active.viewportY > 0)) return;
+    if (!ordinary || term.buffer.active.viewportY > 0) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     open(event.deltaY);

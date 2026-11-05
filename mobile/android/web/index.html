@@ -27,6 +27,7 @@
     <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path></symbol>
     <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6Z"></path><path d="m14 5 5 5"></path></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"></path></symbol>
     <symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
     <symbol id="i-paste" viewBox="0 0 24 24"><path d="M11 14h10"></path><path d="M16 4h2a2 2 0 0 1 2 2v1.344"></path><path d="m17 18 4-4-4-4"></path><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"></path><rect x="8" y="2" width="8" height="4" rx="1"></rect></symbol>
@@ -148,7 +149,7 @@
         <div id="special-keys" aria-label="AI 编程快捷键">
           <button type="button" data-key="esc">Esc</button>
           <button type="button" id="complete-input" data-key="tab">Tab</button>
-          <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C">Ctrl+C</button>
+          <button type="button" data-key="interrupt" aria-label="发送 Ctrl+C">^C</button>
           <button type="button" data-key="shift-tab" aria-label="发送 Shift+Tab">⇧Tab</button>
           <button type="button" data-key="up" data-repeat aria-label="向上">↑</button>
           <button type="button" data-key="down" data-repeat aria-label="向下">↓</button>
@@ -257,17 +258,16 @@
   </dialog>
 
   <dialog id="session-drawer" class="session-drawer" aria-labelledby="session-drawer-title">
-    <header class="drawer-heading"><h2 id="session-drawer-title">会话</h2><button class="icon-button" type="button" data-close="session-drawer" aria-label="关闭会话侧栏"><svg><use href="#i-back"/></svg></button></header>
+    <header class="drawer-heading"><h2 id="session-drawer-title">终端会话 <span id="session-count"></span></h2><button class="icon-button" type="button" data-close="session-drawer" aria-label="关闭会话侧栏"><svg><use href="#i-back"/></svg></button></header>
     <p id="session-context"></p>
+    <button id="drawer-new-session" class="tonal compact" type="button"><svg><use href="#i-plus"/></svg>新建终端</button>
     <div id="session-options" class="rows" aria-label="项目会话"></div>
     <p id="session-error" class="error" role="alert" hidden></p>
     <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
     <div class="drawer-actions">
-      <button id="drawer-new-session" class="secondary wide" type="button">新建终端</button>
       <button id="back" class="secondary" type="button">返回工作台</button>
       <button id="drawer-settings" class="secondary" type="button">终端设置</button>
-      <button id="end-session" class="secondary danger wide" type="button">结束当前会话</button>
-      <button id="end-all-sessions" class="secondary danger wide" type="button">结束全部会话</button>
+      <button id="end-all-sessions" class="text-button danger" type="button">关闭全部会话</button>
     </div>
   </dialog>
 

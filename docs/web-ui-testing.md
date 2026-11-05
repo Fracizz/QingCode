@@ -17,12 +17,15 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 手机会话侧栏与命名：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-sidebar.ego.mjs').then(m=>m.run())"`，复用 `pnpm test:web` 的 Android 页面。验证左侧抽屉、程序标题、手动名称优先级、清空恢复自动命名、失败保留原名、草稿隔离、重连接回、320px 窄屏、横屏菜单与旧电脑兼容，并在同一浏览器空间回归最近项目和结束全部会话。截图及 JSON 位于 `.dev/web-tests/mobile-sidebar/`。Rust `mobile` / `mobile_screen` 测试验证真实 OSC 分片解析、标题过滤、名称长度校验、手动名称优先及快照/轮询元数据；浏览器使用内存 RPC，不能代替 Android 真机与本机/WSL/SSH 进程验收。
 
 手机会话操作菜单：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-actions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证点 ⋯ 与触摸长按都打开同一底部菜单、短按仍切换会话、置顶后排在最前并显示标记（新置顶在上）、离开再接回后仍保留、取消置顶恢复电脑端顺序、结束非当前会话时留在侧栏并清除其置顶，以及 320px 窄屏。置顶只保存在手机 localStorage（按连接 + 项目），不改变电脑端顺序；截图与 JSON 位于 `.dev/web-tests/mobile-session-actions/`，使用内存 RPC，不替代 Android 真机长按手感验收。
+手机侧栏逐项关闭：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-close.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖每行独立关闭、明确目标与取消、关闭其他项保留当前会话和草稿、失败重试、关闭当前项恢复剩余会话草稿、最后一项关闭后返回首页，以及窄屏、键盘高度和横屏下的触控区与底部操作；随后在同一空间回归重命名、旧电脑兼容及关闭全部的范围、取消和部分失败。截图和 JSON 位于 `.dev/web-tests/mobile-session-close/`；关闭操作只作用于内存桥，不代替 Android 真机和实际进程验收。
 
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
 手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。
 
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
+
+Codex / OpenCode 全屏只读历史：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-tui-history.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖备用屏、鼠标上报和内联 TUI 的上下连续手势、进入历史后不立即退出、Claude 风格普通终端保持自然滚动、无缓存提示、读取失败重试及显式程序模式；只读模式断言没有终端输入。截图与 JSON 位于 `.dev/web-tests/mobile-tui-history/`。Rust `mobile_screen` 测试补充验证真实重绘的纯文本采样、频率、缓存上限、分片转义与 OSC 排除；浏览器模拟程序输出，不能代替 Android WebView 和实际 Codex / OpenCode 验收。
 
 Android 终端长按选字运行 `node scripts/web-tests/mobile-selection.agent-browser.mjs`，复用真实 xterm、触摸手势与页面。覆盖中文宽字符长按、双端手柄跨行拖动、全选、手机剪贴板桥、失败重试、鼠标上报 TUI 不发输入、返回取消、旋转清理及会话切换；截图与结果在 `.dev/web-tests/mobile-selection/`。剪贴板写入由内存桥模拟，Android 原生剪贴板和真实触屏手感仍需真机验收。
 

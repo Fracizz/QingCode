@@ -102,7 +102,7 @@ $resources = Join-Path $stage 'res'
 $drawables = Join-Path $resources 'drawable-nodpi'
 New-Item -ItemType Directory -Path $classes,$assets,$bytecode,$drawables,(Split-Path -Parent $OutputApk) -Force | Out-Null
 try {
-  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js')) {
+  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js', 'nativeRpc.js', 'terminalInput.js', 'desktopProtocol.js', 'terminalImages.js')) {
     Copy-Item -LiteralPath (Join-Path $source "web/$asset") -Destination $assets
   }
   Copy-Item -LiteralPath (Join-Path $source 'res/values') -Destination $resources -Recurse
@@ -128,7 +128,8 @@ try {
   Invoke-AndroidTool $aapt @('link', '-I', $androidJar, '--manifest', (Join-Path $source 'AndroidManifest.xml'),
     '--version-code', [string]$version.code, '--version-name', [string]$version.name, '--replace-version',
     '-A', $assets, '-o', $unsigned, $compiled)
-  Invoke-AndroidTool $java @('--release', '8', '-encoding', 'UTF-8', '-Xlint:-options', '-cp', $androidJar, '-d', $classes, (Join-Path $source 'MainActivity.java'))
+  $javaSources = @(Get-ChildItem -LiteralPath $source -Filter '*.java' -File | ForEach-Object FullName)
+  Invoke-AndroidTool $java (@('--release', '8', '-encoding', 'UTF-8', '-Xlint:-options', '-cp', $androidJar, '-d', $classes) + $javaSources)
   $classFiles = Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse | ForEach-Object FullName
   Invoke-AndroidTool $dex (@('--min-api', '26', '--lib', $androidJar, '--output', $bytecode) + $classFiles)
   Invoke-AndroidTool $jar @('uf', $unsigned, '-C', $bytecode, 'classes.dex')

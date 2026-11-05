@@ -19,8 +19,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   }
   // 重命名入口在会话操作菜单（⋯ / 长按）里。
   const openRename = async (selector, label) => {
-    await page.click(selector + ' .icon-button', { label: label + ' (more actions)' })
+    await page.click(selector + ' .session-more', { label: label + ' (more actions)' })
     await page.waitForSelector('#session-actions-dialog[open]')
+    await page.waitForFunction(() => !document.querySelector('#session-actions-dialog').getAnimations().some(animation => animation.playState === 'running'))
     await page.click('#session-action-rename', { label })
     await page.waitForSelector('#rename-session-dialog[open]')
   }
@@ -152,10 +153,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await drawer()
       await page.waitForFunction(() => !document.querySelector('#session-name-hint').hidden)
-      await page.click('#session-options .session-option[data-current="true"] .icon-button', { label: 'open legacy session actions' })
+      await page.click('#session-options .session-option[data-current="true"] .session-more', { label: 'open legacy session actions' })
       await page.waitForSelector('#session-actions-dialog[open]')
       assert.equal(await page.evaluate(() => document.querySelector('#session-action-rename').disabled), true)
       await page.evaluate(() => window.qingBack())
+      assert.ok(await page.evaluate(() => [...document.querySelectorAll('#session-options .session-close')].every(button => !button.disabled)))
       assert.match(await page.evaluate(() => document.querySelector('#terminal-name').textContent), /^终端 \d+$/)
     })
     await recentRegression({ spaceId: task.spaceId, baseUrl, artifactDir: resolve(output, 'recent-batch-regression'), finish: false })

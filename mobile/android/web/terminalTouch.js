@@ -10,6 +10,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   let velocity = 0;
   let hold = null;
   let point = { x: 0, y: 0 };
+  let gestureId = 0;
 
   function dispatch(deltaY, momentum = false) {
     if (!deltaY) return;
@@ -20,6 +21,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     Object.defineProperties(wheel, {
       wheelDeltaY: { value: undefined }, wheelDeltaX: { value: undefined },
       qingTouch: { value: true }, qingMomentum: { value: momentum },
+      qingGesture: { value: gestureId },
     });
     screen.dispatchEvent(wheel);
   }
@@ -45,6 +47,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     cancel();
     if (event.touches.length !== 1 || !screen.contains(event.target)) return;
     const touch = event.touches[0];
+    gestureId += 1;
     const now = view.performance.now();
     point = { x: touch.clientX, y: touch.clientY };
     gesture = { id: touch.identifier, x: point.x, y: point.y, previousY: point.y, at: now, axis: null };
