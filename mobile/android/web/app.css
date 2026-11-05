@@ -433,7 +433,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .compose-notes { flex: none; display: flex; align-items: center; }
 .compose-notes:not(:has(> :not([hidden]))) { display: none; }
 #completion-help { display: none; }
-.compose-note { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; overflow: hidden; color: var(--accent); font-size: 0; white-space: nowrap; }
+.compose-note { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; overflow: hidden; color: var(--accent); font-size: 0; white-space: nowrap; }
 .compose-note::before { content: '✓'; font: 700 14px/1 system-ui, sans-serif; }
 :is(#image-state[data-state="error"], .compose-chip:is([data-state="unknown"], [data-state="error"])) { color: var(--error); }
 :is(#image-state[data-state="error"], .compose-chip:is([data-state="unknown"], [data-state="error"]))::before { content: '!'; display: grid; place-items: center; width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 50%; font-size: 10px; }
