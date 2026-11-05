@@ -153,8 +153,8 @@ export default function TerminalComposer({
             }}
             onPaste={onPaste}
             placeholder={translate('输入多段需求，也可粘贴图片或文件…')}
-            className="modal-field-input min-h-[200px] flex-1 resize-y font-mono text-ui leading-relaxed"
-            style={{ height: 'min(42vh, 420px)' }}
+            className="modal-field-input min-h-[240px] flex-1 resize-y font-mono text-ui leading-relaxed"
+            style={{ height: 'min(56vh, 560px)' }}
           />
           <p className="text-ui-sm text-fg-muted">
             {translate('支持粘贴图片、文件和拖入附件。填入后请在终端中检查并提交。')}
