@@ -50,6 +50,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse trusted projects' })
     await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     const headHeight = await page.evaluate(() => document.querySelector('.terminal-head').getBoundingClientRect().height)
     await step('top tabs are replaced by a collapsible left drawer and program titles update the header', async () => {
@@ -114,6 +115,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#back', { label: 'return to dashboard' })
       await page.click('#dashboard-nav [data-page="home"]', { label: 'open resume home' })
       await page.click('#resume', { label: 'resume named session' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await waitName('发布与构建')
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     })
@@ -150,6 +152,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#dashboard-nav [data-page="home"]', { label: 'show legacy resume home' })
       await page.evaluate(() => { window.__mobileFixture.state.sessionNames = false })
       await page.click('#resume', { label: 'resume from older desktop' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await drawer()
       await page.waitForFunction(() => !document.querySelector('#session-name-hint').hidden)

@@ -727,6 +727,7 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   setRawKeyboard(false);
   composeStatus.reset();
   get('scroll-bottom').hidden = true;
+  get('terminal-empty').hidden = true;
   get('input-tip').hidden = true;
   hideFontToast();
   disposeTouchScroll?.();
@@ -983,12 +984,18 @@ async function openProject(item, resumeOnly = false) {
       ?? sessions[0];
     if (existing) selectSession(existing);
     else if (resumeOnly) returnToDashboard('home');
-    else await createSession(epoch, 'default');
+    else showEmptyProject();
   } catch (error) {
     if (epoch === viewEpoch) handleTerminalError(error);
   } finally {
     busy = false;
   }
+}
+
+// 进入没有终端的项目时不再自动新建，只显示空状态，由用户点「新建终端」。
+function showEmptyProject() {
+  terminalState('暂无终端');
+  get('terminal-empty').hidden = false;
 }
 
 async function createSession(epoch, terminalProfile = null) {
@@ -1046,6 +1053,7 @@ async function openNewSessionDialog() {
 }
 
 function selectSession(session) {
+  get('terminal-empty').hidden = true;
   get('session-dialog').close();
   get('session-drawer').close();
   if (selected === session.id) return;
@@ -1168,6 +1176,8 @@ get('drawer-settings').addEventListener('click', () => { get('session-drawer').c
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
+// 空状态一键新建：沿用电脑端默认终端配置；其他配置仍走右上角「＋」。
+get('terminal-empty-new').addEventListener('click', () => { void newSession('default'); });
 
 async function newSession(terminalProfile) {
   if (busy) return;

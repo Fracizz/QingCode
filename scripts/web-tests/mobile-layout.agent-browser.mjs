@@ -63,6 +63,7 @@ try {
   run('set', 'viewport', '390', '844')
   evaluate(captureTerminal)
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal opens with a useful viewport and dimensions', `document.querySelector('#terminal-status').textContent === '会话中' && window.__layoutTerm.rows > 20 && document.querySelector('#terminal-size').textContent.includes('×') && ${terminalFits}`)
   // A large physical corner must not squeeze every row of the terminal toolbar.
   evaluate(`document.documentElement.style.setProperty('--corner-inset', '48px'); document.documentElement.style.setProperty('--corner-bottom-inset', '22px')`)

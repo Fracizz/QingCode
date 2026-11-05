@@ -34,6 +34,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'open project list' })
     await page.click('#project-list .row:first-child', { label: 'open local project' })
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
 
     await step('the first terminal is created from the desktop default profile', async () => {
@@ -104,6 +105,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         && document.querySelector('#active-host').dataset.state === 'online')
       await page.click('#dashboard-nav [data-page="project"]', { label: 'open legacy project list' })
       await page.click('#project-list .row:first-child', { label: 'open legacy project' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await openDialog('open dialog on legacy desktop')
       await page.waitForFunction(() => !document.querySelector('#terminal-profiles-error').hidden)

@@ -134,6 +134,11 @@
             <pre id="history-content"></pre>
           </div>
         </section>
+        <!-- 项目暂无手机终端时的空状态：进入项目不再自动新建终端，由用户决定。 -->
+        <div id="terminal-empty" hidden>
+          <p>此项目还没有终端</p>
+          <button id="terminal-empty-new" class="primary" type="button">新建终端</button>
+        </div>
         <p id="font-toast" role="status" hidden></p>
         <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg><span>回到最新</span></button>
       </div>

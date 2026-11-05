@@ -344,11 +344,18 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .terminal-selection-handle:active:not(:disabled), .terminal-selection-handle:focus-visible { background: transparent; }
 #terminal-history { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--console); }
 #history-more { color: var(--accent); font-size: 13px; }
-#history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 12px; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+#history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 #history-more { width: 100%; }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
+#terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
+#terminal-empty[hidden] { display: none; }
+#terminal-empty-new { min-height: 44px; padding: 0 24px; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
 #history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
+/* 历史左右边距与 #viewport 一致，打开历史时文字不左右跳；分隔条区分全屏程序的采样画面与当前画面。 */
+#history-content .history-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; color: var(--muted); font: 600 11px/1.6 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+#history-content .history-divider::before, #history-content .history-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+#history-content .history-divider:first-child { margin-top: 0; }
 #viewport { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
 #scroll-bottom { position: absolute; right: 14px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
 #scroll-bottom svg { width: 16px; height: 16px; }

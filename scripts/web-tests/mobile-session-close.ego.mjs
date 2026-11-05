@@ -43,6 +43,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]')
     await page.click('#project-list .row:first-child')
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation(false))
     await page.fill('#compose', '第一会话的草稿')

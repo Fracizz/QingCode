@@ -35,6 +35,7 @@ try {
   check('电脑连接成功', `document.querySelector('#active-host').dataset.state === 'online'`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('终端可输入', `document.querySelector('#terminal-status').textContent === '会话中'`)
   evaluate(`window.__keyEvents = []; document.addEventListener('click', e => window.__keyEvents.push({id:e.target.id,key:e.target.dataset.key,disabled:e.target.disabled}),true)`)
   check('常用区为单行，Esc、Tab、Ctrl+C 在最前，没有重复补全工具栏', `(() => { const keys = [...document.querySelector('#special-keys').children]; return keys.length === 11 && keys.slice(0, 3).map(k => k.dataset.key).join() === 'esc,tab,interrupt' && new Set(keys.map(k => Math.round(k.getBoundingClientRect().top))).size === 1 && !document.querySelector('#completion-tools'); })()`)

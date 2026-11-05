@@ -43,6 +43,7 @@ try {
   }; window.__mobileFixture.state.sessions.set(window.__resumed.id, window.__resumed); window.__mobileFixture.state.nextSession=2`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('reattach displays the latest screen without replaying the old stream', `document.querySelector('#terminal-status').textContent === '会话中' && window.__mobileFixture.terminalText().includes('LATEST READY') && !window.__mobileFixture.terminalText().includes('slow old output')`)
   check('first poll requests a snapshot and follows its exact sequence', `window.__mobileFixture.state.polls[0].latest === true && window.__mobileFixture.state.polls.some(p=>p.from===1000 && !p.latest) && !window.__mobileFixture.state.polls.some(p=>p.from===0 && !p.latest)`)
   check('history is not downloaded before the user requests it', `window.__mobileFixture.state.historyRequests.length === 0 && !document.querySelector('#history-open') && document.querySelector('#terminal-history').hidden`)

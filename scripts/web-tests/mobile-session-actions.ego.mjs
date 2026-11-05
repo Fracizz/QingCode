@@ -67,6 +67,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse trusted projects' })
     await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
 
     await step('three named sessions keep desktop order before anything is pinned', async () => {
@@ -131,6 +132,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#back', { label: 'return to dashboard' })
       await page.click('#dashboard-nav [data-page="home"]', { label: 'show terminal home' })
       await page.click('#resume', { label: 'resume pinned project' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await drawer()
       assert.deepEqual(await order(), ['丙 部署', '乙 测试', '甲 构建'])

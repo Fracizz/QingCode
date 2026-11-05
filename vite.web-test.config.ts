@@ -13,6 +13,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'gestures.js': ['mobile/android/web/gestures.js', 'text/javascript'],
   'composer.js': ['mobile/android/web/composer.js', 'text/javascript'],
   'terminalHistory.js': ['mobile/android/web/terminalHistory.js', 'text/javascript'],
+  'historyRender.js': ['mobile/android/web/historyRender.js', 'text/javascript'],
   'terminalSelection.js': ['mobile/android/web/terminalSelection.js', 'text/javascript'],
   'connectionLatency.js': ['mobile/android/web/connectionLatency.js', 'text/javascript'],
   'workspaceState.js': ['mobile/android/web/workspaceState.js', 'text/javascript'],

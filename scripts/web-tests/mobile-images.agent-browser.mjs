@@ -34,6 +34,7 @@ try {
   run('click', '#dashboard-nav [data-page="project"]')
   check('bottom bar is compact and reaches the bottom', `(() => { const r = document.querySelector('#dashboard-nav').getBoundingClientRect(); return r.height <= 56 && r.bottom === innerHeight; })()`)
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal ready', `document.querySelector('#terminal-status').textContent === '会话中'`)
   run('eval', `window.__imageTest = { original: document.querySelector('#terminal-name').textContent, inputCount: window.__mobileFixture.state.inputs.length }`)
   check('first terminal uses the desktop default profile', `${creates('default')} === 1`)

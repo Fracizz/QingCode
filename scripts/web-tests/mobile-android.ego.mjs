@@ -140,6 +140,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
     await step('resume card reopens the same session on the new address', async () => {
       await page.click('loc=role:button[name="终端"]', { label: 'open home page' })
       await page.click('#resume', { label: 'resume last terminal' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.getElementById('terminal-status').textContent === '会话中')
       assert.match(await terminalText(), /echo after/)
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))

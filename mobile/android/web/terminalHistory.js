@@ -1,3 +1,5 @@
+import { renderHistoryPage, renderScreen } from './historyRender.js';
+
 /** Paged history replaces the viewport while the live terminal keeps receiving output. */
 export function attachTerminalHistory({ term, get, loadPage, onClose = () => {}, touchToProgram = () => false }) {
   const panel = get('terminal-history');
@@ -103,8 +105,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       if (!active || attempt !== generation) return;
       const height = scroll.scrollHeight;
       const top = scroll.scrollTop;
-      const text = page.lines.length ? page.lines.join('\n') + '\n' : '';
-      content.prepend(document.createTextNode(text));
+      content.prepend(renderHistoryPage(content.ownerDocument, page.lines));
       cursor = page.before;
       more = page.more === true;
       moreButton.hidden = !more;
@@ -133,10 +134,8 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     const buffer = term.buffer.active;
     const localDepth = buffer.type === 'normal' ? buffer.baseY - buffer.viewportY : 0;
     startCursor = Math.max(0, latest - localDepth);
-    // Copy the visible rows first: the first movement has no blank/loading-screen jump.
-    const rows = Array.from({ length: term.rows }, (_, index) =>
-      buffer.getLine(buffer.viewportY + index)?.translateToString(true) ?? '');
-    content.textContent = rows.join('\n');
+    // 先带颜色复制可见行：第一次滑动不会出现空白或加载画面的跳变。
+    content.replaceChildren(renderScreen(content.ownerDocument, term));
     content.style.fontSize = term.options.fontSize + 'px';
     content.style.fontFamily = term.options.fontFamily;
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;

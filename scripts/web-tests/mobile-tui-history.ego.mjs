@@ -56,6 +56,7 @@ export async function run({ spaceId, finish = true } = {}) {
     }))
     await page.click('#dashboard-nav [data-page="project"]')
     await page.click('#project-list .row:first-child')
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation(false))
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })

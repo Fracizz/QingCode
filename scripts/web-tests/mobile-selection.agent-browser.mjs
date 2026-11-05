@@ -32,6 +32,7 @@ try {
   check('paired computer is online', `document.querySelector('#active-host').dataset.state==='online'`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal is ready', `document.querySelector('#terminal-status').textContent==='会话中'`)
   write('alpha 中文内容 omega\r\nsecond line\r\nthird line')
   evaluate('window.__inputCount=window.__mobileFixture.state.inputs.length')

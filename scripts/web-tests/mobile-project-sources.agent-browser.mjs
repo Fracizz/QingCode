@@ -42,6 +42,7 @@ try {
   check('connection name search identifies WSL remote projects', `document.querySelectorAll('#project-list .row').length === 2 &&
     ${sources}[0] === '远端 · WSL · localhost'`)
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal header keeps source on one line without the address', `document.getElementById('terminal-status').textContent === '会话中' &&
     document.getElementById('terminal-host').textContent === 'django · 远端 · WSL'`)
   run('click', '#show-sessions')

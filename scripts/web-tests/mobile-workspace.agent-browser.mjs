@@ -30,6 +30,7 @@ const pair = () => {
   check('paired computer is online', `document.querySelector('#active-host').dataset.state==='online'`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal is attached', `document.querySelector('#terminal-status').textContent==='会话中'`)
 }
 const fits = `document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('dialog[open]')].every(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth+1 && r.top>=0 && r.bottom<=innerHeight+1})`

@@ -28,6 +28,7 @@ try {
   check('computer is connected', `document.querySelector('#active-host').dataset.state === 'online'`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('click', '#project-list .row:first-child')
+  evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal is ready', `document.querySelector('#terminal-status').textContent === '会话中' && !document.querySelector('#slash-command').disabled`)
 
   resetInputs()

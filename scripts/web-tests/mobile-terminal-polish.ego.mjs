@@ -64,6 +64,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse fixture projects' })
     await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await waitTerminal()
   }
   try {
@@ -92,6 +93,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       // 离开再进入终端后不再显示说明。
       await page.evaluate(() => window.qingBack())
       await page.click('#project-list .row:first-child', { label: 'reopen terminal project' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await waitTerminal()
       assert.equal(await page.evaluate(() => document.querySelector('#input-tip').hidden), true)
     })

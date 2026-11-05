@@ -53,6 +53,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse fixture projects' })
     await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await step('shortcut labels fit at 320px, 390px, keyboard height and landscape', async () => {
       for (const [width, height, name] of [[390, 844, 'portrait'], [320, 640, 'narrow'], [390, 400, 'keyboard'], [844, 390, 'landscape']]) {
@@ -130,6 +131,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       await page.evaluate(() => { window.__mobileFixture.state.inputGate = null; window.__releaseInput() })
       await page.click('#dashboard-nav [data-page="project"]', { label: 'return to fixture projects' })
       await page.click('#project-list .row:first-child', { label: 'resume previous terminal' })
+      await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await send('queue-barrier')
       await enterReceived()
@@ -147,6 +149,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       if (await page.evaluate(() => document.querySelector('#terminal-screen').hidden)) {
         await page.click('#dashboard-nav [data-page="project"]', { label: 'browse projects after reload' })
         await page.click('#project-list .row:first-child', { label: 'resume after page reload' })
+        await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       }
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await settings()
