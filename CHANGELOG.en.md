@@ -6,12 +6,13 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.15] - 2026-11-04
+## [0.1.15-beta.1] - 2026-11-04
 
 ### Added
 
 - Android supports selecting multiple images, uploading them sequentially into the draft and retaining successful attachments after a partial failure.
 - The Android session drawer supports program titles, manual names, recent projects and ending all project sessions.
+- Long-press an Android session to open its action menu or pin it locally.
 
 ### Changed
 
@@ -22,6 +23,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 - Terminal dimensions use the available content area so collapsing shortcuts does not obscure the final row.
 - Switching sessions stops the remaining image batch and prevents late results from changing another draft.
+- Fixed Android terminal history and session actions and improved network request reliability.
 
 ## [0.1.14-beta.24] - 2026-11-03
 
