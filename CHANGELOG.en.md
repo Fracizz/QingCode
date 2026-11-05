@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.15-beta.3] - 2026-11-05
+
+### Changed
+
+- Enlarged the terminal multi-line input area for easier review and editing of longer requests.
+
 ## [0.1.15-beta.2] - 2026-11-04
 
 ### Added
