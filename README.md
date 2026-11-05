@@ -5,6 +5,8 @@
 **QingCode** 是 AI 开发时代下的**代码项目管理搭子**：把多项目切换、服务启动、终端现场和轻量编辑放进同一个 Windows 窗口。  
 不是再做一个 VS Code / Zed，而是补上「同时盯多个项目、一键拉起前后端与工具链」这件事。
 
+桌面之外，**QingCode Android** 把这套终端现场延伸到手机：连回同一台 Windows 电脑，继续同一批项目与会话，出门也能盯着 AI 干活。
+
 ## 界面预览
 
 以下为中文界面实拍，保留原始 PNG，点击图片可查看原图。截图中的版本号为拍摄时版本。
@@ -98,6 +100,19 @@ qingcode-server direct-info --include-secret
 - **断线后接回终端**：网络断开或直连入口重启时，仍存活的远端 daemon 会保留 PTY，重连后接回原会话。明确关闭终端、进程退出或机器重启仍会结束会话。原有 SSH 连接方式继续保留。
 
 完整配对、端口变更、会话边界与部署说明见 [Agent 端口直连](./docs/direct-agent.md)。
+
+### 安卓移动版：把终端现场带到手机
+
+QingCode Android 是**终端优先的远程控制器**，不是另一个手机 IDE。手机通过局域网或 Tailscale 等虚拟组网连接 Windows 上运行的 QingCode，直接打开电脑端已添加并信任的项目——本机、WSL、SSH 与 Agent 直连都在同一列表里；选一个项目，就能接回电脑上的终端现场。
+
+为什么坚持用终端，而不是做一个「手机版 AI 客户端」：
+
+- **原汁原味**：手机上运行的就是电脑上的同一个 CLI、同一个 TUI、同一套配置与快捷键。Claude Code、OpenCode、Codex 等怎么在终端里用，手机上就怎么用；CLI 更新后，新能力也直接可用，不必等第三方客户端跟进适配。
+- **没有魔改，不额外引入风控风险**：QingCode 不改写、不注入、不代理任何 AI 服务的客户端或协议，只负责把真实终端画面和按键搬到手机。账号、模型、额度与请求始终留在官方 CLI 内，和坐在电脑前敲命令走同一条链路，不会因为「第三方客户端魔改」多出一层账号风险。
+- **现场留在电脑上**：终端会话由 Windows 端托管。手机短暂离线、切换电脑或重开 App 都不会中断正在运行的任务；回来时接续原会话，继续看输出、补输入。
+- **为手机重做的操作层**：扫码配对、多电脑切换、常用快捷键栏、中文输入与粘贴、图片上传、历史回看与输出搜索、字号调整与横屏沉浸；桌面端负责 SSH / Server 凭据和项目信任，手机只在已授权范围内操作终端。
+
+连接方式：Windows 端打开 **设置 → 功能 → Android 移动连接**，设置端口与密码并启用，再用手机扫码或在「连接」中粘贴配对链接。手机与电脑需网络互通，Android 8.0+。完整配对、会话与安全边界见 [Android 移动端说明](./mobile/README.md)。
 
 ### 运行配置：管好项目里的服务启动
 
@@ -195,12 +210,14 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 3. 需要时一键启动服务，终端按任务分开；可用双终端或田字四终端同时观察多路输出
 4. 用终端配置进入 AI CLI，或从设置复制 CLI Skill 给 Agent  
 5. 在标题栏切到下一个项目——编辑与终端状态仍在  
+6. 离开电脑时用 QingCode Android 扫码接回，继续同一终端里的输入与输出
 
 ## 适合谁
 
 - 同时维护多个本地仓库，又要经常起停服务的人  
 - 已经在用 AI 编程工具，需要一个更稳的本机项目 / 进程搭子  
 - 不想为「切项目 + 起服务」再开一整套重型 IDE 的人  
+- 经常离开电脑，却想用手机继续盯 AI CLI、服务日志或远程构建的人
 
 ## 获取应用
 
@@ -211,11 +228,13 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 | Windows | x64 | `QingCode_*-windows-x64-setup.exe`（推荐）或便携 `.exe` |
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
+| Android 8.0+ | 通用 | `QingCode_<版本>-android.apk`（需配合 Windows 桌面端） |
 
 - Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；首次安装会显示安装目录，点击「开始安装」后才执行；检测到旧版本时在原目录自动覆盖升级，无需先卸载。同版本重装默认也需确认。配置和项目记录保留，完成页的「运行QingCode」默认勾选，可取消。升级会先正常关闭当前安装的应用；如有未保存内容，请处理应用内的保存提示，取消关闭或超时会停止升级，不强制结束进程。`/S` 可完全静默安装，只有显式传入 `/R` 才在静默安装后启动。需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）；缺失时自动下载安装，失败时提供下载入口。升级也会清理旧版导航组件文件，保留组件目录中额外存放的文件。
 - Windows 安装包和便携版都不内置 `servers/`；两者共用独立的 `QingCode-servers.zip` 或在线下载。需要离线使用时，将 zip 中的 `servers/`（含 `manifest.json`）放到安装目录或 exe 同目录。本地 `pnpm package` / `package:exe` 默认构建并校验服务包；`-SkipServer` 仅跳过编译，仍校验并发布当前版本产物，旧版本或损坏文件会阻止打包。
 - 打包默认覆盖项目根目录相对路径 `release/servers/` 中的同名二进制和 `manifest.json`，清理旧架构服务文件并重新生成 `release/QingCode-servers.zip`，保留目录中的其他文件。路径不依赖调用者当前目录，也不绑定某台机器的绝对路径。
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
+- Android：APK 为通用包，需 Android 8.0+，连接 Windows 上运行中的 QingCode（同一局域网或 Tailscale 等虚拟组网）。首次使用先在电脑端启用「Android 移动连接」并扫码配对；仅通过 Releases 分发，覆盖安装即可升级，发布签名保持一致。详见 [Android 移动端说明](./mobile/README.md)。
 
 本地打包（Windows x64 本机）：
 
@@ -252,7 +271,7 @@ pnpm typecheck:legacy  # 经典版对照 / 回退检查
 
 ## 技术栈
 
-Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust
+Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust；Android 端为 Java + WebView
 
 ## 许可证
 

@@ -5,6 +5,8 @@
 **QingCode** is a **project-management companion for the AI coding era** on Windows: multi-project switching, service startup, terminal sessions, and light editing in one window.  
 It is not another VS Code or Zed — it focuses on keeping local and remote projects and their processes under control.
 
+**QingCode Android** extends that terminal workspace to your phone: connect back to the same Windows machine and continue in the same projects and sessions, even when you step away from the desk.
+
 ## Screenshots
 
 These original PNG screenshots show the Simplified Chinese UI; English is also available in Settings. Click an image to view it at full resolution. Version numbers reflect the build used when the screenshots were taken.
@@ -99,6 +101,19 @@ Import the pairing JSON, enter the remote host's actual IP address or hostname, 
 
 See [Direct Agent connections](./docs/direct-agent.md) (Chinese) for pairing, port changes, session boundaries, and deployment details.
 
+### Android: your terminal workspace in your pocket
+
+QingCode Android is a **terminal-first remote controller**, not another mobile IDE. It connects over your LAN or a virtual network such as Tailscale to QingCode running on Windows and opens the projects already added and trusted there — local, WSL, SSH, and direct Agent projects in one list. Pick one and you are back in the desktop terminal session.
+
+Why terminal-first instead of a "mobile AI client":
+
+- **The real thing, unchanged**: the phone runs the same CLI, the same TUI, and the same configuration and shortcuts as your desktop. Claude Code, OpenCode, Codex, and similar tools behave exactly as they do in a terminal, and new CLI features arrive without waiting for a third-party client to catch up.
+- **No patched clients, no added platform risk**: QingCode does not rewrite, inject into, or proxy any AI service's client or protocol. It only carries the real terminal screen and keystrokes to your phone. Accounts, models, quotas, and requests stay inside the official CLI — the same path as typing at your desk — so there is no extra account risk from a modified third-party client.
+- **The session stays on the desktop**: Windows hosts the terminal sessions. A brief phone disconnect, a switch between computers, or reopening the app does not interrupt a running task; reconnect and continue in the same session.
+- **A control layer built for phones**: QR pairing, multiple computers, a shortcut bar, IME input and paste, image upload, history and output search, font sizing, and landscape immersive mode. The desktop keeps SSH / Server credentials and workspace trust; the phone only acts within what you have authorized.
+
+Connect from **Settings → Features → Android mobile connection** on Windows: set a port and password, enable it, then scan the QR code or paste the pairing link in the phone's **Connections** screen. Phone and computer must be able to reach each other, and Android 8.0+ is required. See [Android mobile notes](./mobile/README.md) for pairing, sessions, and security boundaries.
+
 ### Run configurations: start project services
 
 This is a core QingCode workflow. Define run configurations per project (stored in `.qingcode/run.json`):
@@ -191,12 +206,14 @@ A typical pairing: start API, web, and workers in QingCode and keep the scene wh
 3. Start services in one click; use dual terminals or the 2×2 quad-terminal grid for several output streams
 4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent
 5. Switch projects from the title bar — editor and terminal state remain
+6. Away from the desk, pair QingCode Android and continue typing or reading in the same terminal
 
 ## Who it is for
 
 - People who keep several local repos and frequently start/stop services  
 - Developers already using AI coding tools who want a steadier local project / process companion  
 - Anyone who would rather not launch a full IDE just to switch projects and bring services up  
+- People who leave the desk but still want to watch AI CLIs, service logs, or remote builds from their phone
 
 ## Get the app
 
@@ -207,9 +224,11 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | x64 | `QingCode_*-windows-x64-setup.exe` (recommended) or portable `.exe` |
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
+| Android 8.0+ | Universal | `QingCode_<version>-android.apk` (works with the Windows desktop app) |
 
 - Windows: portable exe or NSIS installer (`*-setup.exe`). Double-click setup to install or upgrade in place automatically, preserving settings and project history without an uninstall prompt or wizard. The completion page offers a checked, optional action to launch QingCode. Setup first requests a normal app close; handle any unsaved-file prompts in the app. Cancellation or timeout stops the upgrade without killing the editor. `/S` installs silently; launching afterwards requires an explicit `/R`. Needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/); if missing, setup tries an automatic installation and offers download links on failure. Upgrades also remove retired navigation component files while preserving additional files in those directories.
 - macOS: unsigned builds may need right-click → Open the first time  
+- Android: a universal APK for Android 8.0+, connecting to a running QingCode on Windows over the same LAN or a virtual network such as Tailscale. Enable **Settings → Features → Android mobile connection** and pair by QR code first. Distributed through Releases only; install updates over the existing app with the same release signature. See [Android mobile notes](./mobile/README.md).
 
 Local packaging (Windows x64 host):
 
@@ -242,7 +261,7 @@ See [AGENTS.md](./AGENTS.md) for repo conventions and [HELP.md](./HELP.md) for u
 
 ## Stack
 
-Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust
+Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust; the Android app uses Java + WebView
 
 ## License
 
