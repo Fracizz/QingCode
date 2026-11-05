@@ -20,8 +20,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   }
   const order = () => page.evaluate(() => [...document.querySelectorAll('#session-options .session-option')].map(row => row.querySelector('.session-label').textContent))
   const actions = async (position, label) => {
-    await page.click(`#session-options .session-option:nth-child(${position}) .icon-button`, { label })
+    await page.click(`#session-options .session-option:nth-child(${position}) .session-more`, { label })
     await page.waitForSelector('#session-actions-dialog[open]')
+    await settle('#session-actions-dialog')
   }
   const touchHold = async (selector, ms) => {
     const point = await page.evaluate(selector => {
@@ -33,7 +34,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
   }
   const renameCurrent = async value => {
-    await page.click('#session-options .session-option[data-current="true"] .icon-button', { label: 'current session actions' })
+    await page.click('#session-options .session-option[data-current="true"] .session-more', { label: 'current session actions' })
+    await page.waitForSelector('#session-actions-dialog[open]')
+    await settle('#session-actions-dialog')
     await page.click('#session-action-rename', { label: 'rename from actions' })
     await page.fill('#session-name-input', value)
     await page.click('#save-session-name', { label: 'save session name' })
@@ -146,7 +149,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await actions(1, 'open pinned session actions')
       await page.click('#session-action-end', { label: 'end second session' })
       await page.waitForSelector('#confirm-dialog[open]')
-      assert.equal(await page.evaluate(() => document.querySelector('#confirm-title').textContent), '结束会话？')
+      assert.equal(await page.evaluate(() => document.querySelector('#confirm-title').textContent), '关闭会话？')
       await page.click('#confirm-action', { label: 'confirm ending session' })
       await page.waitForFunction(() => document.querySelectorAll('#session-options .session-option').length === 2)
       assert.deepEqual(await order(), ['甲 构建', '丙 部署'])

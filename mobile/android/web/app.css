@@ -482,13 +482,17 @@ dialog.session-drawer {
 dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-in 180ms var(--ease); }
 @keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.drawer-heading h2 { margin: 0; }
-#session-context { font-size: 13px; overflow-wrap: anywhere; }
-#session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: var(--paper); }
-.session-option { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; }
-.session-option .row { grid-template-columns: minmax(0, 1fr); padding: 12px; }
-.session-option strong { display: flex; align-items: flex-start; gap: 8px; white-space: normal; overflow-wrap: anywhere; }
-.session-label { min-width: 0; }
+.drawer-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; }
+#session-count { color: var(--muted); font-size: 13px; font-weight: 500; }
+#session-context { padding: 0 4px 2px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+#drawer-new-session { width: 100%; flex: none; font-size: 14px; font-weight: 650; }
+#session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: transparent; border-radius: 0; padding-block: 2px; }
+.session-option { display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; align-items: center; padding: 4px; border-radius: var(--control-radius); }
+#session-options > .session-option + .session-option { border-top: 0; margin-top: 4px; }
+.session-option .row { grid-template-columns: minmax(0, 1fr); padding: 8px; border-radius: var(--control-radius); text-align: left; }
+.session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
+.session-label { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.session-option small { margin-top: 4px; font-size: 11px; }
 .session-spinner { display: none; flex: none; width: 20px; height: 20px; margin-top: 3px; color: var(--accent); animation: spin 1s linear infinite; }
 .session-option[data-running="true"] .session-spinner { display: block; }
 /* 长按打开会话操作：避免系统选中文字或弹出长按菜单。 */
@@ -497,12 +501,14 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option[data-pinned="true"] .session-pin { display: block; }
 .session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
 .session-option .icon-button { color: var(--muted); }
-.drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; }
-.drawer-actions .wide { grid-column: 1 / -1; }
+.session-option .session-close:active:not(:disabled), .session-option .session-close:focus-visible { color: var(--error); }
+.drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
+#end-all-sessions { grid-column: 1 / -1; }
 .drawer-actions button { padding-inline: 8px; font-size: 13px; }
 @media (max-height: 450px) {
-  dialog.session-drawer[open] { overflow-y: auto; }
-  #session-options { flex: none; max-height: 45vh; }
+  dialog.session-drawer[open] { gap: 6px; }
+  #session-context { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .drawer-actions { padding-top: 8px; }
 }
 .sheet-handle { display: none; }
 

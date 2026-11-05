@@ -493,6 +493,7 @@ enum Operation {
         device: Option<String>,
     },
     Ping,
+    Capabilities,
     Projects,
     Sessions {
         project: String,
@@ -756,16 +757,15 @@ impl Hub {
         let owned: Vec<String> = inner
             .sessions
             .iter()
-            .filter(|(_, session)| session.owner == id && session.ready)
+            // Invalidate reservations too; late spawns must close their PTY.
+            .filter(|(_, session)| session.owner == id)
             .map(|(session_id, _)| session_id.clone())
             .collect();
         owned
             .into_iter()
             .filter_map(|session_id| {
                 let session = inner.sessions.remove(&session_id)?;
-                session
-                    .exit
-                    .is_none()
+                (session.ready && session.exit.is_none())
                     .then_some((session_id, session.project.kind))
             })
             .collect()
@@ -824,6 +824,41 @@ impl Hub {
                 (id.clone(), session.project.kind)
             })
             .collect()
+    }
+
+    fn reserve_session(
+        &self,
+        id: String,
+        project: Project,
+        device: &str,
+        label: Option<String>,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        require_device(&inner, device)?;
+        if inner.sessions.len() >= MAX_SESSIONS {
+            return Err("终端数量已达上限，请结束闲置会话。".into());
+        }
+        inner.next_number += 1;
+        let mut session = Session::new(project, device.to_string(), inner.next_number);
+        session.label = label;
+        inner.sessions.insert(id, session);
+        Ok(())
+    }
+
+    /// A false result makes the caller close a successfully spawned PTY whose
+    /// reservation was cancelled during a native/remote launch.
+    fn finish_create(&self, id: &str, succeeded: bool) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let authorized = inner
+            .sessions
+            .get(id)
+            .is_some_and(|session| require_device(&inner, &session.owner).is_ok());
+        if !succeeded || !authorized {
+            inner.sessions.remove(id);
+            return false;
+        }
+        inner.sessions.get_mut(id).unwrap().ready = true;
+        true
     }
 
     fn take_live_sessions(&self) -> Vec<(String, ProjectKind)> {
@@ -1597,6 +1632,11 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
         | Operation::AgentClose { .. }
         | Operation::AgentDelete { .. }
         | Operation::AgentUsage { .. } => agent_operation(app, operation).await,
+        Operation::Capabilities => Ok(json!({
+            "protocolVersion": 1,
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history"],
+            "sessionScope": "shared",
+        })),
         Operation::Projects => desktop(app, None).await,
         Operation::Sessions { project } => {
             let inner = hub.inner.lock().unwrap();
@@ -1698,6 +1738,11 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             if current.path != project.path || current.kind != project.kind {
                 return Err("项目位置已变化，请重新打开终端后发送图片。".into());
             }
+            // A desktop prompt may have outlived revocation or session closure.
+            {
+                let inner = hub.inner.lock().unwrap();
+                image_project(&inner, &id, device)?;
+            }
             let bytes = decode_image(&data)?;
             let extension = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
                 "png"
@@ -1784,9 +1829,18 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
     }
 }
 
+fn require_device(inner: &HubState, device: &str) -> Result<(), String> {
+    if !inner.accepting || !inner.devices.iter().any(|entry| entry.saved.id == device) {
+        return Err("移动连接已停止或设备已移除。".into());
+    }
+    Ok(())
+}
+
 fn image_project(inner: &HubState, id: &str, device: &str) -> Result<Project, String> {
+    require_device(inner, device)?;
     let session = inner.sessions.get(id).ok_or("终端不存在。")?;
-    if !inner.accepting || !session.ready || session.exit.is_some() || session.owner != device {
+    // Paired devices share phone sessions. owner only selects lifecycle cleanup.
+    if !session.ready || session.exit.is_some() {
         return Err("当前设备没有可用的终端会话。".into());
     }
     Ok(session.project.clone())
@@ -1884,20 +1938,12 @@ async fn create(
         None => None,
     };
     let id = format!("{TERMINAL_PREFIX}{}", Uuid::new_v4().simple());
-    {
-        let mut inner = hub.inner.lock().unwrap();
-        if !inner.accepting {
-            return Err("移动连接已停止。".into());
-        }
-        if inner.sessions.len() >= MAX_SESSIONS {
-            return Err("终端数量已达上限，请结束闲置会话。".into());
-        }
-        inner.next_number += 1;
-        let number = inner.next_number;
-        let mut session = Session::new(project.clone(), device.to_string(), number);
-        session.label = profile.as_ref().and_then(LaunchProfile::label);
-        inner.sessions.insert(id.clone(), session);
-    }
+    hub.reserve_session(
+        id.clone(),
+        project.clone(),
+        device,
+        profile.as_ref().and_then(LaunchProfile::label),
+    )?;
     let (cols, rows) = size(cols, rows);
     hub.with_session(&id, |session| session.screen.resize(cols, rows));
     let command = profile
@@ -1974,18 +2020,7 @@ async fn create(
         .map_err(|error| error.to_string())
         .and_then(|result| result)
     };
-    let kept = {
-        let mut inner = hub.inner.lock().unwrap();
-        if result.is_err() {
-            inner.sessions.remove(&id);
-            false
-        } else if let Some(session) = inner.sessions.get_mut(&id) {
-            session.ready = true;
-            true
-        } else {
-            false
-        }
-    };
+    let kept = hub.finish_create(&id, result.is_ok());
     result?;
     if !kept {
         let _ = end(app, id, project.kind).await;
@@ -2176,22 +2211,73 @@ mod tests {
     }
 
     #[test]
-    fn image_upload_requires_a_live_session_owned_by_the_device() {
-        let mut inner = HubState {
-            accepting: true,
-            ..HubState::default()
-        };
-        let mut session = Session::new(project(), "phone".into(), 1);
+    fn image_upload_shares_live_sessions_between_paired_devices_only() {
+        let hub = accepting_hub(Vec::new());
+        let phone_token = hub.pair(PEER, CODE, None, |_| Ok(())).unwrap();
+        let other_token = hub.pair(PEER, CODE, None, |_| Ok(())).unwrap();
+        let phone = hub.authenticate(Some(&phone_token)).unwrap();
+        let other = hub.authenticate(Some(&other_token)).unwrap();
+        let mut inner = hub.inner.lock().unwrap();
+        let mut session = Session::new(project(), phone.clone(), 1);
         session.ready = true;
         inner.sessions.insert("mobile-test".into(), session);
-        assert!(image_project(&inner, "mobile-test", "phone").is_ok());
-        assert!(image_project(&inner, "mobile-test", "other-phone").is_err());
-        assert!(image_project(&inner, "missing", "phone").is_err());
+        assert!(image_project(&inner, "mobile-test", &phone).is_ok());
+        assert!(image_project(&inner, "mobile-test", &other).is_ok());
+        assert!(image_project(&inner, "mobile-test", "unpaired").is_err());
+        assert!(image_project(&inner, "missing", &phone).is_err());
         inner.sessions.get_mut("mobile-test").unwrap().ready = false;
-        assert!(image_project(&inner, "mobile-test", "phone").is_err());
+        assert!(image_project(&inner, "mobile-test", &phone).is_err());
         inner.sessions.get_mut("mobile-test").unwrap().ready = true;
         inner.accepting = false;
-        assert!(image_project(&inner, "mobile-test", "phone").is_err());
+        assert!(image_project(&inner, "mobile-test", &phone).is_err());
+    }
+
+    #[test]
+    fn revoked_device_cannot_reserve_after_a_desktop_prompt_completes() {
+        let hub = accepting_hub(Vec::new());
+        let token = hub.pair(PEER, CODE, None, |_| Ok(())).unwrap();
+        let device = hub.authenticate(Some(&token)).unwrap();
+        hub.forget_device(&device);
+        assert!(hub
+            .reserve_session("late".into(), project(), &device, None)
+            .is_err());
+        assert!(!hub.holds("late"));
+    }
+
+    #[tokio::test]
+    async fn revocation_during_spawn_invalidates_the_reservation_and_rejects_late_completion() {
+        let hub = Arc::new(accepting_hub(Vec::new()));
+        let token = hub.pair(PEER, CODE, None, |_| Ok(())).unwrap();
+        let device = hub.authenticate(Some(&token)).unwrap();
+        hub.reserve_session("pending".into(), project(), &device, None)
+            .unwrap();
+        let (spawned, finish) = oneshot::channel();
+        let launching = hub.clone();
+        let late_spawn = tokio::spawn(async move {
+            finish.await.unwrap();
+            // false is the production signal to kill the late PTY.
+            launching.finish_create("pending", true)
+        });
+        assert!(hub.forget_device(&device).is_empty());
+        assert!(!hub.holds("pending"));
+        spawned.send(()).unwrap();
+        assert!(!late_spawn.await.unwrap());
+        assert!(!hub.holds("pending"));
+    }
+
+    #[test]
+    fn stopped_listener_or_failed_spawn_cannot_publish_a_session() {
+        let hub = accepting_hub(Vec::new());
+        let token = hub.pair(PEER, CODE, None, |_| Ok(())).unwrap();
+        let device = hub.authenticate(Some(&token)).unwrap();
+        hub.reserve_session("failed".into(), project(), &device, None)
+            .unwrap();
+        assert!(!hub.finish_create("failed", false));
+        hub.reserve_session("stopped".into(), project(), &device, None)
+            .unwrap();
+        hub.inner.lock().unwrap().accepting = false;
+        assert!(!hub.finish_create("stopped", true));
+        assert!(!hub.holds("stopped"));
     }
 
     #[test]

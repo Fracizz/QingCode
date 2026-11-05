@@ -23,6 +23,8 @@
     ],
     creates: [],
     terminalProfileRequests: 0,
+    capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history'], sessionScope: 'shared' },
+    capabilityRequests: 0,
     sessionNames: true,
     renameError: null,
     renameDelay: 0,
@@ -290,6 +292,9 @@
     if (state.hosts.get(saved.id) !== saved.fingerprint) return { ok: false, error: 'Windows 身份校验失败，请重新核对证书指纹。' }
     if (request.op.startsWith('agent_')) return agent(request)
     switch (request.op) {
+      case 'capabilities':
+        state.capabilityRequests += 1
+        return state.capabilities ? { ok: true, data: state.capabilities } : { ok: false, error: '请求格式无效。' }
       case 'projects': return { ok: true, data: state.projects }
       case 'sessions': {
         state.sessionRequests.push({ project: request.project, at: Date.now() })

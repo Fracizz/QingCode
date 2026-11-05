@@ -56,8 +56,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -80,9 +78,7 @@ public final class MainActivity extends Activity {
         System.setProperty("http.maxConnections", "4");
     }
 
-    private final ExecutorService control = Executors.newSingleThreadExecutor();
-    private final ExecutorService output = Executors.newSingleThreadExecutor();
-    private final ExecutorService latency = Executors.newSingleThreadExecutor();
+    private final NativeRequests requests = new NativeRequests();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private final List<Integer> cameraReplies = new ArrayList<>();
     private WebView view;
@@ -207,6 +203,7 @@ public final class MainActivity extends Activity {
                         case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "composer.js": case "terminalHistory.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "chat.js": case "chatModel.js":
+                        case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
@@ -485,9 +482,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         imageSelections.clear();
-        control.shutdownNow();
-        output.shutdownNow();
-        latency.shutdownNow();
+        requests.close();
         if (view != null) {
             view.removeJavascriptInterface("QingCodeNative");
             view.destroy();
@@ -505,6 +500,8 @@ public final class MainActivity extends Activity {
     }
 
     public final class Bridge {
+        @JavascriptInterface public void cancel(int id) { requests.cancel(id); }
+
         @JavascriptInterface public void request(int id, String payload) {
             if (payload == null || payload.length() > 12 * 1024 * 1024) {
                 reply(id, failure("请求过大。"));
@@ -571,15 +568,9 @@ public final class MainActivity extends Activity {
                     reply(id, failure("图片选择已失效，请重新选择。"));
                     return;
                 }
-                control.execute(() -> {
-                    try {
-                        byte[] image = readImage(selection.uris.get(index), selection.compression);
-                        replySafely(id, new JSONObject().put("data", Base64.encodeToString(image, Base64.NO_WRAP)));
-                    } catch (IOException error) {
-                        reply(id, failure(error.getMessage()));
-                    } catch (Exception | OutOfMemoryError error) {
-                        reply(id, failure("读取图片失败，请选择较小的图片或提高压缩等级。"));
-                    }
+                enqueue(id, op, () -> {
+                    byte[] image = readImage(selection.uris.get(index), selection.compression);
+                    return success(new JSONObject().put("data", Base64.encodeToString(image, Base64.NO_WRAP)));
                 });
                 return;
             }
@@ -634,20 +625,28 @@ public final class MainActivity extends Activity {
                 });
                 return;
             }
-            ExecutorService executor = "latency".equals(op) ? latency : "poll".equals(op) ? output : control;
-            executor.execute(() -> {
-                try {
-                    reply(id, perform(request));
-                } catch (Exception error) {
-                    String reason = error instanceof SocketTimeoutException
-                        ? "连接超时，请确认电脑在线并允许局域网访问。"
-                        : error instanceof javax.net.ssl.SSLException
-                            ? "Windows 身份校验失败，请重新核对证书指纹。"
-                            : error.getMessage();
-                    reply(id, failure(reason == null ? "连接失败。" : reason));
-                }
-            });
+            enqueue(id, op, () -> perform(request));
         }
+    }
+
+    private void enqueue(int id, String op, NativeRequests.Work<JSONObject> work) {
+        long deadline = "create".equals(op) || "image".equals(op) || "read_image".equals(op)
+            || "agent_create".equals(op) || "agent_send".equals(op) || "agent_image".equals(op) ? 110_000
+            : "agent_usage".equals(op) ? 70_000 : "latency".equals(op) ? 7_000 : 40_000;
+        requests.submit(id, op, deadline, () -> {
+            try { return work.run(); }
+            catch (OutOfMemoryError error) { throw new IOException("内存不足，请选择较小图片或提高压缩等级。"); }
+        }, new NativeRequests.Reply<JSONObject>() {
+            @Override public void success(JSONObject result) { reply(id, result); }
+            @Override public void failure(Exception error) {
+                String reason = error instanceof SocketTimeoutException
+                    ? "连接超时，请确认电脑在线并允许局域网访问。"
+                    : error instanceof javax.net.ssl.SSLException
+                        ? "Windows 身份校验失败，请重新核对证书指纹。"
+                        : error.getMessage();
+                reply(id, MainActivity.failure(reason == null ? "连接失败。" : reason));
+            }
+        });
     }
 
     private void loadConnections() {
@@ -763,7 +762,7 @@ public final class MainActivity extends Activity {
         switch (op) {
             case "projects": case "sessions": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
-            case "terminal_profiles":
+            case "terminal_profiles": case "capabilities":
             case "agent_catalog": case "agent_defaults": case "agent_threads": case "agent_create": case "agent_send":
             case "agent_image": case "agent_poll": case "agent_history": case "agent_respond": case "agent_interrupt":
             case "agent_configure": case "agent_rename": case "agent_close": case "agent_delete": case "agent_usage":
@@ -887,7 +886,7 @@ public final class MainActivity extends Activity {
         private static boolean idempotent(String op) {
             switch (op) {
                 case "projects": case "sessions": case "poll": case "history": case "resize":
-                case "terminal_profiles": return true;
+                case "terminal_profiles": case "capabilities": return true;
                 case "agent_catalog": case "agent_threads": case "agent_poll": case "agent_history": case "agent_usage": return true;
                 default: return false;
             }
@@ -918,52 +917,61 @@ public final class MainActivity extends Activity {
         }
 
         private JSONObject send(String op, byte[] data) throws Exception {
+            NativeRequests.Context pending = NativeRequests.current();
+            if (pending != null) pending.checkActive();
             HttpsURLConnection http = (HttpsURLConnection) endpoint.toURL().openConnection(java.net.Proxy.NO_PROXY);
-            http.setSSLSocketFactory(sockets);
-            http.setHostnameVerifier(hosts);
-            http.setInstanceFollowRedirects(false);
-            http.setUseCaches(false);
-            http.setConnectTimeout("ping".equals(op) ? 3000 : 5000);
-            http.setReadTimeout(readTimeout(op));
-            http.setRequestMethod("POST");
-            http.setRequestProperty("Content-Type", "application/json");
-            if (!token.isEmpty()) http.setRequestProperty("Authorization", "Bearer " + token);
-            http.setFixedLengthStreamingMode(data.length);
-            http.setDoOutput(true);
-            final long began = android.os.SystemClock.elapsedRealtimeNanos();
-            try (OutputStream stream = http.getOutputStream()) { stream.write(data); }
-            int status = http.getResponseCode();
-            // Reading the body to the end returns the socket to the keep-alive pool.
-            try (InputStream stream = status < 400 ? http.getInputStream() : http.getErrorStream()) {
-                if (stream == null) throw new IOException("Windows 返回 HTTP " + status);
-                ByteArrayOutputStream response = new ByteArrayOutputStream();
-                byte[] buffer = new byte[16384];
-                for (int size; (size = stream.read(buffer)) >= 0;) {
-                    if (response.size() + size > MAX_RESPONSE) {
-                        http.disconnect();
-                        throw new IOException("Windows 响应过大。");
+            Runnable abort = http::disconnect;
+            if (pending != null) pending.cancelWith(abort);
+            try {
+                http.setSSLSocketFactory(sockets);
+                http.setHostnameVerifier(hosts);
+                http.setInstanceFollowRedirects(false);
+                http.setUseCaches(false);
+                http.setConnectTimeout("ping".equals(op) ? 3000 : 5000);
+                http.setReadTimeout(readTimeout(op));
+                http.setRequestMethod("POST");
+                http.setRequestProperty("Content-Type", "application/json");
+                if (!token.isEmpty()) http.setRequestProperty("Authorization", "Bearer " + token);
+                http.setFixedLengthStreamingMode(data.length);
+                http.setDoOutput(true);
+                final long began = android.os.SystemClock.elapsedRealtimeNanos();
+                if (pending != null) pending.checkActive();
+                try (OutputStream stream = http.getOutputStream()) { stream.write(data); }
+                int status = http.getResponseCode();
+                // Reading the body to the end returns the socket to the keep-alive pool.
+                try (InputStream stream = status < 400 ? http.getInputStream() : http.getErrorStream()) {
+                    if (stream == null) throw new IOException("Windows 返回 HTTP " + status);
+                    ByteArrayOutputStream response = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[16384];
+                    for (int size; (size = stream.read(buffer)) >= 0;) {
+                        if (response.size() + size > MAX_RESPONSE) {
+                            http.disconnect();
+                            throw new IOException("Windows 响应过大。");
+                        }
+                        response.write(buffer, 0, size);
                     }
-                    response.write(buffer, 0, size);
-                }
-                final double milliseconds = (android.os.SystemClock.elapsedRealtimeNanos() - began) / 1_000_000.0;
-                JSONObject result = new JSONObject(response.toString("UTF-8"));
-                if (status == 401) result.put("revoked", true);
-                if ("image".equals(op) && status == 400 && "请求格式无效。".equals(result.optString("error"))) {
-                    return failure("电脑端无法识别图片上传请求，请更新并重启电脑端 QingCode 后重试；仅更新 Android APK 不够。");
-                }
-                if ("ping".equals(op)) {
-                    // Older desktop builds reject the unknown operation. Preserve their
-                    // other working features and stop periodic unsupported probes.
-                    if (status == 400 && "请求格式无效。".equals(result.optString("error"))) {
-                        return success(new JSONObject().put("supported", false));
+                    final double milliseconds = (android.os.SystemClock.elapsedRealtimeNanos() - began) / 1_000_000.0;
+                    JSONObject result = new JSONObject(response.toString("UTF-8"));
+                    if (status == 401) result.put("revoked", true);
+                    if ("image".equals(op) && status == 400 && "请求格式无效。".equals(result.optString("error"))) {
+                        return failure("电脑端无法识别图片上传请求，请更新并重启电脑端 QingCode 后重试；仅更新 Android APK 不够。");
                     }
-                    if (result.optBoolean("ok")) {
-                        JSONObject pong = result.optJSONObject("data");
-                        if (pong == null || !pong.optBoolean("pong")) return failure("电脑延迟响应无效。");
-                        return success(new JSONObject().put("supported", true).put("milliseconds", milliseconds));
+                    if ("ping".equals(op)) {
+                        // Older desktop builds reject the unknown operation. Preserve their
+                        // other working features and stop periodic unsupported probes.
+                        if (status == 400 && "请求格式无效。".equals(result.optString("error"))) {
+                            return success(new JSONObject().put("supported", false));
+                        }
+                        if (result.optBoolean("ok")) {
+                            JSONObject pong = result.optJSONObject("data");
+                            if (pong == null || !pong.optBoolean("pong")) return failure("电脑延迟响应无效。");
+                            return success(new JSONObject().put("supported", true).put("milliseconds", milliseconds));
+                        }
                     }
+                    return result;
                 }
-                return result;
+            } finally {
+                if (pending != null) pending.clearAbort(abort);
             }
         }
     }

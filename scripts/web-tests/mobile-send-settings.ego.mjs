@@ -64,10 +64,13 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
           const box = button.getBoundingClientRect()
           const text = document.createRange(); text.selectNodeContents(button)
           const label = text.getBoundingClientRect()
-          return { fits: label.left >= box.left + 4 && label.right <= box.right - 4, width: box.width, height: box.height,
+          return { text: button.textContent, accessibleName: button.getAttribute('aria-label'),
+            fits: label.left >= box.left + 4 && label.right <= box.right - 4, width: box.width, height: box.height,
             keysLargeEnough: [...document.querySelectorAll('#special-keys > button')].every(key => key.getBoundingClientRect().width >= 44),
             overflow: document.documentElement.scrollWidth > innerWidth }
         })
+        assert.equal(fit.text, '^C')
+        assert.equal(fit.accessibleName, '发送 Ctrl+C')
         assert.ok(fit.fits && fit.height >= 44 && fit.keysLargeEnough && !fit.overflow, JSON.stringify(fit))
         await page.screenshot({ path: resolve(output, name + '.png') })
       }

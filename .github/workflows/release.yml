@@ -369,6 +369,10 @@ jobs:
           & $sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' | Out-Host
           if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed with exit code $LASTEXITCODE" }
 
+      - name: Test Android native request scheduler
+        if: steps.keystore.outputs.ready == 'true'
+        run: pnpm test:android-native
+
       - name: Build signed APK
         if: steps.keystore.outputs.ready == 'true'
         shell: pwsh

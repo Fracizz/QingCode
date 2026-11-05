@@ -18,7 +18,6 @@ import {
   sessionName,
   sessionRunning,
   mergeSessionName,
-  splitInput,
   terminalGridSize,
   terminalProfileChoices,
   toggleSessionPin,
@@ -35,13 +34,17 @@ import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_L
 import { createWorkspaceState, terminalText, searchOffsets } from './workspaceState.js';
 import { createChat } from './chat.js';
 import { idleLabel } from './chatModel.js';
+import { createNativeRpc } from './nativeRpc.js';
+import { createTerminalInput } from './terminalInput.js';
+import { createDesktopProtocol } from './desktopProtocol.js';
+import { uploadTerminalImages } from './terminalImages.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
 const pages = { chat: get('chat-screen'), home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
 const terminalScreen = get('terminal-screen');
 const compose = get('compose');
-const requests = new Map();
+const nativeRpc = createNativeRpc(native);
 const health = new Map();
 let persistenceFailed = false;
 const workspace = createWorkspaceState({ storage: localStorage, onError: () => { persistenceFailed = true; } });
@@ -64,10 +67,8 @@ let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
 // 发送按键：default 保持原行为；enter 为文字送达后单独补发回车。
 let sendMode = localStorage.getItem(prefix + 'send-mode') === 'enter' ? 'enter' : 'default';
-const AUTO_ENTER_DELAY_MS = 250;
 let fullscreen = false;
 let fullscreenEpoch = 0;
-let requestId = 0;
 let profiles = [];
 let profile = null;
 let project = null;
@@ -98,11 +99,7 @@ let terminalReady = false;
 const modifiers = { ctrl: 'off', alt: 'off' };
 const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
-let inputQueue = '';
-let inputCompletions = [];
-let inputTimer = null;
-let inputChain = Promise.resolve();
-let queuedInput = 0;
+let inputFailed = false;
 let resizing = null;
 let editing = null;
 let composing = false;
@@ -157,35 +154,31 @@ function renderLatency() {
   get('host-latency').textContent = '手机到电脑往返延迟：' + value + '。' + time + state + '不包含电脑到远端及终端程序处理耗时。';
 }
 
-function rpc(op, args = {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++requestId;
-    requests.set(id, { resolve, reject });
-    try {
-      native.request(id, JSON.stringify({ op, ...args }));
-    } catch (error) {
-      requests.delete(id);
-      reject(error);
-    }
-  });
-}
-
-window.qingReply = (id, result) => {
-  const request = requests.get(id);
-  if (!request) return;
-  requests.delete(id);
-  if (result.ok) {
-    request.resolve(result.data);
-  } else {
-    const error = new Error(result.error || '连接失败。');
-    error.revoked = result.revoked === true;
-    request.reject(error);
-  }
-};
+const rpc = nativeRpc.request;
+window.qingReply = nativeRpc.receive;
 
 function remote(op, args = {}, address = profile?.id) {
   return rpc(op, { ...args, profile: address });
 }
+const desktopProtocol = createDesktopProtocol(remote);
+const terminalInput = createTerminalInput({
+  write: (target, data) => remote('input', { id: target.id, data }, target.address),
+  isCurrent: target => target.epoch === viewEpoch && target.id === selected
+    && target.address === profile?.id && terminalReady,
+  onSuccess: () => {
+    if (inputFailed) {
+      inputFailed = false;
+      get('terminal-status').textContent = '会话中';
+    }
+  },
+  onError: error => {
+    if (error.revoked) handleTerminalError(error);
+    else {
+      inputFailed = true;
+      get('terminal-status').textContent = '输入提交结果未知，请检查终端输出。';
+    }
+  },
+});
 
 function message(id, value) {
   const target = get(id);
@@ -682,6 +675,7 @@ get('pair-form').addEventListener('submit', async event => {
       throw new Error('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。');
     }
     const paired = await rpc('pair', { name, host, port, code, fingerprint });
+    desktopProtocol.invalidate(paired);
     connectionLatency.invalidate(paired.id);
     field.value = '';
     putProfile(paired);
@@ -1206,10 +1200,7 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   terminalHistory?.dispose();
   terminalHistory = undefined;
   terminalReady = false;
-  if (inputTimer !== null) {
-    clearTimeout(inputTimer);
-    flushInput();
-  }
+  terminalInput.flush();
   if (selected && compose.value) drafts.set(draftKey(selected), compose.value);
   else if (selected) drafts.delete(draftKey(selected));
   viewEpoch += 1;
@@ -1376,6 +1367,7 @@ function sendSize() {
 }
 
 function terminalState(text, state = 'idle', retry = false) {
+  inputFailed = false;
   terminalReady = state === 'online';
   get('expanded-send').disabled = !terminalReady;
   get('terminal-status').textContent = text;
@@ -1442,9 +1434,9 @@ function renderSessions() {
   get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
   const options = get('session-options');
   const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
-  get('end-session').disabled = !selected;
-  get('end-all-sessions').disabled = !sessions.length;
-  get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
+  get('session-count').textContent = String(sessions.length);
+  get('end-all-sessions').disabled = busy || !sessions.length;
+  get('drawer-new-session').disabled = busy;
   const pins = new Set(sessionPins());
   for (const [position, { session, index }] of orderSessions(sessions, [...pins]).entries()) {
     const label = sessionName(session, index + 1);
@@ -1469,9 +1461,11 @@ function renderSessions() {
       option.append(text);
       // 长按整行或点 ⋯ 打开会话操作（置顶、重命名、结束）。
       attachLongPress(option, () => { if (latest()) openSessionActions(latest()); });
-      const more = button('icon-button', () => { if (latest()) openSessionActions(latest()); });
+      const more = button('icon-button session-more', () => { if (latest()) openSessionActions(latest()); });
       more.append(icon('more'));
-      row.append(option, more);
+      const close = button('icon-button session-close', () => { void endSession(session.id); });
+      close.append(icon('close'));
+      row.append(option, more, close);
     }
     existingRows.delete(session.id);
     row.dataset.current = String(session.id === selected);
@@ -1479,6 +1473,8 @@ function renderSessions() {
     const running = sessionRunning(session);
     row.dataset.running = String(running);
     const option = row.querySelector('.row');
+    option.disabled = busy;
+    option.setAttribute('aria-label', '切换到 ' + label);
     const status = session.exit ? '已结束' : [running ? '运行中' : '', session.id === selected ? '当前会话' : '可接入'].filter(Boolean).join(' · ');
     const identity = '终端 ' + (session.number ?? index + 1);
     row.querySelector('.session-label').textContent = label;
@@ -1487,7 +1483,11 @@ function renderSessions() {
     const idle = row.querySelector('.session-idle');
     idle.textContent = session.exit ? '' : idleLabel(session);
     idle.hidden = !idle.textContent;
-    row.querySelector('.icon-button').setAttribute('aria-label', label + ' 的更多操作');
+    row.querySelector('.session-more').setAttribute('aria-label', label + ' 的更多操作');
+    row.querySelector('.session-more').disabled = busy;
+    const close = row.querySelector('.session-close');
+    close.setAttribute('aria-label', (session.exit ? '移除 ' : '关闭 ') + label);
+    close.disabled = busy;
     if (session.id === selected) {
       option.setAttribute('aria-current', 'true');
     } else option.removeAttribute('aria-current');
@@ -1506,7 +1506,7 @@ async function openSessionDrawer() {
 }
 
 async function refreshSessionDrawer() {
-  if (sessionRefreshing || !get('session-drawer').open || document.hidden || !foreground) return;
+  if (busy || sessionRefreshing || !get('session-drawer').open || document.hidden || !foreground) return;
   sessionRefreshing = true;
   const epoch = viewEpoch;
   const drawerEpoch = sessionDrawerEpoch;
@@ -1648,7 +1648,9 @@ async function openNewSessionDialog() {
   get('new-session-dialog').showModal();
   const request = ++terminalProfilesRequest;
   try {
-    const choices = terminalProfileChoices(await remote('terminal_profiles', {}, address));
+    const capabilities = await desktopProtocol.capabilities(profile);
+    const supported = capabilities === null || capabilities.features.includes('terminal_profiles');
+    const choices = terminalProfileChoices(supported ? await remote('terminal_profiles', {}, address) : null);
     terminalProfiles.set(address, choices);
     if (request === terminalProfilesRequest && profile?.id === address) renderTerminalProfiles(choices);
   } catch {
@@ -1759,62 +1761,16 @@ async function poll(session, epoch) {
   }
 }
 
-function flushInput(enter = '') {
-  inputTimer = null;
-  const pending = inputQueue;
-  inputQueue = '';
-  const completions = inputCompletions;
-  inputCompletions = [];
-  const id = selected;
-  const address = profile?.id;
-  const epoch = viewEpoch;
-  if (!id || !pending) { for (const complete of completions) complete('unknown'); return; }
-  const length = pending.length + enter.length;
-  queuedInput += length;
-  inputChain = inputChain.then(async () => {
-    try {
-      for (const part of splitInput(pending)) {
-        await remote('input', { id, data: part }, address);
-      }
-      if (enter) {
-        // 从文字确认送达后开始等待，避免慢网络下两次写入仍紧挨着，或失败后执行残留文字。
-        // 整组操作留在同一队列项，后续按键/提交不能插到文字与 Enter 之间。
-        await new Promise(resolve => setTimeout(resolve, AUTO_ENTER_DELAY_MS));
-        if (epoch !== viewEpoch || selected !== id || profile?.id !== address || !terminalReady) {
-          for (const complete of completions) complete('unknown');
-          return;
-        }
-        await remote('input', { id, data: enter }, address);
-      }
-      for (const complete of completions) complete('received');
-    } catch (error) {
-      for (const complete of completions) complete('unknown');
-      if (epoch === viewEpoch) {
-        if (error.revoked) handleTerminalError(error);
-        else get('terminal-status').textContent = '输入提交结果未知，请检查终端输出。';
-      }
-    } finally {
-      queuedInput -= length;
-    }
-  });
-}
-
 function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
   if (!terminalReady) return false;
   if (!raw && (modifiers.ctrl !== 'off' || modifiers.alt !== 'off')) {
     value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
     consumeModifiers();
   }
-  if (queuedInput + inputQueue.length + value.length + enter.length > 32_768) {
+  if (!terminalInput.enqueue(value, { id: selected, address: profile?.id, epoch: viewEpoch }, { enter, onComplete })) {
     get('terminal-status').textContent = '输入过长，请分段粘贴。';
     return false;
   }
-  // 分开发送的提交必须有独立边界，不能被 22ms 的输入合并并回上一条输入。
-  if (enter && inputTimer !== null) { clearTimeout(inputTimer); flushInput(); }
-  inputQueue += value;
-  if (onComplete) inputCompletions.push(onComplete);
-  if (enter) flushInput(enter);
-  else if (inputTimer === null) inputTimer = setTimeout(flushInput, 22);
   return true;
 }
 
@@ -1858,44 +1814,51 @@ async function newSession(terminalProfile) {
     busy = false;
   }
 }
-/** 结束（或移除已结束的）指定会话；结束的不是当前会话时留在会话列表。 */
 async function endSession(id) {
-  if (busy || !id) return;
+  const target = sessions.find(item => item.id === id);
+  if (busy || !target) return;
   const epoch = viewEpoch;
-  const current = id === selected;
-  const ended = sessions.find(item => item.id === id)?.exit;
-  if (!await confirmAction(ended ? '移除会话？' : current ? '结束当前会话？' : '结束会话？',
-    ended ? '此会话的输出将从列表中移除。' : '该会话中的 Shell 和前台任务将被关闭。', ended ? '移除' : '结束')) return;
-  if (busy || epoch !== viewEpoch || (current && id !== selected)) return;
+  const address = profile.id;
+  const ended = target.exit;
   busy = true;
-  if (current) get('session-drawer').close();
-  else message('session-error', '');
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
+  message('session-error', '');
+  renderSessions();
   try {
-    await remote('end', { id });
+    if (!await confirmAction(ended ? '移除会话？' : '关闭会话？',
+      `「${sessionName(target)}」` + (ended ? '的输出将从列表中移除。' : '中的 Shell 和前台任务将被关闭。'), ended ? '移除' : '关闭')) return;
+    if (epoch !== viewEpoch) return;
+    await remote('end', { id }, address);
     if (epoch !== viewEpoch) return;
     sessions = sessions.filter(item => item.id !== id);
-    drafts.delete(draftKey(id));
     saveSessionPins(sessionPins().filter(pin => pin !== id));
-    if (!current) renderSessions();
-    else {
+    if (selected === id) {
       compose.value = '';
-      if (sessions.length) selectSession(sessions.find(item => !item.exit) ?? sessions[0]);
-      else {
+      if (sessions.length) {
+        selectSession(sessions.find(item => !item.exit) ?? sessions[0]);
+        get('session-drawer').showModal();
+        get('show-sessions').setAttribute('aria-expanded', 'true');
+      } else {
         localStorage.removeItem(sessionKey(project.id));
         returnToDashboard('home');
       }
     }
+    drafts.delete(draftKey(id));
   } catch (error) {
     if (epoch === viewEpoch) {
       if (error.revoked) handleTerminalError(error);
-      else if (current) get('terminal-status').textContent = error.message;
       else message('session-error', error.message);
     }
   } finally {
     busy = false;
+    renderSessions();
+    if (get('session-drawer').open) {
+      clearTimeout(sessionRefreshTimer);
+      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
+    }
   }
 }
-get('end-session').addEventListener('click', () => { void endSession(selected); });
 
 get('end-all-sessions').addEventListener('click', async () => {
   if (busy || !project || !sessions.length) return;
@@ -1904,7 +1867,10 @@ get('end-all-sessions').addEventListener('click', async () => {
   const projectId = project.id;
   const previous = selected;
   busy = true;
+  sessionDrawerEpoch += 1;
+  clearTimeout(sessionRefreshTimer);
   message('session-error', '');
+  renderSessions();
   try {
     // Refresh before confirmation, then end only the exact sessions shown there.
     const targets = await remote('sessions', { project: projectId }, address);
@@ -1955,7 +1921,11 @@ get('end-all-sessions').addEventListener('click', async () => {
     }
   } finally {
     busy = false;
-    get('end-all-sessions').disabled = !sessions.length;
+    renderSessions();
+    if (get('session-drawer').open) {
+      clearTimeout(sessionRefreshTimer);
+      sessionRefreshTimer = setTimeout(refreshSessionDrawer, 1500);
+    }
   }
 });
 
@@ -2157,32 +2127,29 @@ async function sendImage() {
   get('expanded-attach').disabled = true;
   get('choose-image').disabled = true;
   message('image-error', '');
-  let selection;
   let inserted = 0;
   let count = 0;
   const current = () => epoch === viewEpoch && selected === id && attempt === imageEpoch;
   try {
-    const picked = await rpc('pick_image', { compression: compression.value });
-    selection = picked?.selection;
-    if (!picked || !current()) return;
-    // Older native bridges return a single image directly. New bridges keep only
-    // URI handles and decode each photo immediately before its upload.
-    count = selection ? picked.count : 1;
-    if (!Number.isSafeInteger(count) || count < 1) throw new Error('图片选择已失效，请重新选择。');
-    get('choose-image').textContent = '正在上传…';
-    for (let index = 0; index < count; index++) {
-      if (!current()) return;
-      setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index + 1}/${count}`);
-      const image = selection ? await rpc('read_image', { selection, index }) : picked;
-      if (!current()) return;
-      const result = await remote('image', { id, data: image.data }, address);
-      if (!current()) return;
-      compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + result.path + ' ';
-      drafts.set(draftKey(id), compose.value);
-      resizeComposer();
-      if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
-      inserted += 1;
-    }
+    const capabilities = await desktopProtocol.capabilities(profile);
+    if (capabilities && !capabilities.features.includes('images')) throw new Error('电脑端不支持图片上传，请更新电脑端 QingCode。');
+    if (!current()) return;
+    await uploadTerminalImages({
+      rpc, remote, address, id, compression: compression.value, isCurrent: current,
+      onProgress: (index, total) => {
+        count = total;
+        get('choose-image').textContent = '正在上传…';
+        setImageNote(count === 1 ? '图片上传中…' : `图片上传中… ${index}/${count}`);
+      },
+      onInsert: path => {
+        compose.value += (compose.value && !/\s$/.test(compose.value) ? ' ' : '') + path + ' ';
+        drafts.set(draftKey(id), compose.value);
+        resizeComposer();
+        if (get('expanded-dialog').open) get('expanded-compose').value = compose.value;
+        inserted += 1;
+      },
+    });
+    if (!current() || !count) return;
     if (get('image-dialog').open) get('image-dialog').close();
     setImageNote(count === 1 ? '✓ 图片已插入' : `✓ 已插入 ${inserted} 张图片`, { state: 'done', ttl: 2500 });
     compose.focus();
@@ -2198,7 +2165,6 @@ async function sendImage() {
       }
     }
   } finally {
-    if (selection) void rpc('release_images', { selection }).catch(() => {});
     if (imageNote?.state === 'busy' && attempt === imageEpoch) setImageNote('');
     sendingImage = false;
     get('attach-image').disabled = !terminalReady;

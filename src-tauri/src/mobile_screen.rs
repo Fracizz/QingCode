@@ -1,6 +1,7 @@
 //! Bounded current screen and read-only, cursor-paginated mobile scrollback.
 use std::collections::VecDeque;
 use std::num::NonZeroU16;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use vt100::capture::{basic_formatted_to_plain, BasicFormattedCaptureState, RowContents};
@@ -9,6 +10,7 @@ const MAX_HISTORY_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY_LINES: usize = 5000;
 const PAGE_LINES: usize = 120;
 const PAGE_BYTES: usize = 64 * 1024;
+const TUI_FRAME_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 struct History {
@@ -17,6 +19,8 @@ struct History {
     next: u64,
     truncated: bool,
     title: Option<String>,
+    tui_sampled_at: Option<Instant>,
+    last_tui_frame: String,
 }
 
 impl vt100::Callbacks for History {
@@ -36,6 +40,12 @@ impl vt100::Callbacks for History {
         let _ =
             row.write_formatted_basic(&mut formatted, &mut BasicFormattedCaptureState::default());
         let text = basic_formatted_to_plain(&formatted).collect::<String>();
+        self.push_line(text);
+    }
+}
+
+impl History {
+    fn push_line(&mut self, text: String) {
         self.bytes += text.len();
         self.lines.push_back((self.next, text));
         self.next += 1;
@@ -46,9 +56,7 @@ impl vt100::Callbacks for History {
             }
         }
     }
-}
 
-impl History {
     fn update_title(&mut self, title: &[u8]) {
         let title: String = String::from_utf8_lossy(title)
             .chars()
@@ -113,7 +121,48 @@ impl MobileScreen {
     }
 
     pub(super) fn process(&mut self, data: &[u8]) {
+        self.process_at(data, Instant::now());
+    }
+
+    fn process_at(&mut self, data: &[u8], now: Instant) {
+        let previous = self.take_tui_frame(now);
         self.parser.process(data);
+        self.retain_tui_frame(previous);
+    }
+
+    // TUI applications repaint instead of scrolling normal terminal lines. Sample the
+    // screen they are replacing, as plain text; never replay it into the live terminal.
+    fn take_tui_frame(&mut self, now: Instant) -> Option<(Instant, String)> {
+        if !self.parser.screen().alternate_screen() {
+            return None;
+        }
+        let history = self.parser.callbacks_mut();
+        if history
+            .tui_sampled_at
+            .is_some_and(|last| now.saturating_duration_since(last) < TUI_FRAME_INTERVAL)
+        {
+            return None;
+        }
+        Some((now, self.parser.screen().contents()))
+    }
+
+    fn retain_tui_frame(&mut self, previous: Option<(Instant, String)>) {
+        let Some((now, previous)) = previous else {
+            return;
+        };
+        if previous.trim().is_empty() || previous == self.parser.screen().contents() {
+            return;
+        }
+        let history = self.parser.callbacks_mut();
+        if previous == history.last_tui_frame {
+            return;
+        }
+        history.tui_sampled_at = Some(now);
+        history.push_line("── 全屏画面历史 ──".to_string());
+        for line in previous.trim_end().lines() {
+            history.push_line(line.to_string());
+        }
+        history.last_tui_frame = previous;
     }
 
     pub(super) fn resize(&mut self, cols: u16, rows: u16) {
@@ -122,6 +171,7 @@ impl MobileScreen {
     }
 
     pub(super) fn replace(&mut self, data: &str, cols: u16, rows: u16) {
+        let previous = self.take_tui_frame(Instant::now());
         let history = std::mem::take(self.parser.callbacks_mut());
         self.parser = vt100::Parser::new_with_callbacks(
             nonzero(rows.clamp(2, 150)),
@@ -130,6 +180,7 @@ impl MobileScreen {
             history,
         );
         self.process(data.as_bytes());
+        self.retain_tui_frame(previous);
     }
 
     pub(super) fn snapshot(&self) -> Value {
@@ -261,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn full_screen_tui_does_not_pollute_normal_history_or_replay_osc() {
+    fn full_screen_tui_retains_plain_screen_history_without_replaying_osc() {
         let mut screen = MobileScreen::new();
         screen.resize(40, 3);
         screen.process(b"shell\r\na\r\nb\r\nc\r\n");
@@ -275,6 +326,71 @@ mod tests {
             .starts_with("\x1b[?1049h"));
         assert!(!snapshot["data"].as_str().unwrap().contains("secret"));
         screen.replace("\x1b[2Jprompt", 40, 3);
-        assert_eq!(screen.history_before(), history);
+        assert!(screen.history_before() > history);
+        let retained = screen.history(screen.history_before()).to_string();
+        assert!(retained.contains("全屏画面历史"));
+        assert!(!retained.contains("secret"));
+        assert!(!retained.contains("52;c"));
+    }
+
+    #[test]
+    fn tui_repaints_are_sampled_and_do_not_duplicate_unchanged_screens() {
+        let mut screen = MobileScreen::new();
+        screen.resize(40, 4);
+        let now = Instant::now();
+        screen.process_at(b"\x1b[?1049h\x1b[2J\x1b[Hfirst answer", now);
+        screen.process_at(b"\x1b[2J\x1b[Hsecond answer", now + Duration::from_secs(1));
+        let first = screen.history_before();
+        assert!(first > 0);
+        screen.process_at(
+            b"\x1b[2J\x1b[Hthird answer",
+            now + Duration::from_millis(1100),
+        );
+        assert_eq!(screen.history_before(), first);
+        screen.process_at(b"\x1b[H", now + Duration::from_secs(2));
+        assert_eq!(screen.history_before(), first);
+        screen.process_at(b"\x1b[2J\x1b[Hfourth answer", now + Duration::from_secs(3));
+        let retained = screen.history(screen.history_before()).to_string();
+        assert!(retained.contains("first answer"));
+        assert!(retained.contains("third answer"));
+        assert!(!retained.contains("second answer"));
+        assert!(!retained.contains("fourth answer"));
+        assert!(screen.snapshot()["data"]
+            .as_str()
+            .unwrap()
+            .contains("fourth answer"));
+    }
+
+    #[test]
+    fn cursor_only_or_partial_escape_output_does_not_consume_tui_capture_interval() {
+        let mut screen = MobileScreen::new();
+        let now = Instant::now();
+        screen.process_at(b"\x1b[?1049hfirst answer", now);
+        screen.process_at(b"\x1b[H\x1b[", now);
+        assert!(!screen.has_history());
+        screen.process_at(b"2J\x1b[Hsecond answer", now + Duration::from_millis(10));
+        assert!(screen.has_history());
+        assert!(screen
+            .history(screen.history_before())
+            .to_string()
+            .contains("first answer"));
+    }
+
+    #[test]
+    fn tui_frame_history_shares_normal_history_bounds() {
+        let mut screen = MobileScreen::new();
+        screen.resize(40, 3);
+        let now = Instant::now();
+        screen.process_at(b"\x1b[?1049hfirst", now);
+        for index in 1..MAX_HISTORY_LINES + 10 {
+            screen.process_at(
+                format!("\x1b[2J\x1b[Hanswer {index}").as_bytes(),
+                now + Duration::from_secs(index as u64),
+            );
+        }
+        let history = screen.parser.callbacks();
+        assert!(history.bytes <= MAX_HISTORY_BYTES);
+        assert!(history.lines.len() <= MAX_HISTORY_LINES);
+        assert!(history.truncated);
     }
 }
