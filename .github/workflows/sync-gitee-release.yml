@@ -36,6 +36,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch || github.ref }}
 
       - name: Require GITEE_TOKEN
         if: env.GITEE_TOKEN == ''
@@ -102,6 +104,7 @@ jobs:
             gh release download $tag --repo '${{ github.repository }}' --dir release-assets --pattern $name 2>$null
             if ($LASTEXITCODE -ne 0) { Write-Host "optional asset $name not on GitHub Release $tag" }
           }
+          exit 0
 
       - name: Publish to Gitee
         if: steps.meta.outputs.skip != 'true'
