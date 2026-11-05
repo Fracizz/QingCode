@@ -20,6 +20,7 @@ import { attachTerminalTouchScroll, attachTouchMouseGuard } from './terminalTouc
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
+import { attachTerminalScrollbar } from './terminalScrollbar.js';
 import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState } from './workspaceState.js';
@@ -78,6 +79,10 @@ let viewEpoch = 0;
 let term;
 let fit;
 let disposeTouchScroll;
+let terminalScrollbar;
+/** 用户正在往上阅读时收到的整屏快照先不重画（重画会清空手机滚动记录），回到底部后再接最新画面。 */
+let deferredLatest = false;
+let unsupportedScrollGesture = null;
 let terminalHistory;
 let terminalSelection;
 let terminalLinks;
@@ -709,6 +714,9 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   terminalSelection = undefined;
   terminalHistory?.dispose();
   terminalHistory = undefined;
+  terminalScrollbar?.dispose();
+  terminalScrollbar = undefined;
+  deferredLatest = false;
   terminalLinks?.dispose();
   terminalLinks = undefined;
   if (get('link-dialog').open) get('link-dialog').close();
@@ -745,7 +753,7 @@ function makeTerminal() {
     fontSize: settings.fontSize(),
     lineHeight: 1.2,
     fontFamily: 'monospace',
-    scrollback: 2500,
+    scrollback: 10000,
     cursorBlink: true,
     // Keep ANSI colors and cursor aligned with the desktop dark terminal.
     theme: {
@@ -780,7 +788,11 @@ function makeTerminal() {
   terminalHistory = attachTerminalHistory({
     term, get,
     onClose: () => disposeTouchScroll?.cancel?.(),
-    touchToProgram: () => settings.touchMode() === 'program',
+    onUnsupportedScroll: gesture => {
+      if (gesture !== undefined && gesture === unsupportedScrollGesture) return;
+      unsupportedScrollGesture = gesture;
+      showTerminalToast('此全屏程序未开启鼠标滚动，可用 PgUp / PgDn 翻页', 2200);
+    },
     loadPage: async before => {
       // formatted：新版电脑端返回带基本颜色的历史；旧版忽略该参数，仍返回纯文本。
       const data = await remote('history', { id: historySession, before, formatted: true });
@@ -795,7 +807,8 @@ function makeTerminal() {
   });
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
     onLongPress: point => terminalSelection?.start(point),
-    canInertia: () => terminalHistory?.isOpen() || (term?.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none'),
+    // 惯性同样交给原始终端：普通终端滚本地记录，开了鼠标的全屏程序收到滚轮；不支持滚动的全屏程序不滑行。
+    canInertia: () => terminalHistory?.isOpen() || !!term && (term.buffer.active.type === 'normal' || term.modes.mouseTrackingMode !== 'none'),
   });
   terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
@@ -818,10 +831,27 @@ function makeTerminal() {
     clearTimeout(resizing);
     resizing = setTimeout(sendSize, 120);
   });
+  const historyScroll = get('history-scroll');
+  terminalScrollbar = attachTerminalScrollbar(get('viewport').parentElement, {
+    metrics: () => {
+      if (terminalHistory?.isOpen()) {
+        return { total: historyScroll.scrollHeight, visible: historyScroll.clientHeight, offset: historyScroll.scrollTop };
+      }
+      const buffer = term?.buffer.active;
+      if (!buffer || buffer.type !== 'normal' || !buffer.baseY) return null;
+      return { total: buffer.baseY + term.rows, visible: term.rows, offset: buffer.viewportY };
+    },
+    scrollTo: offset => {
+      if (terminalHistory?.isOpen()) historyScroll.scrollTop = offset;
+      else term?.scrollToLine(Math.round(offset));
+    },
+  });
   term.onScroll(() => {
+    terminalScrollbar?.update();
     if (terminalHistory?.isOpen()) return;
     const buffer = term.buffer.active;
-    get('scroll-bottom').hidden = buffer.viewportY >= buffer.baseY;
+    const reading = buffer.viewportY < buffer.baseY;
+    get('scroll-bottom').hidden = !reading && !deferredLatest;
   });
 }
 
@@ -886,6 +916,14 @@ function fitTerminal() {
 }
 
 get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });
+get('history-scroll').addEventListener('scroll', () => terminalScrollbar?.update(), { passive: true });
+
+/** 用户是否在往上阅读：此时新输出不把画面拉回底部，也不用整屏快照清掉滚动记录。 */
+function readingBack() {
+  if (terminalHistory?.isOpen() || terminalScrollbar?.dragging()) return true;
+  const buffer = term?.buffer.active;
+  return !!buffer && buffer.viewportY < buffer.baseY;
+}
 
 new ResizeObserver(() => {
   clearTimeout(fitting);
@@ -894,10 +932,16 @@ new ResizeObserver(() => {
 
 /** 双指缩放时在输出区上方短暂显示当前字号。 */
 function showFontToast(size) {
+  showTerminalToast('字号 ' + size + 'px');
+}
+
+/** 输出区上方的短提示；delay 毫秒后自动隐藏（0 表示由调用方隐藏）。 */
+function showTerminalToast(text, delay = 0) {
   clearTimeout(fontToastTimer);
   const toast = get('font-toast');
-  toast.textContent = '字号 ' + size + 'px';
+  toast.textContent = text;
   toast.hidden = false;
+  if (delay) hideFontToast(delay);
 }
 
 function hideFontToast(delay = 0) {
@@ -1088,6 +1132,15 @@ async function poll(session, epoch) {
       await new Promise(resolve => setTimeout(resolve, 350));
       continue;
     }
+    if (deferredLatest) {
+      // 阅读中暂停接收：回到底部后直接取最新画面，跳过的输出仍可在电脑端历史里上滑查看。
+      if (readingBack()) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        continue;
+      }
+      deferredLatest = false;
+      latest = true;
+    }
     try {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
@@ -1105,6 +1158,11 @@ async function poll(session, epoch) {
       for (const chunk of outputBatches(data.chunks)) {
         if (epoch !== viewEpoch) return;
         const view = term;
+        if (chunk.screen && readingBack()) {
+          deferredLatest = true;
+          get('scroll-bottom').hidden = false;
+          break;
+        }
         if (chunk.screen) {
           view.reset();
           view.resize(chunk.cols, chunk.rows);
@@ -1116,7 +1174,7 @@ async function poll(session, epoch) {
         });
         if (chunk.screen && epoch === viewEpoch) fitTerminal();
       }
-      if (data.chunks.length && (terminalHistory?.isOpen() || term.buffer.active.viewportY < term.buffer.active.baseY)) {
+      if (data.chunks.length && readingBack()) {
         get('scroll-bottom').querySelector('span').textContent = '有新输出 · 回到最新';
       }
       if (epoch !== viewEpoch) return;

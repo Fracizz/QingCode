@@ -101,7 +101,7 @@ describe('Android history rendering', () => {
     expect(host.textContent).toBe('one\n全屏画面two\n')
   })
 
-  it('copies the visible screen with colors under a current-screen divider', () => {
+  it('copies the visible screen with colors and no divider, continuing the history above', () => {
     const rows = [line([cell('$', { fg: 2 }), cell(' '), cell('l'), cell('s')]), line([cell(' ')])]
     const term = {
       rows: 2, cols: 4, options: { theme: { green: '#89d185' } },
@@ -109,9 +109,9 @@ describe('Android history rendering', () => {
     }
     const host = document.createElement('pre')
     host.append(renderScreen(document, term))
-    expect(host.querySelector('.history-divider')!.textContent).toBe('当前画面')
-    expect((host.querySelector('span:not(.history-divider)') as HTMLElement).style.color).toBe('rgb(137, 209, 133)')
-    expect(host.textContent).toBe('当前画面$ ls\n')
+    expect(host.querySelector('.history-divider')).toBeNull()
+    expect((host.querySelector('span') as HTMLElement).style.color).toBe('rgb(137, 209, 133)')
+    expect(host.textContent).toBe('$ ls\n')
   })
 
   it('rejoins soft-wrapped screen rows into one logical line, keeping the word gap', () => {
@@ -126,6 +126,6 @@ describe('Android history rendering', () => {
     }
     const host = document.createElement('pre')
     host.append(renderScreen(document, term))
-    expect(host.textContent).toBe('当前画面abc de\nx')
+    expect(host.textContent).toBe('abc de\nx')
   })
 })

@@ -352,13 +352,21 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-empty-new { min-height: 44px; padding: 0 24px; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
 #history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
-/* 历史左右边距与 #viewport 一致，打开历史时文字不左右跳；分隔条区分全屏程序的采样画面与当前画面。 */
+/* 历史左右边距与 #viewport 一致，打开历史时文字不左右跳；分隔条仅用于旧版电脑端的全屏画面标记。 */
 #history-content .history-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; color: var(--muted); font: 600 11px/1.6 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
 #history-content .history-divider::before, #history-content .history-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 #history-content .history-divider:first-child { margin-top: 0; }
 #viewport { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
-#scroll-bottom { position: absolute; right: 14px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
+#scroll-bottom { position: absolute; z-index: 3; right: 40px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
 #scroll-bottom svg { width: 16px; height: 16px; }
+/* 自绘的加粗触摸滚动条：替代 xterm 与历史面板的细滚动条；透明的宽轨道便于手指抓取。 */
+#viewport .xterm-scrollable-element > .scrollbar, #history-scroll { scrollbar-width: none; }
+#viewport .xterm-scrollable-element > .scrollbar { display: none !important; }
+#history-scroll::-webkit-scrollbar { display: none; }
+.touch-scrollbar { position: absolute; z-index: 4; top: 6px; right: 0; bottom: 6px; width: 32px; touch-action: none; }
+.touch-scrollbar[hidden] { display: none; }
+.touch-scrollbar-thumb { position: absolute; top: 0; right: 3px; width: 10px; border-radius: 5px; background: #a2aeba80; transition: width .12s, background-color .12s; will-change: transform; }
+.touch-scrollbar.dragging .touch-scrollbar-thumb { right: 2px; width: 14px; border-radius: 7px; background: var(--accent); }
 #terminal-tools { flex: none; padding: 0 8px max(8px, var(--safe-bottom), var(--corner-bottom-inset)); border-top: 1px solid var(--divider); background: var(--paper); }
 .terminal-state { display: flex; align-items: center; gap: 7px; min-height: 24px; padding: 0 6px; }
 #terminal-status { flex: 1; min-width: 0; padding: 2px 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }

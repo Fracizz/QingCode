@@ -320,10 +320,10 @@
     <p>固定列宽时可横向滚动，旋转和键盘弹出只改变可见高度。</p>
     <fieldset id="touch-mode" class="setting-choices" aria-describedby="touch-mode-hint">
       <legend>全屏程序中的触摸</legend>
-      <label><input type="radio" name="touch-mode" value="view" checked><span><strong>只查看历史</strong><small>防误触，不向程序发送点击</small></span></label>
-      <label><input type="radio" name="touch-mode" value="program"><span><strong>发给程序</strong><small>滑动滚动，点按点击</small></span></label>
+      <label><input type="radio" name="touch-mode" value="view" checked><span><strong>点按只聚焦</strong><small>防误触，不向程序发送点击</small></span></label>
+      <label><input type="radio" name="touch-mode" value="program"><span><strong>点按发给程序</strong><small>点按会作为鼠标点击</small></span></label>
     </fieldset>
-    <p id="touch-mode-hint">Codex、OpenCode 等会接管鼠标。默认手指滑动只打开手机端只读历史，点按不发点击；需要用手指滚动程序界面时再改为「发给程序」。实体鼠标不受影响。</p>
+    <p id="touch-mode-hint">手指上下滑动始终滚动原始终端：普通终端滚动输出记录，Codex、OpenCode 等全屏程序由程序自己滚动。这里只决定点按是否作为鼠标点击发给程序。实体鼠标不受影响。</p>
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示，也可在终端上双指缩放</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <div class="font-setting"><div><strong>快捷键栏</strong><p>调整常用键顺序，隐藏的键移到「更多」</p></div><button id="open-key-layout" class="secondary compact" type="button">调整</button></div>
     <label for="image-compression">图片压缩</label>

@@ -1,7 +1,23 @@
 import { renderHistoryPage, renderScreen } from './historyRender.js';
 
-/** Paged history replaces the viewport while the live terminal keeps receiving output. */
-export function attachTerminalHistory({ term, get, loadPage, onClose = () => {}, touchToProgram = () => false }) {
+/**
+ * 手机本地滚动记录（可见区上方）相当于电脑端历史的多少行：电脑端把自动换行拼回一个逻辑行，
+ * 本地的续行（isWrapped）不单独计数，否则接缝处会重复或缺行。
+ */
+export function localLogicalDepth(buffer) {
+  if (buffer.type !== 'normal') return 0;
+  let depth = 0;
+  for (let index = buffer.viewportY; index < buffer.baseY; index += 1) {
+    if (!buffer.getLine(index)?.isWrapped) depth += 1;
+  }
+  return depth;
+}
+
+/**
+ * 上滑即原始终端：普通终端滚手机 xterm 的滚动记录，滑到顶后接电脑端保留的更早输出（只读面板）；
+ * 全屏程序开启鼠标时滚轮交给程序自己滚动。
+ */
+export function attachTerminalHistory({ term, get, loadPage, onClose = () => {}, onUnsupportedScroll = () => {} }) {
   const panel = get('terminal-history');
   const scroll = get('history-scroll');
   const content = get('history-content');
@@ -25,7 +41,6 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
   let anchor = null;
   let restoringAnchor = false;
   let anchorFrame = null;
-  let openingGesture = null;
 
   function rememberAnchor() {
     if (panel.hidden) { anchor = null; return; }
@@ -64,7 +79,6 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     if (motionFrame !== null) view.cancelAnimationFrame(motionFrame);
     motionFrame = null;
     motion = 0;
-    openingGesture = null;
     onClose();
     term.scrollToBottom();
     latestButton.hidden = true;
@@ -128,12 +142,10 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     }
   }
 
-  function open(delta, allowEmpty = false) {
-    if (!active || (!available && !allowEmpty) || !panel.hidden) return;
+  function open(delta) {
+    if (!active || !available || !panel.hidden) return;
     generation += 1;
-    const buffer = term.buffer.active;
-    const localDepth = buffer.type === 'normal' ? buffer.baseY - buffer.viewportY : 0;
-    startCursor = Math.max(0, latest - localDepth);
+    startCursor = Math.max(0, latest - localLogicalDepth(term.buffer.active));
     // 先带颜色复制可见行：第一次滑动不会出现空白或加载画面的跳变。
     content.replaceChildren(renderScreen(content.ownerDocument, term));
     content.style.fontSize = term.options.fontSize + 'px';
@@ -141,13 +153,13 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;
     content.style.lineHeight = (screenHeight / term.rows) + 'px';
     cursor = null;
-    more = available;
+    more = true;
     failed = false;
     departedBottom = false;
-    moreButton.hidden = !more;
+    moreButton.hidden = false;
     panel.hidden = false;
     latestButton.hidden = false;
-    status.textContent = available ? '正在加载历史…' : '暂无更早的已保留输出，当前画面可只读查看。';
+    status.textContent = '正在加载历史…';
     scroll.scrollTop = scroll.scrollHeight;
     queueMotion(delta);
     void older();
@@ -167,25 +179,20 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     if (!panel.hidden) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const direction = event.qingTouch && openingGesture && openingGesture.id === event.qingGesture ? openingGesture.direction : 1;
-      queueMotion(event.deltaY * direction);
+      queueMotion(event.deltaY);
       return;
     }
-    const ordinary = term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none';
-    // 全屏程序（Codex / OpenCode 等）默认不把手指滑动发给程序，防止误触改变程序界面：
-    // 两个竖滑方向均可进入只读历史；进入的整次手势继续向历史移动，不能刚打开就退回实时。
-    // 「触摸发给程序」开启时沿用原行为，实体鼠标不改变。
-    if (event.qingTouch && !ordinary && !touchToProgram()) {
+    const buffer = term.buffer.active;
+    // 全屏程序没有开启鼠标时，xterm 会把滚轮转成方向键（Codex 里会翻出输入历史），手指滑动不发给程序。
+    if (event.qingTouch && buffer.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (event.deltaY && !event.qingMomentum) {
-        openingGesture = event.qingGesture === undefined ? null : { id: event.qingGesture, direction: event.deltaY > 0 ? -1 : 1 };
-        open(-Math.abs(event.deltaY), true);
-      }
+      if (event.deltaY && !event.qingMomentum) onUnsupportedScroll(event.qingGesture);
       return;
     }
+    // 其余情况交给 xterm：开了鼠标的程序收到滚轮，普通终端滚本地记录；只在本地记录到顶后接电脑端历史。
     if (event.deltaY >= 0 || !available) return;
-    if (!ordinary || term.buffer.active.viewportY > 0) return;
+    if (buffer.type !== 'normal' || term.modes.mouseTrackingMode !== 'none' || buffer.viewportY > 0) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     open(event.deltaY);

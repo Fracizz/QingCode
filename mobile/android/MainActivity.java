@@ -201,7 +201,7 @@ public final class MainActivity extends Activity {
                     switch (asset) {
                         case "index.html": type = "text/html"; break;
                         case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
-                        case "composer.js": case "terminalHistory.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
+                        case "composer.js": case "terminalHistory.js": case "terminalScrollbar.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":

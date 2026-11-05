@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachTerminalTouchScroll, attachTouchMouseGuard } from '../../mobile/android/web/terminalTouch.js'
-import { attachTerminalHistory } from '../../mobile/android/web/terminalHistory.js'
+import { attachTouchMouseGuard } from '../../mobile/android/web/terminalTouch.js'
+import { attachTerminalHistory, localLogicalDepth } from '../../mobile/android/web/terminalHistory.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks() })
@@ -44,8 +44,8 @@ describe('Android touch mouse guard', () => {
   })
 })
 
-describe('Android touch scrolling in full-screen programs', () => {
-  function fixture({ mouse = 'any', toProgram = false, available = true, type = 'alternate' } = {}) {
+describe('Android touch scrolling goes to the raw terminal', () => {
+  function fixture({ mouse = 'any', available = true, type = 'alternate', viewportY = 0, baseY = 0 } = {}) {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
     document.body.innerHTML = `<section id="terminal-history" hidden><div id="history-scroll"><button id="history-more"></button><p id="history-status"></p><pre id="history-content"></pre></div></section>
       <button id="scroll-bottom" hidden><span></span></button><div id="term"><div class="xterm-screen"></div></div>`
@@ -53,73 +53,73 @@ describe('Android touch scrolling in full-screen programs', () => {
     const term = {
       element, rows: 2, options: { fontSize: 14, fontFamily: 'mono' },
       modes: { mouseTrackingMode: mouse },
-      buffer: { active: { type, baseY: 0, viewportY: 0, getLine: () => ({ translateToString: () => 'row' }) } },
+      buffer: { active: { type, baseY, viewportY, getLine: () => ({ translateToString: () => 'row' }) } },
       scrollToBottom: vi.fn(),
     }
+    const unsupported = vi.fn()
+    const loadPage = vi.fn(() => new Promise(() => {}))
     const history = attachTerminalHistory({
-      term, get: (id: string) => document.getElementById(id), touchToProgram: () => toProgram,
-      loadPage: () => new Promise(() => {}),
+      term, get: (id: string) => document.getElementById(id), onUnsupportedScroll: unsupported, loadPage,
     })
     history.update(10, available)
     disposers.push(() => history.dispose())
     const program = vi.fn()
-    // 冒泡到这里代表 xterm 会把滚轮转成鼠标序列发给程序。
+    // 冒泡到这里代表交给 xterm：开了鼠标的程序收到滚轮，普通终端滚本地记录。
     element.addEventListener('wheel', program)
-    const swipe = (deltaY: number) => {
+    const swipe = (deltaY: number, extra: Record<string, unknown> = {}) => {
       const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY })
       Object.defineProperty(wheel, 'qingTouch', { value: true })
+      for (const [key, value] of Object.entries(extra)) Object.defineProperty(wheel, key, { value })
       element.querySelector('.xterm-screen')!.dispatchEvent(wheel)
     }
     const historyOpen = () => !document.getElementById('terminal-history')!.hidden
-    return { swipe, program, historyOpen, element, history }
+    return { swipe, program, historyOpen, unsupported, loadPage }
   }
 
-  it.each([40, -40])('opens read-only TUI history for touch delta %i without sending input', delta => {
+  it.each([40, -40])('passes touch delta %i to a full-screen program that reports the mouse', delta => {
     const { swipe, program, historyOpen } = fixture()
     swipe(delta)
-    expect(program).not.toHaveBeenCalled()
-    expect(historyOpen()).toBe(true)
-  })
-
-  it('explains missing retained history instead of silently swallowing the gesture', () => {
-    const { swipe, program, historyOpen } = fixture({ available: false })
-    swipe(-40)
-    expect(program).not.toHaveBeenCalled()
-    expect(historyOpen()).toBe(true)
-    expect(document.getElementById('history-status')!.textContent).toContain('暂无更早')
-    expect(document.getElementById('history-more')!.hidden).toBe(true)
-    expect(document.getElementById('history-content')!.textContent).toContain('row')
-  })
-
-  it.each(['alternate', 'normal'])('keeps an entire upward finger drag in read-only %s history', async type => {
-    const { element, historyOpen, program } = fixture({ type })
-    // A normal buffer with mouse reporting is also a TUI, e.g. inline full-screen layouts.
-    disposers.push(attachTerminalTouchScroll(element, { canInertia: () => false }))
-    const screen = element.querySelector('.xterm-screen')!
-    const touch = (event: string, y: number) => screen.dispatchEvent(Object.assign(new Event(event, { bubbles: true, cancelable: true }), {
-      touches: event === 'touchend' ? [] : [{ identifier: 1, clientX: 20, clientY: y }],
-    }))
-    touch('touchstart', 250)
-    touch('touchmove', 200)
-    await new Promise(resolve => requestAnimationFrame(resolve))
-    expect(historyOpen()).toBe(true)
-    touch('touchmove', 100)
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-    touch('touchend', 100)
-    expect(historyOpen()).toBe(true)
-    expect(program).not.toHaveBeenCalled()
-  })
-
-  it('keeps physical mouse wheels under program control', () => {
-    const { element, program, historyOpen } = fixture()
-    element.querySelector('.xterm-screen')!.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -40 }))
     expect(program).toHaveBeenCalledTimes(1)
     expect(historyOpen()).toBe(false)
   })
 
-  it.each([40, -40])('passes touch delta %i to the program in program mode', delta => {
-    const { swipe, program } = fixture({ toProgram: true })
-    swipe(delta)
+  it('does not turn swipes into arrow keys when a full-screen program ignores the mouse', () => {
+    const { swipe, program, historyOpen, unsupported } = fixture({ mouse: 'none' })
+    swipe(-40, { qingGesture: 3 })
+    swipe(-10, { qingGesture: 3, qingMomentum: true })
+    expect(program).not.toHaveBeenCalled()
+    expect(historyOpen()).toBe(false)
+    expect(unsupported).toHaveBeenCalledTimes(1)
+    expect(unsupported).toHaveBeenCalledWith(3)
+  })
+
+  it('scrolls the local normal buffer first and opens desktop history only at its top', () => {
+    const reading = fixture({ type: 'normal', mouse: 'none', viewportY: 5, baseY: 20 })
+    reading.swipe(-40)
+    expect(reading.program).toHaveBeenCalledTimes(1)
+    expect(reading.historyOpen()).toBe(false)
+    document.body.replaceChildren()
+    const top = fixture({ type: 'normal', mouse: 'none' })
+    top.swipe(-40)
+    expect(top.program).not.toHaveBeenCalled()
+    expect(top.historyOpen()).toBe(true)
+    expect(top.loadPage).toHaveBeenCalledWith(10)
+  })
+
+  it('keeps physical mouse wheels under program control', () => {
+    const { program, historyOpen } = fixture({ mouse: 'none' })
+    document.querySelector('.xterm-screen')!.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -40 }))
     expect(program).toHaveBeenCalledTimes(1)
+    expect(historyOpen()).toBe(false)
+  })
+})
+
+describe('local scrollback depth in desktop history lines', () => {
+  it('counts wrapped continuation rows as part of the preceding logical line', () => {
+    const wrapped = [false, true, true, false, false, true]
+    const buffer = { type: 'normal', viewportY: 0, baseY: 6, getLine: (index: number) => ({ isWrapped: wrapped[index] }) }
+    expect(localLogicalDepth(buffer)).toBe(3)
+    expect(localLogicalDepth({ ...buffer, viewportY: 4 })).toBe(1)
+    expect(localLogicalDepth({ ...buffer, type: 'alternate' })).toBe(0)
   })
 })

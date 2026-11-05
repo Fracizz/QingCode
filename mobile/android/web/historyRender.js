@@ -1,7 +1,7 @@
-// 只读历史面板的渲染：电脑端历史为纯文本行，当前画面从 xterm 缓冲区带颜色复制。
+// 只读历史面板的渲染：电脑端历史为带基本颜色的文本行，可见行从 xterm 缓冲区带颜色复制。
 // 纯函数，不依赖全局状态，便于 Vitest 覆盖。
 
-/** 电脑端为全屏程序（Codex / OpenCode 等）采样的画面之间插入的标记行，见 mobile_screen.rs。 */
+/** 旧版电脑端为全屏程序采样画面插入的标记行；新版不再采样，保留解析以兼容旧电脑端。 */
 export const TUI_FRAME_MARKER = '── 全屏画面历史 ──';
 
 const BASE16 = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
@@ -221,12 +221,11 @@ export function renderHistoryPage(doc, lines, theme = {}) {
   return fragment;
 }
 
-/** 当前画面（xterm 可见行）带颜色复制，开头用分隔条与更早历史区分。 */
+/** 手机可见行带颜色复制，作为只读面板的起点；与上方电脑端历史连续衔接，不加分隔条。 */
 export function renderScreen(doc, term) {
   const fragment = doc.createDocumentFragment();
   const buffer = term.buffer.active;
   const theme = term.options.theme ?? {};
-  fragment.append(divider(doc, '当前画面'));
   for (let index = 0; index < term.rows; index += 1) {
     const line = buffer.getLine(buffer.viewportY + index);
     // 下一行是自动换行的延续时拼成一个逻辑行，交给手机按自身宽度排版。
