@@ -39,6 +39,21 @@ export interface TerminalOverviewInput {
   detached: readonly DetachedProjectTerminals[]
 }
 
+/**
+ * 程序标题开头的转圈帧字符：盲文点阵（含空白帧）与圆形/方块转圈。
+ * 须与后端 `is_spinner_glyph`（src-tauri/src/mobile.rs）和手机端 protocol.js 保持一致。
+ */
+const SPINNER_PREFIX = /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]\s*/u
+
+/**
+ * 手机会话的显示名：只去掉程序标题开头的转圈帧字符（由平滑的转圈图标代替），
+ * 其余原样保留（如 `✳ Claude Code`）；手动设置的名称不做任何处理。
+ */
+export function mobileSessionDisplayName(session: Pick<MobileSessionSummary, 'name' | 'customName'>): string {
+  if (session.customName) return session.name
+  return session.name.replace(SPINNER_PREFIX, '') || session.name
+}
+
 export function terminalOverviewEntries(input: TerminalOverviewInput): TerminalOverviewEntry[] {
   return [
     ...input.terminals.map(tab => ({
@@ -52,7 +67,7 @@ export function terminalOverviewEntries(input: TerminalOverviewInput): TerminalO
       source: 'mobile' as const,
       key: `mobile:${session.id}`,
       projectId: session.project.id,
-      name: session.name,
+      name: mobileSessionDisplayName(session),
       session,
     })),
     ...input.detached.flatMap(group =>
@@ -87,8 +102,11 @@ export function groupTerminalOverview(
   projects: readonly Pick<Project, 'id' | 'name'>[],
   filter: TerminalOverviewFilter = 'all',
   query = '',
+  /** 额外的可搜索文本（如已翻译的状态、来源标签），由视图层提供。 */
+  describe?: (entry: TerminalOverviewEntry) => readonly string[],
 ): TerminalOverviewGroup[] {
-  const needle = query.trim().toLowerCase()
+  // 空白分隔的多个关键词需全部命中，不区分大小写与顺序。
+  const needles = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const known = new Map(projects.map((project, index) => [project.id, { project, index }]))
   const groups = new Map<string, TerminalOverviewGroup>()
   for (const entry of entries) {
@@ -96,11 +114,16 @@ export function groupTerminalOverview(
     const projectName =
       known.get(entry.projectId)?.project.name ??
       (entry.source === 'mobile' ? entry.session.project.name : entry.projectId)
-    if (needle) {
-      const haystack = [entry.name, projectName, entry.source === 'mobile' ? entry.session.deviceName ?? '' : '']
+    if (needles.length) {
+      const haystack = [
+        entry.name,
+        projectName,
+        entry.source === 'mobile' ? entry.session.deviceName ?? '' : '',
+        ...(describe?.(entry) ?? []),
+      ]
         .join('\n')
         .toLowerCase()
-      if (!haystack.includes(needle)) continue
+      if (!needles.every(needle => haystack.includes(needle))) continue
     }
     let group = groups.get(entry.projectId)
     if (!group) {
@@ -120,6 +143,63 @@ export function groupTerminalOverview(
     const right = known.get(b.projectId)?.index ?? Number.POSITIVE_INFINITY
     return left - right || a.projectName.localeCompare(b.projectName, 'zh-CN')
   })
+}
+
+export interface TerminalOverviewPagedGroup extends TerminalOverviewGroup {
+  /** 该项目在全部筛选结果中的终端数（本页可能只显示其中一部分）。 */
+  total: number
+}
+
+export interface TerminalOverviewPage {
+  groups: TerminalOverviewPagedGroup[]
+  /** 已夹取到合法范围内的页码（从 0 开始）。 */
+  page: number
+  pageCount: number
+  total: number
+}
+
+/**
+ * 按终端条数分页（而不是按项目组），保持分组顺序；跨页的项目组在每一页都会带上组头。
+ * 页码越界时夹取到最后一页，便于批量关闭后列表变短时不出现空页。
+ */
+export function paginateTerminalOverview(
+  groups: readonly TerminalOverviewGroup[],
+  page: number,
+  pageSize: number,
+): TerminalOverviewPage {
+  const size = Math.max(1, Math.floor(pageSize))
+  const total = groups.reduce((sum, group) => sum + group.entries.length, 0)
+  const pageCount = Math.max(1, Math.ceil(total / size))
+  const safePage = Math.min(Math.max(0, Math.floor(page) || 0), pageCount - 1)
+  const start = safePage * size
+  const end = start + size
+  const paged: TerminalOverviewPagedGroup[] = []
+  let offset = 0
+  for (const group of groups) {
+    const groupStart = offset
+    offset += group.entries.length
+    if (offset <= start || groupStart >= end) continue
+    paged.push({
+      ...group,
+      total: group.entries.length,
+      entries: group.entries.slice(Math.max(0, start - groupStart), end - groupStart),
+    })
+  }
+  return { groups: paged, page: safePage, pageCount, total }
+}
+
+/** 终端是否已退出/结束（关闭它不会结束任何正在运行的程序）。远端未接回的终端总在运行。 */
+export function isTerminalOverviewEntryExited(entry: TerminalOverviewEntry): boolean {
+  if (entry.source === 'desktop') return entry.tab.status === 'exited'
+  if (entry.source === 'mobile') return entry.session.exit !== null
+  return false
+}
+
+/** 批量关闭前的统计：总数与仍在运行的数量（用于确认文案）。 */
+export function summarizeTerminalOverviewBatch(entries: readonly TerminalOverviewEntry[]) {
+  let running = 0
+  for (const entry of entries) if (!isTerminalOverviewEntryExited(entry)) running += 1
+  return { total: entries.length, running, exited: entries.length - running }
 }
 
 /** 「空闲 N 分钟」等，用于手机会话；不足 1 分钟返回 null。 */

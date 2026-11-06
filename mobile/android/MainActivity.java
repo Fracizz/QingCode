@@ -226,6 +226,7 @@ public final class MainActivity extends Activity {
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
                         case "qingcode-icon.png": type = "image/png"; break;
+                        case "qingcode-symbols.woff2": type = "font/woff2"; break;
                         default: return denied();
                     }
                     try {

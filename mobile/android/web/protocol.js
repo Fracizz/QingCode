@@ -15,20 +15,43 @@ export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColu
   };
 }
 
+/**
+ * 程序标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与圆形/方块转圈。
+ * 须与电脑端 `is_spinner_glyph`（src-tauri/src/mobile.rs）保持一致。
+ */
+const SPINNER_PREFIX = /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]\s*/u;
+const SPINNER_START = /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]/u;
+
 export function sessionName(session, fallback = 1) {
   const name = typeof session?.name === 'string' ? session.name.trim() : '';
   // CLI title animations belong in a status icon, never in the session name.
-  const shown = session?.customName ? name : name.replace(/^[⠁-⣿]\s*/, '');
+  // 只去掉转圈帧字符，其余（如 `✳ Claude Code`）原样保留。
+  const shown = session?.customName ? name : name.replace(SPINNER_PREFIX, '');
   // 电脑端没有程序标题时默认命名为「终端 N」，按手机语言显示；手动名称保持原样。
   const numbered = !session?.customName && /^终端 (\d+)$/.exec(shown);
   if (numbered) return t('终端 {n}', { n: numbered[1] });
   return shown || t('终端 {n}', { n: session?.number ?? fallback });
 }
 
-/** A live PTY alone does not imply that its CLI is working. */
+/**
+ * A live PTY alone does not imply that its CLI is working.
+ * 新版电脑端给出按时间窗口平滑过的 programBusy，避免轮询取到空白帧或短暂的普通标题时转圈时转时停；
+ * 旧版电脑端没有该字段时退回按当前标题判断。
+ */
 export function sessionRunning(session) {
+  if (session?.exit) return false;
+  if (typeof session?.programBusy === 'boolean') return session.programBusy;
   const title = session?.programTitle ?? (session?.customName ? '' : session?.name);
-  return !session?.exit && /^[\u2801-\u28ff]/u.test(String(title ?? '').trim());
+  return SPINNER_START.test(String(title ?? '').trim());
+}
+
+/**
+ * 忙碌状态不随名称版本号走：保持时间到期时名称不变，不能被版本号挡住。返回是否有变化。
+ */
+export function mergeSessionActivity(session, incoming) {
+  if (!session || typeof incoming?.programBusy !== 'boolean' || session.programBusy === incoming.programBusy) return false;
+  session.programBusy = incoming.programBusy;
+  return true;
 }
 
 /** Late poll responses must not undo a newer manual rename. */

@@ -11,6 +11,10 @@ export interface MobileSessionSummary {
   id: string
   number: number
   name: string
+  /** 手动设置的名称；为空时 name 来自程序标题（原样保留，可能带转圈帧字符）。 */
+  customName: string | null
+  /** 程序标题最近在转圈（后端按时间窗口平滑判断，旧版后端没有此字段时为 false）。 */
+  programBusy: boolean
   exit: { exitCode: number; disconnected: boolean } | null
   lastActiveAt: number
   idleDeadline: number | null
@@ -55,6 +59,8 @@ export function parseMobileSessionSummary(value: unknown): MobileSessionSummary 
     id: item.id,
     number: typeof item.number === 'number' ? item.number : 0,
     name: typeof item.name === 'string' && item.name ? item.name : `终端 ${item.number ?? ''}`.trim(),
+    customName: typeof item.customName === 'string' && item.customName ? item.customName : null,
+    programBusy: item.programBusy === true,
     exit: parseExit(item.exit),
     lastActiveAt: typeof item.lastActiveAt === 'number' ? item.lastActiveAt : 0,
     idleDeadline: typeof item.idleDeadline === 'number' ? item.idleDeadline : null,

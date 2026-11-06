@@ -27,6 +27,7 @@ import {
   renameProfileKeys,
   sessionName,
   sessionRunning,
+  mergeSessionActivity,
   mergeSessionName,
   splitInput,
   terminalProfileChoices,
@@ -64,6 +65,27 @@ describe('Android session names', () => {
     expect(sessionRunning({ name: '⠋ 我的名字', customName: '⠋ 我的名字' })).toBe(false)
     expect(sessionRunning({})).toBe(false)
     expect(sessionName({ name: '⠋', number: 2 })).toBe('终端 2')
+  })
+
+  it('prefers the smoothed programBusy flag and keeps non-spinner title glyphs', () => {
+    // 电脑端判定仍在忙时，标题暂时没有转圈帧也继续转；判定空闲时，残留的转圈帧不再转。
+    expect(sessionRunning({ name: '✳ Claude Code', programTitle: '✳ Claude Code', programBusy: true })).toBe(true)
+    expect(sessionRunning({ name: '⠋ 构建', programTitle: '⠋ 构建', programBusy: false })).toBe(false)
+    expect(sessionRunning({ name: '⠋ 构建', programBusy: true, exit: { exitCode: 0 } })).toBe(false)
+    // 旧版电脑端没有 programBusy：空白盲文帧与圆形转圈也算转圈帧。
+    expect(sessionRunning({ name: 'BLANK 构建'.replace('BLANK', String.fromCharCode(0x2800)) })).toBe(true)
+    expect(sessionRunning({ name: '◐ Claude Code' })).toBe(true)
+    expect(sessionName({ name: '◓ Claude Code' })).toBe('Claude Code')
+    expect(sessionName({ name: '✳ Claude Code' })).toBe('✳ Claude Code')
+  })
+
+  it('merges busy state regardless of the name revision', () => {
+    const session = { name: 'Claude', nameRevision: 5, programBusy: true }
+    expect(mergeSessionActivity(session, { nameRevision: 4, programBusy: false })).toBe(true)
+    expect(session.programBusy).toBe(false)
+    expect(mergeSessionActivity(session, { programBusy: false })).toBe(false)
+    expect(mergeSessionActivity(session, {})).toBe(false)
+    expect(mergeSessionActivity(undefined, { programBusy: true })).toBe(false)
   })
 
   it('updates activity behind a manual name without accepting an older title', () => {

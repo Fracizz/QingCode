@@ -6,7 +6,12 @@ import {
   countTerminalOverview,
   groupTerminalOverview,
   idleMinutes,
+  isTerminalOverviewEntryExited,
+  mobileSessionDisplayName,
+  paginateTerminalOverview,
+  summarizeTerminalOverviewBatch,
   terminalOverviewEntries,
+  type TerminalOverviewGroup,
 } from './terminalOverview'
 
 const projects = [
@@ -23,6 +28,8 @@ function mobile(id: string, projectId: string, projectName = projectId, deviceNa
     id,
     number: 1,
     name: `phone ${id}`,
+    customName: null,
+    programBusy: false,
     exit: null,
     lastActiveAt: 0,
     idleDeadline: null,
@@ -69,6 +76,68 @@ describe('terminal overview', () => {
     expect(groupTerminalOverview(entries, projects, 'remote', 'alpha')).toEqual([])
   })
 
+  it('searches extra describe text such as status and source labels', () => {
+    const describe = (entry: (typeof entries)[number]) => [entry.source === 'remote' ? '远端 未接回' : '']
+    expect(
+      groupTerminalOverview(entries, projects, 'all', '未接回', describe).flatMap(group => group.entries.map(entry => entry.key)),
+    ).toEqual(['remote:c:pty-1'])
+    // 多个关键词需全部命中（不区分顺序）
+    expect(
+      groupTerminalOverview(entries, projects, 'all', 'beta 远端', describe).flatMap(group => group.entries.map(entry => entry.key)),
+    ).toEqual(['remote:c:pty-1'])
+  })
+
+  it('treats exited desktop tabs and ended phone sessions as exited; remote is always running', () => {
+    const exitedTab = { ...tab('x', 'a'), status: 'exited' } as TerminalTab
+    const endedPhone = { ...mobile('mobile-2', 'a'), exit: { exitCode: 0, disconnected: false } }
+    const all = terminalOverviewEntries({ projects, terminals: [exitedTab], mobile: [endedPhone], detached: [] })
+    expect(all.map(isTerminalOverviewEntryExited)).toEqual([true, true])
+    expect(entries.filter(entry => entry.source === 'remote').map(isTerminalOverviewEntryExited)).toEqual([false])
+    expect(summarizeTerminalOverviewBatch([...all, ...entries])).toEqual({ total: 7, running: 5, exited: 2 })
+  })
+
+  it('paginates by entry count across groups and clamps out-of-range pages', () => {
+    const make = (id: string, count: number): TerminalOverviewGroup => ({
+      projectId: id,
+      projectName: id,
+      missing: false,
+      entries: terminalOverviewEntries({
+        projects,
+        terminals: Array.from({ length: count }, (_, index) => tab(`${id}${index}`, id)),
+        mobile: [],
+        detached: [],
+      }),
+    })
+    const groups = [make('a', 3), make('b', 4)]
+    const first = paginateTerminalOverview(groups, 0, 5)
+    expect(first.pageCount).toBe(2)
+    expect(first.total).toBe(7)
+    expect(first.groups.map(group => [group.projectId, group.entries.length, group.total])).toEqual([
+      ['a', 3, 3],
+      ['b', 2, 4],
+    ])
+    const second = paginateTerminalOverview(groups, 1, 5)
+    expect(second.groups.map(group => group.entries.map(entry => entry.name))).toEqual([['b2', 'b3']])
+    expect(paginateTerminalOverview(groups, 9, 5).page).toBe(1)
+    expect(paginateTerminalOverview([], 3, 5)).toEqual({ groups: [], page: 0, pageCount: 1, total: 0 })
+  })
+
+  it('strips only spinner frames from program titles and keeps everything else', () => {
+    expect(mobileSessionDisplayName({ name: '⠋ 构建', customName: null })).toBe('构建')
+    expect(mobileSessionDisplayName({ name: '\u2800 构建', customName: null })).toBe('构建')
+    expect(mobileSessionDisplayName({ name: '◐ Claude Code', customName: null })).toBe('Claude Code')
+    expect(mobileSessionDisplayName({ name: '✳ Claude Code', customName: null })).toBe('✳ Claude Code')
+    expect(mobileSessionDisplayName({ name: '⠋ 我的名字', customName: '⠋ 我的名字' })).toBe('⠋ 我的名字')
+    expect(mobileSessionDisplayName({ name: '⠋', customName: null })).toBe('⠋')
+    const [entry] = terminalOverviewEntries({
+      projects,
+      terminals: [],
+      mobile: [{ ...mobile('mobile-3', 'a'), name: '⠙ 统一新建终端' }],
+      detached: [],
+    })
+    expect(entry.name).toBe('统一新建终端')
+  })
+
   it('reports idle minutes only after a full minute', () => {
     expect(idleMinutes(0, 1_000_000)).toBeNull()
     expect(idleMinutes(1_000_000, 1_030_000)).toBeNull()
@@ -93,6 +162,8 @@ describe('parseMobileSessionSummary', () => {
       id: 'mobile-1',
       number: 2,
       name: '终端 2',
+      customName: null,
+      programBusy: false,
       exit: { exitCode: 1, disconnected: false },
       lastActiveAt: 0,
       idleDeadline: null,

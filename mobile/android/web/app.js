@@ -5,6 +5,7 @@ import {
   applyModifiers,
   consumeModifier,
   keySequence,
+  mergeSessionActivity,
   mergeSessionName,
   nextModifierState,
   outputBatches,
@@ -16,7 +17,7 @@ import {
   terminalGridSize,
   terminalProfileChoices,
 } from './protocol.js';
-import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel } from './terminalTouch.js';
+import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
 import { heldTerminalRows, heldRowOffset, keyboardLikelyOpen } from './terminalHold.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
@@ -116,6 +117,8 @@ let disposeTouchScroll;
 let terminalScrollbar;
 let terminalJog;
 let terminalMouse;
+/** 鼠标模式下虚拟指针在各会话里的位置（画面内相对比例），切回会话时恢复。 */
+const mousePositions = new Map();
 /** 软键盘打开时保留的终端行数下，实际可见的行数；0 表示没有保留。 */
 let heldVisibleRows = 0;
 /** 当前窗口宽度下见过的最大高度，用来判断软键盘是否打开。 */
@@ -804,7 +807,8 @@ function makeTerminal() {
     allowProposedApi: false,
     fontSize: settings.fontSize(),
     lineHeight: 1.2,
-    fontFamily: 'monospace',
+    // 系统等宽字体缺字时回退到内置符号字体（见 app.css @font-face）。
+    fontFamily: "monospace, 'QingCode Symbols'",
     scrollback: 10000,
     cursorBlink: true,
     // Keep ANSI colors and cursor aligned with the desktop dark terminal.
@@ -867,10 +871,11 @@ function makeTerminal() {
   });
   terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
-    // 鼠标模式下点按总是作为鼠标点击发给程序，不受「全屏程序中的触摸」设置限制。
-    shouldBlock: () => settings.touchMode() === 'view' && !terminalMouse?.isActive() && term?.modes.mouseTrackingMode !== 'none',
+    // 鼠标模式下点按只移动虚拟指针，点击改由虚拟鼠标的左右键发出，所以触摸带出的鼠标事件一律拦下。
+    shouldBlock: () => !!terminalMouse?.isActive() || settings.touchMode() === 'view' && term?.modes.mouseTrackingMode !== 'none',
     // 全屏程序拦截了鼠标事件，xterm 收不到点按；按触点坐标查找链接。
     onTap: event => {
+      if (terminalMouse?.isActive()) return;
       const url = event && terminalLinks?.linkAt(event.clientX, event.clientY);
       if (url) openTerminalLink(url);
       else term?.focus();
@@ -883,6 +888,7 @@ function makeTerminal() {
   updateTerminalSize();
   term.onData(data => { sendInput(data); });
   term.onResize(() => {
+    terminalMouse?.refresh();
     updateTerminalSize();
     clearTimeout(resizing);
     resizing = setTimeout(sendSize, 120);
@@ -909,19 +915,45 @@ function makeTerminal() {
     page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3))),
     onLongPress: toggleMouseMode,
   });
+  const mouseKey = selected && draftKey(selected);
   terminalMouse = attachMouseMode(get('viewport').parentElement, get('viewport'), {
     label: t('鼠标'),
     exitLabel: t('退出鼠标模式'),
+    leftLabel: t('鼠标左键'),
+    rightLabel: t('鼠标右键'),
+    dragLabel: t('拖动以移动鼠标指针'),
+    screenRect: () => term?.element?.querySelector('.xterm-screen')?.getBoundingClientRect() ?? get('viewport').getBoundingClientRect(),
+    grid: () => term && { cols: term.cols, rows: term.rows },
+    position: () => mouseKey ? mousePositions.get(mouseKey) : undefined,
+    savePosition: ratio => { if (mouseKey) mousePositions.set(mouseKey, ratio); },
     onChange: active => {
       terminalScrollbar?.setPinned(active);
       terminalJog?.setPinned(active);
-      showTerminalToast(active ? t('鼠标模式：拖右侧滑块滚动，点终端选中；点「鼠标」退出') : t('已退出鼠标模式'), active ? 2600 : 1200);
+      showTerminalToast(active ? t('鼠标模式：拖动鼠标移动指针，点左右键点击；点「鼠标」退出') : t('已退出鼠标模式'), active ? 2600 : 1200);
     },
-    // 开了鼠标上报的程序由 xterm 收到真实点击；普通终端选中手指下的词。
-    onTap: point => {
+    onClick: (point, button) => {
       hideFontToast();
-      if (terminalHistory?.isOpen() || programMouse()) return;
-      terminalSelection?.start(point);
+      void rpc('haptic').catch(() => {});
+      if (terminalHistory?.isOpen()) return;
+      // 开了鼠标上报的程序：在指针尖端派发真实的左 / 右键点击，由 xterm 编码后发给程序。
+      if (programMouse()) { sendVirtualMouse(screen => dispatchVirtualClick(screen, point, button)); return; }
+      // 普通终端：左键选中指针下的词，右键弹出选中 / 粘贴。
+      if (button === 0) terminalSelection?.start(point);
+      else terminalMouse?.showMenu([
+        { label: t('选中'), run: () => terminalSelection?.start(point) },
+        { label: t('粘贴'), run: () => { void pastePhoneClipboard(); } },
+      ]);
+    },
+    // 长按左键拖动：程序收到按住左键的拖动；普通终端从按下处开始选中，再用选区手柄调整。
+    onDrag: (phase, point) => {
+      if (terminalHistory?.isOpen()) return;
+      if (programMouse()) {
+        const type = phase === 'down' ? 'mousedown' : phase === 'move' ? 'mousemove' : 'mouseup';
+        sendVirtualMouse(screen => dispatchVirtualMouse(screen, type, point, { button: 0, buttons: phase === 'up' ? 0 : 1 }));
+      } else if (phase === 'down') {
+        void rpc('haptic').catch(() => {});
+        terminalSelection?.start(point);
+      }
     },
   });
   term.onWriteParsed(() => {
@@ -977,6 +1009,28 @@ function toggleMouseMode() {
   if (!terminalMouse) return;
   terminalMouse.toggle();
   void rpc('haptic').catch(() => {});
+}
+
+/**
+ * 向终端画面派发虚拟鼠标事件。xterm 在 mousedown 时会聚焦输入框，若原本没开键盘，派发后立即失焦，避免弹出软键盘。
+ */
+function sendVirtualMouse(dispatch) {
+  const screen = term?.element?.querySelector('.xterm-screen');
+  if (!screen || !terminalReady) return;
+  const focused = document.activeElement === term.textarea;
+  dispatch(screen);
+  if (!focused && document.activeElement === term.textarea) term.textarea.blur();
+}
+
+/** 普通终端右键「粘贴」：读手机剪贴板，按终端粘贴（支持括号粘贴模式）写入。 */
+async function pastePhoneClipboard() {
+  try {
+    const text = await rpc('clipboard');
+    if (text && term) term.paste(String(text));
+    else showTerminalToast(t('剪贴板为空'), 1400);
+  } catch (error) {
+    showTerminalToast(t(error.message || '无法打开手机剪贴板。'), 1800);
+  }
 }
 
 function programMouse() {
@@ -1273,7 +1327,8 @@ async function poll(session, epoch) {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
       const current = sessions.find(item => item.id === session.id);
-      if (current && mergeSessionName(current, data)) drawer.render();
+      const renamed = current ? mergeSessionName(current, data) : false;
+      if (mergeSessionActivity(current, data) || renamed) drawer.render();
       if (data.chunks.length) reader.notifyOutput();
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);

@@ -46,6 +46,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'fit.js': ['node_modules/@xterm/addon-fit/lib/addon-fit.js', 'text/javascript'],
   'jsqr.js': ['node_modules/jsqr/dist/jsQR.js', 'text/javascript'],
   'qingcode-icon.png': ['src-tauri/icons/128x128@2x.png', 'image/png'],
+  'qingcode-symbols.woff2': ['mobile/android/web/qingcode-symbols.woff2', 'font/woff2'],
 }
 
 // A separate dev server keeps fixtures and memory adapters out of the desktop build.
