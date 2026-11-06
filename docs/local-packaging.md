@@ -43,7 +43,7 @@ Android 工具链和本地签名沿用 [Android 构建说明](../mobile/README.m
 
 统一 CLI 默认在 `release/` 生成：
 
-- `QingCode_<版本>-setup.exe`：带版本号的安装包，当前版本为 `QingCode_0.1.15-beta.8-setup.exe`。
+- `QingCode_<版本>-setup.exe`：带版本号的安装包，当前版本为 `QingCode_0.1.15-beta.9-setup.exe`。
 - `QingCode-servers.zip` 与 `servers/`：Server 离线包。
 - `QingCode_<APK版本>-android.apk` 与 `QingCode-Android.apk`：最近一次本地 APK。
 

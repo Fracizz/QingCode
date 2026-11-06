@@ -24,6 +24,9 @@ package-lock.json
 # dev 环境本地数据库（项目内，不提交）
 .dev
 
+# 终端/移动端粘贴的临时图片（运行期缓存，不提交）
+.qingcode/terminal-paste/
+
 # 本机 AI 助手的会话/计划临时目录（不提交）
 .workbuddy
 .zcode
