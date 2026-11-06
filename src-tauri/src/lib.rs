@@ -563,18 +563,6 @@ fn terminal_has_child_processes(
     state.has_child_processes(&id)
 }
 
-/// 批量查询标签运行状态：只枚举一次进程，放到阻塞线程，避免轮询卡住主线程。
-#[tauri::command]
-async fn terminal_child_process_states(
-    ids: Vec<String>,
-    state: tauri::State<'_, TerminalManager>,
-) -> Result<std::collections::HashMap<String, bool>, String> {
-    let roots = state.shell_pids_by_id(&ids);
-    tauri::async_runtime::spawn_blocking(move || terminal::child_process_states(&roots))
-        .await
-        .map_err(|error| error.to_string())
-}
-
 /// Status-bar memory: main + WebView2 + associated terminal process trees.
 /// Pass `force: true` to bypass the short TTL cache (hover tip / terminal churn).
 #[tauri::command]
@@ -907,7 +895,6 @@ pub fn run() {
             terminal_session_open,
             resize_terminal,
             terminal_has_child_processes,
-            terminal_child_process_states,
             get_app_memory,
             spawn_script,
             run_environment::resolve_run_environment,

@@ -5,7 +5,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -52,11 +51,6 @@ import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
-import TerminalActivityDot from './TerminalActivityDot'
-import {
-  getTerminalActivityIndicator,
-  subscribeTerminalActivityIndicator,
-} from '@/lib/terminal/terminalActivitySettings'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
 import { terminalShellLabelKey } from '@/lib/terminal/terminalShell'
@@ -123,10 +117,6 @@ export default function TerminalTabs({
   } | null>(null)
   const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
-  const activityIndicator = useSyncExternalStore(
-    subscribeTerminalActivityIndicator,
-    getTerminalActivityIndicator,
-  )
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -838,7 +828,6 @@ export default function TerminalTabs({
                       </button>
                     </Tooltip>
                   )}
-                  {activityIndicator && <TerminalActivityDot terminalId={t.id} />}
                 </div>
               )
             })}
@@ -967,7 +956,6 @@ export default function TerminalTabs({
                 <span className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
               )}
               {term.status === 'exited' && <span className="ui-chip h-6 w-5 flex-shrink-0" />}
-              {activityIndicator && <span className="h-3 w-3 flex-shrink-0" />}
             </div>
           ))}
         </div>

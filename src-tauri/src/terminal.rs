@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, Signal, System};
+use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, Signal, System};
 use tauri::{AppHandle, Emitter};
 mod wsl;
 
@@ -601,17 +601,6 @@ impl TerminalManager {
             return Ok(false);
         }
         Ok(count_meaningful_child_processes(pid) > 0)
-    }
-
-    /// 指定终端的 Shell PID；没有活动进程的终端不返回。
-    pub fn shell_pids_by_id(&self, ids: &[String]) -> Vec<(String, u32)> {
-        let sessions = self.sessions.lock().unwrap();
-        ids.iter()
-            .filter_map(|id| {
-                let pid = sessions.get(id)?.shell_pid?;
-                Some((id.clone(), pid))
-            })
-            .collect()
     }
 
     /// Shell PIDs for live sessions (used by low-cost app memory sampling).
@@ -1337,39 +1326,6 @@ fn meaningful_descendant_count(processes: &[(u32, Option<u32>, &str)], root: u32
     count
 }
 
-/// 一次进程枚举回答多个终端是否有前台子进程。只取进程关系和名称，不采集 CPU、内存。
-pub fn child_process_states(roots: &[(String, u32)]) -> HashMap<String, bool> {
-    if roots.is_empty() {
-        return HashMap::new();
-    }
-    let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let owned: Vec<(u32, Option<u32>, String)> = system
-        .processes()
-        .values()
-        .map(|process| {
-            (
-                process.pid().as_u32(),
-                process.parent().map(|parent| parent.as_u32()),
-                process.name().to_string_lossy().into_owned(),
-            )
-        })
-        .collect();
-    let processes: Vec<(u32, Option<u32>, &str)> = owned
-        .iter()
-        .map(|(pid, parent, name)| (*pid, *parent, name.as_str()))
-        .collect();
-    roots
-        .iter()
-        .map(|(id, pid)| {
-            (
-                id.clone(),
-                meaningful_descendant_count(&processes, *pid) > 0,
-            )
-        })
-        .collect()
-}
-
 fn count_meaningful_child_processes(parent_pid: u32) -> usize {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
@@ -1923,29 +1879,6 @@ mod tests {
         assert!(is_console_noise_process("wslhost.exe"));
         assert!(!is_console_noise_process("opencode.exe"));
         assert!(!is_console_noise_process("node"));
-    }
-
-    #[test]
-    fn child_process_states_detects_live_child_with_single_enumeration() {
-        let mut child = if cfg!(windows) {
-            std::process::Command::new("ping")
-                .args(["-n", "30", "127.0.0.1"])
-                .stdout(std::process::Stdio::null())
-                .spawn()
-        } else {
-            std::process::Command::new("sleep").arg("30").spawn()
-        }
-        .expect("spawn child");
-        // 终端 a 的根是当前测试进程（有子进程），终端 b 的根是没有子进程的子进程本身。
-        let states = child_process_states(&[
-            ("a".to_string(), std::process::id()),
-            ("b".to_string(), child.id()),
-        ]);
-        let _ = child.kill();
-        let _ = child.wait();
-        assert_eq!(states.get("a"), Some(&true));
-        assert_eq!(states.get("b"), Some(&false));
-        assert!(child_process_states(&[]).is_empty());
     }
 
     #[test]

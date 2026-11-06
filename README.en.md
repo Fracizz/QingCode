@@ -191,8 +191,6 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 
 Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual terminals, a draggable 2×2 quad-terminal grid, or the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
 
-To see at a glance which terminal is still running and which has stopped, turn on **Settings → Terminal → Tab Activity Status** (off by default). Tabs then show “Running” and “Stopped, take a look”. See [DESIGN.md](./DESIGN.md) (Chinese) for details.
-
 ### Working with AI: external assistants, no built-in model
 
 QingCode **does not ship** a chat model or agent. Intelligence stays with Cursor / Claude / OpenCode and similar tools; QingCode focuses on projects and the running scene:

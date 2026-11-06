@@ -50,7 +50,6 @@ import {
   markTerminalCommandFinished,
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
-import { clearTerminalTitleSignal, recordTerminalTitle } from '@/lib/terminal/terminalActivity'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
@@ -1085,10 +1084,6 @@ export default function TerminalView({
           useTerminalStore.getState().renameTerminal(terminalId, title)
         }
       },
-      onRawTitle: title => {
-        // 回放历史时的标题不是当前状态，否则一启动就会误判为运行后完成。
-        if (clipboardWritesEnabled) recordTerminalTitle(terminalId, title)
-      },
       onCommandStart: () => markTerminalCommandStarted(terminalId),
       onCommandEnd: () => markTerminalCommandFinished(terminalId),
     })
@@ -1280,7 +1275,6 @@ export default function TerminalView({
       unsubscribeOutput?.()
       writeFlow.dispose()
       disposeOscHandlers()
-      clearTerminalTitleSignal(terminalId)
       container.removeEventListener('wheel', onZoomWheel, { capture: true })
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)

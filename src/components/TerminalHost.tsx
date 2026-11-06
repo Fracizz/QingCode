@@ -1,10 +1,5 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  getTerminalActivityIndicator,
-  subscribeTerminalActivityIndicator,
-} from '@/lib/terminal/terminalActivitySettings'
-import { startTerminalActivityTracker } from '@/lib/terminal/terminalActivityTracker'
 
 const TerminalView = lazy(() => import('./Terminal'))
 
@@ -27,15 +22,6 @@ function terminalHostNode(terminalId: string): HTMLDivElement {
   return node
 }
 
-/** 终端此刻是否真的显示在屏幕上：已挂到槽位、未被隐藏，且有实际尺寸（面板可能被收起）。 */
-function isTerminalHostOnScreen(terminalId: string): boolean {
-  const node = hostNodes.get(terminalId)
-  if (!node?.isConnected) return false
-  const { width, height } = node.getBoundingClientRect()
-  if (width <= 0 || height <= 0) return false
-  return node.checkVisibility?.({ checkVisibilityCSS: true, visibilityProperty: true }) ?? true
-}
-
 export interface TerminalHostEntry {
   terminalId: string
   isActive: boolean
@@ -49,15 +35,6 @@ export function TerminalHosts({
   entries: readonly TerminalHostEntry[]
   layoutKey: string
 }) {
-  const activityEnabled = useSyncExternalStore(
-    subscribeTerminalActivityIndicator,
-    getTerminalActivityIndicator,
-  )
-  useEffect(
-    () => (activityEnabled ? startTerminalActivityTracker(isTerminalHostOnScreen) : undefined),
-    [activityEnabled],
-  )
-
   const liveIds = entries.map(entry => entry.terminalId).join('\n')
   useEffect(() => {
     // 标签关闭后 portal 已卸载，这里回收它的节点。

@@ -328,13 +328,6 @@ export class WebTestBackend {
         return this.terminals.has(id)
       case 'terminal_has_child_processes':
         return this.terminals.get(id)?.script ?? false
-      case 'terminal_child_process_states':
-        return Object.fromEntries(
-          (args.ids as string[]).map(terminalId => [
-            terminalId,
-            this.terminals.get(terminalId)?.script ?? false,
-          ]),
-        )
       case 'write_terminal':
       case 'ssh_write_terminal':
         this.terminalInput(id, String(args.data))

@@ -222,8 +222,6 @@ OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html
 
 终端 Ctrl + 滚轮缩放复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-font-zoom.ego.mjs` 的 `run()`。覆盖每格一步、字号持久化、页面不缩放、不转发给鼠标跟踪中的 TUI、缩放保持历史阅读位置和字号上限。产物位于 `.dev/web-tests/terminal-font-zoom-*/`；不替代 WebView2 中的真实滚轮手感与 Claude／OpenCode 验收。
 
-终端标签运行状态使用 `pnpm dev:web-test`（端口 **38419**）的完整 App，运行 `scripts/web-tests/terminal-activity.ego.mjs` 的 `run()`。覆盖默认关闭不轮询、开启后后台 Agent 的运行中与已停止状态点、查看后清除、正在查看的标签不打标记、后台退出、关闭后停止轮询。标题由内存后端输出模拟，产物位于 `.dev/web-tests/terminal-activity-*/`；不替代真实 Claude／Codex 标题、本机子进程和 SSH 验收。
-
 终端「编辑长文本」浮动面板复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-composer.ego.mjs` 的 `run()`。覆盖无遮罩／无模糊的非模态打开、默认高度约 70% 视口、焦点在终端时 Escape 发给终端不关闭面板、拖动标题栏移动并持久化、面板内 Escape 关闭后重开保留位置与草稿、双击标题栏复位居中。产物位于 `.dev/web-tests/terminal-composer-*/`；不替代 Tauri 原生拖放附件与真实 Claude／OpenCode 验收。
 
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、

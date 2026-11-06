@@ -40,9 +40,6 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     import('./terminal/terminalLargePasteSettings').then(mod =>
       mod.loadEffectiveTerminalLargePasteAsFile(project),
     ),
-    import('./terminal/terminalActivitySettings').then(mod =>
-      mod.loadEffectiveTerminalActivityIndicator(project),
-    ),
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)
