@@ -48,12 +48,33 @@ import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, 
 const native = window.QingCodeNative;
 document.documentElement.lang = initLocale(localStorage, navigator) === 'en' ? 'en' : 'zh-CN';
 translateDocument(document.body);
-// 语言切换：保存偏好后重新加载页面，所有静态与动态文案按新语言重建；会话由电脑端继续托管。
-get('app-language').value = loadLocalePreference(localStorage);
-get('app-language').addEventListener('change', () => {
-  saveLocalePreference(localStorage, get('app-language').value);
-  location.reload();
+// 语言切换：立即生效。原生 WebView 拦截了页面内跳转，location.reload() 不会真正重载，
+// 因此改为就地重译静态文案并重绘各视图，同时保留当前页面与终端会话。
+function renderLanguageChoice() {
+  const choice = loadLocalePreference(localStorage);
+  for (const button of document.querySelectorAll('#app-language [data-locale]')) {
+    button.setAttribute('aria-checked', String(button.dataset.locale === choice));
+  }
+}
+renderLanguageChoice();
+get('app-language').addEventListener('click', event => {
+  const button = event.target.closest?.('[data-locale]');
+  if (!button || button.getAttribute('aria-checked') === 'true') return;
+  saveLocalePreference(localStorage, button.dataset.locale);
+  renderLanguageChoice();
+  applyLocale(initLocale(localStorage, navigator));
 });
+
+/** 切换语言后重译静态文案并重绘带占位符的动态文案；瞬时提示保持原样，下次更新时即为新语言。 */
+function applyLocale(value) {
+  document.documentElement.lang = value === 'en' ? 'en' : 'zh-CN';
+  translateDocument(document.body);
+  dashboard.renderAll();
+  renderLatency();
+  setRawKeyboard(inputMode === 'raw');
+  updates.render();
+  if (profile && selected) drawer.render();
+}
 const prefix = 'qingcode:mobile:';
 const pages = { home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
 const terminalScreen = get('terminal-screen');

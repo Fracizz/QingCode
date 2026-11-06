@@ -17,7 +17,15 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
     try { storage.setItem(UPDATE_PREFS_KEY, JSON.stringify(prefs)); } catch { /* 偏好保存失败时本次仍然生效。 */ }
   }
 
-  function status(text) { get('update-status').textContent = text; }
+  // 状态行记住原文 key 与参数，切换语言后 render 时按新语言重写。
+  let statusMessage = null;
+  function status(key, vars) {
+    statusMessage = key ? { key, vars } : null;
+    paintStatus();
+  }
+  function paintStatus() {
+    get('update-status').textContent = statusMessage ? t(statusMessage.key, statusMessage.vars) : '';
+  }
   function dialogStatus(text) { get('update-dialog-status').textContent = text; }
 
   function renderCard() {
@@ -45,6 +53,7 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
     get('update-version').textContent = current ? t('当前版本 {version}', { version: current.name }) : '';
     get('update-check').disabled = !current || phase === 'checking';
     get('update-auto').checked = prefs.auto;
+    paintStatus();
     renderCard();
     renderDialog();
   }
@@ -53,7 +62,7 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
     if (!current) return null;
     if (checking) return checking;
     if (phase !== 'downloading' && phase !== 'ready' && phase !== 'installing') phase = 'checking';
-    status(t('正在检查更新…'));
+    status('正在检查更新…');
     render();
     checking = (async () => {
       try {
@@ -64,13 +73,13 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
         // 已在下载或已下载好的版本保持不变，避免中途换包。
         if (!(found && ['downloading', 'ready', 'installing'].includes(phase))) found = next;
         if (phase === 'checking') phase = found ? 'available' : 'idle';
-        status(found ? t('发现新版本 {version}', { version: found.version }) : t('已是最新版本。'));
+        status(found ? '发现新版本 {version}' : '已是最新版本。', found ? { version: found.version } : undefined);
         render();
         if (manual && found) openDialog();
         return found;
       } catch (error) {
         if (phase === 'checking') phase = 'idle';
-        status(manual ? t(error.message) : '');
+        status(manual ? error.message : '');
         render();
         return null;
       } finally {
@@ -170,7 +179,7 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
     prefs.skipped = found.version;
     savePrefs();
     dialog.close('cancel');
-    status(t('已跳过 {version}，可随时手动检查更新。', { version: found.version }));
+    status('已跳过 {version}，可随时手动检查更新。', { version: found.version });
     render();
   });
   get('update-page').addEventListener('click', () => {
@@ -180,6 +189,8 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
   return {
     receive,
     check,
+    /** 按当前语言重绘版本、状态行与更新弹层（切换语言时调用）。 */
+    render,
     /** 读取当前版本；自动检查开启且距上次超过 24 小时时在后台检查。 */
     async start() {
       try {

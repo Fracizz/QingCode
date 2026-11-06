@@ -693,9 +693,15 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 }
 #image-compression { width: 100%; min-height: 44px; margin-bottom: 12px; padding: 8px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); font: inherit; color: var(--ink); }
 .session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
-.language-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 4px 8px; }
-.language-setting label { color: var(--muted); font-size: 14px; font-weight: 650; }
-.language-setting select { min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); color: var(--ink); }
+/* 语言：与「应用更新」同款分组卡片，三段式选择，当前项用强调色填充，点按即生效。 */
+.language-setting { margin: 20px 4px 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
+.language-setting .row-text strong { font-size: 14px; }
+.language-setting .row-text small { margin-top: 2px; color: var(--muted); font-size: 12px; }
+.segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 12px; padding: 4px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); }
+.segmented button { min-height: 40px; padding: 0 6px; border-radius: calc(var(--control-radius) - 4px); color: var(--muted); font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.segmented button:active { background: var(--raised); transform: scale(.98); }
+.segmented button[aria-checked="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .update-setting { margin: 12px 4px 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
 .update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .update-row strong { font-size: 14px; }

@@ -115,7 +115,14 @@
           <span class="tile"><svg><use href="#i-host"/></svg></span>
           <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
         </div>
-        <div class="language-setting"><label for="app-language">语言 / Language</label><select id="app-language"><option value="auto">跟随系统</option><option value="zh">中文</option><option value="en">English</option></select></div>
+        <section class="language-setting" aria-labelledby="language-title">
+          <div class="row-text"><strong id="language-title">语言 / Language</strong><small>切换后立即生效</small></div>
+          <div id="app-language" class="segmented" role="radiogroup" aria-labelledby="language-title">
+            <button type="button" role="radio" data-locale="auto" aria-checked="false">跟随系统</button>
+            <button type="button" role="radio" data-locale="zh" aria-checked="false" lang="zh-CN">中文</button>
+            <button type="button" role="radio" data-locale="en" aria-checked="false" lang="en">English</button>
+          </div>
+        </section>
         <section id="update-section" class="update-setting" aria-labelledby="update-title">
           <div class="update-row"><div class="row-text"><strong id="update-title">应用更新</strong><small id="update-version"></small></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
           <p id="update-status" class="hint" role="status"></p>

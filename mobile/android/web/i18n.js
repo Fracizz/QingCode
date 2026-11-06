@@ -1,5 +1,5 @@
 // Android 端国际化：仅中文（默认）与英文。以中文原文作为 key，英文缺失时回退中文。
-// 语言偏好保存在手机 localStorage：auto 跟随系统语言，zh / en 为手动选择；切换后重新加载页面。
+// 语言偏好保存在手机 localStorage：auto 跟随系统语言，zh / en 为手动选择；切换后立即重译页面并重绘视图，不重新加载。
 // 纯逻辑可在 Node 中导入（Vitest：src/lib/mobileAndroidI18n.test.ts）；app.js 启动时调用 initLocale 确定语言。
 
 export const LOCALE_KEY = 'qingcode:mobile:locale';
@@ -82,7 +82,8 @@ export const EN = Object.freeze({
   '中文': '中文', // 语言名保持原文
   // data-i18n：同一中文在不同位置需要不同英文时使用的专用 key。
   'action:connect': 'Connect',
-  '跟随系统': 'System default',
+  '跟随系统': 'System', // 三段选择里需短词，避免窄屏截断
+  '切换后立即生效': 'Takes effect immediately',
 
   // —— 终端 ——
   '打开会话侧栏': 'Open session drawer',
@@ -575,26 +576,92 @@ export function saveLocalePreference(storage, value) {
 }
 
 const ATTRIBUTES = ['placeholder', 'aria-label', 'alt'];
+// 终端画面、脚本与样式不参与界面翻译（终端输出里恰好出现的中文不能被改写）。
+const SKIP_SELECTOR = '.xterm, script, style, [data-i18n-skip]';
+const DATA_KEY = /^[a-z]+:[\w-]+$/;
 
-/** 翻译静态页面：文本节点按去除首尾空白后的原文匹配，保留原有空白；同时翻译常用属性。 */
+// 记录被翻成英文的节点原本的中文，切回中文时优先精确还原（同一英文可能对应多个中文）。
+const textOrigins = new WeakMap(); // Text → { zh, en }
+const dataOrigins = new WeakMap(); // Element → { zh, en }
+const attrOrigins = new WeakMap(); // Element → { [name]: { zh, en } }
+let reverse = null;
+
+/** 英文 → 中文：用于还原启动后才以英文生成、没有原始记录的整句文案；data-i18n 专用 key 不参与。 */
+function reverseEntries() {
+  if (reverse) return reverse;
+  reverse = new Map();
+  for (const [zh, en] of Object.entries(EN)) {
+    if (!DATA_KEY.test(zh) && zh !== en && !reverse.has(en)) reverse.set(en, zh);
+  }
+  return reverse;
+}
+
+function swapTrimmed(raw, from, to) {
+  const start = raw.indexOf(from);
+  return raw.slice(0, start) + to + raw.slice(start + from.length);
+}
+
+function skipped(node) {
+  return !!node.parentElement?.closest(SKIP_SELECTOR);
+}
+
+/**
+ * 按当前语言翻译页面静态文案，可反复调用、可在中英之间来回切换：
+ * 文本节点按去除首尾空白后的整句匹配（保留原有空白），data-i18n 用专用 key，并翻译常用属性。
+ * 带占位符的动态文案不在此处理，由各视图重新渲染。
+ */
 export function translateDocument(root) {
-  if (current === 'zh') return;
+  const toEn = current === 'en';
+  const back = reverseEntries();
+  // data-i18n 先处理：其文字可能同时是普通 key，避免被文本遍历抢先改写后丢失中文原文。
+  for (const element of root.querySelectorAll('[data-i18n]')) {
+    const key = element.dataset.i18n;
+    if (!has(EN, key)) continue;
+    if (toEn) {
+      if (element.textContent === EN[key]) continue;
+      dataOrigins.set(element, { zh: element.textContent, en: EN[key] });
+      element.textContent = EN[key];
+    } else {
+      const origin = dataOrigins.get(element);
+      if (origin && element.textContent === origin.en) element.textContent = origin.zh;
+      dataOrigins.delete(element);
+    }
+  }
   const walker = root.ownerDocument.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const raw = node.nodeValue;
     const key = raw.trim();
-    if (!key || !has(EN, key)) continue;
-    const start = raw.indexOf(key);
-    node.nodeValue = raw.slice(0, start) + EN[key] + raw.slice(start + key.length);
-  }
-  for (const element of root.querySelectorAll('[data-i18n]')) {
-    if (has(EN, element.dataset.i18n)) element.textContent = EN[element.dataset.i18n];
+    if (!key || skipped(node)) continue;
+    if (toEn) {
+      if (!has(EN, key) || EN[key] === key) continue;
+      const next = swapTrimmed(raw, key, EN[key]);
+      textOrigins.set(node, { zh: raw, en: next });
+      node.nodeValue = next;
+    } else {
+      const origin = textOrigins.get(node);
+      if (origin && raw === origin.en) node.nodeValue = origin.zh;
+      else if (back.has(key)) node.nodeValue = swapTrimmed(raw, key, back.get(key));
+      textOrigins.delete(node);
+    }
   }
   for (const element of root.querySelectorAll(ATTRIBUTES.map(name => `[${name}]`).join(','))) {
+    if (element.closest('.xterm, [data-i18n-skip]')) continue;
+    const origins = attrOrigins.get(element) ?? {};
     for (const name of ATTRIBUTES) {
       const value = element.getAttribute(name);
-      if (value && has(EN, value)) element.setAttribute(name, EN[value]);
+      if (!value) continue;
+      if (toEn) {
+        if (!has(EN, value) || EN[value] === value) continue;
+        origins[name] = { zh: value, en: EN[value] };
+        element.setAttribute(name, EN[value]);
+      } else {
+        const origin = origins[name];
+        if (origin && value === origin.en) element.setAttribute(name, origin.zh);
+        else if (back.has(value)) element.setAttribute(name, back.get(value));
+        delete origins[name];
+      }
     }
+    attrOrigins.set(element, origins);
   }
 }
 
