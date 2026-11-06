@@ -10,14 +10,31 @@ import { setTimeout as delay } from 'node:timers/promises'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const runsRoot = path.join(root, '.dev/package-runs')
 const help = `Local packaging (never publishes):
-  pnpm package:local [run|start] [--only all|desktop|exe|installer|server|apk]
+  pnpm package:local [run|start] [--only all|local|desktop|exe|installer|server|apk]
                      [--jobs 3] [--skip-frontend] [--skip-icons] [--skip-server] [--plan]
   pnpm package:local status <run-id>
   pnpm package:local cancel <run-id> [--task apk]
-Default: installer only (versioned NSIS setup; no QingCode-setup.exe alias).
+Default: installer + Server offline pack + APK (versioned NSIS setup; no QingCode-setup.exe alias, no portable exe).
+Use --only installer for just the installer and Server offline pack.
+All packaging modes include the Server offline pack; portable exe is opt-in.
+Successful runs keep only the newest 3 versions in release/.
 run is foreground (Ctrl+C cancels its process trees); start runs in the background.
 Logs and JSON status: .dev/package-runs/<run-id>/
 Only independent stages run in parallel; exe and installer share a Cargo target and run sequentially.`
+
+const RETAINED_VERSIONS = 3
+const ARTIFACT_SUFFIXES = [
+  '-windows-x64-setup.exe',
+  '-windows-arm64-setup.exe',
+  '-windows-x64.exe',
+  '-windows-arm64.exe',
+  '-macos-arm64.dmg',
+  '-macos-arm64.zip',
+  '-setup.exe',
+  '-android.apk',
+  '.exe',
+]
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
 function json(file) { return JSON.parse(readFileSync(file, 'utf8')) }
 export function save(file, value, rename = renameSync, wait = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
@@ -37,11 +54,11 @@ function runPath(id) {
 }
 
 export function buildPlan(options = {}) {
-  const only = options.only ?? 'installer'
-  if (!['all', 'desktop', 'exe', 'installer', 'server', 'apk'].includes(only)) throw new Error('Invalid --only component.')
-  const desktop = ['all', 'desktop', 'exe', 'installer'].includes(only)
-  const apk = ['all', 'apk'].includes(only)
-  const server = ['all', 'desktop', 'exe', 'server'].includes(only)
+  const only = options.only ?? 'local'
+  if (!['all', 'local', 'desktop', 'exe', 'installer', 'server', 'apk'].includes(only)) throw new Error('Invalid --only component.')
+  const desktop = ['all', 'local', 'desktop', 'exe', 'installer'].includes(only)
+  const apk = ['all', 'local', 'apk'].includes(only)
+  const server = ['all', 'local', 'desktop', 'exe', 'installer', 'server', 'apk'].includes(only)
   const tasks = []
   const add = (id, script, args = [], needs = []) => tasks.push({ id, command: 'pwsh', args: ['-NoProfile', '-File', `scripts/${script}`, ...args], needs })
   if (desktop && !options.skipFrontend) add('frontend', 'package-stage.ps1', ['-Stage', 'frontend'])
@@ -51,12 +68,80 @@ export function buildPlan(options = {}) {
   if (desktop) add('embed', 'package-stage.ps1', ['-Stage', 'embed'], desktopNeeds)
   const flags = ['-SkipFrontend', '-SkipIcons', '-SkipServer', '-SkipAndroid', '-SkipServerPack']
   if (desktop && ['all', 'desktop', 'exe'].includes(only)) add('exe', 'package-exe.ps1', flags, ['embed'])
-  if (desktop && ['all', 'desktop', 'installer'].includes(only)) {
-    const installerFlags = only === 'installer' ? [...flags, '-SkipLatestAlias'] : flags
+  if (desktop && ['all', 'local', 'desktop', 'installer'].includes(only)) {
+    const installerFlags = ['installer', 'local'].includes(only) ? [...flags, '-SkipLatestAlias'] : flags
     add('installer', 'package-installer.ps1', installerFlags, tasks.some(task => task.id === 'exe') ? ['exe'] : ['embed'])
   }
   if (apk) add('apk', 'package-android-if-needed.ps1', [], tasks.some(task => task.id === 'icons') ? ['icons'] : [])
   return tasks
+}
+
+export function versionFromArtifactName(name) {
+  if (!name.startsWith('QingCode_')) return null
+  const suffix = ARTIFACT_SUFFIXES.find(item => name.endsWith(item))
+  if (!suffix) return null
+  const version = name.slice('QingCode_'.length, -suffix.length)
+  return VERSION_PATTERN.test(version) ? version : null
+}
+
+function parseVersion(version) {
+  const dash = version.indexOf('-')
+  const core = dash === -1 ? version : version.slice(0, dash)
+  const prerelease = dash === -1 ? [] : version.slice(dash + 1).split('.')
+  return { core: core.split('.').map(Number), prerelease }
+}
+
+function compareVersions(a, b) {
+  const left = parseVersion(a)
+  const right = parseVersion(b)
+  for (let i = 0; i < 3; i++) {
+    if (left.core[i] !== right.core[i]) return left.core[i] - right.core[i]
+  }
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0
+  if (left.prerelease.length === 0) return 1
+  if (right.prerelease.length === 0) return -1
+  for (let i = 0; i < Math.max(left.prerelease.length, right.prerelease.length); i++) {
+    const x = left.prerelease[i]
+    const y = right.prerelease[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const xNumeric = /^\d+$/.test(x)
+    const yNumeric = /^\d+$/.test(y)
+    if (xNumeric && yNumeric) {
+      const difference = Number(x) - Number(y)
+      if (difference !== 0) return difference
+    } else if (xNumeric !== yNumeric) {
+      return xNumeric ? -1 : 1
+    } else if (x !== y) {
+      return x < y ? -1 : 1
+    }
+  }
+  return 0
+}
+
+export function pruneReleaseVersions({ releaseDir, keep = RETAINED_VERSIONS, log = () => {} } = {}) {
+  if (!releaseDir) throw new Error('releaseDir is required.')
+  if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a positive integer.')
+  if (!existsSync(releaseDir)) return { keptVersions: [], removed: [] }
+  const artifacts = readdirSync(releaseDir, { withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => ({ name: entry.name, version: versionFromArtifactName(entry.name) }))
+    .filter(entry => entry.version)
+  const versions = [...new Set(artifacts.map(entry => entry.version))].sort(compareVersions).reverse()
+  const keptVersions = versions.slice(0, keep)
+  const kept = new Set(keptVersions)
+  const removed = []
+  for (const artifact of artifacts) {
+    if (kept.has(artifact.version)) continue
+    try {
+      rmSync(path.join(releaseDir, artifact.name), { force: true })
+      removed.push(artifact.name)
+      log(`  removed old version artifact: ${artifact.name}`)
+    } catch (error) {
+      log(`  warning: could not remove ${artifact.name}: ${error.message}`)
+    }
+  }
+  return { keptVersions, removed }
 }
 
 function stopTree(child) {
@@ -201,6 +286,12 @@ async function main(args) {
   console.log(`Run ${id}; concurrency ${jobs}\nCancel: pnpm package:local cancel ${id}`)
   try {
     const state = await executePlan({ tasks, cwd: root, directory, jobs })
+    if (state.status === 'succeeded') {
+      const retention = pruneReleaseVersions({ releaseDir: path.join(root, 'release'), log: console.log })
+      if (retention.keptVersions.length > 0) {
+        console.log(`Kept release versions (${RETAINED_VERSIONS}): ${retention.keptVersions.join(', ')}`)
+      }
+    }
     console.log(`Packaging ${state.status}. Status: ${path.join(directory, 'status.json')}`)
     process.exitCode = state.status === 'succeeded' ? 0 : state.status === 'cancelled' ? 130 : 1
   } finally { rmSync(lock, { force: true }) }

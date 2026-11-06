@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import { buildPlan, executePlan, save } from './package-local.mjs'
+import { buildPlan, executePlan, pruneReleaseVersions, save, versionFromArtifactName } from './package-local.mjs'
 
 test('a transient Windows replacement lock preserves and then updates the JSON status', () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'qingcode-package-state-'))
@@ -25,15 +25,18 @@ test('a transient Windows replacement lock preserves and then updates the JSON s
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
 
-test('default plan builds only the NSIS installer without Server, portable exe or APK', () => {
+test('default plan builds the installer, Server and APK without the portable exe', () => {
   const tasks = buildPlan()
-  assert.deepEqual(tasks.map(task => task.id), ['frontend', 'icons', 'embed', 'installer'])
-  assert.deepEqual(tasks.find(task => task.id === 'embed').needs, ['frontend', 'icons'])
+  assert.deepEqual(tasks.map(task => task.id), ['frontend', 'icons', 'server', 'embed', 'installer', 'apk'])
+  assert.deepEqual(tasks.find(task => task.id === 'embed').needs, ['frontend', 'icons', 'server'])
   assert.deepEqual(tasks.find(task => task.id === 'installer').needs, ['embed'])
+  assert.deepEqual(tasks.find(task => task.id === 'apk').needs, ['icons'])
   const installerArgs = tasks.find(task => task.id === 'installer').args
   assert.ok(installerArgs.includes('-SkipServerPack'))
   assert.ok(installerArgs.includes('-SkipLatestAlias'))
-  assert.deepEqual(buildPlan(), buildPlan({ only: 'installer' }))
+  assert.ok(!tasks.some(task => task.id === 'exe'))
+  assert.deepEqual(buildPlan(), buildPlan({ only: 'local' }))
+  assert.deepEqual(buildPlan({ only: 'installer' }).map(task => task.id), ['frontend', 'icons', 'server', 'embed', 'installer'])
 })
 
 test('desktop stages share preparation and serialize the Cargo output; APK stays independent', () => {
@@ -43,9 +46,42 @@ test('desktop stages share preparation and serialize the Cargo output; APK stays
   assert.deepEqual(tasks.find(task => task.id === 'installer').needs, ['exe'])
   assert.ok(!tasks.find(task => task.id === 'installer').args.includes('-SkipLatestAlias'))
   assert.deepEqual(tasks.find(task => task.id === 'apk').needs, ['icons'])
-  assert.deepEqual(buildPlan({ only: 'apk', skipIcons: true }).map(task => task.id), ['apk'])
+  assert.deepEqual(buildPlan({ only: 'apk', skipIcons: true }).map(task => task.id), ['server', 'apk'])
   assert.ok(!buildPlan({ only: 'desktop' }).some(task => task.id === 'apk'))
   assert.throws(() => buildPlan({ only: 'unknown' }))
+})
+
+test('versioned local artifacts are recognized without treating aliases as versions', () => {
+  assert.equal(versionFromArtifactName('QingCode_0.1.15-beta.8-setup.exe'), '0.1.15-beta.8')
+  assert.equal(versionFromArtifactName('QingCode_0.1.15-beta.8.exe'), '0.1.15-beta.8')
+  assert.equal(versionFromArtifactName('QingCode_0.1.15-beta.8-android.apk'), '0.1.15-beta.8')
+  assert.equal(versionFromArtifactName('QingCode_1.2.3-windows-x64-setup.exe'), '1.2.3')
+  assert.equal(versionFromArtifactName('QingCode-setup.exe'), null)
+  assert.equal(versionFromArtifactName('QingCode-Android.apk'), null)
+  assert.equal(versionFromArtifactName('notes.txt'), null)
+})
+
+test('release retention keeps the newest three versions and leaves aliases alone', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'qingcode-package-retention-'))
+  const files = [
+    'QingCode_0.1.15-beta.6-setup.exe',
+    'QingCode_0.1.15-beta.7-android.apk',
+    'QingCode_0.1.15-beta.8.exe',
+    'QingCode_0.1.15-beta.9-setup.exe',
+    'QingCode_0.1.15-beta.10-setup.exe',
+    'QingCode-setup.exe',
+    'QingCode-Android.apk',
+    'notes.txt',
+  ]
+  try {
+    for (const name of files) writeFileSync(path.join(directory, name), name)
+    const result = pruneReleaseVersions({ releaseDir: directory, keep: 3 })
+    assert.deepEqual(result.keptVersions, ['0.1.15-beta.10', '0.1.15-beta.9', '0.1.15-beta.8'])
+    assert.deepEqual(result.removed.sort(), ['QingCode_0.1.15-beta.6-setup.exe', 'QingCode_0.1.15-beta.7-android.apk'])
+    assert.ok(existsSync(path.join(directory, 'QingCode-setup.exe')))
+    assert.ok(existsSync(path.join(directory, 'QingCode-Android.apk')))
+    assert.ok(existsSync(path.join(directory, 'notes.txt')))
+  } finally { rmSync(directory, { recursive: true, force: true }) }
 })
 
 const fixtureTask = (id, needs = [], code = 'setTimeout(() => {}, 250)') => ({ id, needs, command: process.execPath, args: ['-e', code] })
