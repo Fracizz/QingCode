@@ -1363,8 +1363,8 @@ get('drawer-settings').addEventListener('click', () => { get('session-drawer').c
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
-// 空状态一键新建：沿用电脑端默认终端配置；其他配置仍走右上角「＋」。
-get('terminal-empty-new').addEventListener('click', () => { void newSession('default'); });
+// 空状态与右上角「＋」、会话抽屉共用「新建会话」弹层，可先选普通终端或电脑端终端配置。
+get('terminal-empty-new').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
 
 async function newSession(terminalProfile) {
   if (busy) return;

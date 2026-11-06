@@ -34,7 +34,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'open project list' })
     await page.click('#project-list .row:first-child', { label: 'open local project' })
-    await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
+    await page.click('#terminal-empty-new', { label: 'open new session dialog from empty state' })
+    await page.waitForFunction(() => document.querySelector('#new-session-dialog').open
+      && document.querySelector('#terminal-profiles').getAttribute('aria-busy') === 'false'
+      && document.querySelectorAll('#terminal-profiles button').length === 4)
+    await step('the empty-state button opens the same new-session choices', async () => {
+      assert.deepEqual(await choices(), [['default', '普通终端'], ['claude', 'Claude'], ['opencode', 'OpenCode'], ['deploy', '部署']])
+    })
+    await page.click('#new-session-dialog [data-profile="default"]', { label: 'start default profile from empty state' })
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
 
     await step('the first terminal is created from the desktop default profile', async () => {

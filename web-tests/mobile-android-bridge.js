@@ -377,12 +377,26 @@
 
   window.__mobileFixture = {
     state,
-    // 进入项目不再自动新建终端：验收脚本打开项目后调用，空项目点「新建终端」，已有会话则直接返回。
+    // 进入项目不再自动新建终端：验收脚本打开项目后调用，空项目点「新建终端」后
+    // 在「新建会话」里选电脑端默认配置（旧电脑没有配置列表时选普通终端），已有会话则直接返回。
     async startTerminalIfEmpty() {
       const ready = () => document.querySelector('#terminal-status')?.textContent === '会话中'
       const empty = () => document.querySelector('#terminal-empty') && !document.querySelector('#terminal-empty').hidden
       for (let i = 0; i < 300 && !ready() && !empty(); i += 1) await new Promise(resolve => setTimeout(resolve, 20))
-      if (empty()) document.querySelector('#terminal-empty-new').click()
+      if (!empty()) return
+      document.querySelector('#terminal-empty-new').click()
+      for (let i = 0; i < 300; i += 1) {
+        const dialog = document.querySelector('#new-session-dialog')
+        const list = document.querySelector('#terminal-profiles')
+        if (dialog?.open && list?.getAttribute('aria-busy') === 'false') {
+          const option = list.querySelector('button[data-profile="default"]') ?? list.querySelector('button')
+          if (option) {
+            option.click()
+            return
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
     },
     terminalSize() {
       const term = terminals.at(-1)
