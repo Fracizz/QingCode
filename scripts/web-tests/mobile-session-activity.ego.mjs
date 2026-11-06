@@ -3,10 +3,10 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export async function run() {
+export async function run({ spaceId, finish = true } = {}) {
   const output = resolve(dirname(fileURLToPath(import.meta.url)), '../../.dev/web-tests/mobile-session-activity')
   await mkdir(output, { recursive: true })
-  const task = await taskSpace('QingCode session activity 20261104')
+  const task = await taskSpace(spaceId ?? 'QingCode session activity 20261104')
   console.log({ spaceId: task.spaceId })
   const page = task.page('p1')
   const results = []
@@ -52,8 +52,32 @@ export async function run() {
       await page.waitForFunction(value => getComputedStyle(window.__activitySpinner).transform !== value, before)
     })
     await page.screenshot({ path: resolve(output, 'two-running-sessions.png') })
+    await step('server-smoothed activity survives blank and ordinary title frames without changing raw metadata', async () => {
+      await page.evaluate(() => {
+        const fixture = window.__mobileFixture
+        const session = fixture.state.sessions.get('mobile-2')
+        session.programBusy = true
+        session.activityRevision = 1
+        fixture.setTitle('mobile-2', '⠀ 优化底部输入框样式 | QingCode')
+      })
+      await refresh()
+      assert.equal(await page.evaluate(() => document.querySelector('.session-option[data-id="mobile-2"]').dataset.running), 'true')
+      await page.evaluate(() => {
+        const fixture = window.__mobileFixture
+        fixture.state.sessions.get('mobile-2').activityRevision += 1
+        fixture.setTitle('mobile-2', '优化底部输入框样式 | QingCode')
+      })
+      await refresh()
+      assert.equal(await page.evaluate(() => document.querySelector('.session-option[data-id="mobile-2"]').dataset.running), 'true')
+      assert.equal(await page.evaluate(() => window.__mobileFixture.state.sessions.get('mobile-2').title), '优化底部输入框样式 | QingCode')
+    })
     await step('unselected session completion updates while the drawer stays open', async () => {
-      await page.evaluate(() => window.__mobileFixture.setTitle('mobile-2', '优化底部输入框样式 | QingCode'))
+      await page.evaluate(() => {
+        const session = window.__mobileFixture.state.sessions.get('mobile-2')
+        session.programBusy = false
+        session.activityRevision += 1
+        window.__mobileFixture.setTitle('mobile-2', '优化底部输入框样式 | QingCode')
+      })
       await page.waitForFunction(() => document.querySelector('.session-option[data-id="mobile-2"]').dataset.running === 'false')
       assert.ok(await page.evaluate(() => window.__activityRow === document.querySelector('.session-option[data-id="mobile-2"]')
         && window.__activitySpinner === document.querySelector('.session-option[data-id="mobile-2"] .session-spinner')))
@@ -62,6 +86,8 @@ export async function run() {
       await page.evaluate(() => {
         const session = window.__mobileFixture.state.sessions.get('mobile-2')
         session.customName = '发布与构建'
+        session.programBusy = true
+        session.activityRevision += 1
         window.__mobileFixture.setTitle('mobile-2', '⠙ 正在构建')
       })
       await page.waitForFunction(() => document.querySelector('.session-option[data-id="mobile-2"]').dataset.running === 'true')
@@ -111,7 +137,7 @@ export async function run() {
     })
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results }, null, 2))
     console.log({ output, results })
-    await task.finish({ keep: [] })
+    if (finish) await task.finish({ keep: [] })
   } catch (error) {
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ spaceId: task.spaceId, results, error: String(error) }, null, 2))
     console.log({ spaceId: task.spaceId, results, error: String(error) })

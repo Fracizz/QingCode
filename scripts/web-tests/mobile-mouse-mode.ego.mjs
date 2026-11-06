@@ -1,5 +1,5 @@
 // 安卓终端鼠标模式 Web 验收：右侧滑块加粗、长按滑块进入鼠标模式（轻震、胶囊、滑块常驻），
-// 普通终端点按选词、全屏程序点按发鼠标点击（默认设置下不发）、返回键 / 胶囊 / 菜单切换。
+// 拖动虚拟鼠标、点终端定位、左右键点击、长按左键拖动，以及返回键 / 胶囊 / 菜单切换。
 // 使用内存桥与合成触摸 / 指针事件，不替代真机触摸手感验收。
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -11,6 +11,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const output = artifactDir ?? resolve(repo, '.dev/web-tests/mobile-mouse-mode')
   await mkdir(output, { recursive: true })
   const task = await taskSpace(spaceId ?? 'QingCode mobile mouse mode 20261105')
+  console.log({ spaceId: task.spaceId })
   const page = task.page('p1')
   const results = []
   const shots = []
@@ -19,6 +20,24 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   }
   const step = async (name, work) => { await work(); results.push({ name, passed: true }) }
   const mouseActive = () => page.evaluate(() => !document.querySelector('.mouse-mode-pill').hidden)
+  const click = async selector => {
+    await page.waitForSelector(selector)
+    await page.waitForFunction(selector => {
+      const target = document.querySelector(selector)
+      if (!target) return false
+      for (let ancestor = target; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getTiming().iterations !== Infinity)) return false
+      }
+      const rect = target.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight
+    }, selector)
+    const point = await page.evaluate(selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    }, selector)
+    await page.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
+    await page.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
+  }
 
   /** 配对并打开一个预置会话；data 为会话初始屏幕。 */
   async function open(data) {
@@ -34,14 +53,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       window.qingLink(window.__mobileFixture.link('192.168.1.8', 48764))
     })
     await page.fill('#pair-code', 'A8z2D3')
-    await page.click('#pair-submit')
+    await click('#pair-submit')
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.evaluate(data => window.__mobileFixture.state.sessions.set('mobile-mouse', {
       id: 'mobile-mouse', number: 1, project: 'p-local', next: 1, exit: null, waiters: [], output: [], history: [],
       snapshot: { data, cols: 80, rows: 24 },
     }), data)
-    await page.click('#dashboard-nav [data-page="project"]')
-    await page.click('#project-list .row:first-child')
+    await click('#dashboard-nav [data-page="project"]')
+    await click('#project-list .row:first-child')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
   }
@@ -74,7 +93,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
 
   try {
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i} alpha-beta gamma`).join('\r\n')
-    await open(lines + '\r\nPS D:\\code\\qingcode> ')
+    await open(lines + '\r\nSymbols: ⏵⏵ ⏴ ⏶ ⏷\r\nPS D:\\code\\qingcode> ')
+    await step('the offline symbol font loads for terminal playback glyphs', async () => {
+      assert.ok(await page.evaluate(async () => (await document.fonts.load('16px "QingCode Symbols"', '⏵⏴⏶⏷')).length > 0))
+      assert.match(await page.evaluate(() => window.__mouseTerm.options.fontFamily), /QingCode Symbols/)
+    })
     await step('the scrollback slider is thicker and easy to hit', async () => {
       await page.evaluate(() => window.__mouseTerm.scrollLines(-60))
       await page.waitForFunction(() => !document.querySelector('.touch-scrollbar').hidden)
@@ -103,14 +126,36 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForTimeout(1800)
       assert.equal(await page.evaluate(() => document.querySelector('.touch-scrollbar').hidden), false)
     })
-    await step('tapping a word in a normal terminal selects it and shows the tap marker', async () => {
+    await step('tapping only positions the pointer, and its left button selects the word', async () => {
       await page.evaluate(() => window.__mouseTerm.scrollLines(-30))
       await tap(12, 3)
+      assert.equal(await page.evaluate(() => window.__mouseTerm.hasSelection()), false)
+      assert.equal(await page.evaluate(() => document.querySelector('.virtual-mouse-pointer').hidden), false)
+      const size = await page.evaluate(() => {
+        const rect = document.querySelector('.virtual-mouse').getBoundingClientRect()
+        return { width: rect.width, height: rect.height }
+      })
+      assert.ok(size.width >= 48 && size.width <= 72 && size.height >= 64 && size.height <= 96)
+      await click('.virtual-mouse-button[data-button="0"]')
       await page.waitForFunction(() => window.__mouseTerm.hasSelection())
       const selected = await page.evaluate(() => window.__mouseTerm.getSelection())
       assert.match(selected, /^alpha-beta$/)
       assert.equal(await page.evaluate(() => document.querySelector('.mouse-mode-marker').hidden), false)
       await shot('normal-select.png')
+    })
+    await step('holding the left button extends a normal-terminal selection without typing input', async () => {
+      await page.evaluate(async () => {
+        window.__mobileFixture.state.inputs.length = 0
+        const button = document.querySelector('.virtual-mouse-button[data-button="0"]')
+        const rect = button.getBoundingClientRect()
+        const init = { bubbles: true, cancelable: true, pointerId: 8, pointerType: 'touch', isPrimary: true, button: 0, clientX: rect.left + 10, clientY: rect.top + 10 }
+        button.dispatchEvent(new PointerEvent('pointerdown', init))
+        await new Promise(done => setTimeout(done, 650))
+        document.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: init.clientX + 50, clientY: init.clientY + 24 }))
+        document.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: init.clientX + 50, clientY: init.clientY + 24 }))
+      })
+      await page.waitForFunction(() => window.__mouseTerm.getSelection().length > 10)
+      assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.inputs), [])
     })
     await step('back closes the selection first, then exits mouse mode', async () => {
       assert.equal(await page.evaluate(() => window.qingBack()), true)
@@ -120,16 +165,27 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('.touch-scrollbar').classList.contains('pinned')), false)
     })
     await step('the terminal menu toggles mouse mode and the pill exits it', async () => {
-      await page.click('#terminal-menu', { label: 'open terminal menu' })
+      await click('#terminal-menu')
       await page.waitForSelector('#terminal-menu-dialog[open]')
       assert.equal(await page.evaluate(() => document.querySelector('#menu-mouse').textContent), '鼠标模式')
-      await page.click('#menu-mouse', { label: 'enter mouse mode from menu' })
+      await click('#menu-mouse')
       await page.waitForFunction(() => !document.querySelector('.mouse-mode-pill').hidden)
-      await page.click('.mouse-mode-pill', { label: 'exit mouse mode' })
+      await click('.mouse-mode-pill')
       assert.equal(await mouseActive(), false)
     })
+    await step('the right button offers selection and clipboard paste in a normal terminal', async () => {
+      await click('#terminal-menu')
+      await click('#menu-mouse')
+      await click('.virtual-mouse-button[data-button="2"]')
+      await page.waitForSelector('.virtual-mouse-menu:not([hidden])')
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.virtual-mouse-menu button')].map(button => button.textContent)), ['选中', '粘贴'])
+      await page.evaluate(() => { window.__mobileFixture.state.clipboard = 'mouse paste'; window.__mobileFixture.state.inputs.length = 0 })
+      await click('.virtual-mouse-menu button:nth-child(2)')
+      await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('').includes('mouse paste'))
+      await click('.mouse-mode-pill')
+    })
 
-    await open('\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[HCodex READY\r\n  > option one\r\n    option two')
+    await open('\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[2J\x1b[HCodex READY\r\n  > option one\r\n    option two')
     await page.waitForFunction(() => window.__mouseTerm?.modes.mouseTrackingMode !== 'none')
     const clicks = () => page.evaluate(() => (window.__mobileFixture.state.inputs.join('').match(/\x1b\[<0;\d+;\d+M/g) || []).length)
     await step('without mouse mode, taps in a full-screen program are not sent as clicks (default setting)', async () => {
@@ -151,12 +207,33 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForTimeout(2800)
       assert.equal(await page.evaluate(() => document.querySelector('.terminal-jog').hidden), false)
     })
-    await step('in mouse mode, taps in a full-screen program are sent as mouse clicks at the tapped cell', async () => {
-      await page.evaluate(() => { window.__mobileFixture.state.inputs.length = 0 })
+    await step('full-screen taps only move the pointer and its buttons send left and right SGR clicks', async () => {
+      await page.evaluate(() => { window.__mobileFixture.state.inputs.length = 0; window.__mouseTerm.textarea.blur() })
       await tap(6, 2)
+      assert.equal(await clicks(), 0)
+      await click('.virtual-mouse-button[data-button="0"]')
       await page.waitForFunction(() => /\x1b\[<0;7;3M/.test(window.__mobileFixture.state.inputs.join('')))
+      await click('.virtual-mouse-button[data-button="2"]')
+      await page.waitForFunction(() => /\x1b\[<2;7;3M/.test(window.__mobileFixture.state.inputs.join('')))
       assert.equal(await page.evaluate(() => window.__mouseTerm.hasSelection()), false)
+      assert.equal(await page.evaluate(() => document.activeElement === window.__mouseTerm.textarea), false)
       await shot('program-click.png')
+    })
+    await step('holding the left button sends press, drag and release, and leaving disposes the mouse', async () => {
+      await page.evaluate(async () => {
+        window.__mobileFixture.state.inputs.length = 0
+        const button = document.querySelector('.virtual-mouse-button[data-button="0"]')
+        const rect = button.getBoundingClientRect()
+        const init = { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, clientX: rect.left + 10, clientY: rect.top + 10 }
+        button.dispatchEvent(new PointerEvent('pointerdown', init))
+        await new Promise(done => setTimeout(done, 650))
+        document.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: init.clientX + 24, clientY: init.clientY + 24 }))
+        document.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: init.clientX + 24, clientY: init.clientY + 24 }))
+      })
+      await page.waitForFunction(() => /\x1b\[<32;\d+;\d+M/.test(window.__mobileFixture.state.inputs.join('')) && /\x1b\[<0;\d+;\d+m/.test(window.__mobileFixture.state.inputs.join('')))
+      await click('#terminal-menu')
+      await click('#menu-dashboard')
+      await page.waitForFunction(() => document.querySelectorAll('.virtual-mouse').length === 0)
     })
   } catch (error) {
     results.push({ name: 'failure', passed: false, error: String(error?.stack ?? error) })

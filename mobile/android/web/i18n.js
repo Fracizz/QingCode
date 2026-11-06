@@ -417,7 +417,13 @@ export const EN = Object.freeze({
   '鼠标': 'Mouse',
   '鼠标模式': 'Mouse mode',
   '退出鼠标模式': 'Exit mouse mode',
-  '鼠标模式：拖右侧滑块滚动，点终端选中；点「鼠标」退出': 'Mouse mode: drag the right slider to scroll, tap the terminal to select; tap "Mouse" to exit',
+  '鼠标模式：拖动鼠标移动指针，点左右键点击；点「鼠标」退出': 'Mouse mode: drag the mouse to move the pointer, tap its buttons to click; tap "Mouse" to exit',
+  '鼠标左键': 'Left click',
+  '鼠标右键': 'Right click',
+  '拖动以移动鼠标指针': 'Drag to move the pointer',
+  '选中': 'Select',
+  '粘贴': 'Paste',
+  '剪贴板为空': 'Clipboard is empty',
   '已退出鼠标模式': 'Mouse mode off',
 
   // —— 在线更新 ——

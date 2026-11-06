@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, SshConnection } from '../types'
+import type { Project, SshConnection, TerminalTab } from '../types'
 import type { Toast } from '../store/projectStore'
 import { projectManagerFixtures } from './projectManagerFixtures'
 
@@ -67,6 +67,10 @@ export const useUIStore = create(() => ({
   projectManagerOpen: true,
   remoteConnectionsOpen: true,
   remoteConnectionsCreating: false,
+  terminalManagerOpen: false,
+  closeTerminalManager() { useUIStore.setState({ terminalManagerOpen: false }) },
+  openTerminalManager() { useUIStore.setState({ terminalManagerOpen: true }) },
+  openTerminalPanel() { record('openTerminalPanel') },
   closeRemoteConnections() { useUIStore.setState({ remoteConnectionsOpen: false }) },
   requestSettings(query: string) { record('requestSettings', [query]) },
   closeProjectManager() {
@@ -84,10 +88,38 @@ export const useUIStore = create(() => ({
 }))
 
 export const useTerminalStore = create(() => ({
+  terminals: [] as TerminalTab[],
+  async closeTerminal(id: string) {
+    record('closeTerminal', [id])
+    if (useTerminalManagerFixture.getState().failedIds.includes(id)) return
+    useTerminalStore.setState(state => ({ terminals: state.terminals.filter(tab => tab.id !== id) }))
+  },
+  setActiveTerminal(id: string) { record('setActiveTerminal', [id]) },
+  renameTerminal(id: string, name: string) {
+    useTerminalStore.setState(state => ({
+      terminals: state.terminals.map(tab => tab.id === id ? { ...tab, name } : tab),
+    }))
+  },
   async closeProjectTerminals(id: string) {
     record('closeProjectTerminals', [id])
   },
 }))
+export const useTerminalManagerFixture = create(() => ({ failedIds: [] as string[] }))
+
+export function resetTerminalManagerFixture(count = 65) {
+  useWebTestOperations.setState({ operations: [] })
+  useTerminalManagerFixture.setState({ failedIds: [] })
+  useTerminalStore.setState({ terminals: Array.from({ length: count }, (_, index): TerminalTab => ({
+    id: `fixture-terminal-${index + 1}`,
+    name: `Fixture ${String(index + 1).padStart(2, '0')} ${index % 5 === 0 ? 'finished' : 'worker'}`,
+    projectId: index < 40 ? 'local-qingcode' : 'ubuntu-django',
+    cwd: index < 40 ? 'D:/fixtures/QingCode' : '/home/code/django',
+    launchCommand: '',
+    status: index % 5 === 0 ? 'exited' : 'running',
+    exitCode: index % 5 === 0 ? 0 : null,
+  })) })
+  useUIStore.setState({ terminalManagerOpen: true })
+}
 export const useEditorStore = create(() => ({
   closeTabsForPath(path: string) {
     record('closeTabsForPath', [path])

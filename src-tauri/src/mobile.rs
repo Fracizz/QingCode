@@ -9,6 +9,7 @@ use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -58,6 +59,54 @@ const PROJECTS_TIMEOUT: Duration = Duration::from_secs(20);
 const CREATE_TIMEOUT: Duration = Duration::from_secs(90);
 /// 手机终端 24 小时内既无输入也无输出时自动结束。
 const TERMINAL_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
+/// 程序标题出现转圈帧后保持「忙碌」的时间。按时间窗口而不是按轮询瞬间的标题判断：
+/// 轮询可能正好取到空白帧或两次工具调用之间短暂的普通标题，直接取样会让转圈时转时停。
+const SPINNER_HOLD: Duration = Duration::from_millis(3000);
+
+/// 标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与常见的圆形/方块转圈。
+fn is_spinner_glyph(character: char) -> bool {
+    matches!(
+        character,
+        '\u{2800}'..='\u{28FF}'
+            | '\u{25D0}'..='\u{25D3}' // ◐◑◒◓
+            | '\u{25E2}'..='\u{25E5}' // ◢◣◤◥
+            | '\u{25F0}'..='\u{25F7}' // ◰◱◲◳◴◵◶◷
+    )
+}
+
+/// 拆出标题开头的单个符号（非字母数字、非空白）与其后的文本。
+fn split_title_glyph(title: &str) -> Option<(char, &str)> {
+    let mut chars = title.chars();
+    let first = chars.next()?;
+    if first.is_alphanumeric() || first.is_whitespace() {
+        return None;
+    }
+    if !chars.as_str().chars().next()?.is_whitespace() {
+        return None;
+    }
+    let rest = chars.as_str().trim_start();
+    (!rest.is_empty()).then_some((first, rest))
+}
+
+/// 这次标题变化是否为一帧转圈动画：新标题以已知转圈字符开头，
+/// 或者只有开头的符号变了、其后的文字不变（兼容未知的转圈字符，如 `| - / \`）。
+fn is_spinner_frame(previous: Option<&str>, current: Option<&str>) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if current.chars().next().is_some_and(is_spinner_glyph) {
+        return true;
+    }
+    match (
+        previous.and_then(split_title_glyph),
+        split_title_glyph(current),
+    ) {
+        (Some((before, before_rest)), Some((after, after_rest))) => {
+            before != after && before_rest == after_rest
+        }
+        _ => false,
+    }
+}
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 #[cfg(not(test))]
 const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
@@ -295,6 +344,7 @@ struct Session {
     /// 带启动命令的终端配置名；程序未设置标题时代替「终端 N」。
     label: Option<String>,
     name_revision: u64,
+    activity_revision: AtomicU64,
     ready: bool,
     exit: Option<Exit>,
     drain_until: Option<Instant>,
@@ -306,6 +356,8 @@ struct Session {
     /// 最近一次输入或输出；轮询不算活动。
     last_active: Instant,
     last_active_ms: u64,
+    /// 最近一次程序标题转圈帧的时间，用于平滑的「忙碌」状态。
+    last_spinner_frame: Option<Instant>,
 }
 
 impl Session {
@@ -317,6 +369,7 @@ impl Session {
             custom_name: None,
             label: None,
             name_revision: 0,
+            activity_revision: AtomicU64::new(0),
             ready: false,
             exit: None,
             drain_until: None,
@@ -327,7 +380,25 @@ impl Session {
             screen: MobileScreen::new(),
             last_active: Instant::now(),
             last_active_ms: unix_now_ms(),
+            last_spinner_frame: None,
         }
+    }
+
+    /// 程序是否在忙：标题仍是转圈帧或最近 `SPINNER_HOLD` 内出现过转圈帧，且终端未退出。
+    fn program_busy_at(&self, now: Instant) -> bool {
+        self.exit.is_none()
+            && (self
+                .screen
+                .title()
+                .and_then(|title| title.chars().next())
+                .is_some_and(is_spinner_glyph)
+                || self
+                    .last_spinner_frame
+                    .is_some_and(|frame| now.saturating_duration_since(frame) < SPINNER_HOLD))
+    }
+
+    fn program_busy(&self) -> bool {
+        self.program_busy_at(Instant::now())
     }
 
     fn touch(&mut self) {
@@ -337,18 +408,19 @@ impl Session {
 
     fn push(&mut self, chunk: OutputChunk) {
         self.touch();
-        let previous_title = self.screen.title().map(str::to_owned);
+        let mut previous_title = self.screen.title().map(str::to_owned);
         match &chunk {
             OutputChunk::Bytes(data) => {
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
-                    self.screen.process(&bytes);
+                    for section in bytes.split_inclusive(|byte| matches!(*byte, 0x07 | 0x1b)) {
+                        self.screen.process(section);
+                        self.observe_program_title(&mut previous_title);
+                    }
                 }
             }
             OutputChunk::Screen { data, cols, rows } => self.screen.replace(data, *cols, *rows),
         }
-        if previous_title.as_deref() != self.screen.title() {
-            self.name_revision += 1;
-        }
+        self.observe_program_title(&mut previous_title);
         if matches!(chunk, OutputChunk::Screen { .. }) {
             self.output.clear();
             self.output_size = 0;
@@ -362,6 +434,16 @@ impl Session {
             }
         }
         self.changed.notify_waiters();
+    }
+
+    fn observe_program_title(&mut self, previous_title: &mut Option<String>) {
+        if previous_title.as_deref() != self.screen.title() {
+            self.name_revision += 1;
+            if is_spinner_frame(previous_title.as_deref(), self.screen.title()) {
+                self.last_spinner_frame = Some(Instant::now());
+            }
+            *previous_title = self.screen.title().map(str::to_owned);
+        }
     }
 
     fn finish(&mut self, exit: Exit) {
@@ -396,7 +478,8 @@ impl Session {
 
     fn metadata(&self, id: &str) -> Value {
         json!({ "id": id, "number": self.number, "exit": self.exit,
-            "programTitle": self.screen.title(),
+            "activityRevision": self.activity_revision.fetch_add(1, Ordering::Relaxed),
+            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
             "lastActiveAt": self.last_active_ms,
             "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
@@ -425,13 +508,14 @@ impl Session {
             .filter(|_| self.drain_until.is_none_or(|until| Instant::now() >= until));
         json!({
             "chunks": chunks,
+            "activityRevision": self.activity_revision.fetch_add(1, Ordering::Relaxed),
             "next": next,
             "more": next < self.next,
             "reset": reset,
             "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
-            "programTitle": self.screen.title(),
+            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -461,10 +545,11 @@ impl Session {
             .filter(|_| self.drain_until.is_none_or(|until| Instant::now() >= until));
         json!({
             "chunks": [self.screen.snapshot()], "next": self.next,
+            "activityRevision": self.activity_revision.fetch_add(1, Ordering::Relaxed),
             "more": false, "reset": false, "snapshot": true, "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
-            "programTitle": self.screen.title(),
+            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -2479,6 +2564,123 @@ mod tests {
         assert!(session.rename(&"中".repeat(81)).is_err());
         assert!(session.rename("bad\nname").is_err());
         assert_eq!(session.name(), "Claude");
+    }
+
+    #[test]
+    fn spinner_frames_are_known_glyphs_or_leading_symbol_changes() {
+        assert!(is_spinner_frame(None, Some("⠋ 构建")));
+        assert!(is_spinner_frame(Some("⠋ 构建"), Some("\u{2800} 构建")));
+        assert!(is_spinner_frame(
+            Some("◐ Claude Code"),
+            Some("◓ Claude Code")
+        ));
+        assert!(is_spinner_frame(Some("| build"), Some("/ build")));
+        assert!(!is_spinner_frame(None, Some("Claude Code")));
+        assert!(!is_spinner_frame(Some("Claude"), Some("OpenCode")));
+        assert!(!is_spinner_frame(Some("✳ Claude Code"), Some("✳ 修复登录")));
+        assert!(!is_spinner_frame(Some("[1] build"), Some("[2] build")));
+        assert!(!is_spinner_frame(Some("/tmp/build"), Some("\\tmp/build")));
+        assert!(!is_spinner_frame(Some("!task"), Some("?task")));
+        assert!(!is_spinner_frame(Some("⠋ 构建"), None));
+    }
+
+    #[test]
+    fn program_busy_holds_across_gaps_between_spinner_frames() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        let push_title = |session: &mut Session, title: &str| {
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!("\x1b]2;{title}\x07")),
+            ));
+        };
+        push_title(&mut session, "✳ Claude Code");
+        assert!(!session.program_busy());
+        assert_eq!(session.metadata("mobile-1")["programBusy"], false);
+        push_title(&mut session, "⠂ Claude Code");
+        push_title(&mut session, "⠐ Claude Code");
+        // 转圈中途短暂换回普通标题，状态不翻转；原始标题与名称原样保留。
+        push_title(&mut session, "✳ Claude Code");
+        assert!(session.program_busy());
+        assert_eq!(session.read(session.next)["programBusy"], true);
+        assert_eq!(session.latest()["programTitle"], "✳ Claude Code");
+        assert_eq!(session.name(), "✳ Claude Code");
+        let frame = session.last_spinner_frame.unwrap();
+        assert!(session.program_busy_at(frame + SPINNER_HOLD - Duration::from_millis(1)));
+        assert!(!session.program_busy_at(frame + SPINNER_HOLD));
+        session.finish(Exit {
+            exit_code: 0,
+            disconnected: false,
+        });
+        assert!(!session.program_busy());
+    }
+
+    #[test]
+    fn program_busy_keeps_current_spinner_but_stops_for_exit() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode("\x1b]2;\u{2800} 构建\x07"),
+        ));
+        let frame = session.last_spinner_frame.unwrap();
+        assert!(session.program_busy_at(frame + SPINNER_HOLD * 4));
+        assert_eq!(session.metadata("mobile-1")["name"], "\u{2800} 构建");
+        session.finish(Exit {
+            exit_code: 0,
+            disconnected: false,
+        });
+        assert!(!session.program_busy_at(frame + SPINNER_HOLD));
+    }
+
+    #[test]
+    fn program_busy_observes_intermediate_titles_in_one_output_chunk() {
+        for terminator in ["\x07", "\x1b\\"] {
+            let mut session = Session::new(project(), "phone".into(), 1);
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!(
+                    "\x1b]2;⠋ 构建{terminator}\x1b]2;✳ Claude Code{terminator}"
+                )),
+            ));
+            assert!(session.program_busy());
+            assert_eq!(session.name(), "✳ Claude Code");
+            assert_eq!(session.latest()["programTitle"], "✳ Claude Code");
+            assert_eq!(session.name_revision, 2);
+            let frame = session.last_spinner_frame.unwrap();
+            assert!(!session.program_busy_at(frame + SPINNER_HOLD));
+        }
+    }
+
+    #[test]
+    fn program_busy_handles_osc_and_unicode_split_across_chunks() {
+        let output = "\x1b]2;⠋ 构建\x1b\\\x1b]2;✳ Claude Code\x07".as_bytes();
+        for split in 1..output.len() {
+            let mut session = Session::new(project(), "phone".into(), 1);
+            for data in [&output[..split], &output[split..]] {
+                session.push(OutputChunk::Bytes(
+                    base64::engine::general_purpose::STANDARD.encode(data),
+                ));
+            }
+            assert!(session.program_busy());
+            assert_eq!(session.name(), "✳ Claude Code");
+            assert_eq!(session.name_revision, 2);
+        }
+    }
+
+    #[test]
+    fn activity_revisions_order_responses_without_changing_original_titles() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode("\x1b]2;◐ 原始标题\x07"),
+        ));
+        session.rename("我的终端").unwrap();
+        let responses = [
+            session.metadata("mobile-1"),
+            session.read(0),
+            session.latest(),
+        ];
+        for (index, response) in responses.iter().enumerate() {
+            assert_eq!(response["activityRevision"], index as u64);
+            assert_eq!(response["name"], "我的终端");
+            assert_eq!(response["programTitle"], "◐ 原始标题");
+            assert_eq!(response["programBusy"], true);
+        }
     }
 
     #[test]

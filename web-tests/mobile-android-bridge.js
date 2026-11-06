@@ -119,6 +119,7 @@
       lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3 }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
       programTitle: session.title ?? null,
+      ...(typeof session.programBusy === 'boolean' ? { programBusy: session.programBusy, activityRevision: session.activityRevision } : {}),
       customName: session.customName ?? null, nameRevision: session.nameRevision ?? 0 } : basic
   }
 

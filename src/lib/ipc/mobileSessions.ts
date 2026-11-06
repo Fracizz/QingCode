@@ -11,6 +11,11 @@ export interface MobileSessionSummary {
   id: string
   number: number
   name: string
+  /** 手动设置的名称；为空时 name 来自程序标题（原样保留，可能带转圈帧字符）。 */
+  customName: string | null
+  programTitle?: string | null
+  /** 程序标题最近在转圈（后端按时间窗口平滑判断，旧版后端按当前标题判断）。 */
+  programBusy: boolean
   exit: { exitCode: number; disconnected: boolean } | null
   lastActiveAt: number
   idleDeadline: number | null
@@ -51,11 +56,19 @@ export function parseMobileSessionSummary(value: unknown): MobileSessionSummary 
   if (typeof item.id !== 'string' || !item.id.startsWith('mobile-')) return null
   if (typeof project.id !== 'string' || typeof project.name !== 'string') return null
   const kind = project.kind === 'ssh' || project.kind === 'wsl' ? project.kind : 'local'
+  const customName = typeof item.customName === 'string' && item.customName ? item.customName : null
+  const title = typeof item.programTitle === 'string' ? item.programTitle : customName ? '' : item.name
+  const exit = parseExit(item.exit)
   return {
     id: item.id,
     number: typeof item.number === 'number' ? item.number : 0,
     name: typeof item.name === 'string' && item.name ? item.name : `终端 ${item.number ?? ''}`.trim(),
-    exit: parseExit(item.exit),
+    customName,
+    programTitle: typeof item.programTitle === 'string' ? item.programTitle : null,
+    programBusy: !exit && (typeof item.programBusy === 'boolean'
+      ? item.programBusy
+      : /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]/u.test(String(title ?? '').trim())),
+    exit,
     lastActiveAt: typeof item.lastActiveAt === 'number' ? item.lastActiveAt : 0,
     idleDeadline: typeof item.idleDeadline === 'number' ? item.idleDeadline : null,
     project: {

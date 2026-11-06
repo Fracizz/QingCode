@@ -40,12 +40,14 @@ const mobileAssets: Record<string, [string, string]> = {
   'appUpdate.js': ['mobile/android/web/appUpdate.js', 'text/javascript'],
   'updateView.js': ['mobile/android/web/updateView.js', 'text/javascript'],
   'mouseMode.js': ['mobile/android/web/mouseMode.js', 'text/javascript'],
+  'terminalFont.js': ['mobile/android/web/terminalFont.js', 'text/javascript'],
   'app.css': ['mobile/android/web/app.css', 'text/css'],
   'xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   'xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],
   'fit.js': ['node_modules/@xterm/addon-fit/lib/addon-fit.js', 'text/javascript'],
   'jsqr.js': ['node_modules/jsqr/dist/jsQR.js', 'text/javascript'],
   'qingcode-icon.png': ['src-tauri/icons/128x128@2x.png', 'image/png'],
+  'qingcode-symbols.woff2': ['mobile/android/web/qingcode-symbols.woff2', 'font/woff2'],
 }
 
 // A separate dev server keeps fixtures and memory adapters out of the desktop build.
@@ -102,6 +104,6 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 38439,
     strictPort: true,
-    watch: { ignored: ['**/.dev/**', '**/src-tauri/**', '**/dist/**', '**/release/**'] },
+    watch: { ignored: ['**/.dev/**', '**/src-tauri/**', '**/dist/**', '**/release/**', '**/coverage/**'] },
   },
 })

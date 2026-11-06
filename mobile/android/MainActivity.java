@@ -220,16 +220,19 @@ public final class MainActivity extends Activity {
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
-                        case "terminalLinks.js":
+                        case "terminalLinks.js": case "terminalFont.js":
                         case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
                         case "qingcode-icon.png": type = "image/png"; break;
+                        case "qingcode-symbols.woff2": type = "font/woff2"; break;
+                        case "qingcode-symbols-OFL.txt": type = "text/plain"; break;
                         default: return denied();
                     }
                     try {
-                        return new WebResourceResponse(type, "UTF-8", getAssets().open(asset));
+                        String encoding = type.equals("font/woff2") ? null : "UTF-8";
+                        return new WebResourceResponse(type, encoding, getAssets().open(asset));
                     } catch (IOException ignored) {
                         return denied();
                     }

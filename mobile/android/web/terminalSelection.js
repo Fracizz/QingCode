@@ -26,6 +26,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   let active = false;
   let held = false;
   let drag = null;
+  let virtualAnchor = null;
   let frame = null;
   let epoch = 0;
   let disposed = false;
@@ -70,6 +71,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     if (!active) return false;
     active = held = false;
     drag = null;
+    virtualAnchor = null;
     epoch++;
     view.cancelAnimationFrame(frame);
     frame = null;
@@ -79,6 +81,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   }
   function start({ x, y }) {
     if (disposed) return;
+    virtualAnchor = null;
     onStart();
     // Keep the existing keyboard focus: hiding the IME would resize/reflow the
     // terminal and immediately invalidate the selection we are about to make.
@@ -100,6 +103,17 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     status.textContent = '';
     layer.hidden = tools.hidden = false;
     select(row * term.cols + left, row * term.cols + right);
+  }
+  function dragSelection(phase, location) {
+    if (disposed) return;
+    if (phase === 'down') {
+      start(location);
+      held = false;
+      virtualAnchor = range()?.[0] ?? null;
+    } else if (virtualAnchor !== null) {
+      if (active) select(virtualAnchor, point(location.x, location.y, true));
+      if (phase === 'up') virtualAnchor = null;
+    }
   }
   const copy = doc.createElement('button');
   copy.type = 'button';
@@ -193,7 +207,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   screen.addEventListener('contextmenu', context);
   const subscriptions = [term.onScroll(position), term.onRender(position), term.onResize(close)];
   return {
-    start, close, isActive: () => active,
+    start, drag: dragSelection, close, isActive: () => active,
     dispose() {
       close();
       disposed = true;

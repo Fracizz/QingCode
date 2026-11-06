@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachTerminalTouchScroll } from '../../mobile/android/web/terminalTouch.js'
+import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchVirtualMouse } from '../../mobile/android/web/terminalTouch.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -174,5 +174,83 @@ describe('Android terminal touch scrolling', () => {
     touch('touchstart', [[10, 100]])
     touch('touchmove', [[10, 50]])
     expect(wheel).not.toHaveBeenCalled()
+  })
+})
+
+describe('Android terminal touch mouse guard', () => {
+  function guardFixture(shouldBlock = () => true) {
+    const container = document.createElement('div')
+    const screen = document.createElement('div')
+    container.append(screen)
+    document.body.append(container)
+    const onTap = vi.fn()
+    const received = vi.fn()
+    for (const type of ['mousedown', 'mousemove', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) screen.addEventListener(type, received)
+    const dispose = attachTouchMouseGuard(container, { shouldBlock, onTap })
+    disposers.push(dispose)
+    const touch = (type = 'touchstart') => screen.dispatchEvent(new Event(type, { bubbles: true }))
+    const mouse = (type: string, firesTouchEvents?: boolean) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 30, clientY: 40 })
+      if (firesTouchEvents !== undefined) Object.defineProperty(event, 'sourceCapabilities', { value: { firesTouchEvents } })
+      screen.dispatchEvent(event)
+      return event
+    }
+    return { screen, onTap, received, dispose, touch, mouse }
+  }
+
+  it('suppresses all compatibility events and their default actions after a touch', () => {
+    const { mouse, touch, received, onTap } = guardFixture()
+    touch()
+    for (const type of ['mousedown', 'mousemove', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) {
+      expect(mouse(type).defaultPrevented).toBe(true)
+    }
+    expect(received).not.toHaveBeenCalled()
+    expect(onTap).toHaveBeenCalledTimes(1)
+    expect(onTap.mock.calls[0][0]).toMatchObject({ clientX: 30, clientY: 40 })
+  })
+
+  it('preserves explicit physical mouse events immediately after touching the screen', () => {
+    const { mouse, touch, received, onTap } = guardFixture()
+    touch()
+    expect(mouse('mousedown', false).defaultPrevented).toBe(false)
+    expect(mouse('mouseup', false).defaultPrevented).toBe(false)
+    expect(received).toHaveBeenCalledTimes(2)
+    expect(onTap).not.toHaveBeenCalled()
+  })
+
+  it('uses the compatibility fallback only until the recent-touch window expires', () => {
+    const now = vi.spyOn(window.performance, 'now').mockReturnValue(0)
+    const { mouse, touch, received } = guardFixture()
+    touch('touchend')
+    now.mockReturnValue(799)
+    expect(mouse('mousedown').defaultPrevented).toBe(true)
+    now.mockReturnValue(800)
+    expect(mouse('mousedown').defaultPrevented).toBe(false)
+    expect(mouse('mousedown', true).defaultPrevented).toBe(true)
+    expect(received).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows all virtual drag phases even during the compatibility blocking window', () => {
+    const { screen, touch, received, onTap } = guardFixture()
+    touch()
+    for (const type of ['mousedown', 'mousemove', 'mouseup']) {
+      const event = dispatchVirtualMouse(screen, type, { x: 30, y: 40 }, { buttons: type === 'mouseup' ? 0 : 1 })
+      expect(event.defaultPrevented).toBe(false)
+    }
+    expect(received).toHaveBeenCalledTimes(3)
+    expect(onTap).not.toHaveBeenCalled()
+  })
+
+  it('restores unblocked touch clicks when disabled or disposed', () => {
+    let block = true
+    const { mouse, touch, received, dispose } = guardFixture(() => block)
+    touch()
+    expect(mouse('mousedown').defaultPrevented).toBe(true)
+    block = false
+    expect(mouse('mousedown', true).defaultPrevented).toBe(false)
+    block = true
+    dispose()
+    expect(mouse('mousedown', true).defaultPrevented).toBe(false)
+    expect(received).toHaveBeenCalledTimes(2)
   })
 })

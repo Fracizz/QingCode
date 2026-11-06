@@ -1,6 +1,8 @@
 // 左侧会话抽屉：按项目列出手机会话、置顶、重命名、结束；打开且在前台时定时刷新元数据。
 import {
   idleLabel,
+  mergeSessionActivity,
+  mergeSessionList,
   mergeSessionName,
   orderSessions,
   parseSessionPins,
@@ -148,16 +150,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     try {
       const list = await remote('sessions', { project: state.project().id });
       if (epoch !== state.viewEpoch() || currentDrawer !== drawerEpoch || !drawer.open) return;
-      const previousList = state.sessions();
-      setSessions(list.map(item => {
-        const previous = previousList.find(saved => saved.id === item.id);
-        if (previous) {
-          mergeSessionName(item, previous);
-          // An older list response cannot revive a terminal already seen exiting.
-          item.exit ??= previous.exit;
-        }
-        return item;
-      }));
+      setSessions(mergeSessionList(list, state.sessions()));
       prunePins(state.sessions());
       message('session-error', '');
       render();
@@ -249,7 +242,10 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       const result = await remote('rename_session', { id: target.id, name: get('session-name-input').value.trim() }, target.address);
       if (target.epoch !== state.viewEpoch() || state.profile().id !== target.address) return;
       const session = state.sessions().find(item => item.id === target.id);
-      if (session) mergeSessionName(session, result);
+      if (session) {
+        mergeSessionName(session, result);
+        mergeSessionActivity(session, result);
+      }
       render();
       if (renamingSession === target) get('rename-session-dialog').close();
     } catch (error) {

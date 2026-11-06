@@ -40,6 +40,29 @@ export function dispatchLineWheel(screen, ticks, point, extra = {}) {
   return count;
 }
 
+/**
+ * 虚拟鼠标：在终端画面上派发一次合成鼠标事件（mousedown / mousemove / mouseup），
+ * 由 xterm 按程序请求的鼠标模式编码上报。button：0 左键、2 右键；buttons 为按下中的键位掩码。
+ * 事件带 qingVirtual 标记，触摸拦截不会把它当作「来自触摸的兼容事件」拦下。
+ */
+export function dispatchVirtualMouse(screen, type, point, { button = 0, buttons = 0, detail = 1 } = {}) {
+  const view = screen.ownerDocument.defaultView;
+  const event = new view.MouseEvent(type, {
+    bubbles: true, cancelable: true, detail,
+    clientX: point.x, clientY: point.y, button, buttons,
+  });
+  Object.defineProperty(event, 'qingVirtual', { value: true });
+  screen.dispatchEvent(event);
+  return event;
+}
+
+/** 虚拟鼠标一次完整点击：按下再抬起（双击由程序按两次点击的间隔自行判断）。 */
+export function dispatchVirtualClick(screen, point, button = 0) {
+  const mask = button === 2 ? 2 : button === 1 ? 4 : 1;
+  dispatchVirtualMouse(screen, 'mousedown', point, { button, buttons: mask });
+  dispatchVirtualMouse(screen, 'mouseup', point, { button, buttons: 0 });
+}
+
 /** Coalesce finger motion per frame, then coast without sending TUI keys after release. */
 export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, onProgramWheel } = {}) {
   const screen = element.querySelector('.xterm-screen');
@@ -193,12 +216,14 @@ export function attachTouchMouseGuard(container, { shouldBlock, onTap } = {}) {
   let touchedAt = -Infinity;
   const touched = () => { touchedAt = view.performance.now(); };
   function guard(event) {
-    const fromTouch = event.sourceCapabilities?.firesTouchEvents === true || view.performance.now() - touchedAt < 800;
-    if (!fromTouch || !shouldBlock?.()) return;
+    const firesTouchEvents = event.sourceCapabilities?.firesTouchEvents;
+    const fromTouch = firesTouchEvents === true || firesTouchEvents !== false && view.performance.now() - touchedAt < 800;
+    if (event.qingVirtual || !fromTouch || !shouldBlock?.()) return;
+    if (event.cancelable) event.preventDefault();
     event.stopPropagation();
     if (event.type === 'mousedown') onTap?.(event);
   }
-  const types = ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
+  const types = ['mousedown', 'mousemove', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
   container.addEventListener('touchstart', touched, { capture: true, passive: true });
   container.addEventListener('touchend', touched, { capture: true, passive: true });
   for (const type of types) container.addEventListener(type, guard, true);
