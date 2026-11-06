@@ -77,6 +77,8 @@ public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final String PROFILE_PREFIX = "profile:";
     private static final int CAMERA_REQUEST = 1;
+    private static final int NOTIFICATION_REQUEST = 2;
+    static final String OPEN_SESSION_ACTION = "com.qingcode.companion.OPEN_SESSION";
     private static final int IMAGE_REQUEST = 2;
     private static final int MAX_IMAGE = 8 * 1024 * 1024;
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
@@ -95,6 +97,9 @@ public final class MainActivity extends Activity {
     private WebView view;
     private SharedPreferences preferences;
     private String pendingLink;
+    private JSONObject pendingSession;
+    private SessionWatcher watcher;
+    private final List<Integer> notificationReplies = new ArrayList<>();
     private boolean pageReady;
     private boolean foreground;
     private boolean immersive;
@@ -121,6 +126,8 @@ public final class MainActivity extends Activity {
         preferences = getSharedPreferences("pairing", MODE_PRIVATE);
         loadConnections();
         pendingLink = pairingLink(getIntent());
+        pendingSession = sessionTarget(getIntent());
+        watcher = SessionWatcher.get(this);
 
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(0xff111419);
@@ -220,9 +227,9 @@ public final class MainActivity extends Activity {
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
-                        case "terminalLinks.js": case "terminalFont.js":
-                        case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js":
-                        case "xterm.js": case "fit.js": case "jsqr.js":
+                        case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js":
+                        case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js": case "historySelection.js":
+                        case "xterm.js": case "fit.js": case "unicode11.js": case "webgl.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
                         case "qingcode-icon.png": type = "image/png"; break;
@@ -449,10 +456,27 @@ public final class MainActivity extends Activity {
         return link.length() > 512 ? null : link;
     }
 
+    /** 点通知打开会话。Activity 对外导出，所以 JS 还会核对地址属于已配对的电脑。 */
+    private static JSONObject sessionTarget(Intent intent) {
+        if (intent == null || !OPEN_SESSION_ACTION.equals(intent.getAction())) return null;
+        try {
+            return new JSONObject().put("address", intent.getStringExtra("address"))
+                .put("project", intent.getStringExtra("project")).put("session", intent.getStringExtra("session"));
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (intent != null && INSTALL_ACTION.equals(intent.getAction())) {
             installStatus(intent);
+            return;
+        }
+        JSONObject target = sessionTarget(intent);
+        if (target != null) {
+            if (view != null && pageReady) view.evaluateJavascript("window.qingOpenSession(" + target + ")", null);
+            else pendingSession = target;
             return;
         }
         String link = pairingLink(intent);
@@ -476,6 +500,15 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        if (code == NOTIFICATION_REQUEST) {
+            List<Integer> asked;
+            synchronized (notificationReplies) {
+                asked = new ArrayList<>(notificationReplies);
+                notificationReplies.clear();
+            }
+            for (int id : asked) replySafely(id, watcher.notificationsAllowed());
+            return;
+        }
         if (code != CAMERA_REQUEST) return;
         boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
         List<Integer> waiting;
@@ -494,12 +527,14 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
+        watcher.onForeground();
         if (view != null) view.onResume();
         notifyForeground();
     }
 
     @Override protected void onPause() {
         foreground = false;
+        watcher.onBackground();
         notifyForeground();
         if (view != null) view.onPause();
         super.onPause();
@@ -635,6 +670,38 @@ public final class MainActivity extends Activity {
                     String link = pendingLink;
                     pendingLink = null;
                     replySafely(id, link == null ? JSONObject.NULL : link);
+                });
+                return;
+            }
+            if ("pendingSession".equals(op)) {
+                runOnUiThread(() -> {
+                    JSONObject target = pendingSession;
+                    pendingSession = null;
+                    replySafely(id, target == null ? JSONObject.NULL : target);
+                });
+                return;
+            }
+            if ("session_watch".equals(op)) {
+                watcher.configure(request.optBoolean("enabled"), request.optBoolean("english"));
+                replySafely(id, watcher.notificationsAllowed());
+                return;
+            }
+            if ("session_watch_seen".equals(op)) {
+                watcher.seen(request.optString("address"), request.optString("id"));
+                replySafely(id, true);
+                return;
+            }
+            if ("notification_permission".equals(op)) {
+                runOnUiThread(() -> {
+                    if (Build.VERSION.SDK_INT < 33
+                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                        replySafely(id, watcher.notificationsAllowed());
+                        return;
+                    }
+                    synchronized (notificationReplies) {
+                        notificationReplies.add(id);
+                    }
+                    requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_REQUEST);
                 });
                 return;
             }
@@ -969,6 +1036,7 @@ public final class MainActivity extends Activity {
             String address = request.getString("profile");
             preferences.edit().remove(PROFILE_PREFIX + address).apply();
             connections.remove(address);
+            watcher.forget(address);
             return success(JSONObject.NULL);
         }
         Connection current = connections.get(request.getString("profile"));
@@ -995,6 +1063,7 @@ public final class MainActivity extends Activity {
             if (!address.equals(current.address())) {
                 preferences.edit().remove(PROFILE_PREFIX + current.address()).apply();
                 connections.remove(current.address());
+                watcher.forget(current.address());
             }
             return success(moved.summary());
         }
@@ -1003,6 +1072,8 @@ public final class MainActivity extends Activity {
             case "projects": case "sessions": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
             case "terminal_profiles": case "capabilities":
+                if (!"capabilities".equals(op) && !"terminal_profiles".equals(op)) watcher.touch(current);
+                if ("input".equals(op)) watcher.noteInput();
                 return current.call(request);
             default:
                 return failure("未知操作。");
@@ -1025,7 +1096,7 @@ public final class MainActivity extends Activity {
         return result;
     }
 
-    private static final class Connection {
+    static final class Connection {
         final URI endpoint;
         final String fingerprint;
         final String token;
@@ -1123,7 +1194,7 @@ public final class MainActivity extends Activity {
         private static boolean idempotent(String op) {
             switch (op) {
                 case "projects": case "sessions": case "poll": case "history": case "resize":
-                case "terminal_profiles": case "capabilities": return true;
+                case "terminal_profiles": case "capabilities": case "attention": return true;
                 default: return false;
             }
         }
@@ -1131,6 +1202,7 @@ public final class MainActivity extends Activity {
         private static int readTimeout(String op) {
             // Creating a terminal may wait for a confirmation on the desktop.
             if ("ping".equals(op)) return 3000;
+            if ("attention".equals(op)) return 8000;
             return "create".equals(op) || "image".equals(op) ? 100_000 : 32_000;
         }
 

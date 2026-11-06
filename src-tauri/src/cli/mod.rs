@@ -124,6 +124,27 @@ fn execute(cmd: Command) -> i32 {
         Command::RunStart { query, project } => online::run_start(&query, project.as_deref()),
         Command::RunStop { query, project } => online::run_stop(&query, project.as_deref()),
         Command::RunStatus { project } => online::run_status(project.as_deref()),
+        Command::TerminalList { project } => online::terminal_list(project.as_deref()),
+        Command::TerminalSend {
+            query,
+            project,
+            input,
+            enter,
+        } => {
+            let text = match input {
+                args::TerminalInput::None => String::new(),
+                args::TerminalInput::Text(text) => text,
+                args::TerminalInput::Stdin => match run_config::read_json_source("-") {
+                    Ok(text) => text,
+                    Err(error) => return output::fail(output::EXIT_ERROR, error),
+                },
+            };
+            online::terminal_send(
+                &query,
+                project.as_deref(),
+                online::terminal_payload(text, enter),
+            )
+        }
         Command::TrustGrant { path } => online::trust_grant(&path),
         Command::Open { targets } => online::open(&targets),
     }

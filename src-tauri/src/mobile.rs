@@ -46,6 +46,10 @@ const MAX_IMAGE: usize = 8 * 1024 * 1024;
 const MAX_POLL_BYTES: usize = 192 * 1024;
 /// 电脑端「终端管理」只读预览附带的最近历史行数。
 const PREVIEW_HISTORY_LINES: usize = 200;
+/// 手机终端有新输出时通知电脑端预览的事件，只带会话 id，内容由预览自行读取。
+const PREVIEW_OUTPUT_EVENT: &str = "mobile-session-output";
+/// 同一会话的通知合并间隔：持续输出的 TUI 不会把预览刷新推到这个频率以上。
+const PREVIEW_NOTIFY_INTERVAL: Duration = Duration::from_millis(100);
 /// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
 /// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
 const OUTPUT_COALESCE: Duration = Duration::from_millis(24);
@@ -358,6 +362,8 @@ struct Session {
     last_active_ms: u64,
     /// 最近一次程序标题转圈帧的时间，用于平滑的「忙碌」状态。
     last_spinner_frame: Option<Instant>,
+    /// 已安排一次预览通知且尚未发出。
+    preview_notify_pending: bool,
 }
 
 impl Session {
@@ -381,6 +387,7 @@ impl Session {
             last_active: Instant::now(),
             last_active_ms: unix_now_ms(),
             last_spinner_frame: None,
+            preview_notify_pending: false,
         }
     }
 
@@ -483,6 +490,13 @@ impl Session {
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
             "lastActiveAt": self.last_active_ms,
             "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
+    }
+
+    /// 后台提醒只需要状态：名称用于通知标题，不返回程序标题之外的终端内容。
+    fn attention(&self, id: &str) -> Value {
+        json!({ "id": id, "name": self.name(), "project": self.project.id,
+            "projectName": self.project.name, "busy": self.program_busy(),
+            "exited": self.exit.is_some(), "bells": self.screen.attention_count() })
     }
 
     fn read(&self, from: u64) -> Value {
@@ -601,6 +615,8 @@ enum Operation {
     Sessions {
         project: String,
     },
+    /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
+    Attention,
     /// 电脑端「终端配置」列表（只含 id / 名称 / 是否已信任，不含命令）。
     TerminalProfiles,
     Create {
@@ -915,6 +931,17 @@ impl Hub {
         }
     }
 
+    /// 更新会话画面。返回 true 表示调用方需要安排一次预览通知；
+    /// 通知发出前的后续更新只返回 false，由已安排的那次一并覆盖。
+    fn update_for_preview(&self, id: &str, update: impl FnOnce(&mut Session)) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(session) = inner.sessions.get_mut(id) else {
+            return false;
+        };
+        update(session);
+        !std::mem::replace(&mut session.preview_notify_pending, true)
+    }
+
     fn rename_session(&self, id: &str, name: &str) -> Result<Value, String> {
         let mut inner = self.inner.lock().unwrap();
         let session = inner.sessions.get_mut(id).ok_or("终端不存在。")?;
@@ -992,33 +1019,49 @@ pub(crate) fn is_mobile_terminal(id: &str) -> bool {
     id.starts_with(TERMINAL_PREFIX)
 }
 
+/// 更新手机会话，并在合并间隔结束时通知电脑端预览。
+/// 通知排在间隔末尾，一段输出的最后一块也能被预览读到；
+/// 没有预览在监听时，Tauri 不会把事件发给 webview。
+fn deliver_update(app: &AppHandle, id: &str, update: impl FnOnce(&mut Session)) {
+    let Some(state) = app.try_state::<MobileState>() else {
+        return;
+    };
+    if !state.hub.update_for_preview(id, update) {
+        return;
+    }
+    let app = app.clone();
+    let id = id.to_owned();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(PREVIEW_NOTIFY_INTERVAL).await;
+        // 先清标记再发事件：之后到达的输出会再安排一次通知，不会漏掉。
+        if let Some(state) = app.try_state::<MobileState>() {
+            state.hub.with_session(&id, |session| {
+                session.preview_notify_pending = false;
+            });
+        }
+        let _ = app.emit(PREVIEW_OUTPUT_EVENT, json!({ "id": id }));
+    });
+}
+
 /// Base64 PTY output for a `mobile-*` terminal.
 pub(crate) fn deliver_data(app: &AppHandle, id: &str, data: String) {
-    if let Some(state) = app.try_state::<MobileState>() {
-        state
-            .hub
-            .with_session(id, |session| session.push(OutputChunk::Bytes(data)));
-    }
+    deliver_update(app, id, |session| session.push(OutputChunk::Bytes(data)));
 }
 
 /// Plain-text screen snapshot for a reattached `mobile-*` daemon terminal.
 pub(crate) fn deliver_screen(app: &AppHandle, id: &str, data: String, cols: u16, rows: u16) {
-    if let Some(state) = app.try_state::<MobileState>() {
-        state.hub.with_session(id, |session| {
-            session.push(OutputChunk::Screen { data, cols, rows })
-        });
-    }
+    deliver_update(app, id, |session| {
+        session.push(OutputChunk::Screen { data, cols, rows })
+    });
 }
 
 pub(crate) fn deliver_exit(app: &AppHandle, id: &str, exit_code: u32, disconnected: bool) {
-    if let Some(state) = app.try_state::<MobileState>() {
-        state.hub.with_session(id, |session| {
-            session.finish(Exit {
-                exit_code,
-                disconnected,
-            })
-        });
-    }
+    deliver_update(app, id, |session| {
+        session.finish(Exit {
+            exit_code,
+            disconnected,
+        })
+    });
 }
 
 fn lan_ipv4(ip: Ipv4Addr) -> bool {
@@ -1582,7 +1625,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history"],
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
@@ -1597,6 +1640,19 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             Ok(json!(sessions
                 .into_iter()
                 .map(|(id, session)| session.metadata(id))
+                .collect::<Vec<_>>()))
+        }
+        Operation::Attention => {
+            let inner = hub.inner.lock().unwrap();
+            let mut sessions: Vec<_> = inner
+                .sessions
+                .iter()
+                .filter(|(_, session)| session.ready)
+                .collect();
+            sessions.sort_by_key(|(_, session)| session.number);
+            Ok(json!(sessions
+                .into_iter()
+                .map(|(id, session)| session.attention(id))
                 .collect::<Vec<_>>()))
         }
         Operation::TerminalProfiles => desktop_query(app, json!({ "profiles": true })).await,
@@ -2406,6 +2462,24 @@ mod tests {
     }
 
     #[test]
+    fn preview_notification_is_scheduled_once_until_sent() {
+        let hub = accepting_hub(Vec::new());
+        hub.inner.lock().unwrap().sessions.insert(
+            "mobile-a".into(),
+            Session::new(project(), "owner".into(), 1),
+        );
+        let write = |session: &mut Session| session.push(OutputChunk::Bytes("aGk=".into()));
+
+        assert!(hub.update_for_preview("mobile-a", write));
+        assert!(!hub.update_for_preview("mobile-a", write));
+        hub.with_session("mobile-a", |session| {
+            session.preview_notify_pending = false;
+        });
+        assert!(hub.update_for_preview("mobile-a", write));
+        assert!(!hub.update_for_preview("mobile-missing", write));
+    }
+
+    #[test]
     fn failed_persistence_rolls_back_the_pairing() {
         let hub = accepting_hub(Vec::new());
         let error = hub
@@ -2582,6 +2656,21 @@ mod tests {
         assert!(!is_spinner_frame(Some("/tmp/build"), Some("\\tmp/build")));
         assert!(!is_spinner_frame(Some("!task"), Some("?task")));
         assert!(!is_spinner_frame(Some("⠋ 构建"), None));
+    }
+
+    #[test]
+    fn attention_reports_busy_exit_and_bells_without_terminal_content() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode("secret output"),
+        ));
+        let value = session.attention("mobile-1");
+        assert_eq!(value["id"], "mobile-1");
+        assert_eq!(value["project"], session.project.id);
+        assert_eq!(value["busy"], false);
+        assert_eq!(value["exited"], false);
+        assert_eq!(value["bells"], 1);
+        assert!(!value.to_string().contains("secret output"));
     }
 
     #[test]

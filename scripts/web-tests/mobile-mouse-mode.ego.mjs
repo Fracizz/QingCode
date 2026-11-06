@@ -184,6 +184,82 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('').includes('mouse paste'))
       await click('.mouse-mode-pill')
     })
+    await step('sliding on the left button selects immediately without waiting for the hold', async () => {
+      await page.evaluate(() => window.__mouseTerm.scrollToBottom())
+      await click('#terminal-menu')
+      await click('#menu-mouse')
+      await tap(2, 1)
+      await page.evaluate(() => {
+        window.__mobileFixture.state.inputs.length = 0
+        const button = document.querySelector('.virtual-mouse-button[data-button="0"]')
+        const rect = button.getBoundingClientRect()
+        const init = { bubbles: true, cancelable: true, pointerId: 11, pointerType: 'touch', isPrimary: true, button: 0, clientX: rect.left + 10, clientY: rect.top + 10 }
+        button.dispatchEvent(new PointerEvent('pointerdown', init))
+        document.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: init.clientX + 60, clientY: init.clientY + 40 }))
+        document.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: init.clientX + 60, clientY: init.clientY + 40 }))
+      })
+      await page.waitForFunction(() => window.__mouseTerm.hasSelection())
+      assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.inputs), [])
+      await shot('slide-select.png')
+      await click('.virtual-mouse-button[data-button="2"]')
+      await page.waitForSelector('.virtual-mouse-menu:not([hidden])')
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.virtual-mouse-menu button')].map(button => button.textContent)), ['复制', '选中', '粘贴'])
+      await page.evaluate(() => window.qingBack())
+      await click('.mouse-mode-pill')
+    })
+    await step('in the history panel the pointer tracks text, and the buttons select and open a menu', async () => {
+      await click('#terminal-menu')
+      await click('#menu-mouse')
+      // 直接显示历史面板：这里验证鼠标在面板里的行为，历史分页由其他用例覆盖。
+      const word = await page.evaluate(async () => {
+        const panel = document.querySelector('#terminal-history')
+        const content = document.querySelector('#history-content')
+        content.textContent = 'history-alpha history-beta\nsecond-line of history\n'
+        content.style.fontSize = '14px'
+        panel.hidden = false
+        await new Promise(done => setTimeout(done, 100))
+        const range = document.createRange()
+        range.setStart(content.firstChild, 2)
+        range.setEnd(content.firstChild, 3)
+        const rect = range.getBoundingClientRect()
+        const x = rect.left + rect.width / 2
+        const y = rect.top + rect.height / 2
+        const pointer = { bubbles: true, cancelable: true, pointerId: 12, pointerType: 'touch', isPrimary: true, button: 0, clientX: x, clientY: y }
+        panel.dispatchEvent(new PointerEvent('pointerdown', pointer))
+        panel.dispatchEvent(new PointerEvent('pointerup', pointer))
+        const arrow = document.querySelector('.virtual-mouse-pointer').getBoundingClientRect()
+        return { x, y, arrowX: arrow.left, arrowY: arrow.top, cellHidden: document.querySelector('.virtual-mouse-cell').hidden }
+      })
+      assert.equal(word.cellHidden, true)
+      assert.ok(Math.abs(word.arrowX + 1.8 - word.x) < 1 && Math.abs(word.arrowY + 1.8 - word.y) < 1, JSON.stringify(word))
+      await click('.virtual-mouse-button[data-button="0"]')
+      await page.waitForFunction(() => getSelection().toString() === 'history-alpha')
+      await page.waitForSelector('.virtual-mouse-menu:not([hidden])')
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.virtual-mouse-menu button')].map(button => button.textContent)), ['复制', '取消'])
+      await shot('history-select.png')
+      await click('.virtual-mouse-menu button:nth-child(1)')
+      await page.waitForFunction(() => document.querySelector('#font-toast').textContent === '已复制')
+      assert.equal(await page.evaluate(() => getSelection().toString()), 'history-alpha')
+      await click('.virtual-mouse-button[data-button="2"]')
+      await page.waitForSelector('.virtual-mouse-menu:not([hidden])')
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.virtual-mouse-menu button')].map(button => button.textContent)), ['复制', '选中', '回到最新'])
+      await page.evaluate(() => {
+        const button = document.querySelector('.virtual-mouse-button[data-button="0"]')
+        const rect = button.getBoundingClientRect()
+        const init = { bubbles: true, cancelable: true, pointerId: 13, pointerType: 'touch', isPrimary: true, button: 0, clientX: rect.left + 10, clientY: rect.top + 10 }
+        button.dispatchEvent(new PointerEvent('pointerdown', init))
+        document.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: init.clientX + 90, clientY: init.clientY }))
+        document.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: init.clientX + 90, clientY: init.clientY }))
+      })
+      await page.waitForFunction(() => getSelection().toString().length > 5 && getSelection().toString() !== 'history-alpha')
+      await page.evaluate(() => {
+        getSelection().removeAllRanges()
+        document.querySelector('#terminal-history').hidden = true
+        document.querySelector('#history-content').textContent = ''
+      })
+      await page.waitForFunction(() => !document.querySelector('.virtual-mouse-cell').hidden)
+      await click('.mouse-mode-pill')
+    })
 
     await open('\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[2J\x1b[HCodex READY\r\n  > option one\r\n    option two')
     await page.waitForFunction(() => window.__mouseTerm?.modes.mouseTrackingMode !== 'none')
@@ -214,6 +290,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await click('.virtual-mouse-button[data-button="0"]')
       await page.waitForFunction(() => /\x1b\[<0;7;3M/.test(window.__mobileFixture.state.inputs.join('')))
       await click('.virtual-mouse-button[data-button="2"]')
+      await page.waitForSelector('.virtual-mouse-menu:not([hidden])')
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.virtual-mouse-menu button')].map(button => button.textContent)), ['选中', '粘贴', '发送右键'])
+      await click('.virtual-mouse-menu button:nth-child(3)')
       await page.waitForFunction(() => /\x1b\[<2;7;3M/.test(window.__mobileFixture.state.inputs.join('')))
       assert.equal(await page.evaluate(() => window.__mouseTerm.hasSelection()), false)
       assert.equal(await page.evaluate(() => document.activeElement === window.__mouseTerm.textarea), false)

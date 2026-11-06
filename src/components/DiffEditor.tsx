@@ -7,7 +7,7 @@ import { ChevronDown, ChevronUp, AlertTriangle, FileIcon } from 'lucide-react'
 import type { EditorTab } from '../types'
 import { openWorkingTreeFile } from '../lib/git/openWorkingTreeFile'
 import { loadLanguageSupport } from '../lib/editorLanguages'
-import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
+import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { translateFor, useI18n } from '../lib/i18n'
@@ -179,12 +179,24 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
         mergeRef.current?.b.requestMeasure()
       })
     }
+    // 终端字号可连续缩放，它与 diff 无关，不能每步都重建编辑器。
+    const fontKey = () => {
+      const { terminalFont: _font, terminalFontSize: _size, ...editorFonts } = loadFontSettings()
+      return JSON.stringify(editorFonts)
+    }
+    let lastFontKey = fontKey()
+    const onFontSettings = () => {
+      const next = fontKey()
+      if (next === lastFontKey) return
+      lastFontKey = next
+      rebuild()
+    }
     window.addEventListener(THEME_SETTINGS_EVENT, rebuild)
-    window.addEventListener(FONT_SETTINGS_EVENT, rebuild)
+    window.addEventListener(FONT_SETTINGS_EVENT, onFontSettings)
     return () => {
       cancelled = true
       window.removeEventListener(THEME_SETTINGS_EVENT, rebuild)
-      window.removeEventListener(FONT_SETTINGS_EVENT, rebuild)
+      window.removeEventListener(FONT_SETTINGS_EVENT, onFontSettings)
       mergeRef.current?.destroy()
       mergeRef.current = null
     }

@@ -166,6 +166,38 @@ pub fn run_remove(query: &str, project: Option<&str>) -> i32 {
     })
 }
 
+pub fn terminal_list(project: Option<&str>) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "terminal.list".into(),
+        project: project.map(str::to_string),
+        config: None,
+        path: None,
+        paths: None,
+        content: None,
+    })
+}
+
+/// 终端里回车键发送的是 CR；`\n` 在 TUI 中可能只是换行而不是提交。
+pub fn terminal_payload(mut text: String, enter: bool) -> String {
+    if enter {
+        text.push('\r');
+    }
+    text
+}
+
+pub fn terminal_send(query: &str, project: Option<&str>, data: String) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "terminal.send".into(),
+        project: project.map(str::to_string),
+        config: Some(query.to_string()),
+        path: None,
+        paths: None,
+        content: Some(data),
+    })
+}
+
 pub fn trust_grant(path: &str) -> i32 {
     dispatch(IpcRequest {
         id: uuid::Uuid::new_v4().to_string(),
@@ -208,5 +240,18 @@ fn dispatch(req: IpcRequest) -> i32 {
         }
         Err(ipc::ClientError::AppNotRunning(msg)) => output::fail(EXIT_APP_NOT_RUNNING, msg),
         Err(ipc::ClientError::Other(msg)) => output::fail(EXIT_ERROR, msg),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal_payload;
+
+    #[test]
+    fn terminal_payload_appends_cr_only_when_enter_is_requested() {
+        assert_eq!(terminal_payload("ls".into(), false), "ls");
+        assert_eq!(terminal_payload("ls".into(), true), "ls\r");
+        assert_eq!(terminal_payload(String::new(), true), "\r");
+        assert_eq!(terminal_payload("a\nb\n".into(), false), "a\nb\n");
     }
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 // 终端鼠标模式：长按滑块进入，点按判定决定是否选中 / 点击。
-import { cellRect, clampPoint, createLongPress, fromRatio, isTap, layoutMouseBody, LONG_PRESS_MS, LONG_PRESS_SLOP, MOUSE_BODY, POINTER_GAP, TAP_MAX_MS, TAP_SLOP, toRatio } from '../../mobile/android/web/mouseMode.js'
+import { cellRect, clampPoint, createLongPress, fromRatio, isTap, layoutMouseBody, LONG_PRESS_MS, LONG_PRESS_SLOP, MOUSE_BODY, POINTER_GAP, TAP_MAX_MS, TAP_SLOP, toRatio, visibleRect } from '../../mobile/android/web/mouseMode.js'
 
 const view = { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms), clearTimeout: (id: ReturnType<typeof setTimeout>) => clearTimeout(id) }
 
@@ -58,6 +58,12 @@ describe('Android virtual mouse layout', () => {
     expect(fromRatio({ x: 2, y: -1 }, rect)).toEqual({ x: 209, y: 20 })
   })
 
+  it('limits the pointer to the part of the screen inside the container', () => {
+    const screen = { left: 0, top: -90, width: 400, height: 500 }
+    expect(visibleRect(screen, { left: 0, top: 0, width: 400, height: 300 })).toEqual({ left: 0, top: 0, width: 400, height: 300 })
+    expect(visibleRect(rect, { left: 500, top: 500, width: 10, height: 10 })).toBe(rect)
+  })
+
   it('finds the cell under the pointer tip', () => {
     expect(cellRect({ x: 35, y: 45 }, rect, 20, 10)).toMatchObject({ col: 2, row: 2, width: 10, height: 10, left: 30, top: 40 })
     expect(cellRect({ x: 999, y: 999 }, rect, 20, 10)).toMatchObject({ col: 19, row: 9 })
@@ -76,8 +82,8 @@ describe('Android virtual mouse layout', () => {
   })
 
   it('keeps the compact mouse body within narrow and keyboard-compressed bounds', () => {
-    expect(MOUSE_BODY).toEqual({ width: 56, height: 80 })
-    expect(layoutMouseBody({ x: 319, y: 99 }, { width: 320, height: 100 })).toMatchObject({ left: 251, top: 0 })
+    expect(MOUSE_BODY).toEqual({ width: 64, height: 88 })
+    expect(layoutMouseBody({ x: 319, y: 99 }, { width: 320, height: 100 })).toMatchObject({ left: 241, top: 0 })
     expect(layoutMouseBody({ x: 20, y: 20 }, { width: 40, height: 50 })).toMatchObject({ left: 0, top: 0 })
   })
 })

@@ -32,6 +32,18 @@ describe('parseShellIntegrationOsc', () => {
 })
 
 describe('registerTerminalOscHandlers', () => {
+  it('exposes the raw title before the spinner glyph is stripped', () => {
+    const { registry, emit } = fakeRegistry()
+    const onTitle = vi.fn()
+    const onRawTitle = vi.fn()
+    registerTerminalOscHandlers(registry, { onTitle, onRawTitle })
+
+    emit(2, ' ⠋ 构建 ')
+    emit(0, '   ')
+    expect(onRawTitle.mock.calls).toEqual([['⠋ 构建']])
+    expect(onTitle.mock.calls).toEqual([['构建']])
+  })
+
   it('routes titles and shell-integration markers and swallows them', () => {
     const { registry, emit } = fakeRegistry()
     const onTitle = vi.fn()

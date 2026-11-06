@@ -1,6 +1,7 @@
 // 终端「鼠标模式」：长按右侧滑块（或「… → 鼠标模式」）进入。
 // 模式内终端上会出现一只可拖动的虚拟鼠标：箭头尖端就是点击位置，拖机身移动指针，
-// 点左 / 右键在尖端发出点击，长按左键再拖相当于按住左键拖动。点终端空白处只把指针移过去，不点击。
+// 点左 / 右键在尖端发出点击；按住左键滑动（或点左键后紧接着拖机身）相当于按住左键拖动，用于选中。
+// 点终端空白处只把指针移过去，不点击。
 // 点左下角胶囊、返回键、切换会话或离开终端时退出。
 
 /** 按住滑块多久算长按，以及长按期间允许的手指抖动（px）。 */
@@ -10,10 +11,14 @@ export const LONG_PRESS_SLOP = 8;
 export const TAP_SLOP = 10;
 export const TAP_MAX_MS = 500;
 /** 虚拟鼠标机身尺寸（CSS px），以及机身相对箭头尖端的偏移。 */
-export const MOUSE_BODY = { width: 56, height: 80 };
-export const POINTER_GAP = { x: 12, y: 26 };
-/** 按住左键多久进入「按住拖动」。 */
+export const MOUSE_BODY = { width: 64, height: 88 };
+export const POINTER_GAP = { x: 14, y: 32 };
+/** 箭头尖端在指针元素内的偏移（CSS px），摆放时扣除，让尖端正好落在点击位置。 */
+export const POINTER_TIP = { x: 1.8, y: 1.8 };
+/** 按住左键不动多久进入「按住拖动」（手指一滑动就会立即进入）。 */
 export const HOLD_MS = 400;
+/** 点左键后多久内拖动机身，算作接着按住左键拖动（单击后再滑动即选中）。 */
+export const CLICK_DRAG_MS = 800;
 
 /** 判断一次按下 / 抬起是否算点按（纯函数，便于测试）。 */
 export function isTap(start, end, slop = TAP_SLOP, maxMs = TAP_MAX_MS) {
@@ -28,6 +33,18 @@ export function clampPoint(point, rect) {
     x: Math.max(rect.left, Math.min(rect.left + Math.max(0, rect.width - 1), point.x)),
     y: Math.max(rect.top, Math.min(rect.top + Math.max(0, rect.height - 1), point.y)),
   };
+}
+
+/**
+ * 终端画面与容器的相交部分：软键盘打开时终端保留行数，画面会超出容器，
+ * 指针只能停在看得见的区域；不相交时退回画面本身。
+ */
+export function visibleRect(screen, bounds) {
+  const left = Math.max(screen.left, bounds.left);
+  const top = Math.max(screen.top, bounds.top);
+  const width = Math.min(screen.left + screen.width, bounds.left + bounds.width) - left;
+  const height = Math.min(screen.top + screen.height, bounds.top + bounds.height) - top;
+  return width > 0 && height > 0 ? { left, top, width, height } : screen;
 }
 
 /** 指针位置与终端画面内相对比例互转，用于按会话记住位置、终端尺寸变化后恢复。 */
@@ -104,12 +121,13 @@ const POINTER_SVG = '<svg aria-hidden="true" viewBox="0 0 18 24"><path d="M1.5 1
 
 /**
  * host：终端外层容器（放胶囊、指针和虚拟鼠标）；target：接收点按的终端区域。
- * screenRect()：终端画面（client 坐标）；grid()：{ cols, rows }。
- * onClick(point, button)：左键 0 / 右键 2 点击；onDrag(phase, point)：长按左键拖动（down / move / up）。
+ * extraTargets：同样接收点按的其他区域（盖在终端上的历史面板）。
+ * screenRect()：指针可活动的画面（client 坐标）；grid()：{ cols, rows }，返回空时不画字格高亮（历史面板没有字格）。
+ * onClick(point, button)：左键 0 / 右键 2 点击；onDrag(phase, point)：按住左键拖动（down / move / up）。
  * position() / savePosition(ratio)：按会话记住指针位置；onChange(active)：进入 / 退出时通知。
  */
 export function attachMouseMode(host, target, {
-  onClick, onDrag, onChange, screenRect, grid, position, savePosition,
+  onClick, onDrag, onChange, screenRect, grid, position, savePosition, extraTargets = [],
   label = 'Mouse', exitLabel = 'Exit mouse mode', leftLabel = 'Left click', rightLabel = 'Right click', dragLabel = 'Drag to move pointer',
 } = {}) {
   const doc = host.ownerDocument;
@@ -155,9 +173,14 @@ export function attachMouseMode(host, target, {
   let ratio = null;
   let disposed = false;
   let renderedScreen = null;
+  let lastLeftClick = -Infinity;
+
+  function fullRect() {
+    return screenRect?.() ?? target.getBoundingClientRect();
+  }
 
   function rect() {
-    return screenRect?.() ?? target.getBoundingClientRect();
+    return visibleRect(fullRect(), host.getBoundingClientRect());
   }
 
   /** 按当前尖端位置摆放指针、字格高亮与机身。 */
@@ -168,9 +191,10 @@ export function attachMouseMode(host, target, {
     renderedScreen = { left: screen.left, top: screen.top, width: screen.width, height: screen.height };
     const bounds = host.getBoundingClientRect();
     const local = { x: tip.x - bounds.left, y: tip.y - bounds.top };
-    pointer.style.transform = `translate(${local.x}px, ${local.y}px)`;
+    pointer.style.transform = `translate(${local.x - POINTER_TIP.x}px, ${local.y - POINTER_TIP.y}px)`;
     const size = grid?.();
-    const box = size && cellRect(tip, screen, size.cols, size.rows);
+    // 字格按完整画面计算：可见区域可能只是画面的一部分。
+    const box = size && cellRect(tip, fullRect(), size.cols, size.rows);
     cell.hidden = !box;
     if (box) {
       cell.style.transform = `translate(${box.left - bounds.left}px, ${box.top - bounds.top}px)`;
@@ -204,8 +228,12 @@ export function attachMouseMode(host, target, {
     const width = menu.offsetWidth || 160;
     const height = menu.offsetHeight || 44;
     const left = Math.max(4, Math.min(bounds.width - width - 4, layout.left + MOUSE_BODY.width / 2 - width / 2));
+    // 放在机身远离指针的一侧，不盖住指针和刚选中的文字；放不下再换到另一侧。
     const above = layout.top - height - 8;
-    const top = Math.max(4, above >= 4 ? above : Math.min(bounds.height - height - 4, layout.top + MOUSE_BODY.height + 8));
+    const below = layout.top + MOUSE_BODY.height + 8;
+    const belowFits = below + height + 4 <= bounds.height;
+    const useBelow = layout.flip.y ? above < 4 && belowFits : belowFits || above < 4;
+    const top = Math.max(4, useBelow ? Math.min(bounds.height - height - 4, below) : above);
     menu.style.transform = `translate(${left}px, ${top}px)`;
   }
 
@@ -245,6 +273,7 @@ export function attachMouseMode(host, target, {
     } else {
       endGesture(true);
       press = null;
+      lastLeftClick = -Infinity;
       view.clearTimeout(markerTimer);
       markerTimer = null;
       marker.hidden = cell.hidden = true;
@@ -284,7 +313,7 @@ export function attachMouseMode(host, target, {
   }
   const cancel = () => { press = null; };
 
-  // ---- 虚拟鼠标：拖机身移动，点左右键点击，长按左键拖动 ----
+  // ---- 虚拟鼠标：拖机身移动，点左右键点击，按住左键滑动即拖动 ----
   function endGesture(cancelled = false) {
     if (!gesture) return;
     const current = gesture;
@@ -306,8 +335,11 @@ export function attachMouseMode(host, target, {
     hideMenu();
     const button = event.target.closest?.('.virtual-mouse-button');
     const which = button ? Number(button.dataset.button) : null;
+    // 刚点过左键时，接下来拖机身算按住左键拖动（单击后再滑动选中）。
+    const afterClick = view.performance.now() - lastLeftClick <= CLICK_DRAG_MS;
+    lastLeftClick = -Infinity;
     gesture = {
-      id: event.pointerId, button: which, mode: which === null ? 'drag' : 'pending',
+      id: event.pointerId, button: which, mode: which === null && !afterClick ? 'drag' : 'pending',
       x: event.clientX, y: event.clientY, at: view.performance.now(), origin: { ...tip }, timer: null,
     };
     try { body.setPointerCapture(event.pointerId); } catch {}
@@ -330,10 +362,18 @@ export function attachMouseMode(host, target, {
     const dy = event.clientY - gesture.y;
     if (gesture.mode === 'pending') {
       if (Math.hypot(dx, dy) <= TAP_SLOP) return;
-      // 按键上直接拖动也当作拖机身，免得手指必须对准下半部分。
       view.clearTimeout(gesture.timer);
-      gesture.mode = 'drag';
-      body.classList.add('dragging');
+      if (gesture.button === 2) {
+        // 右键上直接拖动当作拖机身，免得手指必须对准下半部分。
+        gesture.mode = 'drag';
+        body.classList.add('dragging');
+      } else {
+        // 按着左键滑动就是按住左键拖动，不必先等长按。
+        gesture.mode = 'hold';
+        body.classList.add('holding');
+        mark(gesture.origin);
+        onDrag?.('down', { ...gesture.origin });
+      }
     }
     moveTo({ x: gesture.origin.x + dx, y: gesture.origin.y + dy }, false);
     if (gesture?.mode === 'hold') onDrag?.('move', { ...tip });
@@ -348,6 +388,7 @@ export function attachMouseMode(host, target, {
       && isTap(current, { x: event.clientX, y: event.clientY, at: view.performance.now() })) {
       endGesture();
       mark(tip);
+      if (current.button === 0) lastLeftClick = view.performance.now();
       onClick?.({ ...tip }, current.button);
       return;
     }
@@ -363,6 +404,7 @@ export function attachMouseMode(host, target, {
 
   function suspend() {
     cancel();
+    lastLeftClick = -Infinity;
     endGesture(true);
     hideMenu();
   }
@@ -380,6 +422,8 @@ export function attachMouseMode(host, target, {
   for (const element of [pill, body, menu]) {
     for (const type of ['pointerdown', 'touchstart', 'mousedown']) element.addEventListener(type, event => event.stopPropagation());
   }
+  // 点鼠标和菜单不能清掉历史面板里已选中的文字。
+  for (const element of [body, menu]) element.addEventListener('mousedown', event => event.preventDefault());
   body.addEventListener('pointerdown', bodyDown);
   body.addEventListener('lostpointercapture', event => { if (gesture?.id === event.pointerId) endGesture(true); });
   body.addEventListener('contextmenu', event => event.preventDefault());
@@ -390,9 +434,12 @@ export function attachMouseMode(host, target, {
     mark(tip);
     onClick?.({ ...tip }, Number(button.dataset.button));
   });
-  target.addEventListener('pointerdown', down, true);
-  target.addEventListener('pointerup', up, true);
-  target.addEventListener('pointercancel', cancel, true);
+  const targets = [target, ...extraTargets];
+  for (const element of targets) {
+    element.addEventListener('pointerdown', down, true);
+    element.addEventListener('pointerup', up, true);
+    element.addEventListener('pointercancel', cancel, true);
+  }
   doc.addEventListener('pointerdown', outsideDown, true);
   doc.addEventListener('pointermove', move, true);
   doc.addEventListener('pointermove', bodyMove);
@@ -428,9 +475,11 @@ export function attachMouseMode(host, target, {
       disposed = true;
       resize?.disconnect();
       view.clearTimeout(markerTimer);
-      target.removeEventListener('pointerdown', down, true);
-      target.removeEventListener('pointerup', up, true);
-      target.removeEventListener('pointercancel', cancel, true);
+      for (const element of targets) {
+        element.removeEventListener('pointerdown', down, true);
+        element.removeEventListener('pointerup', up, true);
+        element.removeEventListener('pointercancel', cancel, true);
+      }
       doc.removeEventListener('pointerdown', outsideDown, true);
       doc.removeEventListener('pointermove', move, true);
       doc.removeEventListener('pointermove', bodyMove);

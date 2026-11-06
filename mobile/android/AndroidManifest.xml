@@ -10,6 +10,11 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!-- Online update: hands a downloaded, signature-checked QingCode APK to the system installer after user confirmation. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Background alerts: requested only after the user turns them on in terminal settings. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_qingcode"
@@ -34,5 +39,14 @@
                 <data android:scheme="qingcode" android:host="pair" />
             </intent-filter>
         </activity>
+        <!-- Runs only while a session is busy and the app is in the background; ends when sessions stop. -->
+        <service
+            android:name=".SessionWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Watches terminal sessions on a paired computer and alerts when a running program stops." />
+        </service>
     </application>
 </manifest>

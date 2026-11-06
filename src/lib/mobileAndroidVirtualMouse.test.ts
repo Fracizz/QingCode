@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 // 虚拟鼠标：点终端只移动指针，左右键点击，长按左键拖动；合成鼠标事件不被触摸拦截挡下。
-import { attachMouseMode, HOLD_MS } from '../../mobile/android/web/mouseMode.js'
+import { attachMouseMode, CLICK_DRAG_MS, HOLD_MS, POINTER_TIP } from '../../mobile/android/web/mouseMode.js'
 import { attachTouchMouseGuard, dispatchVirtualClick, dispatchVirtualMouse } from '../../mobile/android/web/terminalTouch.js'
 
 const disposers: Array<() => void> = []
@@ -116,17 +116,108 @@ describe('Android virtual mouse', () => {
     expect(mouse.point()).toEqual({ x: 200, y: 150 })
   })
 
-  it('drags from buttons without clicking when movement starts before the hold threshold', () => {
+  it('moves the pointer without clicking when sliding on the right button', () => {
     vi.useFakeTimers()
-    const { mouse, left, body, onDrag, onClick } = fixture()
-    pointer(left, 'pointerdown', 230, 160)
-    pointer(left, 'pointermove', 260, 180)
+    const { mouse, right, body, onDrag, onClick } = fixture()
+    pointer(right, 'pointerdown', 230, 160)
+    pointer(right, 'pointermove', 260, 180)
     vi.advanceTimersByTime(HOLD_MS * 2)
     expect(body.classList.contains('dragging')).toBe(true)
-    pointer(left, 'pointerup', 260, 180)
+    pointer(right, 'pointerup', 260, 180)
     expect(mouse.point()).toEqual({ x: 230, y: 170 })
     expect(onDrag).not.toHaveBeenCalled()
     expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('starts a left drag as soon as the finger slides on the left button', () => {
+    const { left, onDrag, onClick } = fixture()
+    pointer(left, 'pointerdown', 230, 160)
+    pointer(left, 'pointermove', 260, 180)
+    pointer(left, 'pointerup', 260, 180)
+    expect(onDrag.mock.calls).toEqual([
+      ['down', { x: 200, y: 150 }],
+      ['move', { x: 230, y: 170 }],
+      ['up', { x: 230, y: 170 }],
+    ])
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('treats dragging the body right after a left click as a left drag', () => {
+    vi.useFakeTimers()
+    const { left, body, onDrag, onClick } = fixture()
+    pointer(left, 'pointerdown', 230, 160)
+    pointer(left, 'pointerup', 230, 160)
+    expect(onClick).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(CLICK_DRAG_MS - 1)
+    pointer(body, 'pointerdown', 230, 200)
+    pointer(body, 'pointermove', 260, 200)
+    pointer(body, 'pointerup', 260, 200)
+    expect(onDrag.mock.calls.map(([phase]) => phase)).toEqual(['down', 'move', 'up'])
+  })
+
+  it('moves the pointer when the body is dragged long after a click or after a right click', () => {
+    vi.useFakeTimers()
+    const { left, right, body, onDrag } = fixture()
+    pointer(left, 'pointerdown', 230, 160)
+    pointer(left, 'pointerup', 230, 160)
+    vi.advanceTimersByTime(CLICK_DRAG_MS + 1)
+    pointer(body, 'pointerdown', 230, 200)
+    pointer(body, 'pointermove', 260, 200)
+    pointer(body, 'pointerup', 260, 200)
+    pointer(right, 'pointerdown', 230, 160)
+    pointer(right, 'pointerup', 230, 160)
+    pointer(body, 'pointerdown', 230, 200)
+    pointer(body, 'pointermove', 200, 200)
+    pointer(body, 'pointerup', 200, 200)
+    expect(onDrag).not.toHaveBeenCalled()
+  })
+
+  it('does not start a drag from a still tap on the body after a click', () => {
+    const { left, body, onDrag, onClick } = fixture()
+    pointer(left, 'pointerdown', 230, 160)
+    pointer(left, 'pointerup', 230, 160)
+    pointer(body, 'pointerdown', 230, 200)
+    pointer(body, 'pointerup', 230, 200)
+    expect(onDrag).not.toHaveBeenCalled()
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the menu on the side of the body away from the pointer', () => {
+    const { mouse, viewport, host } = fixture()
+    const menu = host.querySelector<HTMLElement>('.virtual-mouse-menu')!
+    pointer(viewport, 'pointerdown', 50, 60)
+    pointer(viewport, 'pointerup', 50, 60)
+    mouse.showMenu([{ label: 'Paste', run: vi.fn() }])
+    // 指针在上：机身顶部 92，菜单放到机身下方。
+    expect(menu.style.transform).toBe('translate(16px, 188px)')
+    pointer(viewport, 'pointerdown', 50, 290)
+    pointer(viewport, 'pointerup', 50, 290)
+    mouse.showMenu([{ label: 'Paste', run: vi.fn() }])
+    // 指针在下：机身翻到上方，顶部 170，菜单放到机身上方。
+    expect(menu.style.transform).toBe('translate(16px, 118px)')
+  })
+
+  it('moves the pointer on taps in an extra target such as the history panel', () => {
+    const host = document.createElement('div')
+    const viewport = document.createElement('div')
+    const panel = document.createElement('section')
+    host.append(viewport, panel)
+    document.body.append(host)
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(screenRect)
+    const mouse = attachMouseMode(host, viewport, { screenRect: () => screenRect, extraTargets: [panel] })
+    disposers.push(() => mouse.dispose())
+    mouse.set(true)
+    pointer(panel, 'pointerdown', 50, 60)
+    pointer(panel, 'pointerup', 50, 60)
+    expect(mouse.point()).toEqual({ x: 50, y: 60 })
+    expect(host.querySelector<HTMLElement>('.virtual-mouse-cell')!.hidden).toBe(true)
+  })
+
+  it('offsets the arrow element so its tip sits exactly on the click position', () => {
+    const { mouse, host } = fixture()
+    const tip = mouse.point()!
+    expect(host.querySelector<HTMLElement>('.virtual-mouse-pointer')!.style.transform)
+      .toBe(`translate(${tip.x - POINTER_TIP.x}px, ${tip.y - POINTER_TIP.y}px)`)
   })
 
   it('completes a gesture outside the body even when pointer capture is unavailable', () => {

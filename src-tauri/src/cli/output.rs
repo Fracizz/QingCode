@@ -166,6 +166,11 @@ Usage:
   Existing configs and commands remain supported. start/stop/status require the running app.
   run start submits tasks asynchronously; inspect run status and verify service readiness.
 
+  qingcode.exe terminal list [--project ...]
+  qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+  Terminal commands require the GUI. send writes raw input to a running terminal in a trusted
+  project (local or SSH); --enter appends CR. Success means queued, not executed.
+
   qingcode.exe settings export [--scope user|workspace] [--project ...] [--output <file>]
   qingcode.exe settings import --json <file|-> [--scope user|workspace] [--project ...]
   qingcode.exe settings reset --yes [--scope user|workspace] [--project ...]

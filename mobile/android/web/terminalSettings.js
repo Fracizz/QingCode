@@ -1,12 +1,12 @@
-// 「终端设置」弹层中仅保存在手机上的偏好：字号、列宽、全屏程序触摸、发送按键、图片压缩。
+// 「终端设置」弹层中仅保存在手机上的偏好：字号、列宽、全屏程序触摸、发送按键、图片压缩、硬件加速渲染。
 import { get } from './dom.js';
 import { FONT_MAX, FONT_MIN, clampFontSize } from './pinchZoom.js';
 
 /**
  * onFontSize(size) 在字号变化后重新适配终端；onColumns() 在列宽变化后重新适配；
- * onSendMode() 在发送按键设置变化后刷新发送按钮。
+ * onSendMode() 在发送按键设置变化后刷新发送按钮；onRenderer() 在硬件加速设置变化后切换渲染器。
  */
-export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMode }) {
+export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMode, onRenderer }) {
   const savedFontSize = Number(localStorage.getItem(prefix + 'font-size'));
   let fontSize = Number.isInteger(savedFontSize) && savedFontSize >= FONT_MIN && savedFontSize <= FONT_MAX ? savedFontSize : 13;
   const savedColumns = localStorage.getItem(prefix + 'columns');
@@ -58,6 +58,14 @@ export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMo
     onSendMode();
   });
 
+  let gpuRender = localStorage.getItem(prefix + 'gpu-render') !== 'off';
+  get('terminal-renderer').value = gpuRender ? 'on' : 'off';
+  get('terminal-renderer').addEventListener('change', () => {
+    gpuRender = get('terminal-renderer').value !== 'off';
+    localStorage.setItem(prefix + 'gpu-render', gpuRender ? 'on' : 'off');
+    onRenderer();
+  });
+
   const savedCompression = localStorage.getItem(prefix + 'image-compression');
   if (['original', 'low', 'medium', 'high'].includes(savedCompression)) compression.value = savedCompression;
   compression.addEventListener('change', () => localStorage.setItem(prefix + 'image-compression', compression.value));
@@ -69,5 +77,6 @@ export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMo
     touchMode: () => touchMode,
     sendMode: () => sendMode,
     compression: () => compression.value,
+    gpuRender: () => gpuRender,
   };
 }

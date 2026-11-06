@@ -13,6 +13,8 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('name: qingcode-cli')
     expect(md).toContain('D:\\Apps\\QingCode.exe project list')
     expect(md).toContain('run start')
+    expect(md).toContain('D:\\Apps\\QingCode.exe terminal send <id|name>')
+    expect(md).toContain('There is no command to read terminal')
     expect(md).toContain('does not')
     expect(md).toContain('auto-register')
     expect(md).toContain('It is not a partial patch')

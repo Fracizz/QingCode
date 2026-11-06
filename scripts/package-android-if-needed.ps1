@@ -46,6 +46,7 @@ $inputs = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'mobile/android')
 $inputs += @('scripts/build-android.ps1', 'scripts/android-version.mjs', 'scripts/package-android-if-needed.ps1',
   'src-tauri/icons/128x128@2x.png', 'node_modules/@xterm/xterm/lib/xterm.js',
   'node_modules/@xterm/xterm/css/xterm.css', 'node_modules/@xterm/addon-fit/lib/addon-fit.js',
+  'node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js', 'node_modules/@xterm/addon-webgl/lib/addon-webgl.js',
   'node_modules/jsqr/dist/jsQR.js', 'node_modules/@xterm/xterm/LICENSE',
   'node_modules/@xterm/addon-fit/LICENSE', 'node_modules/jsqr/LICENSE') | ForEach-Object { Join-Path $projectRoot $_ }
 function Get-AndroidFingerprint {

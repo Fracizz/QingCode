@@ -21,11 +21,11 @@ const EDGE = 8
 const KEEP_VISIBLE_X = 160
 const KEEP_VISIBLE_Y = 48
 
-/** 默认：宽 800、高约 82% 视口（上限 820），水平垂直居中。 */
+/** 默认：宽 840、高约 70% 视口（上限 700），水平垂直居中。 */
 export function defaultComposerRect(viewport: Viewport): ComposerRect {
-  const width = Math.max(Math.min(800, viewport.width - EDGE * 4), Math.min(COMPOSER_MIN_WIDTH, viewport.width - EDGE * 2))
+  const width = Math.max(Math.min(840, viewport.width - EDGE * 4), Math.min(COMPOSER_MIN_WIDTH, viewport.width - EDGE * 2))
   const height = Math.max(
-    Math.min(Math.round(viewport.height * 0.82), 820, viewport.height - EDGE * 2),
+    Math.min(Math.round(viewport.height * 0.7), 700, viewport.height - EDGE * 2),
     Math.min(COMPOSER_MIN_HEIGHT, viewport.height - EDGE * 2)
   )
   return {

@@ -45,7 +45,10 @@ import { attachPinchZoom } from './pinchZoom.js';
 import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
 import { createUpdateView } from './updateView.js';
 import { attachMouseMode } from './mouseMode.js';
+import { attachHistorySelection } from './historySelection.js';
 import { createTerminalFontLoader } from './terminalFont.js';
+import { attachTerminalRenderer } from './terminalRenderer.js';
+import { createSessionWatch } from './sessionWatch.js';
 import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, translateDocument } from './i18n.js';
 
 const native = window.QingCodeNative;
@@ -122,6 +125,8 @@ let terminalJog;
 let terminalMouse;
 /** 鼠标模式下虚拟指针在各会话里的位置（画面内相对比例），切回会话时恢复。 */
 const mousePositions = new Map();
+/** 虚拟鼠标在历史面板（只读 DOM 文本）里的选区。 */
+const historySelection = attachHistorySelection(get('history-content'));
 /** 软键盘打开时保留的终端行数下，实际可见的行数；0 表示没有保留。 */
 let heldVisibleRows = 0;
 /** 当前窗口宽度下见过的最大高度，用来判断软键盘是否打开。 */
@@ -148,6 +153,8 @@ let sendingImage = false;
 let imageEpoch = 0;
 let fontToastTimer = null;
 const inputTipKey = prefix + 'input-tip-seen';
+const gestureGuideKey = prefix + 'gesture-guide-seen';
+let terminalRenderer;
 // 配对与连接详情弹窗；在下方创建，视图回调中延迟读取。
 let pairing = null;
 
@@ -221,6 +228,7 @@ const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () =
 
 const settings = createTerminalSettings({
   prefix,
+  onRenderer: () => terminalRenderer?.sync(),
   onFontSize: size => {
     if (term) {
       term.options.fontSize = size;
@@ -256,6 +264,32 @@ const drawer = createSessionDrawer({
 });
 
 createShortcutBar({ prefix, onChange: () => updateComposerActions() });
+
+const sessionWatch = createSessionWatch({
+  rpc,
+  prefix,
+  capabilities: () => profile ? desktopProtocol.capabilities(profile) : Promise.resolve(null),
+  notice: text => showTerminalToast(text, 4000),
+  // 其他首次说明还在显示时先不问，避免同时堆两条。
+  tipBlocked: () => !get('input-tip').hidden || get('gesture-guide').open || terminalScreen.hidden,
+});
+
+/** 点通知进入对应会话。目标来自 Intent，只接受已配对的电脑和当前仍存在的项目。 */
+async function openSessionTarget(target) {
+  const item = profiles.find(saved => saved.id === target?.address);
+  if (!item || typeof target.project !== 'string' || typeof target.session !== 'string') return;
+  localStorage.setItem(prefix + 'session:' + item.id + ':' + target.project, target.session);
+  const current = !terminalScreen.hidden && profile?.id === item.id && project?.id === target.project;
+  const existing = current && sessions.find(session => session.id === target.session);
+  if (existing) {
+    await selectSession(existing);
+    return;
+  }
+  if (!await activate(item)) return;
+  const destination = projects.find(candidate => candidate.id === target.project);
+  if (destination) await openProject(destination);
+}
+window.qingOpenSession = target => { void openSessionTarget(target); };
 // 在线更新：版本信息、后台检查与安装包下载（原生层经 window.qingUpdate 回传进度）。
 const updates = createUpdateView({ rpc });
 window.qingUpdate = event => updates.receive(event);
@@ -266,6 +300,7 @@ window.qingVisibility = visible => {
   else drawer.sleep();
   if (!visible) saveDraft();
   connectionLatency.setForeground(visible === true);
+  if (foreground) terminalRenderer?.wake();
 };
 
 function syncLatency() {
@@ -312,7 +347,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -553,6 +588,17 @@ function dismissInputTip() {
 }
 get('input-tip-dismiss').addEventListener('click', dismissInputTip);
 
+/** 第一次接入终端时说明一次手势；无论怎样关闭都不再显示。 */
+function showGestureGuide() {
+  let seen = true;
+  try { seen = localStorage.getItem(gestureGuideKey) === 'true'; } catch { /* 读不到时不打扰。 */ }
+  if (seen || terminalScreen.hidden || document.querySelector('dialog[open]')) return;
+  get('gesture-guide').showModal();
+}
+get('gesture-guide').addEventListener('close', () => {
+  try { localStorage.setItem(gestureGuideKey, 'true'); } catch { /* 本次仍然关闭。 */ }
+});
+
 function draftKey(id) {
   return profile.id + '/' + id;
 }
@@ -777,6 +823,8 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   deferredLatest = false;
   terminalLinks?.dispose();
   terminalLinks = undefined;
+  terminalRenderer?.dispose();
+  terminalRenderer = undefined;
   if (get('link-dialog').open) get('link-dialog').close();
   terminalReady = false;
   terminalInput.flush();
@@ -795,6 +843,7 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   get('scroll-bottom').hidden = true;
   get('terminal-empty').hidden = true;
   get('input-tip').hidden = true;
+  sessionWatch.hideTip();
   hideFontToast();
   disposeTouchScroll?.();
   disposeTouchScroll = undefined;
@@ -807,7 +856,8 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
 
 function makeTerminal() {
   term = new window.Terminal({
-    allowProposedApi: false,
+    // term.unicode 属于 proposed API；不开启就无法切换到 Unicode 11 宽度。
+    allowProposedApi: true,
     fontSize: settings.fontSize(),
     lineHeight: 1.2,
     // 系统等宽字体缺字时回退到内置符号字体（见 app.css @font-face）。
@@ -841,7 +891,11 @@ function makeTerminal() {
   });
   fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
+  // 与桌面终端和电脑端屏幕快照使用同样的字符宽度，否则 emoji 会让全屏程序错位。
+  term.loadAddon(new window.Unicode11Addon.Unicode11Addon());
+  term.unicode.activeVersion = '11';
   term.open(get('viewport'));
+  terminalRenderer = attachTerminalRenderer(term, { Addon: window.WebglAddon?.WebglAddon, enabled: settings.gpuRender });
   const historyEpoch = viewEpoch;
   const historySession = selected;
   terminalHistory = attachTerminalHistory({
@@ -920,37 +974,47 @@ function makeTerminal() {
   });
   const mouseKey = selected && draftKey(selected);
   terminalMouse = attachMouseMode(get('viewport').parentElement, get('viewport'), {
+    extraTargets: [get('terminal-history')],
     label: t('鼠标'),
     exitLabel: t('退出鼠标模式'),
     leftLabel: t('鼠标左键'),
     rightLabel: t('鼠标右键'),
     dragLabel: t('拖动以移动鼠标指针'),
-    screenRect: () => term?.element?.querySelector('.xterm-screen')?.getBoundingClientRect() ?? get('viewport').getBoundingClientRect(),
-    grid: () => term && { cols: term.cols, rows: term.rows },
+    // 历史面板盖住 xterm 时指针在面板里活动；面板是自由滚动的文字，不对应 xterm 字格，不画高亮。
+    screenRect: () => terminalHistory?.isOpen()
+      ? get('history-scroll').getBoundingClientRect()
+      : term?.element?.querySelector('.xterm-screen')?.getBoundingClientRect() ?? get('viewport').getBoundingClientRect(),
+    grid: () => term && !terminalHistory?.isOpen() ? { cols: term.cols, rows: term.rows } : null,
     position: () => mouseKey ? mousePositions.get(mouseKey) : undefined,
     savePosition: ratio => { if (mouseKey) mousePositions.set(mouseKey, ratio); },
     onChange: active => {
       terminalScrollbar?.setPinned(active);
       terminalJog?.setPinned(active);
-      showTerminalToast(active ? t('鼠标模式：拖动鼠标移动指针，点左右键点击；点「鼠标」退出') : t('已退出鼠标模式'), active ? 2600 : 1200);
+      showTerminalToast(active ? t('鼠标模式：拖动鼠标移动指针，按住左键滑动选中，右键打开菜单；点「鼠标」退出') : t('已退出鼠标模式'), active ? 2600 : 1200);
     },
     onClick: (point, button) => {
       hideFontToast();
       void rpc('haptic').catch(() => {});
-      if (terminalHistory?.isOpen()) return;
-      // 开了鼠标上报的程序：在指针尖端派发真实的左 / 右键点击，由 xterm 编码后发给程序。
-      if (programMouse()) { sendVirtualMouse(screen => dispatchVirtualClick(screen, point, button)); return; }
-      // 普通终端：左键选中指针下的词，右键弹出选中 / 粘贴。
-      if (button === 0) terminalSelection?.start(point);
-      else terminalMouse?.showMenu([
-        { label: t('选中'), run: () => terminalSelection?.start(point) },
-        { label: t('粘贴'), run: () => { void pastePhoneClipboard(); } },
-      ]);
+      // 右键在任何画面都打开菜单：多数全屏程序不响应右键，发给程序的右键放在菜单里。
+      if (button === 2) { terminalMouse?.showMenu(mouseMenuItems(point)); return; }
+      if (terminalHistory?.isOpen()) {
+        if (historySelection.start(point)) showHistorySelectionMenu();
+        return;
+      }
+      // 开了鼠标上报的程序：在指针尖端派发真实的左键点击，由 xterm 编码后发给程序。
+      if (programMouse()) { sendVirtualMouse(screen => dispatchVirtualClick(screen, point, 0)); return; }
+      // 普通终端：左键选中指针下的词。
+      terminalSelection?.start(point);
     },
-    // 长按左键拖动：程序收到按住左键的拖动；普通终端从按下处开始并延伸选区。
+    // 按住左键拖动：历史面板和普通终端延伸选区；能收到拖动的程序收到按下、移动和抬起。
     onDrag: (phase, point) => {
-      if (terminalHistory?.isOpen()) return;
-      if (programMouse()) {
+      if (terminalHistory?.isOpen()) {
+        if (phase === 'down') void rpc('haptic').catch(() => {});
+        historySelection.drag(phase, point);
+        if (phase === 'up' && historySelection.text()) showHistorySelectionMenu();
+        return;
+      }
+      if (programReceivesDrag()) {
         const type = phase === 'down' ? 'mousedown' : phase === 'move' ? 'mousemove' : 'mouseup';
         sendVirtualMouse(screen => dispatchVirtualMouse(screen, type, point, { button: 0, buttons: phase === 'up' ? 0 : 1 }));
       } else {
@@ -1040,6 +1104,48 @@ async function pastePhoneClipboard() {
   }
 }
 
+/** 虚拟鼠标右键菜单：按当前画面列出可做的操作。 */
+function mouseMenuItems(point) {
+  const inHistory = !!terminalHistory?.isOpen();
+  const selectedText = inHistory ? historySelection.text() : term?.getSelection();
+  const items = [];
+  if (selectedText) items.push({ label: t('复制'), run: () => { void copyMouseSelection(selectedText); } });
+  if (inHistory) {
+    items.push({ label: t('选中'), run: () => { if (historySelection.start(point)) showHistorySelectionMenu(); } });
+    items.push({ label: t('回到最新'), run: () => get('scroll-bottom').click() });
+    return items;
+  }
+  items.push({ label: t('选中'), run: () => terminalSelection?.start(point) });
+  items.push({ label: t('粘贴'), run: () => { void pastePhoneClipboard(); } });
+  if (programMouse()) items.push({ label: t('发送右键'), run: () => sendVirtualMouse(screen => dispatchVirtualClick(screen, point, 2)) });
+  return items;
+}
+
+/** 历史面板没有实时终端的选区工具栏：选中后在鼠标旁给出复制和取消。 */
+function showHistorySelectionMenu() {
+  const text = historySelection.text();
+  if (!text) return;
+  terminalMouse?.showMenu([
+    { label: t('复制'), run: () => { void copyMouseSelection(text); } },
+    { label: t('取消'), run: () => historySelection.clear() },
+  ]);
+}
+
+async function copyMouseSelection(text) {
+  try {
+    await rpc('copy', { text });
+    showTerminalToast(t('已复制'), 1200);
+  } catch (error) {
+    showTerminalToast(t(error.message || '复制失败，请重试'), 1800);
+  }
+}
+
+/** 程序是否请求了拖动上报：只报点击的程序（x10 / vt200）收不到拖动，拖选仍在手机本地完成。 */
+function programReceivesDrag() {
+  const mode = term?.modes.mouseTrackingMode;
+  return mode === 'drag' || mode === 'any';
+}
+
 function programMouse() {
   return !!term && term.modes.mouseTrackingMode !== 'none';
 }
@@ -1105,6 +1211,8 @@ function fitTerminal() {
 }
 
 get('scroll-bottom').addEventListener('click', () => { terminalHistory?.close(); term?.scrollToBottom(); });
+// 历史面板打开 / 关闭时指针换了活动区域，重新摆放并更新字格高亮。
+new MutationObserver(() => terminalMouse?.refresh()).observe(get('terminal-history'), { attributes: true, attributeFilter: ['hidden'] });
 get('history-scroll').addEventListener('scroll', () => terminalScrollbar?.update(), { passive: true });
 
 /** 用户是否在往上阅读：此时新输出不把画面拉回底部，也不用整屏快照清掉滚动记录。 */
@@ -1313,6 +1421,8 @@ async function selectSession(session) {
   makeTerminal();
   drawer.render();
   renderInputTip();
+  showGestureGuide();
+  sessionWatch.seen(profile.id, session.id);
   composeStatus.renderSubmission();
   void poll(session, epoch);
 }
@@ -1341,6 +1451,7 @@ async function poll(session, epoch) {
       const current = sessions.find(item => item.id === session.id);
       const renamed = current ? mergeSessionName(current, data) : false;
       if (mergeSessionActivity(current, data) || renamed) drawer.render();
+      if (current?.programBusy) void sessionWatch.busySeen();
       if (data.chunks.length) reader.notifyOutput();
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);
@@ -1723,6 +1834,11 @@ async function initialize() {
       }
     }
     dashboard.renderAll();
+    const target = await rpc('pendingSession');
+    if (target) {
+      await openSessionTarget(target);
+      return;
+    }
     const link = await rpc('pendingLink');
     if (link) {
       if (item) await activate(item, 'connection');

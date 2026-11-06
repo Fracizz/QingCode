@@ -53,6 +53,15 @@ pub enum Command {
     RunStatus {
         project: Option<String>,
     },
+    TerminalList {
+        project: Option<String>,
+    },
+    TerminalSend {
+        query: String,
+        project: Option<String>,
+        input: TerminalInput,
+        enter: bool,
+    },
     TrustGrant {
         path: String,
     },
@@ -61,7 +70,19 @@ pub enum Command {
     },
 }
 
-const ROOT_COMMANDS: &[&str] = &["project", "run", "settings", "trust", "open", "help"];
+/// `terminal send` 的输入来源；内容原样发送，不做任何转换。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalInput {
+    None,
+    Text(String),
+    Stdin,
+}
+
+const ROOT_COMMANDS: &[&str] = &[
+    "project", "run", "terminal", "settings", "trust", "open", "help",
+];
+
+const TERMINAL_USAGE: &str = "usage: terminal list [--project ...] | terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]";
 
 /// Returns `Some` when argv is a CLI invocation (not plain GUI / open-with files).
 pub fn parse(args: &[String]) -> Option<Result<Command, String>> {
@@ -84,6 +105,7 @@ fn parse_command(rest: &[&str]) -> Result<Command, String> {
         "help" => Ok(Command::Help),
         "project" => parse_project(&rest[1..]),
         "run" => parse_run(&rest[1..]),
+        "terminal" => parse_terminal(&rest[1..]),
         "settings" => parse_settings(&rest[1..]),
         "trust" => parse_trust(&rest[1..]),
         "open" => {
@@ -283,6 +305,69 @@ fn parse_run(args: &[&str]) -> Result<Command, String> {
     }
 }
 
+fn parse_terminal(args: &[&str]) -> Result<Command, String> {
+    match args.first().copied() {
+        Some("list") => {
+            let project = match args.get(1..).unwrap_or_default() {
+                [] => None,
+                ["--project", value] if !value.starts_with('-') => Some((*value).to_string()),
+                _ => return Err(TERMINAL_USAGE.into()),
+            };
+            Ok(Command::TerminalList { project })
+        }
+        Some("send") => parse_terminal_send(&args[1..]),
+        _ => Err(TERMINAL_USAGE.into()),
+    }
+}
+
+fn parse_terminal_send(args: &[&str]) -> Result<Command, String> {
+    let query = args
+        .first()
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| (*s).to_string())
+        .ok_or_else(|| TERMINAL_USAGE.to_string())?;
+    let mut project = None;
+    let mut input = TerminalInput::None;
+    let mut enter = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i] {
+            "--enter" if !enter => enter = true,
+            "--stdin" if input == TerminalInput::None => input = TerminalInput::Stdin,
+            "--project" if project.is_none() => {
+                let value = args
+                    .get(i + 1)
+                    .filter(|v| !v.starts_with('-'))
+                    .ok_or_else(|| TERMINAL_USAGE.to_string())?;
+                project = Some((*value).to_string());
+                i += 1;
+            }
+            "--text" if input == TerminalInput::None => {
+                // 文本可以以 `-` 开头（例如 `-h`），因此不校验内容。
+                let value = args.get(i + 1).ok_or_else(|| TERMINAL_USAGE.to_string())?;
+                input = TerminalInput::Text((*value).to_string());
+                i += 1;
+            }
+            _ => return Err(TERMINAL_USAGE.into()),
+        }
+        i += 1;
+    }
+    let empty = match &input {
+        TerminalInput::None => true,
+        TerminalInput::Text(text) => text.is_empty(),
+        TerminalInput::Stdin => false,
+    };
+    if empty && !enter {
+        return Err(TERMINAL_USAGE.into());
+    }
+    Ok(Command::TerminalSend {
+        query,
+        project,
+        input,
+        enter,
+    })
+}
+
 fn parse_trust(args: &[&str]) -> Result<Command, String> {
     match args.first().copied() {
         Some("grant") => {
@@ -305,6 +390,94 @@ mod tests {
         std::iter::once("qingcode.exe".to_string())
             .chain(parts.iter().map(|s| (*s).to_string()))
             .collect()
+    }
+
+    #[test]
+    fn parses_terminal_list() {
+        assert_eq!(
+            parse(&args(&["terminal", "list"])).unwrap().unwrap(),
+            Command::TerminalList { project: None }
+        );
+        assert_eq!(
+            parse(&args(&["terminal", "list", "--project", "ssh-demo"]))
+                .unwrap()
+                .unwrap(),
+            Command::TerminalList {
+                project: Some("ssh-demo".into())
+            }
+        );
+    }
+
+    #[test]
+    fn parses_terminal_send_text_verbatim() {
+        assert_eq!(
+            parse(&args(&[
+                "terminal",
+                "send",
+                "term-1",
+                "--project",
+                "demo",
+                "--text",
+                "-h \u{3}",
+                "--enter"
+            ]))
+            .unwrap()
+            .unwrap(),
+            Command::TerminalSend {
+                query: "term-1".into(),
+                project: Some("demo".into()),
+                input: TerminalInput::Text("-h \u{3}".into()),
+                enter: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_terminal_send_stdin_and_enter_only() {
+        assert_eq!(
+            parse(&args(&["terminal", "send", "t", "--stdin"]))
+                .unwrap()
+                .unwrap(),
+            Command::TerminalSend {
+                query: "t".into(),
+                project: None,
+                input: TerminalInput::Stdin,
+                enter: false,
+            }
+        );
+        assert_eq!(
+            parse(&args(&["terminal", "send", "t", "--enter"]))
+                .unwrap()
+                .unwrap(),
+            Command::TerminalSend {
+                query: "t".into(),
+                project: None,
+                input: TerminalInput::None,
+                enter: true,
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_rejects_ambiguous_or_empty_arguments() {
+        for parts in [
+            vec!["terminal"],
+            vec!["terminal", "read", "t"],
+            vec!["terminal", "list", "--project"],
+            vec!["terminal", "list", "extra"],
+            vec!["terminal", "send"],
+            vec!["terminal", "send", "--text", "x"],
+            vec!["terminal", "send", "t"],
+            vec!["terminal", "send", "t", "--text", ""],
+            vec!["terminal", "send", "t", "--text"],
+            vec!["terminal", "send", "t", "--text", "a", "--stdin"],
+            vec!["terminal", "send", "t", "--stdin", "--stdin"],
+            vec!["terminal", "send", "t", "--enter", "--enter"],
+            vec!["terminal", "send", "t", "--enter", "--project"],
+            vec!["terminal", "send", "t", "--enter", "--unknown"],
+        ] {
+            assert!(parse(&args(&parts)).unwrap().is_err(), "{parts:?}");
+        }
     }
 
     #[test]

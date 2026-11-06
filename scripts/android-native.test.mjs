@@ -13,10 +13,14 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
   try {
     execFileSync(executable('javac'), ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-d', output,
       join(root, 'mobile/android/NativeRequests.java'), join(root, 'mobile/tests/NativeRequestsTest.java'),
-      join(root, 'mobile/android/UpdatePolicy.java'), join(root, 'mobile/tests/UpdatePolicyTest.java')], { timeout: 30_000, windowsHide: true })
+      join(root, 'mobile/android/UpdatePolicy.java'), join(root, 'mobile/tests/UpdatePolicyTest.java'),
+      join(root, 'mobile/android/WatchPolicy.java'), join(root, 'mobile/tests/WatchPolicyTest.java')], { timeout: 30_000, windowsHide: true })
     const result = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.NativeRequestsTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
     assert.match(result, /6 native scheduler regressions passed/)
+    const watch = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.WatchPolicyTest'],
+      { encoding: 'utf8', timeout: 20_000, windowsHide: true })
+    assert.match(watch, /6 watch policy regressions passed/)
   } finally {
     assert.equal(dirname(resolve(output)), resolve(tmpdir()))
     assert.ok(basename(output).startsWith('qingcode-native-'))

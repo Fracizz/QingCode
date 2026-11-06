@@ -6,6 +6,13 @@
   if (lang === 'auto') localStorage.removeItem('qingcode:mobile:locale')
   else if (lang === 'en' || lang === 'zh') localStorage.setItem('qingcode:mobile:locale', lang)
   else if (!localStorage.getItem('qingcode:mobile:locale')) localStorage.setItem('qingcode:mobile:locale', 'zh')
+  // 现有验收按 DOM 断言终端文字且不预期首次手势弹层。
+  // ?gpu=1 开启 WebGL；?guide=1 模拟首次使用，?guide=keep 保留已有的「已看过」记录。
+  const query = new URLSearchParams(location.search)
+  if (query.get('gpu') === '1') localStorage.removeItem('qingcode:mobile:gpu-render')
+  else localStorage.setItem('qingcode:mobile:gpu-render', 'off')
+  if (query.get('guide') === '1') localStorage.removeItem('qingcode:mobile:gesture-guide-seen')
+  else if (query.get('guide') !== 'keep') localStorage.setItem('qingcode:mobile:gesture-guide-seen', 'true')
   const FINGERPRINT = '0123456789abcdef'.repeat(4)
   const CODE = 'A8z2D3'
   const encoder = new TextEncoder()
@@ -288,6 +295,19 @@
         state.fullscreen = request.enabled === true;
         return { ok: true, data: state.fullscreen };
       }
+      case 'pendingSession': {
+        const target = state.pendingSession ?? null
+        state.pendingSession = null
+        return { ok: true, data: target }
+      }
+      case 'session_watch':
+        state.sessionWatch = { enabled: request.enabled === true, english: request.english === true }
+        return { ok: true, data: state.notificationsAllowed !== false }
+      case 'session_watch_seen':
+        (state.sessionWatchSeen ??= []).push(request.id)
+        return { ok: true, data: true }
+      case 'notification_permission':
+        return { ok: true, data: state.notificationsAllowed !== false }
       case 'pendingLink': {
         const link = state.pendingLink
         state.pendingLink = null

@@ -1,7 +1,12 @@
 import { listen } from '@tauri-apps/api/event'
 import { safeInvoke, isTauri } from './tauri'
 import { authorizePaths } from './pathAllowlist'
-import { normalizeProjectPath, pushTrustedRootsToNative, trustProject } from './workspaceTrust'
+import {
+  isProjectTrusted,
+  normalizeProjectPath,
+  pushTrustedRootsToNative,
+  trustProject,
+} from './workspaceTrust'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -21,6 +26,12 @@ import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
 import { hasRunTaskTarget, parseRunTaskOs } from './runTaskPlatform'
+import { writeTerminal } from './ipc/terminal'
+import {
+  assertCliTerminalWritable,
+  cliTerminalSummary,
+  resolveCliTerminal,
+} from './terminal/cliTerminal'
 
 interface CliRequest {
   id: string
@@ -268,6 +279,38 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       return {
         project: { id: project.id, name: project.name, path: project.path },
         configs: running,
+      }
+    }
+    case 'terminal.list': {
+      const project = resolveProject(req.project)
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        trusted: isProjectTrusted(project),
+        terminals: useTerminalStore
+          .getState()
+          .terminals.filter(terminal => terminal.projectId === project.id)
+          .map(cliTerminalSummary),
+      }
+    }
+    case 'terminal.send': {
+      if (!req.config) throw new Error('terminal is required')
+      if (!req.content) throw new Error('content is required')
+      const project = resolveProject(req.project)
+      // 向终端写入等同于执行命令，必须和运行配置一样受工作区信任约束。
+      if (!isProjectTrusted(project)) {
+        throw new Error(`project is not trusted: ${project.path}`)
+      }
+      const terminal = resolveCliTerminal(
+        useTerminalStore.getState().terminals,
+        project.id,
+        req.config
+      )
+      assertCliTerminalWritable(terminal)
+      await writeTerminal(terminal.id, req.content)
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        terminal: { id: terminal.id, name: terminal.name },
+        bytes: new TextEncoder().encode(req.content).length,
       }
     }
     case 'trust.grant': {

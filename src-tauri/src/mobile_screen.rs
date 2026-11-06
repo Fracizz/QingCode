@@ -19,13 +19,34 @@ struct History {
     next: u64,
     truncated: bool,
     title: Option<String>,
+    /// 程序主动发出的提醒次数（BEL、OSC 9 / OSC 777 通知），供手机后台提醒比较增量。
+    attention: u64,
     /// 只用于判断上一行是否自动换行（vt100 在下一行开头写 `\n` 表示上一行未换行）。
     wrap_state: BasicFormattedCaptureState,
     /// 最近一次由普通滚动写入的行 id；自动换行的后续行拼接到这一行。
     last_scroll_line: Option<u64>,
 }
 
+/// OSC 9（iTerm2 / Windows Terminal 通知，`9;4` 是进度条而不是通知）和 OSC 777;notify。
+fn is_notification_osc(params: &[&[u8]]) -> bool {
+    match params {
+        [b"9", second, ..] => *second != b"4",
+        [b"777", b"notify", ..] => true,
+        _ => false,
+    }
+}
+
 impl vt100::Callbacks for History {
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.attention += 1;
+    }
+
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        if is_notification_osc(params) {
+            self.attention += 1;
+        }
+    }
+
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.update_title(title);
     }
@@ -131,6 +152,10 @@ fn nonzero(value: u16) -> NonZeroU16 {
 impl MobileScreen {
     pub(super) fn title(&self) -> Option<&str> {
         self.parser.callbacks().title.as_deref()
+    }
+
+    pub(super) fn attention_count(&self) -> u64 {
+        self.parser.callbacks().attention
     }
 
     pub(super) fn new() -> Self {
@@ -259,6 +284,23 @@ mod tests {
         assert_eq!(screen.title(), Some("修复登录"));
         screen.process(format!("\x1b]2;{}\x07", "中".repeat(200)).as_bytes());
         assert_eq!(screen.title().unwrap().chars().count(), 120);
+    }
+
+    #[test]
+    fn attention_counts_bells_and_notifications_but_not_title_or_progress() {
+        let mut screen = MobileScreen::new();
+        screen.process(b"]2;Claude");
+        screen.process(b"]9;4;1;50");
+        assert_eq!(screen.attention_count(), 0);
+        screen.process(b"");
+        assert_eq!(screen.attention_count(), 1);
+        screen.process(b"]9;Needs approval");
+        assert_eq!(screen.attention_count(), 2);
+        screen.process(b"]777;notify;Codex;Done");
+        assert_eq!(screen.attention_count(), 3);
+        // Server 模式的屏幕快照替换解析器时不能清零，否则手机会丢掉增量。
+        screen.replace("hello", 80, 24);
+        assert_eq!(screen.attention_count(), 3);
     }
 
     #[test]

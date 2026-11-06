@@ -30,8 +30,18 @@ const mocks = vi.hoisted(() => {
     safeInvoke: vi.fn(),
     confirm: vi.fn(async () => true),
     sshReady: vi.fn(async () => true),
+    outputListeners: [] as Array<(event: { payload: unknown }) => void>,
   }
 })
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (_event: string, handler: (event: { payload: unknown }) => void) => {
+    mocks.outputListeners.push(handler)
+    return () => {
+      mocks.outputListeners.splice(mocks.outputListeners.indexOf(handler), 1)
+    }
+  }),
+}))
 
 function store<T extends object>(state: T) {
   return Object.assign((selector: (value: T) => unknown) => selector(state), { getState: () => state })
@@ -230,6 +240,34 @@ describe('TerminalManager', () => {
     await waitFor(() => expect(mocks.projectState.pushToast).toHaveBeenCalledWith('warn', '已关闭 0 个终端，1 个失败', 'phone offline'))
     expect(screen.getByText('preview output')).toBeTruthy()
     expect(screen.getByLabelText('选择终端「claude」')).toBeChecked()
+  })
+
+  it('refreshes the read-only preview on output and stops listening when collapsed', async () => {
+    let output = 'first output'
+    const original = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation(async (label: string, command: string, args: unknown) => {
+      if (command === 'mobile_session_preview') return { name: 'claude', history: [], screen: output }
+      return original(label, command, args)
+    })
+    render(<TerminalManager />)
+    await screen.findByText('claude')
+    fireEvent.click(screen.getByLabelText('只读预览：claude'))
+    await screen.findByText('first output')
+    await waitFor(() => expect(mocks.outputListeners).toHaveLength(1))
+
+    output = 'other session'
+    await act(async () => {
+      mocks.outputListeners[0]({ payload: { id: 'mobile-other' } })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('other session')).toBeNull()
+
+    output = 'second output'
+    act(() => mocks.outputListeners[0]({ payload: { id: 'mobile-1' } }))
+    await screen.findByText('second output')
+
+    fireEvent.click(screen.getByLabelText('收起预览：claude'))
+    await waitFor(() => expect(mocks.outputListeners).toHaveLength(0))
   })
 
   it('retains failed detached terminals and ends them without attaching', async () => {

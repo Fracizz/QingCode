@@ -400,11 +400,14 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-input-mode { flex: none; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
 #terminal-input-mode[data-mode="raw"] { color: var(--accent); }
 /* 首次说明：在快捷键上方，一段文字加「知道了」，不遮挡输入框。 */
-#input-tip { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 8px 6px 8px 12px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
-#input-tip[hidden] { display: none; }
-#input-tip p { flex: 1; min-width: 0; color: var(--ink); font-size: 12px; line-height: 1.5; }
-#input-tip strong { color: var(--accent); font-weight: 650; }
-#input-tip-dismiss { flex: none; min-height: 44px; }
+#input-tip, .terminal-tip { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 8px 6px 8px 12px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
+#input-tip[hidden], .terminal-tip[hidden] { display: none; }
+#input-tip p, .terminal-tip p { flex: 1; min-width: 0; color: var(--ink); font-size: 12px; line-height: 1.5; }
+#input-tip strong, .terminal-tip strong { color: var(--accent); font-weight: 650; }
+#input-tip-dismiss, .terminal-tip button { flex: none; min-height: 44px; }
+.gesture-list { display: grid; gap: 12px; margin: 4px 0 16px; }
+.gesture-list dt { color: var(--ink); font-weight: 650; }
+.gesture-list dd { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 /* 双指缩放时的字号提示，居中浮在输出区上方，不拦截触摸。 */
 #font-toast { position: absolute; z-index: 5; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; pointer-events: none; box-shadow: 0 6px 20px #0008; }
 #font-toast[hidden] { display: none; }
@@ -735,21 +738,21 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .mouse-mode-marker.pulse { animation: mouse-mode-pulse .6s ease-out forwards; }
 @keyframes mouse-mode-pulse { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mouse-mode-marker.pulse { animation: none; } }
-/* 虚拟鼠标：箭头尖端为点击位置；机身 56×80，上半为左 / 右键，下半为拖动区。 */
+/* 虚拟鼠标：箭头尖端为点击位置；机身 64×88，上半为左 / 右键，下半为拖动区。 */
 .virtual-mouse-pointer, .virtual-mouse-cell, .virtual-mouse, .virtual-mouse-menu { position: absolute; left: 0; top: 0; }
-.virtual-mouse-pointer { z-index: 7; width: 18px; height: 24px; pointer-events: none; filter: drop-shadow(0 1px 2px #000a); }
+.virtual-mouse-pointer { z-index: 7; width: 22px; height: 29px; pointer-events: none; filter: drop-shadow(0 1px 2px #000a); }
 .virtual-mouse-pointer svg { display: block; width: 100%; height: 100%; fill: #f4f7fa; stroke: #0e1216; stroke-width: 1.4; stroke-linejoin: round; }
 .virtual-mouse-cell { z-index: 6; border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none; }
-.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 38px 1fr; width: 56px; height: 80px; border: 1px solid var(--accent-border); border-radius: 28px 28px 30px 30px; background: #1d232be6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
+.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 42px 1fr; width: 64px; height: 88px; border: 1px solid var(--accent-border); border-radius: 32px 32px 34px 34px; background: #1d232be6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
 .virtual-mouse.dragging, .virtual-mouse.holding, .virtual-mouse:active { opacity: 1; }
 .virtual-mouse[hidden], .virtual-mouse-pointer[hidden], .virtual-mouse-cell[hidden], .virtual-mouse-menu[hidden] { display: none; }
 .virtual-mouse-button { position: relative; min-width: 0; min-height: 0; padding: 0; border: 0; border-bottom: 1px solid var(--accent-border); background: transparent; touch-action: none; }
-.virtual-mouse-button[data-button="0"] { border-right: 1px solid var(--accent-border); border-radius: 27px 0 0 0; }
-.virtual-mouse-button[data-button="2"] { border-radius: 0 27px 0 0; }
+.virtual-mouse-button[data-button="0"] { border-right: 1px solid var(--accent-border); border-radius: 31px 0 0 0; }
+.virtual-mouse-button[data-button="2"] { border-radius: 0 31px 0 0; }
 /* 触控范围向外扩到约 44px，视觉尺寸不变。 */
 .virtual-mouse-button::after { content: ''; position: absolute; top: -6px; bottom: 0; }
-.virtual-mouse-button[data-button="0"]::after { left: -17px; right: 0; }
-.virtual-mouse-button[data-button="2"]::after { left: 0; right: -17px; }
+.virtual-mouse-button[data-button="0"]::after { left: -12px; right: 0; }
+.virtual-mouse-button[data-button="2"]::after { left: 0; right: -12px; }
 .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { background: var(--accent-surface); }
 .virtual-mouse-button[data-button="2"]::before { content: 'R'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 10px; font-weight: 650; }
 .virtual-mouse-button[data-button="0"]::before { content: 'L'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 10px; font-weight: 650; }

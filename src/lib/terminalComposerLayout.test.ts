@@ -9,9 +9,9 @@ import {
 describe('terminal composer layout', () => {
   it('defaults to a tall centered panel', () => {
     const rect = defaultComposerRect({ width: 1600, height: 1000 })
-    expect(rect).toEqual({ x: 400, y: 90, width: 800, height: 820 })
+    expect(rect).toEqual({ x: 380, y: 150, width: 840, height: 700 })
     const small = defaultComposerRect({ width: 900, height: 700 })
-    expect(small.height).toBe(574)
+    expect(small.height).toBe(490)
     expect(small.x).toBe(Math.round((900 - small.width) / 2))
   })
 

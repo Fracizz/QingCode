@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 终端提示符 >_：通知图标只取轮廓，不能使用彩色应用图标。 -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M4.4,6.1 L10.3,12 4.4,17.9 6,19.5 13.5,12 6,4.5 Z M12,17.5 L20,17.5 20,19.8 12,19.8 Z" />
+</vector>

@@ -102,10 +102,11 @@ $resources = Join-Path $stage 'res'
 $drawables = Join-Path $resources 'drawable-nodpi'
 New-Item -ItemType Directory -Path $classes,$assets,$bytecode,$drawables,(Split-Path -Parent $OutputApk) -Force | Out-Null
 try {
-  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalScrollbar.js', 'terminalJog.js', 'terminalHold.js', 'historyRender.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js', 'nativeRpc.js', 'terminalInput.js', 'desktopProtocol.js', 'terminalImages.js', 'dom.js', 'dashboardView.js', 'pairingFlow.js', 'outputReader.js', 'composeStatus.js', 'sessionDrawer.js', 'terminalSettings.js', 'shortcutBar.js', 'keyLayout.js', 'cursorDrag.js', 'pinchZoom.js', 'terminalLinks.js', 'terminalFont.js', 'i18n.js', 'appUpdate.js', 'updateView.js', 'mouseMode.js', 'qingcode-symbols.woff2', 'qingcode-symbols-OFL.txt')) {
+  foreach ($asset in @('index.html', 'app.css', 'app.js', 'protocol.js', 'scanner.js', 'terminalTouch.js', 'historySelection.js', 'gestures.js', 'composer.js', 'terminalHistory.js', 'terminalScrollbar.js', 'terminalJog.js', 'terminalHold.js', 'historyRender.js', 'terminalSelection.js', 'connectionLatency.js', 'workspaceState.js', 'nativeRpc.js', 'terminalInput.js', 'desktopProtocol.js', 'terminalImages.js', 'dom.js', 'dashboardView.js', 'pairingFlow.js', 'outputReader.js', 'composeStatus.js', 'sessionDrawer.js', 'terminalSettings.js', 'shortcutBar.js', 'keyLayout.js', 'cursorDrag.js', 'pinchZoom.js', 'terminalLinks.js', 'terminalFont.js', 'i18n.js', 'appUpdate.js', 'updateView.js', 'mouseMode.js', 'terminalRenderer.js', 'sessionWatch.js', 'qingcode-symbols.woff2', 'qingcode-symbols-OFL.txt')) {
     Copy-Item -LiteralPath (Join-Path $source "web/$asset") -Destination $assets
   }
   Copy-Item -LiteralPath (Join-Path $source 'res/values') -Destination $resources -Recurse
+  Copy-Item -LiteralPath (Join-Path $source 'res/drawable') -Destination $resources -Recurse
   # The 256 px PNG matches the 256 px frame of the Windows installer ICO.
   $icon = Join-Path $root 'src-tauri/icons/128x128@2x.png'
   Copy-Item -LiteralPath $icon -Destination (Join-Path $drawables 'ic_qingcode.png')
@@ -114,9 +115,13 @@ try {
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/xterm/lib/xterm.js') -Destination $assets
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/xterm/css/xterm.css') -Destination $assets
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-fit/lib/addon-fit.js') -Destination (Join-Path $assets 'fit.js')
+  Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-unicode11/lib/addon-unicode11.js') -Destination (Join-Path $assets 'unicode11.js')
+  Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-webgl/lib/addon-webgl.js') -Destination (Join-Path $assets 'webgl.js')
   Copy-Item -LiteralPath (Join-Path $modules 'jsqr/dist/jsQR.js') -Destination (Join-Path $assets 'jsqr.js')
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/xterm/LICENSE') -Destination (Join-Path $assets 'xterm-LICENSE.txt')
   Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-fit/LICENSE') -Destination (Join-Path $assets 'fit-LICENSE.txt')
+  Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-unicode11/LICENSE') -Destination (Join-Path $assets 'unicode11-LICENSE.txt')
+  Copy-Item -LiteralPath (Join-Path $modules '@xterm/addon-webgl/LICENSE') -Destination (Join-Path $assets 'webgl-LICENSE.txt')
   Copy-Item -LiteralPath (Join-Path $modules 'jsqr/LICENSE') -Destination (Join-Path $assets 'jsqr-LICENSE.txt')
   Copy-Item -LiteralPath (Join-Path $modules 'lucide-react/LICENSE') -Destination (Join-Path $assets 'lucide-LICENSE.txt')
 

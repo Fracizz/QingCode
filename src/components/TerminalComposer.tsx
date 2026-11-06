@@ -225,9 +225,7 @@ export default function TerminalComposer({
     if (files.length) void insertAttachments(() => prepareFiles(files))
   }
 
-  const subtitle = `${translate('填入终端：{name}', { name: terminalName })} · ${translate(
-    '支持粘贴图片、文件和拖入附件。填入后请在终端中检查并提交。'
-  )}`
+  const subtitle = translate('填入终端：{name}', { name: terminalName })
 
   const content = (
     <section
@@ -280,7 +278,7 @@ export default function TerminalComposer({
           <h2 id={titleId} className="text-ui-lg font-semibold">
             {translate('编辑长文本')}
           </h2>
-          {/* 说明并入标题副行，把纵向空间留给输入框；放不下时截断，悬停看全文。 */}
+          {/* 副行只显示目标终端，操作说明放在输入框占位提示；终端名过长时截断，悬停看全文。 */}
           <Tooltip label={subtitle} side="bottom" onlyWhenOverflow wrapperClassName="flex min-w-0">
             <p data-terminal-composer-subtitle="" className="truncate text-ui-sm text-fg-muted">
               {subtitle}
@@ -310,7 +308,7 @@ export default function TerminalComposer({
             setError('')
           }}
           onPaste={onPaste}
-          placeholder={translate('输入多段需求，也可粘贴图片或文件…')}
+          placeholder={translate('输入多段需求，也可粘贴图片、文件或拖入附件。填入后请在终端中检查并提交。')}
           className="modal-field-input min-h-[120px] flex-1 resize-none font-mono text-ui leading-relaxed"
         />
         {busy && (

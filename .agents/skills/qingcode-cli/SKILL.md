@@ -4,7 +4,8 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, grant workspace trust, open files in a running QingCode
+  run configuration, list or send input to terminals open in QingCode (local or SSH), grant
+  workspace trust, open files in a running QingCode
   instance, import/export user or workspace settings and local project lists, restore defaults,
   or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
@@ -203,6 +204,28 @@ matching ID is supplied. It is not a partial patch.
   applies to run-config CRUD for SSH projects.
 - `run start` executes the commands stored in the selected config.
 
+## Terminals (QingCode GUI must be running)
+
+```text
+.\src-tauri\target\debug\qingcode.exe terminal list [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+```
+
+- Works for terminals already open in QingCode, local and SSH alike; the same command drives a
+  remote project's terminal through the GUI's authenticated session. It cannot create a terminal.
+- `--project` omitted means the GUI current project. Terminals are looked up only inside that
+  project; prefer the `id` from `terminal list`, because a duplicate name is rejected.
+- `send` writes raw input exactly as given. Nothing is appended unless `--enter` adds a CR, so
+  without it a command stays unsubmitted. Each newline in multi-line input can execute in a plain
+  shell. A single send is limited to 1 MB.
+- It is rejected when the project is not trusted or the terminal is not `writable` (starting,
+  reconnecting, or exited). Do not grant trust just to get past this; follow the Safety rules.
+- Success means the input was queued, not that it ran. There is no command to read terminal
+  output, and the CLI cannot see what the terminal is doing. Verify effects another way, such as
+  through a file or service the command changes.
+- Treat `send` like running that command on the host: only send what the user asked for. Whatever
+  has focus in the terminal receives the input, including an AI agent or a confirmation prompt.
+
 ## Typical agent flow
 
 1. Discover state with `project list`; identify SSH projects by their `ssh://` path, then use
@@ -221,5 +244,7 @@ matching ID is supplied. It is not a partial patch.
 - `project remove` removes the project and recent-file records from QingCode's database; it does
   not delete the project directory or its files.
 - Never grant trust implicitly. Confirm the exact project root and obtain explicit user approval.
+- `terminal send` executes on the terminal's host, which may be remote. Confirm the target terminal
+  before sending anything destructive.
 - Do not use this CLI for packaging, release tags, or force-push.
 - Named workspaces are out of scope — only the user DB project list.

@@ -25,7 +25,9 @@ import { isTauri } from '../lib/tauri'
 import { isSshProject, isSshWorkspaceReady } from '../lib/sshWorkspace'
 import { killDetachedTerminal } from '../lib/ipc/terminal'
 import {
+  createCoalescedRunner,
   endMobileSession,
+  listenMobileSessionOutput,
   listMobileSessions,
   previewMobileSession,
   renameMobileSession,
@@ -53,7 +55,8 @@ import { promptDialog } from '../store/promptStore'
 import type { TerminalTab } from '../types'
 
 const MOBILE_REFRESH_MS = 3000
-const PREVIEW_REFRESH_MS = 2000
+/** 预览由输出事件驱动，这里只是漏掉事件时的兜底。 */
+const PREVIEW_FALLBACK_REFRESH_MS = 5000
 /** 每页终端条数：终端很多时分页，避免一次渲染过长的列表。 */
 const PAGE_SIZE = 30
 const BATCH_KEY = 'batch'
@@ -842,7 +845,7 @@ function Row(props: RowProps) {
   )
 }
 
-/** 手机终端只读预览：纯文本，定时刷新；不向终端发送任何输入或尺寸。 */
+/** 手机终端只读预览：纯文本，随终端输出实时刷新；不向终端发送任何输入或尺寸。 */
 function MobilePreview({ id }: { id: string }) {
   const { t } = useI18n()
   const [preview, setPreview] = useState<MobileSessionPreview | null>(null)
@@ -852,23 +855,45 @@ function MobilePreview({ id }: { id: string }) {
 
   useEffect(() => {
     let cancelled = false
+    let stopListening: (() => void) | null = null
     const load = async () => {
       try {
         const next = await previewMobileSession(id)
         if (cancelled) return
+        // 更新文本会清掉选区：用户正在预览里选字时先不刷新，取消选择后的下一次刷新再补上。
+        const selection = window.getSelection()
+        if (selection && !selection.isCollapsed && scroller.current?.contains(selection.anchorNode)) return
         setPreview(next)
         setError(null)
       } catch (loadError) {
         if (!cancelled) setError(errorText(loadError))
       }
     }
-    void load()
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load()
-    }, PREVIEW_REFRESH_MS)
+    const refresh = createCoalescedRunner(load)
+    const refreshIfVisible = () => {
+      if (!document.hidden) refresh()
+    }
+    refresh()
+    const timer = window.setInterval(refreshIfVisible, PREVIEW_FALLBACK_REFRESH_MS)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    listenMobileSessionOutput(id, refreshIfVisible)
+      .then(stop => {
+        if (cancelled) {
+          stop()
+          return
+        }
+        stopListening = stop
+        // 补上首次读取与监听生效之间的输出。
+        refreshIfVisible()
+      })
+      .catch(() => {
+        // 监听失败时仍有定时刷新兜底。
+      })
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      stopListening?.()
     }
   }, [id])
 

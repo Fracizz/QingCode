@@ -23,6 +23,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证项目空状态按钮与右上角「+」打开同一「新建会话」弹层、首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。
 
+安卓后台提醒、渲染与手势说明：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-background-alerts.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖首次手势说明只显示一次、320px 布局和返回键、emoji 按 Unicode 11 占两格、WebGL 开关与丢失上下文后的回退和恢复、后台提醒的一次性询问、权限拒绝、旧版电脑不询问，以及点通知切到目标会话。桥默认关闭 WebGL 并标记手势说明已看过，`?gpu=1`、`?guide=1` 用于显式测试，`?guide=keep` 保留已看过记录。截图与 JSON 位于 `.dev/web-tests/mobile-background-alerts/`。Chrome 设备模拟下 WebGL 画布按显示器真实 DPR 计算，文字会缩小错位，这是模拟的假象，WebGL 画质须在未模拟的页面或真机确认；前台服务、系统通知和息屏行为同样只能真机验收。
+
 安卓终端打磨：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-polish.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖状态行「草稿 / 直发」与首次说明、已接收回执约 4 秒后消失且重进终端不回放、输入框横向拖动移动草稿光标与直发 ← / →、快捷键栏排序 / 隐藏到「更多」/ 重载保留 / 恢复默认、双指缩放字号且不发终端输入、实时终端链接点按（localhost 换成电脑地址、复制与打开、全屏程序鼠标上报下按坐标识别），以及 390px / 320px / 键盘高度 / 横屏布局。触摸经 CDP `Input.dispatchTouchEvent` 发出；截图与 JSON 位于 `.dev/web-tests/mobile-terminal-polish/`，截图超时只记录不影响断言。不替代 Android 真机的拖动、缩放手感与系统浏览器验收。
 
 无交互桌面的 Windows 主机（例如经 SSH 登录、`Get-Process` 看不到任何窗口标题）上 Ego 截图会因窗口不渲染而超时。此时可用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>` 以无头 Chrome 运行同一 `*.ego.mjs` 脚本：适配层实现脚本用到的 `taskSpace` / `page` 子集（`click` 支持 CSS 与 `loc=role:button[name=…]`，等元素位置稳定后再点），失败时也会关闭浏览器。有桌面的环境仍按上文默认使用 Ego。
@@ -218,7 +220,11 @@ Server 状态栏延迟使用同一页面，运行 `node scripts/web-tests/connec
 
 OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html`，使用 `pnpm dev:web-test`（端口 **38419**）及 `scripts/web-tests/terminal-interaction.ego.mjs` 的 `run()`。该页复用生产 `TerminalView`、xterm、终端 store 和菜单；需要普通 Vite 配置，避免 `test:web` 的项目管理终端 stub。IPC、终端输出和剪贴板均为内存模拟，不启动本机或远端进程。覆盖历史回放不复制、OSC 52 中文写入与读请求拦截、TUI 无选区右键、Claude Shift 选区与两种复制快捷键、选区右键后重绘仍复制快照、Shift 右键及普通 Shell 中断/菜单。产物位于 `.dev/web-tests/terminal-interaction-*/`，`run({ screenshots: false })` 可跳过截图；不代替 Windows 原生剪贴板及真实 SSH/OpenCode/Claude 验收。
 
-终端「编辑长文本」浮动面板复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-composer.ego.mjs` 的 `run()`。覆盖无遮罩／无模糊的非模态打开、默认高度约 82% 视口、焦点在终端时 Escape 发给终端不关闭面板、拖动标题栏移动并持久化、面板内 Escape 关闭后重开保留位置与草稿、双击标题栏复位居中。产物位于 `.dev/web-tests/terminal-composer-*/`；不替代 Tauri 原生拖放附件与真实 Claude／OpenCode 验收。
+终端 Ctrl + 滚轮缩放复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-font-zoom.ego.mjs` 的 `run()`。覆盖每格一步、字号持久化、页面不缩放、不转发给鼠标跟踪中的 TUI、缩放保持历史阅读位置和字号上限。产物位于 `.dev/web-tests/terminal-font-zoom-*/`；不替代 WebView2 中的真实滚轮手感与 Claude／OpenCode 验收。
+
+终端标签运行状态使用 `pnpm dev:web-test`（端口 **38419**）的完整 App，运行 `scripts/web-tests/terminal-activity.ego.mjs` 的 `run()`。覆盖默认关闭不轮询、开启后后台 Agent 的运行中与已停止状态点、查看后清除、正在查看的标签不打标记、后台退出、关闭后停止轮询。标题由内存后端输出模拟，产物位于 `.dev/web-tests/terminal-activity-*/`；不替代真实 Claude／Codex 标题、本机子进程和 SSH 验收。
+
+终端「编辑长文本」浮动面板复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-composer.ego.mjs` 的 `run()`。覆盖无遮罩／无模糊的非模态打开、默认高度约 70% 视口、焦点在终端时 Escape 发给终端不关闭面板、拖动标题栏移动并持久化、面板内 Escape 关闭后重开保留位置与草稿、双击标题栏复位居中。产物位于 `.dev/web-tests/terminal-composer-*/`；不替代 Tauri 原生拖放附件与真实 Claude／OpenCode 验收。
 
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、
 项目操作和工作区保存替换为 `src/test-pages/projectManagerAdapters.ts` 中的内存适配器。

@@ -5,12 +5,15 @@ import {
   FONT_SETTINGS_EVENT,
   FONT_SETTINGS_KEY,
   JETBRAINS_MONO_FONT,
+  TERMINAL_FONT_SIZE_MAX,
   TERMINAL_MONO_FONT,
   applyFontSettings,
   getResolvedMonoFont,
   getResolvedTerminalFont,
+  getResolvedTerminalFontSize,
   loadFontSettings,
   saveFontSettings,
+  stepTerminalFontSize,
   systemFontOptions,
 } from './fontSettings'
 
@@ -95,4 +98,44 @@ describe('independent terminal font', () => {
       expect(getResolvedMonoFont()).toBe(DEFAULT_FONT_SETTINGS.monoFont)
     }
   )
+})
+
+describe('terminal font zoom', () => {
+  it('steps the persisted terminal size, notifies terminals, and leaves the editor size alone', () => {
+    const changed = vi.fn()
+    window.addEventListener(FONT_SETTINGS_EVENT, changed)
+    try {
+      stepTerminalFontSize(1)
+      expect(loadFontSettings()).toMatchObject({
+        terminalFontSize: DEFAULT_FONT_SETTINGS.terminalFontSize + 1,
+        editorFontSize: DEFAULT_FONT_SETTINGS.editorFontSize,
+      })
+      expect(getResolvedTerminalFontSize()).toBe(DEFAULT_FONT_SETTINGS.terminalFontSize + 1)
+      expect(changed).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(FONT_SETTINGS_EVENT, changed)
+    }
+  })
+
+  it('stops at the limits without broadcasting another change', () => {
+    localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify({ terminalFontSize: TERMINAL_FONT_SIZE_MAX }))
+    const changed = vi.fn()
+    window.addEventListener(FONT_SETTINGS_EVENT, changed)
+    try {
+      stepTerminalFontSize(1)
+      expect(loadFontSettings().terminalFontSize).toBe(TERMINAL_FONT_SIZE_MAX)
+      expect(changed).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener(FONT_SETTINGS_EVENT, changed)
+    }
+  })
+
+  it('upgrades the previous default stack but keeps a font the user chose', () => {
+    localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify({
+      terminalFont: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    }))
+    expect(loadFontSettings().terminalFont).toBe(TERMINAL_MONO_FONT)
+    localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify({ terminalFont: JETBRAINS_MONO_FONT }))
+    expect(loadFontSettings().terminalFont).toBe(JETBRAINS_MONO_FONT)
+  })
 })

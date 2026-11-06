@@ -1,4 +1,5 @@
-import { safeInvoke } from '../tauri'
+import { listen } from '@tauri-apps/api/event'
+import { isTauri, safeInvoke } from '../tauri'
 
 /**
  * 电脑端「终端管理」读取手机会话。手机终端只归手机使用：
@@ -101,6 +102,39 @@ export async function previewMobileSession(id: string): Promise<MobileSessionPre
     truncated: value.truncated === true,
     exit: parseExit(value.exit),
   }
+}
+
+/** 监听某个手机终端的新输出。事件已由后端合并，只表示「有变化」，内容需再读取。 */
+export async function listenMobileSessionOutput(id: string, onOutput: () => void): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  return listen<{ id?: unknown }>('mobile-session-output', event => {
+    if (event.payload?.id === id) onOutput()
+  })
+}
+
+/**
+ * 串行执行异步任务：运行中再次触发只记一次，结束后补跑一轮。
+ * 既不会并发读取导致旧结果覆盖新结果，也不会漏掉最后一次变化。任务需自行处理错误。
+ */
+export function createCoalescedRunner(task: () => Promise<void>): () => void {
+  let running = false
+  let queued = false
+  const run = () => {
+    if (running) {
+      queued = true
+      return
+    }
+    running = true
+    const done = () => {
+      running = false
+      if (queued) {
+        queued = false
+        run()
+      }
+    }
+    void task().then(done, done)
+  }
+  return run
 }
 
 export function renameMobileSession(id: string, name: string): Promise<unknown> {

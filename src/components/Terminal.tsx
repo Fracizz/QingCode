@@ -26,6 +26,7 @@ import {
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
+  stepTerminalFontSize,
   getResolvedTerminalFont,
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
@@ -49,6 +50,8 @@ import {
   markTerminalCommandFinished,
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
+import { clearTerminalTitleSignal, recordTerminalTitle } from '@/lib/terminal/terminalActivity'
+import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
   restoredExitRecovery,
@@ -134,6 +137,9 @@ const DARK_THEME = {
   cursor: '#aeafad',
   cursorAccent: '#181818',
   selectionBackground: '#264f78',
+  scrollbarSliderBackground: 'rgba(212, 212, 212, 0.28)',
+  scrollbarSliderHoverBackground: 'rgba(212, 212, 212, 0.45)',
+  scrollbarSliderActiveBackground: 'rgba(212, 212, 212, 0.6)',
   black: '#000000',
   red: '#f48771',
   green: '#89d185',
@@ -158,6 +164,9 @@ const LIGHT_THEME = {
   cursor: '#1a1a1a',
   cursorAccent: '#ffffff',
   selectionBackground: '#b9d6f5',
+  scrollbarSliderBackground: 'rgba(31, 31, 31, 0.25)',
+  scrollbarSliderHoverBackground: 'rgba(31, 31, 31, 0.42)',
+  scrollbarSliderActiveBackground: 'rgba(31, 31, 31, 0.55)',
   black: '#000000',
   red: '#c43b32',
   green: '#107c10',
@@ -176,12 +185,21 @@ const LIGHT_THEME = {
   brightWhite: '#000000',
 }
 
+const FOREST_SCROLLBAR = {
+  idle: `${M.foreground}47`,
+  hover: `${M.foreground}73`,
+  active: `${M.foreground}99`,
+}
+
 const FOREST_THEME = {
   background: M.contrast,
   foreground: M.foreground,
   cursor: M.accent,
   cursorAccent: M.contrast,
   selectionBackground: M.selectionBg,
+  scrollbarSliderBackground: FOREST_SCROLLBAR.idle,
+  scrollbarSliderHoverBackground: FOREST_SCROLLBAR.hover,
+  scrollbarSliderActiveBackground: FOREST_SCROLLBAR.active,
   black: M.contrast,
   red: M.syntax.red,
   green: M.syntax.green,
@@ -237,6 +255,7 @@ export default function TerminalView({
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const keepScrollOnFitRef = useRef(false)
   const fitRafRef = useRef(0)
   const ptyResizeTimerRef = useRef<number | null>(null)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
@@ -718,7 +737,8 @@ export default function TerminalView({
         flushPendingRedraw()
         if (refresh) {
           term.refresh(0, term.rows - 1)
-          term.scrollToBottom()
+          if (!keepScrollOnFitRef.current) term.scrollToBottom()
+          keepScrollOnFitRef.current = false
         }
         if (focusAfter && isActiveRef.current) term.focus()
       } catch {}
@@ -755,8 +775,11 @@ export default function TerminalView({
       cursorInactiveStyle: 'outline',
       fontSize: getResolvedTerminalFontSize(),
       fontFamily: getResolvedTerminalFont(),
-      lineHeight: 1.0,
+      // 中文和长输出在 1.0 下过于拥挤；对比度目标与同样基于 xterm.js 的 VS Code 一致。
+      lineHeight: 1.1,
       letterSpacing: 0,
+      fontWeightBold: '600',
+      minimumContrastRatio: 4.5,
       scrollback: getTerminalScrollback(),
       // WebGL/canvas: draw box/block glyphs ourselves so WebView2 font metrics
       // cannot stretch OpenCode ASCII banners.
@@ -972,7 +995,21 @@ export default function TerminalView({
     container.addEventListener('mousedown', onMouseDown)
     window.addEventListener('pointerdown', onWindowPointerDown, true)
 
+    // 必须在捕获阶段拦截：否则 xterm 会把滚轮滚动或转发给 TUI，WebView 也会缩放整页。
+    const zoomWheel = createTerminalZoomWheel()
+    const onZoomWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      const step = zoomWheel(event)
+      if (step) stepTerminalFontSize(step)
+    }
+    container.addEventListener('wheel', onZoomWheel, { capture: true, passive: false })
+
     const updateFont = () => {
+      // 正在翻看历史时改字号不能跳回底部。
+      const { viewportY, baseY } = term.buffer.active
+      keepScrollOnFitRef.current = viewportY < baseY
       term.options.fontFamily = getResolvedTerminalFont()
       term.options.fontSize = getResolvedTerminalFontSize()
       scheduleFit(true, isActiveRef.current)
@@ -1047,6 +1084,10 @@ export default function TerminalView({
         if (shouldApplyOscTabTitle(current, title)) {
           useTerminalStore.getState().renameTerminal(terminalId, title)
         }
+      },
+      onRawTitle: title => {
+        // 回放历史时的标题不是当前状态，否则一启动就会误判为运行后完成。
+        if (clipboardWritesEnabled) recordTerminalTitle(terminalId, title)
       },
       onCommandStart: () => markTerminalCommandStarted(terminalId),
       onCommandEnd: () => markTerminalCommandFinished(terminalId),
@@ -1239,6 +1280,8 @@ export default function TerminalView({
       unsubscribeOutput?.()
       writeFlow.dispose()
       disposeOscHandlers()
+      clearTerminalTitleSignal(terminalId)
+      container.removeEventListener('wheel', onZoomWheel, { capture: true })
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)

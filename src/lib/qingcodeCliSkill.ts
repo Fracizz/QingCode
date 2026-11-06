@@ -13,7 +13,8 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, grant workspace trust, open files in a running QingCode
+  run configuration, list or send input to terminals open in QingCode (local or SSH), grant
+  workspace trust, open files in a running QingCode
   instance, import/export user or workspace settings and local project lists, restore defaults,
   or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
@@ -212,6 +213,28 @@ ${quoted} open <file>[:line[:col]] ...
   applies to run-config CRUD for SSH projects.
 - \`run start\` executes the commands stored in the selected config.
 
+## Terminals (QingCode GUI must be running)
+
+\`\`\`text
+${quoted} terminal list [--project ...]
+${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+\`\`\`
+
+- Works for terminals already open in QingCode, local and SSH alike; the same command drives a
+  remote project's terminal through the GUI's authenticated session. It cannot create a terminal.
+- \`--project\` omitted means the GUI current project. Terminals are looked up only inside that
+  project; prefer the \`id\` from \`terminal list\`, because a duplicate name is rejected.
+- \`send\` writes raw input exactly as given. Nothing is appended unless \`--enter\` adds a CR, so
+  without it a command stays unsubmitted. Each newline in multi-line input can execute in a plain
+  shell. A single send is limited to 1 MB.
+- It is rejected when the project is not trusted or the terminal is not \`writable\` (starting,
+  reconnecting, or exited). Do not grant trust just to get past this; follow the Safety rules.
+- Success means the input was queued, not that it ran. There is no command to read terminal
+  output, and the CLI cannot see what the terminal is doing. Verify effects another way, such as
+  through a file or service the command changes.
+- Treat \`send\` like running that command on the host: only send what the user asked for. Whatever
+  has focus in the terminal receives the input, including an AI agent or a confirmation prompt.
+
 ## Typical agent flow
 
 1. Discover state with \`project list\`; identify SSH projects by their \`ssh://\` path, then use
@@ -230,6 +253,8 @@ ${quoted} open <file>[:line[:col]] ...
 - \`project remove\` removes the project and recent-file records from QingCode's database; it does
   not delete the project directory or its files.
 - Never grant trust implicitly. Confirm the exact project root and obtain explicit user approval.
+- \`terminal send\` executes on the terminal's host, which may be remote. Confirm the target terminal
+  before sending anything destructive.
 - Do not use this CLI for packaging, release tags, or force-push.
 - Named workspaces are out of scope — only the user DB project list.
 `
@@ -241,7 +266,8 @@ name: qingcode-cli
 description: >-
   使用 QingCode.exe 子命令管理多个项目，以及本地/SSH 运行配置的增删改查、启动和停止。
   当用户要求添加或列出项目、编辑 .qingcode/run.json、启动或停止运行配置、授予工作区
-  信任、在运行中的 QingCode 中打开文件、导入导出用户/工作区设置与本地项目列表、恢复默认设置，
+  信任、列出 QingCode 已打开的本地/SSH 终端或向其发送输入、在运行中的 QingCode 中打开文件、
+  导入导出用户/工作区设置与本地项目列表、恢复默认设置，
   或 SSH/WSL 启动后 Windows 无法访问前端时使用。
 ---
 
@@ -422,6 +448,26 @@ ${quoted} open <file>[:line[:col]] ...
   增删改查也遵循此规则。
 - \`run start\` 执行所选配置中保存的命令。
 
+## 终端（必须启动 QingCode GUI）
+
+\`\`\`text
+${quoted} terminal list [--project ...]
+${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+\`\`\`
+
+- 适用于 QingCode 中已打开的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的
+  终端。此命令不能新建终端。
+- 未提供 \`--project\` 时使用 GUI 当前项目，且只在该项目内查找终端；优先使用
+  \`terminal list\` 返回的 \`id\`，因为重名会被拒绝。
+- \`send\` 原样写入输入。除非用 \`--enter\` 追加 CR，否则不会追加任何内容，命令也不会提交。
+  多行输入中的每个换行都可能在普通 Shell 中触发执行。单次发送上限为 1 MB。
+- 项目未受信任，或终端不可写（\`writable\` 为 false：启动中、重连中或已退出）时会被拒绝。
+  不要为了绕过拒绝而授予信任，请遵循“安全”一节。
+- 成功只表示输入已进入队列，不代表已经执行。目前没有读取终端输出的命令，CLI 也无法得知终端
+  正在做什么。请通过其他方式验证结果，例如命令修改的文件或服务。
+- 把 \`send\` 当作在该主机上执行命令：只发送用户要求的内容。输入会交给终端当前的前台程序，
+  可能是 AI Agent 或确认提示。
+
 ## Agent 典型流程
 
 1. 使用 \`project list\` 获取状态；通过 \`ssh://\` 路径识别 SSH 项目，然后执行
@@ -438,6 +484,7 @@ ${quoted} open <file>[:line[:col]] ...
 - 只有用户明确要求删除时才能使用 \`project remove\` / \`run remove\`。
 - \`project remove\` 只会删除 QingCode 数据库中的项目和最近文件记录，不会删除项目目录或文件。
 - 绝不能隐式授予信任。确认准确的项目根目录，并取得用户明确授权。
+- \`terminal send\` 在终端所在主机上执行，该主机可能是远端。发送破坏性内容前先确认目标终端。
 - 不要使用此 CLI 执行打包、发布标签或强推。
 - 命名工作区不在范围内——只操作用户数据库中的项目列表。
 `

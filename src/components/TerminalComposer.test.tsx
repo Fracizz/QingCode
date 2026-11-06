@@ -74,11 +74,13 @@ describe('long terminal input', () => {
     expect(callbacks.prepareFiles).toHaveBeenCalledWith([file])
   })
 
-  it('shows the target terminal and attachment hint in one header subtitle', () => {
+  it('shows the target terminal in the subtitle and usage hints in the placeholder', () => {
     render(<TerminalComposer {...props()} />)
     const subtitle = document.querySelector('[data-terminal-composer-subtitle]')!
-    expect(subtitle).toHaveTextContent('填入终端：Claude · 支持粘贴图片、文件和拖入附件')
-    expect(screen.getAllByText(/支持粘贴图片/)).toHaveLength(1)
+    expect(subtitle.textContent).toBe('填入终端：Claude')
+    expect(screen.getByRole('textbox').getAttribute('placeholder')).toBe(
+      '输入多段需求，也可粘贴图片、文件或拖入附件。填入后请在终端中检查并提交。'
+    )
   })
 
   it('floats without a backdrop and only closes on Escape while focused inside', () => {

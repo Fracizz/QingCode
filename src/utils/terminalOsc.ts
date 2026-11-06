@@ -17,6 +17,8 @@ export function sanitizeOscTitle(title: string): string {
 
 export type TerminalOscHandlers = {
   onTitle?: (title: string) => void
+  /** 清洗前的标题：开头的转圈符号是程序忙碌状态的信号。 */
+  onRawTitle?: (title: string) => void
   /** Foreground command started (FinalTerm / VS Code shell integration). */
   onCommandStart?: () => void
   /** Foreground command finished or prompt returned. */
@@ -95,7 +97,10 @@ export function registerTerminalOscHandlers(
     ...TITLE_OSC_IDENTS.map(ident =>
       parser.registerOscHandler(ident, data => {
         const title = data.trim()
-        if (title) handlers.onTitle?.(sanitizeOscTitle(title))
+        if (title) {
+          handlers.onRawTitle?.(title)
+          handlers.onTitle?.(sanitizeOscTitle(title))
+        }
         return true
       }),
     ),

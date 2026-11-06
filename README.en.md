@@ -2,10 +2,26 @@
 
 [中文](./README.md)
 
-**QingCode** is a **project-management companion for the AI coding era** on Windows: multi-project switching, service startup, terminal sessions, and light editing in one window.  
+**QingCode** is a **project-management companion for the AI coding era**: multi-project switching, service startup, terminal sessions, and light editing in one window.  
 It is not another VS Code or Zed — it focuses on keeping local and remote projects and their processes under control.
 
 **QingCode Android** extends that terminal workspace to your phone: connect back to the same Windows machine and continue in the same projects and sessions, even when you step away from the desk.
+
+## Key advantages
+
+| Advantage | What it does for you |
+|-----------|----------------------|
+| **Switch projects without losing your place** | Pin projects to the title bar and switch with a click; unsaved edits and running terminals stay put, and sessions can be restored after a restart |
+| **Start a whole stack in one click** | Put API, web, and workers in one run configuration, with one terminal per task and group start/stop; candidates can be discovered from `package.json` |
+| **One workflow for local and remote** | Local, WSL, SSH, and Server direct-connection projects share one workspace, with the same file tree, terminals, and global search; see [below](#ssh-remote-workspaces) for Windows remote limits |
+| **Reattach after a remote disconnect** | The remote service hosts terminals, so you return to the same session after a network drop instead of restarting long tasks |
+| **The real terminal on your phone** | Your phone shows the same CLI running on your computer, so you can type, read output, and send images without waiting for a third-party client to catch up |
+| **Bring your own AI tools** | No built-in model, and no rewriting or proxying of AI services; Claude Code, Codex, and OpenCode stay official CLIs, with accounts and requests inside the CLI |
+| **Agents can drive QingCode** | Through the CLI and Skill, agents can manage projects, edit run configurations, start and stop services, and read JSON results |
+| **Trust comes before unfamiliar code** | Untrusted projects cannot run scripts or terminals; a changed SSH host fingerprint needs reconfirmation, and remote operations stay inside the project root |
+| **A native shell that stays focused** | Built on Tauri 2 and Rust with the system WebView and no bundled Chromium; no background semantic index and no extension marketplace |
+
+For type inference, refactoring, or breakpoint debugging, pair it with IDEA, VS Code, or Zed; see the [everyday comparison](#everyday-use-compared-with-idea-vs-code-and-zed).
 
 ## Screenshots
 
@@ -94,7 +110,7 @@ QingCode puts weight on **project ops and the running scene**: pin many projects
 
 ### Multi-project switching
 
-Pin local folders, SSH projects, or direct Agent projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
+Pin local folders, SSH projects, or Server direct-connection projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
 
 Project management supports name/path search, visible/hidden filters, and sorting. Closing a title-bar project only hides it; Remove clears its project record without deleting files, and the project can be added again later.
 
@@ -105,13 +121,13 @@ Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fing
 Linux / POSIX remotes support SFTP, a remote PTY, the Git workspace, formatting, run configurations, and multi-project search mixed with local projects. Windows OpenSSH can open a project on a drive-letter path; the terminal starts PowerShell or CMD as configured and is already in the project directory when the prompt appears. On Windows remotes, file operations and transfer to or from the local machine are available; remote Git, search, formatting, and run tasks are not.
 
 - Drag local files or folders onto the SSH file tree to upload them: a folder lands in that directory, a file lands in its parent, and empty space or the project title lands at the project root.
-- With `terminal.integrated.sshUploadOnPaste` enabled (off by default), pasting or dropping local files into an SSH terminal uploads them to the project's `.qingcode/terminal-paste/` and pastes the remote path. Files or folders over 100MB are rejected. Settings and the terminal context menu can clean up that directory. A successful paste upload does not leave a transfer task row.
+- With `terminal.integrated.sshUploadOnPaste` on (the default), pasting or dropping local files into an SSH terminal uploads them to the project's `.qingcode/terminal-paste/` and pastes the remote path. Files or folders over 100MB are rejected. Settings and the terminal context menu can clean up that directory. A successful paste upload does not leave a transfer task row.
 
 Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, and SSH agent forwarding are not currently provided. See [SSH workspaces](./docs/ssh-workspaces.md) for the capability comparison and boundaries.
 
-### Direct Agent connections
+### Server direct connections
 
-Connect to remote `qingcode-server` through a dedicated TLS port shared by HTTPS file operations and WSS terminals. Everyday traffic goes directly to the remote host without an SSH tunnel. Add a standalone connection from **Remote Connections → New Agent connection**, or install/import the service from an existing SSH connection's **Agent direct connection** panel.
+Connect to remote `qingcode-server` through a dedicated TLS port shared by HTTPS file operations and WSS terminals. Everyday traffic goes directly to the remote host without an SSH tunnel. Add a standalone connection from **Remote Connections → New Server connection**, or install/import the service from an existing SSH connection's **Server direct connection** panel.
 
 With `qingcode-server` available on the remote host, start it under your usual development account and export pairing information:
 
@@ -126,11 +142,11 @@ Import the pairing JSON, enter the remote host's actual IP address or hostname, 
 - **Authorize firewall access over SSH**: select a connection to the same host with a confirmed SSH fingerprint. Check Windows administrator permissions, then confirm the TCP port, source IP, receiving address, and actual network profile, including Public. Authorization creates a dedicated rule and probes the port, reporting rule creation and reachability separately. A copyable command is also available; upstream firewalls and gateway mappings require separate configuration.
 - **Reconnect to existing terminals**: a surviving remote daemon retains PTYs across network disconnections and direct gateway restarts, allowing reconnection to the original session. Explicitly closing a terminal, process exit, or machine restart still ends the session. Existing SSH connections remain available.
 
-See [Direct Agent connections](./docs/direct-agent.md) (Chinese) for pairing, port changes, session boundaries, and deployment details.
+See [Server direct connections](./docs/direct-agent.md) (Chinese) for pairing, port changes, session boundaries, and deployment details.
 
 ### Android: your terminal workspace in your pocket
 
-QingCode Android is a **terminal-first remote controller**, not another mobile IDE. It connects over your LAN or a virtual network such as Tailscale to QingCode running on Windows and opens the projects already added and trusted there — local, WSL, SSH, and direct Agent projects in one list. Pick one and you are back in the desktop terminal session.
+QingCode Android is a **terminal-first remote controller**, not another mobile IDE. It connects over your LAN or a virtual network such as Tailscale to QingCode running on Windows and opens the projects already added and trusted there — local, WSL, SSH, and Server direct-connection projects in one list. Pick one and you are back in the desktop terminal session.
 
 Why terminal-first instead of a "mobile AI client":
 
@@ -139,7 +155,7 @@ Why terminal-first instead of a "mobile AI client":
 - **The session stays on the desktop**: Windows hosts the terminal sessions. A brief phone disconnect, a switch between computers, or reopening the app does not interrupt a running task; reconnect and continue in the same session.
 - **A control layer built for phones**: QR pairing, multiple computers, a shortcut bar, IME input and paste, image upload, history and output search, font sizing, and landscape immersive mode. The desktop keeps SSH / Server credentials and workspace trust; the phone only acts within what you have authorized.
 
-Connect from **Settings → Features → Android mobile connection** on Windows: set a port and password, enable it, then scan the QR code or paste the pairing link in the phone's **Connections** screen. Phone and computer must be able to reach each other, and Android 8.0+ is required. See [Android mobile notes](./mobile/README.md) for pairing, sessions, and security boundaries.
+Connect from **Settings → Mobile connection** on Windows: set a port and password, enable it, then scan the QR code or paste the pairing link in the phone's **Connections** screen. Phone and computer must be able to reach each other, and Android 8.0+ is required. See [Android mobile notes](./mobile/README.md) for pairing, sessions, and security boundaries.
 
 ### Run configurations: start project services
 
@@ -175,13 +191,15 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 
 Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual terminals, a draggable 2×2 quad-terminal grid, or the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
 
+To see at a glance which terminal is still running and which has stopped, turn on **Settings → Terminal → Tab Activity Status** (off by default). Tabs then show “Running” and “Stopped, take a look”. See [DESIGN.md](./DESIGN.md) (Chinese) for details.
+
 ### Working with AI: external assistants, no built-in model
 
 QingCode **does not ship** a chat model or agent. Intelligence stays with Cursor / Claude / OpenCode and similar tools; QingCode focuses on projects and the running scene:
 
 - **AI CLIs in the terminal**: jump into `opencode` (and others) via terminal profiles; hand run-config terminals to an assistant when useful  
 - **Copy into chats**: copy absolute / relative paths or **file references** (with line ranges) from the explorer or editor  
-- **QingCode CLI + Skill**: Settings → **AI** → “Copy Skill text” puts an installable Skill description on the clipboard — install it yourself in your agent (e.g. as `SKILL.md`). Agents can drive `QingCode.exe` to list/add projects, edit run configs, and (with the GUI running) switch projects, start/stop runs, grant trust, and open files (JSON on stdout). QingCode **does not** auto-register with any agent  
+- **QingCode CLI + Skill**: Settings → **Tools and Integrations** → “Copy skills text” puts an installable Skill description on the clipboard — install it yourself in your agent (e.g. as `SKILL.md`). Agents can drive `QingCode.exe` to list/add projects, edit run configs, and (with the GUI running) switch projects, start/stop runs, grant trust, and open files (JSON on stdout). QingCode **does not** auto-register with any agent  
 
 Typical loop: QingCode manages projects and services → AI edits in a terminal or external IDE → CLI / references reconnect the scene when needed.
 
@@ -228,7 +246,7 @@ A typical pairing: start API, web, and workers in QingCode and keep the scene wh
 
 ## Typical flow
 
-1. Add several local folders, SSH projects, or direct Agent projects and pin them in the title bar
+1. Add several local folders, SSH projects, or Server direct-connection projects and pin them in the title bar
 2. Create run configurations for common stacks (for example `dev` = API + web)  
 3. Start services in one click; use dual terminals or the 2×2 quad-terminal grid for several output streams
 4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent
@@ -255,7 +273,7 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 
 - Windows: portable exe or NSIS installer (`*-setup.exe`). Double-click setup to install or upgrade in place automatically, preserving settings and project history without an uninstall prompt or wizard. The completion page offers a checked, optional action to launch QingCode. Setup first requests a normal app close; handle any unsaved-file prompts in the app. Cancellation or timeout stops the upgrade without killing the editor. `/S` installs silently; launching afterwards requires an explicit `/R`. Needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/); if missing, setup tries an automatic installation and offers download links on failure. Upgrades also remove retired navigation component files while preserving additional files in those directories.
 - macOS: unsigned builds may need right-click → Open the first time  
-- Android: a universal APK for Android 8.0+, connecting to a running QingCode on Windows over the same LAN or a virtual network such as Tailscale. Enable **Settings → Features → Android mobile connection** and pair by QR code first. Distributed through Releases only; install updates over the existing app with the same release signature. See [Android mobile notes](./mobile/README.md).
+- Android: a universal APK for Android 8.0+, connecting to a running QingCode on Windows over the same LAN or a virtual network such as Tailscale. Enable **Settings → Mobile connection** and pair by QR code first. Distributed through Releases only; install updates over the existing app with the same release signature. See [Android mobile notes](./mobile/README.md).
 
 Local packaging (Windows x64 host):
 

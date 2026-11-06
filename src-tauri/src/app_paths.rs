@@ -42,7 +42,7 @@ pub fn db_file() -> PathBuf {
     app_data_dir().join("qingcode.db")
 }
 
-/// JSON file written by a running GUI instance: `{"port":u16,"pid":u32}`.
+/// JSON file written by a running GUI instance: `{"port":u16,"pid":u32,"token":string}`.
 pub fn ipc_endpoint_file() -> PathBuf {
     app_data_dir().join("qingcode.ipc")
 }

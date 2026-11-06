@@ -13,8 +13,15 @@ export const SYSTEM_INTERFACE_FONT =
 export const SYSTEM_MONO_FONT =
   '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
-/** Concrete mono stack for xterm cell metrics (avoid generic `ui-monospace`). */
+/**
+ * Concrete mono stack for xterm cell metrics (avoid generic `ui-monospace`).
+ * 网格由首个西文字体决定；中文字体只作回退，避免各机器的系统回退字体不一致。
+ */
 export const TERMINAL_MONO_FONT =
+  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace'
+
+/** 旧版默认栈；已保存它的用户没有主动选择字体，读取时升级到新默认值。 */
+const LEGACY_TERMINAL_MONO_FONT =
   '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
 export const JETBRAINS_MONO_FONT =
@@ -47,6 +54,10 @@ export const TERMINAL_FONT_OPTIONS: FontOption[] = [
 
 export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20] as const
 
+/** Ctrl + 滚轮缩放终端字号的范围。 */
+export const TERMINAL_FONT_SIZE_MIN = 8
+export const TERMINAL_FONT_SIZE_MAX = 32
+
 export type FontSettings = {
   interfaceFont: string
   monoFont: string
@@ -68,7 +79,10 @@ export const DEFAULT_FONT_SETTINGS: FontSettings = {
 
 /** Missing or empty values from older preferences now use the terminal default. */
 function normalizeTerminalFont(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value : TERMINAL_MONO_FONT
+  if (typeof value !== 'string' || !value.trim() || value === LEGACY_TERMINAL_MONO_FONT) {
+    return TERMINAL_MONO_FONT
+  }
+  return value
 }
 
 type StoredFontSettings = Partial<FontSettings & { monoFontSize?: number }>
@@ -235,6 +249,18 @@ export function applyStoredFontSettings(settings: FontSettings) {
   const normalized = { ...settings, terminalFont: normalizeTerminalFont(settings.terminalFont) }
   localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(normalized))
   applyFontSettings(normalized)
+}
+
+/** 按步进调整终端字号并立即应用到所有终端；已到边界时不写入、不广播。 */
+export function stepTerminalFontSize(step: number) {
+  const current = loadFontSettings()
+  const size = Math.min(
+    TERMINAL_FONT_SIZE_MAX,
+    Math.max(TERMINAL_FONT_SIZE_MIN, current.terminalFontSize + step),
+  )
+  if (size !== current.terminalFontSize) {
+    applyStoredFontSettings({ ...current, terminalFontSize: size })
+  }
 }
 
 /**
