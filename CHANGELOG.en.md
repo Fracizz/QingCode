@@ -6,6 +6,39 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-11-06
+
+The first stable release after v0.1.12, rolling up the 0.1.13–0.1.16 beta line.
+
+### Added
+
+- SSH remote workspaces: remote projects with host-fingerprint confirmation, remote file tree, editing, uploads and image preview, disconnect-proof remote terminals, remote Git, run configurations and SFTP transfer, plus connection import from the local SSH config.
+- Remote Server: connections run through a version-checked QingCode Server with reuse, latency display, automatic redeploy on version mismatch, and bundled online and offline server packages.
+- Android companion terminal: QR pairing and multi-device management, terminal-first layout with Chinese/English UI, multi-image attachments, a session drawer with renaming, pinning, long-press actions and keyword search, mouse mode, paged full-screen programs, and in-app updates.
+- Terminal: `Ctrl+Enter` newline, a larger composer, long pastes saved to a file with the path inserted, independent font settings and zoom, content export, CLI access to list and drive terminals, and activity badges with background notifications.
+- Configuration transfer: import/export user and workspace settings and reset defaults from the UI or CLI; run configurations are discovered automatically.
+- Search and explorer: choose folders and file types to search, `Ctrl+Shift+F` follows the Explorer folder, and directory paging.
+- Windows: single-instance file opening, independent file windows, `Ctrl+O`, text read modes for DLP or encrypted files, and open-with registration.
+- Installer: closes the running app in the target directory, bundles the Server package, and can launch the app when finished.
+
+### Changed
+
+- Tighter spacing, typography and controls, an olive-green Forest theme, reduced-motion support, and a simplified status-bar Git branch hint.
+- Android returns to a terminal-first interface with "Terminal / Projects / Connections" navigation.
+- Local packaging now produces the Server package and APK by default and keeps only the latest three versions.
+
+### Fixed
+
+- Fixed a Windows heap-corruption crash caused by a cross-thread `Rc` race in the event loop.
+- Fixed idle sessions repeatedly submitting file-watch requests; slow requests now coalesce later configurations.
+- Fixed corrupted terminal glyphs after long sessions, terminal text flicker while dragging the main sidebar, and issues with search cancellation and panel resizing.
+- Fixed stale Server package digests after rapid rewrites of same-size files, and the recovery flow for remote Server version mismatches.
+
+### Removed
+
+- Go to Definition, Find Usages, workspace symbols and the related language components.
+- The terminal tab run-state indicator.
+
 ## [0.1.15-beta.3] - 2026-11-05
 
 ### Added
