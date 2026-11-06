@@ -60,6 +60,12 @@
           <span class="row-text"><small>继续终端</small><strong id="resume-name"></strong><small id="resume-host"></small></span>
           <svg class="arrow"><use href="#i-chevron"/></svg>
         </button>
+        <!-- 在线更新：后台检查发现新版本时显示，点按打开更新弹层。 -->
+        <button id="update-card" class="resume-card update-card" type="button" hidden>
+          <span class="tile"><svg><use href="#i-down"/></svg></span>
+          <span class="row-text"><small>发现新版本</small><strong id="update-card-version"></strong><small>点按查看更新内容并安装</small></span>
+          <svg class="arrow"><use href="#i-chevron"/></svg>
+        </button>
         <div id="home-empty" class="empty-card">
           <span class="tile"><svg><use href="#i-terminal"/></svg></span>
           <h2 id="home-empty-title">连接一台 QingCode</h2>
@@ -110,6 +116,11 @@
           <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
         </div>
         <div class="language-setting"><label for="app-language">语言 / Language</label><select id="app-language"><option value="auto">跟随系统</option><option value="zh">中文</option><option value="en">English</option></select></div>
+        <section id="update-section" class="update-setting" aria-labelledby="update-title">
+          <div class="update-row"><div class="row-text"><strong id="update-title">应用更新</strong><small id="update-version"></small></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
+          <p id="update-status" class="hint" role="status"></p>
+          <label class="update-auto"><input id="update-auto" type="checkbox" checked> 每天自动检查更新</label>
+        </section>
       </section>
 
       <nav id="dashboard-nav" aria-label="主导航">
@@ -407,6 +418,18 @@
     <p id="link-note" hidden></p>
     <p id="link-status" class="hint" role="status"></p>
     <div class="dialog-actions"><button id="link-copy" type="button" class="secondary">复制链接</button><button id="link-open" type="button" class="primary">在浏览器打开</button></div>
+  </dialog>
+  <dialog id="update-dialog" class="sheet" aria-labelledby="update-dialog-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="update-dialog-title">发现新版本</h2>
+    <p id="update-dialog-version"></p>
+    <pre id="update-notes" tabindex="0" aria-label="更新说明"></pre>
+    <progress id="update-progress" max="100" hidden></progress>
+    <p id="update-dialog-status" class="hint" role="status"></p>
+    <p id="update-dialog-error" class="error" role="alert" hidden></p>
+    <p class="hint">安装包来自 GitHub / Gitee 发布页，安装前核对签名与版本；需要在系统中允许 QingCode 安装应用。</p>
+    <div class="dialog-actions"><button id="update-skip" type="button" class="secondary">跳过此版本</button><button id="update-action" type="button" class="primary">下载并安装</button></div>
+    <div class="dialog-links"><button id="update-page" type="button" class="text-button">在浏览器查看</button><button type="button" class="text-button" data-close="update-dialog">稍后</button></div>
   </dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title">
     <form method="dialog">

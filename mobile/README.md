@@ -2,7 +2,7 @@
 
 安卓版的界面与统一圆角规范见 [Android 设计规范](android/design.md)。
 
-## APK 按需发布
+## APK 打包与发布
 
 本地 `pnpm package:exe` / `pnpm package:installer` 会检查 Android 输入文件和已生成 APK 的摘要。
 有更新或 APK 缺失/损坏时构建 `release/QingCode_<版本>-android.apk`，并更新 `QingCode-Android.apk`；
@@ -10,10 +10,15 @@
 需要 `ANDROID_HOME` / `JAVA_HOME`，也支持本项目现有 `.dev/android-build/sdk` 工具目录；
 缺少工具链时提示跳过。签名沿用已有本地密钥；缓存保存在 `.dev/android-build/package-state.json`。
 
-Release 工作流以最近一个实际包含 APK 的公开发布版本（含预发布）为比较基准。
-Android 源码、构建/版本脚本、打包图标、依赖锁文件或 APK 内置依赖声明变化时才重新打包；
-仅桌面端或应用版本号变化时跳过 APK，继续使用最近发布的 Android APK。
-首次发布会尝试构建；仍须配置固定发布签名密钥，缺少密钥时跳过 APK，不阻断桌面端发布。
+Release 工作流每次发布（含 beta 等预发布）都构建并上传 `QingCode_<版本>-android.apk`，Gitee 同步时一并镜像，供手机端在线更新取用。
+必须配置固定发布签名密钥（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`，可选 `ANDROID_KEY_PASSWORD`）；
+缺少密钥时工作流报错提示并跳过 APK，不阻断桌面端发布，但该版本手机无法在线更新。换签名密钥会导致手机无法覆盖安装。
+
+## 在线更新
+
+「连接」页底部的「应用更新」显示当前版本，可手动「检查更新」；默认每天自动检查一次（可关闭），发现新版本时首页显示提示卡片。
+手机依次读取 GitHub、Gitee 的发布列表，选出版本号最高且附带 `QingCode_<版本>-android.apk` 的发布：beta 等预发布版本的手机也会收到更新的 beta，正式版手机只接收正式版；最新发布缺少 APK 时回退到仍比当前新的较早版本。
+下载只允许 HTTPS 访问 github.com / gitee.com 发布附件及其 CDN（每次跳转都校验主机），并核对长度；安装前检查包名、versionCode 高于当前版本且签名与已安装应用一致，再通过系统 PackageInstaller 由用户确认安装。首次安装需在系统设置中允许 QingCode「安装未知应用」。可「跳过此版本」，跳过后不再提示该版本，仍可手动检查。
 
 Android 端是终端优先的远程控制器。手机可保存多台能通过局域网访问的 Windows QingCode，在「连接」中切换、重连、重命名、修改端口、重新配对或移除。每台电脑分别提供本机、WSL 和远端已信任项目，Windows 负责 SSH、Server 连接和凭据管理。
 

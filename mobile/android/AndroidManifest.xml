@@ -8,6 +8,8 @@
     <!-- Requested only when the user taps "扫码添加" to read the desktop pairing QR code. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- Online update: hands a downloaded, signature-checked QingCode APK to the system installer after user confirmation. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_qingcode"

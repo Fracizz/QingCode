@@ -2,10 +2,15 @@ package com.qingcode.companion;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.provider.Settings;
 import android.graphics.Insets;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -38,6 +43,8 @@ import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -52,9 +59,11 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -70,6 +79,7 @@ public final class MainActivity extends Activity {
     private static final int IMAGE_REQUEST = 2;
     private static final int MAX_IMAGE = 8 * 1024 * 1024;
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
+    private static final String INSTALL_ACTION = "com.qingcode.companion.INSTALL_STATUS";
 
     static {
         // Windows closes idle keep-alive connections after 15 s; expire ours first so a
@@ -91,6 +101,10 @@ public final class MainActivity extends Activity {
     private Integer imageReply;
     private String imageCompression;
     private final Map<String, ImageSelection> imageSelections = new ConcurrentHashMap<>();
+    // 在线更新：同一时间只下载一个安装包；下载并校验通过后才允许交给系统安装器。
+    private volatile Thread updateThread;
+    private volatile boolean updateCancelled;
+    private volatile File updateApk;
 
     private static final class ImageSelection {
         final List<Uri> uris;
@@ -206,7 +220,7 @@ public final class MainActivity extends Activity {
                         case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
                         case "terminalLinks.js":
-                        case "i18n.js":
+                        case "i18n.js": case "appUpdate.js": case "updateView.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
@@ -433,6 +447,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (intent != null && INSTALL_ACTION.equals(intent.getAction())) {
+            installStatus(intent);
+            return;
+        }
         String link = pairingLink(intent);
         if (link == null) return;
         if (view != null && pageReady) {
@@ -485,6 +503,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         imageSelections.clear();
+        updateCancelled = true;
         requests.close();
         if (view != null) {
             view.removeJavascriptInterface("QingCodeNative");
@@ -615,6 +634,36 @@ public final class MainActivity extends Activity {
                 });
                 return;
             }
+            if ("app_version".equals(op)) {
+                runOnUiThread(() -> {
+                    try {
+                        PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                        replySafely(id, new JSONObject().put("name", info.versionName).put("code", versionCode(info))
+                            .put("canInstall", getPackageManager().canRequestPackageInstalls())
+                            .put("downloading", updateThread != null).put("ready", updateApk != null && updateApk.isFile()));
+                    } catch (Exception error) {
+                        reply(id, failure("请求失败。"));
+                    }
+                });
+                return;
+            }
+            if ("update_releases".equals(op)) {
+                enqueue(id, op, () -> success(AppUpdates.releases()));
+                return;
+            }
+            if ("update_download".equals(op)) {
+                startUpdateDownload(id, request.optString("url"), request.optLong("size", -1));
+                return;
+            }
+            if ("update_cancel".equals(op)) {
+                updateCancelled = true;
+                replySafely(id, true);
+                return;
+            }
+            if ("update_install".equals(op)) {
+                runOnUiThread(() -> installUpdate(id));
+                return;
+            }
             if ("camera".equals(op)) {
                 runOnUiThread(() -> {
                     if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -629,6 +678,185 @@ public final class MainActivity extends Activity {
                 return;
             }
             enqueue(id, op, () -> perform(request));
+        }
+    }
+
+    private static long versionCode(PackageInfo info) {
+        return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+    }
+
+    /** 通知页面更新状态：progress / ready / cancelled / confirm / error。 */
+    private void notifyUpdate(JSONObject state) {
+        runOnUiThread(() -> {
+            if (view != null && pageReady) view.evaluateJavascript("window.qingUpdate&&window.qingUpdate(" + state + ")", null);
+        });
+    }
+
+    private void notifyUpdate(String state, String message) {
+        try {
+            JSONObject value = new JSONObject().put("state", state);
+            if (message != null) value.put("message", message);
+            notifyUpdate(value);
+        } catch (Exception ignored) {
+            // 状态通知失败不影响下载本身。
+        }
+    }
+
+    private void startUpdateDownload(int id, String url, long size) {
+        if (!UpdatePolicy.allowedDownload(url)) { reply(id, failure("更新地址不受信任，已停止下载。")); return; }
+        synchronized (this) {
+            if (updateThread != null) { reply(id, failure("已有更新正在下载。")); return; }
+            updateCancelled = false;
+            updateApk = null;
+            final File dir = new File(getCacheDir(), "updates");
+            Thread thread = new Thread(() -> {
+                File part = new File(dir, "QingCode-update.apk.part");
+                File apk = new File(dir, "QingCode-update.apk");
+                try {
+                    if (!dir.isDirectory() && !dir.mkdirs()) throw new AppUpdates.UpdateException("无法保存更新包。");
+                    File[] old = dir.listFiles();
+                    if (old != null) for (File item : old) if (!item.delete()) item.deleteOnExit();
+                    final long[] last = { 0 };
+                    AppUpdates.download(url, size, part, new AppUpdates.Progress() {
+                        @Override public void update(long received, long total) {
+                            long now = System.currentTimeMillis();
+                            if (now - last[0] < 250 && received != total) return;
+                            last[0] = now;
+                            try {
+                                notifyUpdate(new JSONObject().put("state", "progress").put("received", received).put("total", total));
+                            } catch (Exception ignored) {
+                                // 进度只是显示。
+                            }
+                        }
+                        @Override public boolean cancelled() { return updateCancelled; }
+                    });
+                    if (!part.renameTo(apk)) throw new AppUpdates.UpdateException("无法保存更新包。");
+                    verifyUpdate(apk);
+                    updateApk = apk;
+                    notifyUpdate("ready", null);
+                } catch (AppUpdates.CancelledException error) {
+                    if (!part.delete()) part.deleteOnExit();
+                    notifyUpdate("cancelled", null);
+                } catch (AppUpdates.UpdateException error) {
+                    if (!apk.delete()) apk.deleteOnExit();
+                    notifyUpdate("error", error.getMessage());
+                } catch (Exception error) {
+                    if (!part.delete()) part.deleteOnExit();
+                    if (!apk.delete()) apk.deleteOnExit();
+                    notifyUpdate("error", "下载失败，请检查网络后重试。");
+                } finally {
+                    updateThread = null;
+                }
+            }, "qingcode-update");
+            updateThread = thread;
+            thread.start();
+        }
+        replySafely(id, true);
+    }
+
+    /** 安装前核对包名、版本号和签名，避免把错误或被替换的安装包交给系统。 */
+    @SuppressWarnings("deprecation")
+    private void verifyUpdate(File apk) throws Exception {
+        PackageManager manager = getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+        PackageInfo archive = manager.getPackageArchiveInfo(apk.getAbsolutePath(), flags);
+        if (archive == null) throw new AppUpdates.UpdateException("下载的安装包无效，请重新下载。");
+        if (!getPackageName().equals(archive.packageName)) throw new AppUpdates.UpdateException("安装包不属于 QingCode，已拒绝安装。");
+        PackageInfo installed = manager.getPackageInfo(getPackageName(), flags);
+        if (versionCode(archive) <= versionCode(installed)) throw new AppUpdates.UpdateException("安装包版本不高于当前版本，无需更新。");
+        Set<String> expected = signers(installed);
+        Set<String> actual = signers(archive);
+        // 读不到签名时交给系统安装器校验；读到时必须与当前应用一致。
+        if (!expected.isEmpty() && !actual.isEmpty() && Collections.disjoint(expected, actual)) {
+            throw new AppUpdates.UpdateException("安装包签名与当前应用不一致，已拒绝安装。");
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static Set<String> signers(PackageInfo info) throws Exception {
+        Signature[] signatures = null;
+        if (Build.VERSION.SDK_INT >= 28 && info.signingInfo != null) {
+            signatures = info.signingInfo.hasMultipleSigners()
+                ? info.signingInfo.getApkContentsSigners() : info.signingInfo.getSigningCertificateHistory();
+        } else if (info.signatures != null) {
+            signatures = info.signatures;
+        }
+        Set<String> result = new HashSet<>();
+        if (signatures == null) return result;
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        for (Signature signature : signatures) {
+            if (signature != null) result.add(Base64.encodeToString(digest.digest(signature.toByteArray()), Base64.NO_WRAP));
+        }
+        return result;
+    }
+
+    /** 未授权「安装未知应用」时打开系统设置；已授权时用 PackageInstaller 会话交给系统确认安装。 */
+    private void installUpdate(int id) {
+        final File apk = updateApk;
+        if (apk == null || !apk.isFile()) { reply(id, failure("更新包已失效，请重新下载。")); return; }
+        try {
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                replySafely(id, new JSONObject().put("permission", true));
+                return;
+            }
+        } catch (Exception error) {
+            reply(id, failure("无法打开系统安装设置，请在系统设置中允许 QingCode 安装应用。"));
+            return;
+        }
+        new Thread(() -> {
+            PackageInstaller installer = getPackageManager().getPackageInstaller();
+            int session = -1;
+            try {
+                PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                params.setAppPackageName(getPackageName());
+                params.setSize(apk.length());
+                session = installer.createSession(params);
+                try (PackageInstaller.Session writer = installer.openSession(session)) {
+                    try (InputStream input = new FileInputStream(apk); OutputStream output = writer.openWrite("QingCode.apk", 0, apk.length())) {
+                        byte[] buffer = new byte[64 * 1024];
+                        for (int count; (count = input.read(buffer)) != -1;) output.write(buffer, 0, count);
+                        writer.fsync(output);
+                    }
+                    Intent status = new Intent(this, MainActivity.class).setAction(INSTALL_ACTION);
+                    int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+                    writer.commit(PendingIntent.getActivity(this, session, status, flags).getIntentSender());
+                }
+                replySafely(id, new JSONObject().put("started", true));
+            } catch (Exception error) {
+                if (session != -1) {
+                    try { installer.abandonSession(session); } catch (Exception ignored) { /* 会话可能已提交。 */ }
+                }
+                reply(id, failure("无法启动系统安装，请重新下载后重试。"));
+            }
+        }, "qingcode-install").start();
+    }
+
+    /** PackageInstaller 回调：需要用户确认时打开系统确认页，失败时把原因交给页面。 */
+    @SuppressWarnings("deprecation")
+    private void installStatus(Intent intent) {
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            try {
+                if (confirm != null) startActivity(confirm);
+                notifyUpdate("confirm", null);
+            } catch (Exception error) {
+                notifyUpdate("error", "无法打开系统安装确认，请重试。");
+            }
+        } else if (status == PackageInstaller.STATUS_SUCCESS) {
+            notifyUpdate("installed", null);
+        } else if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
+            notifyUpdate("ready", "已取消安装。");
+        } else {
+            String detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            try {
+                JSONObject value = new JSONObject().put("state", "error").put("message", "安装失败，请重新下载后重试。");
+                if (detail != null) value.put("detail", detail.length() > 300 ? detail.substring(0, 300) : detail);
+                notifyUpdate(value);
+            } catch (Exception ignored) {
+                // 状态通知失败时页面保持原状态。
+            }
         }
     }
 

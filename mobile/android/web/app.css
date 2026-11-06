@@ -693,3 +693,14 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .language-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 4px 8px; }
 .language-setting label { color: var(--muted); font-size: 14px; font-weight: 650; }
 .language-setting select { min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); color: var(--ink); }
+.update-setting { margin: 12px 4px 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.update-row strong { font-size: 14px; }
+.update-setting .hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.update-setting .hint:empty { display: none; }
+.update-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.update-auto input { width: 18px; min-height: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--accent); }
+.update-card { margin-bottom: 12px; }
+#update-notes { max-height: 38vh; overflow: auto; margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 system-ui, sans-serif; user-select: text; -webkit-user-select: text; }
+#update-progress { width: 100%; height: 6px; margin-top: 12px; accent-color: var(--accent); }
+#update-dialog-status:empty { display: none; }

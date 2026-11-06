@@ -81,9 +81,9 @@ describe('Android i18n', () => {
     // 带 HTTP 状态码的动态消息不收录。
     const dynamic = new Set(['Windows 返回 HTTP '])
     const missing: string[] = []
-    for (const name of ['MainActivity.java', 'NativeRequests.java']) {
+    for (const name of ['MainActivity.java', 'NativeRequests.java', 'AppUpdates.java']) {
       const source = readFileSync(resolve(root, 'mobile/android', name), 'utf8')
-      for (const match of source.matchAll(/(?:(?:failure|Exception|cancel)\(|\?\s*)"([^"]+)"/g)) {
+      for (const match of source.matchAll(/(?:(?:failure|Exception|cancel)\(|notifyUpdate\("\w+", |put\("message", |\?\s*)"([^"]+)"/g)) {
         if (han.test(match[1]) && !(match[1] in EN) && !dynamic.has(match[1])) missing.push(`${name}: ${match[1]}`)
       }
     }

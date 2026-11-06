@@ -49,6 +49,24 @@
     clipboard: '',
     openedLinks: [],
     latency: 32.4,
+    // 在线更新：模拟已安装版本、发布列表、下载进度与系统安装器。
+    update: {
+      // ?appVersion=0.1.15&appCode=115999 可模拟其他已安装版本。
+      version: new URLSearchParams(location.search).has('appVersion')
+        ? { name: new URLSearchParams(location.search).get('appVersion'), code: Number(new URLSearchParams(location.search).get('appCode')) }
+        : { name: '0.1.15-beta.3', code: 115303 },
+      canInstall: false,
+      list: { source: 'github', page: 'https://github.com/Fracizz/QingCode/releases', releases: [] },
+      checks: 0,
+      checkError: null,
+      downloads: [],
+      cancels: 0,
+      installs: 0,
+      downloadError: null,
+      steps: 4,
+      stepDelay: 80,
+      cancelled: false,
+    },
     latencySupported: true,
     latencyRequests: [],
     latencyError: null,
@@ -215,6 +233,34 @@
     switch (request.op) {
       case 'profiles': return { ok: true, data: [...state.profiles.values()].map(summary) }
       case 'clipboard': return { ok: true, data: state.clipboard }
+      case 'app_version': return { ok: true, data: { ...state.update.version, canInstall: state.update.canInstall, downloading: false, ready: false } }
+      case 'update_releases':
+        state.update.checks += 1
+        if (state.update.checkError) return { ok: false, error: state.update.checkError }
+        return { ok: true, data: state.update.list }
+      case 'update_download': {
+        const update = state.update
+        update.downloads.push({ url: request.url, size: request.size })
+        update.cancelled = false
+        const total = request.size > 0 ? request.size : 2_500_000
+        ;(async () => {
+          for (let step = 1; step <= update.steps; step += 1) {
+            await new Promise(resolve => setTimeout(resolve, update.stepDelay))
+            if (update.cancelled) { window.qingUpdate?.({ state: 'cancelled' }); return }
+            window.qingUpdate?.({ state: 'progress', received: Math.round(total * step / update.steps), total })
+          }
+          if (update.downloadError) window.qingUpdate?.({ state: 'error', message: update.downloadError })
+          else window.qingUpdate?.({ state: 'ready' })
+        })()
+        return { ok: true, data: true }
+      }
+      case 'update_cancel': state.update.cancels += 1; state.update.cancelled = true; return { ok: true, data: true }
+      case 'update_install':
+        state.update.installs += 1
+        // 首次模拟未授权「安装未知应用」：打开系统设置后视为已授权。
+        if (!state.update.canInstall) { state.update.canInstall = true; return { ok: true, data: { permission: true } } }
+        setTimeout(() => window.qingUpdate?.({ state: 'confirm' }), 30)
+        return { ok: true, data: { started: true } }
       case 'latency': {
         const value = state.latency
         const supported = state.latencySupported

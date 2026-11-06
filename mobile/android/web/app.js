@@ -41,6 +41,7 @@ import { createShortcutBar } from './shortcutBar.js';
 import { attachCursorDrag } from './cursorDrag.js';
 import { attachPinchZoom } from './pinchZoom.js';
 import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
+import { createUpdateView } from './updateView.js';
 import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, translateDocument } from './i18n.js';
 
 const native = window.QingCodeNative;
@@ -226,6 +227,9 @@ const drawer = createSessionDrawer({
 });
 
 createShortcutBar({ prefix, onChange: () => updateComposerActions() });
+// 在线更新：版本信息、后台检查与安装包下载（原生层经 window.qingUpdate 回传进度）。
+const updates = createUpdateView({ rpc });
+window.qingUpdate = event => updates.receive(event);
 
 window.qingVisibility = visible => {
   foreground = visible === true;
@@ -279,7 +283,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -1580,6 +1584,8 @@ for (const sheet of document.querySelectorAll('dialog.sheet')) {
 }
 
 async function initialize() {
+  // 更新检查独立进行，不阻塞连接与终端恢复。
+  void updates.start();
   try {
     profiles = await rpc('profiles');
     const savedAddress = localStorage.getItem(prefix + 'active');
