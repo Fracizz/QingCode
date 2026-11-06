@@ -1,8 +1,13 @@
 // 终端右侧的触摸滚动条：加粗、可直接拖动，长输出一下拖到顶。
 // 滚动来源（xterm 本地记录或只读历史面板）由调用方通过 metrics / scrollTo 提供。
+// 按住滑块不动约半秒触发 onLongPress（进入鼠标模式）；鼠标模式下 setPinned(true) 让滑块常驻。
+import { createLongPress } from './mouseMode.js';
 
 /** 滑块尺寸与位置（像素）：total / visible / offset 为同一单位的内容长度。 */
-export function thumbGeometry({ total, visible, offset }, track, minSize = 48) {
+/** 滑块最短高度：手指容易按住。 */
+export const MIN_THUMB = 64;
+
+export function thumbGeometry({ total, visible, offset }, track, minSize = MIN_THUMB) {
   if (!(total > visible) || !(track > 0)) return null;
   const size = Math.min(track, Math.max(minSize, track * visible / total));
   const range = total - visible;
@@ -17,7 +22,7 @@ export function offsetForThumb({ total, visible }, track, size, top) {
   return Math.min(1, Math.max(0, top / free)) * (total - visible);
 }
 
-export function attachTerminalScrollbar(host, { metrics, scrollTo, idleMs = 1500 } = {}) {
+export function attachTerminalScrollbar(host, { metrics, scrollTo, onLongPress, idleMs = 1500 } = {}) {
   const doc = host.ownerDocument;
   const view = doc.defaultView;
   const bar = doc.createElement('div');
@@ -31,6 +36,14 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, idleMs = 1500
   let drag = null;
   let hideTimer = null;
   let current = null;
+  let pinned = false;
+  const longPress = createLongPress(view, () => {
+    // 长按不是拖动：放开抓取，交给调用方切换鼠标模式。
+    drag = null;
+    bar.classList.remove('dragging');
+    onLongPress?.();
+    update();
+  });
 
   function layout() {
     current = metrics();
@@ -49,7 +62,7 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, idleMs = 1500
     if (!geometry) return;
     bar.hidden = false;
     const atEnd = current.offset >= current.total - current.visible - 1;
-    if (atEnd && !drag) hideTimer = view.setTimeout(() => { if (!drag) bar.hidden = true; }, idleMs);
+    if (atEnd && !drag && !pinned) hideTimer = view.setTimeout(() => { if (!drag && !pinned) bar.hidden = true; }, idleMs);
   }
 
   function moveTo(clientY) {
@@ -70,15 +83,22 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, idleMs = 1500
     // 按住滑块保持抓取点；点在轨道上则滑块中心跳到手指处。
     drag = { id: event.pointerId, grab: inside ? event.clientY - rect.top : rect.height / 2 };
     bar.classList.add('dragging');
-    bar.setPointerCapture?.(event.pointerId);
+    try {
+      bar.setPointerCapture?.(event.pointerId);
+    } catch {
+      // 合成事件或指针已抬起时无法捕获。
+    }
+    if (onLongPress && inside) longPress.down(event);
     if (!inside) moveTo(event.clientY);
   }
   function move(event) {
     if (!drag || event.pointerId !== drag.id) return;
     event.preventDefault();
+    longPress.move(event);
     moveTo(event.clientY);
   }
   function up(event) {
+    longPress.cancel();
     if (!drag || event.pointerId !== drag.id) return;
     drag = null;
     bar.classList.remove('dragging');
@@ -95,8 +115,14 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, idleMs = 1500
   bar.addEventListener('touchmove', stop, { passive: true });
   return {
     update,
-    hide() { view.clearTimeout(hideTimer); drag = null; bar.classList.remove('dragging'); bar.hidden = true; },
+    hide() { view.clearTimeout(hideTimer); longPress.cancel(); drag = null; bar.classList.remove('dragging'); bar.hidden = true; },
+    /** 鼠标模式：常驻显示并换成强调色。 */
+    setPinned(value) {
+      pinned = !!value;
+      bar.classList.toggle('pinned', pinned);
+      update();
+    },
     dragging: () => !!drag,
-    dispose() { view.clearTimeout(hideTimer); bar.remove(); },
+    dispose() { view.clearTimeout(hideTimer); longPress.cancel(); bar.remove(); },
   };
 }

@@ -27,6 +27,8 @@ export type ScmToolbarProps = {
   loading: boolean
   operationKind: ScmOperationKind | null
   disabled: boolean
+  /** 最近一次后台自动检查更新的失败原因；为空表示无失败或已恢复。 */
+  fetchError?: string | null
   branchMenuOpen: boolean
   remotesMenuOpen: boolean
   branchAnchorRef: RefObject<HTMLButtonElement | null>
@@ -43,8 +45,12 @@ export type ScmToolbarProps = {
   onOpenRemotesMenu: () => void
 }
 
-function TimeTag({ label }: { label: string }) {
-  return <span className="shrink-0 text-ui-2xs text-fg-dim">{label}</span>
+function TimeTag({ label, tone = 'dim' }: { label: string; tone?: 'dim' | 'warning' }) {
+  return (
+    <span className={`shrink-0 text-ui-2xs ${tone === 'warning' ? 'text-warn' : 'text-fg-dim'}`}>
+      {label}
+    </span>
+  )
 }
 
 function segmentGroup(active = false) {
@@ -78,6 +84,7 @@ export default function ScmToolbar({
   loading,
   operationKind,
   disabled,
+  fetchError = null,
   branchMenuOpen,
   remotesMenuOpen,
   branchAnchorRef,
@@ -163,7 +170,15 @@ export default function ScmToolbar({
       </Tooltip>
 
       <SegmentGroup>
-        <Tooltip label={t('从远程获取最新引用（git fetch）')} side="bottom" wrapperClassName="h-full">
+        <Tooltip
+          label={
+            fetchError
+              ? t('自动检查更新失败：{error}', { error: fetchError })
+              : t('从远程获取最新引用（git fetch）')
+          }
+          side="bottom"
+          wrapperClassName="h-full"
+        >
           <button
             type="button"
             aria-label={t('检查更新')}
@@ -177,7 +192,11 @@ export default function ScmToolbar({
               <RefreshCw size={12} className="text-fg-muted" />
             )}
             <span className="whitespace-nowrap">{t('检查更新')}</span>
-            <TimeTag label={fetchTime} />
+            {fetchError ? (
+              <TimeTag label={t('失败')} tone="warning" />
+            ) : (
+              <TimeTag label={fetchTime} />
+            )}
           </button>
         </Tooltip>
       </SegmentGroup>

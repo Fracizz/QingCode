@@ -412,6 +412,13 @@ export const EN = Object.freeze({
   '复制链接': 'Copy link',
   '在浏览器打开': 'Open in browser',
 
+  // —— 鼠标模式 ——
+  '鼠标': 'Mouse',
+  '鼠标模式': 'Mouse mode',
+  '退出鼠标模式': 'Exit mouse mode',
+  '鼠标模式：拖右侧滑块滚动，点终端选中；点「鼠标」退出': 'Mouse mode: drag the right slider to scroll, tap the terminal to select; tap "Mouse" to exit',
+  '已退出鼠标模式': 'Mouse mode off',
+
   // —— 在线更新 ——
   '应用更新': 'App updates',
   '检查更新': 'Check for updates',

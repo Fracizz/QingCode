@@ -1028,6 +1028,16 @@ interface TerminalState {
   spawnRestoredTerminals: (projectId: string) => Promise<void>
   /** After the SSH workspace is ready, surface detached daemon terminals once. */
   syncDetachedTerminals: (projectId: string) => Promise<void>
+  /** 列出 SSH 项目内没有本地标签的远端终端（不弹窗）；非 SSH 项目返回 null。 */
+  findDetachedTerminals: (
+    projectId: string,
+  ) => Promise<{ connectionId: string; terminals: SshDetachedTerminal[] } | null>
+  /** 把指定远端终端接回为本项目标签，受每项目终端上限限制。 */
+  attachDetachedTerminals: (
+    projectId: string,
+    connectionId: string,
+    terminals: SshDetachedTerminal[],
+  ) => Promise<void>
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
@@ -1714,6 +1724,125 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
+  findDetachedTerminals: async (projectId: string) => {
+    const projectState = useProjectStore.getState()
+    const project =
+      projectState.projects.find(candidate => candidate.id === projectId) ??
+      (projectState.currentProject?.id === projectId ? projectState.currentProject : null)
+    if (!project || !isSshProject(project)) return null
+    const connectionId =
+      project.connection_id ?? sshConnectionIdFromUri(project.path)
+    if (!connectionId) return null
+    const detached = await listDetachedTerminals(connectionId)
+    // 同一连接下其他 SSH 项目的根：终端归给最深的包含根，不跨项目接回或结束。
+    const connectionRoots = useProjectStore
+      .getState()
+      .projects.filter(
+        candidate =>
+          candidate.id !== project.id &&
+          isSshProject(candidate) &&
+          (candidate.connection_id ?? sshConnectionIdFromUri(candidate.path)) === connectionId
+      )
+      .map(candidate => candidate.path)
+    const terminals = filterUnownedDetachedTerminals(
+      detached,
+      get().terminals,
+      connectionId,
+      project.path,
+      connectionRoots,
+    )
+    return { connectionId, terminals }
+  },
+
+  attachDetachedTerminals: async (
+    projectId: string,
+    connectionId: string,
+    terminals: SshDetachedTerminal[],
+  ) => {
+    if (terminalExitInProgress || terminals.length === 0) return
+    const capacity = Math.max(
+      0,
+      MAX_TERMINALS_PER_PROJECT - get().terminals.filter(t => t.projectId === projectId).length,
+    )
+    const accepted = terminals.slice(0, capacity)
+    if (accepted.length === 0) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'info',
+          translate('每个项目最多可创建 {count} 个终端', {
+            count: MAX_TERMINALS_PER_PROJECT,
+          }),
+        )
+      return
+    }
+
+    const pane = get().terminalFocusPane
+    const added: TerminalTab[] = []
+    for (const terminal of accepted) {
+      const id = crypto.randomUUID()
+      const name = disambiguateTerminalName(
+        terminal.name || translate('远端终端'),
+        get().terminals.map(tab => tab.name),
+      )
+      const tab: TerminalTab = {
+        id,
+        name,
+        projectId,
+        cwd: terminal.cwd,
+        launchCommand: '',
+        pane,
+        status: 'starting',
+        exitCode: null,
+        startedAt: Date.now(),
+        persistent: true,
+        ptyId: terminal.ptyId,
+        connectionId,
+        awaitingRestoreSpawn: true,
+        ptySpawnPending: true,
+      }
+      set(state => ({
+        terminals: [...state.terminals, tab],
+        ...bindTerminalToPane(state, projectId, pane, id),
+      }))
+      added.push(tab)
+    }
+    useUIStore.getState().openTerminalPanel()
+    await Promise.all(
+      added.map(tab => {
+        const terminal = accepted.find(candidate => candidate.ptyId === tab.ptyId)
+        return get().spawnPendingTerminal(
+          tab.id,
+          terminal?.cols ?? DEFAULT_PTY_COLS,
+          terminal?.rows ?? DEFAULT_PTY_ROWS,
+        )
+      }),
+    )
+    const recovered = added.filter(tab =>
+      get().terminals.some(
+        terminal => terminal.id === tab.id && terminal.status === 'running',
+      ),
+    ).length
+    if (recovered > 0) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'success',
+          translate('已接回 {count} 个远端终端', { count: recovered }),
+        )
+    }
+    if (accepted.length < terminals.length) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'info',
+          translate('受终端数量上限限制，还有 {count} 个远端终端未接回', {
+            count: terminals.length - accepted.length,
+          }),
+        )
+    }
+  },
+
   syncDetachedTerminals: async (projectId: string) => {
     if (terminalExitInProgress) return
     const projectState = useProjectStore.getState()
@@ -1729,32 +1858,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (detachedTerminalSyncs.has(syncKey)) return
     detachedTerminalSyncs.add(syncKey)
 
-    let detached: SshDetachedTerminal[]
+    let found: Awaited<ReturnType<TerminalState['findDetachedTerminals']>>
     try {
-      detached = await listDetachedTerminals(connectionId)
+      found = await get().findDetachedTerminals(projectId)
     } catch (error) {
       detachedTerminalSyncs.delete(syncKey)
       console.warn('ssh_list_detached_terminals failed:', error)
       return
     }
-
-    // 同一连接下其他 SSH 项目的根：终端归给最深的包含根，不跨项目接回或结束。
-    const connectionRoots = useProjectStore
-      .getState()
-      .projects.filter(
-        candidate =>
-          candidate.id !== project.id &&
-          isSshProject(candidate) &&
-          (candidate.connection_id ?? sshConnectionIdFromUri(candidate.path)) === connectionId
-      )
-      .map(candidate => candidate.path)
-    const orphans = filterUnownedDetachedTerminals(
-      detached,
-      get().terminals,
-      connectionId,
-      project.path,
-      connectionRoots,
-    )
+    const orphans = found?.terminals ?? []
     if (orphans.length === 0) return
 
     const openOrphanActions = async () => {
@@ -1810,87 +1922,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return
       }
 
-      const capacity = Math.max(
-        0,
-        MAX_TERMINALS_PER_PROJECT - get().terminals.filter(t => t.projectId === projectId).length,
-      )
-      const accepted = orphans.slice(0, capacity)
-      if (accepted.length === 0) {
-        useProjectStore
-          .getState()
-          .pushToast(
-            'info',
-            translate('每个项目最多可创建 {count} 个终端', {
-              count: MAX_TERMINALS_PER_PROJECT,
-            }),
-          )
-        return
-      }
-
-      const pane = get().terminalFocusPane
-      const added: TerminalTab[] = []
-      for (const terminal of accepted) {
-        const id = crypto.randomUUID()
-        const name = disambiguateTerminalName(
-          terminal.name || translate('远端终端'),
-          get().terminals.map(tab => tab.name),
-        )
-        const tab: TerminalTab = {
-          id,
-          name,
-          projectId,
-          cwd: terminal.cwd,
-          launchCommand: '',
-          pane,
-          status: 'starting',
-          exitCode: null,
-          startedAt: Date.now(),
-          persistent: true,
-          ptyId: terminal.ptyId,
-          connectionId,
-          awaitingRestoreSpawn: true,
-          ptySpawnPending: true,
-        }
-        set(state => ({
-          terminals: [...state.terminals, tab],
-          ...bindTerminalToPane(state, projectId, pane, id),
-        }))
-        added.push(tab)
-      }
-      useUIStore.getState().openTerminalPanel()
-      await Promise.all(
-        added.map(tab => {
-          const terminal = accepted.find(candidate => candidate.ptyId === tab.ptyId)
-          return get().spawnPendingTerminal(
-            tab.id,
-            terminal?.cols ?? DEFAULT_PTY_COLS,
-            terminal?.rows ?? DEFAULT_PTY_ROWS,
-          )
-        }),
-      )
-      const recovered = added.filter(tab =>
-        get().terminals.some(
-          terminal => terminal.id === tab.id && terminal.status === 'running',
-        ),
-      ).length
-      if (recovered > 0) {
-        useProjectStore
-          .getState()
-          .pushToast(
-            'success',
-            translate('已接回 {count} 个远端终端', { count: recovered }),
-          )
-      }
-      if (accepted.length < orphans.length) {
-        useProjectStore
-          .getState()
-          .pushToast(
-            'info',
-            translate('受终端数量上限限制，还有 {count} 个远端终端未接回', {
-              count: orphans.length - accepted.length,
-            }),
-          )
-      }
+      await get().attachDetachedTerminals(projectId, connectionId, orphans)
     }
 
     useProjectStore.getState().pushToast(

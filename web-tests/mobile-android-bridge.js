@@ -233,6 +233,7 @@
     switch (request.op) {
       case 'profiles': return { ok: true, data: [...state.profiles.values()].map(summary) }
       case 'clipboard': return { ok: true, data: state.clipboard }
+      case 'haptic': state.haptics = (state.haptics ?? 0) + 1; return { ok: true, data: true }
       case 'app_version': return { ok: true, data: { ...state.update.version, canInstall: state.update.canInstall, downloading: false, ready: false } }
       case 'update_releases':
         state.update.checks += 1

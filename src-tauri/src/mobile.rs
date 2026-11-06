@@ -43,6 +43,8 @@ const MAX_INPUT: usize = 16 * 1024;
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 /// Upper bound for one poll response body before JSON framing.
 const MAX_POLL_BYTES: usize = 192 * 1024;
+/// 电脑端「终端管理」只读预览附带的最近历史行数。
+const PREVIEW_HISTORY_LINES: usize = 200;
 /// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
 /// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
 const OUTPUT_COALESCE: Duration = Duration::from_millis(24);
@@ -828,6 +830,73 @@ impl Hub {
         }
     }
 
+    fn rename_session(&self, id: &str, name: &str) -> Result<Value, String> {
+        let mut inner = self.inner.lock().unwrap();
+        let session = inner.sessions.get_mut(id).ok_or("终端不存在。")?;
+        if !session.ready {
+            return Err("终端正在启动或关闭。".into());
+        }
+        session.rename(name)?;
+        Ok(session.metadata(id))
+    }
+
+    /// 全部已就绪的手机会话，附项目与创建设备，按项目名、编号排序。
+    fn session_summaries(&self) -> Vec<Value> {
+        let inner = self.inner.lock().unwrap();
+        let mut sessions: Vec<_> = inner
+            .sessions
+            .iter()
+            .filter(|(_, session)| session.ready)
+            .collect();
+        sessions.sort_by(|(_, a), (_, b)| {
+            (a.project.name.as_str(), a.project.id.as_str(), a.number).cmp(&(
+                b.project.name.as_str(),
+                b.project.id.as_str(),
+                b.number,
+            ))
+        });
+        sessions
+            .into_iter()
+            .map(|(id, session)| {
+                let device = inner
+                    .devices
+                    .iter()
+                    .find(|entry| entry.saved.id == session.owner);
+                let mut value = session.metadata(id);
+                if let Value::Object(map) = &mut value {
+                    map.insert(
+                        "project".into(),
+                        json!({
+                            "id": session.project.id, "name": session.project.name,
+                            "path": session.project.path, "kind": session.project.kind,
+                            "host": session.project.host,
+                        }),
+                    );
+                    map.insert(
+                        "deviceName".into(),
+                        json!(device.map(|entry| entry.saved.name.as_str())),
+                    );
+                }
+                value
+            })
+            .collect()
+    }
+
+    fn session_preview(&self, id: &str) -> Result<Value, String> {
+        let inner = self.inner.lock().unwrap();
+        let session = inner
+            .sessions
+            .get(id)
+            .filter(|session| session.ready)
+            .ok_or("终端不存在。")?;
+        let mut preview = session.screen.preview(PREVIEW_HISTORY_LINES);
+        if let Value::Object(map) = &mut preview {
+            map.insert("name".into(), json!(session.name()));
+            map.insert("exit".into(), json!(session.exit));
+        }
+        Ok(preview)
+    }
+
     #[cfg(test)]
     fn holds(&self, id: &str) -> bool {
         self.inner.lock().unwrap().sessions.contains_key(id)
@@ -1512,7 +1581,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             }
             hub.with_session(&id, Session::touch);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
-                crate::remote_ssh::ssh_write_terminal(id, data, app.state()).await?;
+                crate::remote_ssh::ssh_write_terminal_unchecked(id, data, app.state()).await?;
             } else {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1581,7 +1650,13 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             hub.with_session(&id, Session::touch);
             let (cols, rows) = size(cols, rows);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
-                crate::remote_ssh::ssh_resize_terminal(id.clone(), cols, rows, app.state()).await?;
+                crate::remote_ssh::ssh_resize_terminal_unchecked(
+                    id.clone(),
+                    cols,
+                    rows,
+                    app.state(),
+                )
+                .await?;
             } else {
                 app.state::<crate::TerminalManager>()
                     .resize(&id, cols, rows)?;
@@ -1589,40 +1664,77 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             hub.with_session(&id, |session| session.screen.resize(cols, rows));
             Ok(Value::Null)
         }
-        Operation::RenameSession { id, name } => {
-            let mut inner = hub.inner.lock().unwrap();
-            let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
-            if !session.ready {
-                return Err("终端正在启动或关闭。".into());
-            }
-            session.rename(&name)?;
-            Ok(session.metadata(&id))
-        }
+        Operation::RenameSession { id, name } => hub.rename_session(&id, &name),
         Operation::End { id } => {
-            let kind = {
-                let mut inner = hub.inner.lock().unwrap();
-                let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
-                if !session.ready {
-                    return Err("终端正在启动或关闭。".into());
-                }
-                if session.exit.is_some() {
-                    inner.sessions.remove(&id);
-                    return Ok(Value::Null);
-                }
-                session.ready = false;
-                session.project.kind
-            };
-            let result = end(app, id.clone(), kind).await;
-            let mut inner = hub.inner.lock().unwrap();
-            if result.is_ok() {
-                inner.sessions.remove(&id);
-            } else if let Some(session) = inner.sessions.get_mut(&id) {
-                session.ready = true;
-            }
-            result?;
+            end_session(app, id).await?;
             Ok(Value::Null)
         }
     }
+}
+
+/// 结束手机会话；已退出的会话直接移除。手机端与电脑端「终端管理」共用。
+async fn end_session(app: &AppHandle, id: String) -> Result<(), String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let kind = {
+        let mut inner = hub.inner.lock().unwrap();
+        let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
+        if !session.ready {
+            return Err("终端正在启动或关闭。".into());
+        }
+        if session.exit.is_some() {
+            inner.sessions.remove(&id);
+            return Ok(());
+        }
+        session.ready = false;
+        session.project.kind
+    };
+    let result = end(app, id.clone(), kind).await;
+    let mut inner = hub.inner.lock().unwrap();
+    if result.is_ok() {
+        inner.sessions.remove(&id);
+    } else if let Some(session) = inner.sessions.get_mut(&id) {
+        session.ready = true;
+    }
+    result
+}
+
+/// 手机终端只归手机使用：电脑端的新建、输入、改尺寸、结束与接回入口一律拒绝 `mobile-*` id。
+/// 电脑端只能通过「终端管理」只读查看、重命名或结束手机会话。
+pub(crate) fn reject_desktop_use(id: &str) -> Result<(), String> {
+    if is_mobile_terminal(id) {
+        Err("手机终端只能在手机上操作；电脑端可在「终端管理」中查看、重命名或结束。".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// 电脑端「终端管理」列出全部手机会话（跨项目），只含元数据，不含输出。
+#[tauri::command]
+pub fn mobile_sessions(state: State<'_, MobileState>) -> Vec<Value> {
+    state.hub.session_summaries()
+}
+
+/// 电脑端只读预览：最近历史与当前画面的纯文本，不改尺寸、不输入。
+#[tauri::command]
+pub fn mobile_session_preview(id: String, state: State<'_, MobileState>) -> Result<Value, String> {
+    state.hub.session_preview(&id)
+}
+
+#[tauri::command]
+pub fn mobile_rename_session(
+    id: String,
+    name: String,
+    state: State<'_, MobileState>,
+) -> Result<Value, String> {
+    state.hub.rename_session(&id, &name)
+}
+
+#[tauri::command]
+pub async fn mobile_end_session(id: String, app: AppHandle) -> Result<(), String> {
+    if !is_mobile_terminal(&id) {
+        return Err("终端不存在。".into());
+    }
+    end_session(&app, id).await
 }
 
 fn require_device(inner: &HubState, device: &str) -> Result<(), String> {
@@ -1751,7 +1863,7 @@ async fn create(
         if let Some(command) = command {
             // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
             // 远端 Windows 按配置的 shell 执行；daemon 名称沿用 `mobile-` id。
-            crate::remote_ssh::ssh_spawn_script(
+            crate::remote_ssh::ssh_spawn_script_unchecked(
                 id.clone(),
                 project.path,
                 "interactive".into(),
@@ -1767,7 +1879,7 @@ async fn create(
             )
             .await
         } else {
-            crate::remote_ssh::ssh_create_terminal(
+            crate::remote_ssh::ssh_create_terminal_unchecked(
                 id.clone(),
                 project.path,
                 Some(cols),
@@ -1829,7 +1941,7 @@ async fn create(
 
 async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), String> {
     if kind == ProjectKind::Ssh {
-        crate::remote_ssh::ssh_kill_terminal(id, None, None, app.state()).await
+        crate::remote_ssh::ssh_kill_terminal_unchecked(id, None, None, app.state()).await
     } else {
         let app = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -2148,6 +2260,64 @@ mod tests {
         assert_eq!(ended, vec![("mobile-a".to_string(), ProjectKind::Local)]);
         assert!(hub.authenticate(Some(&tokens[0])).is_err());
         assert!(hub.holds("mobile-b"));
+    }
+
+    #[test]
+    fn desktop_entry_points_reject_mobile_terminals() {
+        assert!(reject_desktop_use("mobile-abc").is_err());
+        assert!(reject_desktop_use("term-1").is_ok());
+    }
+
+    #[test]
+    fn desktop_summaries_list_every_project_with_device_and_skip_unready() {
+        let hub = accepting_hub(Vec::new());
+        let token = hub.pair(PEER, CODE, Some("Pixel"), |_| Ok(())).unwrap();
+        let owner = hub.authenticate(Some(&token)).unwrap();
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            let mut other = project();
+            other.id = "q".into();
+            other.name = "a-first".into();
+            for (id, project, ready) in [
+                ("mobile-b", project(), true),
+                ("mobile-a", other, true),
+                ("mobile-starting", project(), false),
+            ] {
+                let mut session = Session::new(project, owner.clone(), 1);
+                session.ready = ready;
+                inner.sessions.insert(id.into(), session);
+            }
+        }
+        let list = hub.session_summaries();
+        let ids: Vec<_> = list
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["mobile-a", "mobile-b"]);
+        assert_eq!(list[0]["project"]["id"], "q");
+        assert_eq!(list[0]["deviceName"], "Pixel");
+        assert!(hub.session_preview("mobile-starting").is_err());
+    }
+
+    #[test]
+    fn desktop_preview_is_plain_text_of_history_and_screen() {
+        let hub = accepting_hub(Vec::new());
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            let mut session = Session::new(project(), "owner".into(), 1);
+            session.ready = true;
+            session.screen.resize(20, 2);
+            session
+                .screen
+                .process(b"\x1b[31mone\x1b[0m\r\ntwo\r\nthree");
+            inner.sessions.insert("mobile-a".into(), session);
+        }
+        let preview = hub.session_preview("mobile-a").unwrap();
+        assert_eq!(preview["history"], json!(["one"]));
+        assert_eq!(preview["screen"], "two\nthree");
+        assert_eq!(preview["alternate"], false);
+        assert!(hub.rename_session("mobile-a", "构建").is_ok());
+        assert_eq!(hub.session_preview("mobile-a").unwrap()["name"], "构建");
     }
 
     #[test]

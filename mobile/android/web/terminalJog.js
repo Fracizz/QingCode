@@ -2,6 +2,7 @@
 // 程序内部的滚动位置手机端无从得知，所以滑块不表示位置，只表示速度：
 // 按住往上 / 往下拖，离中心越远滚得越快；松手弹回中间并停止。上下箭头各翻一页。
 import { t } from './i18n.js';
+import { createLongPress } from './mouseMode.js';
 
 /** 中心附近不滚动的比例，避免按下时手抖就开始滚。 */
 export const JOG_DEADZONE = .1;
@@ -30,7 +31,7 @@ export function jogTicks(state, ratio, elapsedMs) {
   return ticks;
 }
 
-export function attachTerminalJog(host, { scroll, page, idleMs = 2500 } = {}) {
+export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 2500 } = {}) {
   const doc = host.ownerDocument;
   const view = doc.defaultView;
   const root = doc.createElement('div');
@@ -61,10 +62,16 @@ export function attachTerminalJog(host, { scroll, page, idleMs = 2500 } = {}) {
   let pump = null;
   let hideTimer = null;
   const state = { remainder: 0 };
+  let pinned = false;
+  // 按住滑块不动约半秒：不滚动，交给调用方切换鼠标模式。
+  const longPress = createLongPress(view, () => {
+    release();
+    onLongPress?.();
+  });
 
   function scheduleHide() {
     view.clearTimeout(hideTimer);
-    hideTimer = drag ? null : view.setTimeout(() => { if (!drag) root.hidden = true; }, idleMs);
+    hideTimer = drag || pinned ? null : view.setTimeout(() => { if (!drag && !pinned) root.hidden = true; }, idleMs);
   }
 
   /** 显示一段时间后自动隐藏；只有程序开了鼠标上报时才显示。 */
@@ -104,16 +111,19 @@ export function attachTerminalJog(host, { scroll, page, idleMs = 2500 } = {}) {
       // 合成事件或指针已抬起时无法捕获，拖动仍按 pointermove 处理。
     }
     view.clearTimeout(hideTimer);
+    if (onLongPress) longPress.down(event);
     if (pump === null) pump = view.setTimeout(tick, JOG_INTERVAL_MS);
   }
   function move(event) {
     if (!drag || event.pointerId !== drag.id) return;
     event.preventDefault();
+    longPress.move(event);
     const offset = Math.max(-drag.travel, Math.min(drag.travel, event.clientY - drag.y));
     drag.ratio = offset / drag.travel;
     setKnob(offset);
   }
   function release(event) {
+    if (event) longPress.cancel();
     if (!drag || (event && event.pointerId !== drag.id)) return;
     drag = null;
     view.clearTimeout(pump);
@@ -150,8 +160,16 @@ export function attachTerminalJog(host, { scroll, page, idleMs = 2500 } = {}) {
       else { release(); view.clearTimeout(hideTimer); root.hidden = true; }
     },
     reveal,
+    /** 鼠标模式：程序开着鼠标上报时常驻显示。 */
+    setPinned(value) {
+      pinned = !!value;
+      root.classList.toggle('pinned', pinned);
+      if (pinned) reveal();
+      else scheduleHide();
+    },
     dragging: () => !!drag,
     dispose() {
+      longPress.cancel();
       release();
       view.clearTimeout(hideTimer);
       root.remove();

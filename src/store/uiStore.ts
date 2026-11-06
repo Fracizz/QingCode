@@ -61,6 +61,8 @@ interface UIState {
   workspaceManagerOpen: boolean
   /** Whether the SSH remote connections manager modal is open. */
   remoteConnectionsOpen: boolean
+  /** 「终端管理」弹窗：跨项目列出电脑、手机与远端未接回的终端。 */
+  terminalManagerOpen: boolean
   /** 远程连接管理页从「创建项目 → 添加远程主机」打开：直接进入新建表单，保存后自动关闭。 */
   remoteConnectionsCreating: boolean
   /** Whether the unified create-project dialog is open. */
@@ -105,6 +107,8 @@ interface UIState {
   openRemoteConnections: () => void
   openRemoteConnectionsForCreate: () => void
   closeRemoteConnections: () => void
+  openTerminalManager: () => void
+  closeTerminalManager: () => void
   openCreateProject: () => void
   closeCreateProject: () => void
 }
@@ -201,6 +205,7 @@ export const useUIStore = create<UIState>((set) => ({
   projectManagerOpen: false,
   workspaceManagerOpen: false,
   remoteConnectionsOpen: false,
+  terminalManagerOpen: false,
   serverUpdateRootUri: null,
   remoteConnectionsCreating: false,
   createProjectOpen: false,
@@ -368,6 +373,8 @@ export const useUIStore = create<UIState>((set) => ({
   openRemoteConnectionsForCreate: () =>
     set({ remoteConnectionsOpen: true, remoteConnectionsCreating: true }),
   closeRemoteConnections: () => set({ remoteConnectionsOpen: false, remoteConnectionsCreating: false }),
+  openTerminalManager: () => set({ terminalManagerOpen: true }),
+  closeTerminalManager: () => set({ terminalManagerOpen: false }),
   openCreateProject: () => set({ createProjectOpen: true }),
   closeCreateProject: () => set({ createProjectOpen: false }),
 }))

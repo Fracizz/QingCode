@@ -70,8 +70,10 @@ import {
 import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
 import {
   clearFetchAuthFailed,
+  markAutoFetchAttempt,
   markFetchAuthFailed,
   markLocalGitSyncTime,
+  readAutoFetchAttemptAt,
   readFetchAuthFailed,
   resolveGitSyncTimestamp,
 } from '@/lib/git/syncTimes'
@@ -232,6 +234,13 @@ function ScmOperationAlert({
 type GitOperation = {
   kind: 'stage' | 'unstage' | 'discard' | 'commit' | 'push' | 'fetch' | 'pull' | 'switch'
   key: string
+}
+
+/** 会改写远程引用或切换 HEAD 的操作，不能与后台 fetch 并发。 */
+function isRemoteGitOperation(
+  kind: GitOperation['kind']
+): kind is 'fetch' | 'pull' | 'push' | 'switch' {
+  return kind === 'fetch' || kind === 'pull' || kind === 'push' || kind === 'switch'
 }
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
@@ -732,6 +741,13 @@ export default function SourceControlPanel() {
   const commitFilesSequenceRef = useRef(0)
   const commitFileDiffSequenceRef = useRef(0)
   const [operation, setOperation] = useState<GitOperation | null>(null)
+  // 后台自动检查更新单独记录：git fetch 只动远程引用，不碰暂存区，
+  // 因此不占用 operation / loading，暂存、取消暂存与提交在此期间照常可用。
+  const backgroundFetchPathRef = useRef<string | null>(null)
+  const [backgroundFetchPath, setBackgroundFetchPath] = useState<string | null>(null)
+  const [autoFetchError, setAutoFetchError] = useState<{ path: string; message: string } | null>(
+    null
+  )
   const [contextMenu, setContextMenu] = useState<ScmContextMenu | null>(null)
   const setView = useUIStore(s => s.setView)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
@@ -871,9 +887,11 @@ export default function SourceControlPanel() {
   }, [loadMoreCommits])
 
   const refresh = useCallback(
-    async (opts?: { soft?: boolean; reuseInFlight?: boolean }) => {
+    async (opts?: { soft?: boolean; reuseInFlight?: boolean; quiet?: boolean }) => {
       const sequence = ++refreshSequenceRef.current
       const soft = opts?.soft ?? false
+      // quiet：后台全量刷新，不进入 loading，也不清空用户当前的选择与内联 diff。
+      const quiet = !soft && (opts?.quiet ?? false)
       const project = useProjectStore.getState().currentProject
       if (!project) {
         loadingRefreshSequenceRef.current = null
@@ -904,11 +922,11 @@ export default function SourceControlPanel() {
       const isCurrentRequest = () =>
         refreshSequenceRef.current === sequence &&
         useProjectStore.getState().currentProject?.path === path
-      if (!soft) {
+      if (!soft && !quiet) {
         loadingRefreshSequenceRef.current = sequence
         setLoading(true)
         setOperationError(null)
-      } else if (loadingRefreshSequenceRef.current !== null) {
+      } else if (soft && loadingRefreshSequenceRef.current !== null) {
         loadingRefreshSequenceRef.current = null
         setLoading(false)
       }
@@ -933,10 +951,12 @@ export default function SourceControlPanel() {
         if (isCurrentRequest()) {
           setStatus(next)
           setError(null)
-          setSelectedKeys(new Set())
-          setInlineDiff(null)
-          setInlineDiffLoading(false)
-          setInlineDiffError(null)
+          if (!quiet) {
+            setSelectedKeys(new Set())
+            setInlineDiff(null)
+            setInlineDiffLoading(false)
+            setInlineDiffError(null)
+          }
         }
         // History uses commitsSequenceRef — still load even if a soft refresh
         // advanced refreshSequenceRef while git_status was in flight.
@@ -1173,7 +1193,7 @@ export default function SourceControlPanel() {
   const switchToBranch = useCallback(
     async (branch: string) => {
       const project = useProjectStore.getState().currentProject
-      if (!project || operation || loading) return
+      if (!project || operation || loading || backgroundFetchPathRef.current === project.path) return
       setBranchMenuOpen(false)
       setOperation({ kind: 'switch', key: `switch:${branch}` })
       setOperationError(null)
@@ -1621,7 +1641,7 @@ export default function SourceControlPanel() {
   const pullCurrent = useCallback(
     async (rebase = false) => {
       const project = useProjectStore.getState().currentProject
-      if (!project || operation || loading) return
+      if (!project || operation || loading || backgroundFetchPathRef.current === project.path) return
       setPullMenuOpen(false)
       setOperation({ kind: 'pull', key: rebase ? 'pull:rebase' : 'pull' })
       setOperationError(null)
@@ -1657,29 +1677,52 @@ export default function SourceControlPanel() {
   const fetchRemote = useCallback(
     async (opts?: { silent?: boolean; reason?: ScmAutoFetchReason }) => {
       const project = useProjectStore.getState().currentProject
-      if (!project || operation || loading) return false
+      if (!project) return false
+      const path = project.path
       const silent = opts?.silent ?? false
+      // 同一项目的后台 fetch 仍在进行：手动与自动都不再叠加。
+      if (backgroundFetchPathRef.current === path) return false
+      if (silent) {
+        // 后台 fetch 不与拉取 / 推送 / 切换分支等远程操作并发；暂存、提交与刷新不受影响。
+        if (operation && isRemoteGitOperation(operation.kind)) return false
+      } else if (operation || loading) {
+        return false
+      }
       const reason = opts?.reason ?? 'manual'
       const repoReady = status?.is_repository ?? false
-      const lastFetchAt = resolveGitSyncTimestamp(project.path, 'fetch', status?.last_fetch_at)
+      const lastFetchAt = resolveGitSyncTimestamp(path, 'fetch', status?.last_fetch_at)
       if (
         silent &&
-        !shouldAutoFetch(lastFetchAt, readFetchAuthFailed(project.path), reason, repoReady)
+        !shouldAutoFetch(
+          lastFetchAt,
+          readFetchAuthFailed(path),
+          reason,
+          repoReady,
+          readAutoFetchAttemptAt(path)
+        )
       ) {
         return false
       }
-      setOperation({ kind: 'fetch', key: silent ? 'auto-fetch' : 'fetch' })
-      if (!silent) setOperationError(null)
+      const isCurrentProject = () => useProjectStore.getState().currentProject?.path === path
+      if (silent) {
+        markAutoFetchAttempt(path)
+        backgroundFetchPathRef.current = path
+        setBackgroundFetchPath(path)
+      } else {
+        setOperation({ kind: 'fetch', key: 'fetch' })
+        setOperationError(null)
+      }
+      setAutoFetchError(prev => (prev?.path === path ? null : prev))
       try {
-        await fetchGit(project.path)
-        if (useProjectStore.getState().currentProject?.path === project.path) {
-          await refresh({ soft: false })
-          const branches = await getGitBranches(project.path)
-          if (useProjectStore.getState().currentProject?.path === project.path) {
-            markLocalGitSyncTime(project.path, 'fetch')
-            clearFetchAuthFailed(project.path)
+        await fetchGit(path)
+        if (isCurrentProject()) {
+          await refresh({ soft: false, quiet: silent })
+          const branches = await getGitBranches(path)
+          if (isCurrentProject()) {
+            markLocalGitSyncTime(path, 'fetch')
+            clearFetchAuthFailed(path)
             setBranchList(branches)
-            void loadRemotes(project.path)
+            void loadRemotes(path)
             if (!silent) {
               useProjectStore.getState().pushToast('success', t('已检查更新'))
             }
@@ -1687,17 +1730,27 @@ export default function SourceControlPanel() {
         }
         return true
       } catch (reason) {
-        if (useProjectStore.getState().currentProject?.path === project.path) {
-          const message = String(reason)
-          if (isScmFetchAuthError(message)) markFetchAuthFailed(project.path)
-          if (!silent) {
+        const message = String(reason)
+        if (isScmFetchAuthError(message)) markFetchAuthFailed(path)
+        if (isCurrentProject()) {
+          if (silent) {
+            // 自动检查更新失败不弹 toast，只在工具栏轻提示，鼠标悬停可看原因。
+            setAutoFetchError({ path, message })
+          } else {
             setOperationError(message)
             useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
           }
         }
         return false
       } finally {
-        setOperation(null)
+        if (silent) {
+          if (backgroundFetchPathRef.current === path) {
+            backgroundFetchPathRef.current = null
+            setBackgroundFetchPath(null)
+          }
+        } else {
+          setOperation(null)
+        }
       }
     },
     [loading, operation, refresh, loadRemotes, status?.is_repository, status?.last_fetch_at, t],
@@ -1805,7 +1858,7 @@ export default function SourceControlPanel() {
 
   const retryPush = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
-    if (!project || operation || loading) return
+    if (!project || operation || loading || backgroundFetchPathRef.current === project.path) return
     setOperation({ kind: 'push', key: 'push' })
     setOperationError(null)
     try {
@@ -2138,6 +2191,10 @@ export default function SourceControlPanel() {
       },
     ]
   }
+
+  const backgroundFetching = projectPath !== null && backgroundFetchPath === projectPath
+  const currentAutoFetchError =
+    projectPath !== null && autoFetchError?.path === projectPath ? autoFetchError.message : null
 
   let body: ReactNode
   if (!currentProject) {
@@ -2556,7 +2613,7 @@ export default function SourceControlPanel() {
               <button
                 type="button"
                 onClick={() => void retryPush()}
-                disabled={Boolean(operation) || loading}
+                disabled={Boolean(operation) || loading || backgroundFetching}
                 className="rounded border border-danger/50 px-2 py-1 text-ui-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
                 {t('重试推送')}
@@ -2609,14 +2666,14 @@ export default function SourceControlPanel() {
         remotesLoading={remotesLoading}
         loading={loading}
         operationKind={
-          operation?.kind === 'fetch' ||
-          operation?.kind === 'pull' ||
-          operation?.kind === 'push' ||
-          operation?.kind === 'switch'
+          operation && isRemoteGitOperation(operation.kind)
             ? operation.kind
-            : null
+            : backgroundFetching
+              ? 'fetch'
+              : null
         }
-        disabled={loading || Boolean(operation) || !currentProject}
+        disabled={loading || Boolean(operation) || backgroundFetching || !currentProject}
+        fetchError={backgroundFetching ? null : currentAutoFetchError}
         branchMenuOpen={branchMenuOpen}
         remotesMenuOpen={remotesMenuOpen}
         branchAnchorRef={branchAnchorRef}
@@ -2670,7 +2727,7 @@ export default function SourceControlPanel() {
             style={branchMenuStyle}
             branchList={branchList}
             loading={!branchList}
-            disabled={Boolean(operation)}
+            disabled={Boolean(operation) || backgroundFetching}
             onSwitch={branch => void switchToBranch(branch)}
           />,
           document.body

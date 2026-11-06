@@ -267,6 +267,8 @@ export default function TerminalView({
   } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
+  /** 长文本面板是非模态的：所属终端被切走（标签/项目/布局）时跟着隐藏，切回再出现。 */
+  const [composerHidden, setComposerHidden] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
   const [searchMatchTotal, setSearchMatchTotal] = useState(0)
@@ -496,7 +498,18 @@ export default function TerminalView({
     {
       label: translate('编辑长文本'),
       disabled: !isTerminalWritable(),
-      action: () => setComposerOpen(true),
+      action: () => {
+        setComposerHidden(false)
+        setComposerOpen(true)
+        // 已打开时（非模态，可能被终端抢走焦点）重新聚焦到面板输入框。
+        requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLTextAreaElement>(
+              `[data-terminal-composer="${CSS.escape(terminalId)}"] textarea`
+            )
+            ?.focus()
+        })
+      },
     },
     {
       label: translate('全选'),
@@ -1393,13 +1406,30 @@ export default function TerminalView({
   }, [scheduleFit, terminal, terminalId])
 
   useEffect(() => {
+    if (!composerOpen) return
+    // 终端可能经 portal 挪进隐藏槽位或被 visibility 隐藏，没有统一事件可听，打开期间轻量轮询。
+    const check = () => {
+      const host = containerRef.current
+      const visible =
+        !!host &&
+        host.isConnected &&
+        host.offsetWidth > 0 &&
+        host.offsetHeight > 0 &&
+        (host.checkVisibility?.({ visibilityProperty: true }) ?? true)
+      setComposerHidden(!visible)
+    }
+    check()
+    const timer = window.setInterval(check, 300)
+    return () => window.clearInterval(timer)
+  }, [composerOpen])
+
+  useEffect(() => {
     if (!isTauri()) return
     let unlisten: (() => void) | undefined
     let cancelled = false
     void getCurrentWebview()
       .onDragDropEvent(event => {
         if (event.payload.type !== 'drop' || !isTerminalWritable()) return
-        if (document.querySelector('[data-terminal-composer]')) return
         const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
         if (!tab || (isSshResource(tab.cwd) && !getTerminalSshUploadOnPaste())) return
         const point = logicalDropPoint(event.payload.position, window.devicePixelRatio)
@@ -1507,6 +1537,7 @@ export default function TerminalView({
         <TerminalComposer
           terminalId={terminalId}
           terminalName={terminal.name}
+          hidden={composerHidden}
           onClose={() => {
             setComposerOpen(false)
             if (isActiveRef.current) xtermRef.current?.focus()

@@ -74,6 +74,61 @@ describe('long terminal input', () => {
     expect(callbacks.prepareFiles).toHaveBeenCalledWith([file])
   })
 
+  it('shows the target terminal and attachment hint in one header subtitle', () => {
+    render(<TerminalComposer {...props()} />)
+    const subtitle = document.querySelector('[data-terminal-composer-subtitle]')!
+    expect(subtitle).toHaveTextContent('填入终端：Claude · 支持粘贴图片、文件和拖入附件')
+    expect(screen.getAllByText(/支持粘贴图片/)).toHaveLength(1)
+  })
+
+  it('floats without a backdrop and only closes on Escape while focused inside', () => {
+    const callbacks = props()
+    render(<TerminalComposer {...callbacks} />)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-modal', 'false')
+    expect(document.querySelector('[data-modal-overlay]')).toBeNull()
+    expect(screen.getByRole('textbox')).toHaveFocus()
+    // 焦点在终端时 Escape 属于 Claude/OpenCode，不能关闭面板
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(callbacks.onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' })
+    expect(callbacks.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('drags by the title bar, remembers the position and resets on double click', async () => {
+    localStorage.clear()
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const callbacks = props()
+    const first = render(<TerminalComposer {...callbacks} />)
+    const dialog = screen.getByRole('dialog')
+    const handle = dialog.querySelector('[data-terminal-composer-handle]')!
+    const startLeft = parseFloat(dialog.style.left)
+    const startTop = parseFloat(dialog.style.top)
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 60, clientY: 130 })
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 60, clientY: 130 })
+    await waitFor(() => expect(parseFloat(dialog.style.left)).toBe(startLeft - 40))
+    expect(parseFloat(dialog.style.top)).toBe(startTop + 30)
+    first.unmount()
+    render(<TerminalComposer {...callbacks} />)
+    const reopened = screen.getByRole('dialog')
+    expect(parseFloat(reopened.style.left)).toBe(startLeft - 40)
+    fireEvent.doubleClick(reopened.querySelector('[data-terminal-composer-handle]')!)
+    expect(parseFloat(reopened.style.left)).toBe(startLeft)
+    expect(parseFloat(reopened.style.top)).toBe(startTop)
+    vi.unstubAllGlobals()
+  })
+
+  it('stays mounted with its draft while the target terminal is hidden', () => {
+    const callbacks = props()
+    const view = render(<TerminalComposer {...callbacks} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '对照终端' } })
+    view.rerender(<TerminalComposer {...callbacks} hidden />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    view.rerender(<TerminalComposer {...callbacks} />)
+    expect(screen.getByRole('textbox')).toHaveValue('对照终端')
+  })
+
   it.each([
     'D:/code/django',
     '"D:\\code\\django"',

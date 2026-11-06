@@ -42,6 +42,7 @@ import { attachCursorDrag } from './cursorDrag.js';
 import { attachPinchZoom } from './pinchZoom.js';
 import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
 import { createUpdateView } from './updateView.js';
+import { attachMouseMode } from './mouseMode.js';
 import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, translateDocument } from './i18n.js';
 
 const native = window.QingCodeNative;
@@ -93,6 +94,7 @@ let fit;
 let disposeTouchScroll;
 let terminalScrollbar;
 let terminalJog;
+let terminalMouse;
 /** 软键盘打开时保留的终端行数下，实际可见的行数；0 表示没有保留。 */
 let heldVisibleRows = 0;
 /** 当前窗口宽度下见过的最大高度，用来判断软键盘是否打开。 */
@@ -291,6 +293,7 @@ window.qingBack = () => {
   }
   if (!terminalScreen.hidden) {
     if (terminalSelection?.close()) return true;
+    if (terminalMouse?.isActive()) { terminalMouse.set(false); return true; }
     if (terminalHistory?.close()) return true;
     returnToDashboard();
     return true;
@@ -583,6 +586,8 @@ function showSubmissions() {
 }
 
 get('terminal-menu').addEventListener('click', () => {
+  get('menu-mouse').textContent = terminalMouse?.isActive() ? t('退出鼠标模式') : t('鼠标模式');
+  get('menu-mouse').disabled = !terminalMouse;
   get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
   get('terminal-menu-dialog').showModal();
 });
@@ -590,6 +595,7 @@ for (const [id, action] of Object.entries({
   'menu-edit': openEditor,
   'menu-submissions': showSubmissions,
   'menu-read': () => reader.open(),
+  'menu-mouse': toggleMouseMode,
   'menu-sessions': () => { void drawer.open(); },
   'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'menu-dashboard': () => returnToDashboard('project'),
@@ -730,6 +736,8 @@ function leaveTerminal({ preserveFullscreen = false } = {}) {
   cancelKeyRepeats();
   if (get('keys-dialog').open) get('keys-dialog').close();
   if (!preserveFullscreen) void setTerminalFullscreen(false);
+  terminalMouse?.dispose();
+  terminalMouse = undefined;
   terminalSelection?.dispose();
   terminalSelection = undefined;
   terminalHistory?.dispose();
@@ -838,7 +846,8 @@ function makeTerminal() {
   });
   terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
-    shouldBlock: () => settings.touchMode() === 'view' && term?.modes.mouseTrackingMode !== 'none',
+    // 鼠标模式下点按总是作为鼠标点击发给程序，不受「全屏程序中的触摸」设置限制。
+    shouldBlock: () => settings.touchMode() === 'view' && !terminalMouse?.isActive() && term?.modes.mouseTrackingMode !== 'none',
     // 全屏程序拦截了鼠标事件，xterm 收不到点按；按触点坐标查找链接。
     onTap: event => {
       const url = event && terminalLinks?.linkAt(event.clientX, event.clientY);
@@ -871,11 +880,28 @@ function makeTerminal() {
       if (terminalHistory?.isOpen()) historyScroll.scrollTop = offset;
       else term?.scrollToLine(Math.round(offset));
     },
+    onLongPress: toggleMouseMode,
   });
   terminalJog = attachTerminalJog(get('viewport').parentElement, {
     scroll: ticks => sendProgramWheel(ticks),
     // 一页约等于三分之一屏的格数（程序一格通常滚 1–3 行）。
     page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3))),
+    onLongPress: toggleMouseMode,
+  });
+  terminalMouse = attachMouseMode(get('viewport').parentElement, get('viewport'), {
+    label: t('鼠标'),
+    exitLabel: t('退出鼠标模式'),
+    onChange: active => {
+      terminalScrollbar?.setPinned(active);
+      terminalJog?.setPinned(active);
+      showTerminalToast(active ? t('鼠标模式：拖右侧滑块滚动，点终端选中；点「鼠标」退出') : t('已退出鼠标模式'), active ? 2600 : 1200);
+    },
+    // 开了鼠标上报的程序由 xterm 收到真实点击；普通终端选中手指下的词。
+    onTap: point => {
+      hideFontToast();
+      if (terminalHistory?.isOpen() || programMouse()) return;
+      terminalSelection?.start(point);
+    },
   });
   term.onWriteParsed(() => {
     terminalJog?.setActive(programMouse());
@@ -925,6 +951,13 @@ get('link-copy').addEventListener('click', async () => {
 });
 
 /** 程序是否开着鼠标上报（Codex、opencode 等全屏程序）：此时滑动作为滚轮交给程序。 */
+/** 长按右侧滑块或「… → 鼠标模式」：切换鼠标模式并轻震提示。 */
+function toggleMouseMode() {
+  if (!terminalMouse) return;
+  terminalMouse.toggle();
+  void rpc('haptic').catch(() => {});
+}
+
 function programMouse() {
   return !!term && term.modes.mouseTrackingMode !== 'none';
 }

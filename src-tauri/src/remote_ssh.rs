@@ -6339,8 +6339,7 @@ fn direct_spawn_result_fallback(
     result
 }
 
-#[tauri::command]
-pub async fn ssh_create_terminal(
+pub(crate) async fn ssh_create_terminal_unchecked(
     id: String,
     cwd: String,
     cols: Option<u16>,
@@ -6462,9 +6461,8 @@ pub async fn ssh_run_environment(
     })
 }
 
-#[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn ssh_spawn_script(
+pub(crate) async fn ssh_spawn_script_unchecked(
     id: String,
     cwd: String,
     shell_kind: String,
@@ -6572,8 +6570,7 @@ pub async fn ssh_spawn_script(
     Ok(direct_spawn_result_fallback(result, persistent_reason))
 }
 
-#[tauri::command]
-pub async fn ssh_write_terminal(
+pub(crate) async fn ssh_write_terminal_unchecked(
     id: String,
     data: String,
     manager: State<'_, SshManager>,
@@ -6607,8 +6604,7 @@ pub async fn ssh_write_terminal(
         })
 }
 
-#[tauri::command]
-pub async fn ssh_resize_terminal(
+pub(crate) async fn ssh_resize_terminal_unchecked(
     id: String,
     cols: u16,
     rows: u16,
@@ -6649,8 +6645,7 @@ pub async fn ssh_terminal_diagnostic_log(
     .map_err(|_| "读取远端终端诊断超时，本机日志仍可导出".to_string())?
 }
 
-#[tauri::command]
-pub async fn ssh_kill_terminal(
+pub(crate) async fn ssh_kill_terminal_unchecked(
     id: String,
     source: Option<String>,
     operation_id: Option<String>,
@@ -6708,6 +6703,7 @@ pub async fn ssh_kill_detached_terminal(
     if pty_id.trim().is_empty() {
         return Err("ptyId 不能为空".to_string());
     }
+    crate::mobile::reject_desktop_use(&pty_id)?;
     let root = manager.root_for_uri(&cwd, true)?;
     server::kill_detached_terminal(&pty_id, &root, &app, &manager).await
 }
@@ -6725,6 +6721,89 @@ pub async fn ssh_list_detached_terminals(
     server::list_detached_terminals(&connection_id, &app, &manager).await
 }
 
+// 电脑端入口：手机终端（`mobile-*`）只归手机使用，电脑端不得新建同名、输入、改尺寸或结束。
+// 手机端走对应的 `*_unchecked` 内部实现。
+
+#[tauri::command]
+pub async fn ssh_create_terminal(
+    id: String,
+    cwd: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    shell: Option<String>,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<TerminalSpawnResult, String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    ssh_create_terminal_unchecked(id, cwd, cols, rows, shell, app, manager).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn ssh_spawn_script(
+    id: String,
+    cwd: String,
+    shell_kind: String,
+    target: String,
+    env: HashMap<String, String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    shell: Option<String>,
+    name: Option<String>,
+    project_root: Option<String>,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<TerminalSpawnResult, String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    ssh_spawn_script_unchecked(
+        id,
+        cwd,
+        shell_kind,
+        target,
+        env,
+        cols,
+        rows,
+        shell,
+        name,
+        project_root,
+        app,
+        manager,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ssh_write_terminal(
+    id: String,
+    data: String,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    ssh_write_terminal_unchecked(id, data, manager).await
+}
+
+#[tauri::command]
+pub async fn ssh_resize_terminal(
+    id: String,
+    cols: u16,
+    rows: u16,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    ssh_resize_terminal_unchecked(id, cols, rows, manager).await
+}
+
+#[tauri::command]
+pub async fn ssh_kill_terminal(
+    id: String,
+    source: Option<String>,
+    operation_id: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    ssh_kill_terminal_unchecked(id, source, operation_id, manager).await
+}
+
 /// 把本地标签接回一个仍由 daemon 托管的 PTY。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -6739,6 +6818,8 @@ pub async fn ssh_attach_terminal(
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
+    crate::mobile::reject_desktop_use(&id)?;
+    crate::mobile::reject_desktop_use(&pty_id)?;
     let parsed = parse_remote_uri(&cwd)?;
     let root = manager.root_for_uri(&cwd, true)?;
     if remote_uri_connection_id(&root.uri) != Some(parsed.connection_id.as_str()) {

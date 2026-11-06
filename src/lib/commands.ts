@@ -547,6 +547,12 @@ export function buildCommands(): AppCommand[] {
       run: () => useUIStore.getState().openRemoteConnections(),
     },
     {
+      id: 'terminal.manage',
+      title: '终端管理',
+      keywords: 'terminal manager all sessions mobile phone remote 终端 管理 全部 手机 远端 会话',
+      run: () => useUIStore.getState().openTerminalManager(),
+    },
+    {
       id: 'workspace.saveVisible',
       title: '保存为多项目工作区',
       keywords: 'workspace save group projects',

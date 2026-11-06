@@ -218,6 +218,8 @@ Server 状态栏延迟使用同一页面，运行 `node scripts/web-tests/connec
 
 OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html`，使用 `pnpm dev:web-test`（端口 **38419**）及 `scripts/web-tests/terminal-interaction.ego.mjs` 的 `run()`。该页复用生产 `TerminalView`、xterm、终端 store 和菜单；需要普通 Vite 配置，避免 `test:web` 的项目管理终端 stub。IPC、终端输出和剪贴板均为内存模拟，不启动本机或远端进程。覆盖历史回放不复制、OSC 52 中文写入与读请求拦截、TUI 无选区右键、Claude Shift 选区与两种复制快捷键、选区右键后重绘仍复制快照、Shift 右键及普通 Shell 中断/菜单。产物位于 `.dev/web-tests/terminal-interaction-*/`，`run({ screenshots: false })` 可跳过截图；不代替 Windows 原生剪贴板及真实 SSH/OpenCode/Claude 验收。
 
+终端「编辑长文本」浮动面板复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-composer.ego.mjs` 的 `run()`。覆盖无遮罩／无模糊的非模态打开、默认高度约 82% 视口、焦点在终端时 Escape 发给终端不关闭面板、拖动标题栏移动并持久化、面板内 Escape 关闭后重开保留位置与草稿、双击标题栏复位居中。产物位于 `.dev/web-tests/terminal-composer-*/`；不替代 Tauri 原生拖放附件与真实 Claude／OpenCode 验收。
+
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、
 项目操作和工作区保存替换为 `src/test-pages/projectManagerAdapters.ts` 中的内存适配器。
 外部操作只记录调用，隐藏/恢复只更新测试数据。测试页显示操作记录，供断言调用参数。
@@ -289,3 +291,5 @@ AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-brow
 安卓中英文界面：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-i18n.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；窗口不渲染时改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。以 `?lang=en` 打开 `/mobile-android/`，检查首页、连接页语言选择、配对弹窗与电脑端错误翻译、项目列表、终端、设置/按键/菜单/快捷键栏弹层和会话侧栏不残留中文界面文案，并验证切回中文后重新加载。测试桥未保存语言偏好时固定中文，现有中文断言不受系统语言影响。截图与 JSON 位于 `.dev/web-tests/mobile-i18n/`；词典覆盖由 `mobileAndroidI18n.test.ts` 检查，不替代 Android 真机系统语言验收。
 
 安卓在线更新：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-update.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；无桌面时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖启动后台检查一次、beta 手机收到最新带 APK 的 beta（跳过无 APK 的更新版本）、下载进度、首次安装跳转系统授权与系统确认、取消下载、首页提示卡片与跳过此版本、正式版忽略 beta、检查失败提示与关闭自动检查，以及英文界面。测试桥支持 `?appVersion=<版本>&appCode=<versionCode>` 模拟已安装版本。截图与 JSON 位于 `.dev/web-tests/mobile-update/`；使用内存桥，真实下载、签名校验和系统安装器需真机验收，地址白名单由 `pnpm test:android-native`（需 JDK）中的 `UpdatePolicyTest` 覆盖。
+
+安卓终端鼠标模式：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-mouse-mode.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；无桌面时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖右侧滚动条与全屏程序变速滑块加粗（触控区 ≥ 44px）、短按不误入、长按滑块进入鼠标模式（轻震、左下角胶囊、滑块常驻）、普通终端点按选词与点击标记、返回键先关选区再退出、菜单与胶囊切换，以及全屏程序默认不把点按当点击、鼠标模式下按所点格子发送 SGR 鼠标点击。截图与 JSON 位于 `.dev/web-tests/mobile-mouse-mode/`；合成事件不替代真机触摸手感验收。

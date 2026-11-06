@@ -18,6 +18,7 @@ import {
   XSquare,
   Files,
   List,
+  ListTree,
   ChevronDown,
   ChevronRight,
   LoaderCircle,
@@ -438,14 +439,26 @@ export default function TerminalTabs({
         separatorBefore: true,
         action: () => requestSettings('终端配置'),
       },
+      {
+        label: translate('终端管理（全部项目与手机）'),
+        icon: <ListTree size={14} />,
+        action: () => useUIStore.getState().openTerminalManager(),
+      },
     ]
   }
 
-  const overflowItems = (): ContextMenuItem[] =>
-    projectTerminals.map(term => ({
+  const overflowItems = (): ContextMenuItem[] => [
+    ...projectTerminals.map(term => ({
       label: term.id === paneActiveId ? `${formatTerminalName(term.name)} ●` : formatTerminalName(term.name),
       action: () => activateForPane(term.id),
-    }))
+    })),
+    {
+      label: translate('终端管理（全部项目与手机）'),
+      icon: <ListTree size={14} />,
+      separatorBefore: true,
+      action: () => useUIStore.getState().openTerminalManager(),
+    },
+  ]
 
   const visibleTabIndices =
     visibleIndices.length > 0

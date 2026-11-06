@@ -26,17 +26,20 @@ export function shouldAutoFetch(
   lastFetchAuthFailed: boolean,
   reason: ScmAutoFetchReason,
   isRepository: boolean,
+  /** 最近一次自动检查更新的发起时间（无论成败），用于失败后同样节流。 */
+  lastAttemptAt: number | null = null,
 ): boolean {
   if (!isRepository) return false
   if (reason === 'manual') return true
   if (lastFetchAuthFailed && reason !== 'push-failed-behind') return false
 
-  const elapsed =
-    lastFetchAt == null ? Number.POSITIVE_INFINITY : Date.now() - lastFetchAt
+  // 成功时间与发起时间取较新者：失败的自动 fetch 也要节流，避免每次进项目都重跑。
+  const throttleAt = Math.max(lastFetchAt ?? 0, lastAttemptAt ?? 0)
+  const elapsed = throttleAt > 0 ? Date.now() - throttleAt : Number.POSITIVE_INFINITY
 
   switch (reason) {
     case 'switch-project':
-      return lastFetchAt == null || elapsed >= ENTER_SCM_INTERVAL_MS
+      return elapsed >= ENTER_SCM_INTERVAL_MS
     case 'enter-scm':
       return elapsed >= ENTER_SCM_INTERVAL_MS
     case 'window-focus':

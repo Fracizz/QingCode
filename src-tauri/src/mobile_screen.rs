@@ -186,6 +186,22 @@ impl MobileScreen {
         !self.parser.callbacks().lines.is_empty()
     }
 
+    /// 电脑端只读预览：最近 `lines` 行纯文本历史与当前画面纯文本。
+    /// 全屏程序（备用屏）只看当前画面，历史仍是进入程序前的普通输出。
+    pub(super) fn preview(&self, lines: usize) -> Value {
+        let history = self.parser.callbacks();
+        let skip = history.lines.len().saturating_sub(lines);
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        json!({
+            "history": history.lines.iter().skip(skip).map(|(_, text)| plain(text)).collect::<Vec<_>>(),
+            "screen": screen.contents(),
+            "cols": cols.get(), "rows": rows.get(),
+            "alternate": screen.alternate_screen(),
+            "truncated": history.truncated || skip > 0,
+        })
+    }
+
     /// 纯文本历史，兼容旧版手机端。
     #[cfg(test)]
     pub(super) fn history(&self, before: u64) -> Value {

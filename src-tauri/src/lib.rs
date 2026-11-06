@@ -408,6 +408,7 @@ fn create_terminal(
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<TerminalSpawnResult, String> {
+    mobile::reject_desktop_use(&id)?;
     allowlist.ensure_executable(&cwd)?;
     state.spawn(
         id,
@@ -425,11 +426,16 @@ fn write_terminal(
     data: String,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
+    mobile::reject_desktop_use(&id)?;
     state.write(&id, &data)
 }
 
 #[tauri::command]
 fn set_terminal_output_paused(id: String, paused: bool, state: tauri::State<'_, TerminalManager>) {
+    // 手机终端的输出只发给手机，电脑端暂停会卡住手机画面。
+    if mobile::is_mobile_terminal(&id) {
+        return;
+    }
     state.set_output_paused(&id, paused);
 }
 
@@ -449,6 +455,7 @@ fn kill_terminal(
     operation_id: Option<String>,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
+    mobile::reject_desktop_use(&id)?;
     qingcode_server::diagnostics::record(
         "terminal.kill_requested",
         serde_json::json!({
@@ -474,6 +481,7 @@ fn resize_terminal(
     rows: u16,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
+    mobile::reject_desktop_use(&id)?;
     state.resize(&id, cols, rows)
 }
 
@@ -824,6 +832,10 @@ pub fn run() {
             mobile::mobile_revoke_device,
             mobile::mobile_pairing_qr,
             mobile::mobile_bridge_reply,
+            mobile::mobile_sessions,
+            mobile::mobile_session_preview,
+            mobile::mobile_rename_session,
+            mobile::mobile_end_session,
             commands::scan_directory,
             commands::validate_directory,
             commands::file_stat,

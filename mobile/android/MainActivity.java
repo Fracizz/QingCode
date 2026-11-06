@@ -21,6 +21,7 @@ import android.util.Base64;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.HapticFeedbackConstants;
 import android.view.RoundedCorner;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -220,7 +221,7 @@ public final class MainActivity extends Activity {
                         case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
                         case "terminalLinks.js":
-                        case "i18n.js": case "appUpdate.js": case "updateView.js":
+                        case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;
@@ -632,6 +633,11 @@ public final class MainActivity extends Activity {
                     pendingLink = null;
                     replySafely(id, link == null ? JSONObject.NULL : link);
                 });
+                return;
+            }
+            if ("haptic".equals(op)) {
+                // 长按滑块进入 / 退出鼠标模式时的轻震；系统关闭触感反馈时自动忽略。
+                runOnUiThread(() -> replySafely(id, view != null && view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)));
                 return;
             }
             if ("app_version".equals(op)) {

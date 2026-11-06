@@ -8,7 +8,7 @@ describe('Android touch scrollbar geometry', () => {
   it('sizes the thumb by the visible share with a finger-sized minimum', () => {
     expect(thumbGeometry({ total: 200, visible: 100, offset: 0 }, 400)).toEqual({ size: 200, top: 0 })
     expect(thumbGeometry({ total: 200, visible: 100, offset: 100 }, 400)).toEqual({ size: 200, top: 200 })
-    expect(thumbGeometry({ total: 100000, visible: 40, offset: 0 }, 400)!.size).toBe(48)
+    expect(thumbGeometry({ total: 100000, visible: 40, offset: 0 }, 400)!.size).toBe(64)
     expect(thumbGeometry({ total: 40, visible: 40, offset: 0 }, 400)).toBeNull()
   })
 

@@ -149,6 +149,75 @@ describe('SourceControlPanel', () => {
     )
   })
 
+  it('keeps staging available while the automatic fetch runs in the background', async () => {
+    sessionStorage.clear()
+    const status: GitStatus = {
+      is_repository: true,
+      branch: 'main',
+      changes: [{ path: 'src/app.ts', status: '??' }],
+    }
+    mockGit(status)
+    const baseImpl = mocks.safeInvoke.getMockImplementation()!
+    let finishFetch: (value: string) => void = () => {}
+    mocks.safeInvoke.mockImplementation((label: string, command: string, args?: unknown) => {
+      if (command === 'git_fetch') {
+        return new Promise<string>(resolve => {
+          finishFetch = resolve
+        })
+      }
+      return baseImpl(label, command, args)
+    })
+    render(<SourceControlPanel />)
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith('获取远程更新', 'git_fetch', {
+        path: project.path,
+      })
+    )
+    // 后台 fetch 未结束：远程类按钮锁定，暂存仍可用。
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '推送' })).toBeDisabled()
+    const stageAll = screen.getByRole('button', { name: '所有文件添加至「待提交」' })
+    expect(stageAll).toBeEnabled()
+    fireEvent.click(stageAll)
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith('暂存 Git 更改', 'git_stage', {
+        path: project.path,
+        files: [],
+        all: true,
+      })
+    )
+
+    finishFetch('ok')
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+  })
+
+  it('shows a quiet toolbar hint when the automatic fetch fails and throttles retries', async () => {
+    sessionStorage.clear()
+    mockGit({
+      is_repository: true,
+      branch: 'main',
+      changes: [{ path: 'src/app.ts', status: ' M' }],
+    })
+    const baseImpl = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation((label: string, command: string, args?: unknown) => {
+      if (command === 'git_fetch') return Promise.reject(new Error('无法连接远程仓库'))
+      return baseImpl(label, command, args)
+    })
+    const { unmount } = render(<SourceControlPanel />)
+
+    const fetchButton = await screen.findByRole('button', { name: '检查更新' })
+    await waitFor(() => expect(fetchButton).toHaveTextContent('失败'))
+    expect(useProjectStore.getState().toasts).toHaveLength(0)
+    unmount()
+
+    // 失败的自动 fetch 也记了发起时间：立即重新进入不会再次自动 fetch。
+    mocks.safeInvoke.mockClear()
+    render(<SourceControlPanel />)
+    await screen.findByRole('button', { name: '所有文件添加至「待提交」' })
+    expect(mocks.safeInvoke).not.toHaveBeenCalledWith('获取远程更新', 'git_fetch', expect.anything())
+  })
+
   it('uses POSIX separators when loading an SSH Git file diff', async () => {
     const sshProject = {
       ...project,
