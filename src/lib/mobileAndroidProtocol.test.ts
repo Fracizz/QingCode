@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
+  formatTerminalQuote,
   formatDuration,
   idleLabel,
   MODIFIER_LOCK_WINDOW,
@@ -10,6 +11,8 @@ import {
   applyModifiers,
   avatarFor,
   consumeModifier,
+  countSessionOverview,
+  groupSessionOverview,
   keySequence,
   matchesProject,
   nextModifierState,
@@ -19,6 +22,7 @@ import {
   parsePairingLink,
   parseSessionPins,
   prunedSessionPins,
+  projectSessionsFromOverview,
   SESSION_PIN_LIMIT,
   projectSourceLabel,
   recentProjects,
@@ -410,5 +414,52 @@ describe('Android 终端空闲自动结束提示', () => {
     expect(idleLabel({ idleDeadline: now + hour }, now)).toBe('1 小时后自动结束')
     expect(idleLabel({ lastActiveAt: now }, now)).toBe('')
     expect(idleLabel(null, now)).toBe('')
+  })
+})
+
+describe('Android terminal quote', () => {
+  it('matches the desktop Markdown quote format', () => {
+    expect(formatTerminalQuote('\r\n  a  \r\n\r\nb\n\n')).toBe('>   a\n>\n> b\n\n')
+    expect(formatTerminalQuote('   \n ')).toBe('')
+  })
+})
+
+describe('Android 会话纵览', () => {
+  const local = { id: 'p1', name: 'Alpha', kind: 'local', path: 'D:/a', host: '' }
+  const remote = { id: 'p2', name: 'Beta', kind: 'ssh', path: '/srv/b', host: '10.0.0.2' }
+  const gone = { id: 'p3', name: 'Gamma', kind: 'wsl', path: '/g', host: '' }
+  const list = [
+    { id: 'm3', number: 3, name: 'Claude Code', exit: null, project: remote, deviceName: 'Pixel', ownDevice: true },
+    { id: 'm1', number: 1, name: '终端 1', exit: null, project: local, deviceName: 'Pixel', ownDevice: true },
+    { id: 'm2', number: 2, name: 'vim', exit: { code: 0 }, project: local, deviceName: 'Tablet', ownDevice: false },
+    { id: 'm4', number: 4, name: 'build', exit: null, project: gone, deviceName: 'Tablet', ownDevice: false },
+  ]
+  const projects = [local, { ...remote, connectionName: 'prod' }]
+
+  it('按项目分组，当前项目在前，其余按最近打开，组内按编号；电脑端已移除的项目标记 missing', () => {
+    const groups = groupSessionOverview(list, { projects, current: 'p2', history: [{ id: 'p3', openedAt: 5 }, { id: 'p1', openedAt: 2 }] })
+    expect(groups.map(group => group.project.id)).toEqual(['p2', 'p3', 'p1'])
+    expect(groups[0].project.connectionName).toBe('prod')
+    expect(groups[1].missing).toBe(true)
+    expect(groups[2].sessions.map(session => session.id)).toEqual(['m1', 'm2'])
+    expect(groupSessionOverview(list, { projects }).map(group => group.project.id)).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('筛选未结束/已结束，计数与搜索多个关键词', () => {
+    expect(countSessionOverview(list)).toEqual({ all: 4, live: 3, exited: 1 })
+    expect(groupSessionOverview(list, { projects, filter: 'exited' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m2'])
+    expect(groupSessionOverview(list, { projects, filter: 'live' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m1', 'm3', 'm4'])
+    expect(groupSessionOverview(list, { projects, query: 'alpha VIM' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m2'])
+    expect(groupSessionOverview(list, { projects, query: 'tablet' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m2', 'm4'])
+    expect(groupSessionOverview(list, { projects, query: 'prod' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m3'])
+    expect(groupSessionOverview(list, { projects, query: 'nothing' })).toEqual([])
+  })
+
+  it('从全部会话中取出当前项目的会话，去掉纵览附带字段', () => {
+    expect(projectSessionsFromOverview(list, 'p1')).toEqual([
+      { id: 'm1', number: 1, name: '终端 1', exit: null },
+      { id: 'm2', number: 2, name: 'vim', exit: { code: 0 } },
+    ])
+    expect(list[1].project).toBe(local)
   })
 })

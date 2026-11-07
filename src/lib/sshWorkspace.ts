@@ -67,7 +67,8 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
       if (!ssh?.host_key_fingerprint || (ssh.auth_kind === 'password' && !sshSecretsFor(ssh.id).password)) {
         throw new Error('自动更新需要已确认指纹且可认证的 SSH 连接，请通过“更新远端服务”授权后重试')
       }
-      signal.throwIfAborted()
+      // 共享的更新任务不绑定首个调用方的打开信号：取消打开或切到其他项目时
+      // 更新在后台继续，否则失败结果会被缓存，后续打开不再自动更新。
       if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) throw new Error('项目授权或连接状态已变化')
       const target = {
         rootUri: project.path,
@@ -84,7 +85,6 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
           ? { mode: 'offline', directory: settings.offlineDir }
           : { mode: 'automatic', allowDownload: false } }, progress)
         if (!validServerUpdatePackage(info)) throw new Error(info.problem ?? '服务包未通过校验')
-        signal.throwIfAborted()
         if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) throw new Error('项目授权或连接状态已变化')
         const value = await directServerUpdateApi.update({ ...target, packageDirectory: info.directory }, progress)
         const state = parseSshServerState(value)

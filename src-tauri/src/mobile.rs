@@ -613,7 +613,9 @@ enum Operation {
     Capabilities,
     Projects,
     Sessions {
-        project: String,
+        /// 不传时返回这台电脑上全部项目的手机会话（附项目与创建设备），供手机纵览。
+        #[serde(default)]
+        project: Option<String>,
     },
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
@@ -953,7 +955,8 @@ impl Hub {
     }
 
     /// 全部已就绪的手机会话，附项目与创建设备，按项目名、编号排序。
-    fn session_summaries(&self) -> Vec<Value> {
+    /// viewer 为请求的手机设备时额外标出 `ownDevice`（是否由这台手机创建）。
+    fn session_summaries(&self, viewer: Option<&str>) -> Vec<Value> {
         let inner = self.inner.lock().unwrap();
         let mut sessions: Vec<_> = inner
             .sessions
@@ -988,6 +991,9 @@ impl Hub {
                         "deviceName".into(),
                         json!(device.map(|entry| entry.saved.name.as_str())),
                     );
+                    if let Some(viewer) = viewer {
+                        map.insert("ownDevice".into(), json!(session.owner == viewer));
+                    }
                 }
                 value
             })
@@ -1625,11 +1631,14 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention"],
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
-        Operation::Sessions { project } => {
+        Operation::Sessions { project: None } => Ok(json!(hub.session_summaries(Some(device)))),
+        Operation::Sessions {
+            project: Some(project),
+        } => {
             let inner = hub.inner.lock().unwrap();
             let mut sessions: Vec<_> = inner
                 .sessions
@@ -1852,7 +1861,7 @@ pub(crate) fn reject_desktop_use(id: &str) -> Result<(), String> {
 /// 电脑端「终端管理」列出全部手机会话（跨项目），只含元数据，不含输出。
 #[tauri::command]
 pub fn mobile_sessions(state: State<'_, MobileState>) -> Vec<Value> {
-    state.hub.session_summaries()
+    state.hub.session_summaries(None)
 }
 
 /// 电脑端只读预览：最近历史与当前画面的纯文本，不改尺寸、不输入。
@@ -2429,7 +2438,7 @@ mod tests {
                 inner.sessions.insert(id.into(), session);
             }
         }
-        let list = hub.session_summaries();
+        let list = hub.session_summaries(None);
         let ids: Vec<_> = list
             .iter()
             .map(|item| item["id"].as_str().unwrap())
@@ -2437,6 +2446,14 @@ mod tests {
         assert_eq!(ids, ["mobile-a", "mobile-b"]);
         assert_eq!(list[0]["project"]["id"], "q");
         assert_eq!(list[0]["deviceName"], "Pixel");
+        assert!(list[0].get("ownDevice").is_none());
+        let phone = hub.session_summaries(Some(&owner));
+        assert_eq!(phone.len(), 2);
+        assert_eq!(phone[0]["ownDevice"], true);
+        assert_eq!(
+            hub.session_summaries(Some("other-device"))[0]["ownDevice"],
+            false
+        );
         assert!(hub.session_preview("mobile-starting").is_err());
     }
 

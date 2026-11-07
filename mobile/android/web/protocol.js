@@ -6,6 +6,22 @@ export const PAIRING_PREFIX = 'qingcode://pair?';
 export const DEFAULT_PORT = 48764;
 export const INPUT_SLICE = 2048;
 
+/**
+ * 选字工具栏「添加到对话」：把终端选中文本转成 Markdown 引用（与电脑端 terminalQuote.ts 一致）。
+ * 选区为空白时返回空串；末尾带空行，用户在引用下方接着补充问题后自己发送。
+ */
+export function formatTerminalQuote(selection) {
+  const lines = String(selection ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    // xterm 选区按网格取文本，行尾常带填充空格。
+    .map(line => line.replace(/\s+$/, ''));
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  if (!lines.length) return '';
+  return `${lines.map(line => (line ? `> ${line}` : '>')).join('\n')}\n\n`;
+}
+
 /** Dimensions are the viewport's content box, with padding already deducted. */
 export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColumns = 0) {
   if (![width, height, cellWidth, cellHeight].every(value => Number.isFinite(value) && value > 0)) return null;
@@ -118,6 +134,69 @@ export function orderSessions(sessions, pins = []) {
   return sessions.map((session, index) => ({ session, index }))
     .sort((a, b) => (rank.get(a.session.id) ?? pins.length) - (rank.get(b.session.id) ?? pins.length) || a.index - b.index);
 }
+/** 会话纵览筛选：全部 / 未结束 / 已结束。 */
+export const OVERVIEW_FILTERS = ['all', 'live', 'exited'];
+
+/** 纵览各筛选项的会话数。 */
+export function countSessionOverview(list) {
+  const items = Array.isArray(list) ? list : [];
+  const exited = items.filter(session => session?.exit).length;
+  return { all: items.length, live: items.length - exited, exited };
+}
+
+/**
+ * 会话纵览：把电脑端返回的全部手机会话按项目分组。
+ * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内按会话编号。
+ * 电脑端项目列表中仍存在的项目使用列表里的完整信息（含连接名），否则用会话自带的项目信息并标记 missing。
+ * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
+ */
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '' } = {}) {
+  const known = new Map(projects.map(project => [project.id, project]));
+  const times = new Map();
+  for (const item of Array.isArray(history) ? history : []) {
+    if (item && typeof item.id === 'string' && Number.isFinite(item.openedAt)) times.set(item.id, Math.max(times.get(item.id) || 0, item.openedAt));
+  }
+  const opened = project => Math.max(times.get(project.id) || 0, Number.isFinite(project.lastOpenedAt) ? project.lastOpenedAt : 0);
+  const needles = String(query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const groups = new Map();
+  for (const session of Array.isArray(list) ? list : []) {
+    const id = session?.project?.id;
+    if (typeof id !== 'string') continue;
+    if (filter === 'live' && session.exit) continue;
+    if (filter === 'exited' && !session.exit) continue;
+    const project = known.get(id) ?? { ...session.project };
+    if (needles.length) {
+      const haystack = [sessionName(session), project.name, projectSourceLabel(project), session.deviceName ?? '']
+        .join('\n').toLowerCase();
+      if (!needles.every(needle => haystack.includes(needle))) continue;
+    }
+    let group = groups.get(id);
+    if (!group) groups.set(id, group = { project, missing: !known.has(id), sessions: [] });
+    group.sessions.push(session);
+  }
+  for (const group of groups.values()) {
+    group.sessions.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+  }
+  return [...groups.values()].sort((a, b) =>
+    Number(b.project.id === current) - Number(a.project.id === current)
+    || opened(b.project) - opened(a.project)
+    || String(a.project.name ?? '').localeCompare(String(b.project.name ?? ''))
+    || a.project.id.localeCompare(b.project.id));
+}
+
+/** 全部会话列表里属于某个项目的部分，去掉纵览附带的项目与设备字段，与按项目请求的结果一致。 */
+export function projectSessionsFromOverview(list, projectId) {
+  return (Array.isArray(list) ? list : [])
+    .filter(session => session?.project?.id === projectId)
+    .map(item => {
+      const session = { ...item };
+      delete session.project;
+      delete session.deviceName;
+      delete session.ownDevice;
+      return session;
+    });
+}
+
 export const RECENT_PROJECT_LIMIT = 10;
 
 export function rememberProject(history, id, openedAt = Date.now()) {

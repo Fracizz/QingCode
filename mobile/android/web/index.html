@@ -297,15 +297,32 @@
 
   <dialog id="session-drawer" class="session-drawer" aria-labelledby="session-drawer-title">
     <header class="drawer-heading"><h2 id="session-drawer-title">终端会话 <span id="session-count"></span></h2><button class="icon-button" type="button" data-close="session-drawer" aria-label="关闭会话侧栏"><svg><use href="#i-back"/></svg></button></header>
+    <!-- 本项目：当前项目的会话；全部：这台电脑上所有项目的手机会话（纵览）。 -->
+    <div id="session-scope" class="segmented" role="radiogroup" aria-label="会话范围">
+      <button type="button" role="radio" data-scope="project" aria-checked="true">本项目</button>
+      <button type="button" role="radio" data-scope="all" aria-checked="false">全部</button>
+    </div>
+    <p id="session-scope-hint" class="hint" hidden>更新电脑端后可查看全部项目的会话。</p>
     <p id="session-context"></p>
     <button id="drawer-new-session" class="tonal compact" type="button"><svg><use href="#i-plus"/></svg>新建终端</button>
     <div id="session-options" class="rows" aria-label="项目会话"></div>
+    <div id="session-overview" hidden>
+      <div class="search-field"><svg><use href="#i-search"/></svg><input id="session-search" type="search" placeholder="搜索会话、项目或设备" aria-label="搜索会话、项目或设备" autocomplete="off" enterkeyhint="search"></div>
+      <div id="session-filter" class="segmented" role="radiogroup" aria-label="会话状态">
+        <button type="button" role="radio" data-filter="all" aria-checked="true">全部</button>
+        <button type="button" role="radio" data-filter="live" aria-checked="false">未结束</button>
+        <button type="button" role="radio" data-filter="exited" aria-checked="false">已结束</button>
+      </div>
+      <div id="session-groups" aria-label="全部项目会话"></div>
+      <p id="session-overview-empty" class="hint" hidden></p>
+    </div>
     <p id="session-error" class="error" role="alert" hidden></p>
     <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
     <div class="drawer-actions">
       <button id="back" class="secondary" type="button">返回工作台</button>
       <button id="drawer-settings" class="secondary" type="button">终端设置</button>
       <button id="end-all-sessions" class="text-button danger" type="button">关闭全部会话</button>
+      <button id="clear-ended-sessions" class="text-button danger" type="button" hidden>清理已结束会话</button>
     </div>
   </dialog>
 

@@ -35,7 +35,7 @@
     ],
     creates: [],
     terminalProfileRequests: 0,
-    capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history'], sessionScope: 'shared' },
+    capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions'], sessionScope: 'shared' },
     capabilityRequests: 0,
     sessionNames: true,
     renameError: null,
@@ -141,7 +141,16 @@
       case 'projects': return { ok: true, data: state.projects }
       case 'sessions': {
         state.sessionRequests.push({ project: request.project, at: Date.now() })
-        const data = [...state.sessions.values()].filter(item => item.project === request.project).map(sessionMetadata)
+        // 不带 project：新版电脑端返回全部项目的手机会话，附项目与创建设备（会话纵览）。
+        const all = request.project === undefined && state.capabilities?.features.includes('all_sessions')
+        if (request.project === undefined && !all) return { ok: false, error: '请求格式无效。' }
+        const data = [...state.sessions.values()].filter(item => all || item.project === request.project).map(item => {
+          const metadata = sessionMetadata(item)
+          if (!all) return metadata
+          const project = state.projects.find(candidate => candidate.id === item.project) ?? item.projectInfo
+          return { ...metadata, project: { id: project.id, name: project.name, path: project.path, kind: project.kind, host: project.host },
+            deviceName: item.deviceName ?? 'Pixel', ownDevice: item.ownDevice ?? true }
+        })
         if (state.sessionDelay) await new Promise(resolve => setTimeout(resolve, state.sessionDelay))
         if (state.sessionError) return { ok: false, error: state.sessionError }
         return {
@@ -439,6 +448,14 @@
     },
     fingerprint: FINGERPRINT,
     code: CODE,
+    // 直接在内存桥中加一个手机会话（可指定项目、设备与是否已结束），模拟其他项目或其他手机创建的会话。
+    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null } = {}) {
+      const number = state.nextSession++
+      const session = { id: 'mobile-' + number, number, project, title, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
+      state.sessions.set(session.id, session)
+      push(session, base64('PS> '))
+      return session.id
+    },
     setTitle(id, title) {
       const session = state.sessions.get(id)
       session.title = title

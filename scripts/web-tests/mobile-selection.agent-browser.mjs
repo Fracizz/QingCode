@@ -11,7 +11,9 @@ const evaluate = expression => run('eval', expression)
 const check = (name, expression) => { run('wait', '--fn', expression); results.push({ name, passed: true }) }
 const capture = name => run('screenshot', resolve(directory, `${name}.png`))
 const selecting = `!document.querySelector('.terminal-selection-tools').hidden`
-const clickTool = text => evaluate(`document.querySelectorAll('.terminal-selection-tools button')[${['复制', '全选', '取消'].indexOf(text)}].click()`)
+// 按文字查找按钮：「添加到对话」隐藏时仍在 DOM 中，按序号会点错。
+const clickTool = text => evaluate(`[...document.querySelectorAll('.terminal-selection-tools button')].find(b => b.textContent === ${JSON.stringify(text)}).click()`)
+const copiedToast = `!document.querySelector('#font-toast').hidden && document.querySelector('#font-toast').textContent==='已复制'`
 const hold = (col = 2, row = 0) => evaluate(`new Promise(resolve => {
   const target = window.__selectionTerm.element.querySelector('.xterm-screen');
   const rect = target.getBoundingClientRect();
@@ -40,8 +42,9 @@ try {
   check('holding a wide CJK cell selects the complete word', `${selecting} && window.__selectionTerm.getSelection()==='中文内容'`)
   check('both selection handles are available', `[...document.querySelectorAll('.terminal-selection-handle')].every(h=>!h.hidden)`)
   run('click', '.terminal-selection-tools button:first-child')
-  check('copy writes exact Unicode text to the phone clipboard bridge', `window.__mobileFixture.state.clipboard==='中文内容' && document.querySelector('.terminal-selection-tools [role="status"]').textContent==='已复制'`)
+  check('copy writes exact Unicode text and closes the selection with a toast', `window.__mobileFixture.state.clipboard==='中文内容' && !(${selecting}) && !window.__selectionTerm.hasSelection() && ${copiedToast}`)
   capture('01-long-press-copy')
+  hold(7)
   const end = JSON.parse(run('eval', '--json', `(() => { const r=document.querySelector('[data-side="end"]').getBoundingClientRect(); const s=window.__selectionTerm.element.querySelector('.xterm-screen').getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+15,cell:s.width/window.__selectionTerm.cols,line:s.height/window.__selectionTerm.rows}; })()`)).data.result
   run('mouse', 'move', String(Math.round(end.x)), String(Math.round(end.y)))
   run('mouse', 'down')
@@ -53,6 +56,7 @@ try {
   clickTool('复制')
   check('select all copies multiline output', `window.__mobileFixture.state.clipboard.includes('alpha 中文内容 omega') && window.__mobileFixture.state.clipboard.includes('third line')`)
   check('selection and handle dragging send no terminal input', `window.__mobileFixture.state.inputs.length===window.__inputCount`)
+  hold()
   evaluate('window.qingBack()')
   check('Android Back dismisses selection before leaving the terminal', `!(${selecting}) && !document.querySelector('#terminal-screen').hidden && !window.__selectionTerm.hasSelection()`)
 
@@ -63,21 +67,18 @@ try {
   check('clipboard failure preserves the selection for retry', `${selecting} && window.__selectionTerm.getSelection()==='copy' && document.querySelector('.terminal-selection-tools [role="status"]').textContent==='模拟剪贴板不可用'`)
   evaluate('window.__mobileFixture.state.copyError=null')
   clickTool('复制')
-  check('retry copies the retained selection', `window.__mobileFixture.state.clipboard==='copy' && document.querySelector('.terminal-selection-tools [role="status"]').textContent==='已复制'`)
-  clickTool('取消')
+  check('retry copies the retained selection and then closes it', `window.__mobileFixture.state.clipboard==='copy' && !(${selecting})`)
   run('click', '#keyboard')
   hold()
   check('long press and copy preserve raw-keyboard focus without causing an IME resize', `${selecting} && document.activeElement===window.__selectionTerm.textarea && document.querySelector('#keyboard').getAttribute('aria-pressed')==='true'`)
   run('click', '.terminal-selection-tools button:first-child')
   check('touch toolbar copying keeps keyboard focus', `document.activeElement===window.__selectionTerm.textarea && window.__mobileFixture.state.clipboard==='copy'`)
-  clickTool('取消')
 
   write('\x1b[?1049h\x1b[?1000h\x1b[?1006hClaude 中文输出\r\nselect safely')
   hold(9)
   clickTool('复制')
   check('a mouse-tracking TUI supports selection without sending mouse reports', `window.__selectionTerm.modes.mouseTrackingMode!=='none' && window.__mobileFixture.state.clipboard==='中文输出' && window.__mobileFixture.state.inputs.length===window.__inputCount`)
   capture('03-tui-copy')
-  clickTool('取消')
   write('fresh session')
   hold()
   run('set', 'viewport', '844', '390')

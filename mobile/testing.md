@@ -9,14 +9,14 @@
 ```json
 {
   "protocolVersion": 1,
-  "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention"],
+  "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions"],
   "sessionScope": "shared"
 }
 ```
 
 版本 1 的字段扩展需保持旧客户端行为；功能按 `features` 判断，不用业务写操作探测功能。只有专门的只读能力请求被旧电脑拒绝时使用 legacy 路径；网络或认证失败不能缓存为“不支持”。缓存按地址和证书标识，重新配对后清除。不兼容的协议版本提示更新。
 
-手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。图片和文本使用同一共享规则；终端尺寸采用最后一次调整，不承诺多设备独立网格。桌面终端与手机终端继续隔离。
+手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。图片和文本使用同一共享规则；终端尺寸采用最后一次调整，不承诺多设备独立网格。桌面终端与手机终端继续隔离。
 
 ## 自动验证
 

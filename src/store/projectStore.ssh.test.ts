@@ -256,6 +256,23 @@ describe('SSH project availability', () => {
     expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1)
   })
 
+  it('lets a local project click supersede a remote opening that is still updating its server', async () => {
+    let finishService!: () => void
+    mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finishService = resolve }))
+    useProjectStore.setState({ projects: [remote, local] })
+    const opening = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1))
+
+    expect(await useProjectStore.getState().switchProject(local)).toBe(true)
+    expect(await opening).toBe(false)
+    expect(useSshOpeningStore.getState().attempt).toBeNull()
+    expect(useProjectStore.getState().currentProject).toEqual(local)
+    finishService()
+    await Promise.resolve()
+    expect(useProjectStore.getState().currentProject).toEqual(local)
+    expect(mocks.safeInvoke.mock.calls.some(call => call[1] === 'ssh_activate_workspace')).toBe(false)
+  })
+
   it('cancels a slow connection without letting its late completion activate the project', async () => {
     let finishConnect!: () => void
     mocks.ensureSshWorkspaceConnected.mockImplementationOnce(() => new Promise<void>(resolve => { finishConnect = resolve }))

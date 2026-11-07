@@ -99,9 +99,14 @@ let inputMode = 'compose';
 let disposeTouchGuard;
 const keyRepeats = [];
 const landscape = window.matchMedia('(orientation: landscape) and (min-width: 600px)');
+// 平板宽屏（含横屏平板和较宽的分屏窗口）：会话侧栏常驻在终端左侧。
+const wideLayout = window.matchMedia('(min-width: 840px)');
 let deviceLandscape = landscape.matches;
 let nativeOrientation = false;
 let keysPreference = localStorage.getItem(prefix + 'keys-collapsed');
+// 接入实体键盘时默认收起快捷键栏；期间手动展开只在本次连接键盘内有效，不写入偏好。
+let hardKeyboard = false;
+let hardKeysExpanded = false;
 let fullscreen = false;
 let fullscreenEpoch = 0;
 let profiles = [];
@@ -263,11 +268,47 @@ const drawer = createSessionDrawer({
     locked: () => busy && !endingSession,
     viewEpoch: () => viewEpoch,
     foreground: () => foreground,
+    projects: () => projects,
+    history: () => projectHistory(),
+    allSupported: async () => {
+      if (!profile) return false;
+      const value = await desktopProtocol.capabilities(profile);
+      return !!value?.features.includes('all_sessions');
+    },
   },
   setSessions: list => { sessions = list; },
   selectSession,
   endSession,
+  openOverviewSession,
+  endOverviewSession,
 });
+
+// 平板双栏默认收起，用户展开后记在这台设备上。
+let sessionsDockPreferred = localStorage.getItem(prefix + 'sessions-docked') === 'true';
+
+/** 平板宽屏、在终端页且用户选择展开时常驻会话侧栏，其余情况恢复为可收起的抽屉。 */
+function syncSessionDock() {
+  drawer.dock(tabletLayout() && sessionsDockPreferred && !terminalScreen.hidden && !!project);
+  get('show-sessions').setAttribute('aria-label', drawer.isDocked() ? t('收起会话侧栏') : t('打开会话侧栏'));
+}
+
+/** 侧栏入口：平板上切换双栏并保存；手机上打开抽屉。 */
+function toggleSessions({ expandOnly = false } = {}) {
+  if (!tabletLayout()) { void drawer.open(); return; }
+  const next = expandOnly || !drawer.isDocked();
+  sessionsDockPreferred = next;
+  try { localStorage.setItem(prefix + 'sessions-docked', String(next)); } catch { /* 仅为显示偏好。 */ }
+  syncSessionDock();
+}
+
+/**
+ * 窗口宽 ≥840px 且设备最短边 ≥600px（对应 Android sw600dp）才算平板宽屏：
+ * 横屏手机宽度也可能超过 840px；按屏幕而非视口高度判断，弹出输入法时不会来回切换布局。
+ */
+function tabletLayout() {
+  return wideLayout.matches && Math.min(screen.width, screen.height) >= 600;
+}
+window.addEventListener('resize', syncSessionDock);
 
 createShortcutBar({ prefix, onChange: () => updateComposerActions() });
 
@@ -342,6 +383,7 @@ function renderLatency() {
 function showPage(next) {
   page = next;
   terminalScreen.hidden = true;
+  syncSessionDock();
   get('dashboard').hidden = false;
   for (const [name, section] of Object.entries(pages)) section.hidden = name !== next;
   for (const navButton of get('dashboard-nav').querySelectorAll('button')) {
@@ -360,7 +402,7 @@ function returnToDashboard(next = page) {
 window.qingBack = () => {
   for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
-    if (!dialog.open) continue;
+    if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
     return true;
   }
@@ -683,7 +725,7 @@ for (const [id, action] of Object.entries({
   'menu-submissions': showSubmissions,
   'menu-read': () => reader.open(),
   'menu-mouse': toggleMouseMode,
-  'menu-sessions': () => { void drawer.open(); },
+  'menu-sessions': () => toggleSessions({ expandOnly: true }),
   'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
@@ -766,7 +808,7 @@ function dispatchComposer(action) {
 }
 
 function renderShortcutVisibility() {
-  const collapsed = keysPreference === null ? deviceLandscape : keysPreference === 'true';
+  const collapsed = hardKeyboard ? !hardKeysExpanded : keysPreference === null ? deviceLandscape : keysPreference === 'true';
   cancelKeyRepeats();
   get('special-keys').hidden = collapsed;
   get('toggle-keys').setAttribute('aria-expanded', String(!collapsed));
@@ -810,15 +852,25 @@ landscape.addEventListener('change', () => {
   renderShortcutVisibility();
   void syncTerminalFullscreen();
 });
+window.qingHardKeyboard = present => {
+  if (hardKeyboard === (present === true)) return;
+  hardKeyboard = present === true;
+  hardKeysExpanded = false;
+  renderShortcutVisibility();
+};
 get('toggle-keys').addEventListener('click', () => {
-  keysPreference = String(get('toggle-keys').getAttribute('aria-expanded') === 'true');
-  localStorage.setItem(prefix + 'keys-collapsed', keysPreference);
+  if (hardKeyboard) {
+    hardKeysExpanded = get('toggle-keys').getAttribute('aria-expanded') !== 'true';
+  } else {
+    keysPreference = String(get('toggle-keys').getAttribute('aria-expanded') === 'true');
+    localStorage.setItem(prefix + 'keys-collapsed', keysPreference);
+  }
   renderShortcutVisibility();
 });
 renderShortcutVisibility();
 
 function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) {
-  if (!keepDrawer) get('session-drawer').close();
+  if (!keepDrawer) drawer.close();
   get('rename-session-dialog').close();
   cancelKeyRepeats();
   if (get('keys-dialog').open) get('keys-dialog').close();
@@ -929,8 +981,9 @@ function makeTerminal() {
   });
   terminalSelection = attachTerminalSelection({
     term, container: get('viewport').parentElement,
-    copyText: text => rpc('copy', { text }),
+    copyText: async text => { await rpc('copy', { text }); showTerminalToast(t('已复制'), 1200); },
     onStart: () => disposeTouchScroll?.cancel?.(),
+    canQuote: () => terminalReady && !!term?.modes.bracketedPasteMode,
   });
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
     onLongPress: point => terminalSelection?.start(point),
@@ -1324,6 +1377,7 @@ async function openProject(item, resumeOnly = false) {
   get('terminal-host').textContent = [profile.name, projectSourceLabel({ ...item, host: '' })].join(' · ');
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
+  syncSessionDock();
   void syncTerminalFullscreen();
   terminalState(t('正在连接终端…'));
   try {
@@ -1347,6 +1401,8 @@ async function openProject(item, resumeOnly = false) {
     if (epoch === viewEpoch) handleTerminalError(error);
   } finally {
     busy = false;
+    // 常驻侧栏在打开项目期间已显示，结束忙碌后立即恢复按钮可用。
+    if (drawer.isDocked()) drawer.render();
   }
 }
 
@@ -1413,7 +1469,7 @@ async function openNewSessionDialog() {
 async function selectSession(session, { keepDrawer = false } = {}) {
   get('terminal-empty').hidden = true;
   get('session-dialog').close();
-  if (!keepDrawer) get('session-drawer').close();
+  if (!keepDrawer) drawer.close();
   if (selected === session.id) return;
   leaveTerminal({ preserveFullscreen: true, keepDrawer });
   const epoch = viewEpoch;
@@ -1549,10 +1605,10 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 }
 
 get('back').addEventListener('click', () => returnToDashboard());
-get('show-sessions').addEventListener('click', () => { void drawer.open(); });
+get('show-sessions').addEventListener('click', () => toggleSessions());
 get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
-get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
-get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
+get('drawer-settings').addEventListener('click', () => { drawer.close(); get('session-dialog').showModal(); });
+get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
 // 空状态与右上角「＋」、会话抽屉共用「新建会话」弹层，可先选普通终端或电脑端终端配置。
@@ -1579,6 +1635,7 @@ async function newSession(terminalProfile) {
     }
   } finally {
     busy = false;
+    if (drawer.isDocked()) drawer.render();
   }
 }
 
@@ -1626,6 +1683,122 @@ async function endSession(id) {
   }
 }
 
+/** 纵览中点选会话：当前项目直接切换，其他项目先打开该项目再接入这个会话。 */
+async function openOverviewSession(target) {
+  if (busy || !profile) return;
+  const projectId = target.project?.id;
+  if (projectId === project?.id) {
+    const existing = sessions.find(item => item.id === target.id);
+    if (existing) await selectSession(existing);
+    return;
+  }
+  const destination = projects.find(item => item.id === projectId);
+  if (!destination) {
+    message('session-error', t('电脑端已没有项目「{name}」，只能关闭其中的会话。', { name: target.project?.name ?? projectId }));
+    return;
+  }
+  localStorage.setItem(sessionKey(destination.id), target.id);
+  await openProject(destination);
+}
+
+/** 纵览中关闭会话：当前项目沿用原流程；其他项目确认后只结束该会话，不切换当前终端。 */
+async function endOverviewSession(target) {
+  if (target.project?.id === project?.id) {
+    await endSession(target.id);
+    return;
+  }
+  if (busy || !profile) return;
+  const epoch = viewEpoch;
+  const address = profile.id;
+  const ended = !!target.exit;
+  busy = true;
+  endingSession = true;
+  drawer.pause();
+  message('session-error', '');
+  drawer.render();
+  try {
+    const name = (target.project?.name ?? '') + ' / ' + sessionName(target);
+    if (!await confirmAction(ended ? t('移除会话？') : t('关闭会话？'),
+      t(ended ? '「{name}」的输出将从列表中移除。' : '「{name}」中的 Shell 和前台任务将被关闭。', { name }), ended ? t('移除') : t('关闭'))) return;
+    if (epoch !== viewEpoch) return;
+    await remote('end', { id: target.id }, address);
+    if (epoch !== viewEpoch) return;
+    drawer.removeOverview(target.id);
+    drafts.delete(draftKey(target.id));
+  } catch (error) {
+    if (epoch === viewEpoch) {
+      if (error.revoked) handleTerminalError(error);
+      else message('session-error', error.message);
+    }
+  } finally {
+    busy = false;
+    endingSession = false;
+    drawer.render();
+    drawer.scheduleRefresh();
+  }
+}
+
+// 纵览底部：移除这台电脑上全部项目中已结束的手机会话（只清理输出记录，不影响运行中的会话）。
+get('clear-ended-sessions').addEventListener('click', async () => {
+  if (busy || !profile || !project) return;
+  const epoch = viewEpoch;
+  const address = profile.id;
+  const projectId = project.id;
+  busy = true;
+  drawer.pause();
+  message('session-error', '');
+  drawer.render();
+  try {
+    // 确认前重新读取，只清理确认框中统计到的已结束会话。
+    const latest = await remote('sessions', {}, address);
+    if (epoch !== viewEpoch) return;
+    const targets = latest.filter(item => item.exit);
+    if (!targets.length) return;
+    const projectCount = new Set(targets.map(item => item.project?.id)).size;
+    if (!await confirmAction(t('清理已结束会话？'),
+      t('将移除「{host}」上 {projects} 个项目中 {n} 个已结束会话的输出。运行中的会话不受影响。', { host: profile.name, projects: projectCount, n: targets.length }), t('清理'))) return;
+    if (epoch !== viewEpoch) return;
+    const removed = new Set();
+    let failed = 0;
+    for (const item of targets) {
+      try {
+        await remote('end', { id: item.id }, address);
+        removed.add(item.id);
+        drawer.removeOverview(item.id);
+        drafts.delete(draftKey(item.id));
+      } catch (error) {
+        if (error.revoked) throw error;
+        failed += 1;
+      }
+    }
+    if (epoch !== viewEpoch) return;
+    if (failed) message('session-error', t('已清理 {ended} 个会话，{failed} 个未确认移除，请核对后重试。', { ended: removed.size, failed }));
+    if (project?.id === projectId && removed.size) {
+      sessions = sessions.filter(item => !removed.has(item.id));
+      drawer.savePins(drawer.pins().filter(pin => !removed.has(pin)));
+      if (removed.has(selected)) {
+        compose.value = '';
+        if (sessions.length) {
+          await selectSession(sessions.find(item => !item.exit) ?? sessions[0], { keepDrawer: true });
+        } else {
+          localStorage.removeItem(sessionKey(projectId));
+          leaveTerminal({ preserveFullscreen: true, keepDrawer: true });
+          showEmptyProject();
+        }
+      }
+    }
+  } catch (error) {
+    if (epoch === viewEpoch) {
+      if (error.revoked) handleTerminalError(error);
+      else message('session-error', error.message);
+    }
+  } finally {
+    busy = false;
+    drawer.render();
+    drawer.scheduleRefresh();
+  }
+});
+
 get('end-all-sessions').addEventListener('click', async () => {
   if (busy || !project || !sessions.length) return;
   let epoch = viewEpoch;
@@ -1643,7 +1816,7 @@ get('end-all-sessions').addEventListener('click', async () => {
     sessions = mergeSessionList(targets, sessions);
     drawer.render();
     if (!targets.length) {
-      get('session-drawer').close();
+      drawer.close();
       localStorage.removeItem(sessionKey(projectId));
       returnToDashboard('home');
       return;
@@ -1651,7 +1824,7 @@ get('end-all-sessions').addEventListener('click', async () => {
     if (!await confirmAction(t('结束全部会话？'),
       t('将结束「{host} / {project}」的全部 {n} 个手机会话，关闭其中的 Shell 和前台任务，并移除会话输出。其他项目和桌面终端不受影响。', { host: profile.name, project: project.name, n: targets.length }), t('结束全部'))) return;
     if (epoch !== viewEpoch) return;
-    get('session-drawer').close();
+    drawer.close();
     // Pause polling and input while the confirmed terminals are being closed.
     leaveTerminal({ preserveFullscreen: true });
     epoch = viewEpoch;
@@ -1676,8 +1849,10 @@ get('end-all-sessions').addEventListener('click', async () => {
     } else {
       await selectSession(sessions.find(item => item.id === previous) ?? sessions.find(item => !item.exit) ?? sessions[0]);
       message('session-error', t('已结束 {ended} 个会话，{failed} 个未确认结束，请核对后重试。', { ended: ended.size, failed: failed.length }));
-      get('session-drawer').showModal();
-      get('show-sessions').setAttribute('aria-expanded', 'true');
+      if (!drawer.isDocked()) {
+        get('session-drawer').showModal();
+        get('show-sessions').setAttribute('aria-expanded', 'true');
+      }
     }
   } catch (error) {
     if (epoch === viewEpoch) {

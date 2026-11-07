@@ -1,6 +1,11 @@
 import { t } from './i18n.js';
-/** Touch selection uses xterm's buffer/cell coordinates, including wide CJK cells. */
-export function attachTerminalSelection({ term, container, copyText, onStart = () => {} }) {
+import { formatTerminalQuote } from './protocol.js';
+/**
+ * Touch selection uses xterm's buffer/cell coordinates, including wide CJK cells.
+ * canQuote：终端可写且程序开启了括号粘贴（Claude Code 等 AI CLI）时才显示「添加到对话」，
+ * 否则多行引用会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向）。
+ */
+export function attachTerminalSelection({ term, container, copyText, onStart = () => {}, canQuote = () => false }) {
   const doc = container.ownerDocument;
   const view = doc.defaultView;
   const screen = term.element.querySelector('.xterm-screen');
@@ -101,6 +106,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     active = held = true;
     epoch++;
     status.textContent = '';
+    quote.hidden = !canQuote();
     layer.hidden = tools.hidden = false;
     select(row * term.cols + left, row * term.cols + right);
   }
@@ -125,10 +131,22 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
     copy.disabled = true;
     try {
       await copyText(text);
-      if (!disposed && attempt === epoch) { status.textContent = t('已复制'); }
+      // 复制成功即退出选区；「已复制」提示交给调用方（工具栏随选区一起隐藏）。
+      if (!disposed && attempt === epoch) close();
     } catch (error) {
       if (!disposed && attempt === epoch) status.textContent = t(t(error.message || '复制失败，请重试'));
     } finally { copy.disabled = false; }
+  });
+  const quote = doc.createElement('button');
+  quote.type = 'button';
+  quote.textContent = t('添加到对话');
+  quote.hidden = true;
+  quote.addEventListener('click', () => {
+    // 点击时再校验一次：选区打开期间程序可能已退出或关闭括号粘贴。
+    const text = formatTerminalQuote(term.getSelection());
+    if (!text || !canQuote()) { quote.hidden = true; return; }
+    close();
+    term.paste(text);
   });
   const all = doc.createElement('button');
   all.type = 'button';
@@ -138,7 +156,7 @@ export function attachTerminalSelection({ term, container, copyText, onStart = (
   dismiss.type = 'button';
   dismiss.textContent = t('取消');
   dismiss.addEventListener('click', close);
-  tools.append(copy, all, dismiss, status);
+  tools.append(copy, quote, all, dismiss, status);
   tools.addEventListener('pointerdown', event => event.preventDefault());
   container.append(layer, tools);
 

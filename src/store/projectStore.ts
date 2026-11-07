@@ -79,7 +79,7 @@ import {
   waitForSshWorkspaceConnection,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
-import { runSshOpening, SshPreparationError } from './sshOpeningStore'
+import { cancelSshOpening, runSshOpening, SshPreparationError } from './sshOpeningStore'
 import { beginSshForeground, cancelSshWarmup, takeSshWarmup } from './sshWarmupStore'
 
 export type { FileNode }
@@ -179,7 +179,9 @@ const SSH_DIRECTORY_UNAVAILABLE_RE =
   /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
 /** 远端没响应不是凭据问题，弹重新认证对话框没用，直接报错。 */
 const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
-let projectSwitchPending = false
+/** 进行中的项目切换；新的不同项目点击会取代它（见 switchProject）。 */
+let activeProjectSwitch: { projectId: string; generation: number; done: Promise<void> } | null = null
+let projectSwitchGeneration = 0
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
   return runSshOpening(project, async (signal, report) => {
@@ -851,9 +853,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   switchProject: async (project: Project) => {
-    // A second click must not enqueue another connection or steal activation.
-    if (projectSwitchPending) return false
-    projectSwitchPending = true
+    const pending = activeProjectSwitch
+    // A second click on the same project must not enqueue another connection.
+    if (pending?.projectId === project.id && pending.generation === projectSwitchGeneration) return false
+    const generation = ++projectSwitchGeneration
+    const superseded = () => generation !== projectSwitchGeneration
+    if (pending) {
+      // 点击其他项目优先：取消仍在连接/更新远端服务的打开流程（服务更新本身在
+      // 后台继续），否则启动时恢复的远程项目更新期间本机项目点击毫无响应。
+      cancelSshOpening()
+      await pending.done
+      if (superseded()) return false
+    }
+    let settle!: () => void
+    const current = { projectId: project.id, generation, done: new Promise<void>(resolve => { settle = resolve }) }
+    activeProjectSwitch = current
     const endForeground = beginSshForeground()
     let sshConnectionAttempted = false
     let sshWorkspaceConnected = false
@@ -881,15 +895,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       // VS Code–style workspace trust: ask once before activating the project.
       const trust = await ensureWorkspaceTrust(project)
-      if (trust === false) return false
+      if (trust === false || superseded()) return false
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
+      if (superseded()) return false
       // 本会话已成功打开过、连接仍在的远程项目：直接用缓存目录树切换，
       // 不再弹打开对话框、不阻塞在远端设置读取与整棵树重扫上，校验与刷新转后台。
       const cachedSshTree = isSshProject(project) ? get().projectTrees[project.id] : undefined
       if (cachedSshTree && await isSshWorkspaceReady(project.path)) {
         const recentFiles = await touchAndLoadRecentFiles(project.id)
+        if (superseded()) return false
         const previousId = currentProject?.id ?? null
         set(s => ({
           currentProject: project,
@@ -904,6 +920,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
 
       await syncSshServerSettingsForProject(project)
+      if (superseded()) return false
 
       sshConnectionAttempted = true
       const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
@@ -921,6 +938,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       else if (!project.ephemeral) {
         recentFiles = await touchAndLoadRecentFiles(project.id)
       }
+      if (superseded()) return false
       const previousId = currentProject?.id ?? null
       set(s => ({
         currentProject: project,
@@ -971,8 +989,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       get().pushToast('error', `切换项目失败: ${String(e)}`)
       return false
     } finally {
-      projectSwitchPending = false
+      if (activeProjectSwitch === current) activeProjectSwitch = null
       endForeground()
+      settle()
     }
   },
 

@@ -5,7 +5,7 @@ import { attachTerminalSelection } from '../../mobile/android/web/terminalSelect
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks() })
 
-function fixture() {
+function fixture({ canQuote = () => false, text = '' }: { canQuote?: () => boolean; text?: string } = {}) {
   const container = document.createElement('div')
   const screen = document.createElement('div')
   screen.className = 'xterm-screen'
@@ -26,12 +26,15 @@ function fixture() {
       getLine: () => ({ getCell: (col: number) => ({ getChars: () => 'alpha-beta gamma    '[col] ?? '', getWidth: () => 1 }) }),
     } },
     select, getSelectionPosition: () => selected, clearSelection: () => { selected = undefined },
-    getSelection: () => '', selectAll: vi.fn(), scrollLines: vi.fn(),
+    getSelection: () => text, selectAll: vi.fn(), scrollLines: vi.fn(), paste: vi.fn(),
     onScroll: subscribe, onRender: subscribe, onResize: subscribe,
   }
-  const selection = attachTerminalSelection({ term, container, copyText: vi.fn() })
+  const copyText = vi.fn(async (_text: string) => {})
+  const selection = attachTerminalSelection({ term, container, copyText, canQuote })
   disposers.push(() => selection.dispose())
-  return { selection, select }
+  const quoteButton = () => [...container.querySelectorAll<HTMLButtonElement>('.terminal-selection-tools button')]
+    .find(button => button.textContent === '添加到对话')!
+  return { selection, select, term, quoteButton, copyText, container }
 }
 
 describe('Android virtual mouse selection', () => {
@@ -65,5 +68,55 @@ describe('Android virtual mouse selection', () => {
     selection.drag('down', { x: 25, y: 5 })
     expect(select).toHaveBeenCalledTimes(calls)
     expect(selection.isActive()).toBe(false)
+  })
+})
+
+describe('Android selection quote to conversation', () => {
+  it('hides the action when the program has no bracketed paste', () => {
+    const { selection, quoteButton } = fixture({ text: 'alpha' })
+    selection.start({ x: 25, y: 5 })
+    expect(quoteButton().hidden).toBe(true)
+  })
+
+  it('pastes a Markdown quote into the AI CLI and closes the selection', () => {
+    const { selection, term, quoteButton } = fixture({ canQuote: () => true, text: 'alpha   \nbeta' })
+    selection.start({ x: 25, y: 5 })
+    expect(quoteButton().hidden).toBe(false)
+    quoteButton().click()
+    expect(term.paste).toHaveBeenCalledWith('> alpha\n> beta\n\n')
+    expect(selection.isActive()).toBe(false)
+  })
+
+  it('rechecks writability on click instead of pasting into a plain shell', () => {
+    let allowed = true
+    const { selection, term, quoteButton } = fixture({ canQuote: () => allowed, text: 'alpha' })
+    selection.start({ x: 25, y: 5 })
+    allowed = false
+    quoteButton().click()
+    expect(term.paste).not.toHaveBeenCalled()
+    expect(quoteButton().hidden).toBe(true)
+  })
+})
+
+describe('Android selection copy', () => {
+  it('closes the selection after a successful copy', async () => {
+    const { selection, copyText, container } = fixture({ text: 'alpha' })
+    selection.start({ x: 25, y: 5 })
+    const copyButton = [...container.querySelectorAll<HTMLButtonElement>('.terminal-selection-tools button')]
+      .find(button => button.textContent === '复制')!
+    copyButton.click()
+    await vi.waitFor(() => expect(selection.isActive()).toBe(false))
+    expect(copyText).toHaveBeenCalledWith('alpha')
+  })
+
+  it('keeps the selection open when copying fails', async () => {
+    const { selection, copyText, container } = fixture({ text: 'alpha' })
+    copyText.mockRejectedValueOnce(new Error('复制失败，请重试'))
+    selection.start({ x: 25, y: 5 })
+    const copyButton = [...container.querySelectorAll<HTMLButtonElement>('.terminal-selection-tools button')]
+      .find(button => button.textContent === '复制')!
+    copyButton.click()
+    await vi.waitFor(() => expect(copyButton.disabled).toBe(false))
+    expect(selection.isActive()).toBe(true)
   })
 })

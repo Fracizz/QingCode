@@ -16,8 +16,12 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 手机会话侧栏与命名：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-sidebar.ego.mjs').then(m=>m.run())"`，复用 `pnpm test:web` 的 Android 页面。验证左侧抽屉、程序标题、手动名称优先级、清空恢复自动命名、失败保留原名、草稿隔离、重连接回、320px 窄屏、横屏菜单与旧电脑兼容，并在同一浏览器空间回归最近项目和结束全部会话。截图及 JSON 位于 `.dev/web-tests/mobile-sidebar/`。Rust `mobile` / `mobile_screen` 测试验证真实 OSC 分片解析、标题过滤、名称长度校验、手动名称优先及快照/轮询元数据；浏览器使用内存 RPC，不能代替 Android 真机与本机/WSL/SSH 进程验收。
 
+安卓平板适配：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-tablet.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。以 1280×800（同时模拟屏幕尺寸）验证双栏默认收起、侧栏按钮展开为无遮罩常驻侧栏且终端可输入、再次点击收起并记住选择、新建与切换会话不收起、常驻期间元数据继续刷新、返回键离开终端并在工作台取消常驻、600px 分屏退回模态抽屉、915×412 横屏手机不常驻，以及 `qingHardKeyboard` 收起快捷键栏、手动展开不改偏好、拔出后恢复。截图与 JSON 位于 `.dev/web-tests/mobile-tablet/`；使用内存 RPC，实体键盘识别、分屏与折叠屏须真机验收。
+
 手机会话操作菜单：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-actions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证点 ⋯ 与触摸长按都打开同一底部菜单、短按仍切换会话、置顶后排在最前并显示标记（新置顶在上）、离开再接回后仍保留、取消置顶恢复电脑端顺序、结束非当前会话时留在侧栏并清除其置顶，以及 320px 窄屏。置顶只保存在手机 localStorage（按连接 + 项目），不改变电脑端顺序；截图与 JSON 位于 `.dev/web-tests/mobile-session-actions/`，使用内存 RPC，不替代 Android 真机长按手感验收。
 手机侧栏逐项关闭：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-close.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖每行独立关闭、明确目标与取消、关闭其他项保留当前会话和草稿、失败重试、关闭当前项恢复剩余会话草稿、最后一项关闭后返回首页，以及窄屏、键盘高度和横屏下的触控区与底部操作；随后在同一空间回归重命名、旧电脑兼容及关闭全部的范围、取消和部分失败。截图和 JSON 位于 `.dev/web-tests/mobile-session-close/`；关闭操作只作用于内存桥，不代替 Android 真机和实际进程验收。
+
+手机会话纵览：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-overview.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖默认本项目范围、「全部」一次请求列出所有项目并按当前项目优先分组、其他设备与电脑端已移除项目标注、筛选计数与多关键词搜索、关闭其他项目会话保留当前终端和草稿、跨项目清理已结束会话、点选其他项目会话直接打开并记住范围、320px 窄屏与横屏矮屏布局，以及旧电脑缺少 `all_sessions` 时禁用「全部」。截图和 JSON 位于 `.dev/web-tests/mobile-session-overview/`；会话只存在于内存桥，不代替 Android 真机与多台手机的实际验收。
 
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 

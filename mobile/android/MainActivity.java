@@ -302,8 +302,13 @@ public final class MainActivity extends Activity {
 
     private void notifyOrientation() {
         if (pageReady && view != null) {
-            boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+            Configuration configuration = getResources().getConfiguration();
+            boolean landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE;
             view.evaluateJavascript("window.qingOrientation?.(" + landscape + ")", null);
+            // 平板常配蓝牙 / 皮套键盘：实体键盘可用时网页默认收起快捷键栏。
+            boolean hardKeyboard = configuration.keyboard != Configuration.KEYBOARD_NOKEYS
+                && configuration.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO;
+            view.evaluateJavascript("window.qingHardKeyboard?.(" + hardKeyboard + ")", null);
         }
     }
 

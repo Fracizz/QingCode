@@ -273,8 +273,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #project-filters { position: sticky; z-index: 2; top: -12px; margin: 0 -2px; padding: 8px 2px 2px; background: var(--paper); }
 .search-field { position: relative; }
 .search-field > svg { position: absolute; left: 16px; top: 15px; color: var(--muted); width: 18px; height: 18px; }
-#search { min-height: 48px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
-#search:focus { border-color: var(--accent-border); }
+#search, #session-search { min-height: 48px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
+#search:focus, #session-search:focus { border-color: var(--accent-border); }
 .list-label { margin: 8px 4px 8px; color: var(--muted); font-size: 12px; }
 
 /* 分组列表：同组条目共享一个圆角容器，用细分隔线区分（Material 3 / Android 设置页）。 */
@@ -588,6 +588,23 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
 .session-option .icon-button { color: var(--muted); }
 .session-option .session-close:active:not(:disabled), .session-option .session-close:focus-visible { color: var(--error); }
+/* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
+#session-scope, #session-filter { flex: none; margin-top: 0; }
+#session-scope { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#session-scope button, #session-filter button { min-height: 36px; font-size: 13px; }
+#session-overview:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+#session-search { min-height: 44px; }
+#session-overview .search-field > svg { top: 13px; }
+#session-groups { flex: 1; min-height: 0; overflow-y: auto; padding-block: 2px; }
+.session-group + .session-group { margin-top: 10px; }
+.session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
+.session-group-head strong { min-width: 0; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-group-head span { flex: none; }
+.session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-group .session-option { grid-template-columns: minmax(0, 1fr) 44px; }
+.session-group .session-option + .session-option { margin-top: 4px; }
+#session-overview-empty { margin: 8px 4px; text-align: center; }
+#clear-ended-sessions { grid-column: 1 / -1; }
 .drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
 #end-all-sessions { grid-column: 1 / -1; }
 .drawer-actions button { padding-inline: 8px; font-size: 13px; }
@@ -595,6 +612,16 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   dialog.session-drawer[open] { gap: 6px; }
   #session-context { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .drawer-actions { padding-top: 8px; }
+  /* 矮屏（横屏手机）：搜索、筛选与分组一起滚动，列表不被挤成一行。 */
+  #session-overview:not([hidden]) { overflow-y: auto; gap: 6px; }
+  #session-groups { flex: none; overflow: visible; }
+  #session-search { min-height: 40px; }
+  #session-overview .search-field > svg { top: 11px; }
+  #session-scope button, #session-filter button { min-height: 32px; }
+  /* 底部操作并成一行，纵览时省去上下文行，给列表留出至少一整行。 */
+  .drawer-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :is(#end-all-sessions, #clear-ended-sessions) { grid-column: auto; }
+  #session-drawer:has(#session-overview:not([hidden])) #session-context { display: none; }
 }
 .sheet-handle { display: none; }
 
@@ -651,6 +678,18 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 @media (orientation: landscape) and (min-width: 600px) {
   #viewport { padding-top: 2px; }
 }
+/* 平板宽屏双栏：会话侧栏以非模态方式常驻终端左侧，终端让出同等宽度；左上角侧栏按钮负责展开 / 收起，侧栏内关闭按钮隐藏。 */
+:root { --dock-width: 300px; }
+dialog.session-drawer[data-docked="true"] {
+  position: fixed;
+  z-index: 2;
+  width: var(--dock-width);
+  border-radius: 0;
+  box-shadow: none;
+}
+dialog.session-drawer[data-docked="true"] [data-close="session-drawer"] { display: none; }
+:root[data-sessions-docked="true"] main { padding-left: var(--dock-width); }
+:root[data-sessions-docked="true"] #show-sessions { color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }
 @keyframes dialog-in { from { opacity: 0; transform: scale(.96); } }
