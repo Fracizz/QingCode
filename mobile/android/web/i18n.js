@@ -82,8 +82,19 @@ export const EN = Object.freeze({
   '中文': '中文', // 语言名保持原文
   // data-i18n：同一中文在不同位置需要不同英文时使用的专用 key。
   'action:connect': 'Connect',
+  'state:off': 'Off',
   '跟随系统': 'System', // 三段选择里需短词，避免窄屏截断
   '切换后立即生效': 'Takes effect immediately',
+  // —— 设置页 ——
+  '设置': 'Settings',
+  '打开设置': 'Open settings',
+  '只保存在这台手机上，对所有连接和终端生效。': 'Saved on this phone only and applied to every connection and terminal.',
+  '通用': 'General',
+  '发送与图片': 'Sending and images',
+  '提醒与渲染': 'Alerts and rendering',
+  '更多设置': 'More settings',
+  '语言、图片压缩、发送按键、后台提醒等': 'Language, image compression, send key, background alerts and more',
+  '打开': 'Open',
 
   // —— 终端 ——
   '打开会话侧栏': 'Open session drawer',
@@ -375,7 +386,7 @@ export const EN = Object.freeze({
   '终端配置': 'Terminal profiles',
   '选项来自电脑端「设置 → 终端 → 终端配置」；启动命令在当前项目环境（本机、WSL 或远端）中执行。': 'Options come from "Settings → Terminal → Terminal profiles" on the computer; startup commands run in the project environment (local, WSL, or remote).',
   '图片未能上传': 'Images not uploaded',
-  '可重新选择未上传的图片；压缩等级在终端设置中调整。已插入的图片会保留在草稿中。': 'Select the remaining images again; change compression in Terminal settings. Inserted images stay in the draft.',
+  '可重新选择未上传的图片；压缩等级在设置中调整。已插入的图片会保留在草稿中。': 'Select the remaining images again; change compression in Settings. Inserted images stay in the draft.',
   '终端操作': 'Terminal actions',
   '展开编辑指令': 'Expand editor',
   '最近提交与项目草稿': 'Recent submissions and drafts',
@@ -481,10 +492,10 @@ export const EN = Object.freeze({
   '读取图片选择失败。': 'Failed to read the selected images.',
   '无法读取图片': 'Cannot read the image',
   '图片不能超过 8 MB': 'Images cannot exceed 8 MB',
-  '图片分辨率过大，请在会话与设置中启用图片压缩。': 'Image resolution is too high. Enable image compression in Terminal settings.',
+  '图片分辨率过大，请在设置中启用图片压缩。': 'Image resolution is too high. Enable image compression in Settings.',
   '系统无法解码此图片；HEIC / HEIF 需要手机支持，请先转换为 JPEG 后重试。': 'The system cannot decode this image. HEIC / HEIF needs phone support; convert it to JPEG and try again.',
   '图片解码失败': 'Image decoding failed',
-  '转换后的图片超过 8 MB，请在会话与设置中提高图片压缩等级。': 'The converted image exceeds 8 MB. Raise the compression level in Terminal settings.',
+  '转换后的图片超过 8 MB，请在设置中提高图片压缩等级。': 'The converted image exceeds 8 MB. Raise the compression level in Settings.',
   '请求失败。': 'Request failed.',
   '请求过大。': 'Request too large.',
   '请求无效。': 'Invalid request.',
@@ -545,7 +556,7 @@ export const EN = Object.freeze({
   '配对链接无效。': 'Invalid pairing link.',
   '离开应用时，要在程序停下后': 'Get an ',
   '通知你': 'alert',
-  '吗？可随时在终端设置中更改。': ' when a program stops after you leave the app? You can change this in terminal settings.',
+  '吗？可随时在设置中更改。': ' when a program stops after you leave the app? You can change this in Settings.',
   '开启': 'Turn on',
   '不用': 'No thanks',
   '后台提醒': 'Background alerts',

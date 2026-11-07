@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createConnectionLatency, HOME_LATENCY_INTERVAL, TERMINAL_LATENCY_INTERVAL, latencyText } from '../../mobile/android/web/connectionLatency.js'
+import { createConnectionLatency, HOME_LATENCY_INTERVAL, isFreshLatency, TERMINAL_LATENCY_INTERVAL, latencyText } from '../../mobile/android/web/connectionLatency.js'
 
 const a = { id: '192.168.1.8:48764', fingerprint: 'a' }
 const b = { id: '10.0.0.9:48764', fingerprint: 'b' }
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); vi.restoreAllMocks(); vi.useRealTimers() })
+describe('isFreshLatency', () => {
+  it('fires once per successful probe and never for failures', () => {
+    const ready = { milliseconds: 32, checkedAt: 1000, state: 'ready' }
+    expect(isFreshLatency(ready, null)).toBe(true)
+    expect(isFreshLatency(ready, 1000)).toBe(false)
+    expect(isFreshLatency({ ...ready, checkedAt: 2000 }, 1000)).toBe(true)
+    for (const state of ['failed', 'stale', 'unsupported', 'idle']) expect(isFreshLatency({ milliseconds: null, checkedAt: 2000, state }, 1000)).toBe(false)
+    expect(isFreshLatency({ milliseconds: 32, checkedAt: null, state: 'ready' }, null)).toBe(false)
+  })
+})
+
 function fixture() {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-11-04T12:00:00Z'))

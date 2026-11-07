@@ -36,6 +36,9 @@
   --console: #101317;
   --mono: 'QingCode Symbols', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', 'Roboto Mono', 'Noto Sans Mono', 'Droid Sans Mono', monospace;
   --ease: cubic-bezier(.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --motion-enter: 160ms;
+  --motion-exit: 140ms;
   --corner-inset: 0px;
   --corner-bottom-inset: 0px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -82,6 +85,10 @@ button {
 button:disabled { opacity: .45; cursor: default; }
 /* Material 状态层：按下时叠加一层浅色，而不是整块换色。 */
 button:active:not(:disabled), button:focus-visible { background-color: var(--raised); }
+/* 按压回弹；拖动手柄和虚拟鼠标的按键不走这里。:where 不抬高优先级，后面的专属规则仍可覆盖。 */
+button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-nav button)):active:not(:disabled) { transform: scale(.97); }
+/* 整行列表很宽，同样比例会缩得太明显。 */
+:is(.row, #submission-list button, .terminal-actions button):active:not(:disabled) { transform: scale(.99); }
 button:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -140,11 +147,11 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   min-height: 56px;
   padding: 4px max(16px, calc((100% - 600px) / 2));
 }
-.brand { white-space: nowrap; font-weight: 700; letter-spacing: -.02em; }
+.app-head-actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; max-width: 72%; }
+.brand { flex: none; white-space: nowrap; font-weight: 700; letter-spacing: -.02em; }
 .brand img { display: block; }
 .host-pill {
   min-width: 0;
-  max-width: 56%;
   min-height: 36px;
   padding: 0 10px 0 12px;
   border-radius: var(--control-radius);
@@ -483,6 +490,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 @keyframes compose-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .compose-note::before { animation: none !important; } }
 #submission-state { display: flex; }
+/* 发送中转圈换成对勾时轻弹一下。 */
+.compose-chip[data-state="received"]::before { animation: receipt-pop 240ms var(--ease); }
+@keyframes receipt-pop { 0% { opacity: 0; transform: scale(.4); } 60% { opacity: 1; transform: scale(1.18); } 100% { transform: scale(1); } }
 .compose-chip { background: transparent; }
 #slash-command, #attach-image { color: var(--accent); }
 #more-keys { grid-column: span 2; }
@@ -568,11 +578,13 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
 .session-label { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .session-option small { margin-top: 4px; font-size: 11px; }
-.session-spinner { display: none; flex: none; width: 20px; height: 20px; margin-top: 3px; color: var(--accent); animation: spin 1s linear infinite; }
+/* 图标与标题第一行居中：多行标题时也只对齐首行；需高于通用 svg 尺寸规则的优先级。 */
+.session-option :is(.session-spinner, .session-pin) { width: 16px; height: 16px; margin-top: calc((1.45em - 16px) / 2); }
+.session-spinner { display: none; flex: none; color: var(--accent); animation: spin 1s linear infinite; }
 .session-option[data-running="true"] .session-spinner { display: block; }
 /* 长按打开会话操作：避免系统选中文字或弹出长按菜单。 */
 .session-option .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.session-pin { display: none; flex: none; width: 16px; height: 16px; margin-top: 4px; color: var(--muted); }
+.session-pin { display: none; flex: none; color: var(--muted); }
 .session-option[data-pinned="true"] .session-pin { display: block; }
 .session-option[data-current="true"] { background: var(--accent-surface); color: var(--accent); }
 .session-option .icon-button { color: var(--muted); }
@@ -644,9 +656,42 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 @keyframes pulse { 50% { opacity: .35; } }
 @keyframes dialog-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes sheet-in { from { transform: translateY(100%); } }
+@keyframes backdrop-in { from { background: transparent; } }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes float-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+@keyframes ping-dot { 35% { opacity: .55; transform: scale(1.5); } }
+@keyframes ping-value { 35% { color: var(--accent); } }
+
+/* ---------- 动效 ----------
+   只给界面外壳加：终端内容、光标和手指拖动不做动画。
+   弹层退出用纯 CSS 过渡，不延迟 close()，返回键和连点都无需特殊处理；旧 WebView 不认 allow-discrete 时整条忽略，退化为立即消失。 */
+dialog { transition: opacity var(--motion-exit) var(--ease-exit), transform var(--motion-exit) var(--ease-exit), display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; }
+/* 旧版内核的 ::backdrop 不继承 :root 变量，这里写字面值。 */
+dialog::backdrop { transition: background-color 140ms linear, display 140ms allow-discrete, overlay 140ms allow-discrete; }
+dialog[open]::backdrop { animation: backdrop-in 180ms linear; }
+/* 退出途中仍在顶层显示，不能挡住下面的点击。 */
+dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
+dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
+dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
+@media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
+/* 从隐藏变为显示时自动播放，同页刷新不会重播；终端页只淡入，避免位移影响行列测量。 */
+.dashboard-page:not([hidden]) { animation: page-in var(--motion-enter) var(--ease); }
+#terminal-screen:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
+#scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
+#font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
+/* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
+#terminal-dot[data-state="online"].ping-flash { animation: ping-dot 460ms ease-out; }
+#terminal-latency.ping-flash { animation: ping-value 460ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  dialog, dialog::backdrop { transition: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #terminal-latency.ping-flash { animation: none; }
+  button:active:not(:disabled) { transform: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   button, .pull-indicator, .nav-icon { transition: none; }
-  dialog[open], dialog.sheet[open], [data-state="checking"] .dot { animation: none; }
+  dialog[open], dialog.sheet[open], dialog.session-drawer[open], [data-state="checking"] .dot { animation: none; }
   .session-spinner { animation: none; }
 }
 
@@ -661,7 +706,20 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #new-session-dialog .dialog-actions { margin-top: 12px; }
 #terminal-menu { flex: none; width: 36px; min-width: 36px; }
 #viewport[data-columns="fixed"] { overflow-x: auto; }
-#terminal-columns, #send-mode { width: 100%; min-height: 44px; margin: 6px 0; padding: 10px 12px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--control-radius); }
+/* 下拉选项：隐藏的 select 只存值，点开后是与其他弹层一致的选择面板，不使用系统下拉样式。 */
+.select-field { position: relative; min-width: 0; margin: 6px 0; }
+.select-field > select { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.select-trigger { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 8px 10px 8px 12px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font-size: 14px; text-align: left; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-trigger svg { width: 16px; height: 16px; color: var(--muted); transform: rotate(90deg); }
+.select-trigger[aria-expanded="true"] { border-color: var(--accent-border); }
+.select-options { display: grid; gap: 4px; margin-top: 4px; }
+.select-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; text-align: left; }
+.select-option .row-text strong, .select-option .row-text small { white-space: normal; overflow-wrap: anywhere; }
+.select-option .row-text small:empty { display: none; }
+.select-option svg { width: 18px; height: 18px; visibility: hidden; }
+.select-option[aria-checked="true"] { background: var(--accent-surface); color: var(--accent); }
+.select-option[aria-checked="true"] svg { visibility: visible; }
 .setting-choices { min-width: 0; margin: 14px 0 8px; padding: 0; border: 0; }
 .setting-choices legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 650; }
 .setting-choices label { display: flex; align-items: center; gap: 12px; min-height: 52px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--paper); font-weight: 400; cursor: pointer; }
@@ -687,7 +745,9 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 #submission-list { flex: none; max-height: 28%; overflow: auto; overscroll-behavior: contain; grid-auto-rows: max-content; }
 #submission-list button { text-align: left; width: 100%; display: block; min-height: 44px; padding: 6px 8px; border-radius: 0; border-bottom: 1px solid var(--divider); font-size: 12px; overflow-wrap: anywhere; }
 .reader-controls { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
-.reader-controls select, .reader-controls input[type="search"] { flex: 1; min-width: 0; width: 100px; min-height: 44px; padding: 6px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); color: var(--ink); }
+.reader-controls .select-field { flex: 1; width: 100px; margin: 0; }
+.reader-controls .select-trigger { padding: 6px; background: var(--console); font-size: 12px; }
+.reader-controls input[type="search"] { flex: 1; min-width: 0; width: 100px; min-height: 44px; padding: 6px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); color: var(--ink); }
 .reader-controls label { display: inline-flex; align-items: center; gap: 6px; }
 .reader-controls input[type="checkbox"] { width: 18px; min-height: 18px; }
 #reader-scroll { flex: 1; min-height: 40px; overflow: auto; border-top: 1px solid var(--divider); }
@@ -706,10 +766,16 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
   #reader-dialog .reader-controls label { display: none; }
   #reader-scroll { grid-column: 1 / -1; height: 100%; }
 }
-#image-compression { width: 100%; min-height: 44px; margin-bottom: 12px; padding: 8px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); font: inherit; color: var(--ink); }
 .session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
 /* 语言：与「应用更新」同款分组卡片，三段式选择，当前项用强调色填充，点按即生效。 */
-.language-setting { margin: 20px 4px 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
+/* 设置页：全屏滚动，每项一张卡片，按用途分组。 */
+dialog.settings-dialog[open] { width: calc(100% - 16px - var(--safe-left) - var(--safe-right)); max-width: 640px; height: calc(100% - 16px - var(--safe-top) - var(--safe-bottom)); margin: calc(8px + var(--safe-top)) auto calc(8px + var(--safe-bottom)); background: var(--paper); }
+.settings-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
+.settings-intro { margin: 0 4px; font-size: 12px; }
+.settings-group-title { margin: 16px 4px 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.language-setting, .update-setting, .settings-card { margin: 0 0 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
+.settings-card label { margin-top: 0; font-size: 14px; }
+.settings-card p { margin-top: 6px; font-size: 12px; }
 .language-setting .row-text strong { font-size: 14px; }
 .language-setting .row-text small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 12px; padding: 4px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); }
@@ -717,12 +783,11 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .segmented button:active { background: var(--raised); transform: scale(.98); }
 .segmented button[aria-checked="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
 .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.update-setting { margin: 12px 4px 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
 .update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .update-row strong { font-size: 14px; }
 .update-setting .hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
 .update-setting .hint:empty { display: none; }
-.update-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.update-auto { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--muted); font-size: 13px; font-weight: 400; }
 .update-auto input { width: 18px; min-height: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--accent); }
 .update-card { margin-bottom: 12px; }
 #update-notes { max-height: 38vh; overflow: auto; margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 system-ui, sans-serif; user-select: text; -webkit-user-select: text; }
@@ -757,10 +822,21 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .virtual-mouse-button::after { content: ''; position: absolute; top: -6px; bottom: 0; }
 .virtual-mouse-button[data-button="0"]::after { left: -8px; right: 0; }
 .virtual-mouse-button[data-button="2"]::after { left: 0; right: -8px; }
-.virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { background: var(--accent-surface); }
+.virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { background: var(--accent-surface); transform: scale(.95); }
 .virtual-mouse-button[data-button="2"]::before { content: 'R'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 10px; font-weight: 650; }
 .virtual-mouse-button[data-button="0"]::before { content: 'L'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 10px; font-weight: 650; }
 .virtual-mouse-grip { grid-column: 1 / -1; align-self: center; justify-self: center; width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle, var(--muted) 1.2px, transparent 1.6px) 0 0 / 6px 6px; opacity: .7; pointer-events: none; }
 .virtual-mouse-menu { z-index: 8; display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); box-shadow: 0 4px 16px #0006; }
 .virtual-mouse-menu button { min-height: 44px; padding: 0 14px; color: var(--accent); font-size: 13px; }
-@media (prefers-reduced-motion: reduce) { .virtual-mouse { transition: none; } }
+/* 进入鼠标模式时从箭头尖端长出来：位置由内联 transform 决定，叠加缩放才不会把它带离原位，不支持叠加的内核只淡入。 */
+.virtual-mouse-pointer { transform-origin: 3px 3px; }
+.virtual-mouse:not([hidden]), .virtual-mouse-pointer:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
+@supports (animation-composition: add) {
+  .virtual-mouse:not([hidden]), .virtual-mouse-pointer:not([hidden]) { animation: mouse-grow var(--motion-enter) var(--ease), fade-in var(--motion-enter) linear; animation-composition: add, replace; }
+}
+@keyframes mouse-grow { from { transform: scale(.7); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .virtual-mouse { transition: none; }
+  .virtual-mouse:not([hidden]), .virtual-mouse-pointer:not([hidden]) { animation: none; }
+  .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { transform: none; }
+}

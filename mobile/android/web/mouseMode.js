@@ -205,6 +205,8 @@ export function attachMouseMode(host, target, {
     const layout = layoutMouseBody(local, bounds, { flip: gesture ? flip : undefined });
     flip = layout.flip;
     body.style.transform = `translate(${layout.left}px, ${layout.top}px)`;
+    // 入场缩放以靠近尖端的角为原点。
+    body.style.transformOrigin = `${layout.flip.x ? '100%' : '0'} ${layout.flip.y ? '100%' : '0'}`;
     if (!menu.hidden) placeMenu(layout);
   }
 

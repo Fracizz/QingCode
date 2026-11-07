@@ -1,4 +1,4 @@
-// 在线更新界面：「连接」页的版本与检查按钮、首页新版本提示卡片和更新弹层。
+// 在线更新界面：「设置」页的版本与检查按钮、首页新版本提示卡片和更新弹层。
 // 原生层负责下载、校验与调用系统安装器，进度经 window.qingUpdate 回传；挑选逻辑在 appUpdate.js。
 import { pickApkUpdate, parseUpdatePrefs, progressText, formatBytes, shouldAutoCheck, UPDATE_PREFS_KEY } from './appUpdate.js';
 import { get, message, ask } from './dom.js';

@@ -6,6 +6,11 @@ export function latencyText(snapshot) {
   return value === null ? '--' : value < 1 ? '<1 ms' : Math.round(value) + ' ms';
 }
 
+/** True once per successful probe, so re-renders of the same result stay quiet. */
+export function isFreshLatency(snapshot, previousCheckedAt) {
+  return snapshot.state === 'ready' && snapshot.checkedAt !== null && snapshot.checkedAt !== previousCheckedAt;
+}
+
 /** One probe in flight across all views; no business request or long poll is timed. */
 export function createConnectionLatency({ measure, onChange, doc = document, now = () => Date.now() }) {
   let target = null;

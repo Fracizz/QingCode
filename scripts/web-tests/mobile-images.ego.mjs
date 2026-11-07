@@ -16,8 +16,12 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const openSettings = async () => {
     await page.click('#manage-sessions', { label: 'open terminal settings' })
     await page.waitForSelector('#session-dialog[open]')
+    await page.waitForFunction(() => !document.querySelector('#session-dialog').getAnimations().some(animation => animation.playState === 'running'))
+    await page.click('#open-settings-from-terminal', { label: 'open settings' })
+    await page.waitForSelector('#settings-dialog[open]')
   }
-  const closeSettings = () => page.evaluate(() => window.qingBack())
+  // 返回键依次关闭设置页与终端设置。
+  const closeSettings = () => page.evaluate(() => { window.qingBack(); window.qingBack() })
   const openProject = async () => {
     await page.waitForFunction(() => typeof window.qingLink === 'function')
     await page.evaluate(() => window.qingLink(window.__mobileFixture.link('192.168.1.8', 48764)))

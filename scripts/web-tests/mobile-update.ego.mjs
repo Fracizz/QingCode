@@ -50,7 +50,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#update-card').hidden), true)
     })
     await step('manual check on a beta phone finds the newest beta that ships an APK', async () => {
-      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
+      await page.click('#open-settings', { label: 'open settings' })
       await releases([beta5NoApk, beta4])
       await page.click('#update-check', { label: 'check for updates' })
       await page.waitForSelector('#update-dialog[open]')
@@ -80,7 +80,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await fresh()
       await releases([beta4])
       await page.evaluate(() => { window.__mobileFixture.state.update.stepDelay = 400 })
-      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
+      await page.click('#open-settings', { label: 'open settings' })
       await page.click('#update-check', { label: 'check for updates' })
       await page.waitForSelector('#update-dialog[open]')
       await page.click('#update-action', { label: 'download update' })
@@ -90,7 +90,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await text('#update-action'), '下载并安装')
     })
     await step('home card offers the update until the version is skipped', async () => {
-      await page.evaluate(() => document.querySelector('#update-dialog').close())
+      await page.evaluate(() => { document.querySelector('#update-dialog').close(); document.querySelector('#settings-dialog').close() })
       await page.click('#dashboard-nav [data-page="home"]', { label: 'open home' })
       await page.waitForFunction(() => !document.querySelector('#update-card').hidden)
       assert.match(await text('#update-card-version'), /0\.1\.15-beta\.4/)
@@ -104,7 +104,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('stable phones ignore betas; no update reports latest', async () => {
       await page.goto(baseUrl + '/mobile-android/?lang=zh&appVersion=0.1.15&appCode=115999')
       await page.waitForFunction(() => /0\.1\.15$/.test(document.querySelector('#update-version').textContent))
-      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
+      await page.click('#open-settings', { label: 'open settings' })
       await page.evaluate(() => {
         window.__mobileFixture.state.update.list.releases = [{ tag: 'v0.1.16-beta.1', prerelease: true, draft: false, body: '', assets: [{ name: 'QingCode_0.1.16-beta.1-android.apk', url: 'https://github.com/Fracizz/QingCode/releases/download/v0.1.16-beta.1/QingCode_0.1.16-beta.1-android.apk', size: 1 }] }]
       })
@@ -122,7 +122,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('English UI translates the update flow', async () => {
       await page.goto(baseUrl + '/mobile-android/?lang=en')
       await page.waitForFunction(() => /Current version/.test(document.querySelector('#update-version').textContent))
-      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
+      await page.click('#open-settings', { label: 'open settings' })
       assert.equal(await text('#update-check'), 'Check for updates')
       await releases([beta4])
       await page.click('#update-check', { label: 'check for updates in English' })

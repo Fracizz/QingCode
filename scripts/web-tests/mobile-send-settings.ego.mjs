@@ -32,6 +32,13 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
     await page.cdp('Emulation.clearDeviceMetricsOverride')
     await page.click('#session-dialog [data-close]', { label: 'close terminal settings' })
   }
+  // 发送按键在「设置」页：从终端设置进入，改完直接回到终端设置。
+  const selectSendMode = async value => {
+    await page.click('#open-settings-from-terminal', { label: 'open settings' })
+    await page.waitForSelector('#settings-dialog[open]')
+    await page.selectOption('#send-mode', value)
+    await page.click('#settings-dialog [data-close]', { label: 'close settings' })
+  }
   const resetInputs = () => page.evaluate(() => {
     const state = window.__mobileFixture.state
     state.inputs = []; state.inputEvents = []; state.inputError = ''; state.inputDelay = 0
@@ -82,7 +89,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       await settings()
       await page.click('#touch-mode label:last-of-type', { label: 'send touches to program' })
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:touch-mode')), 'program')
-      await page.selectOption('#send-mode', 'enter')
+      await selectSendMode('enter')
       await metrics(390, 844)
       await page.evaluate(() => { document.querySelector('#session-dialog').scrollTop = 0 })
       await page.screenshot({ path: resolve(output, 'settings.png') })
@@ -161,7 +168,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.inputs), ['reloaded', '\r'])
       await resetInputs()
       await settings()
-      await page.selectOption('#send-mode', 'default')
+      await selectSendMode('default')
       await closeSettings()
       await page.fill('#compose', '/effort')
       assert.equal(await page.evaluate(() => document.querySelector('#send-label').textContent), '候选')

@@ -13,7 +13,7 @@ import {
   toggleSessionPin,
 } from './protocol.js';
 import { attachLongPress } from './gestures.js';
-import { get, message, icon, rowText, button } from './dom.js';
+import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
 
 const REFRESH_INTERVAL = 1500;
@@ -68,7 +68,13 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
     const options = get('session-options');
+    // 上一轮还没收起完的行直接移除，不参与本轮排序。
+    for (const row of options.querySelectorAll('[data-leaving]')) row.remove();
     const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
+    const liveIds = new Set(sessions.map(item => item.id));
+    const gone = [...existingRows.values()].filter(row => !liveIds.has(row.dataset.id));
+    // 同一列表少了几行才收起；切项目或全部结束是整表替换，直接移除。
+    const collapse = drawer.open && existingRows.size > gone.length;
     get('session-count').textContent = String(sessions.length);
     get('end-all-sessions').disabled = busy || !sessions.length;
     get('drawer-new-session').disabled = busy;
@@ -100,9 +106,14 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       close.disabled = busy;
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
-      if (options.children[position] !== row) options.insertBefore(row, options.children[position] ?? null);
+      // 只按留下的行定位，要收起的行留在原地。
+      const next = [...options.children].filter(child => !gone.includes(child))[position];
+      if (next !== row) options.insertBefore(row, next ?? null);
     }
-    for (const row of existingRows.values()) row.remove();
+    for (const row of gone) {
+      if (collapse) collapseAndRemove(row);
+      else row.remove();
+    }
   }
 
   function createRow(session) {

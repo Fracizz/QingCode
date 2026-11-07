@@ -138,7 +138,8 @@ public final class MainActivity extends Activity {
             getWindow().setDecorFitsSystemWindows(false);
             frame.setOnApplyWindowInsetsListener((element, insets) -> {
                 int types = WindowInsets.Type.displayCutout() | WindowInsets.Type.ime();
-                if (!immersive) types |= WindowInsets.Type.systemBars();
+                // 横屏沉浸只隐藏导航栏；状态栏保持可见，内容需要避开它。
+                types |= immersive ? WindowInsets.Type.statusBars() : WindowInsets.Type.systemBars();
                 Insets padding = insets.getInsets(types);
                 int corner = 0;
                 if (Build.VERSION.SDK_INT >= 31) {
@@ -225,7 +226,7 @@ public final class MainActivity extends Activity {
                         case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "composer.js": case "terminalHistory.js": case "terminalScrollbar.js": case "terminalJog.js": case "terminalHold.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
-                        case "dom.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
+                        case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
                         case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js":
                         case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js": case "historySelection.js":
@@ -275,12 +276,13 @@ public final class MainActivity extends Activity {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) {
                 controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                if (immersive) controller.hide(WindowInsets.Type.systemBars());
-                else controller.show(WindowInsets.Type.systemBars());
+                controller.show(WindowInsets.Type.statusBars());
+                if (immersive) controller.hide(WindowInsets.Type.navigationBars());
+                else controller.show(WindowInsets.Type.navigationBars());
             }
         } else {
             getWindow().getDecorView().setSystemUiVisibility(immersive
-                ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
+                ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                     | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                     | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 : View.SYSTEM_UI_FLAG_VISIBLE);
@@ -383,7 +385,7 @@ public final class MainActivity extends Activity {
                     int width = info.getSize().getWidth();
                     int height = info.getSize().getHeight();
                     if (original && (long) width * height > 32_000_000) {
-                        throw new IllegalArgumentException("图片分辨率过大，请在会话与设置中启用图片压缩。");
+                        throw new IllegalArgumentException("图片分辨率过大，请在设置中启用图片压缩。");
                     }
                     decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
                     if (!original) {
@@ -404,7 +406,7 @@ public final class MainActivity extends Activity {
             }
             if (options.outWidth <= 0 || options.outHeight <= 0) throw new IOException("系统无法解码此图片；HEIC / HEIF 需要手机支持，请先转换为 JPEG 后重试。");
             if (original && (long) options.outWidth * options.outHeight > 32_000_000) {
-                throw new IOException("图片分辨率过大，请在会话与设置中启用图片压缩。");
+                throw new IOException("图片分辨率过大，请在设置中启用图片压缩。");
             }
             options.inSampleSize = 1;
             while (!original && Math.max(options.outWidth, options.outHeight) / options.inSampleSize > edge) options.inSampleSize *= 2;
@@ -439,7 +441,7 @@ public final class MainActivity extends Activity {
             ByteArrayOutputStream data = new ByteArrayOutputStream();
             Bitmap.CompressFormat format = bitmap.hasAlpha() ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG;
             if (!bitmap.compress(format, quality, data) || data.size() > MAX_IMAGE) {
-                throw new IOException("转换后的图片超过 8 MB，请在会话与设置中提高图片压缩等级。");
+                throw new IOException("转换后的图片超过 8 MB，请在设置中提高图片压缩等级。");
             }
             return data.toByteArray();
         } finally {

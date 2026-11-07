@@ -25,6 +25,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'desktopProtocol.js': ['mobile/android/web/desktopProtocol.js', 'text/javascript'],
   'terminalImages.js': ['mobile/android/web/terminalImages.js', 'text/javascript'],
   'dom.js': ['mobile/android/web/dom.js', 'text/javascript'],
+  'selectMenu.js': ['mobile/android/web/selectMenu.js', 'text/javascript'],
   'dashboardView.js': ['mobile/android/web/dashboardView.js', 'text/javascript'],
   'pairingFlow.js': ['mobile/android/web/pairingFlow.js', 'text/javascript'],
   'outputReader.js': ['mobile/android/web/outputReader.js', 'text/javascript'],

@@ -38,8 +38,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     }
     return [...found]
   })
-  // 夹具数据中的中文名称允许出现。
-  const allowed = text => /工作电脑|部署/.test(text)
+  // 夹具数据中的中文名称和语言选项的「中文」允许出现。
+  const allowed = text => text === '中文' || /工作电脑|部署/.test(text)
   const assertEnglish = async where => {
     const rest = (await leftovers()).filter(text => !allowed(text))
     assert.deepEqual(rest, [], where)
@@ -58,9 +58,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await assertEnglish('home')
     })
     await shot('home-en.png')
-    await step('connections page shows the language selector', async () => {
+    await step('settings page shows the language selector', async () => {
+      await page.click('#open-settings', { label: 'open settings' })
+      await page.waitForSelector('#settings-dialog[open]')
+      assert.equal(await page.evaluate(() => document.querySelector('#app-language [aria-checked="true"]').dataset.locale), 'en')
+      await assertEnglish('settings')
+      await shot('settings-en.png')
+      await page.click('#settings-dialog [data-close]', { label: 'close settings' })
       await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
-      assert.equal(await page.evaluate(() => document.querySelector('#app-language').value), 'en')
       await assertEnglish('connections')
     })
     await shot('connections-en.png')
@@ -92,7 +97,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await shot('terminal-en.png')
     })
     await step('terminal dialogs are English', async () => {
-      for (const id of ['session-dialog', 'keys-dialog', 'terminal-menu-dialog', 'key-layout-dialog']) {
+      for (const id of ['session-dialog', 'settings-dialog', 'keys-dialog', 'terminal-menu-dialog', 'key-layout-dialog']) {
         await page.evaluate(dialog => document.getElementById(dialog).showModal(), id)
         await assertEnglish(id)
         await shot(id + '-en.png')
@@ -107,11 +112,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('switching back to Chinese reloads with original text', async () => {
       await page.evaluate(() => { localStorage.setItem('qingcode:mobile:locale', 'en'); location.href = location.pathname })
       await page.waitForFunction(() => document.readyState === 'complete' && !!document.querySelector('#app-language'))
-      await page.evaluate(() => {
-        const select = document.querySelector('#app-language')
-        select.value = 'zh'
-        select.dispatchEvent(new Event('change'))
-      })
+      await page.click('#open-settings', { label: 'open settings' })
+      await page.waitForSelector('#settings-dialog[open]')
+      await page.click('#app-language [data-locale="zh"]', { label: 'choose Chinese' })
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN' && document.querySelector('#dashboard-nav [data-page="connection"]').textContent.trim() === '连接')
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:locale')), 'zh')
     })

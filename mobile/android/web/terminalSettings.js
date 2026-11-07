@@ -1,4 +1,4 @@
-// 「终端设置」弹层中仅保存在手机上的偏好：字号、列宽、全屏程序触摸、发送按键、图片压缩、硬件加速渲染。
+// 仅保存在手机上的偏好：「终端设置」弹层中的字号、列宽、全屏程序触摸，以及「设置」页中的发送按键、图片压缩、硬件加速渲染。
 import { get } from './dom.js';
 import { FONT_MAX, FONT_MIN, clampFontSize } from './pinchZoom.js';
 

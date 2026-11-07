@@ -26,13 +26,14 @@ import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
 import { attachTerminalScrollbar } from './terminalScrollbar.js';
 import { attachTerminalSelection } from './terminalSelection.js';
-import { createConnectionLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
+import { createConnectionLatency, isFreshLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState } from './workspaceState.js';
 import { createNativeRpc } from './nativeRpc.js';
 import { createTerminalInput } from './terminalInput.js';
 import { createDesktopProtocol } from './desktopProtocol.js';
 import { uploadTerminalImages } from './terminalImages.js';
-import { get, message, setupDialogs, confirmAction } from './dom.js';
+import { get, message, setupDialogs, confirmAction, replayAnimation } from './dom.js';
+import { setupSelectMenus } from './selectMenu.js';
 import { createDashboardView } from './dashboardView.js';
 import { createPairingFlow } from './pairingFlow.js';
 import { createOutputReader } from './outputReader.js';
@@ -158,6 +159,7 @@ let terminalRenderer;
 // 配对与连接详情弹窗；在下方创建，视图回调中延迟读取。
 let pairing = null;
 
+let latencyFlashedAt = null;
 const connectionLatency = createConnectionLatency({
   measure: address => rpc('latency', { profile: address }),
   onChange: renderLatency,
@@ -187,6 +189,7 @@ const terminalInput = createTerminalInput({
 });
 
 setupDialogs(dialog => dialog.id !== 'pair-dialog' || !get('pair-submit').disabled);
+setupSelectMenus();
 
 const dashboard = createDashboardView({
   state: {
@@ -312,6 +315,11 @@ function syncLatency() {
 function renderLatency() {
   const snapshot = connectionLatency.getSnapshot();
   const value = latencyText(snapshot);
+  // 每次探测成功闪一下状态圆点和延迟值；语言切换等重绘不闪，失败也不闪。
+  if (isFreshLatency(snapshot, latencyFlashedAt)) {
+    latencyFlashedAt = snapshot.checkedAt;
+    if (!terminalScreen.hidden) for (const id of ['terminal-dot', 'terminal-latency']) replayAnimation(get(id), 'ping-flash');
+  }
   get('terminal-latency').textContent = t('电脑 {value}', { value });
   get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));
   get('home-latency').textContent = profile && hostState(profile) === 'online' ? t(' · 电脑 {value}', { value }) : '';
@@ -347,7 +355,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -498,6 +506,9 @@ function moveProfile(from, to) {
 }
 
 get('active-host').addEventListener('click', () => showPage('connection'));
+get('open-settings').addEventListener('click', () => get('settings-dialog').showModal());
+// 叠在终端设置上打开：返回时回到终端设置，与快捷键栏一致。
+get('open-settings-from-terminal').addEventListener('click', () => get('settings-dialog').showModal());
 get('add-host').addEventListener('click', () => pairing.openPair());
 get('refresh').addEventListener('click', () => { void refreshProjects(); });
 get('search').addEventListener('input', () => dashboard.renderProjects());

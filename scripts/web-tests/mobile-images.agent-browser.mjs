@@ -11,7 +11,8 @@ const check = (name, expression) => {
   run('wait', '--fn', expression)
   results.push({ name, passed: true })
 }
-const openSettings = () => { run('click', '#manage-sessions'); run('wait', '300') }
+const openSettings = () => { run('click', '#manage-sessions'); run('wait', '300'); run('click', '#open-settings-from-terminal'); run('wait', '300') }
+const closeSettings = () => { run('eval', 'window.qingBack()'); run('eval', 'window.qingBack()') }
 const openNewSession = () => {
   run('click', '#new-session')
   run('wait', '300')
@@ -53,9 +54,9 @@ try {
   check('profile list refreshes from the desktop on every open', `window.__mobileFixture.state.sessions.size === 4 && ${creates('build')} === 1`)
   check('new terminal accepts input', `!document.querySelector('#attach-image').disabled`)
   openSettings()
-  check('compression lives in settings and defaults to medium', `document.querySelector('#session-dialog #image-compression').value === 'medium' && !document.querySelector('#image-dialog #image-compression')`)
+  check('compression lives in settings and defaults to medium', `document.querySelector('#settings-dialog #image-compression').value === 'medium' && !document.querySelector('#image-dialog #image-compression')`)
   run('screenshot', resolve(directory, 'image-settings.png'))
-  run('eval', 'window.qingBack()')
+  closeSettings()
   run('fill', '#compose', '请分析图片 ')
   run('eval', 'window.__mobileFixture.state.image = null')
   run('click', '#attach-image')
@@ -66,7 +67,7 @@ try {
   run('fill', '#compose', '请分析图片 ')
   openSettings()
   run('select', '#image-compression', 'high')
-  run('eval', 'window.qingBack()')
+  closeSettings()
   run('eval', `window.__mobileFixture.state.imageError = '图片不能超过 8 MB。'`)
   run('click', '#attach-image')
   check('failure opens an error dialog and preserves the draft', `document.querySelector('#image-dialog').open && document.querySelector('#image-error').textContent.includes('8 MB') && document.querySelector('#compose').value === '请分析图片 ' && localStorage.getItem('qingcode:mobile:image-compression') === 'high'`)
@@ -88,9 +89,9 @@ try {
   check('late completion also leaves the source draft intact', `document.querySelector('#compose').value === '保留原会话草稿 '`)
   run('set', 'viewport', '320', '640')
   openSettings()
-  check('saved compression and settings fit a narrow phone', `document.querySelector('#image-compression').value === 'high' && document.querySelector('#session-dialog').getBoundingClientRect().right <= innerWidth && document.documentElement.scrollWidth <= innerWidth && document.querySelector('#image-compression-hint').textContent.includes('HEIC')`)
+  check('saved compression and settings fit a narrow phone', `document.querySelector('#image-compression').value === 'high' && document.querySelector('#settings-dialog').getBoundingClientRect().right <= innerWidth && document.documentElement.scrollWidth <= innerWidth && document.querySelector('#image-compression-hint').textContent.includes('HEIC')`)
   run('screenshot', resolve(directory, 'image-settings-320.png'))
-  run('eval', 'window.qingBack()')
+  closeSettings()
   run('eval', `document.documentElement.style.setProperty('--corner-inset', '28px'); document.documentElement.style.setProperty('--corner-bottom-inset', '9px')`)
   check('rounded screen keeps terminal controls wide with a small bottom clearance', `getComputedStyle(document.querySelector('#terminal-tools')).paddingLeft === '8px' && getComputedStyle(document.querySelector('#terminal-tools')).paddingBottom === '9px' && document.querySelector('#terminal-tools').getBoundingClientRect().bottom === innerHeight && document.documentElement.scrollWidth <= innerWidth`)
   run('wait', '100')

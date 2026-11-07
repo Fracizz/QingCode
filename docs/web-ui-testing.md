@@ -25,6 +25,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 安卓后台提醒、渲染与手势说明：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-background-alerts.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖首次手势说明只显示一次、320px 布局和返回键、emoji 按 Unicode 11 占两格、WebGL 开关与丢失上下文后的回退和恢复、后台提醒的一次性询问、权限拒绝、旧版电脑不询问，以及点通知切到目标会话。桥默认关闭 WebGL 并标记手势说明已看过，`?gpu=1`、`?guide=1` 用于显式测试，`?guide=keep` 保留已看过记录。截图与 JSON 位于 `.dev/web-tests/mobile-background-alerts/`。Chrome 设备模拟下 WebGL 画布按显示器真实 DPR 计算，文字会缩小错位，这是模拟的假象，WebGL 画质须在未模拟的页面或真机确认；前台服务、系统通知和息屏行为同样只能真机验收。
 
+安卓界面动效：先启动 `pnpm test:web`，运行 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/mobile-motion.ego.mjs`（窗口被节流时动画时间不走，所以用无头 Chrome）。覆盖弹层退出时 `close` 语义不变且不挡点击、退出途中重新打开、抽屉与返回键、页面和浮层入场、按压缩放、发送回执、延迟探测闪烁（失败不闪）、虚拟鼠标从尖端长出、会话行原地收起、图标对齐首行，以及减少动画时全部关闭。脚本固定了 `prefers-reduced-motion`，因为测试机系统可能开着减少动画，此时其他脚本走不到动画路径。截图与 JSON 位于 `.dev/web-tests/mobile-motion/`；流畅度须真机确认。
+
 安卓终端打磨：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-polish.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖状态行「草稿 / 直发」与首次说明、已接收回执约 4 秒后消失且重进终端不回放、输入框横向拖动移动草稿光标与直发 ← / →、快捷键栏排序 / 隐藏到「更多」/ 重载保留 / 恢复默认、双指缩放字号且不发终端输入、实时终端链接点按（localhost 换成电脑地址、复制与打开、全屏程序鼠标上报下按坐标识别），以及 390px / 320px / 键盘高度 / 横屏布局。触摸经 CDP `Input.dispatchTouchEvent` 发出；截图与 JSON 位于 `.dev/web-tests/mobile-terminal-polish/`，截图超时只记录不影响断言。不替代 Android 真机的拖动、缩放手感与系统浏览器验收。
 
 无交互桌面的 Windows 主机（例如经 SSH 登录、`Get-Process` 看不到任何窗口标题）上 Ego 截图会因窗口不渲染而超时。此时可用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>` 以无头 Chrome 运行同一 `*.ego.mjs` 脚本：适配层实现脚本用到的 `taskSpace` / `page` 子集（`click` 支持 CSS 与 `loc=role:button[name=…]`，等元素位置稳定后再点），失败时也会关闭浏览器。有桌面的环境仍按上文默认使用 Ego。
@@ -119,7 +121,7 @@ Windows / macOS 可运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`
 
 手机快速接回与历史分页：运行 `node scripts/web-tests/mobile-history.agent-browser.mjs`。以 1000 个旧输出块验证最新快照接回及后续序号，不预取历史；覆盖 120 行分页、前插锚点、阅读期间接收新输出、缓存边界、无图标的滚轮与触摸入口、滑回底部返回实时、只读操作不发按键、失败重试、重连接回、TUI 滚轮、全屏返回顺序和切换会话时的迟到响应。报告位于 `.dev/web-tests/mobile-history/`。Rust 的 `mobile_screen::tests` 与 `mobile::tests` 验证解析器、快照、分页游标和旧客户端兼容；触摸单测 `mobileAndroidTerminalTouch.test.ts` 验证逐帧合并、减速惯性、新触摸中止、TUI 禁止惯性和销毁取消。浏览器采用内存 RPC，Windows / SSH / WSL 与真机链路仍需集成验收。
 
-手机横屏与全屏专项：运行 `node scripts/web-tests/mobile-landscape.agent-browser.mjs`，覆盖横屏默认收起、展开后并排布局、旋转与重载后的偏好、收起时保留草稿和实时键盘、释放隐藏修饰键、横屏自动沉浸与竖屏恢复、离开终端恢复系统栏、Android 返回顺序、失败恢复、迟到回复及横屏键盘高度。通过原生方向回调模拟窄屏横屏和竖屏键盘缩小，确认方向判断不依赖键盘后的视口比例。截图和报告位于 `.dev/web-tests/mobile-landscape/`。原生桥由内存 fixture 模拟；Android 系统栏隐藏、挖孔及软键盘避让仍需真机验收。
+手机横屏与全屏专项：运行 `node scripts/web-tests/mobile-landscape.agent-browser.mjs`，覆盖横屏默认收起、展开后并排布局、旋转与重载后的偏好、收起时保留草稿和实时键盘、释放隐藏修饰键、横屏自动沉浸与竖屏恢复、离开终端恢复系统栏、Android 返回顺序、失败恢复、迟到回复及横屏键盘高度。通过原生方向回调模拟窄屏横屏和竖屏键盘缩小，确认方向判断不依赖键盘后的视口比例。截图和报告位于 `.dev/web-tests/mobile-landscape/`。原生桥由内存 fixture 模拟；Android 横屏保留状态栏并隐藏导航栏、挖孔及软键盘避让仍需真机验收。
 
 手机斜杠命令与技能输入专项：运行 `node scripts/web-tests/mobile-completion.agent-browser.mjs`，覆盖斜杠草稿先预览再确认、草稿与实时输入的 Tab 补全、方向键与确认保留键盘焦点、中文组词保护及多行草稿保留，并检查窄屏、软键盘高度和横屏。截图、JSON 和 HTML 报告位于 `.dev/web-tests/mobile-completion/`；此验收只覆盖真实 Web 资产、xterm 和内存 RPC，仍需真机验证输入法及实际 Claude / OpenCode 候选。
 
@@ -293,6 +295,10 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-browser.mjs`，验证两排六列、单行输入候选、明确的手机草稿与实时输入目标、中文与 emoji 退格、选区删除、换行、删词、删至行首、只清空本地、键盘收起后远端删除、保留另一份草稿、Tab / Shift+Tab 的原始序列、长按松手停止和跨会话取消。覆盖 320px / 390px、软键盘高度和横屏，截图与业务结果位于 `.dev/web-tests/mobile-ai-keys/`。内存桥只证明输入序列与页面行为，真实 Claude / OpenCode 的候选、定制快捷键及手机 IME 仍需真机与 PTY 验收。
 
 安卓中英文界面：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-i18n.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；窗口不渲染时改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。以 `?lang=en` 打开 `/mobile-android/`，检查首页、连接页语言选择、配对弹窗与电脑端错误翻译、项目列表、终端、设置/按键/菜单/快捷键栏弹层和会话侧栏不残留中文界面文案，并验证切回中文后重新加载。测试桥未保存语言偏好时固定中文，现有中文断言不受系统语言影响。截图与 JSON 位于 `.dev/web-tests/mobile-i18n/`；词典覆盖由 `mobileAndroidI18n.test.ts` 检查，不替代 Android 真机系统语言验收。
+
+安卓下拉选项：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-select.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖 6 个下拉不再露出系统控件、窄屏贴底与横屏居中的选择面板、当前项标记、选中后保存、返回键与遮罩取消、程序赋值和语言切换时的显示同步。
+
+安卓设置页：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-settings.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖顶栏入口、通用设置归位、就地切换语言、返回键层级、偏好重载后保留、从终端设置进入不打断会话，以及 320px 窄屏和横屏布局；截图与 JSON 位于 `.dev/web-tests/mobile-settings/`，使用内存桥，不替代 Android 真机验收。
 
 安卓在线更新：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-update.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；无桌面时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖启动后台检查一次、beta 手机收到最新带 APK 的 beta（跳过无 APK 的更新版本）、下载进度、首次安装跳转系统授权与系统确认、取消下载、首页提示卡片与跳过此版本、正式版忽略 beta、检查失败提示与关闭自动检查，以及英文界面。测试桥支持 `?appVersion=<版本>&appCode=<versionCode>` 模拟已安装版本。截图与 JSON 位于 `.dev/web-tests/mobile-update/`；使用内存桥，真实下载、签名校验和系统安装器需真机验收，地址白名单由 `pnpm test:android-native`（需 JDK）中的 `UpdatePolicyTest` 覆盖。
 

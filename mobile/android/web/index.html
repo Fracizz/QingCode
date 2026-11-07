@@ -30,6 +30,7 @@
     <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path></symbol>
     <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6Z"></path><path d="m14 5 5 5"></path></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"></path></symbol>
     <symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
@@ -40,6 +41,7 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8" cy="8" r="1"></circle><path d="m21 15-5-5L5 21"></path></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
   </svg>
@@ -48,7 +50,10 @@
     <div id="dashboard" class="dashboard">
       <header class="app-head">
         <div class="brand"><img src="qingcode-icon.png" alt="" width="28" height="28">QingCode</div>
-        <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><svg><use href="#i-chevron"/></svg></button>
+        <div class="app-head-actions">
+          <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><svg><use href="#i-chevron"/></svg></button>
+          <button id="open-settings" class="icon-button" type="button" aria-label="打开设置"><svg><use href="#i-settings"/></svg></button>
+        </div>
       </header>
 
       <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
@@ -118,19 +123,6 @@
           <span class="tile"><svg><use href="#i-host"/></svg></span>
           <h2>暂无已配对电脑</h2><p>在电脑端「设置 → 功能 → Android 移动连接」启用后，点「添加」扫描二维码。</p>
         </div>
-        <section class="language-setting" aria-labelledby="language-title">
-          <div class="row-text"><strong id="language-title">语言 / Language</strong><small>切换后立即生效</small></div>
-          <div id="app-language" class="segmented" role="radiogroup" aria-labelledby="language-title">
-            <button type="button" role="radio" data-locale="auto" aria-checked="false">跟随系统</button>
-            <button type="button" role="radio" data-locale="zh" aria-checked="false" lang="zh-CN">中文</button>
-            <button type="button" role="radio" data-locale="en" aria-checked="false" lang="en">English</button>
-          </div>
-        </section>
-        <section id="update-section" class="update-setting" aria-labelledby="update-title">
-          <div class="update-row"><div class="row-text"><strong id="update-title">应用更新</strong><small id="update-version"></small></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
-          <p id="update-status" class="hint" role="status"></p>
-          <label class="update-auto"><input id="update-auto" type="checkbox" checked> 每天自动检查更新</label>
-        </section>
       </section>
 
       <nav id="dashboard-nav" aria-label="主导航">
@@ -188,7 +180,7 @@
         </div>
         <!-- 第一次看到程序在运行时询问一次是否开启后台提醒。 -->
         <div id="watch-tip" class="terminal-tip" role="note" hidden>
-          <p>离开应用时，要在程序停下后<strong>通知你</strong>吗？可随时在终端设置中更改。</p>
+          <p>离开应用时，要在程序停下后<strong>通知你</strong>吗？可随时在设置中更改。</p>
           <button id="watch-tip-enable" class="text-button" type="button">开启</button>
           <button id="watch-tip-dismiss" class="text-button" type="button">不用</button>
         </div>
@@ -354,31 +346,71 @@
     <p id="touch-mode-hint">手指上下滑动始终滚动原始终端：普通终端滚动输出记录，Codex、OpenCode 等全屏程序由程序自己滚动。这里只决定点按是否作为鼠标点击发给程序。实体鼠标不受影响。</p>
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示，也可在终端上双指缩放</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <div class="font-setting"><div><strong>快捷键栏</strong><p>调整常用键顺序，隐藏的键移到「更多」</p></div><button id="open-key-layout" class="secondary compact" type="button">调整</button></div>
-    <label for="image-compression">图片压缩</label>
-    <select id="image-compression" aria-describedby="image-compression-hint">
-      <option value="original">原图 · 不压缩</option><option value="low">低压缩 · 更清晰</option>
-      <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
-    </select>
-    <p id="image-compression-hint">自动保存，下次发图直接使用。原图保留 PNG / JPEG 文件；HEIC / HEIF 需要系统支持解码，原图模式保留分辨率并转换格式。单张上传最大 8 MB，超出时请选择压缩。</p>
-    <label for="send-mode">发送按键</label>
-    <select id="send-mode" aria-describedby="send-mode-hint">
-      <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
-    </select>
-    <p id="send-mode-hint">「发送并直接 Enter」等待文字发送成功后再单独发送回车；/命令也会提交。是否执行由当前终端程序决定。</p>
-    <label for="session-watch">后台提醒</label>
-    <select id="session-watch" aria-describedby="session-watch-hint">
-      <option value="off" selected>关闭</option><option value="on">程序停下时通知我</option>
-    </select>
-    <p id="session-watch-hint">离开应用后继续留意运行中的会话，程序停下或会话结束时发通知；没有会话运行时自动停止。依据程序标题判断，普通 Shell 命令没有运行状态，需要手机能连上电脑，会增加耗电。</p>
-    <label for="terminal-renderer">硬件加速渲染</label>
-    <select id="terminal-renderer" aria-describedby="terminal-renderer-hint">
-      <option value="on" selected>开启 · 全屏程序更流畅</option><option value="off">关闭</option>
-    </select>
-    <p id="terminal-renderer-hint">画面花屏或闪烁时可关闭。设备不支持时自动使用普通渲染。</p>
+    <div class="font-setting"><div><strong>更多设置</strong><p>语言、图片压缩、发送按键、后台提醒等</p></div><button id="open-settings-from-terminal" class="secondary compact" type="button">打开</button></div>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button></div>
   </dialog>
 
+  <!-- 手机通用设置：全屏页，工作台顶栏与终端设置都能打开，叠在当前界面上，不影响终端会话。 -->
+  <dialog id="settings-dialog" class="workspace-dialog settings-dialog" aria-labelledby="settings-title">
+    <header class="workspace-head"><h2 id="settings-title">设置</h2><button type="button" class="secondary" data-close="settings-dialog">关闭</button></header>
+    <div class="settings-body">
+      <p class="settings-intro">只保存在这台手机上，对所有连接和终端生效。</p>
+      <h3 class="settings-group-title">通用</h3>
+      <section class="language-setting" aria-labelledby="language-title">
+        <div class="row-text"><strong id="language-title">语言 / Language</strong><small>切换后立即生效</small></div>
+        <div id="app-language" class="segmented" role="radiogroup" aria-labelledby="language-title">
+          <button type="button" role="radio" data-locale="auto" aria-checked="false">跟随系统</button>
+          <button type="button" role="radio" data-locale="zh" aria-checked="false" lang="zh-CN">中文</button>
+          <button type="button" role="radio" data-locale="en" aria-checked="false" lang="en">English</button>
+        </div>
+      </section>
+      <section id="update-section" class="update-setting" aria-labelledby="update-title">
+        <div class="update-row"><div class="row-text"><strong id="update-title">应用更新</strong><small id="update-version"></small></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
+        <p id="update-status" class="hint" role="status"></p>
+        <label class="update-auto"><input id="update-auto" type="checkbox" checked> 每天自动检查更新</label>
+      </section>
+      <h3 class="settings-group-title">发送与图片</h3>
+      <div class="settings-card">
+        <label for="image-compression">图片压缩</label>
+        <select id="image-compression" aria-describedby="image-compression-hint">
+          <option value="original">原图 · 不压缩</option><option value="low">低压缩 · 更清晰</option>
+          <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
+        </select>
+        <p id="image-compression-hint">自动保存，下次发图直接使用。原图保留 PNG / JPEG 文件；HEIC / HEIF 需要系统支持解码，原图模式保留分辨率并转换格式。单张上传最大 8 MB，超出时请选择压缩。</p>
+      </div>
+      <div class="settings-card">
+        <label for="send-mode">发送按键</label>
+        <select id="send-mode" aria-describedby="send-mode-hint">
+          <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
+        </select>
+        <p id="send-mode-hint">「发送并直接 Enter」等待文字发送成功后再单独发送回车；/命令也会提交。是否执行由当前终端程序决定。</p>
+      </div>
+      <h3 class="settings-group-title">提醒与渲染</h3>
+      <div class="settings-card">
+        <label for="session-watch">后台提醒</label>
+        <select id="session-watch" aria-describedby="session-watch-hint">
+          <option value="off" selected data-i18n="state:off">关闭</option><option value="on">程序停下时通知我</option>
+        </select>
+        <p id="session-watch-hint">离开应用后继续留意运行中的会话，程序停下或会话结束时发通知；没有会话运行时自动停止。依据程序标题判断，普通 Shell 命令没有运行状态，需要手机能连上电脑，会增加耗电。</p>
+      </div>
+      <div class="settings-card">
+        <label for="terminal-renderer">硬件加速渲染</label>
+        <select id="terminal-renderer" aria-describedby="terminal-renderer-hint">
+          <option value="on" selected>开启 · 全屏程序更流畅</option><option value="off" data-i18n="state:off">关闭</option>
+        </select>
+        <p id="terminal-renderer-hint">画面花屏或闪烁时可关闭。设备不支持时自动使用普通渲染。</p>
+      </div>
+    </div>
+  </dialog>
+
   <!-- 第一次接入终端时显示一次，之后不再出现。 -->
+  <!-- 所有下拉选项共用，内容由 selectMenu.js 按当前 select 生成。 -->
+  <dialog id="select-dialog" class="sheet" aria-labelledby="select-dialog-title" data-i18n-skip>
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 id="select-dialog-title"></h2>
+    <div id="select-options" class="select-options" role="radiogroup"></div>
+  </dialog>
+
   <dialog id="gesture-guide" class="sheet" aria-labelledby="gesture-guide-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 id="gesture-guide-title">终端手势</h2>
@@ -402,7 +434,7 @@
 
   <dialog id="image-dialog" aria-labelledby="image-title">
     <h2 id="image-title">图片未能上传</h2>
-    <p>可重新选择未上传的图片；压缩等级在终端设置中调整。已插入的图片会保留在草稿中。</p>
+    <p>可重新选择未上传的图片；压缩等级在设置中调整。已插入的图片会保留在草稿中。</p>
     <p id="image-error" class="error" role="alert" hidden></p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="image-dialog">取消</button><button type="button" id="choose-image" class="primary">选择图片</button></div>
   </dialog>

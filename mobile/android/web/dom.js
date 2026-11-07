@@ -4,6 +4,29 @@ import { t } from './i18n.js';
 
 export const get = id => document.getElementById(id);
 
+/** 重播一次由 class 触发的 CSS 动画，结束后摘掉 class，避免状态变化时再次触发。 */
+export function replayAnimation(element, className) {
+  element.classList.remove(className);
+  void element.offsetWidth;
+  element.classList.add(className);
+  element.addEventListener('animationend', () => element.classList.remove(className), { once: true });
+}
+
+/** 收起列表行再移除，下面的行不会突然跳上来；减少动画或不支持时立即移除。 */
+export function collapseAndRemove(row, duration = 160) {
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (reduced || typeof row.animate !== 'function') { row.remove(); return; }
+  const style = getComputedStyle(row);
+  row.dataset.leaving = 'true';
+  row.style.overflow = 'hidden';
+  row.style.pointerEvents = 'none';
+  const animation = row.animate([
+    { height: row.getBoundingClientRect().height + 'px', marginTop: style.marginTop, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, opacity: 1 },
+    { height: '0px', marginTop: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 },
+  ], { duration, easing: 'cubic-bezier(.2, 0, 0, 1)', fill: 'forwards' });
+  animation.onfinish = animation.oncancel = () => row.remove();
+}
+
 /** 写入提示文字；空字符串时隐藏元素。 */
 export function message(id, value) {
   const target = get(id);
