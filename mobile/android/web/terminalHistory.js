@@ -1,4 +1,4 @@
-import { renderHistoryPage, renderScreen } from './historyRender.js';
+import { createCellMeter, renderHistoryPage, renderScreen } from './historyRender.js';
 import { t } from './i18n.js';
 
 /**
@@ -42,6 +42,9 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
   let anchor = null;
   let restoringAnchor = false;
   let anchorFrame = null;
+
+  /** 字形测量器与终端同字体；每页新建，字体切换或加载完成后自动生效。 */
+  const meter = () => createCellMeter(panel.ownerDocument, term.options.fontFamily);
 
   function rememberAnchor() {
     if (panel.hidden) { anchor = null; return; }
@@ -120,7 +123,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       if (!active || attempt !== generation) return;
       const height = scroll.scrollHeight;
       const top = scroll.scrollTop;
-      content.prepend(renderHistoryPage(content.ownerDocument, page.lines, term.options.theme ?? {}));
+      content.prepend(renderHistoryPage(content.ownerDocument, page.lines, term.options.theme ?? {}, meter()));
       cursor = page.before;
       more = page.more === true;
       moreButton.hidden = !more;
@@ -148,7 +151,7 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     generation += 1;
     startCursor = Math.max(0, latest - localLogicalDepth(term.buffer.active));
     // 先带颜色复制可见行：第一次滑动不会出现空白或加载画面的跳变。
-    content.replaceChildren(renderScreen(content.ownerDocument, term));
+    content.replaceChildren(renderScreen(content.ownerDocument, term, meter()));
     content.style.fontSize = term.options.fontSize + 'px';
     content.style.fontFamily = term.options.fontFamily;
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;

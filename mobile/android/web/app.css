@@ -371,6 +371,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
 #history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
 /* 历史左右边距与 #viewport 一致，打开历史时文字不左右跳；分隔条仅用于旧版电脑端的全屏画面标记。 */
+/* 对齐段固定为 xterm 字格宽度（ch），表格边框与中文不错位。 */
+#history-content .cells { display: inline-block; white-space: pre; vertical-align: baseline; }
 #history-content .history-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; color: var(--muted); font: 600 11px/1.6 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
 #history-content .history-divider::before, #history-content .history-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 #history-content .history-divider:first-child { margin-top: 0; }

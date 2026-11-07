@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   TUI_FRAME_MARKER,
+  charCells,
+  gridRuns,
   historyItems,
   lineSegments,
   paletteColor,
@@ -127,5 +129,44 @@ describe('Android history rendering', () => {
     const host = document.createElement('pre')
     host.append(renderScreen(document, term))
     expect(host.textContent).toBe('abc de\nx')
+  })
+})
+
+describe('Android history grid alignment', () => {
+  it('measures cells like the terminal: CJK is two cells, box drawing one, combining zero', () => {
+    expect(charCells('a'.codePointAt(0)!)).toBe(1)
+    expect(charCells('─'.codePointAt(0)!)).toBe(1)
+    expect(charCells('中'.codePointAt(0)!)).toBe(2)
+    expect(charCells('，'.codePointAt(0)!)).toBe(2)
+    expect(charCells(0x0301)).toBe(0)
+  })
+
+  it('splits ASCII from grid runs and counts their cells', () => {
+    expect(gridRuns('│ 已随 │ ok──┤')).toEqual([
+      { text: '│', cells: 1 },
+      { text: ' ', cells: null },
+      { text: '已随', cells: 4 },
+      { text: ' ', cells: null },
+      { text: '│', cells: 1 },
+      { text: ' ok', cells: null },
+      { text: '──┤', cells: 3 },
+    ])
+  })
+
+  it('pins box drawing and CJK to terminal cell widths in history pages and the screen copy', () => {
+    const host = document.createElement('pre')
+    host.append(renderHistoryPage(document, ['├──┼──┤', '│ 最新 │', 'plain', '\x1b[31m中\x1b[m!']))
+    expect(host.textContent).toBe('├──┼──┤\n│ 最新 │\nplain\n中!\n')
+    const widths = [...host.querySelectorAll<HTMLElement>('.cells')].map(span => [span.textContent, span.style.width])
+    expect(widths).toEqual([['├──┼──┤', '7ch'], ['│', '1ch'], ['最新', '4ch'], ['│', '1ch'], ['中', '2ch']])
+
+    const rows = [line([cell('中', { width: 2 }), cell('', { width: 0 }), cell('─')])]
+    const term = { rows: 1, cols: 3, options: {}, buffer: { active: { viewportY: 0, getLine: (y: number) => rows[y] } } }
+    const screen = document.createElement('pre')
+    screen.append(renderScreen(document, term, text => ({ cell: 0.6, width: text.length * 1 })))
+    const span = screen.querySelector<HTMLElement>('.cells')!
+    expect(span.textContent).toBe('中─')
+    expect(span.style.width).toBe('3ch')
+    expect(span.style.letterSpacing).toBe('-0.1000em')
   })
 })
