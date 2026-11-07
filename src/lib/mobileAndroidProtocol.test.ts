@@ -13,6 +13,7 @@ import {
   consumeModifier,
   countSessionOverview,
   groupSessionOverview,
+  limitSessionGroups,
   keySequence,
   matchesProject,
   nextModifierState,
@@ -23,6 +24,8 @@ import {
   parseSessionPins,
   prunedSessionPins,
   projectSessionsFromOverview,
+  prunedSelection,
+  summarizeSessionBatch,
   SESSION_PIN_LIMIT,
   projectSourceLabel,
   recentProjects,
@@ -453,6 +456,21 @@ describe('Android 会话纵览', () => {
     expect(groupSessionOverview(list, { projects, query: 'tablet' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m2', 'm4'])
     expect(groupSessionOverview(list, { projects, query: 'prod' }).flatMap(group => group.sessions.map(item => item.id))).toEqual(['m3'])
     expect(groupSessionOverview(list, { projects, query: 'nothing' })).toEqual([])
+  })
+
+  it('首页按分组顺序只先显示前若干个会话，并给出未显示数量', () => {
+    const groups = groupSessionOverview(list, { projects })
+    const limited = limitSessionGroups(groups, 3)
+    expect(limited.hidden).toBe(1)
+    expect(limited.groups.map(group => [group.project.id, group.sessions.map(item => item.id), group.total])).toEqual([['p1', ['m1', 'm2'], 2], ['p2', ['m3'], 1]])
+    expect(limitSessionGroups(groups, 8)).toEqual({ groups, hidden: 0 })
+    expect(limitSessionGroups(groups, Infinity).hidden).toBe(0)
+  })
+
+  it('批量关闭统计运行中、已结束、其他设备与项目数；多选随列表刷新去掉已不存在的会话', () => {
+    expect(summarizeSessionBatch(list)).toEqual({ total: 4, running: 3, ended: 1, others: 1, projects: 3 })
+    expect(summarizeSessionBatch([])).toEqual({ total: 0, running: 0, ended: 0, others: 0, projects: 0 })
+    expect([...prunedSelection(new Set(['m4', 'gone', 'm1']), list)]).toEqual(['m4', 'm1'])
   })
 
   it('从全部会话中取出当前项目的会话，去掉纵览附带字段', () => {

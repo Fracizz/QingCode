@@ -15,6 +15,7 @@ import {
   rememberProject,
   renameProfileKeys,
   sessionName,
+  summarizeSessionBatch,
   terminalGridSize,
   terminalProfileChoices,
 } from './protocol.js';
@@ -39,6 +40,7 @@ import { createPairingFlow } from './pairingFlow.js';
 import { createOutputReader } from './outputReader.js';
 import { createComposeStatus } from './composeStatus.js';
 import { createSessionDrawer } from './sessionDrawer.js';
+import { createSessionOverview } from './sessionOverview.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
 import { attachCursorDrag } from './cursorDrag.js';
@@ -78,6 +80,8 @@ function applyLocale(value) {
   document.documentElement.lang = value === 'en' ? 'en' : 'zh-CN';
   translateDocument(document.body);
   dashboard.renderAll();
+  homeOverview.render();
+  drawer.render();
   renderLatency();
   setRawKeyboard(inputMode === 'raw');
   updates.render();
@@ -270,6 +274,7 @@ const drawer = createSessionDrawer({
     foreground: () => foreground,
     projects: () => projects,
     history: () => projectHistory(),
+    lastSession: projectId => lastSessionOf(projectId),
     allSupported: async () => {
       if (!profile) return false;
       const value = await desktopProtocol.capabilities(profile);
@@ -279,9 +284,99 @@ const drawer = createSessionDrawer({
   setSessions: list => { sessions = list; },
   selectSession,
   endSession,
-  openOverviewSession,
-  endOverviewSession,
+  openOverviewSession: session => openOverviewSession(session, drawer.overview),
+  endOverviewSessions: list => endOverviewSessions(list, drawer.overview),
 });
+
+// 工作台首页「全部会话」：首页可见、App 在前台且电脑在线时定时刷新；与抽屉的「全部」共用组件。
+const HOME_SESSIONS_INTERVAL = 5000;
+const HOME_SESSIONS_LIMIT = 8;
+let homeSessionsTimer = null;
+let homeSessionsLoading = false;
+let homeSessionsEpoch = 0;
+let homeSessionsSupported = false;
+const homeOverview = createSessionOverview({
+  root: get('home-session-overview'),
+  limit: HOME_SESSIONS_LIMIT,
+  state: {
+    profile: () => profile,
+    projects: () => projects,
+    history: () => projectHistory(),
+    current: () => null,
+    selected: () => null,
+    lastSession: projectId => lastSessionOf(projectId),
+    busy: () => busy,
+  },
+  open: session => openOverviewSession(session, homeOverview),
+  end: list => endOverviewSessions(list, homeOverview),
+  onChange: () => renderHomeSessions(),
+});
+
+/** 该项目上次接入的会话（只读手机记录）。 */
+function lastSessionOf(projectId) {
+  return profile ? localStorage.getItem(prefix + 'session:' + profile.id + ':' + projectId) : null;
+}
+
+function homeSessionsVisible() {
+  return !!profile && page === 'home' && terminalScreen.hidden && !get('dashboard').hidden
+    && foreground && !document.hidden && hostState(profile) === 'online';
+}
+
+/** 没有会话（且不在多选中）或旧电脑端时隐藏整块，首页只保留最近打开。 */
+function renderHomeSessions() {
+  const count = homeOverview.count();
+  get('home-session-count').textContent = String(count);
+  get('home-sessions').hidden = !homeSessionsSupported || !profile || hostState(profile) !== 'online'
+    || (!count && !homeOverview.isSelecting());
+}
+
+async function refreshHomeSessions() {
+  clearTimeout(homeSessionsTimer);
+  homeSessionsTimer = null;
+  if (!homeSessionsVisible() || homeSessionsLoading) return;
+  if (busy) {
+    homeSessionsTimer = setTimeout(refreshHomeSessions, HOME_SESSIONS_INTERVAL);
+    return;
+  }
+  homeSessionsLoading = true;
+  const epoch = ++homeSessionsEpoch;
+  const address = profile.id;
+  try {
+    const capabilities = await desktopProtocol.capabilities(profile);
+    if (epoch !== homeSessionsEpoch || profile?.id !== address) return;
+    homeSessionsSupported = !!capabilities?.features.includes('all_sessions');
+    if (!homeSessionsSupported) {
+      homeOverview.clear();
+      return;
+    }
+    const list = await remote('sessions', {}, address);
+    if (epoch !== homeSessionsEpoch || profile?.id !== address || busy) return;
+    homeOverview.setError('');
+    homeOverview.setList(list, address);
+  } catch (error) {
+    if (epoch === homeSessionsEpoch && profile?.id === address) homeOverview.setError(error.message);
+  } finally {
+    homeSessionsLoading = false;
+    renderHomeSessions();
+    if (homeSessionsSupported && homeSessionsVisible() && !homeSessionsTimer) {
+      homeSessionsTimer = setTimeout(refreshHomeSessions, HOME_SESSIONS_INTERVAL);
+    }
+  }
+}
+
+/** 首页可见性变化后启动或停止刷新；离开首页时退出多选并丢弃在途结果。 */
+function syncHomeSessions() {
+  if (homeSessionsVisible()) {
+    if (!homeSessionsTimer && !homeSessionsLoading) void refreshHomeSessions();
+  } else {
+    clearTimeout(homeSessionsTimer);
+    homeSessionsTimer = null;
+    homeSessionsEpoch += 1;
+    homeOverview.reset();
+    renderHomeSessions();
+  }
+}
+document.addEventListener('visibilitychange', syncHomeSessions);
 
 // 平板双栏默认收起，用户展开后记在这台设备上。
 let sessionsDockPreferred = localStorage.getItem(prefix + 'sessions-docked') === 'true';
@@ -345,6 +440,7 @@ window.qingVisibility = visible => {
   foreground = visible === true;
   if (foreground) drawer.wake();
   else drawer.sleep();
+  syncHomeSessions();
   if (!visible) saveDraft();
   connectionLatency.setForeground(visible === true);
   if (foreground) terminalRenderer?.wake();
@@ -391,6 +487,8 @@ function showPage(next) {
     else navButton.removeAttribute('aria-current');
   }
   syncLatency();
+  if (next === 'home') void refreshHomeSessions();
+  else syncHomeSessions();
 }
 
 function returnToDashboard(next = page) {
@@ -446,6 +544,7 @@ function projectHistory() {
 function updateHost(state) {
   if (profile) health.set(profile.id, state);
   dashboard.renderAll();
+  syncHomeSessions();
 }
 
 async function refreshProjects() {
@@ -1683,97 +1782,96 @@ async function endSession(id) {
   }
 }
 
-/** 纵览中点选会话：当前项目直接切换，其他项目先打开该项目再接入这个会话。 */
-async function openOverviewSession(target) {
+/** 纵览中点选会话：终端页当前项目直接切换，其他项目（或在首页时）打开该项目再接入这个会话。 */
+async function openOverviewSession(target, view) {
   if (busy || !profile) return;
   const projectId = target.project?.id;
-  if (projectId === project?.id) {
+  if (!terminalScreen.hidden && projectId === project?.id) {
     const existing = sessions.find(item => item.id === target.id);
     if (existing) await selectSession(existing);
     return;
   }
   const destination = projects.find(item => item.id === projectId);
   if (!destination) {
-    message('session-error', t('电脑端已没有项目「{name}」，只能关闭其中的会话。', { name: target.project?.name ?? projectId }));
+    view.setError(t('电脑端已没有项目「{name}」，只能关闭其中的会话。', { name: target.project?.name ?? projectId }));
     return;
   }
+  view.setError('');
   localStorage.setItem(sessionKey(destination.id), target.id);
   await openProject(destination);
 }
 
-/** 纵览中关闭会话：当前项目沿用原流程；其他项目确认后只结束该会话，不切换当前终端。 */
-async function endOverviewSession(target) {
-  if (target.project?.id === project?.id) {
-    await endSession(target.id);
-    return;
-  }
-  if (busy || !profile) return;
-  const epoch = viewEpoch;
-  const address = profile.id;
+/** 纵览中某个会话的确认说明：项目 / 会话名，其他设备创建的运行中会话额外注明。 */
+function overviewConfirmText(target) {
   const ended = !!target.exit;
-  busy = true;
-  endingSession = true;
-  drawer.pause();
-  message('session-error', '');
-  drawer.render();
-  try {
-    const name = (target.project?.name ?? '') + ' / ' + sessionName(target);
-    if (!await confirmAction(ended ? t('移除会话？') : t('关闭会话？'),
-      t(ended ? '「{name}」的输出将从列表中移除。' : '「{name}」中的 Shell 和前台任务将被关闭。', { name }), ended ? t('移除') : t('关闭'))) return;
-    if (epoch !== viewEpoch) return;
-    await remote('end', { id: target.id }, address);
-    if (epoch !== viewEpoch) return;
-    drawer.removeOverview(target.id);
-    drafts.delete(draftKey(target.id));
-  } catch (error) {
-    if (epoch === viewEpoch) {
-      if (error.revoked) handleTerminalError(error);
-      else message('session-error', error.message);
-    }
-  } finally {
-    busy = false;
-    endingSession = false;
-    drawer.render();
-    drawer.scheduleRefresh();
-  }
+  const name = (target.project?.name ?? '') + ' / ' + sessionName(target);
+  const text = t(ended ? '「{name}」的输出将从列表中移除。' : '「{name}」中的 Shell 和前台任务将被关闭。', { name });
+  return !ended && target.ownDevice === false
+    ? text + t('该会话由 {device} 创建。', { device: target.deviceName || t('其他设备') }) : text;
 }
 
-// 纵览底部：移除这台电脑上全部项目中已结束的手机会话（只清理输出记录，不影响运行中的会话）。
-get('clear-ended-sessions').addEventListener('click', async () => {
-  if (busy || !profile || !project) return;
+/**
+ * 纵览中关闭一个或多个会话（可跨项目）。终端页当前项目的单个会话沿用 endSession（收起动画与接回剩余会话）；
+ * 其余情况确认后逐个结束，失败的保留并提示，不自动重试。view 为发起操作的纵览，用于显示错误。
+ */
+async function endOverviewSessions(targets, view) {
+  if (busy || !profile || !targets.length) return;
+  const inTerminal = !terminalScreen.hidden;
+  if (targets.length === 1 && inTerminal && targets[0].project?.id === project?.id) {
+    await endSession(targets[0].id);
+    return;
+  }
   const epoch = viewEpoch;
   const address = profile.id;
-  const projectId = project.id;
+  const single = targets.length === 1;
   busy = true;
+  // 单个关闭确认期间列表不变暗，与抽屉逐项关闭一致。
+  endingSession = single;
   drawer.pause();
-  message('session-error', '');
+  clearTimeout(homeSessionsTimer);
+  homeSessionsTimer = null;
+  homeSessionsEpoch += 1;
+  view.setError('');
   drawer.render();
+  homeOverview.render();
   try {
-    // 确认前重新读取，只清理确认框中统计到的已结束会话。
-    const latest = await remote('sessions', {}, address);
-    if (epoch !== viewEpoch) return;
-    const targets = latest.filter(item => item.exit);
-    if (!targets.length) return;
-    const projectCount = new Set(targets.map(item => item.project?.id)).size;
-    if (!await confirmAction(t('清理已结束会话？'),
-      t('将移除「{host}」上 {projects} 个项目中 {n} 个已结束会话的输出。运行中的会话不受影响。', { host: profile.name, projects: projectCount, n: targets.length }), t('清理'))) return;
-    if (epoch !== viewEpoch) return;
+    let title, text, action;
+    if (single) {
+      const [target] = targets;
+      title = target.exit ? t('移除会话？') : t('关闭会话？');
+      text = overviewConfirmText(target);
+      action = target.exit ? t('移除') : t('关闭');
+    } else {
+      const summary = summarizeSessionBatch(targets);
+      title = t('关闭 {n} 个会话？', { n: summary.total });
+      text = [
+        summary.running ? t('将关闭 {n} 个运行中会话的 Shell 和前台任务。', { n: summary.running }) : '',
+        summary.others ? t('其中 {n} 个由其他设备创建。', { n: summary.others }) : '',
+        summary.ended ? t('将移除 {n} 个已结束会话的输出。', { n: summary.ended }) : '',
+        t('涉及 {n} 个项目。', { n: summary.projects }),
+      ].filter(Boolean).join('');
+      action = t('关闭 {n} 个', { n: summary.total });
+    }
+    if (!await confirmAction(title, text, action)) return;
+    if (profile?.id !== address) return;
     const removed = new Set();
     let failed = 0;
     for (const item of targets) {
       try {
         await remote('end', { id: item.id }, address);
         removed.add(item.id);
-        drawer.removeOverview(item.id);
         drafts.delete(draftKey(item.id));
       } catch (error) {
         if (error.revoked) throw error;
         failed += 1;
       }
     }
-    if (epoch !== viewEpoch) return;
-    if (failed) message('session-error', t('已清理 {ended} 个会话，{failed} 个未确认移除，请核对后重试。', { ended: removed.size, failed }));
-    if (project?.id === projectId && removed.size) {
+    if (profile?.id !== address) return;
+    drawer.overview.remove(removed);
+    homeOverview.remove(removed);
+    if (failed) view.setError(t('已关闭 {ended} 个会话，{failed} 个未确认关闭，请核对后重试。', { ended: removed.size, failed }));
+    if (inTerminal && epoch === viewEpoch && project && removed.size) {
+      const projectId = project.id;
       sessions = sessions.filter(item => !removed.has(item.id));
       drawer.savePins(drawer.pins().filter(pin => !removed.has(pin)));
       if (removed.has(selected)) {
@@ -1788,16 +1886,20 @@ get('clear-ended-sessions').addEventListener('click', async () => {
       }
     }
   } catch (error) {
-    if (epoch === viewEpoch) {
-      if (error.revoked) handleTerminalError(error);
-      else message('session-error', error.message);
+    if (profile?.id === address) {
+      if (error.revoked && inTerminal) handleTerminalError(error);
+      else if (error.revoked) updateHost('expired');
+      else view.setError(error.message);
     }
   } finally {
     busy = false;
+    endingSession = false;
     drawer.render();
     drawer.scheduleRefresh();
+    homeOverview.render();
+    syncHomeSessions();
   }
-});
+}
 
 get('end-all-sessions').addEventListener('click', async () => {
   if (busy || !project || !sessions.length) return;
@@ -1999,7 +2101,11 @@ get('compose-form').addEventListener('submit', event => {
 for (const [screen, indicator] of [['home-screen', 'home-pull'], ['project-screen', 'project-pull']]) {
   attachPullToRefresh(get(screen), get(indicator), {
     enabled: () => !!profile && hostState(profile) !== 'checking' && hostState(profile) !== 'expired',
-    onRefresh: () => refreshProjects(),
+    onRefresh: async () => {
+      const ok = await refreshProjects();
+      if (screen === 'home-screen') await refreshHomeSessions();
+      return ok;
+    },
   });
 }
 for (const sheet of document.querySelectorAll('dialog.sheet')) {

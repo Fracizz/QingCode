@@ -273,8 +273,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #project-filters { position: sticky; z-index: 2; top: -12px; margin: 0 -2px; padding: 8px 2px 2px; background: var(--paper); }
 .search-field { position: relative; }
 .search-field > svg { position: absolute; left: 16px; top: 15px; color: var(--muted); width: 18px; height: 18px; }
-#search, #session-search { min-height: 48px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
-#search:focus, #session-search:focus { border-color: var(--accent-border); }
+#search, .overview-search { min-height: 48px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
+#search:focus, .overview-search:focus { border-color: var(--accent-border); }
 .list-label { margin: 8px 4px 8px; color: var(--muted); font-size: 12px; }
 
 /* 分组列表：同组条目共享一个圆角容器，用细分隔线区分（Material 3 / Android 设置页）。 */
@@ -589,13 +589,24 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option .icon-button { color: var(--muted); }
 .session-option .session-close:active:not(:disabled), .session-option .session-close:focus-visible { color: var(--error); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
-#session-scope, #session-filter { flex: none; margin-top: 0; }
-#session-scope { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-#session-scope button, #session-filter button { min-height: 36px; font-size: 13px; }
-#session-overview:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-#session-search { min-height: 44px; }
-#session-overview .search-field > svg { top: 13px; }
-#session-groups { flex: 1; min-height: 0; overflow-y: auto; padding-block: 2px; }
+#session-scope { flex: none; margin-top: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#session-scope button { min-height: 36px; font-size: 13px; }
+/* 会话纵览（sessionOverview.js）：首页与抽屉共用。抽屉内列表独立滚动；首页随整页滚动。 */
+.session-overview { display: flex; flex-direction: column; gap: 8px; }
+#session-overview:not([hidden]) { flex: 1; min-height: 0; }
+.overview-tools { display: flex; align-items: center; gap: 4px; }
+.overview-tools .search-field { flex: 1; min-width: 0; }
+.overview-search { min-height: 44px; }
+.session-overview .search-field > svg { top: 13px; }
+.overview-manage { flex: none; min-width: 56px; min-height: 44px; padding-inline: 8px; font-size: 14px; font-weight: 650; }
+.session-overview .overview-filter { margin-top: 0; }
+.overview-filter button { min-height: 36px; font-size: 13px; }
+.overview-select-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
+.overview-picked { flex: 1 1 auto; min-width: 4em; color: var(--accent); font-size: 13px; font-weight: 650; }
+.overview-select-bar .text-button { min-height: 40px; padding-inline: 6px; font-size: 13px; }
+.overview-end { min-height: 40px; padding-inline: 12px; font-size: 13px; font-weight: 650; background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.overview-error { margin: 0 4px; font-size: 12px; }
+#session-overview .overview-groups { flex: 1; min-height: 0; overflow-y: auto; padding-block: 2px; }
 .session-group + .session-group { margin-top: 10px; }
 .session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
 .session-group-head strong { min-width: 0; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -603,8 +614,20 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-group .session-option { grid-template-columns: minmax(0, 1fr) 44px; }
 .session-group .session-option + .session-option { margin-top: 4px; }
-#session-overview-empty { margin: 8px 4px; text-align: center; }
-#clear-ended-sessions { grid-column: 1 / -1; }
+.overview-empty { margin: 8px 4px; text-align: center; }
+.overview-more { align-self: center; min-height: 44px; font-size: 13px; }
+/* 多选：行首显示勾选框，隐藏单行关闭按钮，点整行切换选择。 */
+.session-check { display: none; flex: none; place-items: center; width: 22px; height: 22px; border: 1.5px solid var(--line); border-radius: 6px; color: transparent; }
+.session-check svg { width: 14px; height: 14px; }
+.session-overview[data-selecting="true"] .session-check { display: grid; }
+.session-overview[data-selecting="true"] .session-option .row { grid-template-columns: 22px minmax(0, 1fr); align-items: center; column-gap: 10px; }
+.session-overview[data-selecting="true"] .session-option { grid-template-columns: minmax(0, 1fr); }
+.session-overview[data-selecting="true"] .session-close { display: none; }
+.session-option[data-checked="true"] .session-check { border-color: var(--accent); background: var(--accent); color: var(--paper); }
+.session-overview[data-selecting="true"] .session-option[data-checked="true"] { background: var(--accent-surface); }
+/* 首页「全部会话」：放在继续终端与最近打开之间，整页滚动，不做嵌套滚动区。 */
+.home-sessions { margin-top: 24px; }
+#home-session-count { margin-left: 4px; font-weight: 500; }
 .drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
 #end-all-sessions { grid-column: 1 / -1; }
 .drawer-actions button { padding-inline: 8px; font-size: 13px; }
@@ -614,13 +637,16 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   .drawer-actions { padding-top: 8px; }
   /* 矮屏（横屏手机）：搜索、筛选与分组一起滚动，列表不被挤成一行。 */
   #session-overview:not([hidden]) { overflow-y: auto; gap: 6px; }
-  #session-groups { flex: none; overflow: visible; }
-  #session-search { min-height: 40px; }
+  #session-overview .overview-groups { flex: none; overflow: visible; }
+  #session-overview .overview-search { min-height: 40px; }
+  #session-overview .overview-manage { min-height: 40px; }
+  #session-overview .session-group-head { padding-block: 2px; }
+  #session-overview .session-group + .session-group { margin-top: 6px; }
   #session-overview .search-field > svg { top: 11px; }
-  #session-scope button, #session-filter button { min-height: 32px; }
+  #session-scope button, #session-overview .overview-filter button { min-height: 32px; }
   /* 底部操作并成一行，纵览时省去上下文行，给列表留出至少一整行。 */
   .drawer-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  :is(#end-all-sessions, #clear-ended-sessions) { grid-column: auto; }
+  #end-all-sessions { grid-column: auto; }
   #session-drawer:has(#session-overview:not([hidden])) #session-context { display: none; }
 }
 .sheet-handle { display: none; }

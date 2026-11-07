@@ -1,8 +1,6 @@
 // 左侧会话抽屉：按项目列出手机会话、置顶、重命名、结束；打开且在前台时定时刷新元数据。
 // 「全部」范围显示这台电脑上所有项目的手机会话纵览（按项目分组、筛选、搜索）。
 import {
-  countSessionOverview,
-  groupSessionOverview,
   idleLabel,
   mergeSessionActivity,
   mergeSessionList,
@@ -17,6 +15,7 @@ import {
   toggleSessionPin,
 } from './protocol.js';
 import { attachLongPress } from './gestures.js';
+import { createSessionOverview } from './sessionOverview.js';
 import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
 
@@ -26,12 +25,12 @@ const DOCKED_REFRESH_INTERVAL = 3000;
 
 /**
  * state：读取 app 状态的 getter（profile、project、sessions、selected、busy、locked、viewEpoch、foreground、
- * projects、history、allSupported），busy 拦截操作；locked 决定按钮是否显示为禁用，关闭单个会话时为假，列表不变暗。
+ * projects、history、lastSession、allSupported），busy 拦截操作；locked 决定按钮是否显示为禁用，关闭单个会话时为假，列表不变暗。
  * allSupported() 返回电脑端是否支持一次列出全部会话（Promise<boolean>）。
  * setSessions(list) 写回会话列表；selectSession / endSession 由 app 执行；
- * openOverviewSession / endOverviewSession 处理纵览中（可能属于其他项目）的会话。
+ * openOverviewSession / endOverviewSessions 处理纵览中（可能属于其他项目）的会话，后者接收会话数组并负责确认。
  */
-export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSession }) {
+export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSessions }) {
   const drawer = get('session-drawer');
   let drawerEpoch = 0;
   let refreshTimer;
@@ -44,25 +43,36 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   // null：尚未确认电脑端是否支持；切换连接后重新确认。
   let allAvailable = null;
   let availabilityAddress = null;
-  let overview = [];
-  let overviewAddress = null;
-  let overviewFilter = 'all';
-  let overviewQuery = '';
 
   function allMode() { return scope === 'all' && allAvailable === true && availabilityAddress === state.profile()?.id; }
 
-  /** 纵览数据只属于读取时的连接；当前项目里已被关闭的会话立即从纵览中去掉。 */
-  function overviewList() {
-    const profile = state.profile();
-    if (!profile || overviewAddress !== profile.id) return [];
-    const project = state.project();
-    const live = new Set(state.sessions().map(item => item.id));
-    return overview.filter(item => item.project?.id !== project?.id || live.has(item.id));
-  }
-
-  function removeOverview(id) {
-    overview = overview.filter(item => item.id !== id);
-  }
+  // 「全部」范围的纵览；当前项目里已被关闭的会话立即从纵览中去掉，不等下一次刷新。
+  const overview = createSessionOverview({
+    root: get('session-overview'),
+    state: {
+      profile: state.profile,
+      projects: state.projects,
+      history: state.history,
+      current: () => state.project()?.id ?? null,
+      selected: state.selected,
+      lastSession: state.lastSession,
+      busy: state.locked,
+      visible: item => {
+        const project = state.project();
+        return item.project?.id !== project?.id || state.sessions().some(session => session.id === item.id);
+      },
+    },
+    open: session => openOverviewSession(session),
+    end: sessions => endOverviewSessions(sessions),
+    onChange: () => {
+      if (!allMode()) return;
+      const list = overview.list();
+      get('session-count').textContent = String(list.length);
+      const profile = state.profile();
+      get('session-context').textContent = profile
+        ? profile.name + ' · ' + t('{n} 个项目', { n: new Set(list.map(item => item.project?.id)).size }) : '';
+    },
+  });
 
   function pinsKey(projectId) {
     return prefix + 'session-pins:' + state.profile().id + ':' + projectId;
@@ -162,126 +172,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('drawer-new-session').hidden = all;
     get('end-all-sessions').hidden = all;
     get('session-overview').hidden = !all;
-    get('clear-ended-sessions').hidden = !all;
-    if (all) renderOverview();
-  }
-
-  function renderOverview() {
-    const list = overviewList();
-    const profile = state.profile();
-    const project = state.project();
-    const busy = state.locked();
-    const groups = groupSessionOverview(list, {
-      projects: state.projects(), current: project?.id ?? null, history: state.history(),
-      filter: overviewFilter, query: overviewQuery,
-    });
-    const counts = countSessionOverview(list);
-    const projectCount = new Set(list.map(item => item.project?.id)).size;
-    get('session-count').textContent = String(list.length);
-    get('session-context').textContent = profile ? profile.name + ' · ' + t('{n} 个项目', { n: projectCount }) : '';
-    for (const item of get('session-filter').querySelectorAll('[data-filter]')) {
-      item.setAttribute('aria-checked', String(item.dataset.filter === overviewFilter));
-      item.textContent = { all: t('全部'), live: t('未结束'), exited: t('已结束') }[item.dataset.filter] + ' ' + counts[item.dataset.filter];
-    }
-    get('clear-ended-sessions').disabled = busy || !counts.exited;
-    const empty = get('session-overview-empty');
-    empty.hidden = groups.length > 0;
-    empty.textContent = list.length ? t('没有符合条件的会话') : t('这台电脑上还没有手机会话');
-    const container = get('session-groups');
-    const existingGroups = new Map([...container.children].map(node => [node.dataset.project, node]));
-    groups.forEach((group, position) => {
-      let node = existingGroups.get(group.project.id);
-      if (!node) node = createGroup(group.project.id);
-      existingGroups.delete(group.project.id);
-      renderGroup(node, group, { project, busy });
-      if (container.children[position] !== node) container.insertBefore(node, container.children[position] ?? null);
-    });
-    for (const node of existingGroups.values()) node.remove();
-  }
-
-  function createGroup(projectId) {
-    const node = document.createElement('section');
-    node.className = 'session-group';
-    node.dataset.project = projectId;
-    const head = document.createElement('div');
-    head.className = 'session-group-head';
-    const name = document.createElement('strong');
-    const source = document.createElement('span');
-    source.className = 'session-group-source';
-    const count = document.createElement('span');
-    count.className = 'session-group-count';
-    head.append(name, source, count);
-    const rows = document.createElement('div');
-    rows.className = 'rows session-group-rows';
-    node.append(head, rows);
-    return node;
-  }
-
-  function renderGroup(node, group, { project, busy }) {
-    const current = group.project.id === project?.id;
-    const title = group.project.name ?? group.project.id;
-    node.querySelector('strong').textContent = title;
-    node.querySelector('.session-group-source').textContent = [projectSourceLabel(group.project), current ? t('当前项目') : '',
-      group.missing ? t('电脑端已移除') : ''].filter(Boolean).join(' · ');
-    node.querySelector('.session-group-count').textContent = String(group.sessions.length);
-    node.setAttribute('aria-label', title);
-    const rows = node.querySelector('.session-group-rows');
-    const existing = new Map([...rows.children].map(row => [row.dataset.id, row]));
-    group.sessions.forEach((session, position) => {
-      let row = existing.get(session.id);
-      if (!row) row = createOverviewRow(session.id);
-      existing.delete(session.id);
-      renderOverviewRow(row, session, { current, busy });
-      if (rows.children[position] !== row) rows.insertBefore(row, rows.children[position] ?? null);
-    });
-    for (const row of existing.values()) row.remove();
-  }
-
-  function createOverviewRow(id) {
-    const row = document.createElement('div');
-    row.className = 'session-option';
-    row.dataset.id = id;
-    const latest = () => overviewList().find(item => item.id === id);
-    const option = button('row', () => {
-      if (!state.busy() && latest()) void openOverviewSession(latest());
-    });
-    const text = rowText('', '');
-    const heading = text.querySelector('strong');
-    const name = document.createElement('span');
-    name.className = 'session-label';
-    heading.append(icon('loader-circle', 'session-spinner'), name);
-    const idle = document.createElement('small');
-    idle.className = 'session-idle';
-    text.append(idle);
-    option.append(text);
-    const close = button('icon-button session-close', () => { if (!state.busy() && latest()) void endOverviewSession(latest()); });
-    close.append(icon('close'));
-    row.append(option, close);
-    return row;
-  }
-
-  function renderOverviewRow(row, session, { current, busy }) {
-    const label = sessionName(session);
-    const selected = current && session.id === state.selected();
-    const running = sessionRunning(session);
-    row.dataset.current = String(selected);
-    row.dataset.running = String(running);
-    const option = row.querySelector('.row');
-    option.disabled = busy;
-    option.setAttribute('aria-label', t('切换到 {name}', { name: label }));
-    if (selected) option.setAttribute('aria-current', 'true');
-    else option.removeAttribute('aria-current');
-    const identity = t('终端 {n}', { n: session.number ?? 1 });
-    const status = session.exit ? t('已结束') : [running ? t('运行中') : '', selected ? t('当前会话') : ''].filter(Boolean).join(' · ');
-    const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
-    row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = [label === identity ? '' : identity, status, device].filter(Boolean).join(' · ');
-    const idle = row.querySelector('.session-idle');
-    idle.textContent = session.exit ? '' : idleLabel(session);
-    idle.hidden = !idle.textContent;
-    const close = row.querySelector('.session-close');
-    close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
-    close.disabled = busy;
+    if (all) overview.render();
+    else overview.reset();
   }
 
   /** 进入「全部」前确认电脑端支持；旧电脑端只保留本项目范围。 */
@@ -304,6 +196,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     drawerEpoch += 1;
     clearTimeout(refreshTimer);
     message('session-error', '');
+    overview.setError('');
     render();
     void refresh();
   }
@@ -312,17 +205,6 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const target = event.target.closest?.('[data-scope]');
     if (target && !target.disabled) setScope(target.dataset.scope);
   });
-  get('session-filter').addEventListener('click', event => {
-    const target = event.target.closest?.('[data-filter]');
-    if (!target || target.dataset.filter === overviewFilter) return;
-    overviewFilter = target.dataset.filter;
-    renderOverview();
-  });
-  get('session-search').addEventListener('input', () => {
-    overviewQuery = get('session-search').value;
-    renderOverview();
-  });
-
   function createRow(session) {
     const row = document.createElement('div');
     row.className = 'session-option';
@@ -383,14 +265,11 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       // 全部范围一次取回所有项目的会话，当前项目的列表从中截取，不再单独请求。
       const response = await remote('sessions', all ? {} : { project: projectId });
       if (epoch !== state.viewEpoch() || currentDrawer !== drawerEpoch || !drawer.open) return;
-      if (all) {
-        overview = response;
-        overviewAddress = address;
-      }
       const list = all ? projectSessionsFromOverview(response, projectId) : response;
       setSessions(mergeSessionList(list, state.sessions()));
       prunePins(state.sessions());
       message('session-error', '');
+      if (all) overview.setList(response, address);
       render();
     } catch (error) {
       if (epoch === state.viewEpoch() && currentDrawer === drawerEpoch && drawer.open) message('session-error', error.message);
@@ -529,6 +408,6 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
 
   return {
     render, open, close, dock, isDocked: () => docked, refresh, pause, scheduleRefresh, wake, sleep, pins, savePins, prunePins,
-    overviewList, removeOverview,
+    overview,
   };
 }

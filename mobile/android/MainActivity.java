@@ -227,7 +227,7 @@ public final class MainActivity extends Activity {
                         case "composer.js": case "terminalHistory.js": case "terminalScrollbar.js": case "terminalJog.js": case "terminalHold.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
-                        case "sessionDrawer.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
+                        case "sessionDrawer.js": case "sessionOverview.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
                         case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js":
                         case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js": case "historySelection.js":
                         case "xterm.js": case "fit.js": case "unicode11.js": case "webgl.js": case "jsqr.js":

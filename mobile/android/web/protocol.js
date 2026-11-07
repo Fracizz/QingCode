@@ -184,6 +184,44 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     || a.project.id.localeCompare(b.project.id));
 }
 
+/**
+ * 首页只先显示前 limit 个会话：按分组顺序截取，跨组时保留组头；hidden 为未显示的会话数。
+ * 被截取的组保留 total（该项目的会话总数），组头仍显示完整数量。
+ * limit 不是有限正数时不截取。
+ */
+export function limitSessionGroups(groups, limit) {
+  const total = groups.reduce((sum, group) => sum + group.sessions.length, 0);
+  if (!Number.isFinite(limit) || limit <= 0 || total <= limit) return { groups, hidden: 0 };
+  const shown = [];
+  let left = Math.floor(limit);
+  for (const group of groups) {
+    if (left <= 0) break;
+    const sessions = group.sessions.slice(0, left);
+    left -= sessions.length;
+    shown.push({ ...group, sessions, total: group.sessions.length });
+  }
+  return { groups: shown, hidden: total - Math.floor(limit) };
+}
+
+/** 批量关闭前的统计：总数、运行中、已结束、其他设备创建的运行中会话、涉及项目数。 */
+export function summarizeSessionBatch(list) {
+  const items = Array.isArray(list) ? list : [];
+  const running = items.filter(item => !item?.exit);
+  return {
+    total: items.length,
+    running: running.length,
+    ended: items.length - running.length,
+    others: running.filter(item => item?.ownDevice === false).length,
+    projects: new Set(items.map(item => item?.project?.id)).size,
+  };
+}
+
+/** 多选状态随列表刷新：去掉已不存在的会话，保持原选择顺序。 */
+export function prunedSelection(selection, list) {
+  const ids = new Set((Array.isArray(list) ? list : []).map(item => item?.id));
+  return new Set([...selection].filter(id => ids.has(id)));
+}
+
 /** 全部会话列表里属于某个项目的部分，去掉纵览附带的项目与设备字段，与按项目请求的结果一致。 */
 export function projectSessionsFromOverview(list, projectId) {
   return (Array.isArray(list) ? list : [])
