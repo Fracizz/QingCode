@@ -6,6 +6,25 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.17-beta.3] - 2026-11-07
+
+A beta after v0.1.16 focused on the terminal context menu, IME input, and the Android companion.
+
+### Added
+
+- The terminal context menu gains "Add to conversation" to quote output from Claude Code, opencode, and other AI CLIs back into the composer.
+
+### Changed
+
+- Slimmed the terminal context menu: unavailable items are hidden based on selection, writability, and AI CLI state, and copy current screen, export, and clean remote paste files moved into the command palette.
+- Android general settings now live on the settings page, with layered panel exit and press animations, a project-style picker replacing native dropdowns, and a status bar kept in landscape.
+
+### Fixed
+
+- Fixed the terminal being pushed up while the IME composes text.
+- Fixed overlapping rows in the Android session submit list, the scrollbar thumb leaving its track, and flicker when closing a single session; widened the virtual pointer.
+- WSL projects no longer show a duplicate WSL badge, and their paths use `distro:path`.
+
 ## [0.1.16] - 2026-11-06
 
 The first stable release after v0.1.12, rolling up the 0.1.13–0.1.16 beta line.
