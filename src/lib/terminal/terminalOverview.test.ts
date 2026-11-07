@@ -4,9 +4,11 @@ import type { MobileSessionSummary } from '../ipc/mobileSessions'
 import { parseMobileSessionSummary } from '../ipc/mobileSessions'
 import {
   countTerminalOverview,
+  formatCreatedTime,
   groupTerminalOverview,
   idleMinutes,
   isTerminalOverviewEntryExited,
+  isTerminalOverviewEntryRunning,
   mobileSessionDisplayName,
   paginateTerminalOverview,
   summarizeTerminalOverviewBatch,
@@ -32,6 +34,7 @@ function mobile(id: string, projectId: string, projectName = projectId, deviceNa
     programBusy: false,
     exit: null,
     lastActiveAt: 0,
+    createdAt: null,
     idleDeadline: null,
     project: { id: projectId, name: projectName, path: '', kind: 'local', host: 'Windows' },
     deviceName,
@@ -186,6 +189,7 @@ describe('parseMobileSessionSummary', () => {
       programBusy: false,
       exit: { exitCode: 1, disconnected: false },
       lastActiveAt: 0,
+      createdAt: null,
       idleDeadline: null,
       project: { id: 'a', name: 'A', path: '', kind: 'local', host: '' },
       deviceName: null,
@@ -201,5 +205,33 @@ describe('parseMobileSessionSummary', () => {
     expect(parseMobileSessionSummary({ ...base, name: '⠋ Manual', customName: '⠋ Manual' })?.programBusy).toBe(false)
     expect(parseMobileSessionSummary({ ...base, name: '⠋ Work', programBusy: false })?.programBusy).toBe(false)
     expect(parseMobileSessionSummary({ ...base, name: '⠋ Work', programBusy: true, exit: { exitCode: 0 } })?.programBusy).toBe(false)
+  })
+})
+
+describe('terminal overview running state and created time', () => {
+  it('formats created time as HH:mm today, MM-DD within the year, full date otherwise', () => {
+    const now = new Date(2026, 10, 7, 23, 40).getTime()
+    expect(formatCreatedTime(new Date(2026, 10, 7, 9, 5).getTime(), now)).toBe('09:05')
+    expect(formatCreatedTime(new Date(2026, 0, 3, 18, 30).getTime(), now)).toBe('01-03 18:30')
+    expect(formatCreatedTime(new Date(2025, 11, 31, 8, 0).getTime(), now)).toBe('2025-12-31 08:00')
+    expect(formatCreatedTime(null, now)).toBeNull()
+    expect(formatCreatedTime(0, now)).toBeNull()
+  })
+
+  it('treats only working programs as running and sorts them first within a project', () => {
+    const busyPhone = { ...mobile('mobile-2', 'a'), programBusy: true }
+    const endedBusy = { ...mobile('mobile-3', 'a'), programBusy: true, exit: { exitCode: 0, disconnected: false } }
+    const entries = terminalOverviewEntries({
+      projects,
+      terminals: [tab('idle', 'a'), tab('busy', 'a'), { ...tab('gone', 'a'), status: 'exited' }],
+      mobile: [mobile('mobile-1', 'a'), busyPhone, endedBusy],
+      detached: [],
+    })
+    const desktopBusy = (terminal: TerminalTab) => terminal.id === 'busy' || terminal.id === 'gone'
+    const running = (entry: (typeof entries)[number]) => isTerminalOverviewEntryRunning(entry, desktopBusy)
+    expect(entries.filter(running).map(entry => entry.key)).toEqual(['desktop:busy', 'mobile:mobile-2'])
+    expect(groupTerminalOverview(entries, projects, 'all', '', undefined, running)[0].entries.map(entry => entry.key)).toEqual([
+      'desktop:busy', 'mobile:mobile-2', 'desktop:idle', 'desktop:gone', 'mobile:mobile-1', 'mobile:mobile-3',
+    ])
   })
 })

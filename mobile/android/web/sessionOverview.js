@@ -2,6 +2,7 @@
 // 工作台首页与终端会话抽屉各挂一个实例；只负责渲染与交互，数据由调用方读取后 setList 写入。
 import {
   countSessionOverview,
+  createdLabel,
   groupSessionOverview,
   idleLabel,
   limitSessionGroups,
@@ -265,7 +266,7 @@ export function createSessionOverview({ root, limit = Infinity, state, open, end
       : [running ? t('运行中') : '', active ? t('当前会话') : last ? t('上次使用') : ''].filter(Boolean).join(' · ');
     const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
     row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = [label === identity ? '' : identity, status, device].filter(Boolean).join(' · ');
+    row.querySelector('small').textContent = [label === identity ? '' : identity, status, createdLabel(session), device].filter(Boolean).join(' · ');
     const idle = row.querySelector('.session-idle');
     idle.textContent = session.exit ? '' : idleLabel(session);
     idle.hidden = !idle.textContent;

@@ -37,8 +37,10 @@ import {
 import {
   countTerminalOverview,
   groupTerminalOverview,
+  formatCreatedTime,
   idleMinutes,
   isTerminalOverviewEntryExited,
+  isTerminalOverviewEntryRunning,
   mobileSessionDisplayName,
   paginateTerminalOverview,
   summarizeTerminalOverviewBatch,
@@ -49,6 +51,10 @@ import {
 } from '../lib/terminal/terminalOverview'
 import { useProjectStore } from '../store/projectStore'
 import { useTerminalStore } from '../store/terminalStore'
+import {
+  isTerminalProgramBusy,
+  subscribeTerminalProgramActivity,
+} from '../lib/terminal/terminalProgramActivity'
 import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { promptDialog } from '../store/promptStore'
@@ -84,18 +90,28 @@ type Translate = ReturnType<typeof useI18n>['t']
 /** 行内展示与搜索共用：来源图标、来源标签与状态明细。 */
 function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) {
   if (entry.source === 'desktop') {
-    return { icon: <Monitor size={14} />, sourceLabel: t('电脑'), details: [t(DESKTOP_STATUS[entry.tab.status])] }
+    const created = formatCreatedTime(entry.tab.startedAt, now)
+    const status = entry.tab.status === 'running'
+      ? isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) ? t('运行中') : t('未结束')
+      : t(DESKTOP_STATUS[entry.tab.status])
+    return {
+      icon: <Monitor size={14} />,
+      sourceLabel: t('电脑'),
+      details: [status, created ? t('创建于 {time}', { time: created }) : ''].filter(Boolean),
+    }
   }
   if (entry.source === 'mobile') {
     const session = entry.session
     const idle = session.exit ? null : idleMinutes(session.lastActiveAt, now)
+    const created = formatCreatedTime(session.createdAt, now)
     return {
       icon: <Smartphone size={14} />,
       sourceLabel: t('手机'),
       details: [
         t('终端 {n}', { n: session.number }),
-        session.exit ? t('已结束') : t('运行中'),
+        session.exit ? t('已结束') : session.programBusy ? t('运行中') : t('未结束'),
         session.deviceName ?? t('设备已移除'),
+        created ? t('创建于 {time}', { time: created }) : '',
         idle === null ? '' : t('空闲 {n} 分钟', { n: idle }),
         t('仅手机可操作'),
       ].filter(Boolean),
@@ -155,6 +171,8 @@ export default function TerminalManager() {
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // 电脑终端的程序标题开始/停止转圈时刷新，「运行中」与排序及时更新。
+  useEffect(() => subscribeTerminalProgramActivity(() => setNow(Date.now())), [])
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
   const alive = useRef(true)
@@ -255,10 +273,17 @@ export default function TerminalManager() {
   const counts = useMemo(() => countTerminalOverview(entries), [entries])
   const groups = useMemo(
     () =>
-      groupTerminalOverview(entries, projects, filter, query, entry => {
-        const { sourceLabel, details } = describeEntry(entry, now, t)
-        return [sourceLabel, ...details]
-      }),
+      groupTerminalOverview(
+        entries,
+        projects,
+        filter,
+        query,
+        entry => {
+          const { sourceLabel, details } = describeEntry(entry, now, t)
+          return [sourceLabel, ...details]
+        },
+        entry => isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)),
+      ),
     [entries, projects, filter, query, now, t],
   )
   const paged = useMemo(() => paginateTerminalOverview(groups, page, PAGE_SIZE), [groups, page])
@@ -807,7 +832,7 @@ function Row(props: RowProps) {
       </Tooltip>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
-          {entry.source === 'mobile' && entry.session.programBusy && !entry.session.exit && (
+          {isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) && (
             // 程序标题在转圈：用持续转动的图标代替标题里随轮询跳动的转圈帧字符。
             <Tooltip label={t('程序正在工作')} side="top" wrapperClassName="inline-flex flex-shrink-0">
               <LoaderCircle

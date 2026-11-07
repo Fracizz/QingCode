@@ -71,6 +71,7 @@ import {
   type TerminalShellId,
 } from '@/lib/terminal/terminalShell'
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
+import { clearTerminalProgramActivity } from '@/lib/terminal/terminalProgramActivity'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
@@ -740,6 +741,7 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   terminalRingVersions.delete(id)
   terminalScrollbackTextCache.delete(id)
   clearTerminalCommandActivity(id)
+  clearTerminalProgramActivity(id)
   if (options?.persist !== false) scheduleTerminalOutputPersist()
 }
 
@@ -2383,6 +2385,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (!parsed) return
         const { id, exitCode: exit_code, disconnected, reason } = parsed
         clearTerminalCommandActivity(id)
+        clearTerminalProgramActivity(id)
         // 进程结束后屏幕可能被替换（重启/新 Shell），恢复时改用 ring 回放。
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {

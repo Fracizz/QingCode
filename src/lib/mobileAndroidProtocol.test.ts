@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
+  createdLabel,
   formatTerminalQuote,
   formatDuration,
   idleLabel,
@@ -479,5 +480,26 @@ describe('Android 会话纵览', () => {
       { id: 'm2', number: 2, name: 'vim', exit: { code: 0 } },
     ])
     expect(list[1].project).toBe(local)
+  })
+})
+
+describe('session created time and running order', () => {
+  it('labels the creation time and skips sessions from older desktops', () => {
+    const now = new Date(2026, 10, 7, 23, 40).getTime()
+    expect(createdLabel({ createdAt: new Date(2026, 10, 7, 9, 5).getTime() }, now)).toBe('创建于 09:05')
+    expect(createdLabel({ createdAt: new Date(2026, 0, 3, 18, 30).getTime() }, now)).toBe('创建于 01-03 18:30')
+    expect(createdLabel({ createdAt: new Date(2025, 11, 31, 8, 0).getTime() }, now)).toBe('创建于 2025-12-31 08:00')
+    expect(createdLabel({}, now)).toBe('')
+  })
+
+  it('puts running sessions first after pins in the drawer and inside overview groups', () => {
+    const list = [
+      { id: 'a', number: 1, programBusy: false, project: { id: 'p', name: 'P' } },
+      { id: 'b', number: 2, programBusy: true, project: { id: 'p', name: 'P' } },
+      { id: 'c', number: 3, programBusy: false, project: { id: 'p', name: 'P' } },
+      { id: 'd', number: 4, programBusy: true, exit: { exitCode: 0 }, project: { id: 'p', name: 'P' } },
+    ]
+    expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'b', 'a', 'd'])
+    expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['b', 'a', 'c', 'd'])
   })
 })

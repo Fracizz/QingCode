@@ -102,7 +102,7 @@ const SOURCE_ORDER: Record<TerminalOverviewSource, number> = { desktop: 0, mobil
 
 /**
  * 按项目分组：电脑端项目列表顺序在前，列表外的手机项目按名称排在后面。
- * 组内按来源（电脑 → 手机 → 远端）排列，来源内保持原顺序。
+ * 组内运行中（程序正在工作）的排最前，再按来源（电脑 → 手机 → 远端），来源内保持原顺序。
  */
 export function groupTerminalOverview(
   entries: readonly TerminalOverviewEntry[],
@@ -111,6 +111,8 @@ export function groupTerminalOverview(
   query = '',
   /** 额外的可搜索文本（如已翻译的状态、来源标签），由视图层提供。 */
   describe?: (entry: TerminalOverviewEntry) => readonly string[],
+  /** 程序是否正在工作；运行中的终端在组内排在最前，彼此保持来源与原顺序。 */
+  running?: (entry: TerminalOverviewEntry) => boolean,
 ): TerminalOverviewGroup[] {
   // 空白分隔的多个关键词需全部命中，不区分大小写与顺序。
   const needles = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -141,8 +143,11 @@ export function groupTerminalOverview(
   }
   for (const group of groups.values()) {
     group.entries = group.entries
-      .map((entry, index) => ({ entry, index }))
-      .sort((a, b) => SOURCE_ORDER[a.entry.source] - SOURCE_ORDER[b.entry.source] || a.index - b.index)
+      .map((entry, index) => ({ entry, index, running: running?.(entry) === true }))
+      .sort((a, b) =>
+        Number(b.running) - Number(a.running)
+        || SOURCE_ORDER[a.entry.source] - SOURCE_ORDER[b.entry.source]
+        || a.index - b.index)
       .map(item => item.entry)
   }
   return [...groups.values()].sort((a, b) => {
@@ -195,6 +200,19 @@ export function paginateTerminalOverview(
   return { groups: paged, page: safePage, pageCount, total }
 }
 
+/**
+ * 终端里的程序是否正在工作（标题在转圈），与手机端「运行中」一致。
+ * desktopBusy 由视图层根据原始标题判断；远端未接回的终端无法得知，视为否。
+ */
+export function isTerminalOverviewEntryRunning(
+  entry: TerminalOverviewEntry,
+  desktopBusy: (tab: TerminalTab) => boolean,
+): boolean {
+  if (entry.source === 'desktop') return entry.tab.status !== 'exited' && desktopBusy(entry.tab)
+  if (entry.source === 'mobile') return !entry.session.exit && entry.session.programBusy
+  return false
+}
+
 /** 终端是否已退出/结束（关闭它不会结束任何正在运行的程序）。远端未接回的终端总在运行。 */
 export function isTerminalOverviewEntryExited(entry: TerminalOverviewEntry): boolean {
   if (entry.source === 'desktop') return entry.tab.status === 'exited'
@@ -207,6 +225,21 @@ export function summarizeTerminalOverviewBatch(entries: readonly TerminalOvervie
   let running = 0
   for (const entry of entries) if (!isTerminalOverviewEntryExited(entry)) running += 1
   return { total: entries.length, running, exited: entries.length - running }
+}
+
+/**
+ * 创建时间的短文本：当天「HH:mm」，同年「MM-DD HH:mm」，跨年带年份；无效时间返回 null。
+ * 手机端 protocol.js 的 createdLabel 使用相同格式。
+ */
+export function formatCreatedTime(createdAt: number | null | undefined, now: number): string | null {
+  if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) return null
+  const date = new Date(createdAt)
+  const today = new Date(now)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  if (date.toDateString() === today.toDateString()) return time
+  return date.getFullYear() === today.getFullYear() ? `${day} ${time}` : `${date.getFullYear()}-${day} ${time}`
 }
 
 /** 「空闲 N 分钟」等，用于手机会话；不足 1 分钟返回 null。 */

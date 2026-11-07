@@ -19,6 +19,8 @@ export interface MobileSessionSummary {
   programBusy: boolean
   exit: { exitCode: number; disconnected: boolean } | null
   lastActiveAt: number
+  /** 会话创建时间（Unix 毫秒）；旧版后端没有时为 null。 */
+  createdAt: number | null
   idleDeadline: number | null
   project: { id: string; name: string; path: string; kind: MobileProjectKind; host: string }
   deviceName: string | null
@@ -71,6 +73,7 @@ export function parseMobileSessionSummary(value: unknown): MobileSessionSummary 
       : /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]/u.test(String(title ?? '').trim())),
     exit,
     lastActiveAt: typeof item.lastActiveAt === 'number' ? item.lastActiveAt : 0,
+    createdAt: typeof item.createdAt === 'number' && item.createdAt > 0 ? item.createdAt : null,
     idleDeadline: typeof item.idleDeadline === 'number' ? item.idleDeadline : null,
     project: {
       id: project.id,

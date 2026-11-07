@@ -360,6 +360,8 @@ struct Session {
     /// 最近一次输入或输出；轮询不算活动。
     last_active: Instant,
     last_active_ms: u64,
+    /// 会话创建时间（Unix 毫秒），供手机与电脑端「终端管理」显示。
+    created_at_ms: u64,
     /// 最近一次程序标题转圈帧的时间，用于平滑的「忙碌」状态。
     last_spinner_frame: Option<Instant>,
     /// 已安排一次预览通知且尚未发出。
@@ -368,6 +370,7 @@ struct Session {
 
 impl Session {
     fn new(project: Project, owner: String, number: u64) -> Self {
+        let now_ms = unix_now_ms();
         Self {
             project,
             owner,
@@ -385,7 +388,8 @@ impl Session {
             changed: Arc::new(Notify::new()),
             screen: MobileScreen::new(),
             last_active: Instant::now(),
-            last_active_ms: unix_now_ms(),
+            last_active_ms: now_ms,
+            created_at_ms: now_ms,
             last_spinner_frame: None,
             preview_notify_pending: false,
         }
@@ -488,7 +492,7 @@ impl Session {
             "activityRevision": self.activity_revision.fetch_add(1, Ordering::Relaxed),
             "programTitle": self.screen.title(), "programBusy": self.program_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
-            "lastActiveAt": self.last_active_ms,
+            "lastActiveAt": self.last_active_ms, "createdAt": self.created_at_ms,
             "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
     }
 
@@ -2982,6 +2986,17 @@ mod tests {
             disconnected: false,
         });
         assert!(session.metadata("mobile-1")["idleDeadline"].is_null());
+    }
+
+    #[test]
+    fn session_metadata_keeps_created_at_after_activity() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        let created = session.metadata("mobile-1")["createdAt"].as_u64().unwrap();
+        assert_eq!(created, session.last_active_ms);
+        session.last_active_ms += 60_000;
+        let meta = session.metadata("mobile-1");
+        assert_eq!(meta["createdAt"].as_u64().unwrap(), created);
+        assert!(meta["lastActiveAt"].as_u64().unwrap() > created);
     }
 
     #[test]

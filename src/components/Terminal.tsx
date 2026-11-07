@@ -53,6 +53,7 @@ import {
   markTerminalCommandFinished,
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
+import { noteTerminalTitle } from '@/lib/terminal/terminalProgramActivity'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
@@ -1061,6 +1062,7 @@ export default function TerminalView({
             .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
         )
       },
+      onRawTitle: title => noteTerminalTitle(terminalId, title),
       onTitle: title => {
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.

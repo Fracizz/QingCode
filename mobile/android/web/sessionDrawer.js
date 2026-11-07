@@ -1,6 +1,7 @@
 // 左侧会话抽屉：按项目列出手机会话、置顶、重命名、结束；打开且在前台时定时刷新元数据。
 // 「全部」范围显示这台电脑上所有项目的手机会话纵览（按项目分组、筛选、搜索）。
 import {
+  createdLabel,
   idleLabel,
   mergeSessionActivity,
   mergeSessionList,
@@ -138,7 +139,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       const status = session.exit ? t('已结束') : [running ? t('运行中') : '', session.id === selected ? t('当前会话') : t('可接入')].filter(Boolean).join(' · ');
       const identity = t('终端 {n}', { n: session.number ?? index + 1 });
       row.querySelector('.session-label').textContent = label;
-      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status]
+      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status, createdLabel(session)]
         .filter(Boolean).join(' · ');
       const idle = row.querySelector('.session-idle');
       idle.textContent = session.exit ? '' : idleLabel(session);
