@@ -22,7 +22,8 @@ function sourceInfo(
     const distro = wslDistroNameFromPath(project.path)
     return {
       identity: `wsl:${distro ?? ''}`,
-      label: 'WSL',
+      // 类型徽标已标明 WSL，来源标签用发行版名（与 SSH 用连接名一致），避免出现两个「WSL」。
+      label: distro ?? 'WSL',
       detail: distro ? `WSL · ${distro}` : 'WSL',
       path: wslDistroPathFromPath(project.path) ?? project.path,
     }

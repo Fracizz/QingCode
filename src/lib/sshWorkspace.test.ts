@@ -174,6 +174,12 @@ describe('isSshProject', () => {
 })
 
 describe('sshProjectDisplayPath', () => {
+  it('shows native WSL projects as distro:/posix/path instead of the UNC path', () => {
+    expect(
+      sshProjectDisplayPath({ kind: 'wsl', path: String.raw`\\wsl.localhost\Ubuntu\home\code\QingCode` })
+    ).toBe('Ubuntu:/home/code/QingCode')
+    expect(sshProjectDisplayPath({ kind: 'local', path: 'wsl://Debian/root/app' })).toBe('Debian:/root/app')
+  })
   it('uses the actual Agent endpoint for project and file display paths', () => {
     const connection = { id: 'c1', name: 'WinDev', username: 'Agent', host: 'old-ssh.test', port: 22, agentEndpoint: { host: '192.168.252.107', port: 48763 } }
     expect(sshProjectDisplayPath({ kind: 'ssh', path: 'ssh://c1/D:/code/app' }, connection)).toBe('192.168.252.107:48763:D:/code/app')

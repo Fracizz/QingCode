@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getSshConnection, listSshConnections, upsertSshConnection } from './projectRepository'
 import { getSshServerEnabled, loadSshPreparationSettings } from './sshServerSettings'
 import { safeInvoke } from './tauri'
+import { isWslProject, wslDistroNameFromPath, wslDistroPathFromPath } from './wslWorkspace'
 import { directAgentApi, directAgentSshCandidates, hasDirectAgentConnection, type DirectAgentInfo } from './directAgent'
 import { parseSshServerState, sshServerVersionMismatch, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
@@ -260,6 +261,12 @@ export function sshProjectDisplayPath(
   connection?: Pick<SshConnection, 'id' | 'username' | 'host' | 'port' | 'agentEndpoint'> | null,
   connections: ReadonlyArray<Pick<SshConnection, 'id' | 'username' | 'host' | 'port' | 'agentEndpoint'>> = []
 ): string {
+  if (isWslProject(project)) {
+    // 与 SSH 的「主机:路径」一致，显示「发行版:/posix/路径」而非 wsl.localhost 的 UNC 路径。
+    const distro = wslDistroNameFromPath(project.path)
+    const posix = wslDistroPathFromPath(project.path)
+    if (posix) return distro ? `${distro}:${posix}` : posix
+  }
   if (!isSshProject(project)) return project.path
   const remote = sshRemoteDisplayPath(project.root_path || sshRemotePathFromUri(project.path))
   const resolved =

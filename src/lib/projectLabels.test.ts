@@ -102,9 +102,10 @@ describe('buildProjectLabels', () => {
     ]
     const result = labels(projects, [connection('wsl', 'WSL', 'localhost')])
     expect(result.get('local')?.source).toBe('本机')
-    expect(result.get('ubuntu')?.source).toBe('WSL · Ubuntu')
-    expect(result.get('debian')?.source).toBe('WSL · Debian')
-    expect(result.get('ssh')?.source).toBe('WSL · dev@localhost')
+    // 原生 WSL 用发行版名作来源（类型徽标已显示 WSL），不再与名为 WSL 的 SSH 连接撞名。
+    expect(result.get('ubuntu')?.source).toBe('Ubuntu')
+    expect(result.get('debian')?.source).toBe('Debian')
+    expect(result.get('ssh')?.source).toBe('WSL')
   })
 
   it('disambiguates duplicate connection names using accounts and ports', () => {
