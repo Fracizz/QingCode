@@ -381,7 +381,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #viewport .xterm-scrollable-element > .scrollbar, #history-scroll { scrollbar-width: none; }
 #viewport .xterm-scrollable-element > .scrollbar { display: none !important; }
 #history-scroll::-webkit-scrollbar { display: none; }
-.touch-scrollbar { position: absolute; z-index: 4; top: 6px; right: 0; bottom: 6px; width: 44px; touch-action: none; }
+.touch-scrollbar { position: absolute; z-index: 4; top: 6px; right: 0; bottom: 6px; width: 44px; overflow: hidden; touch-action: none; }
 .touch-scrollbar[hidden] { display: none; }
 .touch-scrollbar-thumb { position: absolute; top: 0; right: 4px; width: 16px; border-radius: 8px; background: #a2aeba8c; transition: width .12s, background-color .12s; will-change: transform; }
 .touch-scrollbar.dragging .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); }
@@ -421,7 +421,6 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #toggle-keys { flex: none; display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 6px; font-size: 12px; color: var(--muted); }
 #toggle-keys svg { width: 16px; height: 16px; }
 #toggle-keys[aria-expanded="false"] svg { transform: rotate(180deg); }
-#terminal-screen[data-fullscreen="true"] .terminal-head { display: none; }
 
 /* AI 编程常用键：单行按使用频率排序，触摸目标至少 44px；放不下时横向滑动，「更多」固定在右端。 */
 #special-keys {

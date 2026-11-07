@@ -47,7 +47,10 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, onLongPress, 
 
   function layout() {
     current = metrics();
-    const geometry = current && thumbGeometry(current, bar.clientHeight || host.clientHeight);
+    // 隐藏（display: none）时轨道高度为 0；先显示再量，避免用比轨道高的宿主高度算位置，
+    // 让滑块越过终端区底部压到输入区上。
+    bar.hidden = false;
+    const geometry = current && thumbGeometry(current, bar.clientHeight);
     if (!geometry) { bar.hidden = true; return null; }
     thumb.style.height = geometry.size + 'px';
     thumb.style.transform = `translateY(${geometry.top}px)`;
@@ -113,6 +116,9 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, onLongPress, 
   bar.addEventListener('pointercancel', up);
   bar.addEventListener('touchstart', stop, { passive: true });
   bar.addEventListener('touchmove', stop, { passive: true });
+  // 终端区尺寸变化（键盘弹出、横竖屏、面板展开）时按新轨道重排，不让滑块停在旧位置越界。
+  const resizeObserver = view.ResizeObserver ? new view.ResizeObserver(() => { if (!bar.hidden) layout(); }) : null;
+  resizeObserver?.observe(host);
   return {
     update,
     hide() { view.clearTimeout(hideTimer); longPress.cancel(); drag = null; bar.classList.remove('dragging'); bar.hidden = true; },
@@ -123,6 +129,6 @@ export function attachTerminalScrollbar(host, { metrics, scrollTo, onLongPress, 
       update();
     },
     dragging: () => !!drag,
-    dispose() { view.clearTimeout(hideTimer); longPress.cancel(); bar.remove(); },
+    dispose() { view.clearTimeout(hideTimer); longPress.cancel(); resizeObserver?.disconnect(); bar.remove(); },
   };
 }

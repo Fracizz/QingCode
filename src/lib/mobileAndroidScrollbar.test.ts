@@ -44,4 +44,19 @@ describe('Android touch scrollbar', () => {
     scrollbar.dispose()
     expect(host.querySelector('.touch-scrollbar')).toBeNull()
   })
+
+  it('measures the visible track instead of the taller host so the thumb never leaves the terminal area', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    Object.defineProperty(host, 'clientHeight', { value: 500 })
+    const scrollbar = attachTerminalScrollbar(host, { metrics: () => ({ total: 100, visible: 20, offset: 80 }), scrollTo: vi.fn() })
+    const bar = host.querySelector('.touch-scrollbar') as HTMLElement
+    const thumb = bar.querySelector('.touch-scrollbar-thumb') as HTMLElement
+    // display: none 时轨道高度为 0，显示后才是真实的 400。
+    Object.defineProperty(bar, 'clientHeight', { get: () => bar.hidden ? 0 : 400 })
+    scrollbar.update()
+    const top = Number(/translateY\((.+)px\)/.exec(thumb.style.transform)![1])
+    expect(top + parseFloat(thumb.style.height)).toBeLessThanOrEqual(400)
+    scrollbar.dispose()
+  })
 })

@@ -14,7 +14,7 @@ const check = (name, expression) => {
 }
 const capture = name => run('screenshot', resolve(directory, `${name}.png`))
 const collapsed = `document.querySelector('#special-keys').hidden && document.querySelector('#toggle-keys').getAttribute('aria-expanded') === 'false'`
-const fullscreen = `window.__mobileFixture.state.fullscreen && document.querySelector('#terminal-screen').dataset.fullscreen === 'true' && getComputedStyle(document.querySelector('.terminal-head')).display === 'none'`
+const fullscreen = `window.__mobileFixture.state.fullscreen && document.querySelector('#terminal-screen').dataset.fullscreen === 'true' && getComputedStyle(document.querySelector('.terminal-head')).display !== 'none'`
 const normal = `!window.__mobileFixture.state.fullscreen && document.querySelector('#terminal-screen').dataset.fullscreen === 'false' && getComputedStyle(document.querySelector('.terminal-head')).display !== 'none'`
 const fits = `document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('#toggle-keys, #compose-form')].every(el => {const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;})`
 

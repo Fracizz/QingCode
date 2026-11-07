@@ -138,8 +138,8 @@ public final class MainActivity extends Activity {
             getWindow().setDecorFitsSystemWindows(false);
             frame.setOnApplyWindowInsetsListener((element, insets) -> {
                 int types = WindowInsets.Type.displayCutout() | WindowInsets.Type.ime();
-                // 横屏沉浸只隐藏导航栏；状态栏保持可见，内容需要避开它。
-                types |= immersive ? WindowInsets.Type.statusBars() : WindowInsets.Type.systemBars();
+                // 横屏沉浸隐藏全部系统栏，隐藏的栏 inset 为 0；滑动临时唤出时浮在内容上方，不触发重排。
+                types |= WindowInsets.Type.systemBars();
                 Insets padding = insets.getInsets(types);
                 int corner = 0;
                 if (Build.VERSION.SDK_INT >= 31) {
@@ -276,13 +276,12 @@ public final class MainActivity extends Activity {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) {
                 controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                controller.show(WindowInsets.Type.statusBars());
-                if (immersive) controller.hide(WindowInsets.Type.navigationBars());
-                else controller.show(WindowInsets.Type.navigationBars());
+                if (immersive) controller.hide(WindowInsets.Type.systemBars());
+                else controller.show(WindowInsets.Type.systemBars());
             }
         } else {
             getWindow().getDecorView().setSystemUiVisibility(immersive
-                ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
                     | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                     | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 : View.SYSTEM_UI_FLAG_VISIBLE);
