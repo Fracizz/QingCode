@@ -19,6 +19,7 @@ import {
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
 import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import { formatTerminalQuote } from '@/lib/terminal/terminalQuote'
 import {
   protectTerminalSelectionMenu,
   shouldUseTerminalContextMenu,
@@ -274,8 +275,6 @@ export default function TerminalView({
   const revealTimerRef = useRef<number | null>(null)
   /** 申请或刷新 WebGL 渲染（预算见 terminalWebglBudget）；挂载时由主 effect 赋值。 */
   const ensureWebglRef = useRef<() => void>(() => {})
-  /** 清空 WebGL 字形图集并整屏重绘（右键「重绘终端显示」）；挂载时由主 effect 赋值。 */
-  const repaintTerminalRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -471,6 +470,23 @@ export default function TerminalView({
       },
     },
     {
+      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时可用，
+      // 否则多行会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向）。
+      label: translate('添加到对话'),
+      disabled:
+        !formatTerminalQuote(selection) ||
+        !isTerminalWritable() ||
+        !xtermRef.current?.modes.bracketedPasteMode,
+      action: () => {
+        const term = xtermRef.current
+        const quote = formatTerminalQuote(selection)
+        if (!term || !quote || !isTerminalWritable() || !term.modes.bracketedPasteMode) return
+        term.clearSelection()
+        term.paste(quote)
+        term.focus()
+      },
+    },
+    {
       label: translate('复制当前屏幕'),
       disabled: !screen,
       action: () => {
@@ -544,11 +560,6 @@ export default function TerminalView({
       label: translate('清空终端'),
       shortcut: 'Ctrl+Shift+K',
       action: clearBuffer,
-    },
-    {
-      // 兜底：字形显示错乱时手动清空字形图集并整屏重绘，不影响终端内容与进程。
-      label: translate('重绘终端显示'),
-      action: () => repaintTerminalRef.current(),
     },
     ...(isSshResource(
       useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? ''
@@ -882,10 +893,6 @@ export default function TerminalView({
         })
     }
     ensureWebglRef.current = ensureWebgl
-    repaintTerminalRef.current = () => {
-      if (atlasRepair) atlasRepair.repairNow()
-      else term.refresh(0, Math.max(0, term.rows - 1))
-    }
     ensureWebgl()
 
     xtermRef.current = term
@@ -1257,7 +1264,6 @@ export default function TerminalView({
     return () => {
       webglCancelled = true
       ensureWebglRef.current = () => {}
-      repaintTerminalRef.current = () => {}
       // addon 随 term.dispose() 一起释放，这里只归还预算槽位。
       releaseTerminalWebglSlot(webglSlotKey)
       window.clearTimeout(subscribeTimer)

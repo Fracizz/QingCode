@@ -17,7 +17,7 @@ export const GLYPH_ATLAS_REPAIR_DELAY_MS = 120
 export type GlyphAtlasRepairScheduler = {
   /** 记录一次图集页移除；短时间内多次只重建一次。 */
   schedule(): void
-  /** 立即重建（手动「重绘终端显示」），并取消待执行的重建。 */
+  /** 立即重建，并取消待执行的重建。 */
   repairNow(): void
   dispose(): void
 }
