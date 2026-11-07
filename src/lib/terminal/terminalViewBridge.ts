@@ -3,6 +3,8 @@
 export const TERMINAL_CLEAR_EVENT = 'qingcode:terminal-clear'
 export const TERMINAL_SEARCH_EVENT = 'qingcode:terminal-search'
 export const TERMINAL_RESET_EVENT = 'qingcode:terminal-reset'
+export const TERMINAL_COPY_SCREEN_EVENT = 'qingcode:terminal-copy-screen'
+export const TERMINAL_EXPORT_EVENT = 'qingcode:terminal-export'
 
 export type TerminalViewBridgeDetail = {
   /** When set, only that terminal reacts; otherwise the active view reacts. */
@@ -20,6 +22,23 @@ export function requestTerminalClear(terminalId?: string) {
 export function requestTerminalSearch(terminalId?: string) {
   window.dispatchEvent(
     new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_SEARCH_EVENT, {
+      detail: { terminalId },
+    }),
+  )
+}
+
+/** 复制当前屏幕（原右键菜单项，现走命令面板）。 */
+export function requestTerminalCopyScreen(terminalId?: string) {
+  window.dispatchEvent(
+    new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_COPY_SCREEN_EVENT, {
+      detail: { terminalId },
+    }),
+  )
+}
+
+export function requestTerminalExport(terminalId?: string) {
+  window.dispatchEvent(
+    new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_EXPORT_EVENT, {
       detail: { terminalId },
     }),
   )

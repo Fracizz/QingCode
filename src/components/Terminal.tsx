@@ -43,6 +43,8 @@ import {
 } from '@/lib/terminal/terminalCursorSettings'
 import {
   TERMINAL_CLEAR_EVENT,
+  TERMINAL_COPY_SCREEN_EVENT,
+  TERMINAL_EXPORT_EVENT,
   TERMINAL_RESET_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
@@ -85,7 +87,12 @@ import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import { isSshResource, isTauri } from '../lib/tauri'
-import { TERMINAL_DROP_ATTR, confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
+import { TERMINAL_DROP_ATTR } from '../lib/sshTerminalPaste'
+import { lockTerminalHostScroll } from '@/lib/terminal/terminalHostScrollLock'
+import {
+  terminalContextMenuEntries,
+  type TerminalContextMenuItemId,
+} from '@/lib/terminal/terminalContextMenu'
 import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
 import { getTerminalLargePasteAsFile } from '../lib/terminal/terminalLargePasteSettings'
 import { terminalContent } from '../lib/terminal/terminalContent'
@@ -459,126 +466,91 @@ export default function TerminalView({
     else addon.findPrevious(query, opts)
   }
 
+  const copyScreen = useCallback(() => {
+    const term = xtermRef.current
+    const screen = term ? terminalContent(term, 'screen') : ''
+    if (screen) void copySelection(screen)
+  }, [copySelection])
+
+  const exportBuffer = useCallback(() => {
+    const term = xtermRef.current
+    if (!term) return
+    // Snapshot before the asynchronous save dialog; avoid scanning history on every right-click.
+    const buffer = terminalContent(term, 'buffer')
+    const name =
+      useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.name ?? 'terminal'
+    void exportTerminalContent(buffer, name)
+      .then(saved => {
+        if (saved) useProjectStore.getState().pushToast('success', translate('终端内容已导出'))
+      })
+      .catch(error =>
+        useProjectStore
+          .getState()
+          .pushToast('error', translate('导出失败：{error}', { error: String(error) }))
+      )
+  }, [terminalId])
+
   // Capture once: TUI output can invalidate the live selection while the menu is open.
-  const contextMenuItems = useCallback((selection: string, screen: string): ContextMenuItem[] => [
-    {
-      label: translate('复制'),
-      shortcut: 'Ctrl+C',
-      disabled: !selection,
-      action: () => {
-        void copySelection(selection)
+  // 不可用的项直接隐藏；低频操作（复制当前屏幕、清理远程粘贴文件、换行）走命令面板/快捷键。
+  const contextMenuItems = useCallback((selection: string): ContextMenuItem[] => {
+    const writable = isTerminalWritable()
+    const quote = formatTerminalQuote(selection)
+    const items: Record<TerminalContextMenuItemId, Omit<ContextMenuItem, 'separatorBefore'>> = {
+      copy: {
+        label: translate('复制'),
+        shortcut: 'Ctrl+C',
+        action: () => {
+          void copySelection(selection)
+        },
       },
-    },
-    {
-      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时可用，
+      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时出现，
       // 否则多行会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向）。
-      label: translate('添加到对话'),
-      disabled:
-        !formatTerminalQuote(selection) ||
-        !isTerminalWritable() ||
-        !xtermRef.current?.modes.bracketedPasteMode,
-      action: () => {
-        const term = xtermRef.current
-        const quote = formatTerminalQuote(selection)
-        if (!term || !quote || !isTerminalWritable() || !term.modes.bracketedPasteMode) return
-        term.clearSelection()
-        term.paste(quote)
-        term.focus()
+      quote: {
+        label: translate('添加到对话'),
+        action: () => {
+          const term = xtermRef.current
+          if (!term || !quote || !isTerminalWritable() || !term.modes.bracketedPasteMode) return
+          term.clearSelection()
+          term.paste(quote)
+          term.focus()
+        },
       },
-    },
-    {
-      label: translate('复制当前屏幕'),
-      disabled: !screen,
-      action: () => {
-        void copySelection(screen)
+      paste: {
+        label: translate('粘贴'),
+        shortcut: 'Ctrl+V',
+        action: () => {
+          void pasteFromClipboard()
+        },
       },
-    },
-    {
-      label: translate('导出终端内容…'),
-      disabled: !xtermRef.current,
-      action: () => {
-        const term = xtermRef.current
-        if (!term) return
-        // Snapshot before the asynchronous save dialog; avoid scanning history on every right-click.
-        const buffer = terminalContent(term, 'buffer')
-        const name =
-          useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.name ??
-          'terminal'
-        void exportTerminalContent(buffer, name)
-          .then(saved => {
-            if (saved) useProjectStore.getState().pushToast('success', translate('终端内容已导出'))
+      selectAll: { label: translate('全选'), action: selectAll },
+      composer: {
+        label: translate('编辑长文本'),
+        action: () => {
+          setComposerHidden(false)
+          setComposerOpen(true)
+          // 已打开时（非模态，可能被终端抢走焦点）重新聚焦到面板输入框。
+          requestAnimationFrame(() => {
+            document
+              .querySelector<HTMLTextAreaElement>(
+                `[data-terminal-composer="${CSS.escape(terminalId)}"] textarea`
+              )
+              ?.focus()
           })
-          .catch(error =>
-            useProjectStore
-              .getState()
-              .pushToast('error', translate('导出失败：{error}', { error: String(error) }))
-          )
+        },
       },
-    },
-    {
-      label: translate('粘贴'),
-      shortcut: 'Ctrl+V',
-      disabled: !isTerminalWritable(),
-      action: () => {
-        void pasteFromClipboard()
-      },
-    },
-    {
-      label: translate('换行'),
-      shortcut: 'Ctrl+Enter',
-      disabled: !isTerminalWritable(),
-      action: insertTerminalNewline,
-    },
-    {
-      label: translate('编辑长文本'),
-      disabled: !isTerminalWritable(),
-      action: () => {
-        setComposerHidden(false)
-        setComposerOpen(true)
-        // 已打开时（非模态，可能被终端抢走焦点）重新聚焦到面板输入框。
-        requestAnimationFrame(() => {
-          document
-            .querySelector<HTMLTextAreaElement>(
-              `[data-terminal-composer="${CSS.escape(terminalId)}"] textarea`
-            )
-            ?.focus()
-        })
-      },
-    },
-    {
-      label: translate('全选'),
-      separatorBefore: true,
-      action: selectAll,
-    },
-    {
-      label: translate('在终端中查找'),
-      shortcut: 'Ctrl+F',
-      separatorBefore: true,
-      action: openSearch,
-    },
-    {
-      label: translate('清空终端'),
-      shortcut: 'Ctrl+Shift+K',
-      action: clearBuffer,
-    },
-    ...(isSshResource(
-      useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? ''
-    )
-      ? [
-          {
-            label: translate('清理远程粘贴文件'),
-            separatorBefore: true,
-            action: () => {
-              const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
-              if (tab) void confirmClearSshTerminalPasteUploads(tab.cwd)
-            },
-          },
-        ]
-      : []),
-  ], [
+      find: { label: translate('在终端中查找'), shortcut: 'Ctrl+F', action: openSearch },
+      export: { label: translate('导出终端内容…'), action: exportBuffer },
+      clear: { label: translate('清空终端'), shortcut: 'Ctrl+Shift+K', action: clearBuffer },
+    }
+    return terminalContextMenuEntries({
+      hasSelection: !!selection,
+      canQuote: !!quote && !!xtermRef.current?.modes.bracketedPasteMode,
+      writable,
+    }).map(entry => ({ ...items[entry.id], separatorBefore: entry.separatorBefore }))
+  }, [
     clearBuffer,
     copySelection,
-    insertTerminalNewline,
+    exportBuffer,
     isTerminalWritable,
     openSearch,
     pasteFromClipboard,
@@ -995,9 +967,15 @@ export default function TerminalView({
       (event, selection) => setContextMenu({
         x: event.clientX,
         y: event.clientY,
-        items: contextMenuItems(selection, terminalContent(term, 'screen')),
+        items: contextMenuItems(selection),
       })
     )
+    // 打字/输入法组字时浏览器可能滚动 overflow:hidden 的宿主，导致画面整体上移。
+    const disposeHostScrollLock = lockTerminalHostScroll([
+      container.parentElement,
+      container,
+      term.element,
+    ])
     container.addEventListener('mousedown', onMouseDown)
     window.addEventListener('pointerdown', onWindowPointerDown, true)
 
@@ -1294,6 +1272,7 @@ export default function TerminalView({
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
       disposeSelectionMenuGuard()
+      disposeHostScrollLock()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
       term.dispose()
       container.replaceChildren()
@@ -1360,15 +1339,25 @@ export default function TerminalView({
       if (!matches(detail)) return
       resetTerminalView()
     }
+    const onCopyScreen = (event: Event) => {
+      if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) copyScreen()
+    }
+    const onExport = (event: Event) => {
+      if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) exportBuffer()
+    }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
     window.addEventListener(TERMINAL_RESET_EVENT, onReset)
+    window.addEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
+    window.addEventListener(TERMINAL_EXPORT_EVENT, onExport)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
       window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
+      window.removeEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
+      window.removeEventListener(TERMINAL_EXPORT_EVENT, onExport)
     }
-  }, [clearBuffer, openSearch, resetTerminalView, terminalId])
+  }, [clearBuffer, copyScreen, exportBuffer, openSearch, resetTerminalView, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {
@@ -1533,10 +1522,7 @@ export default function TerminalView({
         setContextMenu({
           x: event.clientX,
           y: event.clientY,
-          items: contextMenuItems(
-            xtermRef.current?.getSelection() ?? '',
-            xtermRef.current ? terminalContent(xtermRef.current, 'screen') : ''
-          ),
+          items: contextMenuItems(xtermRef.current?.getSelection() ?? ''),
         })
       }}
     >

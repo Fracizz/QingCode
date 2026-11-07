@@ -7,7 +7,8 @@ import { isNonEditableViewMode } from './openFileError'
 import { translate } from './i18n'
 import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
 import { ensureSettingsFile, resolveGlobalSettingsPath } from './projectSettings'
-import { isTauri } from './tauri'
+import { isSshResource, isTauri } from './tauri'
+import { confirmClearSshTerminalPasteUploads } from './sshTerminalPaste'
 import { hasBackend } from './runtimeCapabilities'
 import { getResolvedTheme, loadTheme, saveTheme, type AppTheme } from './themeSettings'
 import type { ShortcutCommand, ShortcutMap } from './shortcuts'
@@ -21,10 +22,23 @@ import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { saveVisibleProjectsAsWorkspace } from './namedWorkspaceActions'
-import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
+import {
+  requestTerminalClear,
+  requestTerminalCopyScreen,
+  requestTerminalExport,
+  requestTerminalSearch,
+} from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
 import { activeEditorSelectionSeed } from './editorSelectionSeed'
 import { openFileFromDialog } from './openFileDialog'
+
+/** 当前聚焦终端是 SSH 终端时返回其 cwd（ssh:// 资源），否则 null。 */
+function focusedSshTerminalCwd(): string | null {
+  const state = useTerminalStore.getState()
+  const id = state.focusedTerminalId()
+  const cwd = state.terminals.find(tab => tab.id === id)?.cwd
+  return isSshResource(cwd) ? cwd : null
+}
 
 export type AppCommand = {
   id: string
@@ -496,6 +510,36 @@ export function buildCommands(): AppCommand[] {
         useUIStore.getState().openTerminalPanel()
         const id = useTerminalStore.getState().focusedTerminalId()
         requestTerminalClear(id ?? undefined)
+      },
+    },
+    {
+      id: 'terminal.copyScreen',
+      title: '复制当前屏幕',
+      keywords: 'terminal copy screen viewport',
+      when: () => useTerminalStore.getState().terminals.length > 0,
+      run: () => {
+        const id = useTerminalStore.getState().focusedTerminalId()
+        requestTerminalCopyScreen(id ?? undefined)
+      },
+    },
+    {
+      id: 'terminal.export',
+      title: '导出终端内容…',
+      keywords: 'terminal export save buffer history',
+      when: () => useTerminalStore.getState().terminals.length > 0,
+      run: () => {
+        const id = useTerminalStore.getState().focusedTerminalId()
+        requestTerminalExport(id ?? undefined)
+      },
+    },
+    {
+      id: 'terminal.clearRemotePasteFiles',
+      title: '清理远程粘贴文件',
+      keywords: 'terminal ssh remote paste upload clean terminal-paste',
+      when: () => focusedSshTerminalCwd() !== null,
+      run: () => {
+        const cwd = focusedSshTerminalCwd()
+        if (cwd) void confirmClearSshTerminalPasteUploads(cwd)
       },
     },
     {
