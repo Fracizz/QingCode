@@ -683,8 +683,9 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .workspace-dialog > p[data-error="true"] { display: block; color: var(--error); }
 .workspace-dialog textarea { width: 100%; flex: 1; min-height: 70px; resize: none; padding: 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); color: var(--ink); font: 14px/1.5 var(--mono); }
 .workspace-dialog .dialog-actions { position: static; margin-top: 0; padding-block: 0; flex: none; }
-#submission-list { flex: none; max-height: 28%; overflow: auto; }
-#submission-list button { text-align: left; width: 100%; display: block; min-height: 44px; padding: 6px 8px; border-radius: 0; border-bottom: 1px solid var(--divider); font-size: 12px; }
+/* 列表达到 max-height 时，auto 行会被压回 button 的 min-height 而重叠，这里固定按内容撑高并滚动。 */
+#submission-list { flex: none; max-height: 28%; overflow: auto; overscroll-behavior: contain; grid-auto-rows: max-content; }
+#submission-list button { text-align: left; width: 100%; display: block; min-height: 44px; padding: 6px 8px; border-radius: 0; border-bottom: 1px solid var(--divider); font-size: 12px; overflow-wrap: anywhere; }
 .reader-controls { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
 .reader-controls select, .reader-controls input[type="search"] { flex: 1; min-width: 0; width: 100px; min-height: 44px; padding: 6px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); color: var(--ink); }
 .reader-controls label { display: inline-flex; align-items: center; gap: 6px; }
@@ -738,21 +739,24 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .mouse-mode-marker.pulse { animation: mouse-mode-pulse .6s ease-out forwards; }
 @keyframes mouse-mode-pulse { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mouse-mode-marker.pulse { animation: none; } }
-/* 虚拟鼠标：箭头尖端为点击位置；机身 64×88，上半为左 / 右键，下半为拖动区。 */
+/* 虚拟鼠标：箭头尖端为点击位置；机身 72×88，上半为左 / 右键，下半为拖动区。 */
 .virtual-mouse-pointer, .virtual-mouse-cell, .virtual-mouse, .virtual-mouse-menu { position: absolute; left: 0; top: 0; }
-.virtual-mouse-pointer { z-index: 7; width: 22px; height: 29px; pointer-events: none; filter: drop-shadow(0 1px 2px #000a); }
-.virtual-mouse-pointer svg { display: block; width: 100%; height: 100%; fill: #f4f7fa; stroke: #0e1216; stroke-width: 1.4; stroke-linejoin: round; }
+.virtual-mouse-pointer { z-index: 7; width: 26px; height: 26px; pointer-events: none; filter: drop-shadow(0 1px 2px #000a); }
+.virtual-mouse-pointer svg { display: block; width: 100%; height: 100%; stroke-linejoin: round; }
+/* 深色外描边单独一层，不吃掉白色填充，浅色背景上也能看清。 */
+.virtual-mouse-pointer-outline { fill: #0e1216; stroke: #0e1216; stroke-width: 3.4; }
+.virtual-mouse-pointer-fill { fill: #f4f7fa; stroke: #f4f7fa; stroke-width: 1.2; }
 .virtual-mouse-cell { z-index: 6; border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none; }
-.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 42px 1fr; width: 64px; height: 88px; border: 1px solid var(--accent-border); border-radius: 32px 32px 34px 34px; background: #1d232be6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
+.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 42px 1fr; width: 72px; height: 88px; border: 1px solid var(--accent-border); border-radius: 36px 36px 38px 38px; background: #1d232be6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
 .virtual-mouse.dragging, .virtual-mouse.holding, .virtual-mouse:active { opacity: 1; }
 .virtual-mouse[hidden], .virtual-mouse-pointer[hidden], .virtual-mouse-cell[hidden], .virtual-mouse-menu[hidden] { display: none; }
 .virtual-mouse-button { position: relative; min-width: 0; min-height: 0; padding: 0; border: 0; border-bottom: 1px solid var(--accent-border); background: transparent; touch-action: none; }
-.virtual-mouse-button[data-button="0"] { border-right: 1px solid var(--accent-border); border-radius: 31px 0 0 0; }
-.virtual-mouse-button[data-button="2"] { border-radius: 0 31px 0 0; }
+.virtual-mouse-button[data-button="0"] { border-right: 1px solid var(--accent-border); border-radius: 35px 0 0 0; }
+.virtual-mouse-button[data-button="2"] { border-radius: 0 35px 0 0; }
 /* 触控范围向外扩到约 44px，视觉尺寸不变。 */
 .virtual-mouse-button::after { content: ''; position: absolute; top: -6px; bottom: 0; }
-.virtual-mouse-button[data-button="0"]::after { left: -12px; right: 0; }
-.virtual-mouse-button[data-button="2"]::after { left: 0; right: -12px; }
+.virtual-mouse-button[data-button="0"]::after { left: -8px; right: 0; }
+.virtual-mouse-button[data-button="2"]::after { left: 0; right: -8px; }
 .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { background: var(--accent-surface); }
 .virtual-mouse-button[data-button="2"]::before { content: 'R'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 10px; font-weight: 650; }
 .virtual-mouse-button[data-button="0"]::before { content: 'L'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 10px; font-weight: 650; }

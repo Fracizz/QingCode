@@ -231,7 +231,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         return { x, y, arrowX: arrow.left, arrowY: arrow.top, cellHidden: document.querySelector('.virtual-mouse-cell').hidden }
       })
       assert.equal(word.cellHidden, true)
-      assert.ok(Math.abs(word.arrowX + 1.8 - word.x) < 1 && Math.abs(word.arrowY + 1.8 - word.y) < 1, JSON.stringify(word))
+      assert.ok(Math.abs(word.arrowX + 3 - word.x) < 1 && Math.abs(word.arrowY + 3 - word.y) < 1, JSON.stringify(word))
       await click('.virtual-mouse-button[data-button="0"]')
       await page.waitForFunction(() => getSelection().toString() === 'history-alpha')
       await page.waitForSelector('.virtual-mouse-menu:not([hidden])')

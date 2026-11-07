@@ -189,12 +189,12 @@ describe('Android virtual mouse', () => {
     pointer(viewport, 'pointerup', 50, 60)
     mouse.showMenu([{ label: 'Paste', run: vi.fn() }])
     // 指针在上：机身顶部 92，菜单放到机身下方。
-    expect(menu.style.transform).toBe('translate(16px, 188px)')
+    expect(menu.style.transform).toBe('translate(20px, 188px)')
     pointer(viewport, 'pointerdown', 50, 290)
     pointer(viewport, 'pointerup', 50, 290)
     mouse.showMenu([{ label: 'Paste', run: vi.fn() }])
     // 指针在下：机身翻到上方，顶部 170，菜单放到机身上方。
-    expect(menu.style.transform).toBe('translate(16px, 118px)')
+    expect(menu.style.transform).toBe('translate(20px, 118px)')
   })
 
   it('moves the pointer on taps in an extra target such as the history panel', () => {

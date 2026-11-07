@@ -82,8 +82,8 @@ describe('Android virtual mouse layout', () => {
   })
 
   it('keeps the compact mouse body within narrow and keyboard-compressed bounds', () => {
-    expect(MOUSE_BODY).toEqual({ width: 64, height: 88 })
-    expect(layoutMouseBody({ x: 319, y: 99 }, { width: 320, height: 100 })).toMatchObject({ left: 241, top: 0 })
+    expect(MOUSE_BODY).toEqual({ width: 72, height: 88 })
+    expect(layoutMouseBody({ x: 319, y: 99 }, { width: 320, height: 100 })).toMatchObject({ left: 233, top: 0 })
     expect(layoutMouseBody({ x: 20, y: 20 }, { width: 40, height: 50 })).toMatchObject({ left: 0, top: 0 })
   })
 })

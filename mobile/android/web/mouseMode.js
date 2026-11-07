@@ -11,10 +11,10 @@ export const LONG_PRESS_SLOP = 8;
 export const TAP_SLOP = 10;
 export const TAP_MAX_MS = 500;
 /** 虚拟鼠标机身尺寸（CSS px），以及机身相对箭头尖端的偏移。 */
-export const MOUSE_BODY = { width: 64, height: 88 };
+export const MOUSE_BODY = { width: 72, height: 88 };
 export const POINTER_GAP = { x: 14, y: 32 };
 /** 箭头尖端在指针元素内的偏移（CSS px），摆放时扣除，让尖端正好落在点击位置。 */
-export const POINTER_TIP = { x: 1.8, y: 1.8 };
+export const POINTER_TIP = { x: 3, y: 3 };
 /** 按住左键不动多久进入「按住拖动」（手指一滑动就会立即进入）。 */
 export const HOLD_MS = 400;
 /** 点左键后多久内拖动机身，算作接着按住左键拖动（单击后再滑动即选中）。 */
@@ -117,7 +117,8 @@ export function createLongPress(view, onLongPress, { delay = LONG_PRESS_MS, slop
   };
 }
 
-const POINTER_SVG = '<svg aria-hidden="true" viewBox="0 0 18 24"><path d="M1.5 1.5v18.2l4.6-4.3 3.1 7 3.2-1.4-3.1-6.9h6.3z"></path></svg>';
+const POINTER_PATH = 'M3 3 19.6 9.2 12.2 12.2 9.2 19.6Z';
+const POINTER_SVG = `<svg aria-hidden="true" viewBox="0 0 22 22"><path class="virtual-mouse-pointer-outline" d="${POINTER_PATH}"></path><path class="virtual-mouse-pointer-fill" d="${POINTER_PATH}"></path></svg>`;
 
 /**
  * host：终端外层容器（放胶囊、指针和虚拟鼠标）；target：接收点按的终端区域。

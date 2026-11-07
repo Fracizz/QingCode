@@ -44,6 +44,49 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await page.screenshot({ path: resolve(output, 'recovered-input.png') })
 
+    await step('long submission rows grow with their text instead of overlapping', async () => {
+      for (const text of [
+        "'D:\\code\\qingcode\\.qingcode\\terminal-paste\\mw5tfc5l-8jx0e2\\mobile-image.jpg' first long",
+        "'D:\\code\\qingcode\\.qingcode\\terminal-paste\\mw4k4dpt-pkygfq\\mobile-image.jpg' second long",
+        "'D:\\code\\qingcode\\.qingcode\\terminal-paste\\mw4dfw2y-5v53lx\\mobile-image.jpg' third long",
+        'short row',
+      ]) {
+        await page.fill('#compose', text)
+        await page.click('#send')
+        await page.waitForFunction(text => window.__mobileFixture.state.inputs.includes(text + '\r'), text)
+      }
+      await page.click('#terminal-menu')
+      await page.click('#menu-submissions')
+      await page.waitForSelector('#submissions-dialog[open]')
+      await page.screenshot({ path: resolve(output, 'long-submissions.png') })
+      // 当前会话只留 3 条：压低窗口高度，让列表达到 max-height 才会触发行被压扁。
+      for (const [width, height] of [[390, 520], [320, 480]]) {
+        await page.cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true })
+        const rows = await page.evaluate(() => {
+          const list = document.querySelector('#submission-list')
+          return {
+            canScroll: list.scrollHeight > list.clientHeight,
+            sideways: list.scrollWidth > list.clientWidth,
+            rows: [...list.children].map(row => {
+              const rect = row.getBoundingClientRect()
+              // button 的 scrollHeight 不计溢出的文字，用文字的实际范围判断。
+              const range = document.createRange()
+              range.selectNodeContents(row)
+              const text = range.getBoundingClientRect()
+              return { top: rect.top, bottom: rect.bottom, textTop: text.top, textBottom: text.bottom }
+            }),
+          }
+        })
+        assert.equal(rows.rows.length, 3, JSON.stringify(rows))
+        assert.equal(rows.sideways, false, JSON.stringify(rows))
+        assert.equal(rows.canScroll, true, JSON.stringify(rows))
+        for (const row of rows.rows) assert.ok(row.textTop >= row.top && row.textBottom <= row.bottom, JSON.stringify(rows))
+        for (let index = 1; index < rows.rows.length; index++) assert.ok(rows.rows[index].top >= rows.rows[index - 1].bottom - .5, JSON.stringify(rows))
+      }
+      await page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
+      await page.evaluate(() => window.qingBack())
+    })
+
     await step('pending image does not disable Ctrl+C; successful upload only inserts a path', async () => {
       await page.evaluate(() => {
         window.__mobileFixture.state.imageGate = new Promise(resolve => { window.__releaseImage = resolve })
