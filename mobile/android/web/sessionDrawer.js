@@ -19,7 +19,8 @@ import { t } from './i18n.js';
 const REFRESH_INTERVAL = 1500;
 
 /**
- * state：读取 app 状态的 getter（profile、project、sessions、selected、busy、viewEpoch、foreground），
+ * state：读取 app 状态的 getter（profile、project、sessions、selected、busy、locked、viewEpoch、foreground），
+ * busy 拦截操作；locked 决定按钮是否显示为禁用，关闭单个会话时为假，列表不变暗。
  * setSessions(list) 写回会话列表；selectSession / endSession 由 app 执行。
  */
 export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession }) {
@@ -59,7 +60,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   function render() {
     const sessions = state.sessions();
     const selected = state.selected();
-    const busy = state.busy();
+    const busy = state.locked();
     const project = state.project();
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
@@ -68,9 +69,9 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
     const options = get('session-options');
-    // 上一轮还没收起完的行直接移除，不参与本轮排序。
-    for (const row of options.querySelectorAll('[data-leaving]')) row.remove();
-    const existingRows = new Map([...options.children].map(row => [row.dataset.id, row]));
+    // 正在收起的行不参与本轮排序，让动画播完；否则下一次渲染会把它直接切掉。
+    const staying = child => !child.dataset.leaving;
+    const existingRows = new Map([...options.children].filter(staying).map(row => [row.dataset.id, row]));
     const liveIds = new Set(sessions.map(item => item.id));
     const gone = [...existingRows.values()].filter(row => !liveIds.has(row.dataset.id));
     // 同一列表少了几行才收起；切项目或全部结束是整表替换，直接移除。
@@ -107,7 +108,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
       // 只按留下的行定位，要收起的行留在原地。
-      const next = [...options.children].filter(child => !gone.includes(child))[position];
+      const next = [...options.children].filter(child => staying(child) && !gone.includes(child))[position];
       if (next !== row) options.insertBefore(row, next ?? null);
     }
     for (const row of gone) {

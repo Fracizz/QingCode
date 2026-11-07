@@ -145,6 +145,8 @@ let terminalReady = false;
 const modifiers = { ctrl: 'off', alt: 'off' };
 const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
+// 关闭单个会话时只在逻辑上加锁，列表不变暗，避免确认和请求期间闪一下。
+let endingSession = false;
 let inputFailed = false;
 let resizing = null;
 let composing = false;
@@ -258,6 +260,7 @@ const drawer = createSessionDrawer({
     sessions: () => sessions,
     selected: () => selected,
     busy: () => busy,
+    locked: () => busy && !endingSession,
     viewEpoch: () => viewEpoch,
     foreground: () => foreground,
   },
@@ -814,8 +817,8 @@ get('toggle-keys').addEventListener('click', () => {
 });
 renderShortcutVisibility();
 
-function leaveTerminal({ preserveFullscreen = false } = {}) {
-  get('session-drawer').close();
+function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) {
+  if (!keepDrawer) get('session-drawer').close();
   get('rename-session-dialog').close();
   cancelKeyRepeats();
   if (get('keys-dialog').open) get('keys-dialog').close();
@@ -1407,12 +1410,12 @@ async function openNewSessionDialog() {
   }
 }
 
-async function selectSession(session) {
+async function selectSession(session, { keepDrawer = false } = {}) {
   get('terminal-empty').hidden = true;
   get('session-dialog').close();
-  get('session-drawer').close();
+  if (!keepDrawer) get('session-drawer').close();
   if (selected === session.id) return;
-  leaveTerminal({ preserveFullscreen: true });
+  leaveTerminal({ preserveFullscreen: true, keepDrawer });
   const epoch = viewEpoch;
   selected = session.id;
   workspace.context(draftKey(selected), project.id, project.name);
@@ -1586,6 +1589,7 @@ async function endSession(id) {
   const address = profile.id;
   const ended = target.exit;
   busy = true;
+  endingSession = true;
   drawer.pause();
   message('session-error', '');
   drawer.render();
@@ -1597,12 +1601,12 @@ async function endSession(id) {
     if (epoch !== viewEpoch) return;
     sessions = sessions.filter(item => item.id !== id);
     drawer.savePins(drawer.pins().filter(pin => pin !== id));
+    // 先收起这一行，再切换终端；抽屉全程不关，不会滑出再滑入。
+    drawer.render();
     if (selected === id) {
       compose.value = '';
       if (sessions.length) {
-        await selectSession(sessions.find(item => !item.exit) ?? sessions[0]);
-        get('session-drawer').showModal();
-        get('show-sessions').setAttribute('aria-expanded', 'true');
+        await selectSession(sessions.find(item => !item.exit) ?? sessions[0], { keepDrawer: true });
       } else {
         localStorage.removeItem(sessionKey(project.id));
         returnToDashboard('home');
@@ -1616,6 +1620,7 @@ async function endSession(id) {
     }
   } finally {
     busy = false;
+    endingSession = false;
     drawer.render();
     drawer.scheduleRefresh();
   }

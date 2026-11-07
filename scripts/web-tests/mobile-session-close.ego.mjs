@@ -87,6 +87,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
       await page.click(row('mobile-2') + ' .session-close')
       await page.waitForSelector('#confirm-dialog[open]')
       assert.match(await page.evaluate(() => document.querySelector('#confirm-text').textContent), /临时终端/)
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#session-drawer button:disabled').length), 0, 'list must not dim while confirming')
       await page.click('#confirm-dialog [value="cancel"]')
       assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.ends), [])
       assert.equal(await page.evaluate(() => document.querySelector('#session-options [aria-current="true"]').closest('.session-option').dataset.id), 'mobile-3')
@@ -107,12 +108,23 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
       await page.evaluate(() => window.__mobileFixture.state.endErrors.clear())
     })
     await step('closing the current terminal resumes the remaining terminal and its draft', async () => {
+      await page.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] })
+      await page.evaluate(() => {
+        window.__drawerCloses = 0
+        window.__removedRows = []
+        document.querySelector('#session-drawer').addEventListener('close', () => { window.__drawerCloses += 1 })
+        new MutationObserver(records => {
+          for (const record of records) for (const node of record.removedNodes) window.__removedRows.push({ id: node.dataset?.id, leaving: node.dataset?.leaving })
+        }).observe(document.querySelector('#session-options'), { childList: true })
+      })
       await close('mobile-3')
       await count(1)
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       assert.equal(await page.evaluate(() => document.querySelector('#compose').value), '第一会话的草稿')
       assert.equal(await page.evaluate(() => document.querySelector('#session-options [data-current="true"]').dataset.id), 'mobile-1')
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), true)
+      assert.equal(await page.evaluate(() => window.__drawerCloses), 0, 'drawer must stay open without sliding out and back')
+      assert.deepEqual(await page.evaluate(() => window.__removedRows), [{ id: 'mobile-3', leaving: 'true' }], 'row must collapse instead of being cut off')
     })
     await step('closing the last session returns to the home page', async () => {
       await close('mobile-1')
