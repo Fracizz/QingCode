@@ -14,6 +14,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const results = []
   const step = async (name, action) => { await action(); results.push({ name, passed: true }) }
   const openSettings = async () => {
+    await page.click('#terminal-menu', { label: 'open terminal menu' })
+    await page.waitForSelector('#terminal-menu-dialog[open]')
     await page.click('#manage-sessions', { label: 'open terminal settings' })
     await page.waitForSelector('#session-dialog[open]')
     await page.waitForFunction(() => !document.querySelector('#session-dialog').getAnimations().some(animation => animation.playState === 'running'))
@@ -30,7 +32,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.click('#pair-submit', { label: 'pair fixture computer' })
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'show project list' })
-    await page.click('#project-list .row:first-child', { label: 'open fixture project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open fixture project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
   }
@@ -47,7 +49,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#image-compression').value), 'medium')
       await page.selectOption('#image-compression', { label: '原图 · 不压缩' })
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:image-compression')), 'original')
-      assert.match(await page.evaluate(() => document.querySelector('#image-compression-hint').textContent), /PNG \/ JPEG.*HEIC \/ HEIF.*8 MB/)
+      assert.match(await page.evaluate(() => document.querySelector('#image-compression-hint').textContent), /8 MB.*HEIC/)
       await closeSettings()
     })
     await step('original mode reaches the picker and inserts an attachment without submitting', async () => {

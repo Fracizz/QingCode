@@ -46,7 +46,7 @@ try {
   run('click', '#pair-submit')
   check('pairing connects successfully', `document.querySelector('#active-host').dataset.state === 'online'`)
   run('click', '#dashboard-nav [data-page="home"]')
-  check('home shows current computer and an honest empty recent list on older desktops', `!document.querySelector('#home-context').hidden && document.querySelector('#home-context-state').textContent.includes('15 个') && document.querySelectorAll('#home-project-list .row').length === 0 && !document.querySelector('#home-recent-empty').hidden && document.querySelector('#home-guide').hidden && ${fits}`)
+  check('home shows current computer and an honest empty recent list on older desktops', `document.querySelector('#home-context').hidden && document.querySelectorAll('#home-project-list .row').length === 0 && !document.querySelector('#home-recent-empty').hidden && document.querySelector('#home-guide').hidden && ${fits}`)
   capture('03-home-connected')
   run('click', '#home-all-projects')
   run('fill', '#search', '找不到的项目')
@@ -62,7 +62,7 @@ try {
   capture('05-projects-320')
   run('set', 'viewport', '390', '844')
   evaluate(captureTerminal)
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal opens with a useful viewport and dimensions', `document.querySelector('#terminal-status').textContent === '会话中' && window.__layoutTerm.rows > 20 && document.querySelector('#terminal-size').textContent.includes('×') && ${terminalFits}`)
   // A large physical corner must not squeeze every row of the terminal toolbar.

@@ -1,18 +1,18 @@
 // 快捷键栏布局：用户可调整常用键顺序并隐藏不用的键；隐藏的键移入「更多」，不会丢失。
 // 纯逻辑无 DOM，Vitest：src/lib/mobileAndroidKeyLayout.test.ts。
 
-/** 常用键默认顺序（按 AI 编程使用频率），值为按钮的 data-key。 */
+/** 常用键默认顺序（按 AI 编程使用频率），值为按钮的 data-key；方向与退格用 icon 指定的 SVG，字体字形的基线不一致。 */
 export const SHORTCUT_KEYS = Object.freeze([
   { key: 'esc', label: 'Esc', name: 'Esc' },
   { key: 'tab', label: 'Tab', name: 'Tab' },
   { key: 'interrupt', label: '^C', name: 'Ctrl+C' },
-  { key: 'shift-tab', label: '⇧Tab', name: 'Shift+Tab' },
-  { key: 'up', label: '↑', name: '向上' },
-  { key: 'down', label: '↓', name: '向下' },
-  { key: 'backspace', label: '⌫', name: '退格' },
+  { key: 'shift-tab', label: '⇧Tab', name: 'Shift+Tab', icon: 'shift', iconText: 'Tab' },
+  { key: 'up', label: '↑', name: '向上', icon: 'arrow-up' },
+  { key: 'down', label: '↓', name: '向下', icon: 'arrow-down' },
+  { key: 'backspace', label: '⌫', name: '退格', icon: 'backspace' },
   { key: 'slash', label: '/命令', name: '斜杠命令' },
-  { key: 'left', label: '←', name: '向左' },
-  { key: 'right', label: '→', name: '向右' },
+  { key: 'left', label: '←', name: '向左', icon: 'arrow-left' },
+  { key: 'right', label: '→', name: '向右', icon: 'arrow-right' },
 ]);
 
 const KNOWN = new Set(SHORTCUT_KEYS.map(item => item.key));

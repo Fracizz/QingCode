@@ -111,6 +111,8 @@ interface UIState {
   closeTerminalManager: () => void
   openCreateProject: () => void
   closeCreateProject: () => void
+  /** 项目创建成功：关闭创建对话框及其来源的项目管理页，并回到资源管理器。 */
+  finishCreateProject: () => void
 }
 
 interface FullPageRestore {
@@ -185,7 +187,7 @@ function applyColumns(columns: SideWorkspaceColumns) {
 
 const initialColumns = loadSideWorkspaceColumns()
 
-export const useUIStore = create<UIState>((set) => ({
+export const useUIStore = create<UIState>((set, get) => ({
   view: 'explorer',
   sidebarOpen: !isExternalFileWindow(),
   activityBarHidden: loadActivityBarHidden(),
@@ -377,4 +379,8 @@ export const useUIStore = create<UIState>((set) => ({
   closeTerminalManager: () => set({ terminalManagerOpen: false }),
   openCreateProject: () => set({ createProjectOpen: true }),
   closeCreateProject: () => set({ createProjectOpen: false }),
+  finishCreateProject: () => {
+    set({ createProjectOpen: false, projectManagerOpen: false })
+    get().setView('explorer')
+  },
 }))

@@ -70,6 +70,24 @@ pub fn settings_export(scope: &str, project: Option<&str>, destination: Option<&
     }
 }
 
+/// 项目已写入数据库后通知运行中的 GUI 刷新；GUI 未运行时下次启动会读到新数据，不算失败。
+pub fn notify_projects_changed() -> &'static str {
+    let request = IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "projects.reload".into(),
+        project: None,
+        config: None,
+        path: None,
+        paths: None,
+        content: None,
+    };
+    match ipc::client_request(&request) {
+        Ok(response) if response.ok => "reloaded",
+        Err(ipc::ClientError::AppNotRunning(_)) => "not_running",
+        _ => "reload_failed",
+    }
+}
+
 pub fn project_switch(query: &str) -> i32 {
     dispatch(IpcRequest {
         id: uuid::Uuid::new_v4().to_string(),

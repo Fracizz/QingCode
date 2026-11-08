@@ -61,6 +61,35 @@ describe('Android pull to refresh', () => {
     expect(indicator.style.getPropertyValue('--pull')).toBe('0px')
   })
 
+  it('shows the result before collapsing and marks a false or throwing refresh as failed', async () => {
+    for (const [outcome, expected] of [[() => Promise.resolve(true), 'done'], [() => Promise.resolve(false), 'failed'], [() => Promise.reject(new Error('offline')), 'failed']] as const) {
+      const scroller = document.createElement('section')
+      const indicator = document.createElement('div')
+      scroller.append(indicator)
+      document.body.append(scroller)
+      disposers.push(attachPullToRefresh(scroller, indicator, { onRefresh: outcome }))
+      touch(scroller, 'touchstart', [[100, 100]])
+      touch(scroller, 'touchmove', [[100, 300]])
+      touch(scroller, 'touchend', [])
+      await vi.waitFor(() => expect(indicator.dataset.state).toBe(expected))
+      expect(indicator.style.getPropertyValue('--pull')).not.toBe('0px')
+    }
+  })
+
+  it('vibrates once when the pull crosses the threshold', () => {
+    const vibrate = vi.fn()
+    Object.defineProperty(navigator, 'vibrate', { value: vibrate, configurable: true })
+    const { scroller } = fixture()
+    touch(scroller, 'touchstart', [[100, 100]])
+    touch(scroller, 'touchmove', [[100, 120]])
+    expect(vibrate).not.toHaveBeenCalled()
+    touch(scroller, 'touchmove', [[100, 300]])
+    touch(scroller, 'touchmove', [[100, 320]])
+    expect(vibrate).toHaveBeenCalledTimes(1)
+    delete (navigator as { vibrate?: unknown }).vibrate
+    touch(scroller, 'touchend', [])
+  })
+
   it('springs back without refreshing after a short pull', () => {
     const { scroller, indicator, onRefresh } = fixture()
     touch(scroller, 'touchstart', [[100, 100]])

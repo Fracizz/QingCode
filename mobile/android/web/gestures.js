@@ -1,10 +1,105 @@
 // QingCode Android 的触摸手势：下拉刷新、底部弹层下滑关闭、快捷键长按连发。
 // 只处理 DOM 事件；阈值与阻尼等纯逻辑在 protocol.js。Vitest：src/lib/mobileAndroidGestures.test.ts。
-import { PULL_THRESHOLD, pullOffset } from './protocol.js';
+import { PULL_THRESHOLD, pullOffset, swipeRevealOffset, swipeRevealSettles } from './protocol.js';
+
+// 刷新结果在浮标上停留的时长：失败多留一会儿，让用户看清。
+const PULL_DONE_MS = 520;
+const PULL_FAILED_MS = 1200;
+
+// 同一时间只展开一行。
+let revealedRow = null;
+
+/** 收起当前左滑展开的行（进入多选、切换范围等）。 */
+export function closeRevealedRow() {
+  revealedRow?.();
+}
+
+/**
+ * 列表行左滑露出下层操作：row 需含一个跟手移动的 face，操作按钮在其下方靠右。
+ * 只接管明显横向的拖动，竖向交还给列表滚动；展开时点按行面或行外任意处收起，点按行面不触发打开。
+ * 键盘聚焦到下层按钮时自动展开。返回 { open, close }，长按等入口可直接调用。
+ */
+export function attachSwipeReveal(row, face, { width = 76, enabled = () => true } = {}) {
+  let drag = null;
+  let revealed = false;
+  let suppressClickUntil = 0;
+
+  function place(offset, animate) {
+    face.style.transition = animate ? '' : 'none';
+    face.style.transform = offset ? `translateX(${offset}px)` : '';
+  }
+
+  function outside(event) {
+    if (!row.contains(event.target)) close();
+  }
+
+  function open() {
+    if (!enabled()) return;
+    if (revealedRow !== close) revealedRow?.();
+    revealed = true;
+    revealedRow = close;
+    row.dataset.revealed = 'true';
+    place(-width, true);
+    document.addEventListener('pointerdown', outside, true);
+  }
+
+  function close() {
+    revealed = false;
+    if (revealedRow === close) revealedRow = null;
+    delete row.dataset.revealed;
+    place(0, true);
+    document.removeEventListener('pointerdown', outside, true);
+  }
+
+  face.addEventListener('pointerdown', event => {
+    drag = null;
+    if (!enabled() || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, axis: null, base: revealed ? -width : 0, offset: revealed ? -width : 0 };
+  });
+  face.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (!drag.axis) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      drag.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+      if (drag.axis === 'y') { drag = null; return; }
+      face.setPointerCapture?.(event.pointerId);
+    }
+    drag.offset = swipeRevealOffset(drag.base, dx, width);
+    place(drag.offset, false);
+  });
+  face.addEventListener('pointerup', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const moved = drag.axis === 'x';
+    const shouldOpen = swipeRevealSettles(drag.offset, width);
+    drag = null;
+    if (!moved) return;
+    suppressClickUntil = event.timeStamp + 400;
+    if (shouldOpen) open();
+    else close();
+  });
+  face.addEventListener('pointercancel', () => {
+    if (drag?.axis === 'x') place(revealed ? -width : 0, true);
+    drag = null;
+  });
+  // 拖动后的 click 和展开时点行面都不算打开会话。
+  face.addEventListener('click', event => {
+    if (event.timeStamp >= suppressClickUntil && !revealed) return;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    if (event.timeStamp >= suppressClickUntil) close();
+  }, true);
+  row.addEventListener('focusin', event => {
+    if (event.target.matches?.('.swipe-action:focus-visible')) open();
+  });
+  return { open, close };
+}
 
 /**
  * 列表顶部继续下拉时显示刷新指示，松手越过阈值则调用 onRefresh（返回 Promise）。
- * indicator 通过 data-state（pulling / ready / refreshing）与 --pull 变量驱动样式。
+ * indicator 通过 data-state（pulling / ready / refreshing / done / failed）与 --pull 变量驱动样式；
+ * onRefresh 返回 false 或抛错时显示失败，结果停留片刻再收起。越过阈值时轻震一次。
  */
 export function attachPullToRefresh(scroller, indicator, { onRefresh, enabled = () => true }) {
   let gesture = null;
@@ -39,21 +134,25 @@ export function attachPullToRefresh(scroller, indicator, { onRefresh, enabled = 
     if (dy <= 0 || scroller.scrollTop > 0) { cancel(); return; }
     if (event.cancelable) event.preventDefault();
     gesture.offset = pullOffset(dy);
-    render(gesture.offset, gesture.offset >= PULL_THRESHOLD ? 'ready' : 'pulling');
+    const state = gesture.offset >= PULL_THRESHOLD ? 'ready' : 'pulling';
+    if (state === 'ready' && indicator.dataset.state !== 'ready') navigator.vibrate?.(10);
+    render(gesture.offset, state);
   }
 
   async function end() {
     const ready = gesture?.axis === 'pull' && gesture.offset >= PULL_THRESHOLD;
     gesture = null;
-    if (!ready) { render(0); return; }
+    if (!ready) { if (!refreshing) render(0); return; }
     refreshing = true;
     render(PULL_THRESHOLD, 'refreshing');
+    let ok = false;
     try {
-      await onRefresh();
-    } finally {
-      refreshing = false;
-      render(0);
-    }
+      ok = await onRefresh() !== false;
+    } catch { /* 错误内容由调用方的页面提示负责，这里只显示失败状态。 */ }
+    render(PULL_THRESHOLD, ok ? 'done' : 'failed');
+    await new Promise(resolve => setTimeout(resolve, ok ? PULL_DONE_MS : PULL_FAILED_MS));
+    refreshing = false;
+    render(0);
   }
 
   function cancel() {

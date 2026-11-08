@@ -534,10 +534,7 @@ function App() {
           <CreateProjectDialog
             open
             onClose={() => useUIStore.getState().closeCreateProject()}
-            onCreated={() => {
-              useUIStore.getState().closeCreateProject()
-              useUIStore.getState().setView('explorer')
-            }}
+            onCreated={() => useUIStore.getState().finishCreateProject()}
           />
         </Suspense>
       )}

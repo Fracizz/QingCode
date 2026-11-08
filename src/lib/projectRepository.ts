@@ -117,15 +117,36 @@ export async function listProjects(db: Database): Promise<Project[]> {
   return db.select<Project[]>('SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC')
 }
 
+/** CLI 移除项目时写入的路径列表；设置文件回写成功前，这些路径不能从设置重新导入。 */
+const CLI_REMOVED_PATHS_KEY = 'cli_removed_project_paths'
+
+async function readCliRemovedProjectPaths(db: Database): Promise<string[]> {
+  const rows = await db.select<{ value: string }[]>(
+    'SELECT value FROM settings WHERE key = $1',
+    [CLI_REMOVED_PATHS_KEY]
+  )
+  if (!rows[0]) return []
+  try {
+    const parsed: unknown = JSON.parse(rows[0].value)
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 export async function syncProjectsFromUserSettings(
   db: Database,
-  projects: Project[]
+  projects: Project[],
+  removedPaths: string[] = []
 ): Promise<{ projects: Project[]; imported: number }> {
   const settings = await loadGlobalSettings()
   if (!shouldSyncProjectsOnStartup(settings)) {
     return { projects, imported: 0 }
   }
-  const entries = readProjectEntries(settings)
+  const removed = new Set(removedPaths.map(normalizeProjectPath))
+  const entries = readProjectEntries(settings).filter(
+    entry => !removed.has(normalizeProjectPath(entry.path))
+  )
   if (entries.length === 0) return { projects, imported: 0 }
 
   return syncSettingsProjectEntries(db, projects, entries)
@@ -233,8 +254,8 @@ function toSettingsProjectEntry(project: Project): SettingsProjectEntry {
  * skips the write when values are unchanged and the file still carries comments,
  * so a no-op CRUD does not reformat the user's file.
  */
-export async function persistProjectsToUserSettings(): Promise<void> {
-  if (!hasBackend()) return
+export async function persistProjectsToUserSettings(): Promise<boolean> {
+  if (!hasBackend()) return false
   try {
     await withDb('回写项目列表到设置', async d => {
       const projects = await d.select<Project[]>(
@@ -247,8 +268,10 @@ export async function persistProjectsToUserSettings(): Promise<void> {
       settings[PROJECTS_KEY] = entries
       await saveGlobalSettings(settings)
     })
+    return true
   } catch (error) {
     console.warn('persist projects to default-settings.json failed:', error)
+    return false
   }
 }
 
@@ -260,11 +283,12 @@ export async function loadProjectsFromDb(options?: { syncFromSettings?: boolean 
 }> {
   return withDb('加载项目列表', async d => {
     const migrated = await migrateLegacyProjects(d)
+    const cliRemovedPaths = await readCliRemovedProjectPaths(d)
     let projects = await listProjects(d)
     let importedFromSettings = 0
     if (hasBackend() && options?.syncFromSettings !== false) {
       try {
-        const synced = await syncProjectsFromUserSettings(d, projects)
+        const synced = await syncProjectsFromUserSettings(d, projects, cliRemovedPaths)
         projects = synced.projects
         importedFromSettings = synced.imported
         if (importedFromSettings > 0) {
@@ -273,6 +297,10 @@ export async function loadProjectsFromDb(options?: { syncFromSettings?: boolean 
       } catch (error) {
         console.warn('sync projects from default-settings.json failed:', error)
       }
+    }
+    // 设置文件更新后才能删除记录，否则下次启动仍会把项目导回来。
+    if (cliRemovedPaths.length > 0 && (await persistProjectsToUserSettings())) {
+      await d.execute('DELETE FROM settings WHERE key = $1', [CLI_REMOVED_PATHS_KEY])
     }
     return { migrated, projects, importedFromSettings }
   })

@@ -54,11 +54,15 @@ fn execute(cmd: Command) -> i32 {
                     format!("failed to add projects: {errors:?}"),
                 );
             }
-            output::ok(json!({ "added": added, "errors": errors }))
+            let gui = online::notify_projects_changed();
+            output::ok(json!({ "added": added, "errors": errors, "gui": gui }))
         }
         Command::ProjectRemove { query } => {
             match db::open_db().and_then(|c| db::remove_project(&c, &query)) {
-                Ok(removed) => output::ok(json!({ "removed": removed })),
+                Ok(removed) => {
+                    let gui = online::notify_projects_changed();
+                    output::ok(json!({ "removed": removed, "gui": gui }))
+                }
                 Err(e) => output::fail(output::EXIT_ERROR, e),
             }
         }

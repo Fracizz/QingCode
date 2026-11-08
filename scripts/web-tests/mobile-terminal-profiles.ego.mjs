@@ -33,7 +33,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.click('#pair-submit', { label: 'pair fixture computer' })
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'open project list' })
-    await page.click('#project-list .row:first-child', { label: 'open local project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open local project' })
     await page.click('#terminal-empty-new', { label: 'open new session dialog from empty state' })
     await page.waitForFunction(() => document.querySelector('#new-session-dialog').open
       && document.querySelector('#terminal-profiles').getAttribute('aria-busy') === 'false'
@@ -111,7 +111,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => document.querySelector('#active-host-name').textContent === '旧电脑'
         && document.querySelector('#active-host').dataset.state === 'online')
       await page.click('#dashboard-nav [data-page="project"]', { label: 'open legacy project list' })
-      await page.click('#project-list .row:first-child', { label: 'open legacy project' })
+      await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open legacy project' })
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await openDialog('open dialog on legacy desktop')

@@ -44,7 +44,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), false)
     })
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse projects' })
-    await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open terminal project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
 

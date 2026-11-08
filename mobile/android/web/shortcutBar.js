@@ -12,7 +12,7 @@ import {
   toggleKeyHidden,
   visibleKeys,
 } from './keyLayout.js';
-import { get, button } from './dom.js';
+import { get, button, icon } from './dom.js';
 import { attachDragSort } from './gestures.js';
 import { t } from './i18n.js';
 
@@ -26,7 +26,9 @@ export function createShortcutBar({ prefix, onChange }) {
 
   function apply() {
     const { bar: shown, overflow } = visibleKeys(layout);
-    for (const key of shown) bar.insertBefore(buttons.get(key), more);
+    // 收起按钮排在常用键之后（展开时才在栏内，见 renderShortcutVisibility）。
+    const end = bar.querySelector('#toggle-keys') ?? more;
+    for (const key of shown) bar.insertBefore(buttons.get(key), end);
     get('overflow-keys').replaceChildren(...overflow.map(key => buttons.get(key)));
     get('overflow-keys-section').hidden = !overflow.length;
     onChange?.();
@@ -63,18 +65,19 @@ export function createShortcutBar({ prefix, onChange }) {
       box.addEventListener('change', () => save(toggleKeyHidden(layout, key)));
       const cap = document.createElement('span');
       cap.className = 'key-cap';
-      cap.textContent = t(info.label);
+      if (info.icon) cap.append(icon(info.icon), info.iconText ?? '');
+      else cap.textContent = t(info.label);
       const name = document.createElement('span');
       name.className = 'key-name';
       name.textContent = hidden ? t('{name} · 在「更多」中', { name: t(info.name) }) : t(info.name);
       toggle.append(box, cap, name);
       const up = button('icon-button key-move', () => save(moveKey(layout, key, -1)));
-      up.textContent = '↑';
+      up.append(icon('arrow-up'));
       up.dataset.role = 'up';
       up.disabled = index === 0;
       up.setAttribute('aria-label', t('上移 {name}', { name: t(info.name) }));
       const down = button('icon-button key-move', () => save(moveKey(layout, key, 1)));
-      down.textContent = '↓';
+      down.append(icon('arrow-down'));
       down.dataset.role = 'down';
       down.disabled = index === layout.order.length - 1;
       down.setAttribute('aria-label', t('下移 {name}', { name: t(info.name) }));

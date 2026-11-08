@@ -27,6 +27,24 @@ export function collapseAndRemove(row, duration = 160) {
   animation.onfinish = animation.oncancel = () => row.remove();
 }
 
+let toastTimer;
+
+/** 底部短提示；弹层打开时传入该弹层作为 host，否则会被顶层遮住。 */
+export function showToast(host, text) {
+  let toast = document.getElementById('sort-toast');
+  if (!toast) {
+    toast = document.createElement('p');
+    toast.id = 'sort-toast';
+    toast.className = 'sort-toast';
+    toast.setAttribute('role', 'status');
+  }
+  if (toast.parentNode !== host) host.append(toast);
+  toast.textContent = text;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, 1600);
+}
+
 /** 写入提示文字；空字符串时隐藏元素。 */
 export function message(id, value) {
   const target = get(id);

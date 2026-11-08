@@ -2,7 +2,6 @@
 // 「全部」范围显示这台电脑上所有项目的手机会话纵览（按项目分组、筛选、搜索）。
 import {
   createdLabel,
-  idleLabel,
   mergeSessionActivity,
   mergeSessionList,
   mergeSessionName,
@@ -11,11 +10,12 @@ import {
   prunedSessionPins,
   projectSessionsFromOverview,
   projectSourceLabel,
+  sessionIdleInfo,
   sessionName,
   sessionRunning,
   toggleSessionPin,
 } from './protocol.js';
-import { attachLongPress } from './gestures.js';
+import { attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
@@ -148,13 +148,15 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       const option = row.querySelector('.row');
       option.disabled = busy;
       option.setAttribute('aria-label', t('切换到 {name}', { name: label }));
-      const status = session.exit ? t('已结束') : [running ? t('运行中') : '', session.id === selected ? t('当前会话') : t('可接入')].filter(Boolean).join(' · ');
+      const status = session.exit ? t('已结束') : [running ? t('运行中') : '', session.id === selected ? t('当前会话') : ''].filter(Boolean).join(' · ');
       const identity = t('终端 {n}', { n: session.number ?? index + 1 });
       row.querySelector('.session-label').textContent = label;
-      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status, createdLabel(session)]
+      // 空闲时长并入一行；快到自动结束时才单独提醒。
+      const idleInfo = sessionIdleInfo(session);
+      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status, idleInfo.expiring ? '' : idleInfo.text]
         .filter(Boolean).join(' · ');
       const idle = row.querySelector('.session-idle');
-      idle.textContent = session.exit ? '' : idleLabel(session);
+      idle.textContent = idleInfo.expiring ? idleInfo.text : '';
       idle.hidden = !idle.textContent;
       row.querySelector('.session-more').setAttribute('aria-label', t('{name} 的更多操作', { name: label }));
       row.querySelector('.session-more').disabled = busy;
@@ -205,6 +207,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   function setScope(next) {
     if (next === 'all' && !allAvailable) return;
     if (next === scope) return;
+    closeRevealedRow();
     scope = next;
     try { localStorage.setItem(scopeKey, scope); } catch { /* 范围只是显示偏好。 */ }
     drawerEpoch += 1;
@@ -241,9 +244,13 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     attachLongPress(option, () => { if (latest()) openActions(latest()); });
     const more = button('icon-button session-more', () => { if (latest()) openActions(latest()); });
     more.append(icon('more'));
-    const close = button('icon-button session-close', () => { void endSession(session.id); });
+    const close = button('swipe-action session-close', () => { void endSession(session.id); });
     close.append(icon('close'));
-    row.append(option, more, close);
+    const face = document.createElement('div');
+    face.className = 'session-face';
+    face.append(option, more);
+    row.append(close, face);
+    attachSwipeReveal(row, face, { enabled: () => !state.busy() });
     return row;
   }
 
@@ -342,11 +349,11 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const index = sessions.indexOf(session);
     const pinned = pins().includes(session.id);
     get('session-actions-title').textContent = sessionName(session, index + 1);
-    get('session-actions-context').textContent = state.profile().name + ' / ' + state.project().name;
-    get('session-action-pin').textContent = pinned ? t('取消置顶') : t('置顶');
+    get('session-actions-context').textContent = [state.profile().name + ' / ' + state.project().name, createdLabel(session)].filter(Boolean).join(' · ');
+    get('session-action-pin').querySelector('span').textContent = pinned ? t('取消置顶') : t('置顶');
     get('session-action-rename').disabled = !Number.isFinite(session.nameRevision);
-    get('session-action-rename').textContent = Number.isFinite(session.nameRevision) ? t('重命名') : t('重命名（需更新电脑端）');
-    get('session-action-end').textContent = session.exit ? t('移除已结束会话') : session.id === state.selected() ? t('结束当前会话') : t('结束会话');
+    get('session-action-rename').querySelector('span').textContent = Number.isFinite(session.nameRevision) ? t('重命名') : t('重命名（需更新电脑端）');
+    get('session-action-end').querySelector('span').textContent = session.exit ? t('移除已结束会话') : session.id === state.selected() ? t('结束当前会话') : t('结束会话');
     get('session-actions-dialog').showModal();
   }
 

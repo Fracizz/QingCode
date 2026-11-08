@@ -134,9 +134,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await step('终端设置可进入设置页，返回逐层回到终端且会话不中断', async () => {
       await page.click('#dashboard-nav [data-page="project"]', { label: 'show project list' })
-      await page.click('#project-list .row:first-child', { label: 'open fixture project' })
+      await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open fixture project' })
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
+      await page.click('#terminal-menu', { label: 'open terminal menu' })
+      await page.waitForSelector('#terminal-menu-dialog[open]')
       await page.click('#manage-sessions', { label: 'open terminal settings' })
       await page.waitForSelector('#session-dialog[open]')
       await settled('session-dialog')

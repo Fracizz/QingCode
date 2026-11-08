@@ -43,12 +43,14 @@ export function attachNeedsRedraw(snapshot, local) {
  */
 const SPINNER_PREFIX = /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]\s*/u;
 const SPINNER_START = /^[\u2800-\u28ff\u25d0-\u25d3\u25e2-\u25e5\u25f0-\u25f7]/u;
+// Claude Code \u7b49\u7a0b\u5e8f\u5728\u6807\u9898\u524d\u52a0\u7684\u661f\u5f62\u7b26\u53f7\uff08\u2722 \u2733 \u2736 \u273b \u273d\uff09\u3002
+const TITLE_DECORATION = /^[\u2722\u2733\u2736\u273b\u273d]\ufe0f?\s*/u;
 
 export function sessionName(session, fallback = 1) {
   const name = typeof session?.name === 'string' ? session.name.trim() : '';
   // CLI title animations belong in a status icon, never in the session name.
-  // 只去掉转圈帧字符，其余（如 `✳ Claude Code`）原样保留。
-  const shown = session?.customName ? name : name.replace(SPINNER_PREFIX, '');
+  // 转圈帧和程序加在标题前的 ✳ 这类装饰符都不算名称；运行状态由独立图标表达。
+  const shown = session?.customName ? name : name.replace(SPINNER_PREFIX, '').replace(TITLE_DECORATION, '');
   // 电脑端没有程序标题时默认命名为「终端 N」，按手机语言显示；手动名称保持原样。
   const numbered = !session?.customName && /^终端 (\d+)$/.exec(shown);
   if (numbered) return t('终端 {n}', { n: numbered[1] });
@@ -273,9 +275,31 @@ export function projectSourceLabel(project) {
   return [...new Set(parts.filter(Boolean))].join(' · ');
 }
 
+/**
+ * 项目路径的显示形式：去掉 ssh:// 资源前缀；远端 Windows 的 `/D:/code/x` 按用户习惯显示为 `D:\code\x`。
+ * 只用于显示和搜索，打开项目仍使用原始路径。
+ */
+export function projectLocation(project) {
+  const path = String(project?.path ?? '');
+  const location = project?.kind === 'ssh' ? path.replace(/^ssh:\/\/[^/]+/, '') : path;
+  return /^\/[A-Za-z]:(\/|$)/.test(location) ? location.slice(1).replaceAll('/', '\\') : location;
+}
+
+/** 按所在主机分组，组和组内项目都保持电脑端给出的顺序；同一连接名和地址算同一台主机。 */
+export function groupProjectsByHost(projects) {
+  const groups = new Map();
+  for (const project of Array.isArray(projects) ? projects : []) {
+    const key = project.kind === 'local' ? 'local' : [project.kind, project.connectionName ?? '', project.host ?? ''].join('\n');
+    let group = groups.get(key);
+    if (!group) groups.set(key, group = { key, kind: project.kind, label: projectSourceLabel(project), items: [] });
+    group.items.push(project);
+  }
+  return [...groups.values()];
+}
+
 export function matchesProject(project, query) {
   const search = query.trim().toLowerCase();
-  return [project.name, project.path, projectSourceLabel(project)].some(value => String(value ?? '').toLowerCase().includes(search));
+  return [project.name, project.path, projectLocation(project), projectSourceLabel(project)].some(value => String(value ?? '').toLowerCase().includes(search));
 }
 
 export function validIpv4(host) {
@@ -390,6 +414,19 @@ export function pullOffset(distance) {
   return Math.round(PULL_MAX * (1 - Math.exp(-distance / (PULL_MAX * 1.25))));
 }
 
+/** 列表行左滑露出操作：跟手位移，越过全开位置后加阻尼，向右不越过原位。 */
+export function swipeRevealOffset(base, distance, width) {
+  const offset = base + distance;
+  if (offset >= 0) return 0;
+  if (offset >= -width) return offset;
+  return -width + (offset + width) / 3;
+}
+
+/** 松手时是否停在展开位置：露出超过一半即展开。 */
+export function swipeRevealSettles(offset, width) {
+  return offset <= -width / 2;
+}
+
 const AVATAR_HUES = 6;
 
 /** 连接头像：取名称首个字母/汉字（英文取前两个单词首字母），色相由名称稳定散列得出。 */
@@ -491,11 +528,32 @@ export function createdLabel(item, now = Date.now()) {
 export function idleLabel(item, now = Date.now(), action = t('自动结束')) {
   if (!Number.isFinite(item?.idleDeadline)) return '';
   const idle = Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null;
-  // 截止时间来自电脑端时钟：手机时钟偏慢时差值会超过整个空闲窗口，向上取整后显示成 25 小时，这里封顶。
-  const left = idle === null
-    ? item.idleDeadline - now
-    : Math.min(item.idleDeadline - now, item.idleDeadline - item.lastActiveAt);
-  const head = idle === null ? '' : idle < 60000 ? t('刚刚有活动') : t('空闲 {time}', { time: formatDuration(idle) });
+  const left = idleRemaining(item, now);
+  const head = idleHead(idle);
   const tail = left <= 0 ? t('即将{action}', { action }) : t('{time}后{action}', { time: formatDuration(left, true), action });
   return [head, tail].filter(Boolean).join(t('，'));
+}
+
+function idleHead(idle) {
+  if (idle === null) return '';
+  return idle < 60000 ? t('刚刚有活动') : t('空闲 {time}', { time: formatDuration(idle) });
+}
+
+function idleRemaining(item, now) {
+  // 截止时间来自电脑端时钟：手机时钟偏慢时差值会超过整个空闲窗口，向上取整后显示成 25 小时，这里封顶。
+  return Number.isFinite(item.lastActiveAt)
+    ? Math.min(item.idleDeadline - now, item.idleDeadline - item.lastActiveAt)
+    : item.idleDeadline - now;
+}
+
+const IDLE_WARNING_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * 会话行的空闲信息：平时只说空闲多久，距自动结束不足 2 小时才带上倒计时并标记 expiring。
+ * 已结束或旧版电脑端没有 `idleDeadline` 时 text 为空。
+ */
+export function sessionIdleInfo(item, now = Date.now()) {
+  if (item?.exit || !Number.isFinite(item?.idleDeadline)) return { text: '', expiring: false };
+  if (idleRemaining(item, now) <= IDLE_WARNING_MS) return { text: idleLabel(item, now), expiring: true };
+  return { text: idleHead(Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null), expiring: false };
 }

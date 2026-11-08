@@ -11,7 +11,7 @@ const check = (name, expression) => {
   run('wait', '--fn', expression)
   results.push({ name, passed: true })
 }
-const openSettings = () => { run('click', '#manage-sessions'); run('wait', '300'); run('click', '#open-settings-from-terminal'); run('wait', '300') }
+const openSettings = () => { run('click', '#terminal-menu'); run('wait', '300'); run('click', '#manage-sessions'); run('wait', '300'); run('click', '#open-settings-from-terminal'); run('wait', '300') }
 const closeSettings = () => { run('eval', 'window.qingBack()'); run('eval', 'window.qingBack()') }
 const openNewSession = () => {
   run('click', '#new-session')
@@ -34,7 +34,7 @@ try {
   check('paired', `document.querySelector('#active-host').dataset.state === 'online'`)
   run('click', '#dashboard-nav [data-page="project"]')
   check('bottom bar is compact and reaches the bottom', `(() => { const r = document.querySelector('#dashboard-nav').getBoundingClientRect(); return r.height <= 56 && r.bottom === innerHeight; })()`)
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal ready', `document.querySelector('#terminal-status').textContent === '会话中'`)
   run('eval', `window.__imageTest = { original: document.querySelector('#terminal-name').textContent, inputCount: window.__mobileFixture.state.inputs.length }`)

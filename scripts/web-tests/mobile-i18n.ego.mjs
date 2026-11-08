@@ -89,7 +89,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => /projects$/.test(document.querySelector('#list-label').textContent))
       await assertEnglish('projects')
       await shot('projects-en.png')
-      await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+      await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open terminal project' })
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === 'In session')
       await page.evaluate(() => { document.querySelector('#input-tip').hidden = false })

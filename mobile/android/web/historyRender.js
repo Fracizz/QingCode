@@ -177,10 +177,48 @@ function gridSpan(doc, run, meter) {
   return span;
 }
 
+// 方块字符的四个象限（1 左上、2 右上、4 左下、8 右下）。字形比行高矮，按字体显示时行间有缝，
+// 这里按字格绘制，字符本身保留在 DOM 里供复制。
+const BLOCK_QUADRANTS = new Map([
+  [0x2580, 3], [0x2584, 12], [0x2588, 15], [0x258c, 5], [0x2590, 10], [0x2596, 4], [0x2597, 8], [0x2598, 1],
+  [0x2599, 13], [0x259a, 9], [0x259b, 7], [0x259c, 11], [0x259d, 2], [0x259e, 6], [0x259f, 14],
+]);
+const QUADRANT_POSITIONS = [[1, '0 0'], [2, '100% 0'], [4, '0 100%'], [8, '100% 100%']];
+
+function blockCell(doc, char, quadrants) {
+  const span = doc.createElement('span');
+  span.className = 'block-cell';
+  const positions = QUADRANT_POSITIONS.filter(([bit]) => quadrants & bit).map(([, position]) => position);
+  span.style.backgroundImage = positions.map(() => 'linear-gradient(currentColor, currentColor)').join(', ');
+  span.style.backgroundPosition = positions.join(', ');
+  span.textContent = char;
+  return span;
+}
+
+/** 对齐段里的方块字符逐格绘制，其余字符仍按段固定字格宽度。 */
+function appendGridRun(parent, doc, run, meter) {
+  let pending = '';
+  let cells = 0;
+  const flush = () => {
+    if (pending) parent.append(gridSpan(doc, { text: pending, cells }, meter));
+    pending = '';
+    cells = 0;
+  };
+  for (const char of run.text) {
+    const cp = char.codePointAt(0);
+    const quadrants = BLOCK_QUADRANTS.get(cp);
+    if (quadrants === undefined) { pending += char; cells += charCells(cp); continue; }
+    flush();
+    parent.append(blockCell(doc, char, quadrants));
+  }
+  flush();
+}
+
 function appendText(parent, doc, text, meter) {
   if (!NEEDS_GRID.test(text)) { parent.append(doc.createTextNode(text)); return; }
   for (const run of gridRuns(text)) {
-    parent.append(run.cells === null || run.cells === 0 ? doc.createTextNode(run.text) : gridSpan(doc, run, meter));
+    if (run.cells === null || run.cells === 0) parent.append(doc.createTextNode(run.text));
+    else appendGridRun(parent, doc, run, meter);
   }
 }
 

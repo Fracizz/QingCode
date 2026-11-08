@@ -29,7 +29,7 @@ export async function run({ spaceId, finish = true } = {}) {
     await page.click('#pair-submit', { label: 'pair fixture computer' })
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'show trusted projects' })
-    await page.click('#project-list .row:first-child', { label: 'open fixture terminal' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open fixture terminal' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => {

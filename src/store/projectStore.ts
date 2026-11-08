@@ -117,6 +117,8 @@ interface ProjectState {
   toasts: Toast[]
 
   loadProjects: (options?: { restoreCurrent?: boolean; syncFromSettings?: boolean }) => Promise<void>
+  /** CLI 等外部进程改了项目表后刷新列表、处理当前项目被移除，并回写用户设置。 */
+  reloadProjectsAfterExternalChange: () => Promise<void>
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
   deleteSshConnection: (id: string) => Promise<void>
@@ -411,6 +413,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error('loadProjects failed:', e)
       get().pushToast('error', `加载项目列表失败: ${String(e)}`)
     }
+  },
+
+  reloadProjectsAfterExternalChange: async () => {
+    await get().loadProjects({ restoreCurrent: false, syncFromSettings: false })
+    const current = get().currentProject
+    if (current && !current.ephemeral && !get().projects.some(p => p.id === current.id)) {
+      clearCurrentProjectSession(get, set)
+      const next = pickAvailableProject(get().projects, get().unavailableProjectIds)
+      if (next) await get().switchProject(next)
+    }
+    await persistProjectsToUserSettings()
   },
 
   loadSshConnections: async () => {

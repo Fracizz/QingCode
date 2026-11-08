@@ -34,7 +34,7 @@ try {
   closeDetails()
   evaluate('window.__beforeTerminalProbeCount=window.__mobileFixture.state.latencyRequests.length')
   run('click', '#dashboard-nav [data-page="project"]')
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal shares the existing sample without another request', `${value}==='电脑 32 ms' && window.__mobileFixture.state.latencyRequests.length===window.__beforeTerminalProbeCount && document.querySelector('#terminal-status').textContent==='会话中'`)
   evaluate('window.__mobileFixture.state.latency=78.6')

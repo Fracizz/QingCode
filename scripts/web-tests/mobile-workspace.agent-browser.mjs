@@ -29,7 +29,7 @@ const pair = () => {
   run('click', '#pair-submit')
   check('paired computer is online', `document.querySelector('#active-host').dataset.state==='online'`)
   run('click', '#dashboard-nav [data-page="project"]')
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal is attached', `document.querySelector('#terminal-status').textContent==='会话中'`)
 }

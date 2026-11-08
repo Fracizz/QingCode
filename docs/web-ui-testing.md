@@ -302,6 +302,8 @@ AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-brow
 
 安卓下拉选项：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-select.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖 6 个下拉不再露出系统控件、窄屏贴底与横屏居中的选择面板、当前项标记、选中后保存、返回键与遮罩取消、程序赋值和语言切换时的显示同步。
 
+安卓界面精简：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-ui-polish.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；截图超时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖项目按主机分组与搜索展开、方向键和退格 SVG 居中、390px 七个常用键可见、状态浮层不改变终端行列、收起按键后展开按钮的位置、经 CDP 触摸的左滑关闭与点行面收起、弹层焦点落在标题不弹键盘、开关整行可点并写回设置，以及项目行左滑复制显示路径、下拉刷新浮标不推动列表并显示结果。截图与 JSON 位于 `.dev/web-tests/mobile-ui-polish/`；使用内存桥，不替代 Android 真机的滑动手感与软键盘验收。
+
 安卓设置页：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-settings.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖顶栏入口、通用设置归位、就地切换语言、返回键层级、偏好重载后保留、从终端设置进入不打断会话，以及 320px 窄屏和横屏布局；截图与 JSON 位于 `.dev/web-tests/mobile-settings/`，使用内存桥，不替代 Android 真机验收。
 
 安卓在线更新：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-update.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；无桌面时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖启动后台检查一次、beta 手机收到最新带 APK 的 beta（跳过无 APK 的更新版本）、下载进度、首次安装跳转系统授权与系统确认、取消下载、首页提示卡片与跳过此版本、正式版忽略 beta、检查失败提示与关闭自动检查，以及英文界面。测试桥支持 `?appVersion=<版本>&appCode=<versionCode>` 模拟已安装版本。截图与 JSON 位于 `.dev/web-tests/mobile-update/`；使用内存桥，真实下载、签名校验和系统安装器需真机验收，地址白名单由 `pnpm test:android-native`（需 JDK）中的 `UpdatePolicyTest` 覆盖。

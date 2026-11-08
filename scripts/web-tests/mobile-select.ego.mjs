@@ -41,16 +41,16 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => typeof window.qingLink === 'function')
     await openSettings()
 
-    await step('6 个下拉都由项目样式的按钮呈现，系统控件不可触达', async () => {
+    await step('4 个下拉由项目样式的按钮呈现、5 个开关项渲染为开关，系统控件不可触达', async () => {
       assert.ok(await page.evaluate(() => {
         const selects = [...document.querySelectorAll('select')]
-        return selects.length === 6 && selects.every(select => {
-          const trigger = select.parentElement.querySelector('.select-trigger')
+        return selects.length === 9 && selects.filter(select => select.dataset.control === 'switch').length === 5 && selects.every(select => {
+          const trigger = select.parentElement.querySelector(select.dataset.control === 'switch' ? '.switch' : '.select-trigger')
           const style = getComputedStyle(select)
           return trigger && style.opacity === '0' && style.pointerEvents === 'none' && select.tabIndex === -1
         })
       }))
-      assert.equal(await triggerText('image-compression'), '中压缩 · 推荐')
+      assert.equal(await triggerText('image-compression'), '中压缩')
       await page.evaluate(() => document.querySelector('#send-mode').scrollIntoView({ block: 'center' }))
       await settled('settings-dialog')
       await shot('settings-triggers-390.png')
@@ -90,7 +90,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await isOpen('select-dialog'), false)
       assert.equal(await isOpen('settings-dialog'), true)
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:image-compression')), 'high')
-      assert.equal(await triggerText('image-compression'), '高压缩 · 更小')
+      assert.equal(await triggerText('image-compression'), '高压缩')
     })
 
     await step('返回键和遮罩只取消，不改变当前值', async () => {
@@ -107,25 +107,28 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#send-mode').value), 'default')
     })
 
-    await step('点标签把焦点交给可见按钮', async () => {
+    await step('设置行整行可点：点标签打开选择面板', async () => {
       await page.evaluate(() => document.querySelector('label[for="send-mode"]').click())
-      assert.ok(await page.evaluate(() => document.activeElement === document.querySelector('#send-mode').parentElement.querySelector('.select-trigger')))
+      assert.equal(await isOpen('select-dialog'), true)
+      await page.evaluate(() => window.qingBack())
+      assert.equal(await isOpen('select-dialog'), false)
       assert.equal(await isOpen('select-dialog'), false)
     })
 
     await step('程序赋值和语言切换都会同步按钮文字', async () => {
       await page.evaluate(() => { document.querySelector('#terminal-renderer').value = 'off' })
-      assert.equal(await triggerText('terminal-renderer'), '关闭')
+      assert.equal(await page.evaluate(() => document.querySelector('#terminal-renderer ~ .switch').getAttribute('aria-checked')), 'false')
       await page.evaluate(() => { document.querySelector('#terminal-renderer').value = 'on' })
+      assert.equal(await page.evaluate(() => document.querySelector('#terminal-renderer ~ .switch').getAttribute('aria-checked')), 'true')
       await page.evaluate(() => document.querySelector('#app-language [data-locale="en"]').click())
-      await page.waitForFunction(() => document.querySelector('#image-compression').parentElement.querySelector('.select-value').textContent !== '高压缩 · 更小')
+      await page.waitForFunction(() => document.querySelector('#image-compression').parentElement.querySelector('.select-value').textContent !== '高压缩')
       const english = await triggerText('image-compression')
       assert.ok(/^[\x20-\x7e·]+$/.test(english), english)
       await openMenu('image-compression')
       assert.ok(await page.evaluate(() => /^[\x20-\x7e·]+$/.test(document.querySelector('#select-options').textContent) && /^[\x20-\x7e]+$/.test(document.querySelector('#select-dialog-title').textContent)))
       await page.evaluate(() => window.qingBack())
       await page.evaluate(() => document.querySelector('#app-language [data-locale="zh"]').click())
-      await page.waitForFunction(() => document.querySelector('#image-compression').parentElement.querySelector('.select-value').textContent === '高压缩 · 更小')
+      await page.waitForFunction(() => document.querySelector('#image-compression').parentElement.querySelector('.select-value').textContent === '高压缩')
     })
 
     await step('横屏面板居中且不溢出', async () => {

@@ -44,6 +44,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const text = selector => page.evaluate(target => document.querySelector(target)?.textContent ?? '', selector)
   const barKeys = () => page.evaluate(() => [...document.querySelectorAll('#special-keys > [data-key]')].map(item => item.dataset.key))
   const openKeyLayout = async () => {
+    await page.click('#terminal-menu', { label: 'open terminal menu' })
+    await page.waitForSelector('#terminal-menu-dialog[open]')
     await page.click('#manage-sessions', { label: 'open terminal settings' })
     await page.waitForSelector('#session-dialog[open]')
     await settled('#session-dialog')
@@ -63,7 +65,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.click('#pair-submit', { label: 'pair fixture computer' })
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse fixture projects' })
-    await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open terminal project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await waitTerminal()
   }
@@ -77,22 +79,22 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await connect()
 
     await step('the status line names the input target and a one-time tip explains draft and direct input', async () => {
-      assert.equal(await text('#terminal-input-mode'), '草稿')
-      assert.equal(await page.evaluate(() => document.querySelector('#terminal-input-mode').dataset.mode), 'compose')
+      assert.match(await page.evaluate(() => document.querySelector('#compose').placeholder), /草稿/)
+      assert.equal(await page.evaluate(() => document.querySelector('#compose-form').dataset.mode), 'compose')
       assert.ok(await page.evaluate(() => !document.querySelector('#input-tip').hidden && document.querySelector('#input-tip').getBoundingClientRect().height > 0))
       assert.match(await page.evaluate(() => document.querySelector('#compose').placeholder), /草稿/)
       await capture('01-first-entry-tip')
       await page.click('#keyboard', { label: 'switch to direct input' })
-      await page.waitForFunction(() => document.querySelector('#terminal-input-mode').textContent === '直发')
-      assert.equal(await page.evaluate(() => document.querySelector('#terminal-input-mode').dataset.mode), 'raw')
+      await page.waitForFunction(() => document.querySelector('#compose-form').dataset.mode === 'raw')
+      assert.equal(await page.evaluate(() => document.querySelector('#compose-form').dataset.mode), 'raw')
       assert.equal(await page.evaluate(() => document.querySelector('#input-tip').hidden), true)
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:input-tip-seen')), 'true')
       await capture('02-direct-input')
       await page.click('#keyboard', { label: 'switch back to draft input' })
-      await page.waitForFunction(() => document.querySelector('#terminal-input-mode').textContent === '草稿')
+      await page.waitForFunction(() => document.querySelector('#compose-form').dataset.mode === 'compose')
       // 离开再进入终端后不再显示说明。
       await page.evaluate(() => window.qingBack())
-      await page.click('#project-list .row:first-child', { label: 'reopen terminal project' })
+      await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'reopen terminal project' })
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await waitTerminal()
       assert.equal(await page.evaluate(() => document.querySelector('#input-tip').hidden), true)
@@ -134,7 +136,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await inputs(), '')
 
       await page.click('#keyboard', { label: 'switch to direct input' })
-      await page.waitForFunction(() => document.querySelector('#terminal-input-mode').textContent === '直发')
+      await page.waitForFunction(() => document.querySelector('#compose-form').dataset.mode === 'raw')
       await resetInputs()
       await touch('touchStart', [[x - 60, y]])
       await touch('touchMove', [[x - 30, y]])
@@ -144,7 +146,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('').length >= 12)
       assert.equal(await inputs(), '\x1b[C'.repeat(4))
       // 拖动不会把编辑目标切回草稿，也不会改动保留的草稿。
-      assert.equal(await text('#terminal-input-mode'), '直发')
+      assert.equal(await page.evaluate(() => document.querySelector('#compose-form').dataset.mode), 'raw')
       assert.equal(await page.evaluate(() => document.querySelector('#compose').value), 'abcdefghij')
       await page.click('#keyboard', { label: 'switch back to draft input' })
       await page.fill('#compose', '')
@@ -312,14 +314,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         await page.waitForTimeout(250)
         const layout = await page.evaluate(() => {
           const form = document.querySelector('#compose-form').getBoundingClientRect()
-          const mode = document.querySelector('#terminal-input-mode').getBoundingClientRect()
+          const latency = document.querySelector('#terminal-latency').getBoundingClientRect()
           return {
             overflow: document.documentElement.scrollWidth > innerWidth,
             formInside: form.bottom <= innerHeight + 0.5 && form.left >= 0 && form.right <= innerWidth + 0.5,
-            modeVisible: mode.width > 0 && mode.right <= innerWidth,
+            latencyVisible: latency.width > 0 && latency.right <= innerWidth,
           }
         })
-        assert.deepEqual(layout, { overflow: false, formInside: true, modeVisible: true }, name)
+        assert.deepEqual(layout, { overflow: false, formInside: true, latencyVisible: true }, name)
         await capture(name)
       }
       await metrics(390, 844)

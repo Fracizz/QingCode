@@ -21,7 +21,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
   const row = id => `#session-options [data-id="${id}"]`
   const close = async (id, confirm = true) => {
     await drawer()
-    await page.click(row(id) + ' .session-close', { label: 'close individual terminal' })
+    await page.evaluate(selector => document.querySelector(selector).click(), row(id) + ' .session-close')
     await page.waitForSelector('#confirm-dialog[open]')
     await page.click(confirm ? '#confirm-action' : '#confirm-dialog [value="cancel"]', { label: confirm ? 'confirm terminal close' : 'keep terminal session' })
     await page.waitForFunction(() => !document.querySelector('#confirm-dialog').open)
@@ -42,7 +42,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
     await page.click('#pair-submit')
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]')
-    await page.click('#project-list .row:first-child')
+    await page.click('#project-list > :first-child .project-row:first-child .row')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation(false))
@@ -84,7 +84,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
       await page.evaluate(() => window.qingOrientation(false))
     })
     await step('cancel names the selected target and keeps all sessions', async () => {
-      await page.click(row('mobile-2') + ' .session-close')
+      await page.evaluate(selector => document.querySelector(selector).click(), row('mobile-2') + ' .session-close')
       await page.waitForSelector('#confirm-dialog[open]')
       assert.match(await page.evaluate(() => document.querySelector('#confirm-text').textContent), /临时终端/)
       assert.equal(await page.evaluate(() => document.querySelectorAll('#session-drawer button:disabled').length), 0, 'list must not dim while confirming')

@@ -60,7 +60,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       snapshot: { data, cols: 80, rows: 24 },
     }), data)
     await click('#dashboard-nav [data-page="project"]')
-    await click('#project-list .row:first-child')
+    await click('#project-list > :first-child .project-row:first-child .row')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
   }

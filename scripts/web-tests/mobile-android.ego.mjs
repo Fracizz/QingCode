@@ -127,6 +127,7 @@ export async function run({ spaceId, artifactDir, screenshots = true, baseUrl = 
       await page.click('#back', { label: 'return to dashboard' })
       await page.click('loc=role:button[name="连接"]', { label: 'open connections page' })
       await page.click('loc=role:button[name="管理连接 DEVBOX"]', { label: 'manage DEVBOX connection' })
+      await page.evaluate(() => { document.querySelector('#host-advanced').open = true })
       await page.fill('#host-port', '49000')
       await page.click('#host-form [type="submit"]', { label: 'save new port' })
       await page.waitForFunction(() => document.getElementById('connection-list').textContent.includes('192.168.1.8:49000'))

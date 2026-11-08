@@ -45,6 +45,8 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     editing = item;
     get('host-address').textContent = item.id;
     get('host-fingerprint').textContent = item.fingerprint;
+    get('host-fingerprint-short').textContent = item.fingerprint.slice(0, 8) + '…' + item.fingerprint.slice(-8);
+    get('host-advanced').open = false;
     get('host-name').value = item.name;
     get('host-port').value = item.port;
     message('host-error', '');

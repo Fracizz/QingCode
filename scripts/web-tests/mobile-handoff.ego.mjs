@@ -24,7 +24,7 @@ export async function run({ spaceId, finish = true, base = 'http://127.0.0.1:384
   }
   const openFirstProject = async () => {
     await page.click('#dashboard-nav [data-page="project"]')
-    await page.click('#project-list .row:first-child')
+    await page.click('#project-list > :first-child .project-row:first-child .row')
   }
   try {
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, mobile: true, deviceScaleFactor: 1 })

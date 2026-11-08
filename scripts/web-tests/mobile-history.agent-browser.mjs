@@ -42,7 +42,7 @@ try {
     snapshot:{data:String.fromCharCode(27)+'[2J'+String.fromCharCode(27)+'[HLATEST READY'+String.fromCharCode(13,10)+'$ ', cols:80, rows:24}
   }; window.__mobileFixture.state.sessions.set(window.__resumed.id, window.__resumed); window.__mobileFixture.state.nextSession=2`)
   run('click', '#dashboard-nav [data-page="project"]')
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('reattach displays the latest screen without replaying the old stream', `document.querySelector('#terminal-status').textContent === '会话中' && window.__mobileFixture.terminalText().includes('LATEST READY') && !window.__mobileFixture.terminalText().includes('slow old output')`)
   check('first poll requests a snapshot and follows its exact sequence', `window.__mobileFixture.state.polls[0].latest === true && window.__mobileFixture.state.polls.some(p=>p.from===1000 && !p.latest) && !window.__mobileFixture.state.polls.some(p=>p.from===0 && !p.latest)`)

@@ -12,6 +12,7 @@ import {
   nextModifierState,
   outputBatches,
   parsePairingLink,
+  projectLocation,
   projectSourceLabel,
   rememberProject,
   renameProfileKeys,
@@ -35,7 +36,7 @@ import { createNativeRpc } from './nativeRpc.js';
 import { createTerminalInput } from './terminalInput.js';
 import { createDesktopProtocol } from './desktopProtocol.js';
 import { uploadTerminalImages } from './terminalImages.js';
-import { get, message, setupDialogs, confirmAction, replayAnimation } from './dom.js';
+import { get, message, setupDialogs, confirmAction, replayAnimation, showToast } from './dom.js';
 import { setupSelectMenus } from './selectMenu.js';
 import { createDashboardView } from './dashboardView.js';
 import { createPairingFlow } from './pairingFlow.js';
@@ -210,6 +211,28 @@ const terminalInput = createTerminalInput({
 setupDialogs(dialog => dialog.id !== 'pair-dialog' || !get('pair-submit').disabled);
 setupSelectMenus();
 
+// 终端状态只在异常时浮出：正常会话不占视线；浮层不参与布局，显隐不会让终端重新计算行列。
+function syncTerminalStateRow() {
+  const status = get('terminal-status').textContent;
+  document.querySelector('.terminal-state').hidden = (!status || status === t('会话中')) && get('terminal-retry').hidden;
+}
+new MutationObserver(syncTerminalStateRow).observe(get('terminal-status'), { childList: true, characterData: true, subtree: true });
+new MutationObserver(syncTerminalStateRow).observe(get('terminal-retry'), { attributes: true, attributeFilter: ['hidden'] });
+
+// 校验失败的控件可能收在「高级」里，展开才能看到并聚焦。
+get('host-form').addEventListener('invalid', event => { event.target.closest('details')?.setAttribute('open', ''); }, true);
+get('host-fingerprint-copy').addEventListener('click', async () => {
+  const button = get('host-fingerprint-copy');
+  try {
+    await rpc('copy', { text: get('host-fingerprint').textContent });
+    button.textContent = t('已复制');
+  } catch (error) {
+    message('host-error', error.message);
+    return;
+  }
+  setTimeout(() => { button.textContent = t('复制'); }, 1200);
+});
+
 const dashboard = createDashboardView({
   state: {
     profile: () => profile,
@@ -217,6 +240,9 @@ const dashboard = createDashboardView({
     projects: () => projects,
     loaded: () => loaded,
     hostState,
+    resumeSession: () => resumeSession(),
+    sessionCount: projectId => homeOverview.list().filter(item => item.project?.id === projectId && !item.exit).length,
+    latency: () => latencyText(connectionLatency.getSnapshot()),
   },
   lastProject,
   projectHistory,
@@ -225,6 +251,14 @@ const dashboard = createDashboardView({
   openPair: (...args) => pairing.openPair(...args),
   openHost: item => pairing.openHost(item),
   openProject,
+  copyProjectPath: async item => {
+    try {
+      await rpc('copy', { text: projectLocation(item) });
+      showToast(document.body, t('已复制路径'));
+    } catch (error) {
+      showToast(document.body, t(error.message));
+    }
+  },
 });
 
 pairing = createPairingFlow({
@@ -320,11 +354,25 @@ const homeOverview = createSessionOverview({
     selected: () => null,
     lastSession: projectId => lastSessionOf(projectId),
     busy: () => busy,
+    // 「继续终端」卡片已经展示这个会话；只有一个会话时仍保留在列表里，方便管理。
+    omit: session => homeOverview.list().length > 1 && session.id === resumeSession()?.id,
   },
   open: session => openOverviewSession(session, homeOverview),
   end: list => endOverviewSessions(list, homeOverview),
-  onChange: () => renderHomeSessions(),
+  onChange: () => {
+    renderHomeSessions();
+    dashboard.renderResume();
+    dashboard.renderConnectionStats();
+    if (page === 'project') dashboard.renderProjects();
+  },
 });
+
+/** 首页「继续终端」对应的会话：最近项目里上次接入且仍未结束的那个。 */
+function resumeSession() {
+  const recent = lastProject();
+  const id = recent && lastSessionOf(recent.id);
+  return id ? homeOverview.list().find(item => item.id === id && item.project?.id === recent.id && !item.exit) ?? null : null;
+}
 
 /** 该项目上次接入的会话（只读手机记录）。 */
 function lastSessionOf(projectId) {
@@ -493,7 +541,8 @@ function renderLatency() {
   }
   get('terminal-latency').textContent = t('电脑 {value}', { value });
   get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));
-  get('home-latency').textContent = profile && hostState(profile) === 'online' ? t(' · 电脑 {value}', { value }) : '';
+  get('home-latency').textContent = profile && hostState(profile) === 'online' ? value : '';
+  dashboard.renderConnectionStats();
   const editing = pairing?.editingProfile();
   if (!editing || editing.id !== profile?.id) {
     get('host-latency').textContent = t('延迟仅检测当前连接的电脑。');
@@ -743,8 +792,6 @@ function setRawKeyboard(enabled) {
   get('keyboard').setAttribute('aria-label', enabled ? t('切回草稿输入') : t('切换为直发：按键立即发给终端'));
   get('input-hint').textContent = enabled ? t('终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认') : t('命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选');
   get('input-mode').textContent = enabled ? t('终端实时输入') : t('命令输入');
-  get('terminal-input-mode').textContent = enabled ? t('直发') : t('草稿');
-  get('terminal-input-mode').dataset.mode = nextMode;
   get('keys-target').textContent = t('编辑目标：{target}', { target: enabled ? t('终端实时输入') : t('手机草稿') });
   compose.placeholder = enabled ? t('直发中 · 按键立即发给终端') : t('草稿 · 编辑后点发送');
   get('compose-form').dataset.mode = nextMode;
@@ -845,7 +892,7 @@ function showSubmissions() {
 }
 
 get('terminal-menu').addEventListener('click', () => {
-  get('menu-mouse').textContent = terminalMouse?.isActive() ? t('退出鼠标模式') : t('鼠标模式');
+  get('menu-mouse').querySelector('span').textContent = terminalMouse?.isActive() ? t('退出鼠标模式') : t('鼠标模式');
   get('menu-mouse').disabled = !terminalMouse;
   get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
   get('terminal-menu-dialog').showModal();
@@ -857,6 +904,7 @@ for (const [id, action] of Object.entries({
   'menu-mouse': toggleMouseMode,
   'menu-sessions': () => toggleSessions({ expandOnly: true }),
   'menu-new': () => { if (!busy) openNewSessionDialog(); },
+  'manage-sessions': () => get('session-dialog').showModal(),
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
 get('review-submission').addEventListener('click', showSubmissions);
@@ -885,7 +933,7 @@ get('copy-submission').addEventListener('click', async () => {
 });
 
 function terminalControls() {
-  return document.querySelectorAll('#special-keys button, #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach');
+  return document.querySelectorAll('#special-keys button:not(#toggle-keys), #keys-dialog [data-key], #keyboard, #send, #attach-image, #expanded-attach');
 }
 
 function updateComposerActions() {
@@ -894,6 +942,8 @@ function updateComposerActions() {
   get('send').setAttribute('aria-label', raw ? t('确认终端中的选择或命令') : slash ? t('查看命令或技能候选，不发送回车') : compose.value ? t('发送并回车') : t('发送回车'));
   get('send').querySelector('use').setAttribute('href', slash ? '#i-keyboard' : !raw && compose.value ? '#i-send' : '#i-return');
   get('send-label').textContent = raw ? t('确认') : slash ? t('候选') : t('发送');
+  // 普通发送只显示图标；确认和查看候选含义不同，保留文字。
+  get('send').dataset.labelled = String(raw || slash);
   get('completion-help').textContent = slash ? t('先查看候选，再确认') : t('↑↓ 选择 · ↵ 确认');
   composeStatus.renderNotes();
   for (const control of terminalControls()) {
@@ -941,6 +991,9 @@ function renderShortcutVisibility() {
   const collapsed = hardKeyboard ? !hardKeysExpanded : keysPreference === null ? deviceLandscape : keysPreference === 'true';
   cancelKeyRepeats();
   get('special-keys').hidden = collapsed;
+  // 展开时收起按钮是按键栏最后一项，不占固定宽度；收起后按键栏隐藏，移到输入框左侧。
+  if (collapsed) get('terminal-tools').insertBefore(get('toggle-keys'), get('compose-form'));
+  else get('special-keys').insertBefore(get('toggle-keys'), get('more-keys'));
   get('toggle-keys').setAttribute('aria-expanded', String(!collapsed));
   get('toggle-keys').querySelector('span').textContent = collapsed ? t('展开按键') : t('收起按键');
   terminalScreen.dataset.keysCollapsed = String(collapsed);
@@ -1826,7 +1879,6 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 
 get('back').addEventListener('click', () => returnToDashboard());
 get('show-sessions').addEventListener('click', () => toggleSessions());
-get('manage-sessions').addEventListener('click', () => get('session-dialog').showModal());
 get('drawer-settings').addEventListener('click', () => { drawer.close(); get('session-dialog').showModal(); });
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });

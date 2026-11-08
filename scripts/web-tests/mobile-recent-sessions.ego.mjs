@@ -57,7 +57,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await page.screenshot({ path: resolve(output, 'recent-bottom.png') })
     await step('opening a project moves it to the top and saves its history', async () => {
-      await page.click('#home-project-list .row:last-child', { label: 'open older recent project' })
+      await page.click('#home-project-list .project-row:last-child .row', { label: 'open older recent project' })
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await page.click('#show-sessions', { label: 'open session drawer' })
@@ -83,7 +83,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.deepEqual(await names(), ['Project 5'])
     })
     await page.click('#home-all-projects', { label: 'browse all projects' })
-    await page.click('#project-list .row:first-child', { label: 'open batch session project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open batch session project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     for (let i = 0; i < 2; i++) {

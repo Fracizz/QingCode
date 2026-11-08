@@ -33,7 +33,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.click('#pair-submit', { label: 'pair fixture computer' })
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
     await page.click('#dashboard-nav [data-page="project"]', { label: 'browse fixture projects' })
-    await page.click('#project-list .row:first-child', { label: 'open terminal project' })
+    await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open terminal project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
   }

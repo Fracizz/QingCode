@@ -153,6 +153,39 @@ describe('project removal with settings startup sync enabled', () => {
     expect(startup.projects.some(project => project.path === 'D:/remove-me')).toBe(true)
   })
 
+  it('does not reimport a project removed by the CLI and clears the record once settings are updated', async () => {
+    state.db!.prepare('DELETE FROM projects WHERE id = ?').run('removed')
+    state.db!
+      .prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+      .run('cli_removed_project_paths', JSON.stringify(['D:\\remove-me']))
+
+    const startup = await loadProjectsFromDb()
+
+    expect(startup.importedFromSettings).toBe(0)
+    expect(startup.projects.map(project => project.id)).toEqual(['kept'])
+    expect(state.settings['qingcode.projects']).toEqual([{ path: 'D:/keep-me', name: 'Keep me' }])
+    expect(
+      state.db!.prepare('SELECT * FROM settings WHERE key = ?').all('cli_removed_project_paths')
+    ).toEqual([])
+  })
+
+  it('shows a CLI-added project and leaves a CLI-removed current project', async () => {
+    state.db!
+      .prepare('INSERT INTO projects (id, name, path, hidden, created_at, last_opened_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('cli', 'From CLI', 'D:/from-cli', 0, 3, 3)
+    state.db!.prepare('DELETE FROM projects WHERE id = ?').run('kept')
+
+    await useProjectStore.getState().reloadProjectsAfterExternalChange()
+
+    const { projects: loaded, currentProject } = useProjectStore.getState()
+    expect(loaded.map(project => project.id).sort()).toEqual(['cli', 'removed'])
+    expect(currentProject?.id).not.toBe('kept')
+    expect((state.settings['qingcode.projects'] as { path: string }[]).map(item => item.path).sort()).toEqual([
+      'D:/from-cli',
+      'D:/remove-me',
+    ])
+  })
+
   it('can remove every project without the startup seed restoring any of them', async () => {
     for (const project of projects) await useProjectStore.getState().removeProject(project.id)
     await useProjectStore.getState().loadProjects()

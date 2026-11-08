@@ -31,6 +31,17 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('finishCreateProject', () => {
+  it('closes the create dialog and the project manager it was opened from', () => {
+    useUIStore.setState({ createProjectOpen: true, projectManagerOpen: true, view: 'search' })
+    useUIStore.getState().finishCreateProject()
+    const state = useUIStore.getState()
+    expect(state.createProjectOpen).toBe(false)
+    expect(state.projectManagerOpen).toBe(false)
+    expect(state.view).toBe('explorer')
+  })
+})
+
 describe('showExplorerViewKeepingSidebar', () => {
   it('leaves a collapsed sidebar collapsed', () => {
     useUIStore.setState({ view: 'sourceControl', sidebarOpen: false })

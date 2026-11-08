@@ -34,7 +34,7 @@ try {
   run('click', '#pair-submit')
   check('电脑连接成功', `document.querySelector('#active-host').dataset.state === 'online'`)
   run('click', '#dashboard-nav [data-page="project"]')
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('终端可输入', `document.querySelector('#terminal-status').textContent === '会话中'`)
   evaluate(`window.__keyEvents = []; document.addEventListener('click', e => window.__keyEvents.push({id:e.target.id,key:e.target.dataset.key,disabled:e.target.disabled}),true)`)

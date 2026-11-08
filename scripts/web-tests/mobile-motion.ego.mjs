@@ -75,7 +75,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations().length)
     })
 
-    await page.click('#project-list .row:first-child')
+    await page.click('#project-list > :first-child .project-row:first-child .row')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation?.(false))
@@ -217,7 +217,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       })
       assert.equal(order.length, 3)
       const target = order[1]
-      await page.click(`#session-options [data-id="${target}"] .session-close`)
+      await page.evaluate(selector => document.querySelector(selector).click(), `#session-options [data-id="${target}"] .session-close`)
       await page.waitForSelector('#confirm-dialog[open]')
       await page.click('#confirm-action')
       await page.waitForFunction(() => document.querySelectorAll('#session-options .session-option').length === 2)

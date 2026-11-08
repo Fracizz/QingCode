@@ -155,7 +155,9 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
     content.style.fontSize = term.options.fontSize + 'px';
     content.style.fontFamily = term.options.fontFamily;
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;
-    content.style.lineHeight = (screenHeight / term.rows) + 'px';
+    const rowHeight = (screenHeight / term.rows) + 'px';
+    content.style.lineHeight = rowHeight;
+    content.style.setProperty('--history-row', rowHeight);
     cursor = null;
     more = true;
     failed = false;

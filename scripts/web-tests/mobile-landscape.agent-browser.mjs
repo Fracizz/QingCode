@@ -29,7 +29,7 @@ try {
   check('computer is connected', `document.querySelector('#active-host').dataset.state === 'online'`)
   check('landscape dashboard retains system bars and has no fullscreen button', `!window.__mobileFixture.state.fullscreen && !document.querySelector('#toggle-fullscreen')`)
   run('click', '#dashboard-nav [data-page="project"]')
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('collapsed landscape leaves at least 200px for terminal output', `document.querySelector('#terminal-status').textContent === '会话中' && document.querySelector('#viewport').getBoundingClientRect().height >= 200 && ${fits}`)
   check('opening a terminal in landscape automatically enters native immersive mode', fullscreen)
@@ -76,7 +76,7 @@ try {
   check('landscape re-enters immersive mode automatically', fullscreen)
   evaluate('window.qingBack()')
   check('Android Back returns directly to the dashboard and restores system bars', `document.querySelector('#terminal-screen').hidden && !document.querySelector('#dashboard').hidden && !window.__mobileFixture.state.fullscreen`)
-  run('click', '#project-list .row:first-child')
+  run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('reopening the terminal restores immersive mode and its draft', `${fullscreen} && document.querySelector('#compose').value === '/effort'`)
 

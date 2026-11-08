@@ -169,4 +169,12 @@ describe('Android history grid alignment', () => {
     expect(span.style.width).toBe('3ch')
     expect(span.style.letterSpacing).toBe('-0.1000em')
   })
+
+  it('draws block elements per cell so rows join without gaps and text stays copyable', () => {
+    const host = document.createElement('pre')
+    host.append(renderHistoryPage(document, ['\x1b[38;2;215;119;87m▐▛█\x1b[m ─▌x']))
+    expect(host.textContent).toBe('▐▛█ ─▌x\n')
+    expect([...host.querySelectorAll('.block-cell')].map(span => span.textContent)).toEqual(['▐', '▛', '█', '▌'])
+    expect([...host.querySelectorAll('.cells')].map(span => span.textContent)).toEqual(['─'])
+  })
 })

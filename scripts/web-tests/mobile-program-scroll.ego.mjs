@@ -52,7 +52,7 @@ export async function run({ spaceId, finish = true } = {}) {
       snapshot: { data: '\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[HCodex READY', cols: 80, rows: 24 },
     }))
     await page.click('#dashboard-nav [data-page="project"]')
-    await page.click('#project-list .row:first-child')
+    await page.click('#project-list > :first-child .project-row:first-child .row')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.waitForFunction(() => window.__tuiTerm?.modes.mouseTrackingMode !== 'none')

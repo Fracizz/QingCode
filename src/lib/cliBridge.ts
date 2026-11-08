@@ -190,6 +190,10 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (project) await ensureSshWorkspaceConnected(project)
       return resetSettings(scope, project)
     }
+    case 'projects.reload': {
+      await useProjectStore.getState().reloadProjectsAfterExternalChange()
+      return { count: useProjectStore.getState().projects.filter(p => !p.ephemeral).length }
+    }
     case 'project.switch': {
       const project = resolveProject(req.project)
       const ok = await useProjectStore.getState().switchProject(project)

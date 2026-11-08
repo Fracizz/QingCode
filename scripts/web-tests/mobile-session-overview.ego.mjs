@@ -48,7 +48,7 @@ export async function run({ spaceId, finish = true } = {}) {
   }
   const openFirstProject = async () => {
     await page.click('#dashboard-nav [data-page="project"]')
-    await page.click('#project-list .row:first-child')
+    await page.click('#project-list > :first-child .project-row:first-child .row')
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
   }
@@ -104,17 +104,19 @@ export async function run({ spaceId, finish = true } = {}) {
         .filter(node => !node.hidden).map(node => node.id).filter(Boolean))
       assert.ok(order.indexOf('home-sessions') < order.indexOf('home-projects'), JSON.stringify(order))
       assert.equal((await rowIds(home)).length, 8)
-      assert.equal(await text(home + ' .overview-more'), '展开全部（还有 3 个）')
-      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh'])
+      assert.equal(await text(home + ' .overview-more'), '展开全部（还有 2 个）')
+      // 「继续终端」已展示 mobile-1，默认列表不重复；组头数量仍是完整数量。
+      assert.equal(await text('#resume-name'), 'Claude Code')
+      assert.deepEqual(await groupIds(home), ['p-ssh'])
       assert.equal(await text(home + ' [data-project="p-ssh"] .session-group-count'), '9', 'group header keeps the full count')
-      assert.match(await text(home + ' [data-id="mobile-1"] small'), /上次使用/)
+      assert.equal((await rowIds(home)).includes('mobile-1'), false)
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), false)
       const last = (await page.evaluate(() => window.__mobileFixture.state.sessionRequests)).at(-1)
       assert.equal(last.project, undefined, 'home reads every project in one request')
       await page.screenshot({ path: resolve(output, 'home-390.png') })
       await tap(home + ' .overview-more')
-      assert.equal((await rowIds(home)).length, 11)
-      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh', 'p-gone'])
+      assert.equal((await rowIds(home)).length, 10)
+      assert.deepEqual(await groupIds(home), ['p-ssh', 'p-gone'])
       await tap(home + ' .overview-more')
       assert.equal((await rowIds(home)).length, 8)
     })
@@ -123,6 +125,7 @@ export async function run({ spaceId, finish = true } = {}) {
       await fillIn(home + ' .overview-search', 'galaxy')
       assert.deepEqual(await rowIds(home), ['mobile-3', 'mobile-11'])
       await fillIn(home + ' .overview-search', '')
+      await tap(home + ' .overview-filter-toggle')
       await tap(home + ' [data-filter="live"]')
       assert.equal((await rowIds(home)).length, 9)
       await tap(home + ' [data-filter="all"]')
@@ -146,7 +149,7 @@ export async function run({ spaceId, finish = true } = {}) {
 
     await step('closing another device\'s running session names that device in the confirmation', async () => {
       await tap(home + ' .overview-more')
-      await tap(home + ' [data-id="mobile-11"] .session-close')
+      await page.evaluate(selector => document.querySelector(selector).click(), home + ' [data-id="mobile-11"] .session-close')
       assert.match(await confirm(false), /api-server \/ 平板会话.*由 Galaxy Tab 创建/)
       assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.ends), [])
       await tap(home + ' .overview-more')
@@ -292,7 +295,7 @@ export async function run({ spaceId, finish = true } = {}) {
         const visible = target => !!root.querySelector(target)?.offsetParent
         return { search: visible('.overview-search'), filters: visible('.overview-filter'), manage: visible('.overview-manage') }
       }, drawerView)
-      assert.deepEqual(view, { search: true, filters: true, manage: true })
+      assert.deepEqual(view, { search: true, filters: false, manage: true })
       await page.screenshot({ path: resolve(output, 'drawer-empty-390.png') })
     })
 

@@ -25,6 +25,8 @@ struct History {
     wrap_state: BasicFormattedCaptureState,
     /// 最近一次由普通滚动写入的行 id；自动换行的后续行拼接到这一行。
     last_scroll_line: Option<u64>,
+    /// 调整尺寸时 vt100 把挤出屏幕顶部的行也报给 on_scroll；这些行程序随后会重绘，不能计入历史。
+    resizing: bool,
 }
 
 /// OSC 9（iTerm2 / Windows Terminal 通知，`9;4` 是进度条而不是通知）和 OSC 777;notify。
@@ -56,7 +58,7 @@ impl vt100::Callbacks for History {
     }
 
     fn on_scroll(&mut self, row: RowContents<'_>, alternate: bool) {
-        if alternate {
+        if alternate || self.resizing {
             return;
         }
         let mut probe = String::new();
@@ -102,6 +104,16 @@ impl History {
         }
     }
 
+    /// 程序请求清空滚动区（`CSI 3J`）后通常会整屏重放，旧行留着就会重复。
+    /// `next` 继续递增，手机端已有的分页游标不会指向新内容。
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.bytes = 0;
+        self.truncated = false;
+        self.wrap_state = BasicFormattedCaptureState::default();
+        self.last_scroll_line = None;
+    }
+
     fn update_title(&mut self, title: &[u8]) {
         let title: String = String::from_utf8_lossy(title)
             .chars()
@@ -141,8 +153,13 @@ impl History {
     }
 }
 
+/// vt100 不把清空滚动区通知给回调，需要在送入解析器前识别。
+const CLEAR_SCROLLBACK: &[u8] = b"\x1b[3J";
+
 pub(super) struct MobileScreen {
     parser: vt100::Parser<History>,
+    /// 已匹配的 `CLEAR_SCROLLBACK` 前缀长度；序列可能被拆在多个输出块里。
+    clear_match: usize,
 }
 
 fn nonzero(value: u16) -> NonZeroU16 {
@@ -166,17 +183,34 @@ impl MobileScreen {
                 0,
                 History::default(),
             ),
+            clear_match: 0,
         }
     }
 
     /// 全屏程序（备用屏）重绘不进入历史：手机端上滑直接交给程序自己滚动。
     pub(super) fn process(&mut self, data: &[u8]) {
-        self.parser.process(data);
+        let mut start = 0;
+        for (index, byte) in data.iter().enumerate() {
+            self.clear_match = if *byte == CLEAR_SCROLLBACK[self.clear_match] {
+                self.clear_match + 1
+            } else {
+                usize::from(*byte == CLEAR_SCROLLBACK[0])
+            };
+            if self.clear_match == CLEAR_SCROLLBACK.len() {
+                self.clear_match = 0;
+                self.parser.process(&data[start..=index]);
+                self.parser.callbacks_mut().clear();
+                start = index + 1;
+            }
+        }
+        self.parser.process(&data[start..]);
     }
 
     pub(super) fn resize(&mut self, cols: u16, rows: u16) {
+        self.parser.callbacks_mut().resizing = true;
         self.parser
             .set_size(nonzero(rows.clamp(2, 150)), nonzero(cols.clamp(2, 300)));
+        self.parser.callbacks_mut().resizing = false;
     }
 
     pub(super) fn replace(&mut self, data: &str, cols: u16, rows: u16) {
@@ -395,6 +429,38 @@ c
         let retained = screen.history(screen.history_before()).to_string();
         assert!(!retained.contains("TUI"));
         assert!(!retained.contains("secret"));
+    }
+
+    #[test]
+    fn shrinking_rows_does_not_copy_rows_the_program_will_repaint_into_history() {
+        let mut screen = MobileScreen::new();
+        screen.resize(40, 6);
+        screen.process(b"logo 1\r\nlogo 2\r\nlogo 3\r\nlogo 4\r\nlogo 5\r\n> ");
+        assert!(!screen.has_history());
+        screen.resize(40, 3);
+        assert!(!screen.has_history());
+        // 尺寸恢复后，正常滚出的行仍然进入历史。
+        screen.process(b"\r\na\r\nb\r\nc\r\nd\r\n");
+        assert!(screen.has_history());
+    }
+
+    #[test]
+    fn clear_scrollback_drops_history_even_when_split_across_chunks() {
+        let mut screen = MobileScreen::new();
+        screen.resize(40, 2);
+        screen.process(b"old 1\r\nold 2\r\nold 3\r\n");
+        let before = screen.history_before();
+        assert!(screen.has_history());
+        screen.process(b"\x1b[2J\x1b[");
+        assert!(screen.has_history());
+        screen.process(b"3J\x1b[Hnew 1\r\nnew 2\r\nnew 3\r\n");
+        let page = screen.history(screen.history_before());
+        assert_eq!(page["lines"], json!(["new 1", "new 2"]));
+        assert_eq!(page["more"], false);
+        assert_eq!(page["truncated"], false);
+        // 游标不回退：清空前的翻页请求不会命中新内容。
+        assert!(screen.history_before() > before);
+        assert_eq!(screen.history(before)["lines"], json!([]));
     }
 
     #[test]

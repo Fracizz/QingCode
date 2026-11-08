@@ -1,7 +1,7 @@
 // 会话列表的显示状态：「运行中优先」临时排序（点一下排出运行中的会话，再点恢复默认顺序，不保存），
 // 以及工作台首页是否显示全部会话（保存在这台手机上）。首页纵览、抽屉「本项目」与「全部」共用，改动后通知各处重绘。
 import { t } from './i18n.js';
-import { icon } from './dom.js';
+import { icon, showToast } from './dom.js';
 
 const PREFIX = 'qingcode:mobile:';
 const HOME_SESSIONS = PREFIX + 'home-sessions';
@@ -66,22 +66,6 @@ export function setRunningStatusEnabled(on) {
   notify();
 }
 
-let toastTimer = null;
-
-function showSortToast(host, text) {
-  let toast = document.getElementById('sort-toast');
-  if (!toast) {
-    toast = document.createElement('p');
-    toast.id = 'sort-toast';
-    toast.className = 'sort-toast';
-    toast.setAttribute('role', 'status');
-  }
-  if (toast.parentNode !== host) host.append(toast);
-  toast.textContent = text;
-  toast.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.hidden = true; }, 1600);
-}
 
 export function onSessionPrefsChange(listener) {
   listeners.add(listener);
@@ -98,7 +82,7 @@ export function runningFirstToggle(className = '') {
   item.addEventListener('click', () => {
     setRunningFirst(!runningFirstValue);
     // 图标没有文字，点按后用短提示说明当前排序；弹层（会话栏）内显示在弹层里，避免被顶层遮住。
-    showSortToast(item.closest('dialog[open]') ?? document.body,
+    showToast(item.closest('dialog[open]') ?? document.body,
       runningFirstValue ? t('已按运行中优先排序') : t('已恢复默认顺序'));
   });
   toggles.add(item);

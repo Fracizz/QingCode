@@ -2,28 +2,26 @@
 // 工作台首页与终端会话抽屉各挂一个实例；只负责渲染与交互，数据由调用方读取后 setList 写入。
 import {
   countSessionOverview,
-  createdLabel,
   groupSessionOverview,
-  idleLabel,
   limitSessionGroups,
   projectSourceLabel,
   prunedSelection,
+  sessionIdleInfo,
   sessionName,
   sessionRunning,
 } from './protocol.js';
 import { icon, rowText, button } from './dom.js';
+import { attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 import { t } from './i18n.js';
-
-// 搜索提示放不下时的滚动速度。
-const HINT_SCROLL_PX_PER_SECOND = 20;
 
 /**
  * root：组件容器。limit：首次显示的会话数（首页 8，抽屉不限）。
  * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）；0 表示始终显示（抽屉）。
  * header：可选的标题行；收起时「运行中优先」与「管理」移到标题右侧，省掉一整行。
  * state：profile()、projects()、history()、current()（终端页当前项目 id，首页为 null）、
- * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)。
+ * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)、
+ * omit?(item)（默认视图不重复列出的会话；搜索、筛选和多选时仍会显示）。
  * open(session) 接入会话；end(sessions) 关闭一个或多个会话（确认与结果提示由调用方负责），返回 Promise。
  * onChange() 在列表或数量变化后通知调用方（如更新标题数量、显示/隐藏所在区块）。
  */
@@ -32,6 +30,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   let address = null;
   let filter = 'all';
   let query = '';
+  let showFilters = false;
   let expanded = false;
   let selecting = false;
   let selection = new Set();
@@ -55,28 +54,16 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   hint.setAttribute('aria-hidden', 'true');
   const hintText = document.createElement('span');
   hint.append(hintText);
-  hintText.textContent = t('搜索会话、项目或设备');
+  hintText.textContent = t('搜索会话');
   search.append(icon('search'), input, hint);
-  // 文案放不下时才滚动，时长按溢出宽度折算，保证不同语言的滚动速度一致。
-  const fitHint = () => {
-    const shift = Math.ceil(hintText.getBoundingClientRect().width - hint.clientWidth);
-    if (!hint.clientWidth || shift <= 0) {
-      hint.removeAttribute('data-scrolling');
-      return;
-    }
-    hint.style.setProperty('--hint-shift', `${shift}px`);
-    // 匀速段占动画的 70%，其余时间停在首尾。
-    hint.style.setProperty('--hint-duration', `${Math.max(3, shift / HINT_SCROLL_PX_PER_SECOND / 0.7).toFixed(2)}s`);
-    hint.setAttribute('data-scrolling', '');
-  };
-  // 抽屉打开、旋转屏幕或搜索框重新显示时，可用宽度才会变化。
-  new ResizeObserver(fitHint).observe(hint);
-  // 搜索行：搜索框、「运行中优先」图标、「管理」多选；会话少时只收起搜索框，图标与「管理」靠右保留。
+  // 搜索行：搜索框、筛选、「运行中优先」图标、「管理」多选；会话少时只收起搜索框与筛选，其余靠右保留。
+  const filterToggle = button('icon-button overview-filter-toggle', () => { showFilters = !showFilters; render(); });
+  filterToggle.append(icon('filter'));
   const sort = runningFirstToggle('overview-sort');
   const manage = button('text-button overview-manage', () => setSelecting(!selecting));
   const actions = document.createElement('div');
   actions.className = 'overview-actions';
-  actions.append(sort.element, manage);
+  actions.append(filterToggle, sort.element, manage);
   tools.append(search, actions);
 
   const filters = document.createElement('div');
@@ -153,6 +140,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   }
 
   function setSelecting(next) {
+    closeRevealedRow();
     selecting = next;
     if (!selecting) selection = new Set();
     render();
@@ -168,7 +156,10 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     });
     // 搜索、筛选或多选时显示全部结果，避免选中的会话藏在「展开全部」后面。
     const narrowed = !!query.trim() || filter !== 'all' || selecting;
-    const { groups, hidden } = expanded || narrowed ? { groups: grouped, hidden: 0 } : limitSessionGroups(grouped, limit);
+    const shown = narrowed || !state.omit ? grouped : grouped
+      .map(group => ({ ...group, total: group.total ?? group.sessions.length, sessions: group.sessions.filter(item => !state.omit(item)) }))
+      .filter(group => group.sessions.length);
+    const { groups, hidden } = expanded || narrowed ? { groups: shown, hidden: 0 } : limitSessionGroups(shown, limit);
     root.dataset.selecting = String(selecting);
     // 会话少时不显示搜索与筛选；已在搜索或筛选中则保留，避免控件突然消失。
     const compact = compactBelow > 0 && all.length <= compactBelow && !query.trim() && filter === 'all';
@@ -176,11 +167,15 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const actionsHome = compact && header ? header : tools;
     if (actions.parentNode !== actionsHome) actionsHome.append(actions);
     tools.hidden = compact && !!header;
-    filters.hidden = compact;
+    // 正在筛选时保持筛选条可见，否则看不出列表为什么变少。
+    filters.hidden = compact || !(showFilters || filter !== 'all');
+    filterToggle.hidden = compact;
+    filterToggle.setAttribute('aria-label', t('筛选会话'));
+    filterToggle.setAttribute('aria-expanded', String(!filters.hidden));
+    filterToggle.dataset.active = String(filter !== 'all');
     sort.relabel();
     // 静态文案也在每次渲染时取当前语言，切换语言后重绘即生效。
-    hintText.textContent = t('搜索会话、项目或设备');
-    fitHint();
+    hintText.textContent = t('搜索会话');
     input.setAttribute('aria-label', t('搜索会话、项目或设备'));
     filters.setAttribute('aria-label', t('会话状态'));
     manage.textContent = selecting ? t('完成') : t('管理');
@@ -200,9 +195,9 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     selectEnded.disabled = busy || !matching.some(item => item.exit);
     endPicked.textContent = t('关闭所选');
     endPicked.disabled = busy || !selection.size;
-    empty.hidden = groups.length > 0;
+    empty.hidden = groups.length > 0 || grouped.length > 0 && !narrowed;
     empty.textContent = all.length ? t('没有符合条件的会话') : t('这台电脑上还没有手机会话');
-    more.hidden = !hidden && !(expanded && !narrowed && grouped.reduce((sum, group) => sum + group.sessions.length, 0) > limit);
+    more.hidden = !hidden && !(expanded && !narrowed && shown.reduce((sum, group) => sum + group.sessions.length, 0) > limit);
     more.textContent = hidden ? t('展开全部（还有 {n} 个）', { n: hidden }) : t('收起');
     const existing = new Map([...groupsNode.children].map(node => [node.dataset.project, node]));
     groups.forEach((group, position) => {
@@ -238,7 +233,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const current = group.project.id === state.current();
     const title = group.project.name ?? group.project.id;
     node.querySelector('strong').textContent = title;
-    node.querySelector('.session-group-source').textContent = [projectSourceLabel(group.project), current ? t('当前项目') : '',
+    // 组头只留连接名，地址在项目页和搜索中可见。
+    node.querySelector('.session-group-source').textContent = [projectSourceLabel({ ...group.project, host: '' }), current ? t('当前项目') : '',
       group.missing ? t('电脑端已移除') : ''].filter(Boolean).join(' · ');
     node.querySelector('.session-group-count').textContent = String(group.total ?? group.sessions.length);
     node.setAttribute('aria-label', title);
@@ -282,11 +278,17 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     idle.className = 'session-idle';
     text.append(idle);
     option.append(check, text);
-    const close = button('icon-button session-close', () => {
+    const close = button('swipe-action session-close', () => {
       if (!state.busy() && latest()) void end([latest()]);
     });
     close.append(icon('close'));
-    row.append(option, close);
+    const face = document.createElement('div');
+    face.className = 'session-face';
+    face.append(option);
+    row.append(close, face);
+    // 左滑露出关闭；长按同样展开。多选时用勾选，不响应手势。
+    const swipe = attachSwipeReveal(row, face, { enabled: () => !selecting && !state.busy() });
+    attachLongPress(option, swipe.open);
     return row;
   }
 
@@ -318,9 +320,11 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     row.querySelector('.session-label').textContent = label;
     const inUse = !session.exit && session.inUseHere === false && session.controllerName
       ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
-    row.querySelector('small').textContent = [label === identity ? '' : identity, status, inUse, createdLabel(session), device].filter(Boolean).join(' · ');
+    // 空闲时长并入一行；快到自动结束时才单独提醒。
+    const idleInfo = sessionIdleInfo(session);
+    row.querySelector('small').textContent = [label === identity ? '' : identity, status, inUse, device, idleInfo.expiring ? '' : idleInfo.text].filter(Boolean).join(' · ');
     const idle = row.querySelector('.session-idle');
-    idle.textContent = session.exit ? '' : idleLabel(session);
+    idle.textContent = idleInfo.expiring ? idleInfo.text : '';
     idle.hidden = !idle.textContent;
     const close = row.querySelector('.session-close');
     close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));

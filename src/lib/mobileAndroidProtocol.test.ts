@@ -30,6 +30,11 @@ import {
   summarizeSessionBatch,
   SESSION_PIN_LIMIT,
   projectSourceLabel,
+  groupProjectsByHost,
+  projectLocation,
+  sessionIdleInfo,
+  swipeRevealOffset,
+  swipeRevealSettles,
   recentProjects,
   rememberProject,
   pullOffset,
@@ -100,7 +105,7 @@ describe('Android session names', () => {
     expect(sessionRunning({ name: 'BLANK 构建'.replace('BLANK', String.fromCharCode(0x2800)) })).toBe(true)
     expect(sessionRunning({ name: '◐ Claude Code' })).toBe(true)
     expect(sessionName({ name: '◓ Claude Code' })).toBe('Claude Code')
-    expect(sessionName({ name: '✳ Claude Code' })).toBe('✳ Claude Code')
+    expect(sessionName({ name: '✳ Claude Code' })).toBe('Claude Code')
   })
 
   it('merges busy state regardless of the name revision', () => {
@@ -170,6 +175,68 @@ describe('Android recent projects', () => {
     expect(history).toHaveLength(10)
     expect(history[0]).toEqual({ id: '8', openedAt: 30 })
     expect(history.filter(item => item.id === '8')).toHaveLength(1)
+  })
+})
+
+describe('Android session row idle text', () => {
+  const hour = 3_600_000
+  const now = 100 * hour
+
+  it('only says how long the session has been idle while far from auto-end', () => {
+    expect(sessionIdleInfo({ lastActiveAt: now - 13 * 60000, idleDeadline: now + 20 * hour }, now)).toEqual({ text: '空闲 13 分钟', expiring: false })
+    expect(sessionIdleInfo({ lastActiveAt: now - 1000, idleDeadline: now + 24 * hour }, now)).toEqual({ text: '刚刚有活动', expiring: false })
+  })
+
+  it('adds the countdown within two hours of auto-end', () => {
+    const near = sessionIdleInfo({ lastActiveAt: now - 22 * hour, idleDeadline: now + 2 * hour }, now)
+    expect(near.expiring).toBe(true)
+    expect(near.text).toBe('空闲 22 小时，2 小时后自动结束')
+  })
+
+  it('shows nothing for exited sessions or old desktops', () => {
+    expect(sessionIdleInfo({ exit: { code: 0 }, idleDeadline: now + hour }, now)).toEqual({ text: '', expiring: false })
+    expect(sessionIdleInfo({ lastActiveAt: now }, now)).toEqual({ text: '', expiring: false })
+  })
+})
+
+describe('Android project display', () => {
+  it('shows remote Windows paths the Windows way and only strips the ssh resource prefix elsewhere', () => {
+    expect(projectLocation({ kind: 'ssh', path: 'ssh://conn/D:/code/qingcode' })).toBe('D:\\code\\qingcode')
+    expect(projectLocation({ kind: 'ssh', path: 'ssh://conn/home/code/django' })).toBe('/home/code/django')
+    expect(projectLocation({ kind: 'local', path: 'D:\\code\\qingcode' })).toBe('D:\\code\\qingcode')
+    expect(projectLocation({ kind: 'wsl', path: '/home/code' })).toBe('/home/code')
+  })
+
+  it('finds remote Windows projects by the displayed path', () => {
+    expect(matchesProject({ name: 'x', kind: 'ssh', path: 'ssh://conn/D:/code/x' }, 'd:\\code')).toBe(true)
+  })
+
+  it('groups projects by host in first-seen order and keeps same-name projects apart', () => {
+    const groups = groupProjectsByHost([
+      { id: '1', name: 'django', kind: 'ssh', connectionName: 'WSL', host: 'localhost' },
+      { id: '2', name: 'django', kind: 'ssh', connectionName: 'WinDev', host: '192.168.252.107' },
+      { id: '3', name: 'QingCode', kind: 'local', host: 'Windows' },
+      { id: '4', name: 'nem-panel', kind: 'ssh', connectionName: 'WSL', host: 'localhost' },
+      { id: '5', name: 'local-two', kind: 'local', host: 'Other' },
+    ])
+    expect(groups.map(group => group.items.map(item => item.id))).toEqual([['1', '4'], ['2'], ['3', '5']])
+    expect(groups.map(group => group.label)).toEqual(['远端 · WSL · localhost', '远端 · WinDev · 192.168.252.107', '本机'])
+  })
+})
+
+describe('Android swipe-to-reveal rows', () => {
+  const width = 76
+
+  it('follows the finger, never moves right of rest, and resists past fully open', () => {
+    expect(swipeRevealOffset(0, 30, width)).toBe(0)
+    expect(swipeRevealOffset(0, -30, width)).toBe(-30)
+    expect(swipeRevealOffset(-width, 20, width)).toBe(-56)
+    expect(swipeRevealOffset(0, -106, width)).toBe(-86)
+  })
+
+  it('settles open once more than half is revealed', () => {
+    expect(swipeRevealSettles(-38, width)).toBe(true)
+    expect(swipeRevealSettles(-37, width)).toBe(false)
   })
 })
 
