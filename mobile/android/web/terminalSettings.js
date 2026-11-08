@@ -1,12 +1,13 @@
-// 仅保存在手机上的偏好：「终端设置」弹层中的字号、列宽、全屏程序触摸，以及「设置」页中的发送按键、图片压缩、硬件加速渲染。
+// 仅保存在手机上的偏好：「终端设置」弹层中的字号、列宽、全屏程序触摸，以及「设置」页中的屏幕常亮、发送按键、图片压缩、硬件加速渲染。
 import { get } from './dom.js';
 import { FONT_MAX, FONT_MIN, clampFontSize } from './pinchZoom.js';
 
 /**
  * onFontSize(size) 在字号变化后重新适配终端；onColumns() 在列宽变化后重新适配；
- * onSendMode() 在发送按键设置变化后刷新发送按钮；onRenderer() 在硬件加速设置变化后切换渲染器。
+ * onSendMode() 在发送按键设置变化后刷新发送按钮；onRenderer() 在硬件加速设置变化后切换渲染器；
+ * onKeepScreenOn(enabled) 在屏幕常亮变化时通知原生层，已开启时启动也调用一次。
  */
-export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMode, onRenderer }) {
+export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMode, onRenderer, onKeepScreenOn }) {
   const savedFontSize = Number(localStorage.getItem(prefix + 'font-size'));
   let fontSize = Number.isInteger(savedFontSize) && savedFontSize >= FONT_MIN && savedFontSize <= FONT_MAX ? savedFontSize : 13;
   const savedColumns = localStorage.getItem(prefix + 'columns');
@@ -64,6 +65,15 @@ export function createTerminalSettings({ prefix, onFontSize, onColumns, onSendMo
     gpuRender = get('terminal-renderer').value !== 'off';
     localStorage.setItem(prefix + 'gpu-render', gpuRender ? 'on' : 'off');
     onRenderer();
+  });
+
+  // 屏幕常亮默认关闭；原生窗口标志不跨 Activity 重建，启动时按保存值重新应用。
+  const keepScreenOn = get('keep-screen-on');
+  keepScreenOn.value = localStorage.getItem(prefix + 'keep-screen-on') === 'on' ? 'on' : 'off';
+  if (keepScreenOn.value === 'on') onKeepScreenOn(true);
+  keepScreenOn.addEventListener('change', () => {
+    localStorage.setItem(prefix + 'keep-screen-on', keepScreenOn.value);
+    onKeepScreenOn(keepScreenOn.value === 'on');
   });
 
   const savedCompression = localStorage.getItem(prefix + 'image-compression');

@@ -304,6 +304,9 @@
         state.fullscreen = request.enabled === true;
         return { ok: true, data: state.fullscreen };
       }
+      case 'keep_screen_on':
+        state.keepScreenOnRequests = [...(state.keepScreenOnRequests ?? []), request.enabled];
+        return { ok: true, data: request.enabled === true };
       case 'pendingSession': {
         const target = state.pendingSession ?? null
         state.pendingSession = null

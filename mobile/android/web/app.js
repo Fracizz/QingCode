@@ -244,6 +244,7 @@ const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () =
 const settings = createTerminalSettings({
   prefix,
   onRenderer: () => terminalRenderer?.sync(),
+  onKeepScreenOn: enabled => void rpc('keep_screen_on', { enabled }).catch(() => {}),
   onFontSize: size => {
     if (term) {
       term.options.fontSize = size;

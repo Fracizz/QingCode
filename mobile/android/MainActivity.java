@@ -612,6 +612,16 @@ public final class MainActivity extends Activity {
                 });
                 return;
             }
+            if ("keep_screen_on".equals(op)) {
+                runOnUiThread(() -> {
+                    // 窗口标志只在应用可见时生效，切到后台或锁屏由系统自动解除，无需 WAKE_LOCK。
+                    boolean enabled = request.optBoolean("enabled", false);
+                    if (enabled) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    replySafely(id, enabled);
+                });
+                return;
+            }
             if ("pick_image".equals(op)) {
                 runOnUiThread(() -> {
                     if (imageReply != null) { reply(id, failure("请先完成当前图片选择。")); return; }

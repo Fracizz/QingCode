@@ -44,7 +44,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('工作台顶栏提供设置入口，通用设置不再散落在连接页和终端设置', async () => {
       await page.waitForFunction(() => document.querySelector('#open-settings').getBoundingClientRect().height >= 44)
       assert.ok(await page.evaluate(() => {
-        const inSettings = ['app-language', 'update-section', 'image-compression', 'send-mode', 'session-watch', 'terminal-renderer']
+        const inSettings = ['app-language', 'update-section', 'keep-screen-on', 'image-compression', 'send-mode', 'session-watch', 'terminal-renderer']
           .every(id => document.getElementById(id).closest('#settings-dialog'))
         const inTerminal = ['terminal-columns', 'touch-mode', 'font-size', 'open-key-layout', 'open-settings-from-terminal']
           .every(id => document.getElementById(id).closest('#session-dialog'))
@@ -72,6 +72,25 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#app-language [data-locale="zh"]', { label: 'choose Chinese' })
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN' && document.querySelector('#settings-title').textContent === '设置')
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:locale')), 'zh')
+    })
+    await step('屏幕常亮默认关闭，切换后通知原生层，重载后恢复', async () => {
+      const requests = () => page.evaluate(() => window.__mobileFixture.state.keepScreenOnRequests ?? [])
+      assert.equal(await page.evaluate(() => document.querySelector('#keep-screen-on').value), 'off')
+      assert.deepEqual(await requests(), [])
+      await page.selectOption('#keep-screen-on', 'on')
+      await page.waitForFunction(() => window.__mobileFixture.state.keepScreenOnRequests?.length === 1)
+      assert.deepEqual(await requests(), [true])
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:keep-screen-on')), 'on')
+      await page.reload()
+      await metrics(390, 844)
+      await page.waitForFunction(() => typeof window.qingLink === 'function')
+      await page.waitForFunction(() => window.__mobileFixture.state.keepScreenOnRequests?.length === 1)
+      assert.equal(await page.evaluate(() => document.querySelector('#keep-screen-on').value), 'on')
+      assert.deepEqual(await requests(), [true])
+      await openFromHome()
+      await page.selectOption('#keep-screen-on', 'off')
+      await page.waitForFunction(() => window.__mobileFixture.state.keepScreenOnRequests?.length === 2)
+      assert.deepEqual(await requests(), [true, false])
     })
     await step('未打开终端时也能修改图片压缩和发送按键，重载后保留', async () => {
       await page.selectOption('#image-compression', 'high')

@@ -384,6 +384,13 @@
         <p id="update-status" class="hint" role="status"></p>
         <label class="update-auto"><input id="update-auto" type="checkbox" checked> 每天自动检查更新</label>
       </section>
+      <div class="settings-card">
+        <label for="keep-screen-on">屏幕常亮</label>
+        <select id="keep-screen-on" aria-describedby="keep-screen-on-hint">
+          <option value="off" selected data-i18n="state:off">关闭</option><option value="on">使用应用时保持亮屏</option>
+        </select>
+        <p id="keep-screen-on-hint">停留在应用内时屏幕不自动熄灭，方便查看程序输出；切到后台或手动锁屏后恢复系统息屏设置。开启会增加耗电。</p>
+      </div>
       <h3 class="settings-group-title">工作台</h3>
       <div class="settings-card">
         <label for="home-sessions-setting">全部会话</label>
