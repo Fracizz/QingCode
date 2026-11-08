@@ -7,7 +7,7 @@ import {
   EyeOff,
   ListTree,
   LoaderCircle,
-  MessageSquareMore,
+  MessageCircleMore,
   Monitor,
   Pencil,
   RefreshCw,
@@ -601,7 +601,7 @@ export default function TerminalManager() {
                   : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
             >
-              <MessageSquareMore size={15} />
+              <MessageCircleMore size={15} />
             </button>
           </Tooltip>
         </div>
