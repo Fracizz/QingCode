@@ -20,7 +20,7 @@ const HINT_SCROLL_PX_PER_SECOND = 20;
 
 /**
  * root：组件容器。limit：首次显示的会话数（首页 8，抽屉不限）。
- * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）。
+ * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）；0 表示始终显示（抽屉）。
  * header：可选的标题行；收起时「运行中优先」与「管理」移到标题右侧，省掉一整行。
  * state：profile()、projects()、history()、current()（终端页当前项目 id，首页为 null）、
  * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)。
@@ -171,7 +171,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const { groups, hidden } = expanded || narrowed ? { groups: grouped, hidden: 0 } : limitSessionGroups(grouped, limit);
     root.dataset.selecting = String(selecting);
     // 会话少时不显示搜索与筛选；已在搜索或筛选中则保留，避免控件突然消失。
-    const compact = all.length <= compactBelow && !query.trim() && filter === 'all';
+    const compact = compactBelow > 0 && all.length <= compactBelow && !query.trim() && filter === 'all';
     search.hidden = compact;
     const actionsHome = compact && header ? header : tools;
     if (actions.parentNode !== actionsHome) actionsHome.append(actions);

@@ -272,6 +272,30 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.ok((await page.evaluate(() => window.__mobileFixture.state.sessionRequests)).every(item => item.project !== undefined))
     })
 
+    await step('the drawer keeps search and filters visible with no sessions', async () => {
+      await page.evaluate(() => {
+        for (const key of Object.keys(localStorage)) if (key.startsWith('qingcode:mobile:')) localStorage.removeItem(key)
+      })
+      await page.reload()
+      await page.waitForFunction(() => typeof window.qingLink === 'function')
+      await pair()
+      await openFirstProject()
+      await page.evaluate(() => window.__mobileFixture.state.sessions.clear())
+      await drawer()
+      await page.click('[data-scope="all"]')
+      await page.waitForFunction(selector => {
+        const root = document.querySelector(selector)
+        return root && !root.hidden && root.querySelectorAll('.session-option').length === 0
+      }, drawerView)
+      const view = await page.evaluate(selector => {
+        const root = document.querySelector(selector)
+        const visible = target => !!root.querySelector(target)?.offsetParent
+        return { search: visible('.overview-search'), filters: visible('.overview-filter'), manage: visible('.overview-manage') }
+      }, drawerView)
+      assert.deepEqual(view, { search: true, filters: true, manage: true })
+      await page.screenshot({ path: resolve(output, 'drawer-empty-390.png') })
+    })
+
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results }, null, 2))
     console.log({ output, results })
     if (finish) await task.finish({ keep: [] })
