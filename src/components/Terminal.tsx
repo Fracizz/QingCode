@@ -53,7 +53,7 @@ import {
   markTerminalCommandFinished,
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
-import { noteTerminalTitle } from '@/lib/terminal/terminalProgramActivity'
+import { noteTerminalOutput, noteTerminalTitle } from '@/lib/terminal/terminalProgramActivity'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
@@ -1089,6 +1089,8 @@ export default function TerminalView({
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
+        // 回放的历史输出不代表程序此刻在工作。
+        if (!isReplay) noteTerminalOutput(terminalId)
         writeFlow.written(size)
         term.write(data, () => {
           writeFlow.parsed(size)

@@ -5,6 +5,7 @@ import { icon } from './dom.js';
 
 const PREFIX = 'qingcode:mobile:';
 const HOME_SESSIONS = PREFIX + 'home-sessions';
+const RUNNING_STATUS = PREFIX + 'running-status';
 const listeners = new Set();
 const toggles = new Set();
 
@@ -26,6 +27,7 @@ function write(key, on, fallback) {
 // 临时排序只在本次运行中生效，重开 App 回到电脑端默认顺序。
 let runningFirstValue = false;
 let homeSessionsValue = read(HOME_SESSIONS, true);
+let runningStatusValue = read(RUNNING_STATUS, true);
 
 function notify() {
   for (const item of toggles) {
@@ -51,6 +53,16 @@ export function setHomeSessionsEnabled(on) {
   if (homeSessionsValue === !!on) return;
   homeSessionsValue = !!on;
   write(HOME_SESSIONS, homeSessionsValue, true);
+  notify();
+}
+
+/** 会话行是否显示「运行中」转圈与文字；默认显示。只影响显示，不影响排序与后台提醒。 */
+export function runningStatusEnabled() { return runningStatusValue; }
+
+export function setRunningStatusEnabled(on) {
+  if (runningStatusValue === !!on) return;
+  runningStatusValue = !!on;
+  write(RUNNING_STATUS, runningStatusValue, true);
   notify();
 }
 

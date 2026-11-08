@@ -1,18 +1,36 @@
 /**
- * 电脑终端的「程序正在工作」状态：根据程序设置的原始窗口标题（OSC 0/1/2）判断。
- * 与手机会话的 `programBusy`（src-tauri/src/mobile.rs 的 `program_busy_at`）规则一致：
- * 标题以转圈帧字符开头，或最近 SPINNER_HOLD 内出现过转圈帧，即视为运行中。
- * 标签名使用清洗后的标题（会去掉开头的转圈字符），所以这里单独记录原始标题。
+ * 电脑终端的「程序正在工作」状态，两路信号任一成立即视为运行中：
+ * 1. 标题转圈（强信号）：程序设置的原始窗口标题（OSC 0/1/2）以转圈帧字符开头，
+ *    或最近 SPINNER_HOLD 内出现过转圈帧。适合 Claude Code / Codex 等 AI CLI。
+ * 2. 输出活跃（弱信号）：持续输出至少 OUTPUT_STREAK_MS，且最近 SPINNER_HOLD 内仍有输出。
+ *    覆盖 build / test / 日志等不改标题的命令。紧跟输入或改尺寸的输出（回显、重绘）不计；
+ *    shell 集成（OSC 133/633）明确报告停在提示符时也不计。
+ * 两路规则须与 src-tauri/src/mobile.rs 的手机会话 `programBusy` 一致。
+ *
+ * 性能：每块输出只做 O(1) 的时间戳记录，不逐块通知；状态翻转时才通知，
+ * 并且每个终端最多挂一个到期定时器。不轮询进程树。
  */
+import { getTerminalCommandRunning } from './terminalCommandActivity'
 
-/** 转圈帧之间的空档保持「运行中」，避免状态随动画闪烁。须与后端 SPINNER_HOLD 一致。 */
+/** 转圈帧/输出之间的空档保持「运行中」，避免状态闪烁。须与后端 SPINNER_HOLD 一致。 */
 export const SPINNER_HOLD_MS = 3000
+/** 输入或改尺寸之后这段时间内的输出视为回显/重绘。须与后端 OUTPUT_QUIET_AFTER_INPUT 一致。 */
+export const OUTPUT_QUIET_AFTER_INPUT_MS = 500
+/** 输出需连续这么久才算运行中，过滤提示符重绘、一次性的短输出。须与后端 OUTPUT_STREAK 一致。 */
+export const OUTPUT_STREAK_MS = 1000
 
 type Listener = (terminalId: string) => void
 
 interface Activity {
   title: string
   lastFrame: number | null
+  /** 最近一次输入或改尺寸。 */
+  lastInput: number | null
+  /** 当前这段连续输出的开始时间（间隔达到 SPINNER_HOLD 即断开）。 */
+  streakStart: number | null
+  lastOutput: number | null
+  /** 上次通知时的状态，只在翻转时通知。 */
+  busy: boolean
   timer: ReturnType<typeof setTimeout> | null
 }
 
@@ -49,31 +67,91 @@ function notify(terminalId: string) {
   for (const listener of listeners) listener(terminalId)
 }
 
+function activityFor(terminalId: string): Activity {
+  let activity = activities.get(terminalId)
+  if (!activity) {
+    activity = {
+      title: '',
+      lastFrame: null,
+      lastInput: null,
+      streakStart: null,
+      lastOutput: null,
+      busy: false,
+      timer: null,
+    }
+    activities.set(terminalId, activity)
+  }
+  return activity
+}
+
+function outputBusy(terminalId: string, activity: Activity, now: number): boolean {
+  const { lastOutput, streakStart } = activity
+  if (lastOutput === null || streakStart === null) return false
+  if (now - lastOutput >= SPINNER_HOLD_MS || lastOutput - streakStart < OUTPUT_STREAK_MS) return false
+  // shell 集成明确说停在提示符：输出只是提示符/补全重绘。
+  return getTerminalCommandRunning(terminalId) !== false
+}
+
+function computeBusy(terminalId: string, activity: Activity, now: number): boolean {
+  if (isSpinnerGlyph([...activity.title][0])) return true
+  if (activity.lastFrame !== null && now - activity.lastFrame < SPINNER_HOLD_MS) return true
+  return outputBusy(terminalId, activity, now)
+}
+
+/** 状态翻转时通知；仍在运行且会自然到期时，挂一个到期定时器（已挂则不重排）。 */
+function refresh(terminalId: string, activity: Activity, now: number) {
+  const busy = computeBusy(terminalId, activity, now)
+  if (busy !== activity.busy) {
+    activity.busy = busy
+    notify(terminalId)
+  }
+  if (!busy || activity.timer || isSpinnerGlyph([...activity.title][0])) return
+  const expiry = Math.max(activity.lastFrame ?? 0, activity.lastOutput ?? 0) + SPINNER_HOLD_MS
+  activity.timer = setTimeout(() => {
+    activity.timer = null
+    if (activities.get(terminalId) === activity) refresh(terminalId, activity, Date.now())
+  }, Math.max(0, expiry - now))
+}
+
 /** 记录终端程序设置的原始标题（未清洗）。 */
 export function noteTerminalTitle(terminalId: string, rawTitle: string, now = Date.now()) {
   const title = rawTitle.trim()
-  const activity = activities.get(terminalId) ?? { title: '', lastFrame: null, timer: null }
-  const wasBusy = isTerminalProgramBusy(terminalId, now)
-  if (isSpinnerFrame(activity.title || null, title)) {
-    activity.lastFrame = now
-    // 保持时间到期后通知一次，让列表从「运行中」切回。
-    if (activity.timer) clearTimeout(activity.timer)
-    activity.timer = setTimeout(() => {
-      activity.timer = null
-      notify(terminalId)
-    }, SPINNER_HOLD_MS)
-  }
+  const activity = activityFor(terminalId)
+  if (isSpinnerFrame(activity.title || null, title)) activity.lastFrame = now
   activity.title = title
-  activities.set(terminalId, activity)
-  if (wasBusy !== isTerminalProgramBusy(terminalId, now)) notify(terminalId)
+  refresh(terminalId, activity, now)
 }
 
-/** 终端程序是否正在工作（标题在转圈）。 */
+/** 记录一块程序输出（不含回放/快照）。 */
+export function noteTerminalOutput(terminalId: string, now = Date.now()) {
+  const activity = activityFor(terminalId)
+  if (activity.lastInput !== null && now - activity.lastInput < OUTPUT_QUIET_AFTER_INPUT_MS) return
+  if (activity.lastOutput === null || now - activity.lastOutput >= SPINNER_HOLD_MS) {
+    activity.streakStart = now
+  }
+  activity.lastOutput = now
+  // 连续输出期间状态不变，跳过计算，避免逐块开销。
+  if (activity.busy && activity.timer) return
+  refresh(terminalId, activity, now)
+}
+
+/** 记录一次输入或改尺寸：随后短时间内的输出视为回显/重绘。 */
+export function noteTerminalInput(terminalId: string, now = Date.now()) {
+  activityFor(terminalId).lastInput = now
+}
+
+/** 终端程序是否正在工作（标题在转圈，或持续有输出）。 */
 export function isTerminalProgramBusy(terminalId: string, now = Date.now()): boolean {
   const activity = activities.get(terminalId)
-  if (!activity) return false
-  if (isSpinnerGlyph([...activity.title][0])) return true
-  return activity.lastFrame !== null && now - activity.lastFrame < SPINNER_HOLD_MS
+  return !!activity && computeBusy(terminalId, activity, now)
+}
+
+/**
+ * 最近一次通知时的状态，不随时间变化；供 useSyncExternalStore 做稳定快照。
+ * 状态到期翻转时会先更新这里再通知订阅者。
+ */
+export function getTerminalProgramBusySnapshot(terminalId: string): boolean {
+  return activities.get(terminalId)?.busy ?? false
 }
 
 export function clearTerminalProgramActivity(terminalId: string) {

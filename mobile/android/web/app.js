@@ -22,7 +22,7 @@ import {
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
 import { heldTerminalRows, heldRowOffset, keyboardLikelyOpen } from './terminalHold.js';
-import { homeSessionsEnabled, onSessionPrefsChange, setHomeSessionsEnabled } from './sessionPrefs.js';
+import { homeSessionsEnabled, onSessionPrefsChange, runningStatusEnabled, setHomeSessionsEnabled, setRunningStatusEnabled } from './sessionPrefs.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
@@ -338,8 +338,12 @@ function renderHomeSessions() {
 // 设置 → 工作台：首页「全部会话」默认显示；关闭后停止刷新，重新打开时立即读取。
 get('home-sessions-setting').value = homeSessionsEnabled() ? 'on' : 'off';
 get('home-sessions-setting').addEventListener('change', () => setHomeSessionsEnabled(get('home-sessions-setting').value === 'on'));
+// 设置 → 工作台：会话行的「运行中」显示，默认开启；关闭只隐藏显示。
+get('running-status-setting').value = runningStatusEnabled() ? 'on' : 'off';
+get('running-status-setting').addEventListener('change', () => setRunningStatusEnabled(get('running-status-setting').value === 'on'));
 onSessionPrefsChange(() => {
   get('home-sessions-setting').value = homeSessionsEnabled() ? 'on' : 'off';
+  get('running-status-setting').value = runningStatusEnabled() ? 'on' : 'off';
   renderHomeSessions();
   if (homeSessionsEnabled()) void refreshHomeSessions();
   else {

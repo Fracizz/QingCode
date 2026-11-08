@@ -71,7 +71,10 @@ import {
   type TerminalShellId,
 } from '@/lib/terminal/terminalShell'
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
-import { clearTerminalProgramActivity } from '@/lib/terminal/terminalProgramActivity'
+import {
+  clearTerminalProgramActivity,
+  noteTerminalInput,
+} from '@/lib/terminal/terminalProgramActivity'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
@@ -280,6 +283,8 @@ const pacedPtyResizes = new Map<string, { size: { cols: number; rows: number }; 
 
 function markPtySizeChanged(id: string) {
   ptySizeChangedAt.set(id, Date.now())
+  // 改尺寸后 ConPTY/TUI 会整屏重绘，这段输出不算程序在工作。
+  noteTerminalInput(id)
 }
 
 function ptyResizeWaitMs(id: string): number {
@@ -2127,6 +2132,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return
     }
     recordTypedInput(id, data)
+    noteTerminalInput(id)
     try {
       await writeTerminal(id, data)
     } catch (error) {

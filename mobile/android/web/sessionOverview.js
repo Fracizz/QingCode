@@ -12,7 +12,7 @@ import {
   sessionRunning,
 } from './protocol.js';
 import { icon, rowText, button } from './dom.js';
-import { onSessionPrefsChange, runningFirst, runningFirstToggle } from './sessionPrefs.js';
+import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 import { t } from './i18n.js';
 
 /**
@@ -262,7 +262,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   function renderRow(row, session, { current, last, busy }) {
     const label = sessionName(session);
     const active = current && session.id === state.selected();
-    const running = sessionRunning(session);
+    // 只影响显示；「运行中优先」排序仍按真实状态。
+    const running = runningStatusEnabled() && sessionRunning(session);
     const checked = selection.has(session.id);
     row.dataset.current = String(active);
     row.dataset.running = String(running);

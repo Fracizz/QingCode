@@ -19,7 +19,7 @@ import { attachLongPress } from './gestures.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
-import { onSessionPrefsChange, runningFirst, runningFirstToggle } from './sessionPrefs.js';
+import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 
 const REFRESH_INTERVAL = 1500;
 // 平板常驻时整段终端时间都在刷新，放慢节奏减少电脑端请求。
@@ -142,7 +142,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       existingRows.delete(session.id);
       row.dataset.current = String(session.id === selected);
       row.dataset.pinned = String(pinned.has(session.id));
-      const running = sessionRunning(session);
+      // 只影响显示；「运行中优先」排序仍按真实状态。
+      const running = runningStatusEnabled() && sessionRunning(session);
       row.dataset.running = String(running);
       const option = row.querySelector('.row');
       option.disabled = busy;

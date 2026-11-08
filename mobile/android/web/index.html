@@ -392,6 +392,13 @@
         </select>
         <p id="home-sessions-setting-hint">在工作台首页列出这台电脑上所有项目的手机会话，可搜索、批量关闭。关闭时仍可在终端左侧会话栏切到「全部」查看。</p>
       </div>
+      <div class="settings-card">
+        <label for="running-status-setting">运行状态</label>
+        <select id="running-status-setting" aria-describedby="running-status-setting-hint">
+          <option value="on" selected>在会话列表显示</option><option value="off">不显示</option>
+        </select>
+        <p id="running-status-setting-hint">程序标题在转圈，或持续输出约 1 秒以上时，会话行显示转圈与「运行中」，停止约 3 秒后消失。关闭只隐藏显示，「运行中优先」排序与后台提醒不受影响。</p>
+      </div>
       <h3 class="settings-group-title">发送与图片</h3>
       <div class="settings-card">
         <label for="image-compression">图片压缩</label>

@@ -101,6 +101,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': true,
     'terminal.integrated.largePasteAsFile': false,
+    'terminal.integrated.tabActivityIndicator': true,
     'ssh.server.enabled': true,
     'ssh.server.autoDownload': true,
     'ssh.server.offlineDir': '',
@@ -237,6 +238,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.sshUploadOnPaste": true,
   // terminal.integrated.largePasteAsFile：粘贴超过 32KB 或 500 行的文本时，不再询问，直接存为文件并粘贴路径（默认 false，即每次询问）
   "terminal.integrated.largePasteAsFile": false,
+  // terminal.integrated.tabActivityIndicator：终端标签显示「运行中」呼吸点（标题转圈或持续输出时；事件驱动，不轮询进程，默认 true）
+  "terminal.integrated.tabActivityIndicator": true,
 
   // ============================== SSH ==============================
   // ssh.server.enabled：仅兼容尚未保存 mode 的旧连接（true=Server，false=SSH，默认 true）。

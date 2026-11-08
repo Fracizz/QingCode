@@ -66,6 +66,11 @@ const TERMINAL_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
 /// 程序标题出现转圈帧后保持「忙碌」的时间。按时间窗口而不是按轮询瞬间的标题判断：
 /// 轮询可能正好取到空白帧或两次工具调用之间短暂的普通标题，直接取样会让转圈时转时停。
 const SPINNER_HOLD: Duration = Duration::from_millis(3000);
+/// 输入或改尺寸之后这段时间内的输出视为回显/重绘，不算程序在工作。
+/// 须与 src/lib/terminal/terminalProgramActivity.ts 的 OUTPUT_QUIET_AFTER_INPUT_MS 一致。
+const OUTPUT_QUIET_AFTER_INPUT: Duration = Duration::from_millis(500);
+/// 输出需连续这么久才算运行中，过滤提示符重绘等一次性短输出。须与前端 OUTPUT_STREAK_MS 一致。
+const OUTPUT_STREAK: Duration = Duration::from_millis(1000);
 
 /// 标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与常见的圆形/方块转圈。
 fn is_spinner_glyph(character: char) -> bool {
@@ -364,6 +369,11 @@ struct Session {
     created_at_ms: u64,
     /// 最近一次程序标题转圈帧的时间，用于平滑的「忙碌」状态。
     last_spinner_frame: Option<Instant>,
+    /// 最近一次输入或改尺寸，其后短时间内的输出视为回显/重绘。
+    last_input: Option<Instant>,
+    /// 当前这段连续输出的开始与最近一次（间隔达到 `SPINNER_HOLD` 即断开）。
+    output_streak_start: Option<Instant>,
+    last_output: Option<Instant>,
     /// 已安排一次预览通知且尚未发出。
     preview_notify_pending: bool,
 }
@@ -391,6 +401,9 @@ impl Session {
             last_active_ms: now_ms,
             created_at_ms: now_ms,
             last_spinner_frame: None,
+            last_input: None,
+            output_streak_start: None,
+            last_output: None,
             preview_notify_pending: false,
         }
     }
@@ -412,6 +425,48 @@ impl Session {
         self.program_busy_at(Instant::now())
     }
 
+    /// 持续输出（连续至少 `OUTPUT_STREAK`，且最近 `SPINNER_HOLD` 内仍有输出）。
+    /// 覆盖 build / test 等不改标题的命令；只用于列表显示，后台提醒仍只看标题转圈，
+    /// 免得 `tail -f` 这类间歇输出反复触发「已停下」通知。
+    fn output_busy_at(&self, now: Instant) -> bool {
+        self.exit.is_none()
+            && match (self.output_streak_start, self.last_output) {
+                (Some(start), Some(last)) => {
+                    now.saturating_duration_since(last) < SPINNER_HOLD
+                        && last.saturating_duration_since(start) >= OUTPUT_STREAK
+                }
+                _ => false,
+            }
+    }
+
+    /// 列表显示与排序用的「运行中」：标题转圈或持续输出。
+    fn display_busy(&self) -> bool {
+        let now = Instant::now();
+        self.program_busy_at(now) || self.output_busy_at(now)
+    }
+
+    /// 输入或改尺寸：既算会话活动，也让随后的回显/重绘不计入输出活跃。
+    fn note_input(&mut self) {
+        self.touch();
+        self.last_input = Some(self.last_active);
+    }
+
+    fn note_output_at(&mut self, now: Instant) {
+        if self
+            .last_input
+            .is_some_and(|input| now.saturating_duration_since(input) < OUTPUT_QUIET_AFTER_INPUT)
+        {
+            return;
+        }
+        if self
+            .last_output
+            .is_none_or(|last| now.saturating_duration_since(last) >= SPINNER_HOLD)
+        {
+            self.output_streak_start = Some(now);
+        }
+        self.last_output = Some(now);
+    }
+
     fn touch(&mut self) {
         self.last_active = Instant::now();
         self.last_active_ms = unix_now_ms();
@@ -422,6 +477,7 @@ impl Session {
         let mut previous_title = self.screen.title().map(str::to_owned);
         match &chunk {
             OutputChunk::Bytes(data) => {
+                self.note_output_at(self.last_active);
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
                     for section in bytes.split_inclusive(|byte| matches!(*byte, 0x07 | 0x1b)) {
                         self.screen.process(section);
@@ -490,7 +546,7 @@ impl Session {
     fn metadata(&self, id: &str) -> Value {
         json!({ "id": id, "number": self.number, "exit": self.exit,
             "activityRevision": self.activity_revision.fetch_add(1, Ordering::Relaxed),
-            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
+            "programTitle": self.screen.title(), "programBusy": self.display_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
             "lastActiveAt": self.last_active_ms, "createdAt": self.created_at_ms,
             "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
@@ -533,7 +589,7 @@ impl Session {
             "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
-            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
+            "programTitle": self.screen.title(), "programBusy": self.display_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -567,7 +623,7 @@ impl Session {
             "more": false, "reset": false, "snapshot": true, "exit": exit,
             "historyBefore": self.screen.history_before(),
             "historyAvailable": self.screen.has_history(),
-            "programTitle": self.screen.title(), "programBusy": self.program_busy(),
+            "programTitle": self.screen.title(), "programBusy": self.display_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
         })
     }
@@ -1733,7 +1789,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
-            hub.with_session(&id, Session::touch);
+            hub.with_session(&id, Session::note_input);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_write_terminal_unchecked(id, data, app.state()).await?;
             } else {
@@ -1801,7 +1857,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             result
         }
         Operation::Resize { id, cols, rows } => {
-            hub.with_session(&id, Session::touch);
+            hub.with_session(&id, Session::note_input);
             let (cols, rows) = size(cols, rows);
             if hub.session_kind(&id)? == ProjectKind::Ssh {
                 crate::remote_ssh::ssh_resize_terminal_unchecked(
@@ -2721,6 +2777,40 @@ mod tests {
             disconnected: false,
         });
         assert!(!session.program_busy());
+    }
+
+    #[test]
+    fn output_busy_needs_a_sustained_streak_and_ignores_echo() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        let start = Instant::now();
+        let step = Duration::from_millis(200);
+        // 短促输出（如提示符重绘）不算运行中。
+        session.note_output_at(start);
+        session.note_output_at(start + step);
+        assert!(!session.output_busy_at(start + step));
+        // 持续输出满 OUTPUT_STREAK 才算，并保持 SPINNER_HOLD。
+        let last = start + OUTPUT_STREAK;
+        session.note_output_at(last);
+        assert!(session.output_busy_at(last));
+        assert!(session.output_busy_at(last + SPINNER_HOLD - Duration::from_millis(1)));
+        assert!(!session.output_busy_at(last + SPINNER_HOLD));
+        // 后台提醒用的 program_busy 不受输出影响。
+        assert!(!session.program_busy_at(last));
+
+        // 紧跟输入的回显不计。
+        let mut echo = Session::new(project(), "phone".into(), 2);
+        echo.note_input();
+        let typed = echo.last_input.unwrap();
+        echo.note_output_at(typed + step);
+        assert!(echo.last_output.is_none());
+        echo.note_output_at(typed + OUTPUT_QUIET_AFTER_INPUT);
+        assert!(echo.last_output.is_some());
+
+        session.finish(Exit {
+            exit_code: 0,
+            disconnected: false,
+        });
+        assert!(!session.output_busy_at(last));
     }
 
     #[test]

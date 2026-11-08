@@ -94,6 +94,11 @@ import {
   loadScopedTerminalLargePasteAsFile,
   saveScopedTerminalLargePasteAsFile,
 } from '../lib/terminal/terminalLargePasteSettings'
+import {
+  getTerminalActivityIndicator,
+  loadScopedTerminalActivityIndicator,
+  saveScopedTerminalActivityIndicator,
+} from '../lib/terminal/terminalActivitySettings'
 import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import {
   loadEffectiveSshServerEnabled,
@@ -216,6 +221,7 @@ export default function SettingsEditor() {
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [largePasteAsFile, setLargePasteAsFile] = useState(getTerminalLargePasteAsFile)
+  const [activityIndicator, setActivityIndicator] = useState(getTerminalActivityIndicator)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
@@ -358,6 +364,9 @@ export default function SettingsEditor() {
     void loadScopedTerminalLargePasteAsFile(settingsScope, currentProject).then(
       setLargePasteAsFile,
     )
+    void loadScopedTerminalActivityIndicator(settingsScope, currentProject).then(
+      setActivityIndicator,
+    )
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -492,6 +501,17 @@ export default function SettingsEditor() {
       await saveScopedTerminalLargePasteAsFile(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存大段粘贴设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateActivityIndicator = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setActivityIndicator(enabled)
+    try {
+      await saveScopedTerminalActivityIndicator(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存标签运行状态设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -1152,6 +1172,27 @@ export default function SettingsEditor() {
                       onChange={e => void updateLargePasteAsFile(e.target.value === 'on')}
                       className="setting-control setting-select"
                       aria-label={t('终端 › 集成: 大段粘贴存为文件')}
+                    >
+                      <option value="off">{t('关闭')}</option>
+                      <option value="on">{t('开启')}</option>
+                    </select>
+                  </SettingItem>
+                )}
+                {match('状态', '运行中', 'tabActivityIndicator') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 标签运行状态')}
+                    description={t(
+                      '在终端标签上显示「运行中」呼吸点：程序标题在转圈，或持续输出约 1 秒以上时亮起，停止约 3 秒后熄灭。由输出事件驱动，不轮询进程；不出声的长命令（如静默编译）不会亮。',
+                    )}
+                    modified={
+                      activityIndicator !== DEFAULT_GLOBAL_SETTINGS['terminal.integrated.tabActivityIndicator']
+                    }
+                  >
+                    <select
+                      value={activityIndicator ? 'on' : 'off'}
+                      onChange={e => void updateActivityIndicator(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('终端 › 集成: 标签运行状态')}
                     >
                       <option value="off">{t('关闭')}</option>
                       <option value="on">{t('开启')}</option>
