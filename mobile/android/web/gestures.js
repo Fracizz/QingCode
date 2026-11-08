@@ -232,3 +232,123 @@ export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 }
     element.removeEventListener('click', click, true);
   };
 }
+
+/**
+ * 长按拖动排序（快捷键栏布局等短列表）：在 rowSelector 行上按住 delay 毫秒进入拖动，
+ * 被拖行跟随手指，其余行让位；松手调用 onDrop(row, from, to)。按住期间移动超过 slop 视为滚动，放弃拖动。
+ * 拖动后吞掉随后的 click，避免松手时误触行内的开关；ignoreSelector 内的控件（如上移 / 下移按钮）不触发拖动。
+ * 落点计算在 keyLayout.js 的 dragTargetIndex。
+ */
+export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, targetIndex, delay = 320, slop = 8 }) {
+  let pending = null;
+  let drag = null;
+  let swallowClick = false;
+
+  function rows() { return [...list.querySelectorAll(rowSelector)]; }
+
+  function clear() {
+    clearTimeout(pending?.timer);
+    pending = null;
+    if (!drag) return;
+    for (const row of drag.rows) {
+      row.style.removeProperty('transform');
+      row.style.removeProperty('transition');
+    }
+    drag.row.classList.remove('dragging');
+    delete list.dataset.dragging;
+    drag = null;
+  }
+
+  function begin() {
+    const { row, pointerId, y } = pending;
+    pending = null;
+    if (!row.isConnected) return;
+    const all = rows();
+    const rects = all.map(item => item.getBoundingClientRect());
+    const from = all.indexOf(row);
+    const listRect = list.getBoundingClientRect();
+    drag = {
+      row, pointerId, y, from, to: from, rows: all,
+      mids: rects.map(rect => rect.top + rect.height / 2),
+      // 让位距离取相邻行的间距（含分隔线）；只有一行时不会让位。
+      step: all.length > 1 ? (rects[all.length - 1].top - rects[0].top) / (all.length - 1) : rects[from].height,
+      // 被拖行不超出列表上下边界。
+      min: listRect.top - rects[from].top,
+      max: listRect.bottom - rects[from].bottom,
+    };
+    try { row.setPointerCapture(pointerId); } catch { /* 捕获失败时仍靠列表冒泡跟踪。 */ }
+    row.classList.add('dragging');
+    list.dataset.dragging = 'true';
+    for (const item of all) if (item !== row) item.style.transition = 'transform 160ms ease';
+    navigator.vibrate?.(12);
+  }
+
+  function down(event) {
+    clear();
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const row = event.target.closest?.(rowSelector);
+    if (!row || !list.contains(row) || (ignoreSelector && event.target.closest(ignoreSelector))) return;
+    pending = { row, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(begin, delay) };
+  }
+
+  function move(event) {
+    if (pending && event.pointerId === pending.pointerId) {
+      if (Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > slop) clear();
+      return;
+    }
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    event.preventDefault();
+    const offset = Math.max(drag.min, Math.min(drag.max, event.clientY - drag.y));
+    drag.row.style.transform = `translateY(${offset}px)`;
+    drag.to = targetIndex(drag.mids, drag.from, drag.mids[drag.from] + offset);
+    for (const [index, item] of drag.rows.entries()) {
+      if (index === drag.from) continue;
+      const shift = index > drag.from && index <= drag.to ? -drag.step : index < drag.from && index >= drag.to ? drag.step : 0;
+      item.style.transform = shift ? `translateY(${shift}px)` : '';
+    }
+  }
+
+  function up(event) {
+    if (pending && event.pointerId === pending.pointerId) { clear(); return; }
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const { row, from, to } = drag;
+    swallowClick = true;
+    // click 只在 pointerup 后同步派发；下一帧仍未出现说明不会再来，解除吞掉。
+    setTimeout(() => { swallowClick = false; }, 0);
+    clear();
+    if (to !== from) onDrop(row, from, to);
+  }
+
+  function cancel(event) {
+    if ((pending && event.pointerId === pending.pointerId) || (drag && event.pointerId === drag.pointerId)) clear();
+  }
+
+  // 拖动中阻止页面 / 弹层滚动；只在已进入拖动时取消，按住期间的滑动仍正常滚动。
+  function touchMove(event) { if (drag) event.preventDefault(); }
+  // WebView 长按会弹出系统菜单或选中文字，按住期间屏蔽。
+  function context(event) { if (pending || drag) event.preventDefault(); }
+  function click(event) {
+    if (!swallowClick) return;
+    swallowClick = false;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+  }
+
+  list.addEventListener('pointerdown', down);
+  list.addEventListener('pointermove', move);
+  list.addEventListener('pointerup', up);
+  list.addEventListener('pointercancel', cancel);
+  list.addEventListener('touchmove', touchMove, { passive: false });
+  list.addEventListener('contextmenu', context);
+  list.addEventListener('click', click, true);
+  return () => {
+    clear();
+    list.removeEventListener('pointerdown', down);
+    list.removeEventListener('pointermove', move);
+    list.removeEventListener('pointerup', up);
+    list.removeEventListener('pointercancel', cancel);
+    list.removeEventListener('touchmove', touchMove);
+    list.removeEventListener('contextmenu', context);
+    list.removeEventListener('click', click, true);
+  };
+}

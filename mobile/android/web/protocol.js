@@ -126,14 +126,14 @@ export function prunedSessionPins(pins, sessions) {
 }
 
 /**
- * 显示顺序：置顶会话按置顶顺序在前；其余运行中（程序在工作）的排前面，再保持电脑端顺序。
+ * 显示顺序：置顶会话按置顶顺序在前；打开「运行中优先」时其余运行中（程序在工作）的排前面，再保持电脑端顺序。
  * 返回 { session, index }，index 是原列表位置，用于「终端 N」兜底名称。
  */
-export function orderSessions(sessions, pins = []) {
+export function orderSessions(sessions, pins = [], { runningFirst = false } = {}) {
   const rank = new Map(pins.map((id, index) => [id, index]));
   return sessions.map((session, index) => ({ session, index }))
     .sort((a, b) => (rank.get(a.session.id) ?? pins.length) - (rank.get(b.session.id) ?? pins.length)
-      || Number(sessionRunning(b.session)) - Number(sessionRunning(a.session))
+      || (runningFirst ? Number(sessionRunning(b.session)) - Number(sessionRunning(a.session)) : 0)
       || a.index - b.index);
 }
 /** 会话纵览筛选：全部 / 未结束 / 已结束。 */
@@ -148,11 +148,11 @@ export function countSessionOverview(list) {
 
 /**
  * 会话纵览：把电脑端返回的全部手机会话按项目分组。
- * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内运行中的排最前，再按会话编号。
+ * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内按会话编号（runningFirst 时运行中的排最前）。
  * 电脑端项目列表中仍存在的项目使用列表里的完整信息（含连接名），否则用会话自带的项目信息并标记 missing。
  * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
  */
-export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '' } = {}) {
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
   const times = new Map();
   for (const item of Array.isArray(history) ? history : []) {
@@ -177,7 +177,7 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     group.sessions.push(session);
   }
   for (const group of groups.values()) {
-    group.sessions.sort((a, b) => Number(sessionRunning(b)) - Number(sessionRunning(a)) || (a.number ?? 0) - (b.number ?? 0));
+    group.sessions.sort((a, b) => (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0) || (a.number ?? 0) - (b.number ?? 0));
   }
   return [...groups.values()].sort((a, b) =>
     Number(b.project.id === current) - Number(a.project.id === current)

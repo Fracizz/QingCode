@@ -19,6 +19,7 @@ import { attachLongPress } from './gestures.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
+import { onSessionPrefsChange, runningFirst, runningFirstToggle } from './sessionPrefs.js';
 
 const REFRESH_INTERVAL = 1500;
 // 平板常驻时整段终端时间都在刷新，放慢节奏减少电脑端请求。
@@ -44,6 +45,11 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   // null：尚未确认电脑端是否支持；切换连接后重新确认。
   let allAvailable = null;
   let availabilityAddress = null;
+
+  // 「本项目」列表的「运行中优先」，与纵览中的同一选项同步。
+  const projectSort = runningFirstToggle('drawer-sort');
+  get('drawer-new-session').after(projectSort.element);
+  onSessionPrefsChange(() => { if (drawer.open || docked) render(); });
 
   function allMode() { return scope === 'all' && allAvailable === true && availabilityAddress === state.profile()?.id; }
 
@@ -124,7 +130,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('end-all-sessions').disabled = busy || !sessions.length;
     get('drawer-new-session').disabled = busy;
     const pinned = new Set(pins());
-    for (const [position, { session, index }] of orderSessions(sessions, [...pinned]).entries()) {
+    for (const [position, { session, index }] of orderSessions(sessions, [...pinned], { runningFirst: runningFirst() }).entries()) {
       const label = sessionName(session, index + 1);
       let row = existingRows.get(session.id);
       if (!row) row = createRow(session);
@@ -171,6 +177,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('session-scope-hint').hidden = allAvailable !== false;
     get('session-options').hidden = all;
     get('drawer-new-session').hidden = all;
+    projectSort.element.hidden = all;
+    projectSort.relabel();
     get('end-all-sessions').hidden = all;
     get('session-overview').hidden = !all;
     if (all) overview.render();

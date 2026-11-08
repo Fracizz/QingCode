@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   SHORTCUT_KEYS,
   defaultKeyLayout,
+  dragTargetIndex,
   isDefaultKeyLayout,
   moveKey,
+  moveKeyTo,
   parseKeyLayout,
   serializeKeyLayout,
   toggleKeyHidden,
@@ -50,6 +52,26 @@ describe('Android shortcut bar layout', () => {
     expect(moveKey(layout, 'right', 1)).toBe(layout)
     expect(moveKey(layout, 'bogus', 1)).toBe(layout)
     expect(layout.order).toEqual(defaults)
+  })
+
+  it('drags a key to any position, clamping out-of-range targets', () => {
+    const layout = defaultKeyLayout()
+    expect(moveKeyTo(layout, 'right', 0).order.slice(0, 2)).toEqual(['right', 'esc'])
+    expect(moveKeyTo(layout, 'esc', 3).order.slice(0, 4)).toEqual(['tab', 'interrupt', 'shift-tab', 'esc'])
+    expect(moveKeyTo(layout, 'esc', 99).order.at(-1)).toBe('esc')
+    expect(moveKeyTo(layout, 'tab', 1)).toBe(layout)
+    expect(moveKeyTo(layout, 'bogus', 0)).toBe(layout)
+    expect(layout.order).toEqual(defaults)
+  })
+
+  it('picks the drop slot only after crossing a neighbour midline', () => {
+    const mids = [25, 75, 125, 175]
+    expect(dragTargetIndex(mids, 1, 75)).toBe(1)
+    expect(dragTargetIndex(mids, 1, 124)).toBe(1)
+    expect(dragTargetIndex(mids, 1, 126)).toBe(2)
+    expect(dragTargetIndex(mids, 1, 400)).toBe(3)
+    expect(dragTargetIndex(mids, 2, 24)).toBe(0)
+    expect(dragTargetIndex(mids, 2, 76)).toBe(2)
   })
 
   it('hidden keys leave the bar but stay reachable in More, in order', () => {

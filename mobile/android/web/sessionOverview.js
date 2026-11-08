@@ -12,16 +12,18 @@ import {
   sessionRunning,
 } from './protocol.js';
 import { icon, rowText, button } from './dom.js';
+import { onSessionPrefsChange, runningFirst, runningFirstToggle } from './sessionPrefs.js';
 import { t } from './i18n.js';
 
 /**
  * root：组件容器。limit：首次显示的会话数（首页 8，抽屉不限）。
+ * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）。
  * state：profile()、projects()、history()、current()（终端页当前项目 id，首页为 null）、
  * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)。
  * open(session) 接入会话；end(sessions) 关闭一个或多个会话（确认与结果提示由调用方负责），返回 Promise。
  * onChange() 在列表或数量变化后通知调用方（如更新标题数量、显示/隐藏所在区块）。
  */
-export function createSessionOverview({ root, limit = Infinity, state, open, end, onChange = () => {} }) {
+export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, state, open, end, onChange = () => {} }) {
   let items = [];
   let address = null;
   let filter = 'all';
@@ -44,8 +46,13 @@ export function createSessionOverview({ root, limit = Infinity, state, open, end
   input.autocomplete = 'off';
   input.enterKeyHint = 'search';
   search.append(icon('search'), input);
+  tools.append(search);
+  // 选项行：左侧「运行中优先」，右侧「管理」多选。
+  const options = document.createElement('div');
+  options.className = 'overview-options';
+  const sort = runningFirstToggle('overview-sort');
   const manage = button('text-button overview-manage', () => setSelecting(!selecting));
-  tools.append(search, manage);
+  options.append(sort.element, manage);
 
   const filters = document.createElement('div');
   filters.className = 'segmented overview-filter';
@@ -99,7 +106,8 @@ export function createSessionOverview({ root, limit = Infinity, state, open, end
   error.className = 'error overview-error';
   error.setAttribute('role', 'alert');
   error.hidden = true;
-  root.append(tools, filters, bar, error, groupsNode, empty, more);
+  root.append(tools, filters, options, bar, error, groupsNode, empty, more);
+  onSessionPrefsChange(() => render());
 
   input.addEventListener('input', () => { query = input.value; render(); });
 
@@ -111,7 +119,7 @@ export function createSessionOverview({ root, limit = Infinity, state, open, end
   }
 
   function matchingItems() {
-    return groupSessionOverview(list(), { projects: state.projects(), filter, query }).flatMap(group => group.sessions);
+    return groupSessionOverview(list(), { projects: state.projects(), filter, query, runningFirst: runningFirst() }).flatMap(group => group.sessions);
   }
 
   function setSelecting(next) {
@@ -126,12 +134,17 @@ export function createSessionOverview({ root, limit = Infinity, state, open, end
     selection = prunedSelection(selection, all);
     const counts = countSessionOverview(all);
     const grouped = groupSessionOverview(all, {
-      projects: state.projects(), current: state.current(), history: state.history(), filter, query,
+      projects: state.projects(), current: state.current(), history: state.history(), filter, query, runningFirst: runningFirst(),
     });
     // 搜索、筛选或多选时显示全部结果，避免选中的会话藏在「展开全部」后面。
     const narrowed = !!query.trim() || filter !== 'all' || selecting;
     const { groups, hidden } = expanded || narrowed ? { groups: grouped, hidden: 0 } : limitSessionGroups(grouped, limit);
     root.dataset.selecting = String(selecting);
+    // 会话少时不显示搜索与筛选；已在搜索或筛选中则保留，避免控件突然消失。
+    const compact = all.length <= compactBelow && !query.trim() && filter === 'all';
+    tools.hidden = compact;
+    filters.hidden = compact;
+    sort.relabel();
     // 静态文案也在每次渲染时取当前语言，切换语言后重绘即生效。
     input.placeholder = t('搜索会话、项目或设备');
     input.setAttribute('aria-label', t('搜索会话、项目或设备'));

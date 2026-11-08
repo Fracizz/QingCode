@@ -79,6 +79,23 @@ export async function run({ spaceId, finish = true } = {}) {
       fixture.addSession({ project: 'p-ssh', title: '平板会话', deviceName: 'Galaxy Tab', ownDevice: false })
     })
 
+    const setHomeSessions = value => page.evaluate(next => {
+      const select = document.querySelector('#home-sessions-setting')
+      select.value = next
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    }, value)
+
+    await step('home shows all sessions by default and the setting can hide it', async () => {
+      await goHome()
+      await page.waitForFunction(() => !document.querySelector('#home-sessions').hidden)
+      assert.equal(await page.evaluate(() => document.querySelector('#home-sessions-setting').value), 'on')
+      await setHomeSessions('off')
+      assert.equal(await page.evaluate(() => document.querySelector('#home-sessions').hidden), true)
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:home-sessions')), 'off')
+      await setHomeSessions('on')
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:home-sessions')), null)
+    })
+
     await step('home lists all sessions above recent projects, shows eight first and marks the last used session', async () => {
       await goHome()
       await page.waitForFunction(() => !document.querySelector('#home-sessions').hidden
@@ -109,6 +126,21 @@ export async function run({ spaceId, finish = true } = {}) {
       await tap(home + ' [data-filter="live"]')
       assert.equal((await rowIds(home)).length, 9)
       await tap(home + ' [data-filter="all"]')
+    })
+
+    await step('running first is an opt-in option shared by home and the drawer', async () => {
+      const firstInSsh = root => page.evaluate(selector => document.querySelector(selector + ' [data-project="p-ssh"] .session-option')?.dataset.id, root)
+      await page.evaluate(() => window.__mobileFixture.setTitle('mobile-10', '⠋ 构建 6'))
+      await new Promise(done => setTimeout(done, 600))
+      assert.notEqual(await firstInSsh(home), 'mobile-10', 'default keeps desktop order')
+      assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .overview-sort input').checked, home), false)
+      await tap(home + ' .overview-sort input')
+      await page.waitForFunction(selector => document.querySelector(selector + ' [data-project="p-ssh"] .session-option')?.dataset.id === 'mobile-10', home)
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:sessions-running-first')), 'on')
+      await page.screenshot({ path: resolve(output, 'home-running-first.png') })
+      await tap(home + ' .overview-sort input')
+      await page.waitForFunction(selector => document.querySelector(selector + ' [data-project="p-ssh"] .session-option')?.dataset.id !== 'mobile-10', home)
+      await page.evaluate(() => window.__mobileFixture.setTitle('mobile-10', '构建 6'))
     })
 
     await step('closing another device\'s running session names that device in the confirmation', async () => {

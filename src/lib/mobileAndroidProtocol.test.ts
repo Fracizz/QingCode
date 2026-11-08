@@ -492,14 +492,16 @@ describe('session created time and running order', () => {
     expect(createdLabel({}, now)).toBe('')
   })
 
-  it('puts running sessions first after pins in the drawer and inside overview groups', () => {
+  it('puts running sessions first after pins only when the running-first option is on', () => {
     const list = [
       { id: 'a', number: 1, programBusy: false, project: { id: 'p', name: 'P' } },
       { id: 'b', number: 2, programBusy: true, project: { id: 'p', name: 'P' } },
       { id: 'c', number: 3, programBusy: false, project: { id: 'p', name: 'P' } },
       { id: 'd', number: 4, programBusy: true, exit: { exitCode: 0 }, project: { id: 'p', name: 'P' } },
     ]
-    expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'b', 'a', 'd'])
-    expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['b', 'a', 'c', 'd'])
+    expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'a', 'b', 'd'])
+    expect(orderSessions(list, ['c'], { runningFirst: true }).map(item => item.session.id)).toEqual(['c', 'b', 'a', 'd'])
+    expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(groupSessionOverview(list, { runningFirst: true })[0].sessions.map(session => session.id)).toEqual(['b', 'a', 'c', 'd'])
   })
 })

@@ -22,6 +22,7 @@ import {
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
 import { heldTerminalRows, heldRowOffset, keyboardLikelyOpen } from './terminalHold.js';
+import { homeSessionsEnabled, onSessionPrefsChange, setHomeSessionsEnabled } from './sessionPrefs.js';
 import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 import { composerInput, editDraft, isSlashDraft } from './composer.js';
 import { attachTerminalHistory } from './terminalHistory.js';
@@ -291,6 +292,8 @@ const drawer = createSessionDrawer({
 // 工作台首页「全部会话」：首页可见、App 在前台且电脑在线时定时刷新；与抽屉的「全部」共用组件。
 const HOME_SESSIONS_INTERVAL = 5000;
 const HOME_SESSIONS_LIMIT = 8;
+// 首页会话不超过这个数时收起搜索与筛选，只留「运行中优先」与「管理」。
+const HOME_SESSIONS_COMPACT = 4;
 let homeSessionsTimer = null;
 let homeSessionsLoading = false;
 let homeSessionsEpoch = 0;
@@ -298,6 +301,7 @@ let homeSessionsSupported = false;
 const homeOverview = createSessionOverview({
   root: get('home-session-overview'),
   limit: HOME_SESSIONS_LIMIT,
+  compactBelow: HOME_SESSIONS_COMPACT,
   state: {
     profile: () => profile,
     projects: () => projects,
@@ -318,17 +322,30 @@ function lastSessionOf(projectId) {
 }
 
 function homeSessionsVisible() {
-  return !!profile && page === 'home' && terminalScreen.hidden && !get('dashboard').hidden
+  return homeSessionsEnabled() && !!profile && page === 'home' && terminalScreen.hidden && !get('dashboard').hidden
     && foreground && !document.hidden && hostState(profile) === 'online';
 }
 
-/** 没有会话（且不在多选中）或旧电脑端时隐藏整块，首页只保留最近打开。 */
+/** 设置中未打开、没有会话（且不在多选中）或旧电脑端时隐藏整块，首页只保留最近打开。 */
 function renderHomeSessions() {
   const count = homeOverview.count();
   get('home-session-count').textContent = String(count);
-  get('home-sessions').hidden = !homeSessionsSupported || !profile || hostState(profile) !== 'online'
+  get('home-sessions').hidden = !homeSessionsEnabled() || !homeSessionsSupported || !profile || hostState(profile) !== 'online'
     || (!count && !homeOverview.isSelecting());
 }
+
+// 设置 → 工作台：首页「全部会话」默认显示；关闭后停止刷新，重新打开时立即读取。
+get('home-sessions-setting').value = homeSessionsEnabled() ? 'on' : 'off';
+get('home-sessions-setting').addEventListener('change', () => setHomeSessionsEnabled(get('home-sessions-setting').value === 'on'));
+onSessionPrefsChange(() => {
+  get('home-sessions-setting').value = homeSessionsEnabled() ? 'on' : 'off';
+  renderHomeSessions();
+  if (homeSessionsEnabled()) void refreshHomeSessions();
+  else {
+    clearTimeout(homeSessionsTimer);
+    homeSessionsTimer = null;
+  }
+});
 
 async function refreshHomeSessions() {
   clearTimeout(homeSessionsTimer);

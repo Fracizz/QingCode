@@ -32,6 +32,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'composeStatus.js': ['mobile/android/web/composeStatus.js', 'text/javascript'],
   'sessionDrawer.js': ['mobile/android/web/sessionDrawer.js', 'text/javascript'],
   'sessionOverview.js': ['mobile/android/web/sessionOverview.js', 'text/javascript'],
+  'sessionPrefs.js': ['mobile/android/web/sessionPrefs.js', 'text/javascript'],
   'terminalSettings.js': ['mobile/android/web/terminalSettings.js', 'text/javascript'],
   'shortcutBar.js': ['mobile/android/web/shortcutBar.js', 'text/javascript'],
   'keyLayout.js': ['mobile/android/web/keyLayout.js', 'text/javascript'],

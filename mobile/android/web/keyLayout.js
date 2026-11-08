@@ -62,6 +62,28 @@ export function moveKey(layout, key, delta) {
   return { ...layout, order };
 }
 
+/** 拖动排序：把 key 移到 index（按移动后的位置计）；越界时夹到两端，未知键原样返回。 */
+export function moveKeyTo(layout, key, index) {
+  const from = layout.order.indexOf(key);
+  if (from < 0) return layout;
+  const to = Math.max(0, Math.min(layout.order.length - 1, Math.trunc(index) || 0));
+  if (to === from) return layout;
+  const order = layout.order.filter(item => item !== key);
+  order.splice(to, 0, key);
+  return { ...layout, order };
+}
+
+/**
+ * 拖动中的落点：mids 为拖动开始时各行中线的 Y，center 为被拖行当前中线。
+ * 越过相邻行的中线才换位，返回松手后应插入的位置。
+ */
+export function dragTargetIndex(mids, from, center) {
+  let to = from;
+  while (to < mids.length - 1 && center > mids[to + 1]) to++;
+  while (to > 0 && center < mids[to - 1]) to--;
+  return to;
+}
+
 export function toggleKeyHidden(layout, key) {
   if (!KNOWN.has(key)) return layout;
   const hidden = layout.hidden.includes(key) ? layout.hidden.filter(item => item !== key) : [...layout.hidden, key];

@@ -382,6 +382,14 @@
         <p id="update-status" class="hint" role="status"></p>
         <label class="update-auto"><input id="update-auto" type="checkbox" checked> 每天自动检查更新</label>
       </section>
+      <h3 class="settings-group-title">工作台</h3>
+      <div class="settings-card">
+        <label for="home-sessions-setting">全部会话</label>
+        <select id="home-sessions-setting" aria-describedby="home-sessions-setting-hint">
+          <option value="on" selected>在首页显示</option><option value="off">不在首页显示</option>
+        </select>
+        <p id="home-sessions-setting-hint">在工作台首页列出这台电脑上所有项目的手机会话，可搜索、批量关闭。关闭时仍可在终端左侧会话栏切到「全部」查看。</p>
+      </div>
       <h3 class="settings-group-title">发送与图片</h3>
       <div class="settings-card">
         <label for="image-compression">图片压缩</label>
@@ -492,7 +500,7 @@
   <dialog id="key-layout-dialog" class="sheet" aria-labelledby="key-layout-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 id="key-layout-title">快捷键栏</h2>
-    <p>勾选的键显示在终端底部，按这里的顺序排列；取消勾选的键移到「更多」顶部。「更多」按钮固定在最右侧。只保存在这台手机上。</p>
+    <p>勾选的键显示在终端底部，按这里的顺序排列；长按一行可拖动排序。取消勾选的键移到「更多」顶部。「更多」按钮固定在最右侧。只保存在这台手机上。</p>
     <div id="key-layout-list" class="key-layout-list" aria-label="快捷键顺序与显示"></div>
     <div class="dialog-actions"><button id="key-layout-reset" type="button" class="secondary">恢复默认</button><button type="button" class="primary" data-close="key-layout-dialog">完成</button></div>
   </dialog>

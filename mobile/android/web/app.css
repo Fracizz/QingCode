@@ -507,7 +507,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #overflow-keys-section .extra-keys { margin-block: 8px 4px; }
 /* 快捷键栏编辑：每行一个键，勾选显示，右侧上移 / 下移按钮（至少 44px）。 */
 .key-layout-list { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--group-radius); overflow: hidden; }
-.key-layout-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; align-items: center; gap: 2px; padding-right: 4px; background: var(--paper); }
+.key-layout-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; align-items: center; gap: 2px; padding-right: 4px; background: var(--paper); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* 长按拖动中：被拖行抬起并置顶，其余行由脚本平移让位。 */
+.key-layout-list[data-dragging] { overflow: visible; }
+.key-layout-row.dragging { z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
 .key-layout-row + .key-layout-row { border-top: 1px solid var(--divider); }
 .key-layout-row label { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0; padding: 0 12px; font-weight: 400; cursor: pointer; }
 .key-layout-row input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
@@ -600,7 +603,13 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .overview-tools .search-field { flex: 1; min-width: 0; }
 .overview-search { min-height: 44px; }
 .session-overview .search-field > svg { top: 13px; }
-.overview-manage { flex: none; min-width: 56px; min-height: 44px; padding-inline: 8px; font-size: 14px; font-weight: 650; }
+.overview-manage { flex: none; min-width: 56px; min-height: 40px; padding-inline: 8px; font-size: 14px; font-weight: 650; }
+/* 选项行：「运行中优先」勾选在左，「管理」在右。 */
+.overview-options { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.running-first { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin: 0; padding-left: 4px; color: var(--muted); font-size: 13px; font-weight: 400; cursor: pointer; }
+.running-first input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
+.running-first[hidden] { display: none; }
+.drawer-sort { flex: none; align-self: flex-start; }
 .session-overview .overview-filter { margin-top: 0; }
 .overview-filter button { min-height: 36px; font-size: 13px; }
 .overview-select-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
@@ -642,6 +651,11 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #session-overview .overview-groups { flex: none; overflow: visible; }
   #session-overview .overview-search { min-height: 40px; }
   #session-overview .overview-manage { min-height: 40px; }
+  /* 选项行（运行中优先 / 管理）并到搜索框右侧，省出一行给列表。 */
+  #session-overview:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; }
+  #session-overview > * { grid-column: 1 / -1; }
+  #session-overview > .overview-tools { grid-column: 1; grid-row: 1; }
+  #session-overview > .overview-options { grid-column: 2; grid-row: 1; }
   #session-overview .session-group-head { padding-block: 2px; }
   #session-overview .session-group + .session-group { margin-top: 6px; }
   #session-overview .search-field > svg { top: 11px; }

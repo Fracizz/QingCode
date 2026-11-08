@@ -1,16 +1,19 @@
 // 快捷键栏的自定义：按保存的布局排列常用键，隐藏的键移到「更多」弹层顶部；
-// 「终端设置 → 快捷键栏」打开编辑弹层，用开关和上移 / 下移按钮调整，立即生效并保存在手机上。
+// 「终端设置 → 快捷键栏」打开编辑弹层，用开关、长按拖动或上移 / 下移按钮调整，立即生效并保存在手机上。
 import {
   defaultKeyLayout,
   isDefaultKeyLayout,
   keyInfo,
+  dragTargetIndex,
   moveKey,
+  moveKeyTo,
   parseKeyLayout,
   serializeKeyLayout,
   toggleKeyHidden,
   visibleKeys,
 } from './keyLayout.js';
 import { get, button } from './dom.js';
+import { attachDragSort } from './gestures.js';
 import { t } from './i18n.js';
 
 export function createShortcutBar({ prefix, onChange }) {
@@ -93,6 +96,13 @@ export function createShortcutBar({ prefix, onChange }) {
     get('key-layout-dialog').showModal();
   });
   get('key-layout-reset').addEventListener('click', () => save(defaultKeyLayout()));
+  // 长按行拖动排序；上移 / 下移按钮保留给无障碍与精确微调。
+  attachDragSort(get('key-layout-list'), {
+    rowSelector: '.key-layout-row',
+    ignoreSelector: '.key-move',
+    targetIndex: dragTargetIndex,
+    onDrop: (row, _from, to) => save(moveKeyTo(layout, row.dataset.layoutKey, to)),
+  });
 
   apply();
   return { layout: () => layout };
