@@ -18,7 +18,6 @@
   color-scheme: dark;
   --paper: #111419;
   --surface: #1a2027;
-  --surface-high: #1f262e;
   --raised: #262e38;
   --line: #303944;
   --divider: #262e37;
@@ -273,8 +272,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #project-filters { position: sticky; z-index: 2; top: -12px; margin: 0 -2px; padding: 8px 2px 2px; background: var(--paper); }
 .search-field { position: relative; }
 .search-field > svg { position: absolute; left: 16px; top: 15px; color: var(--muted); width: 18px; height: 18px; }
-#search, .overview-search { min-height: 48px; padding-left: 44px; border-color: transparent; border-radius: var(--control-radius); background: var(--surface-high); }
+#search, .overview-search { min-height: 48px; padding-left: 44px; border-radius: var(--control-radius); }
 #search:focus, .overview-search:focus { border-color: var(--accent-border); }
+/* 搜索框聚焦只亮自身边框：全局外圈会形成双层边框，并压到相邻按钮。 */
+#search:focus-visible, .overview-search:focus-visible { outline: none; border-color: var(--accent); }
 .list-label { margin: 8px 4px 8px; color: var(--muted); font-size: 12px; }
 
 /* 分组列表：同组条目共享一个圆角容器，用细分隔线区分（Material 3 / Android 设置页）。 */
@@ -604,7 +605,18 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #session-overview:not([hidden]) { flex: 1; min-height: 0; }
 .overview-tools { display: flex; align-items: center; gap: 4px; }
 .overview-tools .search-field { flex: 1; min-width: 0; }
-.overview-search { min-height: 44px; }
+.overview-search { min-height: 44px; text-overflow: ellipsis; }
+/* 自绘搜索提示：原生占位文字聚焦时会被硬切。左右留白与输入框的边框加内边距一致；放不下时慢速滚动，减少动态效果时显示省略号。 */
+.overview-search-hint { position: absolute; left: 45px; right: 14px; top: 50%; transform: translateY(-50%); overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.overview-search:not(:placeholder-shown) + .overview-search-hint { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .overview-search-hint[data-scrolling] { text-overflow: clip; }
+  .overview-search-hint[data-scrolling] > span { display: inline-block; animation: hint-scroll var(--hint-duration) linear infinite alternate; }
+}
+@keyframes hint-scroll {
+  0%, 15% { transform: translateX(0); }
+  85%, 100% { transform: translateX(calc(-1 * var(--hint-shift))); }
+}
 .session-overview .search-field > svg { top: 13px; }
 .overview-manage { flex: none; min-width: 56px; min-height: 40px; padding-inline: 8px; font-size: 14px; font-weight: 650; }
 /* 「运行中优先」图标：按下时高亮，再点恢复默认顺序。会话少收起搜索框时与「管理」靠右。 */
@@ -633,7 +645,8 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #session-overview .overview-groups { flex: 1; min-height: 0; overflow-y: auto; padding-block: 2px; }
 .session-group + .session-group { margin-top: 10px; }
 .session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
-.session-group-head strong { min-width: 0; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 项目名优先完整显示，来源信息用剩余宽度省略；上限 70% 防止超长项目名把来源完全挤掉。 */
+.session-group-head strong { flex: none; max-width: 70%; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-group-head span { flex: none; }
 .session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-group .session-option { grid-template-columns: minmax(0, 1fr) 44px; }

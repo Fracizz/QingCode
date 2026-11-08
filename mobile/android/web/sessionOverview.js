@@ -15,6 +15,9 @@ import { icon, rowText, button } from './dom.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 import { t } from './i18n.js';
 
+// 搜索提示放不下时的滚动速度。
+const HINT_SCROLL_PX_PER_SECOND = 20;
+
 /**
  * root：组件容器。limit：首次显示的会话数（首页 8，抽屉不限）。
  * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）。
@@ -42,11 +45,32 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   const input = document.createElement('input');
   input.type = 'search';
   input.className = 'overview-search';
-  input.placeholder = t('搜索会话、项目或设备');
+  // WebView 聚焦时会强制裁切原生占位文字，这里用空格占位驱动 :placeholder-shown，由提示层显示完整文案。
+  input.placeholder = ' ';
   input.setAttribute('aria-label', t('搜索会话、项目或设备'));
   input.autocomplete = 'off';
   input.enterKeyHint = 'search';
-  search.append(icon('search'), input);
+  const hint = document.createElement('span');
+  hint.className = 'overview-search-hint';
+  hint.setAttribute('aria-hidden', 'true');
+  const hintText = document.createElement('span');
+  hint.append(hintText);
+  hintText.textContent = t('搜索会话、项目或设备');
+  search.append(icon('search'), input, hint);
+  // 文案放不下时才滚动，时长按溢出宽度折算，保证不同语言的滚动速度一致。
+  const fitHint = () => {
+    const shift = Math.ceil(hintText.getBoundingClientRect().width - hint.clientWidth);
+    if (!hint.clientWidth || shift <= 0) {
+      hint.removeAttribute('data-scrolling');
+      return;
+    }
+    hint.style.setProperty('--hint-shift', `${shift}px`);
+    // 匀速段占动画的 70%，其余时间停在首尾。
+    hint.style.setProperty('--hint-duration', `${Math.max(3, shift / HINT_SCROLL_PX_PER_SECOND / 0.7).toFixed(2)}s`);
+    hint.setAttribute('data-scrolling', '');
+  };
+  // 抽屉打开、旋转屏幕或搜索框重新显示时，可用宽度才会变化。
+  new ResizeObserver(fitHint).observe(hint);
   // 搜索行：搜索框、「运行中优先」图标、「管理」多选；会话少时只收起搜索框，图标与「管理」靠右保留。
   const sort = runningFirstToggle('overview-sort');
   const manage = button('text-button overview-manage', () => setSelecting(!selecting));
@@ -155,7 +179,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     filters.hidden = compact;
     sort.relabel();
     // 静态文案也在每次渲染时取当前语言，切换语言后重绘即生效。
-    input.placeholder = t('搜索会话、项目或设备');
+    hintText.textContent = t('搜索会话、项目或设备');
+    fitHint();
     input.setAttribute('aria-label', t('搜索会话、项目或设备'));
     filters.setAttribute('aria-label', t('会话状态'));
     manage.textContent = selecting ? t('完成') : t('管理');
