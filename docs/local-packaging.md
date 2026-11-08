@@ -1,6 +1,6 @@
 # 本地并行打包 CLI
 
-在仓库根目录用 `pnpm package:local` 本地打包。默认生成带版本号的 Windows x64 NSIS 安装版、配套 Server 离线包和按需更新的 Android APK，例如 `release/QingCode_0.1.17-beta.16-setup.exe`，不会生成 `QingCode-setup.exe` 别名，也不构建便携版。每次本地打包（包括 `--only apk`）都会构建或校验 Server，避免 `release/servers` 版本落后于客户端。脚本不提交、不推送、不创建标签、不上传或发布 Release。
+在仓库根目录用 `pnpm package:local` 本地打包。默认生成带版本号的 Windows x64 NSIS 安装版、配套 Server 离线包和按需更新的 Android APK，例如 `release/QingCode_0.1.17-beta.17-setup.exe`，不会生成 `QingCode-setup.exe` 别名，也不构建便携版。每次本地打包（包括 `--only apk`）都会构建或校验 Server，避免 `release/servers` 版本落后于客户端。脚本不提交、不推送、不创建标签、不上传或发布 Release。
 
 ```powershell
 pnpm package:local --plan                         # 预览安装版依赖和命令，不执行
@@ -43,7 +43,7 @@ Android 工具链和本地签名沿用 [Android 构建说明](../mobile/README.m
 
 统一 CLI 默认在 `release/` 生成：
 
-- `QingCode_<版本>-setup.exe`：带版本号的安装包，当前版本为 `QingCode_0.1.17-beta.16-setup.exe`。
+- `QingCode_<版本>-setup.exe`：带版本号的安装包，当前版本为 `QingCode_0.1.17-beta.17-setup.exe`。
 - `QingCode-servers.zip` 与 `servers/`：Server 离线包。
 - `QingCode_<APK版本>-android.apk` 与 `QingCode-Android.apk`：最近一次本地 APK。
 
