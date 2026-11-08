@@ -48,8 +48,9 @@
 !macroend
 
 ; Detect without closing any windows. Only force-close this installation after
-; explicit confirmation; refusal, silent mode, or failure must stop installation.
-!macro QingCloseRunningApp
+; explicit confirmation; refusal, silent mode, or failure must stop the operation.
+; Shared by install and uninstall so other QingCode copies are never affected.
+!macro QingCloseRunningAppWith CONFIRM_TEXT CANCELLED_TEXT FAILED_TEXT
   InitPluginsDir
   File "/oname=$PLUGINSDIR\close-running-app.ps1" "${QING_CLOSE_APP_SCRIPT}"
   ; NSIS is 32-bit. Native PowerShell can read the paths of 64-bit editors;
@@ -64,12 +65,12 @@
   ${If} $0 == 2
     ${If} ${Silent}
       SetErrorLevel 2
-      Abort "QingCode is running. Close QingCode and run setup again."
+      Abort "QingCode is running. Close QingCode and try again."
     ${EndIf}
     BringToFront
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(qingConfirmForceClose)" IDYES qing_force_close
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "${CONFIRM_TEXT}" IDYES qing_force_close
     SetErrorLevel 2
-    Abort "$(qingCloseCancelled)"
+    Abort "${CANCELLED_TEXT}"
     qing_force_close:
       nsExec::ExecToStack '"$2" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -Force -TimeoutSeconds 10'
       Pop $0
@@ -78,8 +79,16 @@
   ${If} $0 != 0
     DetailPrint "$1"
     SetErrorLevel 2
-    Abort "$(qingCloseFailed)"
+    Abort "${FAILED_TEXT}"
   ${EndIf}
+!macroend
+
+!macro QingCloseRunningApp
+  !insertmacro QingCloseRunningAppWith "$(qingConfirmForceClose)" "$(qingCloseCancelled)" "$(qingCloseFailed)"
+!macroend
+
+!macro QingCloseRunningAppForUninstall
+  !insertmacro QingCloseRunningAppWith "$(qingConfirmForceCloseUninstall)" "$(qingCloseCancelledUninstall)" "$(qingCloseFailedUninstall)"
 !macroend
 
 !macro QingOfferWebView2Download

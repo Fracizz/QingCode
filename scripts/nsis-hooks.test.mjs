@@ -37,6 +37,9 @@ test('production installer confirms first installs, detects upgrades and offers 
   assert.doesNotMatch(finish, /SkipIfPassive|MUI_FINISHPAGE_NOAUTOCLOSE/)
   const install = template.match(/Section Install\n([\s\S]*?)SectionEnd/)[1]
   assert.doesNotMatch(install, /CheckIfAppIsRunning/)
+  const uninstall = template.match(/Section Uninstall\n([\s\S]*?)SectionEnd/)[1]
+  assert.doesNotMatch(uninstall, /CheckIfAppIsRunning/)
+  assert.match(uninstall, /!insertmacro QingCloseRunningAppForUninstall/)
   const success = template.match(/Function \.onInstSuccess\n([\s\S]*?)FunctionEnd/)[1]
   assert.doesNotMatch(success, /\$PassiveMode/)
   const hooks = readFileSync(hooksPath, 'utf8').replaceAll('\r\n', '\n')
@@ -62,12 +65,16 @@ async function waitForFile(filename, child) {
 
 const closeScenarios = [powershell, powershell32].flatMap(shell =>
   ['graceful', 'cancel', 'check', 'force'].map(mode => ({ shell, mode })))
-for (const mode of ['installer-yes', 'installer-no', 'installer-silent', 'installer-absent']) {
-  closeScenarios.push({ shell: powershell, mode })
+for (const flow of ['installer', 'uninstaller']) {
+  for (const answer of ['yes', 'no', 'silent', 'absent']) {
+    closeScenarios.push({ shell: powershell, mode: `${flow}-${answer}` })
+  }
 }
 for (const { shell, mode } of closeScenarios) {
+  const compiled = /^(?:un)?installer-/.test(mode)
+  const uninstalling = mode.startsWith('uninstaller-')
   test(`upgrade shutdown mode ${mode} via ${shell === powershell32 ? '32-bit' : 'native'} PowerShell preserves another installation`,
-    { skip: skipClose || (mode.startsWith('installer-') && skip) }, async () => {
+    { skip: skipClose || (compiled && skip) }, async () => {
       const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-')))
       const children = []
       try {
@@ -144,7 +151,7 @@ class TestApp {
           // Force an x64 process: AnyCPU fixtures can hide NSIS's WOW64 bug.
           execFileSync(csc, ['/nologo', '/platform:x64', '/target:winexe', '/reference:System.Windows.Forms.dll', `/out:${exe}`, source], { windowsHide: true })
           const marker = path.join(folder, 'marker')
-          if (mode === 'installer-absent' && directory === 'target') continue
+          if (mode.endsWith('-absent') && directory === 'target') continue
           const child = spawn(exe, [marker, directory === 'other' || mode !== 'graceful' ? 'cancel' : 'close'], { stdio: 'ignore' })
           children.push(child)
           await waitForFile(`${marker}.ready`, child)
@@ -155,13 +162,39 @@ class TestApp {
           '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2']
         if (mode === 'check') args.push('-CheckOnly')
         if (mode === 'force') args.push('-Force')
-        const staysRunning = ['cancel', 'check', 'installer-no', 'installer-silent'].includes(mode)
-        if (mode.startsWith('installer-')) {
+        const staysRunning = ['cancel', 'check', 'installer-no', 'installer-silent', 'uninstaller-no', 'uninstaller-silent'].includes(mode)
+        if (compiled) {
           const installer = path.join(root, 'setup.exe')
+          const uninstaller = path.join(root, 'uninstall.exe')
           const nsi = path.join(root, 'setup.nsi')
           const completed = path.join(root, 'completed')
           const translations = readFileSync(templatePath, 'utf8').split(/\r?\n/)
-            .filter(line => /^LangString qing(?:ConfirmForceClose|CloseCancelled|CloseFailed) /.test(line)).join('\n')
+            .filter(line => /^LangString qing(?:ConfirmForceClose|CloseCancelled|CloseFailed)(?:Uninstall)? /.test(line)).join('\n')
+          const writeCompleted = `FileOpen $2 "${nsisString(completed)}" w
+  FileWrite $2 "installed"
+  FileClose $2`
+          // 卸载场景使用真实的 Uninstall 区段，验证宏在卸载器内可编译并生效。
+          const sections = uninstalling ? `UninstPage instfiles
+Function un.onInit
+  StrCpy $LANGUAGE 2052
+FunctionEnd
+Function un.onUninstSuccess
+  Quit
+FunctionEnd
+Function un.onUninstFailed
+  Quit
+FunctionEnd
+Section
+  WriteUninstaller "${nsisString(uninstaller)}"
+SectionEnd
+Section Uninstall
+  SetAutoClose true
+  !insertmacro QingCloseRunningAppForUninstall
+  ${writeCompleted}
+SectionEnd` : `Section
+  !insertmacro QingCloseRunningApp
+  ${writeCompleted}
+SectionEnd`
           writeFileSync(nsi, `Unicode true
 !include MUI2.nsh
 !include x64.nsh
@@ -188,21 +221,22 @@ FunctionEnd
 Function .onInstFailed
   Quit
 FunctionEnd
-Section
-  !insertmacro QingCloseRunningApp
-  FileOpen $2 "${nsisString(completed)}" w
-  FileWrite $2 "installed"
-  FileClose $2
-SectionEnd
+${sections}
 `)
           execFileSync(makeNsis, ['-INPUTCHARSET', 'UTF8', '-V2', nsi], { windowsHide: true })
-          const setup = spawn(installer, mode === 'installer-silent' ? ['/S'] : [], { stdio: 'ignore' })
+          if (uninstalling) execFileSync(installer, ['/S'], { windowsHide: true, timeout: 30_000 })
+          // `_?=` 让卸载器原地运行，否则它会复制到临时目录后立刻退出，无法取得退出码。
+          const silent = mode.endsWith('-silent') ? ['/S'] : []
+          const setup = uninstalling
+            ? spawn(uninstaller, [...silent, `_?=${path.join(root, 'target')}`], { stdio: 'ignore', windowsVerbatimArguments: true })
+            : spawn(installer, silent, { stdio: 'ignore' })
           children.push(setup)
           const setupExit = new Promise(resolve => setup.once('exit', resolve))
-          if (mode === 'installer-yes' || mode === 'installer-no') {
+          if (mode.endsWith('-yes') || mode.endsWith('-no')) {
             const dialogText = path.join(root, 'dialog.txt')
             execFileSync(path.join(root, 'other', `${appName}.exe`),
-              ['answer', String(setup.pid), mode === 'installer-yes' ? '6' : '7', dialogText], { timeout: 30_000 })
+              ['answer', String(setup.pid), mode.endsWith('-yes') ? '6' : '7', dialogText], { timeout: 30_000 })
+            assert.match(readFileSync(dialogText, 'utf8'), uninstalling ? /强制关闭并继续卸载/ : /强制关闭并继续安装/)
             assert.match(readFileSync(dialogText, 'utf8'), /是否强制关闭/)
             assert.match(readFileSync(dialogText, 'utf8'), /未保存/)
           }
@@ -220,7 +254,7 @@ SectionEnd
         }
         assert.equal(existsSync(path.join(root, 'target', 'marker.closing')), mode === 'graceful' || mode === 'cancel')
         assert.equal(existsSync(path.join(root, 'other', 'marker.closing')), false)
-        assert.equal(children[mode === 'installer-absent' ? 0 : 1].exitCode, null)
+        assert.equal(children[mode.endsWith('-absent') ? 0 : 1].exitCode, null)
         assert.equal(readFileSync(sentinel, 'utf8'), '{"keep":true}')
         const stillRunning = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
           '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-CheckOnly'],

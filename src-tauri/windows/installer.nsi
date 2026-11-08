@@ -488,6 +488,13 @@ LangString qingCloseCancelled ${LANG_ENGLISH} "Installation stopped without clos
 LangString qingCloseFailed ${LANG_SIMPCHINESE} "无法关闭或确认 QingCode 的运行状态。请手动退出 QingCode 后重新运行安装程序。"
 LangString qingCloseFailed ${LANG_ENGLISH} "Could not close QingCode or verify its running state. Close QingCode manually and run setup again."
 
+LangString qingConfirmForceCloseUninstall ${LANG_SIMPCHINESE} "QingCode 正在运行，是否强制关闭并继续卸载？$\r$\n$\r$\n强制关闭可能导致未保存的内容丢失，请先保存工作。$\r$\n选择“是”强制关闭并继续卸载；选择“否”停止本次卸载。"
+LangString qingConfirmForceCloseUninstall ${LANG_ENGLISH} "QingCode is running. Force close it and continue uninstalling?$\r$\n$\r$\nUnsaved work may be lost. Save your work first.$\r$\nChoose Yes to force close and continue, or No to stop uninstalling."
+LangString qingCloseCancelledUninstall ${LANG_SIMPCHINESE} "已停止卸载，未强制关闭 QingCode。请保存工作并退出 QingCode 后重新卸载。"
+LangString qingCloseCancelledUninstall ${LANG_ENGLISH} "Uninstall stopped without closing QingCode. Save your work, close QingCode, and uninstall again."
+LangString qingCloseFailedUninstall ${LANG_SIMPCHINESE} "无法关闭或确认 QingCode 的运行状态。请手动退出 QingCode 后重新卸载。"
+LangString qingCloseFailedUninstall ${LANG_ENGLISH} "Could not close QingCode or verify its running state. Close QingCode manually and uninstall again."
+
 LangString qingStartInstall ${LANG_SIMPCHINESE} "开始安装"
 LangString qingStartInstall ${LANG_ENGLISH} "Start Install"
 
@@ -825,7 +832,8 @@ Section Uninstall
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ; Only this installation is closed; other QingCode copies keep running.
+  !insertmacro QingCloseRunningAppForUninstall
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
