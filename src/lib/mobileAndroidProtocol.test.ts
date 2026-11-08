@@ -419,6 +419,14 @@ describe('Android 终端空闲自动结束提示', () => {
     expect(idleLabel({ lastActiveAt: now }, now)).toBe('')
     expect(idleLabel(null, now)).toBe('')
   })
+
+  it('手机时钟慢于电脑端时剩余时间不超过空闲窗口', () => {
+    const now = 1_000 * hour
+    for (const skew of [1, 30_000, 5 * 60_000]) {
+      const lastActiveAt = now + skew
+      expect(idleLabel({ lastActiveAt, idleDeadline: lastActiveAt + 24 * hour }, now)).toBe('刚刚有活动，24 小时后自动结束')
+    }
+  })
 })
 
 describe('Android terminal quote', () => {

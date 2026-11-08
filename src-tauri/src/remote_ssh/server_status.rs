@@ -212,7 +212,24 @@ pub enum ServerTransport {
     Daemon,
     Serve,
     Direct,
+    /// Server 端口直连：HTTPS/WSS 直连网关。
     Agent,
+    /// Server 经 SSH 隧道：HTTPS/WSS 走 SSH `direct-tcpip` 到远端网关。
+    Tunnel,
+}
+
+/// 直连网关连接的传输类型；未接入网关时为 `None`。
+pub(crate) fn gateway_transport(
+    manager: &SshManager,
+    connection_id: &str,
+) -> Option<ServerTransport> {
+    manager.direct_config(connection_id).map(|config| {
+        if config.tunnel.is_some() {
+            ServerTransport::Tunnel
+        } else {
+            ServerTransport::Agent
+        }
+    })
 }
 
 /// `ssh-server-state` 与 `ssh_server_info` / `ssh_server_restart` 的载荷。
@@ -485,8 +502,8 @@ pub(crate) fn state_for_root(
         trusted: root.trusted,
         slot: view,
     });
-    if manager.direct_config(&parsed.connection_id).is_some() {
-        state.transport = Some(ServerTransport::Agent);
+    if let Some(transport) = gateway_transport(manager, &parsed.connection_id) {
+        state.transport = Some(transport);
     }
     match state.phase {
         ServerPhase::ReadyServer => {
@@ -553,9 +570,7 @@ pub(crate) fn publish_authenticating(
             mode: ServerMode::Unknown,
             connection_mode: manager.connection_mode(connection_id),
             version: None,
-            transport: manager
-                .direct_config(connection_id)
-                .map(|_| ServerTransport::Agent),
+            transport: gateway_transport(manager, connection_id),
             reason: None,
             timings: None,
         },
@@ -578,9 +593,7 @@ pub(crate) fn publish_disconnected(
             mode: ServerMode::Unknown,
             connection_mode: manager.connection_mode(connection_id),
             version: None,
-            transport: manager
-                .direct_config(connection_id)
-                .map(|_| ServerTransport::Agent),
+            transport: gateway_transport(manager, connection_id),
             reason: None,
             timings: None,
         },
@@ -672,9 +685,7 @@ pub(super) fn state_for_uri(
         mode: ServerMode::Unknown,
         connection_mode: manager.connection_mode(&parsed.connection_id),
         version: None,
-        transport: manager
-            .direct_config(&parsed.connection_id)
-            .map(|_| ServerTransport::Agent),
+        transport: gateway_transport(manager, &parsed.connection_id),
         reason: manager.connection_closed_reason(&parsed.connection_id),
         timings: None,
     })
@@ -697,6 +708,11 @@ pub(crate) async fn ssh_server_update(
 ) -> Result<SshServerState, String> {
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
+    if gateway_transport(&manager, &parsed.connection_id) == Some(ServerTransport::Tunnel) {
+        // 用户已确认更新影响：重建隧道并替换旧网关，旧版 daemon 一并替换。
+        super::tunnel::update(&manager, &root, &app).await?;
+        return state_for_root(&manager, &root);
+    }
     if manager.direct_config(&parsed.connection_id).is_some() {
         return Err("Server 端口直连不支持通过 SSH 更新服务，请在远端管理服务".into());
     }
@@ -752,6 +768,11 @@ pub(crate) async fn ssh_server_stop(
 ) -> Result<(), String> {
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
+    // 隧道连接没有按项目的服务进程：网关与 daemon 为用户级共享，断开连接即停止使用。
+    if gateway_transport(&manager, &parsed.connection_id) == Some(ServerTransport::Tunnel) {
+        publish_root_state(&app, &manager, &root);
+        return Ok(());
+    }
     if manager.direct_config(&parsed.connection_id).is_some() {
         return Err("Server 直连的服务由远端独立管理；请断开工作区或在远端停止服务".into());
     }

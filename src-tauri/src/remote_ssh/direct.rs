@@ -10,16 +10,32 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
 use tokio::net::TcpStream;
 use tokio_rustls::{client::TlsStream, TlsConnector};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http, Message};
 
 mod workspace_http;
-pub(super) use workspace_http::WorkspaceClient;
+pub(super) use workspace_http::{discard_tunnel_idle, WorkspaceClient};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
+
+/// TLS 之下的字节流：TCP 直连，或 SSH 隧道的 `direct-tcpip` 通道。
+pub(super) trait Transport: AsyncRead + AsyncWrite + Unpin + Send {
+    /// 本端 TCP 地址；隧道通道没有。测试用它确认连接被复用。
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn local_addr(&self) -> Option<std::net::SocketAddr> {
+        None
+    }
+}
+impl Transport for TcpStream {
+    fn local_addr(&self) -> Option<std::net::SocketAddr> {
+        TcpStream::local_addr(self).ok()
+    }
+}
+impl Transport for russh::ChannelStream<russh::client::Msg> {}
+pub(super) type ServerStream = TlsStream<Box<dyn Transport>>;
 
 type ActiveStreams = Mutex<HashMap<(String, String), Vec<Weak<tokio::sync::Notify>>>>;
 static ACTIVE_STREAMS: OnceLock<ActiveStreams> = OnceLock::new();
@@ -64,6 +80,9 @@ pub(super) struct DirectConnectionConfig {
     pub endpoint: String,
     pub certificate_fingerprint: String,
     pub token: String,
+    /// 经该连接 ID 的 SSH 会话转发（`direct-tcpip`）；`None` 为 TCP 直连。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel: Option<String>,
 }
 
 // Credentials must never enter Debug output, including connection errors.
@@ -72,6 +91,7 @@ impl std::fmt::Debug for DirectConnectionConfig {
         f.debug_struct("DirectConnectionConfig")
             .field("endpoint", &self.endpoint)
             .field("certificate_fingerprint", &self.certificate_fingerprint)
+            .field("tunnel", &self.tunnel)
             .finish_non_exhaustive()
     }
 }
@@ -206,10 +226,28 @@ impl ServerCertVerifier for PinnedCertificate {
     }
 }
 
+/// 建立 TLS 之下的字节流。隧道只换掉这一步，证书固定与认证完全相同。
+async fn dial(endpoint: &Endpoint, tunnel: Option<&str>) -> Result<Box<dyn Transport>, String> {
+    if let Some(connection_id) = tunnel {
+        return super::tunnel::open(connection_id, &endpoint.host, endpoint.port).await;
+    }
+    let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
+        .await
+        .map_err(|_| {
+            format!(
+                "[direct:unreachable] 无法连接 {}，请确认 Server 已启动且 TCP {} 已放行",
+                endpoint.authority, endpoint.port
+            )
+        })?;
+    let _ = stream.set_nodelay(true);
+    Ok(Box::new(stream))
+}
+
 async fn tls(
     endpoint: &Endpoint,
+    tunnel: Option<&str>,
     expected: Option<String>,
-) -> Result<(TlsStream<TcpStream>, String), String> {
+) -> Result<(ServerStream, String), String> {
     let observed = Arc::new(Mutex::new(None));
     let verifier = Arc::new(PinnedCertificate {
         expected,
@@ -222,15 +260,7 @@ async fn tls(
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
-    let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
-        .await
-        .map_err(|_| {
-            format!(
-                "[direct:unreachable] 无法连接 {}，请确认 Server 已启动且 TCP {} 已放行",
-                endpoint.authority, endpoint.port
-            )
-        })?;
-    let _ = stream.set_nodelay(true);
+    let stream = dial(endpoint, tunnel).await?;
     let name = ServerName::try_from(endpoint.host.clone())
         .map_err(|_| "[direct:protocol] Server 主机名无效".to_string())?;
     let stream = TlsConnector::from(Arc::new(config))
@@ -280,7 +310,7 @@ async fn write_http_request<S: AsyncWrite + Unpin>(
 /// Discover the untrusted certificate without sending a password or token.
 pub(super) async fn probe(address: &str) -> Result<String, String> {
     let endpoint = endpoint(address)?;
-    tokio::time::timeout(CONNECT_TIMEOUT, tls(&endpoint, None))
+    tokio::time::timeout(CONNECT_TIMEOUT, tls(&endpoint, None, None))
         .await
         .map_err(|_| timeout_error())?
         .map(|(_, fingerprint)| fingerprint)
@@ -291,7 +321,7 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
     let endpoint = endpoint(&config.endpoint)?;
     let expected = normalized_fingerprint(&config.certificate_fingerprint)?;
     tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (mut stream, _) = tls(&endpoint, Some(expected)).await?;
+        let (mut stream, _) = tls(&endpoint, config.tunnel.as_deref(), Some(expected)).await?;
         let request = format!(
             "GET /health HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
             endpoint.authority, config.token
@@ -335,6 +365,25 @@ pub(super) fn require_current_version(health: &DirectHealth) -> Result<(), Strin
     Ok(())
 }
 
+/// 端口直连要求网关与客户端同版本（配对网关由用户维护）。SSH 隧道沿用 daemon
+/// 的「不降级」规则：同版本或更新版本（协议已在健康检查中核对）可直接使用，
+/// 避免不同版本的客户端轮流替换同一用户的网关；更旧的网关由隧道建立流程替换。
+pub(super) fn require_usable_gateway(
+    config: &DirectConnectionConfig,
+    health: &DirectHealth,
+) -> Result<(), String> {
+    if config.tunnel.is_none() {
+        return require_current_version(health);
+    }
+    match super::server::compare_server_versions(
+        &health.server_version,
+        qingcode_server::SERVER_VERSION,
+    ) {
+        Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater) => Ok(()),
+        _ => require_current_version(health),
+    }
+}
+
 pub(super) async fn workspace_request(
     config: &DirectConnectionConfig,
     request: impl std::borrow::Borrow<serde_json::Value>,
@@ -358,7 +407,7 @@ pub(super) async fn open_stream_for(
     let expected = normalized_fingerprint(&config.certificate_fingerprint)?;
     let cancelled = register_stream(&config.endpoint, connection_id);
     let connect = tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (stream, _) = tls(&endpoint, Some(expected)).await?;
+        let (stream, _) = tls(&endpoint, config.tunnel.as_deref(), Some(expected)).await?;
         let mut request = format!("wss://{}/connect", endpoint.authority)
             .into_client_request()
             .map_err(|_| "[direct:protocol] Server WebSocket 地址无效".to_string())?;
@@ -603,6 +652,7 @@ pub(super) mod tests {
             endpoint: format!("https://127.0.0.1:{}", info.port),
             certificate_fingerprint: info.certificate_sha256,
             token: info.token.unwrap(),
+            tunnel: None,
         };
         let task = tokio::spawn(gateway.run());
         (config, task, directory)
@@ -782,6 +832,7 @@ pub(super) mod tests {
             endpoint: format!("https://127.0.0.1:{port}"),
             certificate_fingerprint: "a".repeat(64),
             token: "pairing-token".into(),
+            tunnel: None,
         };
         let address = config.endpoint.clone();
         let opening =
@@ -820,6 +871,96 @@ pub(super) mod tests {
             .await
             .unwrap_err()
             .starts_with("[direct:auth]"));
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// 隧道只替换拨号：地址指向无人监听的端口，流量仍经隧道到达网关；
+    /// 证书固定、认证、HTTPS 复用与 WSS HELLO 行为不变，且不与 TCP 直连共池。
+    #[tokio::test]
+    async fn tunnel_carries_health_workspace_and_websocket_with_the_same_pinning() {
+        use qingcode_server::proto::{self, Frame, HelloRequest, Kind, PROTOCOL_VERSION};
+        let (direct, gateway, directory) = gateway().await;
+        let port = endpoint(&direct.endpoint).unwrap().port;
+        let id = format!("tunnel-test-{}", uuid::Uuid::new_v4());
+        super::super::tunnel::route_for_test(&id, Some(port));
+        let config = DirectConnectionConfig {
+            endpoint: "https://127.0.0.1:1".into(),
+            tunnel: Some(id.clone()),
+            ..direct.clone()
+        };
+        assert!(test(&config).await.unwrap().healthy);
+        let wrong_identity = DirectConnectionConfig {
+            certificate_fingerprint: "0".repeat(64),
+            ..config.clone()
+        };
+        assert!(test(&wrong_identity)
+            .await
+            .unwrap_err()
+            .starts_with("[direct:identity]"));
+        let client = WorkspaceClient::new(config.clone());
+        for _ in 0..2 {
+            assert!(client
+                .request(&serde_json::json!({"op":"info"}))
+                .await
+                .unwrap()["homePath"]
+                .is_string());
+        }
+        // 同一地址的 TCP 直连不能复用隧道连接。
+        let untunneled = DirectConnectionConfig {
+            tunnel: None,
+            ..config.clone()
+        };
+        assert!(
+            workspace_request(&untunneled, serde_json::json!({"op":"info"}))
+                .await
+                .unwrap_err()
+                .starts_with("[direct:unreachable]")
+        );
+        let daemon = tokio::spawn(qingcode_server::daemon::run_async(
+            qingcode_server::daemon::DaemonOptions {
+                state_dir: Some(directory.clone()),
+                ..Default::default()
+            },
+        ));
+        for _ in 0..100 {
+            if directory.join("token").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut stream = open_stream_for(&config, &id).await.unwrap();
+        proto::write_frame(
+            &mut stream,
+            &Frame::new(
+                Kind::Hello,
+                0,
+                proto::encode(&HelloRequest {
+                    client_id: format!("test-install:{id}"),
+                    protocol_min: PROTOCOL_VERSION,
+                    protocol_max: PROTOCOL_VERSION,
+                    token: config.token.clone(),
+                    resume_token: None,
+                })
+                .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(15), proto::read_frame(&mut stream))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.kind, Kind::Hello);
+        close_connection(&config.endpoint, &id);
+        super::super::tunnel::route_for_test(&id, None);
+        assert!(test(&config)
+            .await
+            .unwrap_err()
+            .contains("SSH 隧道尚未建立"));
+        daemon.abort();
+        let _ = daemon.await;
         gateway.abort();
         let _ = gateway.await;
         let _ = std::fs::remove_dir_all(directory);
@@ -1347,6 +1488,7 @@ pub(super) mod tests {
             endpoint: "https://host:38822".into(),
             certificate_fingerprint: "a".repeat(64),
             token: "private-secret".into(),
+            tunnel: None,
         };
         assert!(!format!("{config:?}").contains("private-secret"));
         assert!(validate_token("secret\r\nInjected: true").is_err());

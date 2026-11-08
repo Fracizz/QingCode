@@ -35,9 +35,9 @@ mod terminal;
 mod watch;
 
 pub(crate) use daemon::{
-    daemon_scan_entries, daemon_search_content_call, daemon_warmup_entries, ensure_remote_daemon,
-    handle_daemon_transport_error, kept_daemon, shutdown_remote_daemon, DaemonSearchParams,
-    KeptDaemon, StaleDaemon,
+    compare_server_versions, daemon_scan_entries, daemon_search_content_call,
+    daemon_warmup_entries, ensure_remote_daemon, forget_kept_daemon, handle_daemon_transport_error,
+    kept_daemon, shutdown_remote_daemon, DaemonSearchParams, KeptDaemon, StaleDaemon,
 };
 pub(crate) use deploy::{
     ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,

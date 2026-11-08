@@ -1332,6 +1332,30 @@ async fn ensure_server_endpoint_inner(
     wait_for_deploy: bool,
 ) -> Result<Option<ServerEndpoint>, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    // Server 模式统一经 SSH 隧道接入直连网关：首次需要服务时建立隧道并切换连接，
+    // 之后与端口直连走同一条路径。只读状态查询（不等待部署）不触发。
+    if wait_for_deploy
+        && root.trusted
+        && manager.direct_config(&connection_id).is_none()
+        && manager.server_mode(&connection_id)
+    {
+        let key = server_slot_key(&connection_id, &root.canonical_path);
+        if manager
+            .server_slot(&key)
+            .is_some_and(|slot| slot.unavailable_reason.is_some())
+        {
+            publish_server_if_watched(app, manager, root);
+            return Ok(None);
+        }
+        if let Err(error) = super::super::tunnel::activate(manager, root, app).await {
+            let mut slot = manager.server_slot(&key).unwrap_or_default();
+            slot.activity = None;
+            slot.last_failure = Some(error.clone());
+            manager.set_server_slot(&key, slot);
+            publish_server_if_watched(app, manager, root);
+            return Err(error);
+        }
+    }
     if let Some(config) = manager.direct_config(&connection_id) {
         if !root.trusted {
             return Ok(None);
@@ -1343,7 +1367,7 @@ async fn ensure_server_endpoint_inner(
         let checked = async {
             manager.ensure_connection_alive(&connection_id).await?;
             let health = super::super::direct::test(&config).await?;
-            super::super::direct::require_current_version(&health)?;
+            super::super::direct::require_usable_gateway(&config, &health)?;
             if verified {
                 return Ok(());
             }
@@ -1656,6 +1680,10 @@ pub(crate) async fn require_serve_endpoint(
     }
     if !root.trusted || !manager.server_mode(&connection_id) {
         return Err(server_mode_error("项目不允许使用远端服务"));
+    }
+    // Server 模式只经 SSH 隧道使用网关，不再部署按项目的 serve 回退。
+    if manager.server_mode(&connection_id) {
+        return Err(server_mode_error("远端服务不可用，请重试或查看服务日志"));
     }
     let key = server_slot_key(&connection_id, &root.canonical_path);
     let gate = manager.server_gate(&key)?;

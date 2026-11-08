@@ -65,8 +65,9 @@ export function serverModeErrorAction(
         if (!accepted) return
         const result = await safeInvoke<unknown>(label, update ? 'ssh_server_update' : 'ssh_server_restart', { rootUri })
         const state = parseSshServerState(result)
-        // 文件服务 readyServer/serve 不代表终端依赖的 daemon 已完成升级。
-        if (update && (state?.phase !== 'readyServer' || state.transport !== 'daemon')) {
+        // 文件服务 readyServer/serve 不代表终端依赖的 daemon 已完成升级；
+        // SSH 隧道经网关接入 daemon，更新完成即已通过 daemon 握手。
+        if (update && (state?.phase !== 'readyServer' || (state.transport !== 'daemon' && state.transport !== 'tunnel'))) {
           pushToast('warn', t('远端服务尚未就绪'), state?.reason ?? undefined)
           return
         }

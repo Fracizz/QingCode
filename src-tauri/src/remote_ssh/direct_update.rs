@@ -68,7 +68,7 @@ fn start_script(bin: &str, info: &DirectInfo) -> String {
         quote(bin), quote(&info.hostname), info.port)
 }
 
-fn read_commands(bin: &str) -> (String, String) {
+pub(super) fn read_commands(bin: &str) -> (String, String) {
     let native = windows_native_path(bin).unwrap_or_else(|| bin.into());
     (
         format!("{} direct-info --include-secret", shell_quote(bin)),
@@ -76,7 +76,7 @@ fn read_commands(bin: &str) -> (String, String) {
     )
 }
 
-fn start_commands(bin: &str, info: &DirectInfo) -> (String, String) {
+pub(super) fn start_commands(bin: &str, info: &DirectInfo) -> (String, String) {
     let native = windows_native_path(bin).unwrap_or_else(|| bin.into());
     (
         format!(
@@ -89,7 +89,7 @@ fn start_commands(bin: &str, info: &DirectInfo) -> (String, String) {
     )
 }
 
-fn stop_commands(bin: &str, info: &DirectInfo) -> (String, String) {
+pub(super) fn stop_commands(bin: &str, info: &DirectInfo) -> (String, String) {
     let native = windows_native_path(bin).unwrap_or_else(|| bin.into());
     (
         format!(
@@ -355,6 +355,7 @@ mod tests {
             endpoint: "https://host:48763".into(),
             certificate_fingerprint: "a".repeat(64),
             token: "secret".into(),
+            tunnel: None,
         };
         let mut info = DirectInfo {
             hostname: "0.0.0.0".into(),

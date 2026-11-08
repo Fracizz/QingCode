@@ -341,6 +341,7 @@ mod tests {
                 endpoint: "https://server.example:48763".into(),
                 certificate_fingerprint: "a".repeat(64),
                 token: "agent-secret".into(),
+                tunnel: None,
             },
         );
         let mut config = sample();

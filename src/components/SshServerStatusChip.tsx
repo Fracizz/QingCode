@@ -19,6 +19,7 @@ import {
   sshServerTipLines,
   type SshServerChip,
   type SshServerState,
+  sshServerUsesGateway,
 } from '../lib/sshServerStatus'
 import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
@@ -58,7 +59,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [fallbackInfo, setFallbackInfo] = useState<DirectAgentInfo | null>(null)
-  const showLatency = !hidden && !infoError && state?.transport === 'agent' && state.phase === 'readyServer'
+  const showLatency = !hidden && !infoError && sshServerUsesGateway(state) && state?.phase === 'readyServer'
   const latency = useConnectionLatency(showLatency && hasBackend() ? rootUri : null)
   const latencyText = latency.milliseconds === null ? '-- ms' : `${Math.max(1, Math.round(latency.milliseconds))} ms`
 
@@ -86,7 +87,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       return next && sshServerEventMatches(next.rootUri, rootUri) ? next : null
     }
     const accept = (next: SshServerState) => {
-      if (next.transport !== 'agent' || next.phase !== 'readyServer') invalidateConnectionLatency(rootUri)
+      if (!sshServerUsesGateway(next) || next.phase !== 'readyServer') invalidateConnectionLatency(rootUri)
       setHidden(false)
       setInfoError(null)
       setState(next)

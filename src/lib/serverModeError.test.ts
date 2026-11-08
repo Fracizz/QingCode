@@ -99,6 +99,14 @@ describe('serverModeErrorAction', () => {
     expect(pushToast).toHaveBeenCalledExactlyOnceWith('warn', '远端服务尚未就绪', 'daemon 版本不匹配')
   })
 
+  it('treats an SSH tunnel update as complete once the gateway reports ready', async () => {
+    invoke.mockResolvedValue({ ...ready, transport: 'tunnel' })
+    await serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)?.onAction()
+    expect(invoke).toHaveBeenCalledWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
+    expect(useUIStore.getState().serverUpdateRootUri).not.toBe(ready.rootUri)
+    expect(pushToast).toHaveBeenCalledWith('success', '已更新远端服务，请重新新建终端或重试原操作')
+  })
+
   it('keeps the original project and reports package/update failures', async () => {
     invoke.mockImplementation(async (_action: string, command: string) => {
       if (command === 'ssh_server_info') return ready

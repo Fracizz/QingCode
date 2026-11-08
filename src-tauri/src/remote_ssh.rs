@@ -39,6 +39,7 @@ mod terminal_exit;
 #[cfg(test)]
 mod test_connection;
 mod transfer;
+mod tunnel;
 pub use terminal_exit::*;
 mod windows_path_guard;
 mod windows_sshd_repair;
@@ -3644,7 +3645,13 @@ pub async fn ssh_disconnect(
     app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    let tunneled = manager
+        .direct_config(&connection_id)
+        .is_some_and(|config| config.tunnel.is_some());
     if let Some(roots) = manager.detach_direct_connection(&connection_id)? {
+        if tunneled {
+            tunnel::disconnect(&manager, &connection_id).await?;
+        }
         for root in roots {
             server_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
         }

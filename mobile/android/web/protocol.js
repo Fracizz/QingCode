@@ -483,8 +483,11 @@ export function createdLabel(item, now = Date.now()) {
  */
 export function idleLabel(item, now = Date.now(), action = t('自动结束')) {
   if (!Number.isFinite(item?.idleDeadline)) return '';
-  const left = item.idleDeadline - now;
   const idle = Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null;
+  // 截止时间来自电脑端时钟：手机时钟偏慢时差值会超过整个空闲窗口，向上取整后显示成 25 小时，这里封顶。
+  const left = idle === null
+    ? item.idleDeadline - now
+    : Math.min(item.idleDeadline - now, item.idleDeadline - item.lastActiveAt);
   const head = idle === null ? '' : idle < 60000 ? t('刚刚有活动') : t('空闲 {time}', { time: formatDuration(idle) });
   const tail = left <= 0 ? t('即将{action}', { action }) : t('{time}后{action}', { time: formatDuration(left, true), action });
   return [head, tail].filter(Boolean).join(t('，'));

@@ -12,7 +12,8 @@ export type SshServerPhase =
 /** 与后端 `ServerMode`（serde camelCase）一致：`server` / `direct` / `unknown`。 */
 export type SshServerMode = 'server' | 'direct' | 'unknown'
 
-export type SshServerTransport = 'daemon' | 'serve' | 'direct' | 'agent'
+/** `agent`：Server 端口直连；`tunnel`：Server 经 SSH 隧道访问同一网关。 */
+export type SshServerTransport = 'daemon' | 'serve' | 'direct' | 'agent' | 'tunnel'
 
 export type SshServerState = {
   connectionId: string
@@ -48,7 +49,12 @@ function normalizeMode(mode: unknown): SshServerMode | null {
   if (mode === 'agent') return 'server'
   return typeof mode === 'string' && MODES.has(mode as SshServerMode) ? (mode as SshServerMode) : null
 }
-const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct', 'agent'])
+const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct', 'agent', 'tunnel'])
+
+/** 经 HTTPS/WSS 网关接入（端口直连或 SSH 隧道）：重启只重建网络连接，不结束终端。 */
+export function sshServerUsesGateway(state: Pick<SshServerState, 'transport'> | null | undefined): boolean {
+  return state?.transport === 'agent' || state?.transport === 'tunnel'
+}
 
 export type SshServerChip =
   | { kind: 'agent' }
@@ -145,6 +151,7 @@ export function sshServerModeKey(state: SshServerState): string {
 
 export function sshServerTransportKey(transport: SshServerTransport | null): string | null {
   if (transport === 'agent') return 'HTTPS / WSS'
+  if (transport === 'tunnel') return 'SSH 隧道 · HTTPS / WSS'
   if (transport === 'daemon') return '常驻服务'
   if (transport === 'serve') return '按项目服务'
   if (transport === 'direct') return '纯 SSH'

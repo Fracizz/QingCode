@@ -534,6 +534,10 @@ pub(super) async fn ensure_shared_daemon_with(
     if !root.trusted || !manager.server_mode(&parsed.connection_id) {
         return Err("仅已信任的 Server 项目可以接入共享服务".into());
     }
+    if manager.direct_config(&parsed.connection_id).is_none() {
+        // Server 模式只经 SSH 隧道接入网关，不再通过 `connect --stdio` 部署。
+        super::super::tunnel::activate(manager, root, app).await?;
+    }
     if let Some(config) = manager.direct_config(&parsed.connection_id) {
         return Ok(DaemonAccess {
             bin: "direct".into(),

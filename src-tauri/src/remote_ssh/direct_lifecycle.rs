@@ -176,6 +176,7 @@ mod tests {
             endpoint: "https://host:48763".into(),
             certificate_fingerprint: "a".repeat(64),
             token: "secret".into(),
+            tunnel: None,
         };
         let mut info = qingcode_server::direct::DirectInfo {
             hostname: "0.0.0.0".into(),

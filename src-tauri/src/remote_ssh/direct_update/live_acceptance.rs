@@ -100,6 +100,7 @@ async fn live_windows_gateway_version_update() {
         endpoint: format!("https://{}:{}", config.host, before.port),
         certificate_fingerprint: before.certificate_sha256.clone(),
         token: before.token.clone().unwrap(),
+        tunnel: None,
     };
     source
         .direct_connections

@@ -10,6 +10,7 @@ import {
   sshServerSwitchBlocker,
   sshServerTipLines,
   sshServerTransportKey,
+  sshServerUsesGateway,
   type SshServerState,
 } from './sshServerStatus'
 
@@ -34,6 +35,17 @@ describe('sshServerStatus', () => {
     expect(sshServerTransportKey('agent')).toBe('HTTPS / WSS')
     expect(sshServerTipLines(agent)[0]).toEqual({ key: 'Server 端口直连' })
     expect(sshServerModeKey({ ...agent, phase: 'disconnected', reason: 'connection reset' })).toBe('Server 已断开')
+  })
+  it('shows an SSH tunnel as the SSH Server mode while reconnecting like a gateway', () => {
+    const tunnel = { ...readyServer, transport: 'tunnel' as const }
+    expect(parseSshServerState(tunnel)?.transport).toBe('tunnel')
+    expect(sshServerModeKey(tunnel)).toBe('SSH + 远端服务')
+    expect(sshServerTransportKey('tunnel')).toBe('SSH 隧道 · HTTPS / WSS')
+    expect(sshServerTipLines(tunnel)[1]).toEqual({ key: '运行方式：{transport}', params: { transport: 'SSH 隧道 · HTTPS / WSS' } })
+    expect(sshServerUsesGateway(tunnel)).toBe(true)
+    expect(sshServerUsesGateway({ transport: 'agent' })).toBe(true)
+    expect(sshServerUsesGateway(readyServer)).toBe(false)
+    expect(sshServerUsesGateway(null)).toBe(false)
   })
   it('offers switching to Server from direct mode unless a precondition blocks it', () => {
     const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }

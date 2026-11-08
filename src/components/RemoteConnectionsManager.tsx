@@ -70,6 +70,7 @@ import {
   sshServerSwitchBlocker,
   sshServerTransportKey,
   type SshServerState,
+  sshServerUsesGateway,
 } from '../lib/sshServerStatus'
 import {
   connectionFromForm,
@@ -1247,7 +1248,7 @@ export default function RemoteConnectionsManager() {
                                     <>
                                       <Tooltip
                                         label={t(
-                                          state.transport === 'agent' || directEnabled ? '重新连接 Server' : sshServerIsDirect(state)
+                                          sshServerUsesGateway(state) || directEnabled ? '重新连接 Server' : sshServerIsDirect(state)
                                             ? '切换到远端服务'
                                             : '重启远端服务'
                                         )}
@@ -1264,12 +1265,12 @@ export default function RemoteConnectionsManager() {
                                             void restartServer(
                                               state.rootUri,
                                               sshServerIsDirect(state),
-                                              state.transport === 'agent' || directEnabled
+                                              sshServerUsesGateway(state) || directEnabled
                                             )
                                           }
                                           className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
                                           aria-label={t(
-                                            state.transport === 'agent' || directEnabled ? '重新连接 Server' : sshServerIsDirect(state)
+                                            sshServerUsesGateway(state) || directEnabled ? '重新连接 Server' : sshServerIsDirect(state)
                                               ? '切换到远端服务'
                                               : '重启远端服务'
                                           )}
@@ -1406,6 +1407,7 @@ export default function RemoteConnectionsManager() {
 
 function transportTooltipKey(transport: SshServerState['transport']): string | null {
   if (transport === 'daemon') return '远端服务常驻运行；SSH 断线重连后可继续接回已持久化的终端。'
+  if (transport === 'tunnel') return '经 SSH 隧道访问远端常驻服务；断线重连后可继续接回已持久化的终端。'
   if (transport === 'serve') return '远端服务按项目启动，在当前 SSH 会话中提供增强功能。'
   if (transport === 'direct') return '当前不运行远端服务，仅使用 SSH / SFTP 直连。'
   return null

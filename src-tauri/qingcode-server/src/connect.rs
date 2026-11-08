@@ -85,10 +85,38 @@ pub fn ensure_daemon_token(options: &ConnectOptions) -> Result<String, String> {
                 endpoint.describe()
             ));
         }
+        // daemon 先建立监听、再轮换 token：就绪标记出现时读到的可能仍是上一个
+        // daemon 留下的旧 token，交给新 daemon 会被判为凭据错误。
+        let stale = run_dir.read_token().ok();
+        let started = Instant::now();
         let mut child = spawn_daemon(options.state_dir.as_deref())?;
         wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
+        let remaining = options.start_timeout.saturating_sub(started.elapsed());
+        return wait_rotated_token(&run_dir, stale.as_deref(), remaining, &mut child);
     }
     run_dir.read_token()
+}
+
+/// 等新拉起的 daemon 写入新 token。子进程已退出说明抢锁失败、另一个 daemon
+/// 正在服务，其 token 本就有效；超时仍未轮换时返回当前 token，由握手报错。
+fn wait_rotated_token(
+    run_dir: &RunDir,
+    stale: Option<&str>,
+    timeout: Duration,
+    child: &mut SpawnedDaemon,
+) -> Result<String, String> {
+    let deadline = Instant::now() + timeout.max(Duration::from_secs(1));
+    loop {
+        if let Ok(token) = run_dir.read_token() {
+            if stale != Some(token.as_str()) {
+                return Ok(token);
+            }
+        }
+        if matches!(child.try_wait(), Ok(Some(_))) || Instant::now() >= deadline {
+            return run_dir.read_token();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// 先直连一次，失败且允许时拉起 daemon 再连（Unix：socket 阻塞客户端）。
@@ -517,6 +545,45 @@ mod tests {
             command.arg("-n").arg("5").arg("127.0.0.1");
             command
         }
+    }
+
+    #[test]
+    fn rotated_token_waits_past_a_stale_token_until_the_new_daemon_writes() {
+        let dir = temp_dir("rotate");
+        let run_dir = RunDir::resolve(Some(&dir)).unwrap();
+        std::fs::write(run_dir.token(), "stale-token").unwrap();
+        let token_path = run_dir.token();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            std::fs::write(token_path, "fresh-token").unwrap();
+        });
+        let mut running = SpawnedDaemon::from_test_child(sleep_command().spawn().unwrap());
+        let token = wait_rotated_token(
+            &run_dir,
+            Some("stale-token"),
+            Duration::from_secs(5),
+            &mut running,
+        )
+        .unwrap();
+        assert_eq!(token, "fresh-token");
+        writer.join().unwrap();
+        // 子进程已退出（抢锁失败）：沿用现有 daemon 的 token，不再等待。
+        let mut exited = SpawnedDaemon::from_test_child(exit_now_command().spawn().unwrap());
+        while matches!(exited.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let started = Instant::now();
+        let token = wait_rotated_token(
+            &run_dir,
+            Some("fresh-token"),
+            Duration::from_secs(5),
+            &mut exited,
+        )
+        .unwrap();
+        assert_eq!(token, "fresh-token");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let _ = running.try_wait();
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use super::*;
 use std::time::Instant;
 
 mod shared_pool;
+pub(in super::super) use shared_pool::discard_tunnel_idle;
 
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
@@ -136,17 +137,28 @@ impl WorkspaceClient {
                 idle.retain(|(used, _)| used.elapsed() < IDLE_TTL);
                 idle.pop().map(|(_, stream)| stream)
             };
+            let tunnel = self.shared.config.tunnel.as_deref();
+            let reused = cached.is_some();
             let mut stream = match cached {
                 Some(stream) => stream,
-                None => tls(&endpoint, Some(expected)).await?.0,
+                None => tls(&endpoint, tunnel, Some(expected.clone())).await?.0,
             };
             let headers = format!(
                 "POST /workspace HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
                 endpoint.authority, self.shared.config.token, body.len()
             );
-            let started = Instant::now();
-            write_http_request(&mut stream, &headers, &body).await
-                .map_err(|_| "[direct:unreachable] 工作区请求发送失败")?;
+            let mut started = Instant::now();
+            if write_http_request(&mut stream, &headers, &body).await.is_err() {
+                // 复用的空闲连接已失效（如隧道 SSH 会话已重建）：请求未完整送出，
+                // 服务端按 Content-Length 不会执行，换新连接重发一次是安全的。
+                if !reused {
+                    return Err("[direct:unreachable] 工作区请求发送失败".into());
+                }
+                stream = tls(&endpoint, tunnel, Some(expected)).await?.0;
+                started = Instant::now();
+                write_http_request(&mut stream, &headers, &body).await
+                    .map_err(|_| "[direct:unreachable] 工作区请求发送失败")?;
+            }
             let response = read_response(&mut stream).await?;
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             if matches!(response.status, 401 | 403) {
@@ -301,8 +313,9 @@ mod tests {
             .local_addr()
             .unwrap();
         assert_ne!(address, previous);
-        // A failed exchange is discarded instead of silently replaying an
-        // operation whose completion could be unknown.
+        // A stale idle connection that cannot even send the request is
+        // replaced once: the server never received a complete request. Failures
+        // after sending are never replayed (see the response tests below).
         let (_, mut stream) = client.shared.idle.lock().unwrap().pop().unwrap();
         stream.shutdown().await.unwrap();
         client
@@ -311,9 +324,8 @@ mod tests {
             .lock()
             .unwrap()
             .push((Instant::now(), stream));
-        assert!(client.request(&request).await.is_err());
-        assert!(client.shared.idle.lock().unwrap().is_empty());
         client.request(&request).await.unwrap();
+        assert_eq!(client.shared.idle.lock().unwrap().len(), 1);
         assert_ne!(
             client.shared.idle.lock().unwrap()[0]
                 .1

@@ -121,7 +121,7 @@ fn keep_daemon(access: &DaemonAccess, info: KeptDaemon) {
     kept_daemons().insert(access.token.clone(), info);
 }
 
-fn forget_kept_daemon(access: &DaemonAccess) {
+pub(crate) fn forget_kept_daemon(access: &DaemonAccess) {
     kept_daemons().remove(&access.token);
 }
 
@@ -136,7 +136,7 @@ pub(crate) enum StaleDaemon {
 
 /// 比较两个 server 版本（semver 优先级，含预发布号，如 `0.1.17-beta.12`）。
 /// 无法解析时返回 `None`，调用方按「旧版本」处理，与引入比较前的行为一致。
-fn compare_server_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+pub(crate) fn compare_server_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
     fn parse(raw: &str) -> Option<(Vec<u64>, Option<Vec<&str>>)> {
         let raw = raw.trim().trim_start_matches(['v', 'V']);
@@ -2909,6 +2909,7 @@ mod tests {
                 endpoint: "https://127.0.0.1:48763".into(),
                 certificate_fingerprint: "0".repeat(64),
                 token: "test-token".into(),
+                tunnel: None,
             },
         );
         manager.direct_active.write().unwrap().insert("c1".into());

@@ -15,6 +15,7 @@ import {
   sshServerVersionMismatch,
   type SshServerState,
   type SshServerTimingStage,
+  sshServerUsesGateway,
 } from '../lib/sshServerStatus'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
@@ -72,7 +73,7 @@ export default function SshServerDialog({
   const ready = !mismatch && state.phase === 'readyServer'
   const overview = view === 'details'
   const views: View[] = [...(compatibility ? ['details'] as const : ['details', 'logs'] as const), ...(agentPanel ? ['agent'] as const : [])]
-  const restartLabel = agent ? t('重新连接 Server') : ready ? t('重启远端服务') : t('重试远端服务')
+  const restartLabel = sshServerUsesGateway(state) ? t('重新连接 Server') : ready ? t('重启远端服务') : t('重试远端服务')
 
   return (
     <ModalOverlay onDismiss={onClose} zIndex="z-[120]">
@@ -168,7 +169,9 @@ export default function SshServerDialog({
                 {!compatibility && (
                   <>
                     <Detail label={t('运行方式')}>
-                      {agent ? t('HTTPS / WSS') : state.transport === 'daemon'
+                      {agent ? t('HTTPS / WSS') : state.transport === 'tunnel'
+                        ? t('SSH 隧道 · HTTPS / WSS')
+                        : state.transport === 'daemon'
                         ? t('常驻服务')
                         : state.transport === 'serve'
                           ? t('按项目服务')

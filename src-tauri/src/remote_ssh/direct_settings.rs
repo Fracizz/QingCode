@@ -46,6 +46,7 @@ impl Saved {
             endpoint: endpoint(&self.host, self.port)?,
             certificate_fingerprint: self.certificate_fingerprint.clone(),
             token: self.token.clone(),
+            tunnel: None,
         })
     }
 }
@@ -592,6 +593,7 @@ mod tests {
             endpoint: endpoint(&host, info.port).unwrap(),
             certificate_fingerprint: info.certificate_sha256,
             token: info.token.expect("pairing token"),
+            tunnel: None,
         };
         assert_eq!(
             direct::probe(&config.endpoint).await.unwrap(),

@@ -11,11 +11,13 @@ struct PoolKey {
     authority: String,
     fingerprint: String,
     credential_hash: [u8; 32],
+    /// 隧道目标都是远端回环地址，不同主机的 `127.0.0.1:<端口>` 不能共用连接。
+    tunnel: Option<String>,
 }
 
 pub(super) struct SharedPool {
     pub(super) config: DirectConnectionConfig,
-    pub(super) idle: Mutex<Vec<(Instant, TlsStream<TcpStream>)>>,
+    pub(super) idle: Mutex<Vec<(Instant, ServerStream)>>,
     pub(super) budget: RequestBudget,
 }
 
@@ -38,6 +40,23 @@ impl SharedPool {
     }
 }
 
+/// 丢弃经该 SSH 隧道建立的空闲连接：隧道会话重建或关闭后，旧通道上的
+/// TLS 连接已失效，复用只会让下一个请求失败。
+pub(in super::super::super) fn discard_tunnel_idle(connection_id: &str) {
+    let Some(pools) = POOLS.get() else {
+        return;
+    };
+    let registry = pools.lock().unwrap_or_else(|error| error.into_inner());
+    for pool in registry.live.values().filter_map(Weak::upgrade) {
+        if pool.config.tunnel.as_deref() == Some(connection_id) {
+            pool.idle
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clear();
+        }
+    }
+}
+
 impl PoolRegistry {
     fn get(&mut self, config: DirectConnectionConfig) -> Arc<SharedPool> {
         let key = PoolKey {
@@ -47,6 +66,7 @@ impl PoolRegistry {
             fingerprint: normalized_fingerprint(&config.certificate_fingerprint)
                 .unwrap_or_else(|_| config.certificate_fingerprint.clone()),
             credential_hash: Sha256::digest(config.token.as_bytes()).into(),
+            tunnel: config.tunnel.clone(),
         };
         self.cached.retain(|_, (used, _)| used.elapsed() < POOL_TTL);
         self.live.retain(|_, pool| pool.strong_count() > 0);
@@ -88,6 +108,7 @@ mod tests {
             endpoint: "https://127.0.0.1:48763".into(),
             certificate_fingerprint: "a".repeat(64),
             token: "test-token".into(),
+            tunnel: None,
         };
         let first = registry.get(config.clone());
         let mut clients = Vec::new();
