@@ -1,6 +1,6 @@
 [package]
 name = "qingcode"
-version = "0.1.17-beta.17"
+version = "0.1.17-beta.18"
 description = "QingCode — a lightweight multi-project code editor"
 authors = ["Franciz"]
 license = "MIT"
