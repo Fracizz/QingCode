@@ -292,7 +292,7 @@ const drawer = createSessionDrawer({
 // 工作台首页「全部会话」：首页可见、App 在前台且电脑在线时定时刷新；与抽屉的「全部」共用组件。
 const HOME_SESSIONS_INTERVAL = 5000;
 const HOME_SESSIONS_LIMIT = 8;
-// 首页会话不超过这个数时收起搜索与筛选，只留「运行中优先」与「管理」。
+// 首页会话不超过这个数时收起搜索与筛选，「运行中优先」与「管理」移到「全部会话」标题右侧。
 const HOME_SESSIONS_COMPACT = 4;
 let homeSessionsTimer = null;
 let homeSessionsLoading = false;
@@ -302,6 +302,7 @@ const homeOverview = createSessionOverview({
   root: get('home-session-overview'),
   limit: HOME_SESSIONS_LIMIT,
   compactBelow: HOME_SESSIONS_COMPACT,
+  header: document.querySelector('#home-sessions .section-heading'),
   state: {
     profile: () => profile,
     projects: () => projects,

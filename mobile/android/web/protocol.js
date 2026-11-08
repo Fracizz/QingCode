@@ -126,7 +126,7 @@ export function prunedSessionPins(pins, sessions) {
 }
 
 /**
- * 显示顺序：置顶会话按置顶顺序在前；打开「运行中优先」时其余运行中（程序在工作）的排前面，再保持电脑端顺序。
+ * 显示顺序：置顶会话按置顶顺序在前；按下「运行中优先」时其余运行中（程序在工作）的排前面，再保持电脑端顺序。
  * 返回 { session, index }，index 是原列表位置，用于「终端 N」兜底名称。
  */
 export function orderSessions(sessions, pins = [], { runningFirst = false } = {}) {

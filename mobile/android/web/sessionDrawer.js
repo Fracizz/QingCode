@@ -46,9 +46,14 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   let allAvailable = null;
   let availabilityAddress = null;
 
-  // 「本项目」列表的「运行中优先」，与纵览中的同一选项同步。
+  // 「本项目」列表的「运行中优先」，与纵览中的按钮同步。
+  // 与「新建终端」同一行，放在右侧。
   const projectSort = runningFirstToggle('drawer-sort');
-  get('drawer-new-session').after(projectSort.element);
+  const projectTools = document.createElement('div');
+  projectTools.className = 'drawer-project-tools';
+  const newSession = get('drawer-new-session');
+  newSession.replaceWith(projectTools);
+  projectTools.append(newSession, projectSort.element);
   onSessionPrefsChange(() => { if (drawer.open || docked) render(); });
 
   function allMode() { return scope === 'all' && allAvailable === true && availabilityAddress === state.profile()?.id; }
@@ -176,8 +181,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     }
     get('session-scope-hint').hidden = allAvailable !== false;
     get('session-options').hidden = all;
-    get('drawer-new-session').hidden = all;
-    projectSort.element.hidden = all;
+    projectTools.hidden = all;
     projectSort.relabel();
     get('end-all-sessions').hidden = all;
     get('session-overview').hidden = !all;

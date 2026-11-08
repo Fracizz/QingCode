@@ -604,12 +604,22 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .overview-search { min-height: 44px; }
 .session-overview .search-field > svg { top: 13px; }
 .overview-manage { flex: none; min-width: 56px; min-height: 40px; padding-inline: 8px; font-size: 14px; font-weight: 650; }
-/* 选项行：「运行中优先」勾选在左，「管理」在右。 */
-.overview-options { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.running-first { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin: 0; padding-left: 4px; color: var(--muted); font-size: 13px; font-weight: 400; cursor: pointer; }
-.running-first input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
-.running-first[hidden] { display: none; }
-.drawer-sort { flex: none; align-self: flex-start; }
+/* 「运行中优先」图标：按下时高亮，再点恢复默认顺序。会话少收起搜索框时与「管理」靠右。 */
+.overview-tools { justify-content: flex-end; }
+.overview-tools .search-field[hidden] { display: none; }
+.overview-tools[hidden] { display: none; }
+.overview-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+/* 收起时放在「全部会话」标题右侧，标题行不因 40px 按钮变高太多。 */
+.section-heading .overview-actions { margin: -6px -4px -6px 0; }
+.sort-toast { position: fixed; z-index: 30; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px); margin: 0; padding: 8px 14px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); color: var(--ink); font-size: 13px; pointer-events: none; box-shadow: 0 6px 20px #0008; }
+.sort-toast[hidden] { display: none; }
+.sort-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
+.running-first { flex: none; width: 40px; height: 40px; min-height: 0; padding: 0; border-radius: var(--control-radius); color: var(--muted); }
+.running-first svg { width: 18px; height: 18px; }
+.running-first[aria-pressed="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.drawer-project-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.drawer-project-tools[hidden] { display: none; }
+.drawer-project-tools #drawer-new-session { flex: 1; width: auto; }
 .session-overview .overview-filter { margin-top: 0; }
 .overview-filter button { min-height: 36px; font-size: 13px; }
 .overview-select-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
@@ -651,11 +661,6 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #session-overview .overview-groups { flex: none; overflow: visible; }
   #session-overview .overview-search { min-height: 40px; }
   #session-overview .overview-manage { min-height: 40px; }
-  /* 选项行（运行中优先 / 管理）并到搜索框右侧，省出一行给列表。 */
-  #session-overview:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; }
-  #session-overview > * { grid-column: 1 / -1; }
-  #session-overview > .overview-tools { grid-column: 1; grid-row: 1; }
-  #session-overview > .overview-options { grid-column: 2; grid-row: 1; }
   #session-overview .session-group-head { padding-block: 2px; }
   #session-overview .session-group + .session-group { margin-top: 6px; }
   #session-overview .search-field > svg { top: 11px; }
@@ -766,7 +771,7 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 #terminal-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop { transition: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #terminal-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #terminal-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
