@@ -77,6 +77,15 @@ import {
 } from '@/lib/terminal/terminalProgramActivity'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
+import {
+  finishTerminalMirror,
+  forwardTerminalMirrorOutput,
+  forwardTerminalMirrorScreen,
+  terminalCapture,
+  type TerminalCapture,
+} from '../lib/terminal/terminalMirror'
+import { closeMobileView, isMobileTerminalId, openMobileView } from '../lib/ipc/mobileSessions'
+import { useTerminalControlStore } from './terminalControlStore'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 import { decodeTerminalEventData } from '../utils/terminalIpc'
 import { isSshProject, sshConnectionIdFromUri } from '../lib/sshWorkspace'
@@ -498,6 +507,11 @@ function markDisconnectedExit(id: string) {
 }
 
 async function killTerminalForClose(tab: TerminalTab, spawnInFlight: boolean, source: TerminalActionSource = 'user_close'): Promise<void> {
+  // 手机终端的标签只是查看入口：关闭标签不结束手机上的进程。
+  if (isMobileTerminalId(tab.id)) {
+    await closeMobileView(tab.id)
+    return
+  }
   const operationId = crypto.randomUUID()
   recordTerminalDiagnostic('terminal.close_requested', tab, source, operationId)
   if (tab.awaitingRestoreSpawn && tab.persistent && tab.ptyId && !spawnInFlight) {
@@ -599,6 +613,7 @@ const terminalRingScreens = new Map<
 function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot, resumeSeq?: number) {
   // 先把批处理中的输出交给视图，保证快照排在它们之后。
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
+  forwardTerminalMirrorScreen(id, snapshot)
   const bytes = new TextEncoder().encode(snapshot.data)
   if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
   touchRing(id, bytes)
@@ -720,6 +735,7 @@ function publishTerminalOutput(id: string, data: unknown, nextSeq?: unknown) {
   const bytes = decodeTerminalEventData(data)
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
+  forwardTerminalMirrorOutput(id, bytes)
   // 与 ring 同步更新，持久化时两者对应同一时刻。
   const resumeSeq = parseResumeSeq(nextSeq)
   if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
@@ -734,6 +750,8 @@ function publishTerminalOutput(id: string, data: unknown, nextSeq?: unknown) {
 }
 
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
+  finishTerminalMirror(id, 0, false)
+  useTerminalControlStore.getState().clearControl(id)
   useTerminalDraftStore.getState().clearDraft(id)
   terminalScrollbackRings.delete(id)
   terminalRingScreens.delete(id)
@@ -2390,6 +2408,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         const parsed = parseTerminalExitEvent(event.payload)
         if (!parsed) return
         const { id, exitCode: exit_code, disconnected, reason } = parsed
+        finishTerminalMirror(id, exit_code, disconnected)
+        useTerminalControlStore.getState().clearControl(id)
         clearTerminalCommandActivity(id)
         clearTerminalProgramActivity(id)
         // 进程结束后屏幕可能被替换（重启/新 Shell），恢复时改用 ring 回放。
@@ -2524,4 +2544,60 @@ if (typeof window !== 'undefined') {
 export function hasTerminalScrollback(id: string): boolean {
   const ring = terminalScrollbackRings.get(id)
   return !!ring && ring.byteLength > 0
+}
+
+/**
+ * 抓取手机接入时的初始画面，必须和 `beginTerminalMirror` 在同一轮同步代码里调用：
+ * 此前的输出都进入快照，此后的输出都进入转发队列，两边不重不漏。
+ */
+export function captureTerminalForMirror(id: string): Promise<TerminalCapture> {
+  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
+  const capture = terminalCapture(id)
+  if (capture) return capture()
+  // 视图尚未挂载（恢复后没打开过的标签）时用输出缓存代替。
+  const size = lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
+  const data = new TextDecoder().decode(terminalByteRingToBytes(terminalScrollbackRings.get(id)))
+  return Promise.resolve({ data, cols: size.cols, rows: size.rows })
+}
+
+/** 在电脑标签中打开手机终端，默认只读；已打开时直接返回原标签。 */
+export async function openMobileSessionTab(session: {
+  id: string
+  name: string
+  project: { id: string; path: string }
+}): Promise<TerminalTab> {
+  const state = useTerminalStore.getState()
+  const existing = state.terminals.find(tab => tab.id === session.id)
+  if (existing) return existing
+  const pane = state.terminalFocusPane
+  const tab: TerminalTab = {
+    id: session.id,
+    name: session.name,
+    projectId: session.project.id,
+    cwd: session.project.path,
+    launchCommand: '',
+    pane,
+    status: 'running',
+    exitCode: null,
+    startedAt: Date.now(),
+  }
+  // 先建标签再打开：首屏快照到达时要能找到它。
+  useTerminalStore.setState(current => ({
+    terminals: [...current.terminals, tab],
+    ...bindTerminalToPane(current, tab.projectId, pane, tab.id),
+  }))
+  try {
+    const opened = await openMobileView(session.id)
+    if (opened.controller) {
+      useTerminalControlStore.getState().setControl(session.id, {
+        name: opened.controller,
+        cols: opened.cols,
+        rows: opened.rows,
+      })
+    }
+    return tab
+  } catch (error) {
+    await useTerminalStore.getState().closeTerminal(session.id)
+    throw error
+  }
 }

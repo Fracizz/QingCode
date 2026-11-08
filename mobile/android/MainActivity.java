@@ -1085,7 +1085,7 @@ public final class MainActivity extends Activity {
         }
         request.remove("profile");
         switch (op) {
-            case "projects": case "sessions": case "create": case "poll": case "history":
+            case "projects": case "sessions": case "attach": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
             case "terminal_profiles": case "capabilities":
                 if (!"capabilities".equals(op) && !"terminal_profiles".equals(op)) watcher.touch(current);

@@ -160,6 +160,12 @@
           <p>此项目还没有终端</p>
           <button id="terminal-empty-new" class="primary" type="button">新建终端</button>
         </div>
+        <!-- 终端已被其他设备接入：程序继续运行，点「接回」才取回使用权。 -->
+        <div id="terminal-taken" hidden>
+          <p id="terminal-taken-text"></p>
+          <p>程序继续运行</p>
+          <button id="terminal-take-back" class="primary" type="button">接回</button>
+        </div>
         <p id="font-toast" role="status" hidden></p>
         <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg><span>回到最新</span></button>
       </div>

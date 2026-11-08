@@ -366,6 +366,8 @@ export function buildWorkspaceSessionSnapshot(input: {
   const terminalsByProject = new Map<string, PersistedTerminalMeta[]>()
   for (const terminal of input.terminals) {
     if (exclude.has(terminal.projectId)) continue
+    // 手机终端的标签只是查看入口，进程归手机会话，重启后不恢复。
+    if (terminal.id.startsWith('mobile-')) continue
     const list = terminalsByProject.get(terminal.projectId) ?? []
     list.push(serializeTerminalMeta(terminal))
     terminalsByProject.set(terminal.projectId, list)

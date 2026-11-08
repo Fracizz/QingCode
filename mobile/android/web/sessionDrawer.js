@@ -277,7 +277,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       const address = state.profile().id;
       const projectId = state.project().id;
       // 全部范围一次取回所有项目的会话，当前项目的列表从中截取，不再单独请求。
-      const response = await remote('sessions', all ? {} : { project: projectId });
+      const response = await remote('sessions', all ? { desktop: true } : { project: projectId });
       if (epoch !== state.viewEpoch() || currentDrawer !== drawerEpoch || !drawer.open) return;
       const list = all ? projectSessionsFromOverview(response, projectId) : response;
       setSessions(mergeSessionList(list, state.sessions()));

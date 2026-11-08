@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../types'
+import type { Project, TerminalTab } from '../types'
 
 const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
@@ -37,7 +37,8 @@ vi.mock('./sshWorkspace', async importOriginal => ({
   ensureSshWorkspaceConnected: mocks.connect,
 }))
 
-import { listenForMobileRequests } from './mobileBridge'
+import { applyTerminalControl, isDesktopTerminalShareable, listenForMobileRequests } from './mobileBridge'
+import { terminalControl } from '../store/terminalControlStore'
 import { restrictProject, trustProject } from './workspaceTrust'
 import { TERMINAL_PROFILES_KEY } from './terminal/terminalProfiles'
 import { trustTerminalProfile } from './terminal/terminalProfileTrust'
@@ -163,5 +164,27 @@ describe('mobile project bridge', () => {
       id: 'ops', name: 'Ops', command: 'deploy; --dry-run', shell: 'pwsh',
     } })
     expect(await send({ profile: 'missing' })).toMatchObject({ error: expect.stringContaining('不存在') })
+  })
+})
+
+describe('desktop terminal sharing', () => {
+  const tab = (patch: Partial<TerminalTab> = {}): TerminalTab => ({
+    id: 'term-1', name: 'claude', projectId: 'p', cwd: 'D:/p', launchCommand: '', status: 'running', exitCode: null, ...patch,
+  })
+
+  it('only shares live interactive terminals', () => {
+    expect(isDesktopTerminalShareable(tab())).toBe(true)
+    expect(isDesktopTerminalShareable(tab({ shellKind: 'interactive', status: 'reconnecting' }))).toBe(true)
+    expect(isDesktopTerminalShareable(tab({ status: 'exited' }))).toBe(false)
+    expect(isDesktopTerminalShareable(tab({ shellKind: 'ps1' }))).toBe(false)
+    expect(isDesktopTerminalShareable(tab({ runEnvironment: 'local' as TerminalTab['runEnvironment'] }))).toBe(false)
+    expect(isDesktopTerminalShareable(tab({ id: 'mobile-abc' }))).toBe(false)
+  })
+
+  it('shows the device in control and clears it when the computer takes back', () => {
+    applyTerminalControl({ id: 'term-1', controller: 'Pixel', cols: 50, rows: 30 })
+    expect(terminalControl('term-1')).toEqual({ name: 'Pixel', cols: 50, rows: 30 })
+    applyTerminalControl({ id: 'term-1', controller: null, cols: 50, rows: 30 })
+    expect(terminalControl('term-1')).toBeUndefined()
   })
 })

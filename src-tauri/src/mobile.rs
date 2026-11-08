@@ -4,7 +4,7 @@
 //! Pairings are persisted as SHA-256 token digests so a phone stays paired across
 //! desktop restarts. Terminal output for `mobile-*` sessions is delivered here
 //! directly by the PTY / SSH emitters instead of being broadcast to webviews.
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::num::NonZeroU32;
@@ -50,6 +50,13 @@ const PREVIEW_HISTORY_LINES: usize = 200;
 const PREVIEW_OUTPUT_EVENT: &str = "mobile-session-output";
 /// 同一会话的通知合并间隔：持续输出的 TUI 不会把预览刷新推到这个频率以上。
 const PREVIEW_NOTIFY_INTERVAL: Duration = Duration::from_millis(100);
+/// 电脑只读查看手机终端时积压的上限；超过后丢弃增量，下一轮改发整屏快照。
+const MAX_VIEW_BACKLOG: usize = 256 * 1024;
+/// 旧使用权发来的输入与改尺寸一律拒绝；手机端按这句文案进入被接管状态。
+const TAKEN_OVER: &str = "终端已在其他设备接入。";
+/// 使用权变化时通知电脑端：`controller` 为设备名表示电脑只读，为 null 表示电脑可操作。
+const CONTROL_EVENT: &str = "terminal-control";
+const DESKTOP_NAME: &str = "电脑";
 /// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
 /// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
 const OUTPUT_COALESCE: Duration = Duration::from_millis(24);
@@ -166,7 +173,62 @@ struct HubState {
     attempts: HashMap<IpAddr, VecDeque<Instant>>,
     total_attempts: VecDeque<Instant>,
     sessions: HashMap<String, Session>,
+    /// 手机接入的电脑终端。与 `sessions` 分表：清理、撤销、停止连接等结束进程的路径只遍历
+    /// `sessions`，因此不可能结束电脑上的终端。
+    mirrors: HashMap<String, Session>,
+    /// 正在电脑标签里查看的手机终端，用于在会话被移除时通知标签。
+    desktop_views: HashSet<String>,
+    desktop_terminals: bool,
     next_number: u64,
+}
+
+impl HubState {
+    fn live(&self, id: &str) -> Option<&Session> {
+        self.sessions.get(id).or_else(|| self.mirrors.get(id))
+    }
+
+    fn live_mut(&mut self, id: &str) -> Option<&mut Session> {
+        if self.sessions.contains_key(id) {
+            self.sessions.get_mut(id)
+        } else {
+            self.mirrors.get_mut(id)
+        }
+    }
+
+    fn controller_name(&self, controller: &Controller) -> String {
+        match controller {
+            Controller::Desktop => DESKTOP_NAME.into(),
+            Controller::Device(id) => self
+                .devices
+                .iter()
+                .find(|entry| entry.saved.id == *id)
+                .map_or_else(|| "其他设备".into(), |entry| entry.saved.name.clone()),
+        }
+    }
+
+    /// 持旧使用权的轮询得到被接管答复，由手机显示「已在 X 上接入」。
+    fn takeover_reply(&self, id: &str, lease: Option<u64>) -> Option<Value> {
+        let session = self.live(id)?;
+        let stale = match lease {
+            Some(lease) => lease != session.lease,
+            // 旧版手机不带使用权，只能用手机会话；电脑终端必须先接入。
+            None => self.mirrors.contains_key(id),
+        };
+        stale.then(|| json!({ "takenOver": true, "by": self.controller_name(&session.controller) }))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Controller {
+    Desktop,
+    Device(String),
+}
+
+/// 电脑只读查看手机终端时待发送的输出，按预览通知的节奏合并后发出。
+#[derive(Default)]
+struct ViewBacklog {
+    bytes: Vec<u8>,
+    snapshot: bool,
 }
 
 struct DeviceEntry {
@@ -199,6 +261,9 @@ struct SavedSettings {
     enabled: bool,
     #[serde(default)]
     devices: Vec<Device>,
+    /// 允许手机接入电脑上开的终端；默认关闭，由用户在设置中显式开启。
+    #[serde(default)]
+    desktop_terminals: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -376,6 +441,13 @@ struct Session {
     last_output: Option<Instant>,
     /// 已安排一次预览通知且尚未发出。
     preview_notify_pending: bool,
+    /// 当前使用这个终端的一方，同一时刻只有一个。
+    controller: Controller,
+    /// 使用权编号，每次接管加一；持旧编号的输入和改尺寸被拒绝。
+    lease: u64,
+    /// 电脑已接回的镜像：停止接收输出，只保留编号，让被顶下去的手机知道是谁接走的。
+    dormant: bool,
+    view: Option<ViewBacklog>,
 }
 
 impl Session {
@@ -383,6 +455,10 @@ impl Session {
         let now_ms = unix_now_ms();
         Self {
             project,
+            controller: Controller::Device(owner.clone()),
+            lease: 1,
+            dormant: false,
+            view: None,
             owner,
             number,
             custom_name: None,
@@ -483,9 +559,16 @@ impl Session {
                         self.screen.process(section);
                         self.observe_program_title(&mut previous_title);
                     }
+                    self.queue_view_bytes(&bytes);
                 }
             }
-            OutputChunk::Screen { data, cols, rows } => self.screen.replace(data, *cols, *rows),
+            OutputChunk::Screen { data, cols, rows } => {
+                self.screen.replace(data, *cols, *rows);
+                if let Some(view) = self.view.as_mut() {
+                    view.bytes = Vec::new();
+                    view.snapshot = true;
+                }
+            }
         }
         self.observe_program_title(&mut previous_title);
         if matches!(chunk, OutputChunk::Screen { .. }) {
@@ -500,6 +583,31 @@ impl Session {
                 self.output_size -= removed.len();
             }
         }
+        self.changed.notify_waiters();
+    }
+
+    fn queue_view_bytes(&mut self, bytes: &[u8]) {
+        let Some(view) = self.view.as_mut() else {
+            return;
+        };
+        if view.snapshot {
+            return;
+        }
+        view.bytes.extend_from_slice(bytes);
+        if view.bytes.len() > MAX_VIEW_BACKLOG {
+            view.bytes = Vec::new();
+            view.snapshot = true;
+        }
+    }
+
+    /// 电脑接回：丢弃缓存并停止接收，但保留表项让旧使用权的手机得到被接管答复。
+    fn release_mirror(&mut self) {
+        self.controller = Controller::Desktop;
+        self.lease += 1;
+        self.dormant = true;
+        self.output.clear();
+        self.output_size = 0;
+        self.screen = MobileScreen::new();
         self.changed.notify_waiters();
     }
 
@@ -676,6 +784,15 @@ enum Operation {
         /// 不传时返回这台电脑上全部项目的手机会话（附项目与创建设备），供手机纵览。
         #[serde(default)]
         project: Option<String>,
+        /// 手机支持使用权时传 true，纵览里并入电脑上开的终端。
+        #[serde(default)]
+        desktop: bool,
+    },
+    /// 接入终端并取得使用权。`take` 仅在用户主动点击时为 true；重连和恢复界面传 false，不抢。
+    Attach {
+        id: String,
+        #[serde(default)]
+        take: bool,
     },
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
@@ -696,6 +813,8 @@ enum Operation {
         latest: bool,
         #[serde(default)]
         tail: bool,
+        #[serde(default)]
+        lease: Option<u64>,
     },
     History {
         id: String,
@@ -707,15 +826,21 @@ enum Operation {
     Input {
         id: String,
         data: String,
+        #[serde(default)]
+        lease: Option<u64>,
     },
     Image {
         id: String,
         data: String,
+        #[serde(default)]
+        lease: Option<u64>,
     },
     Resize {
         id: String,
         cols: u16,
         rows: u16,
+        #[serde(default)]
+        lease: Option<u64>,
     },
     End {
         id: String,
@@ -738,6 +863,7 @@ pub struct Status {
     addresses: Vec<String>,
     computer: String,
     error: Option<String>,
+    desktop_terminals: bool,
 }
 
 #[derive(Serialize)]
@@ -779,6 +905,7 @@ impl Hub {
         inner.saved_port = Some(settings.endpoint.port());
         inner.fingerprint = Some(fingerprint(&settings.certificate));
         inner.code = Some(settings.code.clone());
+        inner.desktop_terminals = settings.desktop_terminals;
         let previous: HashMap<String, Option<Instant>> = inner
             .devices
             .drain(..)
@@ -917,8 +1044,8 @@ impl Hub {
 
     fn session_kind(&self, id: &str) -> Result<ProjectKind, String> {
         let inner = self.inner.lock().unwrap();
-        let session = inner.sessions.get(id).ok_or("终端不存在。")?;
-        if !session.ready || session.exit.is_some() || !inner.accepting {
+        let session = inner.live(id).ok_or("终端不存在。")?;
+        if !session.ready || session.dormant || session.exit.is_some() || !inner.accepting {
             return Err("终端已结束或正在启动。".into());
         }
         Ok(session.project.kind)
@@ -929,6 +1056,10 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap();
         inner.sessions.retain(|_, session| {
             !(session.ready && session.exit.is_some() && session.last_active.elapsed() >= limit)
+        });
+        // 镜像只回收记录，绝不返回给调用方结束进程。
+        inner.mirrors.retain(|_, mirror| {
+            !((mirror.dormant || mirror.exit.is_some()) && mirror.last_active.elapsed() >= limit)
         });
         inner
             .sessions
@@ -988,9 +1119,244 @@ impl Hub {
     }
 
     fn with_session(&self, id: &str, update: impl FnOnce(&mut Session)) {
-        if let Some(session) = self.inner.lock().unwrap().sessions.get_mut(id) {
+        if let Some(session) = self.inner.lock().unwrap().live_mut(id) {
             update(session);
         }
+    }
+
+    fn desktop_terminals_enabled(&self) -> bool {
+        self.inner.lock().unwrap().desktop_terminals
+    }
+
+    /// 校验使用权。手机会话兼容不带编号的旧版手机；电脑终端必须持当前编号。
+    fn authorize(&self, id: &str, lease: Option<u64>) -> Result<(), String> {
+        let inner = self.inner.lock().unwrap();
+        if let Some(session) = inner.sessions.get(id) {
+            return if lease.is_none_or(|lease| lease == session.lease) {
+                Ok(())
+            } else {
+                Err(TAKEN_OVER.into())
+            };
+        }
+        let mirror = inner.mirrors.get(id).ok_or("终端不存在。")?;
+        if lease == Some(mirror.lease) && !mirror.dormant {
+            Ok(())
+        } else {
+            Err(TAKEN_OVER.into())
+        }
+    }
+
+    /// 取得或确认使用权。已持有时返回原编号；被占用且 `take` 为 false 时返回被接管答复。
+    fn claim(&self, id: &str, device: &str, take: bool) -> Result<Value, String> {
+        let mut inner = self.inner.lock().unwrap();
+        require_device(&inner, device)?;
+        let controller = Controller::Device(device.to_string());
+        let session = inner
+            .live(id)
+            .filter(|session| session.ready && !session.dormant)
+            .ok_or("终端不存在。")?;
+        if session.controller == controller {
+            return Ok(json!({ "lease": session.lease }));
+        }
+        if !take {
+            let by = inner.controller_name(&session.controller);
+            return Ok(json!({ "takenOver": true, "by": by }));
+        }
+        let session = inner.live_mut(id).ok_or("终端不存在。")?;
+        session.controller = controller;
+        session.lease += 1;
+        // 叫醒长轮询，被顶下去的设备立刻收到答复。
+        session.changed.notify_waiters();
+        Ok(json!({ "lease": session.lease }))
+    }
+
+    fn mirror_active(&self, id: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .mirrors
+            .get(id)
+            .is_some_and(|mirror| !mirror.dormant)
+    }
+
+    fn is_phone_session(&self, id: &str) -> bool {
+        self.inner.lock().unwrap().sessions.contains_key(id)
+    }
+
+    /// 用电脑当前画面建立镜像；编号沿用旧表项，迟到的手机请求不会误通过。
+    #[allow(clippy::too_many_arguments)]
+    fn seed_mirror(
+        &self,
+        id: String,
+        project: Project,
+        device: &str,
+        name: Option<String>,
+        cols: u16,
+        rows: u16,
+        data: &str,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        require_device(&inner, device)?;
+        if !inner.desktop_terminals {
+            return Err("电脑端未开启手机接入电脑终端。".into());
+        }
+        let lease = inner.mirrors.get(&id).map_or(1, |mirror| mirror.lease + 1);
+        let mut session = Session::new(project, device.to_string(), 0);
+        session.ready = true;
+        session.lease = lease;
+        session.label = name;
+        let (cols, rows) = size(cols, rows);
+        session.screen.resize(cols, rows);
+        session.screen.process(data.as_bytes());
+        inner.mirrors.insert(id, session);
+        Ok(())
+    }
+
+    fn mirror_push(&self, id: &str, chunk: OutputChunk) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(mirror) = inner.mirrors.get_mut(id).filter(|mirror| !mirror.dormant) {
+            mirror.push(chunk);
+        }
+    }
+
+    fn mirror_finish(&self, id: &str, exit: Exit) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(mirror) = inner.mirrors.get_mut(id).filter(|mirror| !mirror.dormant) {
+            mirror.finish(exit);
+        }
+    }
+
+    /// 让出手机设备的镜像（全部或指定设备），返回受影响的终端，由调用方通知电脑端恢复操作。
+    fn release_mirrors(&self, device: Option<&str>) -> Vec<String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .mirrors
+            .iter_mut()
+            .filter(|(_, mirror)| {
+                !mirror.dormant
+                    && device.is_none_or(|device| {
+                        mirror.controller == Controller::Device(device.to_string())
+                    })
+            })
+            .map(|(id, mirror)| {
+                mirror.release_mirror();
+                id.clone()
+            })
+            .collect()
+    }
+
+    fn take_for_desktop(&self, id: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(session) = inner.sessions.get_mut(id) {
+            if session.controller != Controller::Desktop {
+                session.controller = Controller::Desktop;
+                session.lease += 1;
+                session.changed.notify_waiters();
+            }
+            return Ok(());
+        }
+        let mirror = inner.mirrors.get_mut(id).ok_or("终端不存在。")?;
+        if !mirror.dormant {
+            mirror.release_mirror();
+        }
+        Ok(())
+    }
+
+    /// 给电脑终端列表补上当前使用者。
+    fn annotate_desktop_terminals(&self, items: Vec<Value>, viewer: &str) -> Vec<Value> {
+        let inner = self.inner.lock().unwrap();
+        items
+            .into_iter()
+            .filter_map(|mut item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                let holder = inner
+                    .mirrors
+                    .get(&id)
+                    .filter(|mirror| !mirror.dormant && mirror.exit.is_none())
+                    .map_or(Controller::Desktop, |mirror| mirror.controller.clone());
+                let name = inner.controller_name(&holder);
+                let map = item.as_object_mut()?;
+                map.insert("origin".into(), json!("desktop"));
+                map.insert("number".into(), json!(0));
+                map.insert("exit".into(), Value::Null);
+                map.insert("controllerName".into(), json!(name));
+                map.insert(
+                    "inUseHere".into(),
+                    json!(holder == Controller::Device(viewer.to_string())),
+                );
+                Some(item)
+            })
+            .collect()
+    }
+
+    /// 开始在电脑标签中查看手机终端；首次发送整屏快照，之后走增量。
+    fn open_view(&self, id: &str) -> Result<Value, String> {
+        let mut inner = self.inner.lock().unwrap();
+        let session = inner
+            .sessions
+            .get(id)
+            .filter(|session| session.ready)
+            .ok_or("终端不存在。")?;
+        let (cols, rows) = session.screen.size();
+        let holder = (session.controller != Controller::Desktop)
+            .then(|| inner.controller_name(&session.controller));
+        let reply = json!({
+            "name": session.name(), "projectId": session.project.id, "path": session.project.path,
+            "kind": session.project.kind, "controller": holder, "cols": cols, "rows": rows,
+            "exit": session.exit,
+        });
+        inner.desktop_views.insert(id.to_string());
+        if let Some(session) = inner.sessions.get_mut(id) {
+            session.view = Some(ViewBacklog {
+                bytes: Vec::new(),
+                snapshot: true,
+            });
+        }
+        Ok(reply)
+    }
+
+    fn close_view(&self, id: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.desktop_views.remove(id);
+        if let Some(session) = inner.sessions.get_mut(id) {
+            session.view = None;
+        }
+    }
+
+    fn desktop_controls(&self, id: &str) -> Result<ProjectKind, String> {
+        let inner = self.inner.lock().unwrap();
+        let session = inner.sessions.get(id).ok_or("终端不存在。")?;
+        if session.controller != Controller::Desktop {
+            return Err(TAKEN_OVER.into());
+        }
+        if !session.ready || session.exit.is_some() {
+            return Err("终端已结束或正在启动。".into());
+        }
+        Ok(session.project.kind)
+    }
+
+    /// 取出待发给电脑标签的内容：积压过多时给整屏快照，并附带退出信息。
+    fn take_view_output(&self, id: &str) -> Option<(ViewOutput, Option<(u32, bool)>)> {
+        let mut inner = self.inner.lock().unwrap();
+        let session = inner.sessions.get_mut(id)?;
+        let exit = session
+            .exit
+            .as_ref()
+            .map(|exit| (exit.exit_code, exit.disconnected));
+        let output = if session.view.as_ref()?.snapshot {
+            let screen = session.screen.snapshot();
+            let view = session.view.as_mut()?;
+            view.snapshot = false;
+            view.bytes = Vec::new();
+            ViewOutput::Screen(screen)
+        } else {
+            ViewOutput::Bytes(std::mem::take(&mut session.view.as_mut()?.bytes))
+        };
+        Some((output, exit))
+    }
+
+    fn take_view_mark(&self, id: &str) -> bool {
+        self.inner.lock().unwrap().desktop_views.remove(id)
     }
 
     /// 更新会话画面。返回 true 表示调用方需要安排一次预览通知；
@@ -1051,8 +1417,16 @@ impl Hub {
                         "deviceName".into(),
                         json!(device.map(|entry| entry.saved.name.as_str())),
                     );
+                    map.insert(
+                        "controllerName".into(),
+                        json!(inner.controller_name(&session.controller)),
+                    );
                     if let Some(viewer) = viewer {
                         map.insert("ownDevice".into(), json!(session.owner == viewer));
+                        map.insert(
+                            "inUseHere".into(),
+                            json!(session.controller == Controller::Device(viewer.to_string())),
+                        );
                     }
                 }
                 value
@@ -1095,8 +1469,11 @@ fn deliver_update(app: &AppHandle, id: &str, update: impl FnOnce(&mut Session)) 
     if !state.hub.update_for_preview(id, update) {
         return;
     }
-    let app = app.clone();
-    let id = id.to_owned();
+    schedule_output_notify(app.clone(), id.to_owned());
+}
+
+/// 合并间隔结束后发给电脑标签与预览，电脑端比手机晚约 100ms 显示，换取较低的刷新开销。
+fn schedule_output_notify(app: AppHandle, id: String) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(PREVIEW_NOTIFY_INTERVAL).await;
         // 先清标记再发事件：之后到达的输出会再安排一次通知，不会漏掉。
@@ -1105,8 +1482,68 @@ fn deliver_update(app: &AppHandle, id: &str, update: impl FnOnce(&mut Session)) 
                 session.preview_notify_pending = false;
             });
         }
+        flush_view(&app, &id);
         let _ = app.emit(PREVIEW_OUTPUT_EVENT, json!({ "id": id }));
     });
+}
+
+enum ViewOutput {
+    Bytes(Vec<u8>),
+    Screen(Value),
+}
+
+/// 把积压的手机终端输出交给电脑标签，事件名与普通终端相同，电脑端无需另写渲染。
+fn flush_view(app: &AppHandle, id: &str) {
+    let Some(state) = app.try_state::<MobileState>() else {
+        return;
+    };
+    let Some((output, exit)) = state.hub.take_view_output(id) else {
+        return;
+    };
+    match output {
+        ViewOutput::Bytes(bytes) if bytes.is_empty() => {}
+        ViewOutput::Bytes(bytes) => {
+            let data = crate::terminal::encode_terminal_data(&bytes);
+            let _ = app.emit("terminal-data", json!({ "id": id, "data": data }));
+        }
+        ViewOutput::Screen(mut screen) => {
+            screen["id"] = json!(id);
+            let _ = app.emit("terminal-screen", screen);
+        }
+    }
+    if let Some((exit_code, disconnected)) = exit {
+        emit_view_exit(app, id, exit_code, disconnected);
+    }
+}
+
+/// 只通知一次：退出事件和各条移除路径都可能走到这里。
+fn emit_view_exit(app: &AppHandle, id: &str, exit_code: u32, disconnected: bool) {
+    let Some(state) = app.try_state::<MobileState>() else {
+        return;
+    };
+    if state.hub.take_view_mark(id) {
+        let _ = app.emit(
+            "terminal-exit",
+            json!({ "id": id, "exitCode": exit_code, "disconnected": disconnected }),
+        );
+    }
+}
+
+fn emit_control(app: &AppHandle, id: &str) {
+    let Some(state) = app.try_state::<MobileState>() else {
+        return;
+    };
+    let payload = {
+        let inner = state.hub.inner.lock().unwrap();
+        let Some(session) = inner.live(id) else {
+            return;
+        };
+        let holder = (session.controller != Controller::Desktop && !session.dormant)
+            .then(|| inner.controller_name(&session.controller));
+        let (cols, rows) = session.screen.size();
+        json!({ "id": id, "controller": holder, "cols": cols, "rows": rows })
+    };
+    let _ = app.emit(CONTROL_EVENT, payload);
 }
 
 /// Base64 PTY output for a `mobile-*` terminal.
@@ -1194,7 +1631,7 @@ fn status(state: &MobileState) -> Status {
         .map(|running| running.port);
     let error = state.last_error.lock().unwrap().clone();
     let now = Instant::now();
-    let (saved_port, configured, enabled, fingerprint, mut devices) = {
+    let (saved_port, configured, enabled, fingerprint, desktop_terminals, mut devices) = {
         let inner = state.hub.inner.lock().unwrap();
         let devices: Vec<DeviceStatus> = inner
             .devices
@@ -1214,6 +1651,7 @@ fn status(state: &MobileState) -> Status {
             inner.configured,
             inner.enabled,
             inner.fingerprint.clone(),
+            inner.desktop_terminals,
             devices,
         )
     };
@@ -1233,6 +1671,7 @@ fn status(state: &MobileState) -> Status {
         addresses,
         computer: computer_name(),
         error,
+        desktop_terminals,
     }
 }
 
@@ -1241,11 +1680,16 @@ async fn sweep_idle_terminals(app: &AppHandle) {
     let hub = &app.state::<MobileState>().inner().hub;
     for (id, kind) in hub.take_idle_sessions(TERMINAL_IDLE) {
         let result = end(app, id.clone(), kind).await;
-        let mut inner = hub.inner.lock().unwrap();
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            if result.is_ok() {
+                inner.sessions.remove(&id);
+            } else if let Some(session) = inner.sessions.get_mut(&id) {
+                session.ready = true;
+            }
+        }
         if result.is_ok() {
-            inner.sessions.remove(&id);
-        } else if let Some(session) = inner.sessions.get_mut(&id) {
-            session.ready = true;
+            emit_view_exit(app, &id, 0, false);
         }
     }
 }
@@ -1382,6 +1826,7 @@ async fn start_locked(app: &AppHandle, port: u16, code: Option<String>) -> Resul
                     password,
                     enabled: true,
                     devices: Vec::new(),
+                    desktop_terminals: false,
                 }
             }
         };
@@ -1422,7 +1867,12 @@ pub async fn mobile_stop(disable: Option<bool>, app: AppHandle) -> Result<Status
         running.shutdown().await;
     }
     for (id, kind) in state.hub.take_live_sessions() {
-        let _ = end(&app, id, kind).await;
+        let _ = end(&app, id.clone(), kind).await;
+        emit_view_exit(&app, &id, 0, false);
+    }
+    // 只让出使用权：电脑上开的终端继续运行，电脑恢复可操作。
+    for id in state.hub.release_mirrors(None) {
+        emit_control(&app, &id);
     }
     Ok(status(&state))
 }
@@ -1433,7 +1883,11 @@ pub async fn mobile_revoke_device(id: String, app: AppHandle) -> Result<Status, 
     let _lifecycle = state.lifecycle.lock().await;
     update_settings(|settings| settings.devices.retain(|device| device.id != id))?;
     for (session, kind) in state.hub.forget_device(&id) {
-        let _ = end(&app, session, kind).await;
+        let _ = end(&app, session.clone(), kind).await;
+        emit_view_exit(&app, &session, 0, false);
+    }
+    for terminal in state.hub.release_mirrors(Some(&id)) {
+        emit_control(&app, &terminal);
     }
     Ok(status(&state))
 }
@@ -1691,13 +2145,29 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions"],
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
-        Operation::Sessions { project: None } => Ok(json!(hub.session_summaries(Some(device)))),
+        Operation::Sessions {
+            project: None,
+            desktop,
+        } => {
+            let mut list = hub.session_summaries(Some(device));
+            if desktop && hub.desktop_terminals_enabled() {
+                // 电脑窗口暂时无响应时只少了电脑终端，手机会话列表照常返回。
+                if let Ok(Value::Array(items)) =
+                    desktop_query(app, json!({ "desktopTerminals": true })).await
+                {
+                    list.extend(hub.annotate_desktop_terminals(items, device));
+                }
+            }
+            Ok(json!(list))
+        }
+        Operation::Attach { id, take } => attach(app, device, id, take).await,
         Operation::Sessions {
             project: Some(project),
+            ..
         } => {
             let inner = hub.inner.lock().unwrap();
             let mut sessions: Vec<_> = inner
@@ -1747,7 +2217,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             formatted,
         } => {
             let inner = hub.inner.lock().unwrap();
-            let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+            let session = inner.live(&id).ok_or("终端不存在。")?;
             Ok(session.screen.history_page(before, formatted))
         }
         Operation::Poll {
@@ -1755,10 +2225,14 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             from,
             latest,
             tail,
+            lease,
         } => {
             let wait = {
                 let inner = hub.inner.lock().unwrap();
-                let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+                if let Some(reply) = inner.takeover_reply(&id, lease) {
+                    return Ok(reply);
+                }
+                let session = inner.live(&id).ok_or("终端不存在。")?;
                 if latest || (tail && session.should_send_latest(from)) {
                     return Ok(session.latest());
                 }
@@ -1778,31 +2252,28 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
                 tokio::time::sleep(OUTPUT_COALESCE).await;
             }
             let inner = hub.inner.lock().unwrap();
-            let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+            if let Some(reply) = inner.takeover_reply(&id, lease) {
+                return Ok(reply);
+            }
+            let session = inner.live(&id).ok_or("终端不存在。")?;
             Ok(if tail && session.should_send_latest(from) {
                 session.latest()
             } else {
                 session.read(from)
             })
         }
-        Operation::Input { id, data } => {
+        Operation::Input { id, data, lease } => {
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
+            hub.authorize(&id, lease)?;
             hub.with_session(&id, Session::note_input);
-            if hub.session_kind(&id)? == ProjectKind::Ssh {
-                crate::remote_ssh::ssh_write_terminal_unchecked(id, data, app.state()).await?;
-            } else {
-                let app = app.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    app.state::<crate::TerminalManager>().write(&id, &data)
-                })
-                .await
-                .map_err(|error| error.to_string())??;
-            }
+            let kind = hub.session_kind(&id)?;
+            write_input(app, kind, id, data).await?;
             Ok(Value::Null)
         }
-        Operation::Image { id, data } => {
+        Operation::Image { id, data, lease } => {
+            hub.authorize(&id, lease)?;
             let project = {
                 let inner = hub.inner.lock().unwrap();
                 image_project(&inner, &id, device)?
@@ -1856,30 +2327,90 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             }
             result
         }
-        Operation::Resize { id, cols, rows } => {
+        Operation::Resize {
+            id,
+            cols,
+            rows,
+            lease,
+        } => {
+            hub.authorize(&id, lease)?;
             hub.with_session(&id, Session::note_input);
-            let (cols, rows) = size(cols, rows);
-            if hub.session_kind(&id)? == ProjectKind::Ssh {
-                crate::remote_ssh::ssh_resize_terminal_unchecked(
-                    id.clone(),
-                    cols,
-                    rows,
-                    app.state(),
-                )
-                .await?;
-            } else {
-                app.state::<crate::TerminalManager>()
-                    .resize(&id, cols, rows)?;
-            }
-            hub.with_session(&id, |session| session.screen.resize(cols, rows));
+            let kind = hub.session_kind(&id)?;
+            apply_resize(app, kind, &id, cols, rows).await?;
+            // 电脑只读画面跟随使用者的行列，内容不错位。
+            emit_control(app, &id);
             Ok(Value::Null)
         }
         Operation::RenameSession { id, name } => hub.rename_session(&id, &name),
         Operation::End { id } => {
-            end_session(app, id).await?;
+            if hub.is_phone_session(&id) {
+                end_session(app, id).await?;
+            } else {
+                // 电脑上的终端交给电脑端关闭，标签、提示和记录走桌面原有流程。
+                if !hub.desktop_terminals_enabled() {
+                    return Err("电脑端未开启手机接入电脑终端。".into());
+                }
+                desktop_query(app, json!({ "endTerminal": id })).await?;
+            }
             Ok(Value::Null)
         }
     }
+}
+
+async fn write_input(
+    app: &AppHandle,
+    kind: ProjectKind,
+    id: String,
+    data: String,
+) -> Result<(), String> {
+    if kind == ProjectKind::Ssh {
+        crate::remote_ssh::ssh_write_terminal_unchecked(id, data, app.state()).await
+    } else {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            app.state::<crate::TerminalManager>().write(&id, &data)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+}
+
+async fn apply_resize(
+    app: &AppHandle,
+    kind: ProjectKind,
+    id: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let (cols, rows) = size(cols, rows);
+    if kind == ProjectKind::Ssh {
+        crate::remote_ssh::ssh_resize_terminal_unchecked(id.to_owned(), cols, rows, app.state())
+            .await?;
+    } else {
+        app.state::<crate::TerminalManager>()
+            .resize(id, cols, rows)?;
+    }
+    app.state::<MobileState>()
+        .hub
+        .with_session(id, |session| session.screen.resize(cols, rows));
+    Ok(())
+}
+
+/// 手机接入终端。电脑终端首次接入时由电脑端抓取当前画面并开始转发。
+async fn attach(app: &AppHandle, device: &str, id: String, take: bool) -> Result<Value, String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    if !hub.is_phone_session(&id) && !hub.mirror_active(&id) {
+        if !hub.desktop_terminals_enabled() {
+            return Err("电脑端未开启手机接入电脑终端。".into());
+        }
+        if !take {
+            return Ok(json!({ "takenOver": true, "by": DESKTOP_NAME }));
+        }
+        desktop_query(app, json!({ "mirrorStart": id, "device": device })).await?;
+    }
+    let reply = hub.claim(&id, device, take)?;
+    emit_control(app, &id);
+    Ok(reply)
 }
 
 /// 结束手机会话；已退出的会话直接移除。手机端与电脑端「终端管理」共用。
@@ -1893,26 +2424,33 @@ async fn end_session(app: &AppHandle, id: String) -> Result<(), String> {
         }
         if session.exit.is_some() {
             inner.sessions.remove(&id);
+            drop(inner);
+            emit_view_exit(app, &id, 0, false);
             return Ok(());
         }
         session.ready = false;
         session.project.kind
     };
     let result = end(app, id.clone(), kind).await;
-    let mut inner = hub.inner.lock().unwrap();
+    {
+        let mut inner = hub.inner.lock().unwrap();
+        if result.is_ok() {
+            inner.sessions.remove(&id);
+        } else if let Some(session) = inner.sessions.get_mut(&id) {
+            session.ready = true;
+        }
+    }
     if result.is_ok() {
-        inner.sessions.remove(&id);
-    } else if let Some(session) = inner.sessions.get_mut(&id) {
-        session.ready = true;
+        emit_view_exit(app, &id, 0, false);
     }
     result
 }
 
-/// 手机终端只归手机使用：电脑端的新建、输入、改尺寸、结束与接回入口一律拒绝 `mobile-*` id。
-/// 电脑端只能通过「终端管理」只读查看、重命名或结束手机会话。
+/// 电脑端的普通终端入口一律拒绝 `mobile-*` id。手机终端要在电脑上看或操作时，
+/// 走「终端管理」和带使用权校验的 `mobile_view_*` 命令。
 pub(crate) fn reject_desktop_use(id: &str) -> Result<(), String> {
     if is_mobile_terminal(id) {
-        Err("手机终端只能在手机上操作；电脑端可在「终端管理」中查看、重命名或结束。".into())
+        Err("手机终端请从「终端管理」打开后接管；普通终端入口不能操作。".into())
     } else {
         Ok(())
     }
@@ -1947,6 +2485,157 @@ pub async fn mobile_end_session(id: String, app: AppHandle) -> Result<(), String
     end_session(&app, id).await
 }
 
+/// 手机正在使用这个电脑终端时，电脑端输入被拒绝、改尺寸被忽略。
+pub(crate) fn desktop_blocked(state: &MobileState, id: &str) -> bool {
+    state
+        .hub
+        .inner
+        .lock()
+        .unwrap()
+        .mirrors
+        .get(id)
+        .is_some_and(|mirror| {
+            !mirror.dormant && mirror.exit.is_none() && mirror.controller != Controller::Desktop
+        })
+}
+
+pub(crate) fn check_desktop_write(state: &MobileState, id: &str) -> Result<(), String> {
+    if desktop_blocked(state, id) {
+        Err("终端正在其他设备上使用，请先点「接回」。".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn mobile_set_desktop_terminals(enabled: bool, app: AppHandle) -> Result<Status, String> {
+    update_settings(|settings| settings.desktop_terminals = enabled)?;
+    let state = app.state::<MobileState>();
+    state.hub.inner.lock().unwrap().desktop_terminals = enabled;
+    if !enabled {
+        for id in state.hub.release_mirrors(None) {
+            emit_control(&app, &id);
+        }
+    }
+    Ok(status(&state))
+}
+
+#[tauri::command]
+pub fn mobile_terminal_take(id: String, app: AppHandle) -> Result<(), String> {
+    app.state::<MobileState>().hub.take_for_desktop(&id)?;
+    emit_control(&app, &id);
+    Ok(())
+}
+
+/// 主窗口重载后转发已丢失：把镜像全部还给电脑，手机按被接管处理。
+#[tauri::command]
+pub fn mobile_release_mirrors(app: AppHandle, window: WebviewWindow) {
+    if window.label() != "main" {
+        return;
+    }
+    for id in app.state::<MobileState>().hub.release_mirrors(None) {
+        emit_control(&app, &id);
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn mobile_mirror_seed(
+    window: WebviewWindow,
+    state: State<'_, MobileState>,
+    id: String,
+    device: String,
+    project: Value,
+    name: Option<String>,
+    cols: u16,
+    rows: u16,
+    data: String,
+) -> Result<(), String> {
+    if window.label() != "main" || is_mobile_terminal(&id) {
+        return Err("终端不存在。".into());
+    }
+    let project: Project = serde_json::from_value(project).map_err(|error| error.to_string())?;
+    state
+        .hub
+        .seed_mirror(id, project, &device, name, cols, rows, &data)
+}
+
+#[tauri::command]
+pub fn mobile_mirror_output(state: State<'_, MobileState>, id: String, data: String) {
+    state.hub.mirror_push(&id, OutputChunk::Bytes(data));
+}
+
+#[tauri::command]
+pub fn mobile_mirror_screen(
+    state: State<'_, MobileState>,
+    id: String,
+    data: String,
+    cols: u16,
+    rows: u16,
+) {
+    state
+        .hub
+        .mirror_push(&id, OutputChunk::Screen { data, cols, rows });
+}
+
+#[tauri::command]
+pub fn mobile_mirror_finish(
+    state: State<'_, MobileState>,
+    id: String,
+    exit_code: u32,
+    disconnected: bool,
+) {
+    state.hub.mirror_finish(
+        &id,
+        Exit {
+            exit_code,
+            disconnected,
+        },
+    );
+}
+
+/// 在电脑标签中打开手机终端：默认只读，整屏快照随下一轮输出通知发出。
+#[tauri::command]
+pub fn mobile_view_open(id: String, app: AppHandle) -> Result<Value, String> {
+    if !is_mobile_terminal(&id) {
+        return Err("终端不存在。".into());
+    }
+    let state = app.state::<MobileState>();
+    let reply = state.hub.open_view(&id)?;
+    if state.hub.update_for_preview(&id, |_| {}) {
+        schedule_output_notify(app.clone(), id);
+    }
+    Ok(reply)
+}
+
+#[tauri::command]
+pub fn mobile_view_close(id: String, state: State<'_, MobileState>) {
+    state.hub.close_view(&id);
+}
+
+#[tauri::command]
+pub async fn mobile_view_input(id: String, data: String, app: AppHandle) -> Result<(), String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let kind = hub.desktop_controls(&id)?;
+    hub.with_session(&id, Session::note_input);
+    write_input(&app, kind, id, data).await
+}
+
+/// 手机仍在使用时电脑的布局变化不影响终端尺寸，这里直接忽略。
+#[tauri::command]
+pub async fn mobile_view_resize(
+    id: String,
+    cols: u16,
+    rows: u16,
+    app: AppHandle,
+) -> Result<(), String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    match hub.desktop_controls(&id) {
+        Ok(kind) => apply_resize(&app, kind, &id, cols, rows).await,
+        Err(_) => Ok(()),
+    }
+}
+
 fn require_device(inner: &HubState, device: &str) -> Result<(), String> {
     if !inner.accepting || !inner.devices.iter().any(|entry| entry.saved.id == device) {
         return Err("移动连接已停止或设备已移除。".into());
@@ -1956,7 +2645,7 @@ fn require_device(inner: &HubState, device: &str) -> Result<(), String> {
 
 fn image_project(inner: &HubState, id: &str, device: &str) -> Result<Project, String> {
     require_device(inner, device)?;
-    let session = inner.sessions.get(id).ok_or("终端不存在。")?;
+    let session = inner.live(id).ok_or("终端不存在。")?;
     // Paired devices share phone sessions. owner only selects lifecycle cleanup.
     if !session.ready || session.exit.is_some() {
         return Err("当前设备没有可用的终端会话。".into());
@@ -2171,6 +2860,7 @@ mod tests {
 
     fn settings(devices: Vec<Device>) -> SavedSettings {
         SavedSettings {
+            desktop_terminals: false,
             endpoint: SavedEndpoint::Port { port: 49123 },
             certificate: vec![1, 2, 3],
             private_key: vec![],
@@ -2317,7 +3007,7 @@ mod tests {
         .await
         .unwrap_or_else(|error| panic!("image request rejected: {error:?}"));
         match operation {
-            Operation::Image { id, data } => {
+            Operation::Image { id, data, .. } => {
                 assert_eq!(id, "mobile-test");
                 assert_eq!(decode_image(&data).unwrap(), image);
             }
@@ -2470,6 +3160,171 @@ mod tests {
         assert_eq!(ended, vec![("mobile-a".to_string(), ProjectKind::Local)]);
         assert!(hub.authenticate(Some(&tokens[0])).is_err());
         assert!(hub.holds("mobile-b"));
+    }
+
+    fn handoff_hub() -> Hub {
+        let hub = accepting_hub(vec![device("phone"), device("tablet")]);
+        hub.inner.lock().unwrap().desktop_terminals = true;
+        hub
+    }
+
+    fn device(id: &str) -> Device {
+        Device {
+            id: id.into(),
+            name: format!("{id}-name"),
+            token_digest: token_digest(id),
+            paired_at: 0,
+        }
+    }
+
+    fn ready_session(hub: &Hub, id: &str, owner: &str) {
+        hub.reserve_session(id.into(), project(), owner, None)
+            .unwrap();
+        assert!(hub.finish_create(id, true));
+    }
+
+    #[test]
+    fn takeover_requires_an_explicit_take_and_invalidates_the_old_lease() {
+        let hub = handoff_hub();
+        ready_session(&hub, "mobile-a", "phone");
+        assert_eq!(hub.claim("mobile-a", "phone", false).unwrap()["lease"], 1);
+        // 重连与恢复界面不抢使用权。
+        let passive = hub.claim("mobile-a", "tablet", false).unwrap();
+        assert_eq!(passive["takenOver"], true);
+        assert_eq!(passive["by"], "phone-name");
+        assert_eq!(hub.claim("mobile-a", "tablet", true).unwrap()["lease"], 2);
+        assert_eq!(hub.authorize("mobile-a", Some(1)).unwrap_err(), TAKEN_OVER);
+        assert!(hub.authorize("mobile-a", Some(2)).is_ok());
+        let inner = hub.inner.lock().unwrap();
+        assert_eq!(
+            inner.takeover_reply("mobile-a", Some(1)).unwrap()["by"],
+            "tablet-name"
+        );
+        assert!(inner.takeover_reply("mobile-a", Some(2)).is_none());
+    }
+
+    #[test]
+    fn phones_without_a_lease_keep_using_phone_sessions() {
+        let hub = handoff_hub();
+        ready_session(&hub, "mobile-a", "phone");
+        hub.claim("mobile-a", "tablet", true).unwrap();
+        assert!(hub.authorize("mobile-a", None).is_ok());
+        assert!(hub
+            .inner
+            .lock()
+            .unwrap()
+            .takeover_reply("mobile-a", None)
+            .is_none());
+    }
+
+    #[test]
+    fn mirrors_never_reach_paths_that_end_processes() {
+        let hub = handoff_hub();
+        hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+            .unwrap();
+        ready_session(&hub, "mobile-a", "phone");
+        assert!(!hub
+            .take_idle_sessions(Duration::ZERO)
+            .iter()
+            .any(|(id, _)| id == "term-1"));
+        assert!(!hub
+            .forget_device("phone")
+            .iter()
+            .any(|(id, _)| id == "term-1"));
+        assert!(!hub
+            .take_live_sessions()
+            .iter()
+            .any(|(id, _)| id == "term-1"));
+        assert_eq!(hub.release_mirrors(None), vec!["term-1".to_string()]);
+    }
+
+    #[test]
+    fn desktop_takeback_stops_the_mirror_and_tells_the_phone_who_took_it() {
+        let hub = handoff_hub();
+        hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+            .unwrap();
+        let lease = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
+        assert!(hub.authorize("term-1", lease).is_ok());
+        assert!(hub.authorize("term-1", None).is_err());
+        hub.take_for_desktop("term-1").unwrap();
+        assert_eq!(hub.authorize("term-1", lease).unwrap_err(), TAKEN_OVER);
+        assert!(!hub.mirror_active("term-1"));
+        hub.mirror_push("term-1", OutputChunk::Bytes("eA==".into()));
+        let inner = hub.inner.lock().unwrap();
+        assert_eq!(inner.mirrors["term-1"].next, 0);
+        assert_eq!(
+            inner.takeover_reply("term-1", lease).unwrap()["by"],
+            DESKTOP_NAME
+        );
+    }
+
+    #[test]
+    fn reseeded_mirror_never_reuses_an_old_lease() {
+        let hub = handoff_hub();
+        hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+            .unwrap();
+        let old = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
+        hub.take_for_desktop("term-1").unwrap();
+        hub.seed_mirror("term-1".into(), project(), "tablet", None, 80, 24, "y")
+            .unwrap();
+        let new = hub.claim("term-1", "tablet", true).unwrap()["lease"].as_u64();
+        assert!(new > old);
+        assert!(hub.authorize("term-1", old).is_err());
+    }
+
+    #[test]
+    fn mirrors_need_the_feature_enabled() {
+        let hub = accepting_hub(vec![device("phone")]);
+        let error = hub
+            .seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+            .unwrap_err();
+        assert!(error.contains("未开启"));
+    }
+
+    #[test]
+    fn desktop_view_starts_with_a_snapshot_then_streams_and_falls_back_when_backlogged() {
+        let hub = handoff_hub();
+        ready_session(&hub, "mobile-a", "phone");
+        hub.open_view("mobile-a").unwrap();
+        assert!(matches!(
+            hub.take_view_output("mobile-a"),
+            Some((ViewOutput::Screen(_), None))
+        ));
+        hub.with_session("mobile-a", |session| {
+            session.push(OutputChunk::Bytes("aGk=".into()));
+        });
+        match hub.take_view_output("mobile-a") {
+            Some((ViewOutput::Bytes(bytes), None)) => assert_eq!(bytes, b"hi"),
+            _ => panic!("expected incremental output"),
+        }
+        let huge =
+            base64::engine::general_purpose::STANDARD.encode(vec![b'x'; MAX_VIEW_BACKLOG + 1]);
+        hub.with_session("mobile-a", |session| session.push(OutputChunk::Bytes(huge)));
+        assert!(matches!(
+            hub.take_view_output("mobile-a"),
+            Some((ViewOutput::Screen(_), None))
+        ));
+    }
+
+    #[test]
+    fn only_the_desktop_controller_may_type_into_a_viewed_phone_session() {
+        let hub = handoff_hub();
+        ready_session(&hub, "mobile-a", "phone");
+        assert_eq!(hub.desktop_controls("mobile-a").unwrap_err(), TAKEN_OVER);
+        hub.take_for_desktop("mobile-a").unwrap();
+        assert!(hub.desktop_controls("mobile-a").is_ok());
+        assert_eq!(
+            hub.claim("mobile-a", "phone", false).unwrap()["by"],
+            DESKTOP_NAME
+        );
+    }
+
+    #[test]
+    fn saved_settings_default_desktop_terminals_off() {
+        let mut value = serde_json::to_value(settings(Vec::new())).unwrap();
+        value.as_object_mut().unwrap().remove("desktop_terminals");
+        let loaded: SavedSettings = serde_json::from_value(value).unwrap();
+        assert!(!loaded.desktop_terminals);
     }
 
     #[test]

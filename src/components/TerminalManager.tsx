@@ -35,6 +35,7 @@ import {
   type MobileSessionPreview,
   type MobileSessionSummary,
 } from '../lib/ipc/mobileSessions'
+import { openMobileSessionTab } from '@/store/terminalStore'
 import {
   countTerminalOverview,
   groupTerminalOverview,
@@ -154,7 +155,7 @@ function Checkbox({
 
 /**
  * 终端管理：跨项目列出电脑终端、手机终端与 SSH 远端未接回的终端。
- * 手机终端只归手机使用——这里只能只读预览、重命名和结束，不能输入或接管。
+ * 手机终端可在这里只读预览、重命名、结束，或打开到电脑标签后接管。
  */
 export default function TerminalManager() {
   const { t } = useI18n()
@@ -270,7 +271,13 @@ export default function TerminalManager() {
   }, [])
 
   const entries = useMemo(
-    () => terminalOverviewEntries({ projects, terminals, mobile, detached }),
+    () => terminalOverviewEntries({
+      projects,
+      // 打开到电脑标签的手机终端仍按手机会话列出，不重复显示。
+      terminals: terminals.filter(tab => !tab.id.startsWith('mobile-')),
+      mobile,
+      detached,
+    }),
     [projects, terminals, mobile, detached],
   )
   const counts = useMemo(() => countTerminalOverview(entries), [entries])
@@ -378,6 +385,14 @@ export default function TerminalManager() {
       }
       await useTerminalStore.getState().closeTerminal(tab.id)
     })
+
+  const openMobile = async (session: MobileSessionSummary) => {
+    const opened: { tab?: TerminalTab } = {}
+    await run(`mobile:${session.id}`, async () => {
+      opened.tab = await openMobileSessionTab(session)
+    })
+    if (opened.tab) await jumpToDesktop(opened.tab)
+  }
 
   const renameMobile = (session: MobileSessionSummary) => run(`mobile:${session.id}`, async () => {
     const name = await promptDialog({
@@ -661,6 +676,7 @@ export default function TerminalManager() {
                           onRenameDesktop={tab => void renameDesktop(tab)}
                           onEndDesktop={endDesktop}
                           onTogglePreview={id => setPreviewId(current => (current === id ? null : id))}
+                          onOpenMobile={session => void openMobile(session)}
                           onRenameMobile={session => void renameMobile(session)}
                           onEndMobile={endMobile}
                           onAttachRemote={attachRemote}
@@ -788,6 +804,7 @@ interface RowProps {
   onRenameDesktop: (tab: TerminalTab) => void
   onEndDesktop: (tab: TerminalTab) => void
   onTogglePreview: (id: string) => void
+  onOpenMobile: (session: MobileSessionSummary) => void
   onRenameMobile: (session: MobileSessionSummary) => void
   onEndMobile: (session: MobileSessionSummary) => void
   onAttachRemote: (entry: Extract<TerminalOverviewEntry, { source: 'remote' }>) => void
@@ -812,6 +829,13 @@ function Row(props: RowProps) {
   } else if (entry.source === 'mobile') {
     const session = entry.session
     actions = [
+      ...(session.exit
+        ? []
+        : [{
+            label: t('在电脑上打开'),
+            icon: <SquareArrowOutUpRight size={14} />,
+            onClick: () => props.onOpenMobile(session),
+          }]),
       {
         label: props.previewOpen ? t('收起预览') : t('只读预览'),
         icon: props.previewOpen ? <EyeOff size={14} /> : <Eye size={14} />,

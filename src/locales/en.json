@@ -1871,6 +1871,9 @@
     "全部关闭": "Close all",
     "程序正在工作": "Program is working",
     "运行中优先": "Running first",
-    "运行中优先 · 再点恢复默认顺序": "Running first · Click again for default order"
+    "运行中优先 · 再点恢复默认顺序": "Running first · Click again for default order",
+    "正在 {name} 上使用，电脑只读": "In use on {name}. This computer is read-only.",
+    "接管": "Take over",
+    "在电脑上打开": "Open on this computer"
   }
 }

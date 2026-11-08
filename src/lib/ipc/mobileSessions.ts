@@ -2,8 +2,8 @@ import { listen } from '@tauri-apps/api/event'
 import { isTauri, safeInvoke } from '../tauri'
 
 /**
- * 电脑端「终端管理」读取手机会话。手机终端只归手机使用：
- * 这里只能列出、只读预览、重命名和结束，不提供输入、改尺寸或接管。
+ * 电脑端「终端管理」读取手机会话，并在标签里只读查看或接管。
+ * 同一时刻只有一台设备能操作终端，电脑不持有使用权时始终只读。
  */
 
 export type MobileProjectKind = 'local' | 'wsl' | 'ssh'
@@ -146,4 +146,28 @@ export function renameMobileSession(id: string, name: string): Promise<unknown> 
 
 export function endMobileSession(id: string): Promise<void> {
   return safeInvoke('结束手机终端', 'mobile_end_session', { id })
+}
+
+export function isMobileTerminalId(id: string) {
+  return id.startsWith('mobile-')
+}
+
+/** 在电脑标签中打开手机终端；`controller` 为当前使用的设备名，null 表示电脑已持有使用权。 */
+export interface MobileViewOpened {
+  controller: string | null
+  cols: number
+  rows: number
+}
+
+export function openMobileView(id: string): Promise<MobileViewOpened> {
+  return safeInvoke('打开手机终端', 'mobile_view_open', { id })
+}
+
+export function closeMobileView(id: string): Promise<void> {
+  return safeInvoke('关闭手机终端标签', 'mobile_view_close', { id })
+}
+
+/** 电脑取得使用权：电脑终端是接回，手机终端是接管，原设备随即被顶下去。 */
+export function takeTerminalForDesktop(id: string): Promise<void> {
+  return safeInvoke('接回终端', 'mobile_terminal_take', { id })
 }

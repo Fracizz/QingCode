@@ -6784,8 +6784,10 @@ pub async fn ssh_write_terminal(
     id: String,
     data: String,
     manager: State<'_, SshManager>,
+    mobile_state: State<'_, crate::mobile::MobileState>,
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
+    crate::mobile::check_desktop_write(&mobile_state, &id)?;
     ssh_write_terminal_unchecked(id, data, manager).await
 }
 
@@ -6795,8 +6797,12 @@ pub async fn ssh_resize_terminal(
     cols: u16,
     rows: u16,
     manager: State<'_, SshManager>,
+    mobile_state: State<'_, crate::mobile::MobileState>,
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
+    if crate::mobile::desktop_blocked(&mobile_state, &id) {
+        return Ok(());
+    }
     ssh_resize_terminal_unchecked(id, cols, rows, manager).await
 }
 

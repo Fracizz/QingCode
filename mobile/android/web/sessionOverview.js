@@ -78,7 +78,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   picked.className = 'overview-picked';
   picked.setAttribute('role', 'status');
   const selectAll = button('text-button overview-select-all', () => {
-    const matching = matchingItems();
+    const matching = matchingItems().filter(batchable);
     const all = matching.length > 0 && matching.every(item => selection.has(item.id));
     selection = all ? new Set() : new Set(matching.map(item => item.id));
     render();
@@ -111,6 +111,11 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   onSessionPrefsChange(() => render());
 
   input.addEventListener('input', () => { query = input.value; render(); });
+
+  /** 电脑上开的终端不参与批量关闭，避免「全选」误结束电脑上的任务；单个关闭仍可用。 */
+  function batchable(item) {
+    return item.origin !== 'desktop';
+  }
 
   /** 当前连接的会话（调用方可再排除已在别处关闭的项）。 */
   function list() {
@@ -161,7 +166,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       option.textContent = { all: t('全部'), live: t('未结束'), exited: t('已结束') }[option.dataset.filter] + ' ' + counts[option.dataset.filter];
     }
     bar.hidden = !selecting;
-    const matching = grouped.flatMap(group => group.sessions);
+    const matching = grouped.flatMap(group => group.sessions).filter(batchable);
     picked.textContent = t('已选 {n}', { n: selection.size });
     const allPicked = matching.length > 0 && matching.every(item => selection.has(item.id));
     selectAll.textContent = allPicked ? t('取消全选') : t('全选 {n}', { n: matching.length });
@@ -233,6 +238,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const option = button('row', () => {
       if (state.busy() || !latest()) return;
       if (selecting) {
+        if (!batchable(latest())) return;
         if (selection.has(id)) selection.delete(id);
         else selection.add(id);
         render();
@@ -269,7 +275,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     row.dataset.running = String(running);
     row.dataset.checked = String(checked);
     const option = row.querySelector('.row');
-    option.disabled = busy;
+    option.disabled = busy || (selecting && !batchable(session));
+    row.dataset.desktop = String(!batchable(session));
     if (selecting) {
       option.setAttribute('aria-pressed', String(checked));
       option.setAttribute('aria-label', t('选择 {name}', { name: label }));
@@ -279,12 +286,14 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     }
     if (active) option.setAttribute('aria-current', 'true');
     else option.removeAttribute('aria-current');
-    const identity = t('终端 {n}', { n: session.number ?? 1 });
+    const identity = batchable(session) ? t('终端 {n}', { n: session.number ?? 1 }) : t('电脑终端');
     const status = session.exit ? t('已结束')
       : [running ? t('运行中') : '', active ? t('当前会话') : last ? t('上次使用') : ''].filter(Boolean).join(' · ');
     const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
     row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = [label === identity ? '' : identity, status, createdLabel(session), device].filter(Boolean).join(' · ');
+    const inUse = !session.exit && session.inUseHere === false && session.controllerName
+      ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
+    row.querySelector('small').textContent = [label === identity ? '' : identity, status, inUse, createdLabel(session), device].filter(Boolean).join(' · ');
     const idle = row.querySelector('.session-idle');
     idle.textContent = session.exit ? '' : idleLabel(session);
     idle.hidden = !idle.textContent;

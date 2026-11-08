@@ -425,8 +425,10 @@ fn write_terminal(
     id: String,
     data: String,
     state: tauri::State<'_, TerminalManager>,
+    mobile_state: tauri::State<'_, mobile::MobileState>,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
+    mobile::check_desktop_write(&mobile_state, &id)?;
     state.write(&id, &data)
 }
 
@@ -480,8 +482,13 @@ fn resize_terminal(
     cols: u16,
     rows: u16,
     state: tauri::State<'_, TerminalManager>,
+    mobile_state: tauri::State<'_, mobile::MobileState>,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
+    // 手机使用期间终端按手机尺寸，电脑窗口变化不影响它。
+    if mobile::desktop_blocked(&mobile_state, &id) {
+        return Ok(());
+    }
     state.resize(&id, cols, rows)
 }
 
@@ -836,6 +843,17 @@ pub fn run() {
             mobile::mobile_session_preview,
             mobile::mobile_rename_session,
             mobile::mobile_end_session,
+            mobile::mobile_set_desktop_terminals,
+            mobile::mobile_terminal_take,
+            mobile::mobile_release_mirrors,
+            mobile::mobile_mirror_seed,
+            mobile::mobile_mirror_output,
+            mobile::mobile_mirror_screen,
+            mobile::mobile_mirror_finish,
+            mobile::mobile_view_open,
+            mobile::mobile_view_close,
+            mobile::mobile_view_input,
+            mobile::mobile_view_resize,
             commands::scan_directory,
             commands::validate_directory,
             commands::file_stat,

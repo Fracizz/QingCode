@@ -152,6 +152,11 @@ let terminalLinks;
 // 链接弹层当前显示的目标：{ url, open, note }。
 let linkTarget = null;
 let terminalReady = false;
+// 当前终端的使用权编号；旧版电脑端不支持时保持 null。
+let currentLease = null;
+// 被其他设备接入时记下的会话，点「接回」后重新接入。
+let takenSession = null;
+const SESSION_GONE_ERRORS = ['终端不存在。', '该电脑终端已关闭或不可接入。', '电脑端未开启手机接入电脑终端。'];
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
 const modifiers = { ctrl: 'off', alt: 'off' };
 const lastTap = { ctrl: -Infinity, alt: -Infinity };
@@ -179,7 +184,8 @@ const connectionLatency = createConnectionLatency({
 });
 
 function remote(op, args = {}, address = profile?.id) {
-  return rpc(op, { ...args, profile: address });
+  const scoped = currentLease !== null && args.id === selected && ['input', 'resize', 'image'].includes(op);
+  return rpc(op, { ...args, ...(scoped ? { lease: currentLease } : {}), profile: address });
 }
 const desktopProtocol = createDesktopProtocol(remote);
 const terminalInput = createTerminalInput({
@@ -285,7 +291,8 @@ const drawer = createSessionDrawer({
     },
   },
   setSessions: list => { sessions = list; },
-  selectSession,
+  // 抽屉里的点选是用户的主动操作，可以接管其他设备正在用的会话。
+  selectSession: (session, options) => selectSession(session, { ...options, take: true }),
   endSession,
   openOverviewSession: session => openOverviewSession(session, drawer.overview),
   endOverviewSessions: list => endOverviewSessions(list, drawer.overview),
@@ -373,7 +380,7 @@ async function refreshHomeSessions() {
       homeOverview.clear();
       return;
     }
-    const list = await remote('sessions', {}, address);
+    const list = await remote('sessions', { desktop: true }, address);
     if (epoch !== homeSessionsEpoch || profile?.id !== address || busy) return;
     homeOverview.setError('');
     homeOverview.setList(list, address);
@@ -448,12 +455,12 @@ async function openSessionTarget(target) {
   const current = !terminalScreen.hidden && profile?.id === item.id && project?.id === target.project;
   const existing = current && sessions.find(session => session.id === target.session);
   if (existing) {
-    await selectSession(existing);
+    await selectSession(existing, { take: true });
     return;
   }
   if (!await activate(item)) return;
   const destination = projects.find(candidate => candidate.id === target.project);
-  if (destination) await openProject(destination);
+  if (destination) await openProject(destination, false, { id: target.session });
 }
 window.qingOpenSession = target => { void openSessionTarget(target); };
 // 在线更新：版本信息、后台检查与安装包下载（原生层经 window.qingUpdate 回传进度）。
@@ -1031,6 +1038,8 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) 
   composeStatus.reset();
   get('scroll-bottom').hidden = true;
   get('terminal-empty').hidden = true;
+  clearTakenOver();
+  currentLease = null;
   get('input-tip').hidden = true;
   sessionWatch.hideTip();
   hideFontToast();
@@ -1487,7 +1496,7 @@ function handleTerminalError(error, retry = true) {
   }
 }
 
-async function openProject(item, resumeOnly = false) {
+async function openProject(item, resumeOnly = false, target = null) {
   if (!item || busy) return;
   busy = true;
   leaveTerminal();
@@ -1514,10 +1523,14 @@ async function openProject(item, resumeOnly = false) {
     sessions = mergeSessionList(list, sessions);
     drawer.prunePins(list);
     const previous = localStorage.getItem(sessionKey(item.id));
-    const existing = sessions.find(session => session.id === previous)
+    // target 来自列表或通知的点选，是接管；其余情况是恢复上次界面，不抢使用权。
+    const chosen = target && (sessions.find(session => session.id === target.id)
+      ?? (target.origin === 'desktop' ? target : null));
+    const existing = chosen
+      ?? sessions.find(session => session.id === previous)
       ?? sessions.find(session => !session.exit)
       ?? sessions[0];
-    if (existing) await selectSession(existing);
+    if (existing) await selectSession(existing, { take: !!chosen });
     else if (resumeOnly) returnToDashboard('home');
     else showEmptyProject();
   } catch (error) {
@@ -1589,11 +1602,14 @@ async function openNewSessionDialog() {
   }
 }
 
-async function selectSession(session, { keepDrawer = false } = {}) {
+async function selectSession(session, { keepDrawer = false, take = false } = {}) {
   get('terminal-empty').hidden = true;
   get('session-dialog').close();
   if (!keepDrawer) drawer.close();
-  if (selected === session.id) return;
+  if (selected === session.id) {
+    if (take && takenSession) retakeSession();
+    return;
+  }
   leaveTerminal({ preserveFullscreen: true, keepDrawer });
   const epoch = viewEpoch;
   selected = session.id;
@@ -1617,7 +1633,7 @@ async function selectSession(session, { keepDrawer = false } = {}) {
   showGestureGuide();
   sessionWatch.seen(profile.id, session.id);
   composeStatus.renderSubmission();
-  void poll(session, epoch);
+  void poll(session, epoch, take);
 }
 
 /** 接管时等待程序重绘的上限：程序持续输出时等不到安静，到点就取当前画面。 */
@@ -1634,7 +1650,9 @@ async function redrawAfterAttach(id, epoch, from, previous) {
   let next = from;
   let chunks = 0;
   while (epoch === viewEpoch && Date.now() - startedAt < ATTACH_REDRAW_MAX_MS) {
-    const data = await remote('poll', { id, from: next, latest: false, tail: false });
+    const data = await remote('poll', { id, from: next, latest: false, tail: false, ...(currentLease !== null ? { lease: currentLease } : {}) });
+    // 等待期间被其他设备接入：交给主循环的下一次轮询显示提示。
+    if (data.takenOver) return;
     next = data.next;
     if (data.exit || !data.chunks.length) break;
     chunks += data.chunks.length;
@@ -1644,10 +1662,38 @@ async function redrawAfterAttach(id, epoch, from, previous) {
   showTerminalToast(`${previous.cols}×${previous.rows} → ${size.cols}×${size.rows} · ${chunks ? `重绘 ${chunks} 段` : '无重绘，用快照'} · ${Date.now() - startedAt}ms`, 4000);
 }
 
-async function poll(session, epoch) {
+function clearTakenOver() {
+  takenSession = null;
+  get('terminal-taken').hidden = true;
+  delete terminalScreen.dataset.taken;
+}
+
+/** 终端已被其他设备接入：程序继续运行，这台设备停止轮询并保留草稿，等用户点「接回」。 */
+function showTakenOver(session, by) {
+  const text = t('已在 {name} 上接入', { name: t(by) });
+  takenSession = session;
+  currentLease = null;
+  terminalState(text);
+  get('terminal-taken-text').textContent = text;
+  get('terminal-taken').hidden = false;
+  terminalScreen.dataset.taken = 'true';
+}
+
+function retakeSession() {
+  const session = takenSession;
+  if (!session) return;
+  clearTakenOver();
+  terminalState(t('正在接入终端…'));
+  void poll(session, viewEpoch, true);
+}
+
+get('terminal-take-back').addEventListener('click', retakeSession);
+
+async function poll(session, epoch, take = false) {
   let next = 0;
   let latest = true;
   let backoff = 350;
+  let claimed = false;
   let attaching = true;
   while (epoch === viewEpoch) {
     if (document.hidden) {
@@ -1664,8 +1710,27 @@ async function poll(session, epoch) {
       latest = true;
     }
     try {
-      const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
+      if (!claimed) {
+        const capabilities = await desktopProtocol.capabilities(profile);
+        if (epoch !== viewEpoch) return;
+        if (capabilities?.features.includes('handoff')) {
+          const claim = await remote('attach', { id: session.id, take });
+          if (epoch !== viewEpoch) return;
+          if (claim.takenOver) {
+            showTakenOver(session, claim.by);
+            return;
+          }
+          currentLease = claim.lease;
+        }
+        // 只在进入时接管一次，之后的断线重连沿用原编号，不会和其他设备来回抢。
+        claimed = true;
+      }
+      const data = await remote('poll', { id: session.id, from: next, latest, tail: true, ...(currentLease !== null ? { lease: currentLease } : {}) });
       if (epoch !== viewEpoch) return;
+      if (data.takenOver) {
+        showTakenOver(session, data.by);
+        return;
+      }
       if (attaching) {
         attaching = false;
         if (data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
@@ -1730,7 +1795,7 @@ async function poll(session, epoch) {
         handleTerminalError(error);
         return;
       }
-      if (error.message === '终端不存在。') {
+      if (SESSION_GONE_ERRORS.includes(error.message)) {
         saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
         drawer.render();
@@ -1843,8 +1908,8 @@ async function openOverviewSession(target, view) {
   if (busy || !profile) return;
   const projectId = target.project?.id;
   if (!terminalScreen.hidden && projectId === project?.id) {
-    const existing = sessions.find(item => item.id === target.id);
-    if (existing) await selectSession(existing);
+    const existing = sessions.find(item => item.id === target.id) ?? (target.origin === 'desktop' ? target : null);
+    if (existing) await selectSession(existing, { take: true });
     return;
   }
   const destination = projects.find(item => item.id === projectId);
@@ -1854,13 +1919,14 @@ async function openOverviewSession(target, view) {
   }
   view.setError('');
   localStorage.setItem(sessionKey(destination.id), target.id);
-  await openProject(destination);
+  await openProject(destination, false, target);
 }
 
 /** 纵览中某个会话的确认说明：项目 / 会话名，其他设备创建的运行中会话额外注明。 */
 function overviewConfirmText(target) {
   const ended = !!target.exit;
   const name = (target.project?.name ?? '') + ' / ' + sessionName(target);
+  if (target.origin === 'desktop') return t('「{name}」是电脑上开的终端，其中的 Shell 和前台任务将被关闭。', { name });
   const text = t(ended ? '「{name}」的输出将从列表中移除。' : '「{name}」中的 Shell 和前台任务将被关闭。', { name });
   return !ended && target.ownDevice === false
     ? text + t('该会话由 {device} 创建。', { device: target.deviceName || t('其他设备') }) : text;
@@ -1873,7 +1939,7 @@ function overviewConfirmText(target) {
 async function endOverviewSessions(targets, view) {
   if (busy || !profile || !targets.length) return;
   const inTerminal = !terminalScreen.hidden;
-  if (targets.length === 1 && inTerminal && targets[0].project?.id === project?.id) {
+  if (targets.length === 1 && inTerminal && targets[0].project?.id === project?.id && targets[0].origin !== 'desktop') {
     await endSession(targets[0].id);
     return;
   }

@@ -35,6 +35,8 @@
     ],
     creates: [],
     terminalProfileRequests: 0,
+    attaches: [],
+    leasedInputs: [],
     capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions'], sessionScope: 'shared' },
     capabilityRequests: 0,
     sessionNames: true,
@@ -140,13 +142,21 @@
         return state.capabilities ? { ok: true, data: state.capabilities } : { ok: false, error: '请求格式无效。' }
       case 'projects': return { ok: true, data: state.projects }
       case 'sessions': {
-        state.sessionRequests.push({ project: request.project, at: Date.now() })
+        state.sessionRequests.push({ project: request.project, desktop: request.desktop, at: Date.now() })
         // 不带 project：新版电脑端返回全部项目的手机会话，附项目与创建设备（会话纵览）。
         const all = request.project === undefined && state.capabilities?.features.includes('all_sessions')
         if (request.project === undefined && !all) return { ok: false, error: '请求格式无效。' }
-        const data = [...state.sessions.values()].filter(item => all || item.project === request.project).map(item => {
+        const data = [...state.sessions.values()].filter(item => item.origin === 'desktop'
+          ? all && request.desktop === true
+          : all || item.project === request.project).map(item => {
           const metadata = sessionMetadata(item)
           if (!all) return metadata
+          if (item.origin === 'desktop') {
+            const owner = state.projects.find(candidate => candidate.id === item.project)
+            return { ...metadata, origin: 'desktop', number: 0, name: item.title, inUseHere: item.holder === 'me',
+              controllerName: item.holder === 'me' ? 'Pixel' : item.holder ?? '电脑',
+              project: { id: owner.id, name: owner.name, path: owner.path, kind: owner.kind, host: owner.host } }
+          }
           const project = state.projects.find(candidate => candidate.id === item.project) ?? item.projectInfo
           return { ...metadata, project: { id: project.id, name: project.name, path: project.path, kind: project.kind, host: project.host },
             deviceName: item.deviceName ?? 'Pixel', ownDevice: item.ownDevice ?? true }
@@ -185,9 +195,22 @@
         for (const wake of session.waiters.splice(0)) wake()
         return { ok: true, data: sessionMetadata(session) }
       }
+      case 'attach': {
+        const session = state.sessions.get(request.id)
+        if (!session) return { ok: false, error: '终端不存在。' }
+        state.attaches.push({ id: request.id, take: !!request.take })
+        const holder = session.holder ?? 'me'
+        if (holder !== 'me' && !request.take) return { ok: true, data: { takenOver: true, by: holder } }
+        if (holder !== 'me' || !session.lease) session.lease = (session.lease ?? 0) + 1
+        session.holder = 'me'
+        return { ok: true, data: { lease: session.lease } }
+      }
       case 'poll': {
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
+        if (request.lease !== undefined && request.lease !== session.lease) {
+          return { ok: true, data: { takenOver: true, by: session.holder } }
+        }
         state.polls.push({ id: request.id, from: request.from, latest: request.latest, tail: request.tail })
         if (state.pollErrors > 0) { state.pollErrors--; return { ok: false, error: '模拟网络断开' } }
         if (request.latest || (request.tail && request.from < session.next - session.output.length)) {
@@ -216,6 +239,7 @@
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
         state.inputs.push(request.data)
+        if (request.lease !== undefined) state.leasedInputs.push(request.lease)
         const inputEvent = { data: request.data, startedAt: performance.now() }
         state.inputEvents.push(inputEvent)
         if (state.inputGate) await state.inputGate
@@ -452,6 +476,18 @@
     fingerprint: FINGERPRINT,
     code: CODE,
     // 直接在内存桥中加一个手机会话（可指定项目、设备与是否已结束），模拟其他项目或其他手机创建的会话。
+    /** 另一台设备接管会话：编号加一并叫醒长轮询，模拟被顶下去。 */
+    takeOver(id, name) {
+      const session = state.sessions.get(id)
+      session.holder = name
+      session.lease = (session.lease ?? 0) + 1
+      for (const wake of session.waiters.splice(0)) wake()
+    },
+    addDesktopTerminal({ id, project, title }) {
+      const session = { id, number: 0, project, title, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
+      state.sessions.set(id, session)
+      return session
+    },
     addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null } = {}) {
       const number = state.nextSession++
       const session = { id: 'mobile-' + number, number, project, title, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }

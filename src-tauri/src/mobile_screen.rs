@@ -190,6 +190,11 @@ impl MobileScreen {
         self.process(data.as_bytes());
     }
 
+    pub(super) fn size(&self) -> (u16, u16) {
+        let (rows, cols) = self.parser.screen().size();
+        (cols.get(), rows.get())
+    }
+
     pub(super) fn snapshot(&self) -> Value {
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();

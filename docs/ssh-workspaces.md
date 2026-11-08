@@ -1,6 +1,6 @@
 # SSH 工作区
 
-Android 移动连接的远端项目和终端由配对的 Windows QingCode 转发，沿用桌面已有的 SSH 或 Server 连接、工作区信任和路径校验。手机端提供项目选择和手机会话管理，操作范围见 [QingCode Android](../mobile/README.md)。带移动端标识的远端 PTY 始终排除在桌面遗留终端列表之外，桌面重启或手机会话记录丢失也不会接管；旧标签接回和遗留终端结束请求同样会在后端拒绝。
+Android 移动连接的远端项目和终端由配对的 Windows QingCode 转发，沿用桌面已有的 SSH 或 Server 连接、工作区信任和路径校验。手机端提供项目选择和手机会话管理，操作范围见 [QingCode Android](../mobile/README.md)。带移动端标识的远端 PTY 始终排除在桌面遗留终端列表之外，桌面重启或手机会话记录丢失也不会接管；旧标签接回和遗留终端结束请求同样会在后端拒绝。手机接入桌面已开的远端终端时仍经桌面转发，daemon 只看到桌面这一个客户端，不改变 PTY 归属。
 
 独立端口模式见 [Server 端口直连](direct-agent.md)：在「远程连接」中新建 Server 连接，或为已有 SSH 连接启用直连。HTTPS 文件操作与 WSS 终端共用默认 TCP 48763，可修改并保留历史端口提示；日常通信不经过 SSH。以下 SSH 说明只适用于 SSH 连接类型。
 

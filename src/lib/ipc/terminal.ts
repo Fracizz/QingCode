@@ -166,6 +166,7 @@ export function terminalSessionOpen(id: string): Promise<boolean> {
 }
 
 export function writeTerminal(id: string, data: string): Promise<void> {
+  if (id.startsWith('mobile-')) return safeInvoke('终端输入', 'mobile_view_input', { id, data })
   return safeInvoke('终端输入', sshTerminalIds.has(id) ? 'ssh_write_terminal' : 'write_terminal', {
     id,
     data,
@@ -173,6 +174,7 @@ export function writeTerminal(id: string, data: string): Promise<void> {
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number): Promise<void> {
+  if (id.startsWith('mobile-')) return safeInvoke('终端尺寸', 'mobile_view_resize', { id, cols, rows })
   return safeInvoke(
     '终端尺寸',
     sshTerminalIds.has(id) ? 'ssh_resize_terminal' : 'resize_terminal',

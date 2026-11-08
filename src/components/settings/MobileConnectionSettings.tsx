@@ -24,6 +24,7 @@ interface Status {
   addresses: string[]
   computer: string
   error: string | null
+  desktopTerminals?: boolean
 }
 
 interface SavedSettings {
@@ -135,6 +136,14 @@ export default function MobileConnectionSettings() {
       .catch(() => { if (!cancelled) setQr(null) })
     return () => { cancelled = true }
   }, [link, qr?.link])
+
+  async function saveDesktopTerminals(enabled: boolean) {
+    try {
+      setStatus(await safeInvoke<Status>('保存手机接入设置', 'mobile_set_desktop_terminals', { enabled }))
+    } catch (error) {
+      setFeedback({ text: String(error), error: true })
+    }
+  }
 
   async function save() {
     if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) {
@@ -441,6 +450,22 @@ export default function MobileConnectionSettings() {
             </div>
           )}
         </div>
+        {status.configured && (
+          <label className="mt-4 flex items-start gap-2 text-ui-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={status.desktopTerminals === true}
+              onChange={event => void saveDesktopTerminals(event.target.checked)}
+            />
+            <span>
+              允许手机接入电脑上开的终端
+              <span className="block text-fg-muted">
+                已配对的手机可查看和操作已信任项目的交互式终端，不含运行任务。手机使用时电脑只读，可随时接回。
+              </span>
+            </span>
+          </label>
+        )}
         {status.devices.length > 0 && (
           <div className="mt-4 space-y-2">
             <div className="text-ui-sm font-medium">

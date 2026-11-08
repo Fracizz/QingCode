@@ -233,7 +233,8 @@ export function prunedSelection(selection, list) {
 /** 全部会话列表里属于某个项目的部分，去掉纵览附带的项目与设备字段，与按项目请求的结果一致。 */
 export function projectSessionsFromOverview(list, projectId) {
   return (Array.isArray(list) ? list : [])
-    .filter(session => session?.project?.id === projectId)
+    // 电脑终端只在纵览里出现，不进入本项目的手机会话列表（结束全部等操作都基于它）。
+    .filter(session => session?.project?.id === projectId && session.origin !== 'desktop')
     .map(item => {
       const session = { ...item };
       delete session.project;

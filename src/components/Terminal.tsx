@@ -1,10 +1,15 @@
 import TerminalExitNotice from './TerminalExitNotice'
 import TerminalConnectionNotice from './TerminalConnectionNotice'
+import TerminalControlNotice from './TerminalControlNotice'
+import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
+import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
+import { terminalControl, useTerminalControlStore } from '@/store/terminalControlStore'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -118,6 +123,9 @@ import TerminalComposer from './TerminalComposer'
 import '@xterm/xterm/css/xterm.css'
 
 /** Highlight + count require decorations; colors must be #RRGGBB. */
+/** 手机接入时带上的历史行数，避免序列化大缓冲时卡住主线程。 */
+const MOBILE_SEED_SCROLLBACK = 2000
+
 const TERMINAL_SEARCH_DECORATIONS: NonNullable<ISearchOptions['decorations']> = {
   matchBackground: '#613214',
   activeMatchBackground: '#515c6a',
@@ -303,6 +311,8 @@ export default function TerminalView({
   const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
+  const control = useTerminalControlStore(s => s.controls[terminalId])
+  const wasControlledRef = useRef(false)
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -310,7 +320,7 @@ export default function TerminalView({
 
   const isTerminalWritable = useCallback(() => {
     const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
-    return tab?.status === 'running' && !tab.ptySpawnPending
+    return tab?.status === 'running' && !tab.ptySpawnPending && !terminalControl(terminalId)
   }, [terminalId])
 
   const prepareAttachmentPaths = useCallback(
@@ -569,6 +579,8 @@ export default function TerminalView({
     const term = xtermRef.current
     // next 总是按容器算出的网格：登记给 store，恢复/兜底启动按它接回而不是默认 80x24。
     if (term) setTerminalViewGrid(terminalId, next)
+    // 其他设备使用期间网格跟随对方，电脑窗口变化要等接回后才生效。
+    if (terminalControl(terminalId)) return false
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
     if (screenWriteLockRef.current > 0) return false
@@ -870,6 +882,20 @@ export default function TerminalView({
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
+    if (terminalControl(terminalId)) {
+      term.options.disableStdin = true
+      wasControlledRef.current = true
+    }
+    const serializeAddon = new SerializeAddon()
+    term.loadAddon(serializeAddon)
+    // 写入空串作标记：回调触发时，标记之前的输出都已解析，之后的输出还没有。
+    const unregisterCapture = registerTerminalCapture(terminalId, () => new Promise(resolve => {
+      term.write('', () => resolve({
+        data: serializeAddon.serialize({ scrollback: MOBILE_SEED_SCROLLBACK }),
+        cols: term.cols,
+        rows: term.rows,
+      }))
+    }))
 
     const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
     previousStatusRef.current = tab?.status
@@ -1278,6 +1304,7 @@ export default function TerminalView({
       disposeSelectionMenuGuard()
       disposeHostScrollLock()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
+      unregisterCapture()
       term.dispose()
       container.replaceChildren()
       xtermRef.current = null
@@ -1503,6 +1530,20 @@ export default function TerminalView({
     }
   }, [isTerminalWritable, terminal?.cwd, terminalId])
 
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) return
+    term.options.disableStdin = !!control
+    if (control) {
+      wasControlledRef.current = true
+      if (term.cols !== control.cols || term.rows !== control.rows) term.resize(control.cols, control.rows)
+    } else if (wasControlledRef.current) {
+      wasControlledRef.current = false
+      // 恢复电脑自己的网格；onResize 会把尺寸发给 PTY，程序随之重绘。
+      resizeGridFromContainer()
+    }
+  }, [control, resizeGridFromContainer])
+
   return (
     <div
       {...{ [TERMINAL_DROP_ATTR]: terminalId }}
@@ -1546,7 +1587,8 @@ export default function TerminalView({
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
         <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} />
       </div>
-      {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && (
+      <TerminalControlNotice terminalId={terminalId} />
+      {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && !isMobileTerminalId(terminalId) && (
         <TerminalExitNotice
           exitCode={terminal.exitCode}
           restoreUnavailable={terminal.restoreUnavailable}

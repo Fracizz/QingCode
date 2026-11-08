@@ -11,6 +11,12 @@ import { uploadLocalFilesForSshTerminal } from './sshTerminalPaste'
 import { getTerminalProfile, loadTerminalProfileSettings } from './terminal/terminalProfiles'
 import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import { normalizeTerminalShell } from './terminal/terminalShell'
+import { captureTerminalForMirror, useTerminalStore } from '@/store/terminalStore'
+import { useTerminalControlStore } from '@/store/terminalControlStore'
+import { beginTerminalMirror, stopTerminalMirror } from './terminal/terminalMirror'
+import { isTerminalProgramBusy } from './terminal/terminalProgramActivity'
+import { isMobileTerminalId } from './ipc/mobileSessions'
+import type { TerminalTab } from '@/types'
 
 interface Request {
   id: string
@@ -20,6 +26,86 @@ interface Request {
   profiles?: boolean
   /** 按 id 解析一个终端配置，供手机新建会话。 */
   profile?: string
+  /** 列出可供手机接入的电脑终端。 */
+  desktopTerminals?: boolean
+  /** 手机接入电脑终端：抓取当前画面并开始转发。 */
+  mirrorStart?: string
+  device?: string
+  /** 手机结束电脑上的终端。 */
+  endTerminal?: string
+}
+
+/** 只开放交互式终端：运行任务的输出可能含密钥，先不让手机接入。 */
+export function isDesktopTerminalShareable(tab: TerminalTab) {
+  return !isMobileTerminalId(tab.id)
+    && (tab.status === 'running' || tab.status === 'reconnecting')
+    && !tab.runEnvironment
+    && (tab.shellKind === undefined || tab.shellKind === 'interactive')
+}
+
+async function trustedProjectMap() {
+  const projects = await withDb('加载移动端项目列表', listProjects)
+  const connections = await listSshConnections()
+  const hosts = new Map(connections.map(connection => [connection.id, connection]))
+  return new Map(projects
+    .filter(project => !project.ephemeral && isProjectTrusted(project))
+    .map(project => [project.id, mobileProject(project, hosts)]))
+}
+
+async function listDesktopTerminals() {
+  const projects = await trustedProjectMap()
+  return useTerminalStore.getState().terminals.flatMap(tab => {
+    const project = projects.get(tab.projectId)
+    if (!project || !isDesktopTerminalShareable(tab)) return []
+    return [{
+      id: tab.id,
+      name: tab.name,
+      customName: null,
+      programTitle: null,
+      programBusy: isTerminalProgramBusy(tab.id),
+      createdAt: tab.startedAt ?? null,
+      lastActiveAt: 0,
+      idleDeadline: null,
+      project,
+    }]
+  })
+}
+
+async function shareableTerminal(id: string) {
+  const projects = await trustedProjectMap()
+  const tab = useTerminalStore.getState().terminals.find(candidate => candidate.id === id)
+  const project = tab && projects.get(tab.projectId)
+  if (!tab || !project || !isDesktopTerminalShareable(tab)) {
+    throw new Error('该电脑终端已关闭或不可接入。')
+  }
+  return { tab, project }
+}
+
+async function startDesktopTerminalMirror(id: string, device: string) {
+  const { tab, project } = await shareableTerminal(id)
+  const open = beginTerminalMirror(id)
+  try {
+    const capture = await captureTerminalForMirror(id)
+    await safeInvoke('建立终端转发', 'mobile_mirror_seed', {
+      id, device, project, name: tab.name, cols: capture.cols, rows: capture.rows, data: capture.data,
+    })
+    open()
+  } catch (error) {
+    stopTerminalMirror(id)
+    throw error
+  }
+  return null
+}
+
+/** 使用权变化：有设备在用时电脑只读并跟随对方行列，否则恢复并停止转发。 */
+export function applyTerminalControl(payload: { id: string; controller: string | null; cols: number; rows: number }) {
+  const controls = useTerminalControlStore.getState()
+  if (payload.controller) {
+    controls.setControl(payload.id, { name: payload.controller, cols: payload.cols, rows: payload.rows })
+    return
+  }
+  controls.clearControl(payload.id)
+  stopTerminalMirror(payload.id)
 }
 
 function profileName(name: string) {
@@ -63,7 +149,16 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
   return { id: project.id, name: project.name, path: project.path, kind, host, connectionName: remote?.name, lastOpenedAt: project.last_opened_at }
 }
 
-async function respond({ project: projectId = null, attachment, profiles, profile }: Request) {
+async function respond({
+  project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, device, endTerminal,
+}: Request) {
+  if (desktopTerminals) return listDesktopTerminals()
+  if (mirrorStart !== undefined) return startDesktopTerminalMirror(mirrorStart, device ?? '')
+  if (endTerminal !== undefined) {
+    await shareableTerminal(endTerminal)
+    await useTerminalStore.getState().closeTerminal(endTerminal)
+    return null
+  }
   if (profiles) return mobileTerminalProfiles()
   if (profile !== undefined) return mobileTerminalProfile(profile)
   // The main window can lag behind projects added/removed in another window or
@@ -90,7 +185,13 @@ async function respond({ project: projectId = null, attachment, profiles, profil
 
 export async function listenForMobileRequests(): Promise<() => void> {
   if (!isTauri() || getCurrentWebviewWindow().label !== 'main') return () => {}
-  return listen<Request>('mobile-request', async ({ payload }) => {
+  // 窗口重载后转发已丢失，把残留的使用权还给电脑。
+  void safeInvoke('释放手机接入', 'mobile_release_mirrors').catch(() => undefined)
+  const unlistenControl = await listen<Parameters<typeof applyTerminalControl>[0]>(
+    'terminal-control',
+    ({ payload }) => applyTerminalControl(payload),
+  )
+  const unlistenRequests = await listen<Request>('mobile-request', async ({ payload }) => {
     const result = await respond(payload).then(
       data => ({ data }),
       error => ({ error: error instanceof Error ? error.message : String(error) }),
@@ -98,4 +199,8 @@ export async function listenForMobileRequests(): Promise<() => void> {
     await safeInvoke('回复移动端请求', 'mobile_bridge_reply', { id: payload.id, ...result })
       .catch(error => console.warn('Mobile bridge reply failed', error))
   })
+  return () => {
+    unlistenControl()
+    unlistenRequests()
+  }
 }
