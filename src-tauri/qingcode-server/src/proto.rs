@@ -32,6 +32,67 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 本实现能接受的最低协议版本（向后兼容 2 个次版本的设计预留位）。
 pub const PROTOCOL_MIN: u32 = 1;
 
+/// 持久终端（create/attach/replay/snapshot/input/resize/kill）语义的兼容级别。
+///
+/// 客户端与 daemon 之间接回终端只看协议版本与这个级别，不看 server 版本号：同级别
+/// 内只允许新增可选字段，于是旧 daemon 上的终端可被新客户端接回，升级不必结束它们。
+///
+/// **改变上述语义、导致对端无法正确处理时，必须把它加一。**之后：
+/// - daemon 若仍能服务旧级别客户端，在 [`crate::daemon::CAPABILITIES`] 中同时声明
+///   新旧级别（`pty.compat.1`、`pty.compat.2`）；不能服务就只声明新级别。
+/// - 客户端若不再能驱动旧级别 daemon，同步提高 [`PTY_COMPAT_MIN`]：低于下限的旧
+///   daemon 会被判为不兼容，直接淘汰并结束其终端。
+pub const PTY_COMPAT_LEVEL: u32 = 1;
+/// 客户端能驱动的最低终端兼容级别；可驱动区间为 `[PTY_COMPAT_MIN, PTY_COMPAT_LEVEL]`。
+pub const PTY_COMPAT_MIN: u32 = 1;
+/// daemon 在 HELLO 能力里声明兼容级别的前缀，例如 `pty.compat.1`。
+pub const PTY_COMPAT_CAPABILITY_PREFIX: &str = "pty.compat.";
+
+/// 从 HELLO 能力声明解析 daemon 支持的终端兼容级别（升序去重）。没有持久终端能力
+/// 返回 `None`；引入级别声明之前的 daemon 只有 `pty.persist` + `pty.attach`，视为级别 1。
+pub fn pty_compat_levels(capabilities: &[String]) -> Option<Vec<u32>> {
+    let has = |name: &str| capabilities.iter().any(|item| item == name);
+    if !has("pty.persist") || !has("pty.attach") {
+        return None;
+    }
+    let mut levels: Vec<u32> = capabilities
+        .iter()
+        .filter_map(|item| item.strip_prefix(PTY_COMPAT_CAPABILITY_PREFIX))
+        .filter_map(|level| level.parse::<u32>().ok())
+        .collect();
+    if levels.is_empty() {
+        levels.push(1);
+    }
+    levels.sort_unstable();
+    levels.dedup();
+    Some(levels)
+}
+
+/// 本客户端能否驱动此 daemon 上的持久终端：协议一致，且 daemon 声明的级别中至少
+/// 有一个落在客户端可驱动区间内。
+pub fn pty_compatible(protocol: u32, capabilities: &[String]) -> Result<(), String> {
+    if protocol != PROTOCOL_VERSION {
+        return Err(format!("daemon 协议版本不兼容：{protocol}"));
+    }
+    let Some(levels) = pty_compat_levels(capabilities) else {
+        return Err("daemon 不支持持久终端".into());
+    };
+    if levels
+        .iter()
+        .any(|level| (PTY_COMPAT_MIN..=PTY_COMPAT_LEVEL).contains(level))
+    {
+        return Ok(());
+    }
+    let listed = levels
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join("/");
+    Err(format!(
+        "daemon 终端兼容级别 {listed} 不在客户端支持范围 {PTY_COMPAT_MIN}–{PTY_COMPAT_LEVEL} 内"
+    ))
+}
+
 /// 单帧上限（`length` 字段的取值范围上限）。超限直接断开，不再读取剩余字节。
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -685,6 +746,62 @@ impl OutboundQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn caps(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn daemon_advertises_current_pty_compat_level() {
+        let advertised = caps(crate::daemon::CAPABILITIES);
+        let levels = pty_compat_levels(&advertised).unwrap();
+        assert_eq!(levels.last(), Some(&PTY_COMPAT_LEVEL));
+        assert!(PTY_COMPAT_MIN <= PTY_COMPAT_LEVEL);
+        assert!(pty_compatible(PROTOCOL_VERSION, &advertised).is_ok());
+    }
+
+    #[test]
+    fn pty_compat_treats_legacy_daemons_as_level_one_and_rejects_gaps() {
+        // 引入级别声明前的 daemon：只有持久终端能力。
+        let legacy = caps(&["pty.persist", "pty.attach"]);
+        assert_eq!(pty_compat_levels(&legacy), Some(vec![1]));
+        assert!(pty_compatible(PROTOCOL_VERSION, &legacy).is_ok());
+        assert_eq!(
+            pty_compat_levels(&caps(&[
+                "pty.persist",
+                "pty.attach",
+                "pty.compat.3",
+                "pty.compat.1",
+                "pty.compat.3",
+                "pty.compat.x"
+            ])),
+            Some(vec![1, 3])
+        );
+        assert_eq!(pty_compat_levels(&caps(&["pty.persist"])), None);
+        assert!(pty_compatible(PROTOCOL_VERSION, &caps(&["fs.scan"])).is_err());
+        assert!(pty_compatible(PROTOCOL_VERSION + 1, &legacy).is_err());
+    }
+
+    #[test]
+    fn pty_compat_accepts_any_overlapping_level_only() {
+        let beyond = PTY_COMPAT_LEVEL + 1;
+        // 只声明更高级别的新 daemon：旧客户端驱动不了。
+        let newer_only = caps(&[
+            "pty.persist",
+            "pty.attach",
+            &format!("{PTY_COMPAT_CAPABILITY_PREFIX}{beyond}"),
+        ]);
+        let error = pty_compatible(PROTOCOL_VERSION, &newer_only).unwrap_err();
+        assert!(error.contains("不在客户端支持范围"), "{error}");
+        // 同时保留当前级别的新 daemon：仍可兼容。
+        let newer_with_current = caps(&[
+            "pty.persist",
+            "pty.attach",
+            &format!("{PTY_COMPAT_CAPABILITY_PREFIX}{PTY_COMPAT_LEVEL}"),
+            &format!("{PTY_COMPAT_CAPABILITY_PREFIX}{beyond}"),
+        ]);
+        assert!(pty_compatible(PROTOCOL_VERSION, &newer_with_current).is_ok());
+    }
 
     #[test]
     fn frame_roundtrip_preserves_kind_stream_and_payload() {

@@ -1498,6 +1498,7 @@
     "选择": "Choose",
     "重启远端服务": "Restart remote service",
     "更新远端服务": "Update remote service",
+    "将安装与当前客户端匹配的远端服务并替换直连入口。旧版服务若与当前客户端兼容且仍有运行中的终端，会继续托管并可接回，全部结束后的下次连接再切换到新版本；不兼容时会被替换，其托管的终端随之结束。更新期间连接会短暂中断，可能影响同一远端用户下的其他项目。": "Install the remote service version matching this client and replace the direct entry point. If the old service is compatible with this client and still has running terminals, it keeps hosting them so they can be reattached, and switches to the new version on the next connection after they all end; an incompatible service is replaced and its terminals end. Connections briefly drop during the update and other projects under the same remote user may be affected.",
     "将安装与当前客户端匹配的远端服务并替换旧版本。更新会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。": "Install the remote service version matching this client and replace the old version. Updating ends terminals hosted by this service and may affect other projects under the same remote user.",
     "已更新远端服务，请重新新建终端或重试原操作": "Remote service updated. Create a new terminal or retry the original action.",
     "更新远端服务失败: {error}": "Failed to update the remote service: {error}",

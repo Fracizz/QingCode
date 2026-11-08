@@ -87,48 +87,95 @@ impl DaemonChannel {
     }
 }
 
-/// 版本落后、但仍托管着运行中终端而被刻意保留的 daemon。
+/// 版本与客户端不同、但经兼容判定后被刻意沿用的 daemon。
 ///
-/// 升级会结束旧 daemon 托管的全部 PTY，所以隐式准备（打开项目、文件操作、接回
-/// 终端）遇到这种 daemon 时推迟升级：继续使用它，直到运行中的终端全部结束，下次
-/// 健康探测再淘汰并换成新版本。用户显式「更新远端服务」不受此限。
+/// 参照 VS Code「能接回就接回、接不回就不保留旧后端」，但不按构建号一刀切，而是按
+/// 显式的终端兼容契约（协议 + `pty.compat` 级别，见 `proto::pty_compatible`）判断：
+/// - 远端更旧、兼容且仍托管运行中的终端：推迟升级，终端照常接回；全部结束后的下次
+///   健康探测再淘汰并换成新版本；
+/// - 远端更新且兼容：沿用，绝不降级（另一台装了更新客户端的电脑可能正在使用它）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DeferredUpgrade {
+pub(crate) struct KeptDaemon {
     pub(crate) running_version: String,
     pub(crate) live_ptys: usize,
+    /// 远端版本比本客户端新。
+    pub(crate) newer: bool,
 }
 
-/// 按 daemon token 记录推迟升级的实例。token 每次 daemon 启动都会轮换，
-/// 因而唯一对应一个 daemon 实例，换成新版后旧记录自然不再命中。
-fn deferred_upgrades() -> std::sync::MutexGuard<'static, HashMap<String, DeferredUpgrade>> {
-    static DEFERRED: std::sync::OnceLock<Mutex<HashMap<String, DeferredUpgrade>>> =
+/// 按 daemon 访问凭据记录被沿用的实例。SSH 下是 daemon token，每次 daemon 启动都会
+/// 轮换，唯一对应一个实例；端口直连下是固定的配对凭据，探测到版本一致时清除。
+fn kept_daemons() -> std::sync::MutexGuard<'static, HashMap<String, KeptDaemon>> {
+    static KEPT: std::sync::OnceLock<Mutex<HashMap<String, KeptDaemon>>> =
         std::sync::OnceLock::new();
-    DEFERRED
-        .get_or_init(Default::default)
+    KEPT.get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 该 daemon 是否处于「推迟升级」状态；用于状态展示。
-pub(crate) fn deferred_upgrade(access: &DaemonAccess) -> Option<DeferredUpgrade> {
-    deferred_upgrades().get(&access.token).cloned()
+/// 该 daemon 是否为被沿用的异版本实例；用于状态展示与常规通道放行版本差异。
+pub(crate) fn kept_daemon(access: &DaemonAccess) -> Option<KeptDaemon> {
+    kept_daemons().get(&access.token).cloned()
 }
 
-fn defer_upgrade(access: &DaemonAccess, info: DeferredUpgrade) {
-    deferred_upgrades().insert(access.token.clone(), info);
+fn keep_daemon(access: &DaemonAccess, info: KeptDaemon) {
+    kept_daemons().insert(access.token.clone(), info);
 }
 
-fn clear_deferred_upgrade(access: &DaemonAccess) {
-    deferred_upgrades().remove(&access.token);
+fn forget_kept_daemon(access: &DaemonAccess) {
+    kept_daemons().remove(&access.token);
 }
 
-/// 版本落后的 daemon 遇到时的处理方式。
+/// 遇到版本落后的 daemon 时的处理方式（版本更新的 daemon 两种方式都不会降级）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StaleDaemon {
-    /// 隐式准备：仍有运行中的终端就推迟升级，继续使用旧 daemon。
+    /// 隐式准备：兼容且仍有运行中的终端就推迟升级，继续使用旧 daemon。
     DeferWhileBusy,
-    /// 用户显式更新或替换：立即淘汰旧 daemon（会结束其托管的终端）。
+    /// 用户显式更新：立即淘汰旧 daemon（会结束其托管的终端）。
     Replace,
+}
+
+/// 比较两个 server 版本（semver 优先级，含预发布号，如 `0.1.17-beta.12`）。
+/// 无法解析时返回 `None`，调用方按「旧版本」处理，与引入比较前的行为一致。
+fn compare_server_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    fn parse(raw: &str) -> Option<(Vec<u64>, Option<Vec<&str>>)> {
+        let raw = raw.trim().trim_start_matches(['v', 'V']);
+        let raw = raw.split('+').next()?;
+        let (core, pre) = match raw.split_once('-') {
+            Some((core, pre)) => (core, Some(pre.split('.').collect::<Vec<_>>())),
+            None => (raw, None),
+        };
+        let core = core
+            .split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        (core.len() == 3).then_some((core, pre))
+    }
+    fn identifier(left: &str, right: &str) -> Ordering {
+        match (left.parse::<u64>(), right.parse::<u64>()) {
+            (Ok(left), Ok(right)) => left.cmp(&right),
+            // 数字标识符低于字母数字标识符。
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => left.cmp(right),
+        }
+    }
+    let (left_core, left_pre) = parse(left)?;
+    let (right_core, right_pre) = parse(right)?;
+    Some(left_core.cmp(&right_core).then_with(|| {
+        match (left_pre, right_pre) {
+            (None, None) => Ordering::Equal,
+            // 正式版高于同号预发布版。
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(left), Some(right)) => left
+                .iter()
+                .zip(&right)
+                .map(|(left, right)| identifier(left, right))
+                .find(|order| order.is_ne())
+                .unwrap_or_else(|| left.len().cmp(&right.len())),
+        }
+    }))
 }
 
 enum DaemonTransport {
@@ -968,6 +1015,8 @@ fn dispatch_session_stream(state: &SessionState, stream_id: u32, reply: SessionI
 struct HelloPolicy {
     require_version: bool,
     required_capabilities: &'static [&'static str],
+    /// 要求终端兼容级别满足客户端下限（见 `proto::pty_compatible`）。
+    require_pty_compat: bool,
 }
 
 impl HelloPolicy {
@@ -975,19 +1024,22 @@ impl HelloPolicy {
     const STRICT: Self = Self {
         require_version: true,
         required_capabilities: &["fs.scan", "search.content", "watch.subscribe"],
+        require_pty_compat: false,
     };
-    /// 持久化终端通道只按协议与能力判断，不要求 server 版本一致：新客户端必须
-    /// 能接回、列出和结束旧版本 daemon 上仍在运行的终端，否则升级即丢终端。
-    /// 协议演进只新增可选字段与能力名，客户端按能力分流（见稳定性计划）。
+    /// 持久化终端通道按显式的终端兼容契约判断（协议版本 + `pty.compat` 级别），
+    /// 不要求 server 版本一致：兼容的旧 daemon 上的终端可被新客户端接回、列出和
+    /// 结束；不兼容的会在准备阶段被淘汰。
     const TERMINAL: Self = Self {
         require_version: false,
-        required_capabilities: &["pty.persist", "pty.attach"],
+        required_capabilities: &[],
+        require_pty_compat: true,
     };
-    /// 健康探测：能力与常规通道一致，版本由调用方读取 HELLO 后自行判断，
-    /// 以便区分「版本落后但仍托管终端」与「可以直接淘汰」。
+    /// 健康探测：只校验协议，版本与能力由调用方读取 HELLO 后分类，以便区分
+    /// 「兼容且仍托管终端，推迟升级」与「不兼容或空闲，直接淘汰」。
     const PROBE: Self = Self {
         require_version: false,
-        required_capabilities: Self::STRICT.required_capabilities,
+        required_capabilities: &[],
+        require_pty_compat: false,
     };
 
     fn tolerating_version(self) -> Self {
@@ -1002,6 +1054,7 @@ impl HelloPolicy {
     const LENIENT: Self = Self {
         require_version: false,
         required_capabilities: &[],
+        require_pty_compat: false,
     };
 }
 
@@ -1017,14 +1070,21 @@ fn validate_daemon_hello_with(response: &HelloResponse, policy: HelloPolicy) -> 
             response.server_version
         ));
     }
-    if !policy.required_capabilities.is_empty() {
-        for capability in policy.required_capabilities {
-            if !response.capabilities.iter().any(|item| item == *capability) {
-                return Err(format!("daemon 缺少能力 {capability}"));
-            }
-        }
+    missing_capability(&response.capabilities, policy.required_capabilities)?;
+    if policy.require_pty_compat {
+        proto::pty_compatible(response.protocol, &response.capabilities)?;
     }
     Ok(())
+}
+
+fn missing_capability(capabilities: &[String], required: &[&str]) -> Result<(), String> {
+    match required
+        .iter()
+        .find(|capability| !capabilities.iter().any(|item| item == *capability))
+    {
+        Some(capability) => Err(format!("daemon 缺少能力 {capability}")),
+        None => Ok(()),
+    }
 }
 
 /// 打开一条 daemon 传输通道并完成握手。
@@ -1205,9 +1265,9 @@ async fn daemon_hello(
     }
     let hello: HelloResponse = proto::decode_value(&response.payload)
         .map_err(|error| format!("解析 daemon HELLO 失败：{error}"))?;
-    // 已决定推迟升级的旧 daemon（仍托管运行中的终端）在常规通道上也放行版本差异；
+    // 经兼容判定而沿用的异版本 daemon 在常规通道上也放行版本差异；
     // 协议版本与能力仍按策略校验。
-    let policy = if deferred_upgrade(daemon).is_some() {
+    let policy = if kept_daemon(daemon).is_some() {
         policy.tolerating_version()
     } else {
         policy
@@ -1262,22 +1322,23 @@ pub(crate) async fn ensure_remote_daemon(
                 };
                 match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
                     ProbeOutcome::Ready => return Ok(access),
-                    ProbeOutcome::StaleVersion(info)
-                        if stale == StaleDaemon::DeferWhileBusy && info.live_ptys > 0 =>
-                    {
-                        defer_upgrade(&access, info);
-                        return Ok(access);
-                    }
-                    ProbeOutcome::StaleVersion(info) if !shut_down_stale => {
-                        // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求退出，
-                        // 下一轮 daemon-token 按新二进制拉起。只做一次，避免循环。
-                        shut_down_stale = true;
-                        clear_deferred_upgrade(&access);
-                        shutdown_remote_daemon_until(manager, connection_id, &access, deadline)
-                            .await;
-                        stale_version_reason(&info)
-                    }
-                    ProbeOutcome::StaleVersion(info) => stale_version_reason(&info),
+                    ProbeOutcome::Skewed(info) => match info.decision(stale) {
+                        SkewDecision::Keep => {
+                            keep_daemon(&access, info.kept);
+                            return Ok(access);
+                        }
+                        SkewDecision::RefuseNewer => return Err(info.reason()),
+                        SkewDecision::Replace if !shut_down_stale => {
+                            // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求退出，
+                            // 下一轮 daemon-token 按新二进制拉起。只做一次，避免循环。
+                            shut_down_stale = true;
+                            forget_kept_daemon(&access);
+                            shutdown_remote_daemon_until(manager, connection_id, &access, deadline)
+                                .await;
+                            info.reason()
+                        }
+                        SkewDecision::Replace => info.reason(),
+                    },
                     ProbeOutcome::Unavailable(reason) => reason,
                 }
             }
@@ -1297,18 +1358,63 @@ fn daemon_step_budget(deadline: Instant, now: Instant, cap: Duration) -> Option<
     (!remaining.is_zero()).then(|| remaining.min(cap))
 }
 
-/// 探测结果区分「连不上」与「版本过期」：后者值得淘汰旧实例后重试一轮。
+/// 探测结果：版本一致可用、版本不同（交由兼容判定）、连不上。
 enum ProbeOutcome {
     Ready,
-    StaleVersion(DeferredUpgrade),
+    Skewed(SkewedDaemon),
     Unavailable(String),
 }
 
-fn stale_version_reason(info: &DeferredUpgrade) -> String {
-    format!(
-        "daemon 版本不匹配：远端 {}，本端 {SERVER_VERSION}",
-        info.running_version
-    )
+/// 版本与客户端不同的 daemon 及其兼容判定结果。
+struct SkewedDaemon {
+    kept: KeptDaemon,
+    /// 本客户端能否继续使用它：终端兼容契约满足且常规能力齐全。`Err` 带原因。
+    compatible: Result<(), String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SkewDecision {
+    /// 沿用：兼容且（远端更新，或仍托管运行中的终端且非显式替换）。
+    Keep,
+    /// 淘汰旧实例并按本客户端版本重新拉起（其托管的终端随之结束）。
+    Replace,
+    /// 远端更新且不兼容：不降级、不结束别人的终端，提示升级客户端。
+    RefuseNewer,
+}
+
+impl SkewedDaemon {
+    fn decision(&self, stale: StaleDaemon) -> SkewDecision {
+        match (self.kept.newer, self.compatible.is_ok()) {
+            (true, true) => SkewDecision::Keep,
+            (true, false) => SkewDecision::RefuseNewer,
+            (false, true) if stale == StaleDaemon::DeferWhileBusy && self.kept.live_ptys > 0 => {
+                SkewDecision::Keep
+            }
+            (false, _) => SkewDecision::Replace,
+        }
+    }
+
+    fn reason(&self) -> String {
+        let running = &self.kept.running_version;
+        if self.kept.newer {
+            // 刻意不含「版本不匹配」：前端据此提供的「更新远端服务」会把它降级。
+            let why = self.compatible.as_ref().err().map_or("", String::as_str);
+            return format!(
+                "远端服务 v{running} 比本客户端 v{SERVER_VERSION} 新且不兼容（{why}），请升级 QingCode"
+            );
+        }
+        let base = format!("daemon 版本不匹配：远端 {running}，本端 {SERVER_VERSION}");
+        match &self.compatible {
+            Ok(()) => base,
+            Err(why) => format!("{base}（不兼容：{why}）"),
+        }
+    }
+}
+
+/// 版本不同的 daemon 能否被本客户端继续使用（含终端接回与文件操作）。
+fn skewed_daemon_compatible(capabilities: &[String]) -> Result<(), String> {
+    proto::pty_compatible(PROTOCOL_VERSION, capabilities)?;
+    missing_capability(capabilities, HelloPolicy::STRICT.required_capabilities)
 }
 
 /// 从 `pty.list` 应答统计尚未退出的终端；`exited` 为数值即已退出。
@@ -1345,14 +1451,24 @@ async fn probe_daemon_versioned(
         Err(reason) => return ProbeOutcome::Unavailable(reason),
     };
     if channel.server_version == SERVER_VERSION {
+        let capable = missing_capability(
+            &channel.capabilities,
+            HelloPolicy::STRICT.required_capabilities,
+        );
         channel.shutdown().await;
-        clear_deferred_upgrade(access);
-        return ProbeOutcome::Ready;
+        forget_kept_daemon(access);
+        return match capable {
+            Ok(()) => ProbeOutcome::Ready,
+            Err(reason) => ProbeOutcome::Unavailable(reason),
+        };
     }
-    // 版本落后：只在确有运行中的终端时才值得推迟升级。HELLO 的 pty_count 含已退出
-    // 未回收的终端，有 PTY 能力时用 pty.list 精确统计；查询失败按 HELLO 计数保守处理。
+    // 版本不同：交由兼容判定。是否推迟升级取决于运行中的终端数；HELLO 的 pty_count
+    // 含已退出未回收的终端，兼容时用 pty.list 精确统计，查询失败按 HELLO 计数保守处理。
+    let compatible = skewed_daemon_compatible(&channel.capabilities);
+    let newer = compare_server_versions(&channel.server_version, SERVER_VERSION)
+        == Some(std::cmp::Ordering::Greater);
     let mut live_ptys = channel.pty_count;
-    if live_ptys > 0 && channel.capabilities.iter().any(|cap| cap == "pty.persist") {
+    if live_ptys > 0 && compatible.is_ok() {
         let rpc_deadline = deadline.min(Instant::now() + AGENT_PING_TIMEOUT);
         if let Ok(listed) = daemon_rpc(
             &mut channel,
@@ -1367,36 +1483,63 @@ async fn probe_daemon_versioned(
     }
     let running_version = std::mem::take(&mut channel.server_version);
     channel.shutdown().await;
-    ProbeOutcome::StaleVersion(DeferredUpgrade {
-        running_version,
-        live_ptys,
+    ProbeOutcome::Skewed(SkewedDaemon {
+        kept: KeptDaemon {
+            running_version,
+            live_ptys,
+            newer,
+        },
+        compatible,
     })
 }
 
-/// 共享 daemon 的周期健康探测。推迟升级中的旧 daemon 只要仍有运行中的终端就算
-/// 健康；终端全部结束后返回错误，让调用方重新准备，从而完成延后的升级。
+/// 共享 daemon 的健康探测（隐式准备语义，即 [`StaleDaemon::DeferWhileBusy`]）。
+///
+/// 版本不同的 daemon 按 [`SkewedDaemon::decision`] 判定：沿用则照常可用；远端更新
+/// 且不兼容则报错，不降级；需要淘汰（更旧且不兼容或已空闲）时：
+/// - SSH：返回错误，由调用方重新准备，淘汰旧实例并按新二进制拉起；
+/// - Server 端口直连：网关已是当前版本（健康检查保证），这里凭配对凭据请求旧 daemon
+///   退出，网关在下一次 HELLO 时用自身二进制重新拉起，再复验一次。
 pub(super) async fn probe_shared_daemon(
     manager: &SshManager,
     connection_id: &str,
     access: &DaemonAccess,
 ) -> Result<(), String> {
-    match probe_daemon_versioned(
-        manager,
-        connection_id,
-        access,
-        Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
-    )
-    .await
-    {
-        ProbeOutcome::Ready => Ok(()),
-        ProbeOutcome::StaleVersion(info)
-            if info.live_ptys > 0 && deferred_upgrade(access).is_some() =>
-        {
-            defer_upgrade(access, info);
-            Ok(())
+    let probe = |deadline| probe_daemon_versioned(manager, connection_id, access, deadline);
+    let settle = |outcome: ProbeOutcome| -> Result<Result<(), String>, SkewedDaemon> {
+        match outcome {
+            ProbeOutcome::Ready => Ok(Ok(())),
+            ProbeOutcome::Unavailable(reason) => Ok(Err(reason)),
+            ProbeOutcome::Skewed(info) => match info.decision(StaleDaemon::DeferWhileBusy) {
+                SkewDecision::Keep => {
+                    keep_daemon(access, info.kept);
+                    Ok(Ok(()))
+                }
+                SkewDecision::RefuseNewer => Ok(Err(info.reason())),
+                SkewDecision::Replace => Err(info),
+            },
         }
-        ProbeOutcome::StaleVersion(info) => Err(stale_version_reason(&info)),
-        ProbeOutcome::Unavailable(reason) => Err(reason),
+    };
+    let info = match settle(probe(Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT).await) {
+        Ok(result) => return result,
+        Err(info) => info,
+    };
+    forget_kept_daemon(access);
+    let reason = info.reason();
+    if manager.direct_config(connection_id).is_none()
+        || !shutdown_remote_daemon(manager, connection_id, access).await
+    {
+        return Err(reason);
+    }
+    // 旧实例退出、IPC 端点释放有短暂空窗；网关拉起新 daemon 的等待上限为 10s，
+    // 复验握手时限已覆盖。只复验一次，避免与外部托管（如 systemd）的旧版本循环。
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    match settle(probe(Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT).await) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(format!(
+            "已请求旧版服务退出（{reason}），新版服务尚未就绪：{error}"
+        )),
+        Err(info) => Err(info.reason()),
     }
 }
 
@@ -2096,22 +2239,126 @@ mod tests {
     }
 
     #[test]
-    fn probe_policy_reads_stale_version_but_still_requires_capabilities() {
-        let stale = hello_response(
-            PROTOCOL_VERSION,
-            "0.0.9",
-            &["fs.scan", "search.content", "watch.subscribe"],
-        );
+    fn probe_policy_only_checks_protocol_and_stale_daemons_are_classified() {
+        let regular = ["fs.scan", "search.content", "watch.subscribe"];
+        let stale = hello_response(PROTOCOL_VERSION, "0.0.9", &regular);
         assert!(validate_daemon_hello_with(&stale, HelloPolicy::PROBE).is_ok());
-        let missing = hello_response(PROTOCOL_VERSION, "0.0.9", &["fs.scan"]);
-        assert!(validate_daemon_hello_with(&missing, HelloPolicy::PROBE).is_err());
+        let wrong = hello_response(PROTOCOL_VERSION + 1, "0.0.9", &regular);
+        assert!(validate_daemon_hello_with(&wrong, HelloPolicy::PROBE).is_err());
         // 推迟升级时常规通道放行版本差异，但能力缺失仍拒绝。
         assert!(
             validate_daemon_hello_with(&stale, HelloPolicy::STRICT.tolerating_version()).is_ok()
         );
+        let missing = hello_response(PROTOCOL_VERSION, "0.0.9", &["fs.scan"]);
         assert!(
             validate_daemon_hello_with(&missing, HelloPolicy::STRICT.tolerating_version()).is_err()
         );
+    }
+
+    const FULL_CAPABILITIES: [&str; 5] = [
+        "fs.scan",
+        "search.content",
+        "watch.subscribe",
+        "pty.persist",
+        "pty.attach",
+    ];
+
+    fn skewed(capabilities: &[&str], live_ptys: usize, newer: bool) -> SkewedDaemon {
+        let capabilities: Vec<String> = capabilities.iter().map(|item| item.to_string()).collect();
+        SkewedDaemon {
+            kept: KeptDaemon {
+                running_version: if newer { "99.0.0" } else { "0.0.9" }.into(),
+                live_ptys,
+                newer,
+            },
+            compatible: skewed_daemon_compatible(&capabilities),
+        }
+    }
+
+    #[test]
+    fn older_daemon_is_kept_only_when_compatible_and_hosting_live_terminals() {
+        // 兼容（含引入级别声明前的旧 daemon）且有运行中的终端：推迟升级、继续接回。
+        assert_eq!(
+            skewed(&FULL_CAPABILITIES, 2, false).decision(StaleDaemon::DeferWhileBusy),
+            SkewDecision::Keep
+        );
+        // 用户显式更新：即使有终端也替换。
+        assert_eq!(
+            skewed(&FULL_CAPABILITIES, 2, false).decision(StaleDaemon::Replace),
+            SkewDecision::Replace
+        );
+        // 兼容但空闲：直接升级。
+        assert_eq!(
+            skewed(&FULL_CAPABILITIES, 0, false).decision(StaleDaemon::DeferWhileBusy),
+            SkewDecision::Replace
+        );
+        // 没有持久终端能力：终端本就接不回，即使在跑也直接淘汰。
+        let no_pty = skewed(&["fs.scan", "search.content", "watch.subscribe"], 3, false);
+        assert_eq!(
+            no_pty.decision(StaleDaemon::DeferWhileBusy),
+            SkewDecision::Replace
+        );
+        assert!(no_pty.reason().contains("daemon 版本不匹配"));
+        assert!(no_pty.reason().contains("不兼容"));
+        // 常规能力缺失：文件操作无法继续使用它，同样淘汰。
+        assert_eq!(
+            skewed(&["pty.persist", "pty.attach"], 1, false).decision(StaleDaemon::DeferWhileBusy),
+            SkewDecision::Replace
+        );
+    }
+
+    #[test]
+    fn newer_daemon_is_never_downgraded() {
+        // 兼容的更新版：沿用，空闲或显式更新都不降级。
+        for live in [0, 3] {
+            for mode in [StaleDaemon::DeferWhileBusy, StaleDaemon::Replace] {
+                assert_eq!(
+                    skewed(&FULL_CAPABILITIES, live, true).decision(mode),
+                    SkewDecision::Keep
+                );
+            }
+        }
+        // 不兼容的更新版：拒绝而非降级，提示升级客户端。
+        let incompatible = skewed(&["fs.scan", "search.content", "watch.subscribe"], 1, true);
+        assert_eq!(
+            incompatible.decision(StaleDaemon::Replace),
+            SkewDecision::RefuseNewer
+        );
+        let reason = incompatible.reason();
+        assert!(reason.contains("请升级 QingCode"), "{reason}");
+        // 不得命中前端「版本不匹配」检测，否则会提供把它降级的「更新远端服务」。
+        assert!(!reason.contains("版本不匹配"), "{reason}");
+    }
+
+    #[test]
+    fn server_versions_compare_with_prerelease_precedence() {
+        use std::cmp::Ordering::*;
+        let cmp = compare_server_versions;
+        assert_eq!(cmp("0.1.17-beta.12", "0.1.17-beta.11"), Some(Greater));
+        assert_eq!(cmp("0.1.17-beta.2", "0.1.17-beta.11"), Some(Less));
+        assert_eq!(cmp("0.1.17", "0.1.17-beta.12"), Some(Greater));
+        assert_eq!(cmp("0.1.18-beta.1", "0.1.17"), Some(Greater));
+        assert_eq!(cmp("v0.2.0", "0.1.99"), Some(Greater));
+        assert_eq!(cmp("0.1.17-beta.11", "0.1.17-beta.11"), Some(Equal));
+        assert_eq!(cmp("0.1.17-beta", "0.1.17-beta.1"), Some(Less));
+        assert_eq!(cmp("0.1.17-1", "0.1.17-beta"), Some(Less));
+        assert_eq!(cmp("garbage", "0.1.17"), None);
+        assert_eq!(cmp("0.1", "0.1.17"), None);
+    }
+
+    #[test]
+    fn terminal_policy_follows_pty_compat_contract() {
+        let level = |caps: &[&str]| {
+            validate_daemon_hello_with(
+                &hello_response(PROTOCOL_VERSION, "0.0.9", caps),
+                HelloPolicy::TERMINAL,
+            )
+        };
+        assert!(level(&["pty.persist", "pty.attach"]).is_ok());
+        assert!(level(&["pty.persist", "pty.attach", "pty.compat.1"]).is_ok());
+        assert!(level(&["pty.persist"]).is_err());
+        let beyond = format!("pty.compat.{}", proto::PTY_COMPAT_LEVEL + 1);
+        assert!(level(&["pty.persist", "pty.attach", &beyond]).is_err());
     }
 
     #[test]
@@ -2128,26 +2375,27 @@ mod tests {
     }
 
     #[test]
-    fn deferred_upgrade_is_keyed_by_daemon_token() {
+    fn kept_daemon_is_keyed_by_access_token() {
         let old = DaemonAccess {
             bin: "/home/dev/.qingcode/server/new/qingcode-server".into(),
-            token: format!("deferred-{}", uuid::Uuid::new_v4()),
+            token: format!("kept-{}", uuid::Uuid::new_v4()),
         };
-        let info = DeferredUpgrade {
+        let info = KeptDaemon {
             running_version: "0.0.9".into(),
             live_ptys: 2,
+            newer: false,
         };
-        assert!(deferred_upgrade(&old).is_none());
-        defer_upgrade(&old, info.clone());
-        assert_eq!(deferred_upgrade(&old), Some(info));
-        // 新 daemon 轮换 token 后不会继承旧实例的推迟状态。
+        assert!(kept_daemon(&old).is_none());
+        keep_daemon(&old, info.clone());
+        assert_eq!(kept_daemon(&old), Some(info));
+        // 新 daemon 轮换 token 后不会继承旧实例的沿用状态。
         let replaced = DaemonAccess {
             token: format!("fresh-{}", uuid::Uuid::new_v4()),
             ..old.clone()
         };
-        assert!(deferred_upgrade(&replaced).is_none());
-        clear_deferred_upgrade(&old);
-        assert!(deferred_upgrade(&old).is_none());
+        assert!(kept_daemon(&replaced).is_none());
+        forget_kept_daemon(&old);
+        assert!(kept_daemon(&old).is_none());
     }
 
     fn test_session_state() -> (SessionState, SessionEventReceiver) {

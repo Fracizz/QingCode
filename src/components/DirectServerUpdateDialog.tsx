@@ -206,7 +206,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
           </p>
           <p id={`${id}-impact`} className="text-ui-sm text-warn">
             {t(
-              '将安装与当前客户端匹配的远端服务并替换旧版本。更新会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。'
+              '将安装与当前客户端匹配的远端服务并替换直连入口。旧版服务若与当前客户端兼容且仍有运行中的终端，会继续托管并可接回，全部结束后的下次连接再切换到新版本；不兼容时会被替换，其托管的终端随之结束。更新期间连接会短暂中断，可能影响同一远端用户下的其他项目。'
             )}
           </p>
           <details className="text-ui-sm text-fg-muted">

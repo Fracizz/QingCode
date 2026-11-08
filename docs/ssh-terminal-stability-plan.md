@@ -103,6 +103,7 @@ qingcode-server 的 daemon **已经实现了持久化 PTY 宿主**：
 
 - `pty.create` 新增可选参数 `args: string[]`、`env: {k: v}`、`name?: string`（终端配置文件需要）。全部 `#[serde(default)]`，旧客户端不受影响。
 - 新增或调整能力字符串时，客户端必须按能力判断，不能按版本号判断。
+- 终端接回按 `proto::PTY_COMPAT_LEVEL`（能力 `pty.compat.N`）判定兼容：create/attach/replay/snapshot/input/resize/kill 语义出现对端无法处理的变更时必须提升级别，只新增可选字段则不提升。
 - 改动后提升 `qingcode-server` 的版本号（`SERVER_VERSION` 取 `CARGO_PKG_VERSION`），让客户端重新部署。`PROTOCOL_VERSION` 保持不变（只新增可选字段）。
 
 **`clientId`：** 改为每个 QingCode 安装实例生成一个 UUID，持久化在应用数据目录（`qingcode-client-id`）；发给 daemon 的 `clientId` 取 `"<安装 UUID>:<连接 id>"`。detach 的归属校验依赖它，应用重启后不变，P3 用它接回终端。

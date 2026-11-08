@@ -193,8 +193,10 @@ async fn update_over_ssh(
         if !current.trusted || current.canonical_path != root.canonical_path {
             return Err("项目授权已变化；更新未执行".into());
         }
-        // Stop only the descriptor's gateway. The existing version-aware daemon
-        // handover authenticates the old daemon before requesting its shutdown.
+        // Stop only the descriptor's gateway. PTYs live in the daemon, not the
+        // gateway: an outdated daemon that still hosts running terminals is kept
+        // (the new gateway reaches it over local IPC) and retired by the client
+        // once idle; an idle one is authenticated and shut down right away.
         progress(on_progress, "restarting");
         let stopped = execute_commands(
             &maintenance,
@@ -214,7 +216,7 @@ async fn update_over_ssh(
                 &id,
                 &management_root,
                 &staged,
-                server::StaleDaemon::Replace,
+                server::StaleDaemon::DeferWhileBusy,
             )
             .await?;
             execute_commands(

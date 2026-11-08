@@ -490,13 +490,13 @@ pub(crate) fn state_for_root(
     }
     match state.phase {
         ServerPhase::ReadyServer => {
-            let deferred = slot
+            let kept = slot
                 .as_ref()
                 .and_then(|slot| slot.endpoint.as_ref())
                 .and_then(|endpoint| endpoint.daemon.as_ref())
-                .and_then(server::deferred_upgrade);
-            if let Some(deferred) = deferred {
-                apply_deferred_upgrade(&mut state, &deferred);
+                .and_then(server::kept_daemon);
+            if let Some(kept) = kept {
+                apply_kept_daemon(&mut state, &kept);
             }
             state.timings = slot.and_then(|slot| slot.last_timings);
         }
@@ -509,16 +509,20 @@ pub(crate) fn state_for_root(
     Ok(state)
 }
 
-/// 旧版本 daemon 因托管运行中的终端而推迟升级：展示实际运行的版本并说明原因。
-/// 文案刻意不含「版本不匹配」，状态仍按就绪展示，不触发更新提示。
-fn apply_deferred_upgrade(state: &mut SshServerState, deferred: &server::DeferredUpgrade) {
-    state.version = Some(deferred.running_version.clone());
-    state.reason = Some(format!(
-        "已推迟升级：远端服务 v{} 仍托管 {} 个运行中的终端，全部结束后自动更新到 v{}",
-        deferred.running_version,
-        deferred.live_ptys,
-        qingcode_server::SERVER_VERSION
-    ));
+/// 经兼容判定而沿用的异版本 daemon：展示实际运行的版本并说明原因。
+/// 文案刻意不含「版本不匹配」，状态仍按就绪展示，不触发更新（降级）提示。
+fn apply_kept_daemon(state: &mut SshServerState, kept: &server::KeptDaemon) {
+    let running = &kept.running_version;
+    let client = qingcode_server::SERVER_VERSION;
+    state.version = Some(running.clone());
+    state.reason = Some(if kept.newer {
+        format!("远端服务 v{running} 比本客户端 v{client} 新，终端协议兼容，继续沿用，不会降级")
+    } else {
+        format!(
+            "已推迟升级：远端服务 v{running} 仍托管 {} 个运行中的终端（终端协议兼容，可正常接回），全部结束后自动更新到 v{client}",
+            kept.live_ptys
+        )
+    });
 }
 
 fn emit_state(app: &AppHandle, manager: &SshManager, state: &SshServerState) {
@@ -829,6 +833,28 @@ mod tests {
         assert!(!output.contains("partial UTF8"));
         assert!(WINDOWS_DIAGNOSTIC_SCRIPT.contains("ReadWrite -bor [System.IO.FileShare]::Delete"));
         assert!(WINDOWS_DIAGNOSTIC_SCRIPT.contains("Select-Object -First 2"));
+    }
+
+    #[test]
+    fn kept_daemon_shows_running_version_without_triggering_update_prompt() {
+        let input = inputs(true, true, true, None);
+        for newer in [false, true] {
+            let mut state = plain_state(&input, ServerPhase::ReadyServer);
+            apply_kept_daemon(
+                &mut state,
+                &server::KeptDaemon {
+                    running_version: "0.1.0-beta.1".into(),
+                    live_ptys: 2,
+                    newer,
+                },
+            );
+            assert_eq!(state.version.as_deref(), Some("0.1.0-beta.1"));
+            let reason = state.reason.unwrap();
+            // 前端按「版本不匹配」提供「更新远端服务」，沿用状态不能命中。
+            assert!(!reason.contains("版本不匹配"), "{reason}");
+            assert_eq!(reason.contains("不会降级"), newer, "{reason}");
+            assert_eq!(reason.contains("2 个运行中的终端"), !newer, "{reason}");
+        }
     }
 
     fn inputs<'a>(

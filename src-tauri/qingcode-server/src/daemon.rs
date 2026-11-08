@@ -82,6 +82,8 @@ pub const CAPABILITIES: &[&str] = &[
     "watch.subscribe",
     "pty.persist",
     "pty.attach",
+    // 终端兼容级别，须与 proto::PTY_COMPAT_LEVEL 一致（见测试）。
+    "pty.compat.1",
     "server.shutdown",
 ];
 
