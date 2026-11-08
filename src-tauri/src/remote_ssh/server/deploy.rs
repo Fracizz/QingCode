@@ -29,6 +29,7 @@ pub(super) async fn prepare_shared_daemon(
     manager: &SshManager,
     root: &RegisteredRoot,
     app: Option<&AppHandle>,
+    stale: super::daemon::StaleDaemon,
 ) -> Result<super::host_runtime::PreparedDaemon, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     let (arch, local_binary) = locate_local_server_binary(manager, root)
@@ -80,7 +81,7 @@ pub(super) async fn prepare_shared_daemon(
         &connection_id,
         server_status::ServerPhase::Handshaking,
     );
-    let access = ensure_remote_daemon(manager, &connection_id, root, &remote_bin).await?;
+    let access = ensure_remote_daemon(manager, &connection_id, root, &remote_bin, stale).await?;
     Ok(super::host_runtime::PreparedDaemon {
         access,
         local_binary,
@@ -1292,7 +1293,14 @@ pub(crate) async fn update_server_endpoint_with_app(
     forget_install_location(manager, &connection_id);
     manager.clear_server_endpoint(&key);
     publish_server_if_watched(app, manager, root);
-    let result = super::host_runtime::ensure_shared_daemon(manager, root, app).await;
+    // 显式更新已由用户确认会结束旧服务托管的终端：不推迟，直接替换。
+    let result = super::host_runtime::ensure_shared_daemon_with(
+        manager,
+        root,
+        app,
+        super::daemon::StaleDaemon::Replace,
+    )
+    .await;
     let mut slot = manager.server_slot(&key).unwrap_or_default();
     slot.activity = None;
     match &result {

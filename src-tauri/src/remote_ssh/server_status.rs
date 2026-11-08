@@ -490,6 +490,14 @@ pub(crate) fn state_for_root(
     }
     match state.phase {
         ServerPhase::ReadyServer => {
+            let deferred = slot
+                .as_ref()
+                .and_then(|slot| slot.endpoint.as_ref())
+                .and_then(|endpoint| endpoint.daemon.as_ref())
+                .and_then(server::deferred_upgrade);
+            if let Some(deferred) = deferred {
+                apply_deferred_upgrade(&mut state, &deferred);
+            }
             state.timings = slot.and_then(|slot| slot.last_timings);
         }
         // 意外断线（保活超时、远端断开）带上原因；用户主动断开时没有原因。
@@ -499,6 +507,18 @@ pub(crate) fn state_for_root(
         _ => {}
     }
     Ok(state)
+}
+
+/// 旧版本 daemon 因托管运行中的终端而推迟升级：展示实际运行的版本并说明原因。
+/// 文案刻意不含「版本不匹配」，状态仍按就绪展示，不触发更新提示。
+fn apply_deferred_upgrade(state: &mut SshServerState, deferred: &server::DeferredUpgrade) {
+    state.version = Some(deferred.running_version.clone());
+    state.reason = Some(format!(
+        "已推迟升级：远端服务 v{} 仍托管 {} 个运行中的终端，全部结束后自动更新到 v{}",
+        deferred.running_version,
+        deferred.live_ptys,
+        qingcode_server::SERVER_VERSION
+    ));
 }
 
 fn emit_state(app: &AppHandle, manager: &SshManager, state: &SshServerState) {

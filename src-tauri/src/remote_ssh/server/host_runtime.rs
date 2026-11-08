@@ -1,6 +1,6 @@
 //! One authenticated user daemon per host identity, shared by project roots.
 //! Readiness is memory-only: a new SSH incarnation must complete HELLO again.
-use super::daemon::probe_shared_daemon;
+use super::daemon::{probe_shared_daemon, StaleDaemon};
 use super::scripts::sha256_of_file_async;
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -519,6 +519,17 @@ pub(super) async fn ensure_shared_daemon(
     root: &RegisteredRoot,
     app: Option<&AppHandle>,
 ) -> Result<DaemonAccess, String> {
+    ensure_shared_daemon_with(manager, root, app, StaleDaemon::DeferWhileBusy).await
+}
+
+/// `stale` 决定遇到版本落后的 daemon 时是推迟升级（隐式准备）还是立即替换
+/// （用户显式更新，已确认会结束其托管的终端）。
+pub(super) async fn ensure_shared_daemon_with(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+    stale: StaleDaemon,
+) -> Result<DaemonAccess, String> {
     let parsed = parse_remote_uri(&root.uri)?;
     if !root.trusted || !manager.server_mode(&parsed.connection_id) {
         return Err("仅已信任的 Server 项目可以接入共享服务".into());
@@ -538,7 +549,7 @@ pub(super) async fn ensure_shared_daemon(
         entry
             .acquire(
                 &session.server_incarnation,
-                || super::deploy::prepare_shared_daemon(manager, root, app),
+                || super::deploy::prepare_shared_daemon(manager, root, app, stale),
                 |access| async move {
                     probe_shared_daemon(manager, &probe_connection_id, &access).await
                 },

@@ -209,7 +209,14 @@ async fn update_over_ssh(
             .ok_or("未取得原服务路径")?
             .trim();
         let replaced = async {
-            server::ensure_remote_daemon(&maintenance, &id, &management_root, &staged).await?;
+            server::ensure_remote_daemon(
+                &maintenance,
+                &id,
+                &management_root,
+                &staged,
+                server::StaleDaemon::Replace,
+            )
+            .await?;
             execute_commands(
                 &maintenance,
                 &management_root,
