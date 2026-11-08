@@ -1863,6 +1863,8 @@
     "关闭当前筛选/搜索结果中的全部 {n} 个终端": "Close all {n} terminals in the current filter/search results",
     "关闭全部 {n} 个终端": "Close all {n} terminals",
     "全部关闭": "Close all",
-    "程序正在工作": "Program is working"
+    "程序正在工作": "Program is working",
+    "运行中优先": "Running first",
+    "运行中优先 · 再点恢复默认顺序": "Running first · Click again for default order"
   }
 }

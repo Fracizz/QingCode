@@ -102,7 +102,7 @@ const SOURCE_ORDER: Record<TerminalOverviewSource, number> = { desktop: 0, mobil
 
 /**
  * 按项目分组：电脑端项目列表顺序在前，列表外的手机项目按名称排在后面。
- * 组内运行中（程序正在工作）的排最前，再按来源（电脑 → 手机 → 远端），来源内保持原顺序。
+ * 组内按来源（电脑 → 手机 → 远端）排列，来源内保持原顺序；传入 running（「运行中优先」）时程序正在工作的排最前。
  */
 export function groupTerminalOverview(
   entries: readonly TerminalOverviewEntry[],
@@ -111,7 +111,7 @@ export function groupTerminalOverview(
   query = '',
   /** 额外的可搜索文本（如已翻译的状态、来源标签），由视图层提供。 */
   describe?: (entry: TerminalOverviewEntry) => readonly string[],
-  /** 程序是否正在工作；运行中的终端在组内排在最前，彼此保持来源与原顺序。 */
+  /** 「运行中优先」时传入：程序正在工作的终端在组内排在最前，彼此保持来源与原顺序；省略则不按运行状态排序。 */
   running?: (entry: TerminalOverviewEntry) => boolean,
 ): TerminalOverviewGroup[] {
   // 空白分隔的多个关键词需全部命中，不区分大小写与顺序。

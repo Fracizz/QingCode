@@ -168,6 +168,8 @@ export default function TerminalManager() {
   const [loadingRemote, setLoadingRemote] = useState(false)
   const [filter, setFilter] = useState<TerminalOverviewFilter>('all')
   const [query, setQuery] = useState('')
+  // 「运行中优先」是临时排序：点一下把程序正在工作的终端排到组内最前，再点恢复默认顺序；不保存。
+  const [runningFirst, setRunningFirst] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -282,9 +284,9 @@ export default function TerminalManager() {
           const { sourceLabel, details } = describeEntry(entry, now, t)
           return [sourceLabel, ...details]
         },
-        entry => isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)),
+        runningFirst ? entry => isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) : undefined,
       ),
-    [entries, projects, filter, query, now, t],
+    [entries, projects, filter, query, now, t, runningFirst],
   )
   const paged = useMemo(() => paginateTerminalOverview(groups, page, PAGE_SIZE), [groups, page])
   /** 当前筛选/搜索结果中的全部终端（跨页），批量操作都以此为范围。 */
@@ -298,7 +300,7 @@ export default function TerminalManager() {
   const operationPending = busyKey !== null
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [paged.page, query, filter])
+  }, [paged.page, query, filter, runningFirst])
   if (page !== paged.page) setPage(paged.page)
 
   const changeFilter = (next: TerminalOverviewFilter) => {
@@ -586,6 +588,21 @@ export default function TerminalManager() {
               </Tooltip>
             )}
           </label>
+          <Tooltip label={runningFirst ? t('运行中优先 · 再点恢复默认顺序') : t('运行中优先')} side="bottom">
+            <button
+              type="button"
+              aria-label={runningFirst ? t('运行中优先 · 再点恢复默认顺序') : t('运行中优先')}
+              aria-pressed={runningFirst}
+              onClick={() => setRunningFirst(value => !value)}
+              className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border ${
+                runningFirst
+                  ? 'border-accent/60 bg-accent/15 text-accent'
+                  : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
+              }`}
+            >
+              <LoaderCircle size={15} />
+            </button>
+          </Tooltip>
         </div>
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">

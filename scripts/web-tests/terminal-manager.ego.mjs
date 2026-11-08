@@ -77,6 +77,16 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
       await page.fill(search, '')
       await page.waitForFunction(() => document.querySelectorAll('input[aria-label^="选择终端"]').length === 30)
     })
+    await step('running-first is a temporary icon toggle beside search', async () => {
+      const toggle = 'button[aria-label^="运行中优先"]'
+      assert.equal(await page.evaluate(selector => document.querySelector(selector).getAttribute('aria-pressed'), toggle), 'false')
+      await page.click(toggle)
+      await page.waitForFunction(selector => document.querySelector(selector).getAttribute('aria-pressed') === 'true', toggle)
+      assert.equal(await page.evaluate(selector => document.querySelector(selector).getAttribute('aria-label'), toggle), '运行中优先 · 再点恢复默认顺序')
+      await page.screenshot({ path: resolve(output, 'running-first.png') })
+      await page.click(toggle)
+      await page.waitForFunction(selector => document.querySelector(selector).getAttribute('aria-pressed') === 'false', toggle)
+    })
     await step('short narrow windows and English large-text layouts keep controls inside the viewport', async () => {
       await page.cdp('Emulation.setDeviceMetricsOverride', { width: 480, height: 480, deviceScaleFactor: 1, mobile: false })
       await page.evaluate(async () => {
