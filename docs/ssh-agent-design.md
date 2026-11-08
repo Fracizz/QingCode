@@ -199,9 +199,9 @@ A → HELLO { protocol, server_version, build, os, arch, home, shells[], tools{g
 
 ### 6.3 生命周期与回收
 
-- 每个终端连续 detached 默认保留 3 小时，每 60 秒检查一次，到期后先发 SIGHUP，仍未退出则强制结束；已接回的终端停止计时，其他正常连接的终端不受影响。
+- 每个终端连续 detached 默认保留 24 小时，每 60 秒检查一次，到期后先发 SIGHUP，仍未退出则强制结束；已接回的终端停止计时，其他正常连接的终端不受影响。
 - 没有任何客户端连着，也没有存活的 PTY，持续 10 分钟后 daemon 退出。
-- daemon 启动参数 `--detached-ttl-secs` 可覆盖保留时长，例如 `86400` 表示 24 小时；已运行的 daemon 需重新启动才生效。`remote.server.detachedTerminalTtl` 应用设置项尚未落地。
+- daemon 启动参数 `--detached-ttl-secs` 可覆盖保留时长，例如 `10800` 表示 3 小时；已运行的 daemon 需重新启动才生效。`remote.server.detachedTerminalTtl` 应用设置项尚未落地。
 - 单实例：`run/daemon.lock` 用 `flock` 加锁（Windows 上用命名 mutex）。两个代理同时执行 `--ensure-daemon` 时只会启动一个 daemon。
 - 限额：
   - 每个 daemon 最多 64 个 PTY，超出返回明确错误；

@@ -38,7 +38,7 @@ describe('app close decisions', () => {
       tab('local', false), tab('compat', true, { persistent: false, ptyId: undefined })]
     const { deps, events } = fixture(tabs)
     await runAppClose(deps)
-    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.stringContaining('3 小时'),
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.stringContaining('24 小时'),
       options: expect.arrayContaining([expect.objectContaining({ id: 'preserve', primary: true })]) }))
     expect(deps.finishRemote).toHaveBeenCalledTimes(2)
     expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'preserve')

@@ -37,7 +37,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     const compatible = tabs.filter(tab => tab.cwd.startsWith('ssh://') && !hasRemoteSession(tab))
     const transfers = deps.transferCount()
     const detail = [
-      persistent.length > 0 ? t('有 {count} 个远程终端可以保留。保留后远端进程继续运行，重新连接时可接回。默认在连续断开 3 小时后自动结束。', { count: persistent.length }) : '',
+      persistent.length > 0 ? t('有 {count} 个远程终端可以保留。保留后远端进程继续运行，重新连接时可接回。默认在连续断开 24 小时后自动结束。', { count: persistent.length }) : '',
       local.length > 0 ? t('{count} 个本地终端将关闭。', { count: local.length }) : '',
       compatible.length > 0 ? t('{count} 个远程终端不支持持久化，退出后将断开。', { count: compatible.length }) : '',
       transfers > 0 ? t('{count} 项文件传输尚未完成，退出后将中断。', { count: transfers }) : '',

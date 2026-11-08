@@ -224,7 +224,7 @@ Server 状态栏延迟使用同一页面，运行 `node scripts/web-tests/connec
 连接详情和键盘焦点。此页不建立真实连接或读写文件，也不伪造桌面身份，因此浏览器不加载原生内存与版本信息；
 这两项以及 Windows 原生缩放效果仍需桌面验收。截图和执行报告放在 `.dev/web-tests/status-bar/`。
 
-OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html`，使用 `pnpm dev:web-test`（端口 **38419**）及 `scripts/web-tests/terminal-interaction.ego.mjs` 的 `run()`。该页复用生产 `TerminalView`、xterm、终端 store 和菜单；需要普通 Vite 配置，避免 `test:web` 的项目管理终端 stub。IPC、终端输出和剪贴板均为内存模拟，不启动本机或远端进程。覆盖历史回放不复制、OSC 52 中文写入与读请求拦截、TUI 无选区右键、Claude Shift 选区与两种复制快捷键、选区右键后重绘仍复制快照、Shift 右键及普通 Shell 中断/菜单。产物位于 `.dev/web-tests/terminal-interaction-*/`，`run({ screenshots: false })` 可跳过截图；不代替 Windows 原生剪贴板及真实 SSH/OpenCode/Claude 验收。
+OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html`，使用 `pnpm dev:web-test`（端口 **38419**）及 `scripts/web-tests/terminal-interaction.ego.mjs` 的 `run()`。该页复用生产 `TerminalView`、xterm、终端 store 和菜单；需要普通 Vite 配置，避免 `test:web` 的项目管理终端 stub。IPC、终端输出和剪贴板均为内存模拟，不启动本机或远端进程。覆盖历史回放不复制、OSC 52 中文写入与读请求拦截、TUI 无选区右键、Claude Shift 选区与两种复制快捷键、选区右键后重绘仍复制快照、Shift 右键及普通 Shell 中断/菜单，以及文件路径 Ctrl+点击（含带鼠标上报的 TUI、文件不存在）、OSC 8 文件与编辑器链接、文字与地址不符的网页链接确认、Shift+Enter 在 TUI 与普通 Shell 的区别。产物位于 `.dev/web-tests/terminal-interaction-*/`，`run({ screenshots: false })` 可跳过截图；不代替 Windows 原生剪贴板及真实 SSH/OpenCode/Claude 验收。
 
 终端 Ctrl + 滚轮缩放复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-font-zoom.ego.mjs` 的 `run()`。覆盖每格一步、字号持久化、页面不缩放、不转发给鼠标跟踪中的 TUI、缩放保持历史阅读位置和字号上限。产物位于 `.dev/web-tests/terminal-font-zoom-*/`；不替代 WebView2 中的真实滚轮手感与 Claude／OpenCode 验收。
 

@@ -24,7 +24,7 @@
 - daemon 中每个 PTY 的 owner 为 `<安装 UUID>:<连接 ID>`（`src-tauri/src/remote_ssh.rs` 中的 `client_id`）；owner 不同的客户端接入时会被拒绝（`qingcode-server/src/pty.rs` 的 `attach_with`），孤儿列表也只返回本安装的终端（`daemon.rs`）。
 - 因此公司和家里各自管理自己的终端，互不干扰；家里的终端在断线或重启后仍能正常接回。
 - 接续 AI 对话依靠 CLI 自身的会话管理：会话文件保存在公司电脑上（`~/.claude/projects`、`~/.codex/sessions`），家里新开终端后执行 `claude --resume` / `codex resume` 即可。
-- 公司遗留的终端在分离 3 小时后由 daemon 回收（常驻服务可配置），也可以在公司退出 QingCode 时选择「结束远程终端」。
+- 公司遗留的终端在分离 24 小时后由 daemon 回收（常驻服务可配置），也可以在公司退出 QingCode 时选择「结束远程终端」。
 
 ## 工作项
 

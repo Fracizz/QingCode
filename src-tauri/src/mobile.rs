@@ -124,6 +124,8 @@ fn is_spinner_frame(previous: Option<&str>, current: Option<&str>) -> bool {
     }
 }
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// 手机拉会话列表时，最多隔这么久扫描一次远端遗留的手机终端。
+const RESTORE_SCAN_INTERVAL: Duration = Duration::from_secs(10);
 #[cfg(not(test))]
 const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 // Unoptimized test builds would spend seconds per derivation.
@@ -180,6 +182,18 @@ struct HubState {
     desktop_views: HashSet<String>,
     desktop_terminals: bool,
     next_number: u64,
+    restore: RestoreScan,
+}
+
+/// 电脑重启后接回手机终端的扫描进度，只在本次运行内有效。
+#[derive(Default)]
+struct RestoreScan {
+    running: bool,
+    last_started: Option<Instant>,
+    /// 后台连接远端项目只请求一次，避免反复用保存的凭据尝试登录。
+    connect_requested: bool,
+    /// 已完整接回的连接；之后新脱离的终端由各自的代理负责重连。
+    finished: HashSet<String>,
 }
 
 impl HubState {
@@ -1107,6 +1121,41 @@ impl Hub {
         }
         inner.sessions.get_mut(id).unwrap().ready = true;
         true
+    }
+
+    /// 单飞且限频；返回 false 表示这次不用扫描。
+    fn begin_restore_scan(&self, now: Instant) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let throttled = inner
+            .restore
+            .last_started
+            .is_some_and(|last| now.saturating_duration_since(last) < RESTORE_SCAN_INTERVAL);
+        if !inner.accepting || inner.restore.running || throttled {
+            return false;
+        }
+        inner.restore.running = true;
+        inner.restore.last_started = Some(now);
+        true
+    }
+
+    fn finish_restore_scan(&self, connect_requested: bool, finished: Vec<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.restore.running = false;
+        inner.restore.connect_requested |= connect_requested;
+        inner.restore.finished.extend(finished);
+    }
+
+    fn restore_connect_requested(&self) -> bool {
+        self.inner.lock().unwrap().restore.connect_requested
+    }
+
+    fn restore_finished(&self, connection: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .restore
+            .finished
+            .contains(connection)
     }
 
     fn take_live_sessions(&self) -> Vec<(String, ProjectKind)> {
@@ -2153,6 +2202,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             project: None,
             desktop,
         } => {
+            schedule_restore_scan(app, device);
             let mut list = hub.session_summaries(Some(device));
             if desktop && hub.desktop_terminals_enabled() {
                 // 电脑窗口暂时无响应时只少了电脑终端，手机会话列表照常返回。
@@ -2169,6 +2219,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
             project: Some(project),
             ..
         } => {
+            schedule_restore_scan(app, device);
             let inner = hub.inner.lock().unwrap();
             let mut sessions: Vec<_> = inner
                 .sessions
@@ -2838,6 +2889,101 @@ async fn create(
     Ok(session.metadata(&id))
 }
 
+/// 手机会话记录只在电脑内存里，电脑重启或升级后要从 daemon 找回仍在运行的终端。
+/// 在后台进行，不阻塞列表；手机下一次刷新就能看到。
+fn schedule_restore_scan(app: &AppHandle, device: &str) {
+    if !app
+        .state::<MobileState>()
+        .hub
+        .begin_restore_scan(Instant::now())
+    {
+        return;
+    }
+    let app = app.clone();
+    let device = device.to_owned();
+    tauri::async_runtime::spawn(async move {
+        let (connect_requested, finished) = scan_detached_sessions(&app, &device).await;
+        app.state::<MobileState>()
+            .hub
+            .finish_restore_scan(connect_requested, finished);
+    });
+}
+
+async fn scan_detached_sessions(app: &AppHandle, device: &str) -> (bool, Vec<String>) {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let connect_requested = hub.restore_connect_requested()
+        || desktop_query(app, json!({ "connectRemoteProjects": true }))
+            .await
+            .is_ok();
+    let mut finished = Vec::new();
+    for connection in crate::remote_ssh::mobile_restore::restorable_connections(app) {
+        if hub.restore_finished(&connection) {
+            continue;
+        }
+        let listed = crate::remote_ssh::mobile_restore::list_detached(&connection, app).await;
+        match listed {
+            Ok(terminals) => {
+                if restore_detached_sessions(app, device, terminals).await {
+                    finished.push(connection);
+                }
+            }
+            // 守护进程还没就绪时下一轮再查。
+            Err(error) => eprintln!("[WARN] 查询遗留手机终端失败：{error}"),
+        }
+    }
+    (connect_requested, finished)
+}
+
+/// 返回 false 表示有终端这次没接回，下一轮再试。
+async fn restore_detached_sessions(
+    app: &AppHandle,
+    device: &str,
+    terminals: Vec<crate::remote_ssh::mobile_restore::DetachedMobileTerminal>,
+) -> bool {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let terminals: Vec<_> = terminals
+        .into_iter()
+        .filter(|terminal| !hub.is_phone_session(&terminal.session_id))
+        .collect();
+    if terminals.is_empty() {
+        return true;
+    }
+    let Some(projects) = desktop(app, None)
+        .await
+        .ok()
+        .and_then(|value| serde_json::from_value::<Vec<Project>>(value).ok())
+    else {
+        return false;
+    };
+    let mut complete = true;
+    for terminal in terminals {
+        // 项目已移除或不再受信任：不接回，留给 daemon 回收。
+        let Some(project) = projects.iter().find(|project| {
+            crate::remote_ssh::mobile_restore::is_same_root(&project.path, &terminal.root_uri)
+        }) else {
+            continue;
+        };
+        let id = terminal.session_id.clone();
+        if let Err(error) = hub.reserve_session(id.clone(), project.clone(), device, None) {
+            eprintln!("[WARN] 手机终端未接回：{error}");
+            return false;
+        }
+        hub.with_session(&id, |session| {
+            session.screen.resize(terminal.cols, terminal.rows)
+        });
+        let result = crate::remote_ssh::mobile_restore::attach(&terminal, app).await;
+        let attached = result.is_ok();
+        if let Err(error) = result {
+            eprintln!("[WARN] 手机终端接回失败：{error}");
+            complete = false;
+        }
+        if !hub.finish_create(&id, attached) && attached {
+            crate::remote_ssh::mobile_restore::detach(&id, app).await;
+        }
+    }
+    complete
+}
+
 async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), String> {
     if kind == ProjectKind::Ssh {
         crate::remote_ssh::ssh_kill_terminal_unchecked(id, None, None, app.state()).await
@@ -3201,6 +3347,28 @@ mod tests {
             "tablet-name"
         );
         assert!(inner.takeover_reply("mobile-a", Some(2)).is_none());
+    }
+
+    #[test]
+    fn restore_scan_runs_once_at_a_time_and_is_throttled() {
+        let hub = handoff_hub();
+        let start = Instant::now();
+        assert!(hub.begin_restore_scan(start));
+        // 上一轮没结束时，到了间隔也不并发。
+        assert!(!hub.begin_restore_scan(start + RESTORE_SCAN_INTERVAL));
+        hub.finish_restore_scan(true, vec!["conn-a".into()]);
+        assert!(!hub.begin_restore_scan(start + Duration::from_secs(1)));
+        assert!(hub.begin_restore_scan(start + RESTORE_SCAN_INTERVAL));
+        assert!(hub.restore_connect_requested());
+        assert!(hub.restore_finished("conn-a"));
+        assert!(!hub.restore_finished("conn-b"));
+    }
+
+    #[test]
+    fn restore_scan_stays_off_while_the_listener_is_stopped() {
+        let hub = handoff_hub();
+        hub.inner.lock().unwrap().accepting = false;
+        assert!(!hub.begin_restore_scan(Instant::now()));
     }
 
     #[test]

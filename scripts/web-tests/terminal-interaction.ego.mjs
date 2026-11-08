@@ -112,6 +112,90 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       await page.mouse.click(100, 75, { button: 'right', label: 'open shell context menu' })
       await page.waitForSelector('[role="menu"]')
     })
+    await page.keyboard.press('Escape')
+    const cell = (col, row) => page.evaluate(([col, row]) => {
+      const r = document.querySelector('.xterm-screen').getBoundingClientRect()
+      const { cols, rows } = window.terminalFixture.state
+      return { x: r.x + (r.width / cols) * (col + 0.5), y: r.y + (r.height / rows) * (row + 0.5) }
+    }, [col, row])
+    const clickCell = async (col, row, ctrl) => {
+      const point = await cell(col, row)
+      const away = await cell(col, row + 6)
+      // xterm 按行缓存链接结果，内容变化后要先离开这一行再回来才会重新识别。
+      await page.mouse.move(away.x, away.y, { label: 'leave terminal link row' })
+      await page.mouse.move(point.x - 8, point.y, { label: 'approach terminal link' })
+      await page.mouse.move(point.x, point.y, { steps: 2, label: 'hover terminal link' })
+      await page.waitForFunction(() => document.querySelector('.xterm-screen').classList.contains('xterm-cursor-pointer'), undefined, { timeout: 3000 })
+      if (ctrl) await page.keyboard.down('Control')
+      await page.mouse.click(point.x, point.y, { label: ctrl ? 'Ctrl+click terminal link' : 'click terminal link' })
+      if (ctrl) await page.keyboard.up('Control')
+      await page.waitForTimeout(150)
+    }
+    const resetLinks = () => page.evaluate(() => {
+      const { state } = window.terminalFixture
+      state.opened.length = 0
+      state.urls.length = 0
+    })
+    await step('file path opens only on Ctrl+click and carries line and column', async () => {
+      await send('\x1bcsee src/a.ts:12:3 here')
+      await resetLinks()
+      await clickCell(8, 0, false)
+      assert.deepEqual((await state()).opened, [])
+      await clickCell(8, 0, true)
+      assert.deepEqual((await state()).opened, [{ path: '/fixture/src/a.ts', line: 12, column: 3 }])
+    })
+    await step('missing file reports a toast instead of opening a tab', async () => {
+      await send('\x1bcmissing/b.ts:1')
+      await resetLinks()
+      await clickCell(3, 0, true)
+      assert.deepEqual((await state()).opened, [])
+      assert.ok((await page.evaluate(() => window.terminalFixture.toasts())).some(text => text.includes('missing/b.ts')))
+    })
+    await step('file path still opens inside a mouse-tracking TUI', async () => {
+      await send('\x1bc\x1b[?1049h\x1b[?1000h\x1b[?1006hsrc/a.ts:5')
+      await resetLinks()
+      await clickCell(2, 0, true)
+      assert.deepEqual((await state()).opened, [{ path: '/fixture/src/a.ts', line: 5 }])
+    })
+    await step('OSC 8 file and editor links open in QingCode without a native confirm', async () => {
+      await page.evaluate(() => { window.confirm = () => { throw new Error('native confirm must not run') } })
+      await send('\x1bc\x1b]8;;file:///fixture/src/a.ts#L7\x07file-label\x1b]8;;\x07 \x1b]8;;vscode://file/fixture/src/a.ts:9:2\x07codex-label\x1b]8;;\x07')
+      await resetLinks()
+      await clickCell(3, 0, true)
+      await clickCell(14, 0, true)
+      assert.deepEqual((await state()).opened, [
+        { path: '/fixture/src/a.ts', line: 7 },
+        { path: '/fixture/src/a.ts', line: 9, column: 2 },
+      ])
+    })
+    await step('OSC 8 web link confirms when its text hides the real address', async () => {
+      await send('\x1bc\x1b]8;;https://other.test/x\x07good.dev\x1b]8;;\x07 \x1b]8;;https://a.test/\x07https://a.test/\x1b]8;;\x07')
+      await resetLinks()
+      await clickCell(3, 0, true)
+      assert.equal(await page.evaluate(() => window.terminalFixture.confirmPending()), 'https://other.test/x')
+      await page.evaluate(() => window.terminalFixture.answerConfirm(false))
+      await page.waitForTimeout(100)
+      assert.deepEqual((await state()).urls, [])
+      await clickCell(12, 0, true)
+      assert.equal(await page.evaluate(() => window.terminalFixture.confirmPending()), null)
+      assert.deepEqual((await state()).urls, ['https://a.test/'])
+    })
+    await step('Shift+Enter sends LF in a TUI and stays CR in a plain shell', async () => {
+      const shiftEnter = async () => {
+        await page.focus('textarea[aria-label="Terminal input"]')
+        await resetInput()
+        await page.keyboard.press('Shift+Enter')
+        return (await state()).input
+      }
+      await send('\x1bcplain shell')
+      assert.deepEqual(await shiftEnter(), ['\r'])
+      await send('\x1bc\x1b[?1004h')
+      assert.deepEqual(await shiftEnter(), ['\n'])
+      await send('\x1bc\x1b[?1049h')
+      assert.deepEqual(await shiftEnter(), ['\n'])
+      await send('\x1bc')
+      assert.deepEqual(await shiftEnter(), ['\r'])
+    })
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ results, nativeSsh: false, screenshots }, null, 2))
     console.log({ output, results, spaceId: task.spaceId, snapshot: await page.snapshot() })
     await task.finish({ keep: [] })

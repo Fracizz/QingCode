@@ -4,6 +4,8 @@ import { emit } from '@tauri-apps/api/event'
 import TerminalView from '../components/Terminal'
 import { seedTerminalOutputFromPersist, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
+import { useEditorStore } from '../store/editorStore'
+import { useConfirmStore } from '../store/confirmStore'
 import { useLocaleStore } from '../lib/i18n'
 import '../App.css'
 
@@ -11,9 +13,23 @@ import '../App.css'
 // whose Vite config does not alias terminalStore to the project-manager stub.
 async function start() {
   const id = 'terminal-interaction-fixture'
-  const state = { clipboard: '', writes: [] as string[], input: [] as string[], cols: 80, rows: 24 }
+  const state = {
+    clipboard: '', writes: [] as string[], input: [] as string[], cols: 80, rows: 24,
+    opened: [] as Array<{ path: string; line?: number; column?: number }>,
+    urls: [] as string[],
+  }
+  const files = new Set(['/fixture/src/a.ts'])
   mockIPC((command, args) => {
     if (command === 'set_terminal_output_paused') return
+    if (command === 'file_stat') {
+      const { path } = args as { path: string }
+      if (!files.has(path)) throw new Error(`missing: ${path}`)
+      return { size: 1, is_dir: false }
+    }
+    if (command === 'plugin:opener|open_url') {
+      state.urls.push((args as { url: string }).url)
+      return
+    }
     throw new Error(`Unexpected terminal fixture IPC: ${command} ${JSON.stringify(args)}`)
   }, { shouldMockEvents: true })
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
@@ -22,6 +38,9 @@ async function start() {
   } })
   useLocaleStore.getState().setLanguage('zh-CN')
   useProjectStore.setState({ projects: [], currentProject: null })
+  useEditorStore.setState({
+    openFile: async (path, line, column) => { state.opened.push({ path, line, column }) },
+  })
   useTerminalStore.setState({
     terminals: [{ id, name: 'fixture', projectId: 'fixture', cwd: '/fixture', launchCommand: '', status: 'running', exitCode: null }],
     writeToTerminal: async (_id, data) => { state.input.push(data) },
@@ -45,7 +64,13 @@ async function start() {
       })
     })
   }
-  Object.assign(window, { terminalFixture: { state, output } })
+  Object.assign(window, { terminalFixture: {
+    state,
+    output,
+    toasts: () => useProjectStore.getState().toasts.map(toast => toast.text),
+    confirmPending: () => useConfirmStore.getState().request?.detail ?? null,
+    answerConfirm: (value: boolean) => useConfirmStore.getState().answer(value),
+  } })
   createRoot(document.getElementById('root')!).render(
     <main className="flex h-full flex-col bg-bg text-fg">
       <p className="p-3">OpenCode / Claude 终端交互验收（内存传输）</p>

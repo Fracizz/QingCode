@@ -330,13 +330,14 @@ impl TerminalManager {
     fn spawn_with(
         &self,
         id: String,
-        cmd: CommandBuilder,
+        mut cmd: CommandBuilder,
         program: &str,
         cols: u16,
         rows: u16,
         app: AppHandle,
         wsl_task: Option<wsl::WslTask>,
     ) -> Result<(), String> {
+        apply_terminal_identity(&mut cmd, &id, program);
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
             .openpty(clamp_pty_size(cols, rows))
@@ -1022,6 +1023,42 @@ fn mobile_wsl_args(distro: &str, cwd: &str, startup: Option<&str>) -> Vec<String
     args
 }
 
+/// 告诉终端内程序当前的终端身份，本地与远程终端共用。
+pub(crate) fn terminal_identity_env(id: &str) -> [(&'static str, String); 3] {
+    [
+        ("TERM_PROGRAM", "QingCode".to_string()),
+        (
+            "TERM_PROGRAM_VERSION",
+            env!("CARGO_PKG_VERSION").to_string(),
+        ),
+        ("QINGCODE_TERMINAL_ID", id.to_string()),
+    ]
+}
+
+fn apply_terminal_identity(cmd: &mut CommandBuilder, id: &str, program: &str) {
+    let identity = terminal_identity_env(id);
+    let is_wsl = std::path::Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("wsl.exe"));
+    if is_wsl {
+        // wsl.exe 只把 WSLENV 列出的变量带进发行版，保留用户已有的配置。
+        let names = identity
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(":");
+        let merged = match cmd.get_env("WSLENV").and_then(|value| value.to_str()) {
+            Some(existing) if !existing.is_empty() => format!("{existing}:{names}"),
+            _ => names,
+        };
+        cmd.env("WSLENV", merged);
+    }
+    for (name, value) in identity {
+        cmd.env(name, value);
+    }
+}
+
 fn build_host_shell_command(
     shell: Option<&str>,
     cwd: &str,
@@ -1349,6 +1386,31 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn terminal_identity_overrides_inherited_values() {
+        let mut cmd = portable_pty::CommandBuilder::new("cmd.exe");
+        cmd.env("TERM_PROGRAM", "vscode");
+        super::apply_terminal_identity(&mut cmd, "tab-1", r"C:\Windows\System32\cmd.exe");
+        let value = |name: &str| cmd.get_env(name).and_then(|value| value.to_str());
+        assert_eq!(value("TERM_PROGRAM"), Some("QingCode"));
+        assert_eq!(
+            value("TERM_PROGRAM_VERSION"),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(value("QINGCODE_TERMINAL_ID"), Some("tab-1"));
+    }
+
+    #[test]
+    fn terminal_identity_is_forwarded_into_wsl_and_keeps_existing_wslenv() {
+        let mut cmd = portable_pty::CommandBuilder::new("wsl.exe");
+        cmd.env("WSLENV", "USERPROFILE/p");
+        super::apply_terminal_identity(&mut cmd, "tab-1", r"C:\Windows\System32\WSL.EXE");
+        assert_eq!(
+            cmd.get_env("WSLENV").and_then(|value| value.to_str()),
+            Some("USERPROFILE/p:TERM_PROGRAM:TERM_PROGRAM_VERSION:QINGCODE_TERMINAL_ID")
+        );
+    }
+
     #[test]
     fn mobile_wsl_args_pass_profile_command_as_positional_argument() {
         let plain = super::mobile_wsl_args("Ubuntu", "/home/app", None);

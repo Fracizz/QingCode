@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project, TerminalTab } from '../types'
+import type { Project, SshConnection, TerminalTab } from '../types'
 
 const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock('./sshWorkspace', async importOriginal => ({
   ensureSshWorkspaceConnected: mocks.connect,
 }))
 
-import { applyTerminalControl, isDesktopTerminalShareable, listenForMobileRequests } from './mobileBridge'
+import { applyTerminalControl, isDesktopTerminalShareable, listenForMobileRequests, mobileRestoreTargets } from './mobileBridge'
 import { terminalControl } from '../store/terminalControlStore'
 import { restrictProject, trustProject } from './workspaceTrust'
 import { TERMINAL_PROFILES_KEY } from './terminal/terminalProfiles'
@@ -68,6 +68,34 @@ describe('mobile project bridge', () => {
     mocks.listProjects.mockResolvedValue([local, wsl])
     trustProject(local)
     trustProject(wsl)
+  })
+
+  it('connects only confirmed Server-mode projects when restoring phone terminals', () => {
+    const remote = (id: string, connection: string): Project => ({
+      ...local, id, name: id, path: `ssh://${connection}/home/app`, kind: 'ssh', connection_id: connection,
+    })
+    const server = remote('server', 'c-server')
+    const unconfirmed = remote('unconfirmed', 'c-unconfirmed')
+    const sshMode = remote('ssh-mode', 'c-ssh')
+    const inherited = remote('inherited', 'c-inherited')
+    const untrusted = remote('untrusted', 'c-server-2')
+    const temporary = { ...remote('temporary', 'c-server'), ephemeral: true }
+    for (const project of [server, unconfirmed, sshMode, inherited, temporary]) trustProject(project)
+    const connections = [
+      { id: 'c-server', mode: 'server', host_key_fingerprint: 'sha256' },
+      { id: 'c-server-2', mode: 'server', host_key_fingerprint: 'sha256' },
+      { id: 'c-unconfirmed', mode: 'server' },
+      { id: 'c-ssh', mode: 'ssh', host_key_fingerprint: 'sha256' },
+      { id: 'c-inherited', host_key_fingerprint: 'sha256' },
+    ] as SshConnection[]
+    const projects = [local, server, unconfirmed, sshMode, inherited, untrusted, temporary]
+
+    expect(mobileRestoreTargets(projects, connections, true).map(project => project.id)).toEqual(['server', 'inherited'])
+    expect(mobileRestoreTargets(projects, connections, false).map(project => project.id)).toEqual(['server'])
+  })
+
+  it('answers the restore connect request without waiting for slow hosts', async () => {
+    expect(await send({ connectRemoteProjects: true })).toEqual({ id: 'request', data: null })
   })
 
   it('refreshes saved WSL projects added outside the main window', async () => {

@@ -31,6 +31,7 @@ pub use direct_settings::*;
 pub use direct_update::*;
 #[cfg(test)]
 mod live_acceptance;
+pub(crate) mod mobile_restore;
 mod search;
 mod server;
 mod server_status;
@@ -6000,6 +6001,7 @@ async fn spawn_ssh_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
+    let command = with_terminal_identity(command, &id, &parsed.path);
     let transport = manager
         .open_terminal_transport(&parsed.connection_id)
         .await?;
@@ -6151,6 +6153,20 @@ async fn spawn_ssh_terminal(
         }
     });
     Ok(TerminalSpawnResult::default())
+}
+
+/// 兼容模式的终端身份：sshd 默认不接受客户端传环境变量，只能写进启动命令。
+/// Windows 远端的启动命令是整段 `-EncodedCommand`，无法在外层追加，不注入。
+fn with_terminal_identity(command: String, id: &str, remote_path: &str) -> String {
+    if windows_native_path(remote_path).is_some() {
+        return command;
+    }
+    let exports = crate::terminal::terminal_identity_env(id)
+        .iter()
+        .map(|(name, value)| format!("{name}={}", shell_quote(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("export {exports}; {command}")
 }
 
 /// 在终端独占的连接上打开会话通道、申请 PTY 并启动命令。
@@ -6874,7 +6890,7 @@ pub async fn ssh_forget_workspace_root(
 
 /// 尽力结束该根下本安装留在 daemon 里的 detached 终端。离线、daemon 未就绪或
 /// 关闭 server 时无法触达远端，只记日志：这些终端在根未受信任时不会被列出或
-/// 接回（接回要求可信根），由 daemon 的 detached TTL（默认 3 小时）回收。
+/// 接回（接回要求可信根），由 daemon 的 detached TTL（默认 24 小时）回收。
 async fn kill_detached_terminals_best_effort(
     app: &AppHandle,
     manager: &SshManager,
@@ -8373,6 +8389,23 @@ mod tests {
         );
         assert!(script.contains("exit $process.ExitCode"));
         assert!(windows_git_script(r"D:\code", &["a\0b".to_string()]).is_err());
+    }
+
+    #[test]
+    fn direct_terminal_identity_is_exported_only_on_posix_hosts() {
+        let command = with_terminal_identity("exec bash -l".to_string(), "it's", "/srv/app");
+        assert_eq!(
+            command,
+            format!(
+                "export TERM_PROGRAM='QingCode' TERM_PROGRAM_VERSION='{}' QINGCODE_TERMINAL_ID={}; exec bash -l",
+                env!("CARGO_PKG_VERSION"),
+                shell_quote("it's"),
+            )
+        );
+        assert_eq!(
+            with_terminal_identity("powershell.exe".to_string(), "id", "/D:/code/app"),
+            "powershell.exe"
+        );
     }
 
     #[test]

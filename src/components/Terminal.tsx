@@ -55,10 +55,20 @@ import {
   type TerminalViewBridgeDetail,
 } from '@/lib/terminal/terminalViewBridge'
 import {
+  getTerminalCommandRunning,
   markTerminalCommandFinished,
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
-import { noteTerminalOutput, noteTerminalTitle } from '@/lib/terminal/terminalProgramActivity'
+import {
+  getTerminalProgramTitle,
+  noteTerminalOutput,
+  noteTerminalTitle,
+} from '@/lib/terminal/terminalProgramActivity'
+import {
+  createTerminalOscLinkHandler,
+  registerTerminalFileLinks,
+} from '@/lib/terminal/terminalLinkActions'
+import { getTerminalShiftEnterNewline } from '@/lib/terminal/terminalShiftEnterSettings'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
@@ -104,7 +114,9 @@ import { getTerminalLargePasteAsFile } from '../lib/terminal/terminalLargePasteS
 import { terminalContent } from '../lib/terminal/terminalContent'
 import { exportTerminalContent } from '../lib/terminal/terminalExport'
 import {
+  isTerminalAgentForeground,
   isTerminalNewlineShortcut,
+  isTerminalShiftNewlineShortcut,
   TERMINAL_NEWLINE_INPUT,
 } from '../lib/terminal/terminalNewline'
 import {
@@ -785,6 +797,7 @@ export default function TerminalView({
       rows: 20,
       allowProposedApi: true,
       windowsPty: windowsPtyOptions(),
+      linkHandler: createTerminalOscLinkHandler(terminalId, () => xtermRef.current),
     })
 
     const fitAddon = new FitAddon()
@@ -799,6 +812,7 @@ export default function TerminalView({
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(linkAddon)
+    registerTerminalFileLinks(term, terminalId)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
     term.open(containerRef.current)
@@ -929,7 +943,17 @@ export default function TerminalView({
         clearBuffer()
         return false
       }
-      if (isTerminalNewlineShortcut(event)) {
+      const shiftNewline =
+        isTerminalShiftNewlineShortcut(event) &&
+        getTerminalShiftEnterNewline() &&
+        isTerminalAgentForeground({
+          alternateBuffer: term.buffer.active.type === 'alternate',
+          mouseTracking: term.modes.mouseTrackingMode !== 'none',
+          focusReporting: term.modes.sendFocusMode,
+          title: getTerminalProgramTitle(terminalId),
+          commandRunning: getTerminalCommandRunning(terminalId),
+        })
+      if (isTerminalNewlineShortcut(event) || shiftNewline) {
         event.preventDefault()
         if (!event.repeat) insertTerminalNewline()
         return false

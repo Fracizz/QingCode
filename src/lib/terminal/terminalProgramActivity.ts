@@ -122,6 +122,11 @@ export function noteTerminalTitle(terminalId: string, rawTitle: string, now = Da
   refresh(terminalId, activity, now)
 }
 
+/** 程序最近设置的原始窗口标题（未清洗）。 */
+export function getTerminalProgramTitle(terminalId: string): string {
+  return activities.get(terminalId)?.title ?? ''
+}
+
 /** 记录一块程序输出（不含回放/快照）。 */
 export function noteTerminalOutput(terminalId: string, now = Date.now()) {
   const activity = activityFor(terminalId)

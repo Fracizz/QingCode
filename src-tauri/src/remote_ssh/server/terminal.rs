@@ -408,6 +408,17 @@ pub(crate) struct DetachedTerminal {
     name: Option<String>,
 }
 
+/// 电脑重启后仍在 daemon 上、可由手机接回的终端。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetachedMobileTerminal {
+    /// 创建时的 `mobile-*` 会话 id，手机端的草稿和置顶都按它对应。
+    pub(crate) session_id: String,
+    pub(crate) pty_id: String,
+    pub(crate) root_uri: String,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+}
+
 fn comparable_daemon_path(path: &str) -> Option<String> {
     if let Some(native) = windows_native_path(path) {
         let normalized = native
@@ -494,6 +505,23 @@ fn detached_terminal_from_info(
         cols: info.cols,
         rows: info.rows,
         name: info.name.filter(|name| !name.trim().is_empty()),
+    })
+}
+
+fn detached_mobile_terminal_from_info(
+    info: PtyInfoWire,
+    roots: &[RegisteredRoot],
+) -> Option<DetachedMobileTerminal> {
+    if !info.is_mobile() {
+        return None;
+    }
+    let root = trusted_root_for_daemon_path(roots, info.cwd.as_deref()?)?;
+    Some(DetachedMobileTerminal {
+        root_uri: normalize_remote_uri(&root.uri),
+        session_id: info.name?,
+        pty_id: info.id,
+        cols: info.cols,
+        rows: info.rows,
     })
 }
 
@@ -758,8 +786,33 @@ pub(crate) async fn list_detached_terminals(
     app: &AppHandle,
     manager: &SshManager,
 ) -> Result<Vec<DetachedTerminal>, String> {
+    let (ptys, roots) = request_connection_detached_ptys(connection_id, app, manager).await?;
+    Ok(ptys
+        .into_iter()
+        .filter_map(|info| detached_terminal_from_info(info, connection_id, &roots))
+        .collect())
+}
+
+/// 列出本安装在该连接上遗留的手机终端；只读，不接回也不结束。
+pub(crate) async fn list_detached_mobile_terminals(
+    connection_id: &str,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<Vec<DetachedMobileTerminal>, String> {
+    let (ptys, roots) = request_connection_detached_ptys(connection_id, app, manager).await?;
+    Ok(ptys
+        .into_iter()
+        .filter_map(|info| detached_mobile_terminal_from_info(info, &roots))
+        .collect())
+}
+
+async fn request_connection_detached_ptys(
+    connection_id: &str,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(Vec<PtyInfoWire>, Vec<RegisteredRoot>), String> {
     if !manager.server_mode(connection_id) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let roots = manager.roots_for_connection(connection_id);
     let Some(endpoint_root) = roots
@@ -770,7 +823,7 @@ pub(crate) async fn list_detached_terminals(
         })
         .cloned()
     else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), roots));
     };
     let endpoint = server::ready_server_endpoint(app, manager, &endpoint_root)
         .await
@@ -788,17 +841,10 @@ pub(crate) async fn list_detached_terminals(
         daemon,
     )
     .await?;
-    let result = async {
-        let ptys = request_owned_detached_ptys(&session, &client_id).await?;
-        Ok(ptys
-            .into_iter()
-            .filter_map(|info| detached_terminal_from_info(info, connection_id, &roots))
-            .collect())
-    }
-    .await;
+    let result = request_owned_detached_ptys(&session, &client_id).await;
     session.shutdown();
     transport.release();
-    result
+    Ok((result?, roots))
 }
 
 /// 结束本安装留在 daemon 里、但当前没有本地活动会话的终端。
@@ -1021,6 +1067,7 @@ pub(crate) async fn kill_terminal_for_exit(
 fn select_restore_candidate(
     ptys: Vec<PtyInfoWire>,
     pty_id: &str,
+    local_id: &str,
     client_id: &str,
 ) -> Result<PtyInfoWire, String> {
     let info = ptys
@@ -1028,7 +1075,8 @@ fn select_restore_candidate(
         .find(|info| info.id == pty_id)
         .ok_or_else(|| format!("QC_PTY_GONE: PTY 不存在或已回收：{pty_id}"))?;
     // Recheck full daemon metadata for stale orphan lists and persisted desktop tabs.
-    if info.is_mobile() {
+    // 手机终端只能由同名的手机会话接回；电脑标签的 id 永远不是 `mobile-*`。
+    if info.is_mobile() && info.name.as_deref() != Some(local_id) {
         return Err("移动端终端不能接回桌面".into());
     }
     if info.exited.is_some() {
@@ -1080,7 +1128,7 @@ pub(crate) async fn attach_persistent_terminal(
         let response = session.request("pty.list", &serde_json::json!({})).await?;
         let response: PtyListResponse = serde_json::from_value(response)
             .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
-        select_restore_candidate(response.ptys, &pty_id, &client_id)
+        select_restore_candidate(response.ptys, &pty_id, &id, &client_id)
     }
     .await;
     let info = match candidate {
@@ -1273,10 +1321,14 @@ pub(crate) async fn spawn_persistent_terminal(
     working_directory: String,
     cols: u16,
     rows: u16,
-    launch: PersistentLaunch,
+    mut launch: PersistentLaunch,
     app: AppHandle,
     manager: &SshManager,
 ) -> Result<TerminalSpawnResult, String> {
+    // 由客户端传入，已部署的旧版 daemon 无需升级也能拿到终端身份。
+    launch.env.extend(
+        crate::terminal::terminal_identity_env(&id).map(|(name, value)| (name.to_string(), value)),
+    );
     let parsed = parse_remote_uri(&root.uri)?;
     // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
     let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
@@ -2133,7 +2185,7 @@ mod tests {
 
     #[test]
     fn restore_distinguishes_confirmed_absence_from_live_ownership_conflicts() {
-        assert!(select_restore_candidate(vec![], "pty", "owner")
+        assert!(select_restore_candidate(vec![], "pty", "tab", "owner")
             .unwrap_err()
             .contains("QC_PTY_GONE:"));
         let info = |owner: &str, detached: bool, exited: Option<i32>| {
@@ -2143,17 +2195,25 @@ mod tests {
             )
             .unwrap()
         };
-        assert!(select_restore_candidate(vec![info("owner", true, None)], "pty", "owner").is_ok());
-        for candidate in [info("other", true, None), info("owner", false, None)] {
-            assert!(!select_restore_candidate(vec![candidate], "pty", "owner")
-                .unwrap_err()
-                .contains("QC_PTY_GONE:"));
-        }
         assert!(
-            select_restore_candidate(vec![info("owner", true, Some(1))], "pty", "owner")
-                .unwrap_err()
-                .contains("QC_PTY_GONE:")
+            select_restore_candidate(vec![info("owner", true, None)], "pty", "tab", "owner")
+                .is_ok()
         );
+        for candidate in [info("other", true, None), info("owner", false, None)] {
+            assert!(
+                !select_restore_candidate(vec![candidate], "pty", "tab", "owner")
+                    .unwrap_err()
+                    .contains("QC_PTY_GONE:")
+            );
+        }
+        assert!(select_restore_candidate(
+            vec![info("owner", true, Some(1))],
+            "pty",
+            "tab",
+            "owner"
+        )
+        .unwrap_err()
+        .contains("QC_PTY_GONE:"));
     }
 
     fn test_terminal() -> PersistentTerminal {
@@ -2575,10 +2635,67 @@ mod tests {
         let client_id = "install:remote-a";
         let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
         mobile.name = Some("mobile-phone-session".into());
-        let error = select_restore_candidate(vec![mobile], "phone-pty", client_id).unwrap_err();
+        let error =
+            select_restore_candidate(vec![mobile], "phone-pty", "tab", client_id).unwrap_err();
         assert!(error.contains("移动端终端不能接回桌面"));
         // It is still alive; never classify rejection as a missing PTY.
         assert!(!error.contains("QC_PTY_GONE:"));
+    }
+
+    #[test]
+    fn mobile_terminal_is_restored_only_by_its_own_session_id() {
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app");
+        mobile.name = Some("mobile-phone-session".into());
+        assert!(select_restore_candidate(
+            vec![mobile.clone()],
+            "phone-pty",
+            "mobile-phone-session",
+            client_id
+        )
+        .is_ok());
+        assert!(
+            select_restore_candidate(vec![mobile], "phone-pty", "mobile-other", client_id).is_err()
+        );
+    }
+
+    #[test]
+    fn detached_mobile_list_keeps_only_phone_terminals_in_trusted_roots() {
+        let root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let roots = std::slice::from_ref(&root);
+        let client_id = "install:remote-a";
+        let mut mobile = pty_info("phone-pty", Some(client_id), "/home/dev/app/src");
+        mobile.name = Some("mobile-phone-session".into());
+        assert_eq!(
+            detached_mobile_terminal_from_info(mobile.clone(), roots),
+            Some(DetachedMobileTerminal {
+                session_id: "mobile-phone-session".into(),
+                pty_id: "phone-pty".into(),
+                root_uri: "ssh://remote-a/home/dev/app".into(),
+                cols: mobile.cols,
+                rows: mobile.rows,
+            })
+        );
+
+        let desktop = pty_info("desktop-pty", Some(client_id), "/home/dev/app");
+        assert_eq!(detached_mobile_terminal_from_info(desktop, roots), None);
+
+        let mut elsewhere = pty_info("phone-pty", Some(client_id), "/srv/other");
+        elsewhere.name = Some("mobile-phone-session".into());
+        assert_eq!(detached_mobile_terminal_from_info(elsewhere, roots), None);
+
+        let untrusted = RegisteredRoot {
+            trusted: false,
+            ..root.clone()
+        };
+        assert_eq!(
+            detached_mobile_terminal_from_info(mobile, std::slice::from_ref(&untrusted)),
+            None
+        );
     }
 
     #[test]

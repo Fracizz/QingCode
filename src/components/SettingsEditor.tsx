@@ -90,6 +90,11 @@ import {
   saveScopedTerminalSshUploadOnPaste,
 } from '../lib/terminal/terminalSshUploadSettings'
 import {
+  getTerminalShiftEnterNewline,
+  loadScopedTerminalShiftEnterNewline,
+  saveScopedTerminalShiftEnterNewline,
+} from '../lib/terminal/terminalShiftEnterSettings'
+import {
   getTerminalLargePasteAsFile,
   loadScopedTerminalLargePasteAsFile,
   saveScopedTerminalLargePasteAsFile,
@@ -221,6 +226,7 @@ export default function SettingsEditor() {
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [largePasteAsFile, setLargePasteAsFile] = useState(getTerminalLargePasteAsFile)
+  const [shiftEnterNewline, setShiftEnterNewline] = useState(getTerminalShiftEnterNewline)
   const [activityIndicator, setActivityIndicator] = useState(getTerminalActivityIndicator)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
@@ -364,6 +370,9 @@ export default function SettingsEditor() {
     void loadScopedTerminalLargePasteAsFile(settingsScope, currentProject).then(
       setLargePasteAsFile,
     )
+    void loadScopedTerminalShiftEnterNewline(settingsScope, currentProject).then(
+      setShiftEnterNewline,
+    )
     void loadScopedTerminalActivityIndicator(settingsScope, currentProject).then(
       setActivityIndicator,
     )
@@ -501,6 +510,17 @@ export default function SettingsEditor() {
       await saveScopedTerminalLargePasteAsFile(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存大段粘贴设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateShiftEnterNewline = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setShiftEnterNewline(enabled)
+    try {
+      await saveScopedTerminalShiftEnterNewline(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存 Shift+Enter 换行设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -1175,6 +1195,27 @@ export default function SettingsEditor() {
                     >
                       <option value="off">{t('关闭')}</option>
                       <option value="on">{t('开启')}</option>
+                    </select>
+                  </SettingItem>
+                )}
+                {match('Shift+Enter', '换行', 'Agent', 'shiftEnterNewline') && (
+                  <SettingItem
+                    title={t('终端 › 集成: Shift+Enter 换行')}
+                    description={t(
+                      '在 Claude Code、Codex、OpenCode 等 Agent 或全屏 TUI 中，Shift+Enter 换行而不提交。普通 Shell 不受影响。Ctrl+Enter 始终换行。',
+                    )}
+                    modified={
+                      shiftEnterNewline !== DEFAULT_GLOBAL_SETTINGS['terminal.integrated.shiftEnterNewline']
+                    }
+                  >
+                    <select
+                      value={shiftEnterNewline ? 'on' : 'off'}
+                      onChange={e => void updateShiftEnterNewline(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('终端 › 集成: Shift+Enter 换行')}
+                    >
+                      <option value="on">{t('开启')}</option>
+                      <option value="off">{t('关闭')}</option>
                     </select>
                   </SettingItem>
                 )}

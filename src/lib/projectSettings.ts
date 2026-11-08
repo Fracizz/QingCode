@@ -102,6 +102,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.sshUploadOnPaste': true,
     'terminal.integrated.largePasteAsFile': false,
     'terminal.integrated.tabActivityIndicator': true,
+    'terminal.integrated.shiftEnterNewline': true,
     'ssh.server.enabled': true,
     'ssh.server.autoDownload': true,
     'ssh.server.offlineDir': '',
@@ -240,6 +241,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.largePasteAsFile": false,
   // terminal.integrated.tabActivityIndicator：终端标签显示「运行中」呼吸点（标题转圈或持续输出时；事件驱动，不轮询进程，默认 true）
   "terminal.integrated.tabActivityIndicator": true,
+  // terminal.integrated.shiftEnterNewline：在 Claude Code、Codex、OpenCode 等 Agent / TUI 中，Shift+Enter 换行而不提交；普通 Shell 不受影响（默认 true）
+  "terminal.integrated.shiftEnterNewline": true,
 
   // ============================== SSH ==============================
   // ssh.server.enabled：仅兼容尚未保存 mode 的旧连接（true=Server，false=SSH，默认 true）。

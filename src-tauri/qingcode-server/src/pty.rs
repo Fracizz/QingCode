@@ -2464,7 +2464,7 @@ mod tests {
             .detached_at
             .unwrap();
         let ttl = crate::daemon::DaemonOptions::default().detached_ttl;
-        let deadline = detached_at + Duration::from_secs(3 * 60 * 60);
+        let deadline = detached_at + Duration::from_secs(24 * 60 * 60);
 
         assert!(host
             .reap_at(deadline - Duration::from_secs(1), ttl, EXITED_RETENTION)

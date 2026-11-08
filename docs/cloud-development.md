@@ -54,7 +54,7 @@ sudo -u qingcode-cloud-demo /opt/qingcode/demo245/qingcode-server \
 
 将输出导入客户端「新建 Server 直连」，填写真实连接地址并确认指纹。服务单元已启用不等于整机重启验收完成；daemon 崩溃或整机重启会结束原终端进程，服务恢复只能创建新终端。
 
-手动或 SSH 自动创建的 daemon 默认 detached 保留 3 小时，无客户端且无 PTY 时 10 分钟退出。新建常驻服务默认将两项改为 24 小时，安装时可分别设置为正秒数；`0` 不表示无限保留。服务使用 `Restart=always` 恢复异常退出及空闲退出的 daemon，因此空闲重启也会重新建立网关，已有 daemon 终端不会在空闲退出条件下被回收。保留时长到期的 detached 终端仍会按 daemon 回收规则结束。
+手动或 SSH 自动创建的 daemon 默认 detached 保留 24 小时，无客户端且无 PTY 时 10 分钟退出。新建常驻服务默认将空闲退出也改为 24 小时，安装时可分别设置为正秒数；`0` 不表示无限保留。服务使用 `Restart=always` 恢复异常退出及空闲退出的 daemon，因此空闲重启也会重新建立网关，已有 daemon 终端不会在空闲退出条件下被回收。保留时长到期的 detached 终端仍会按 daemon 回收规则结束。
 
 ## 后续工作顺序
 

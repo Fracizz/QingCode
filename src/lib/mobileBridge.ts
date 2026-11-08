@@ -3,7 +3,8 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useProjectStore } from '@/store/projectStore'
 import type { Project, SshConnection } from '@/types'
 import { listProjects, listSshConnections, withDb } from './projectRepository'
-import { ensureSshWorkspaceConnected, isSshProject, sshConnectionIdFromUri } from './sshWorkspace'
+import { getSshServerEnabled } from './sshServerSettings'
+import { ensureSshWorkspaceConnected, isSshProject, resolveSshConnectionMode, sshConnectionIdFromUri } from './sshWorkspace'
 import { isTauri, safeInvoke } from './tauri'
 import { isWslProject, wslDistroNameFromPath } from './wslWorkspace'
 import { isProjectTrusted, pushTrustedRootsToNative } from './workspaceTrust'
@@ -33,6 +34,8 @@ interface Request {
   device?: string
   /** 手机结束电脑上的终端。 */
   endTerminal?: string
+  /** 电脑重启后在后台连接远端项目，以便接回仍在运行的手机终端。 */
+  connectRemoteProjects?: boolean
 }
 
 /** 只开放交互式终端：运行任务的输出可能含密钥，先不让手机接入。 */
@@ -108,6 +111,33 @@ export function applyTerminalControl(payload: { id: string; controller: string |
   stopTerminalMirror(payload.id)
 }
 
+/** 只有 Server 模式的连接有持久终端；指纹未确认的主机要用户在电脑上确认，后台不碰。 */
+export function mobileRestoreTargets(
+  projects: readonly Project[],
+  connections: readonly SshConnection[],
+  serverEnabled: boolean,
+) {
+  const hosts = new Map(connections.map(connection => [connection.id, connection]))
+  return projects.filter(project => {
+    if (project.ephemeral || !isSshProject(project) || !isProjectTrusted(project)) return false
+    const connection = hosts.get(project.connection_id || sshConnectionIdFromUri(project.path) || '')
+    return !!connection?.host_key_fingerprint
+      && resolveSshConnectionMode(connection, serverEnabled) === 'server'
+  })
+}
+
+async function connectRemoteProjects() {
+  const projects = await withDb('加载移动端项目列表', listProjects)
+  const ephemeral = useProjectStore.getState().projects.filter(project => project.ephemeral)
+  await pushTrustedRootsToNative([...projects, ...ephemeral])
+  const targets = mobileRestoreTargets(projects, await listSshConnections(), getSshServerEnabled())
+  const { signal } = new AbortController()
+  for (const project of targets) {
+    // 连不上就跳过：主机离线、未保存密码都不打扰电脑前的用户。
+    await ensureSshWorkspaceConnected(project, { background: true, signal }).catch(() => undefined)
+  }
+}
+
 function profileName(name: string) {
   return name.trim() || '未命名配置'
 }
@@ -151,7 +181,13 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
 
 async function respond({
   project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, device, endTerminal,
+  connectRemoteProjects: connectRemote,
 }: Request) {
+  if (connectRemote) {
+    // 主机可能很慢，不占用桥接请求的超时；连上后由电脑端的扫描接回。
+    void connectRemoteProjects().catch(error => console.warn('Mobile restore connect failed', error))
+    return null
+  }
   if (desktopTerminals) return listDesktopTerminals()
   if (mirrorStart !== undefined) return startDesktopTerminalMirror(mirrorStart, device ?? '')
   if (endTerminal !== undefined) {

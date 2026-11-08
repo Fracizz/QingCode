@@ -51,7 +51,7 @@ pub const PTY_BUFFER_BYTES: usize = 256 * 1024 * 1024;
 pub const IDLE_EXIT: Duration = Duration::from_secs(10 * 60);
 
 /// 每个 PTY 连续 detached 后的默认保留时长；已接回的终端不计时。
-pub const DETACHED_TTL: Duration = Duration::from_secs(3 * 60 * 60);
+pub const DETACHED_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 回收周期。
 pub const REAP_INTERVAL: Duration = Duration::from_secs(60);

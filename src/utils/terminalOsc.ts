@@ -54,10 +54,10 @@ const TITLE_OSC_IDENTS = [0, 1, 2] as const
 const SHELL_INTEGRATION_OSC_IDENTS = [133, 633] as const
 /**
  * xterm 或已加载插件默认会响应、但我们需要吞掉的 OSC：
- * 8 超链接（默认弹原生 confirm 并 window.open）、
  * 4/10/11/12/104/110/111/112 调色板与颜色查询。其余编号 xterm 本身就会忽略。
+ * 8 超链接不在此列：由 Terminal 的 linkHandler 接管（见 terminalLinkActions.ts）。
  */
-export const SUPPRESSED_OSC_IDENTS = [4, 8, 10, 11, 12, 104, 110, 111, 112] as const
+export const SUPPRESSED_OSC_IDENTS = [4, 10, 11, 12, 104, 110, 111, 112] as const
 
 /** Bound application clipboard writes to 1 MiB of UTF-8 text. */
 export const MAX_OSC_CLIPBOARD_BYTES = 1024 * 1024
