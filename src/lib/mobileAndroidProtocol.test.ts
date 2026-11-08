@@ -10,6 +10,7 @@ import {
   PULL_MAX,
   PULL_THRESHOLD,
   applyModifiers,
+  attachNeedsRedraw,
   avatarFor,
   consumeModifier,
   countSessionOverview,
@@ -56,6 +57,21 @@ describe('Android terminal content-box sizing', () => {
     expect(terminalGridSize(9000, 9000, 1, 1)).toEqual({ cols: 300, rows: 150 })
     expect(terminalGridSize(0, 300, 8, 16)).toBeNull()
     expect(terminalGridSize(280, 300, NaN, 16)).toBeNull()
+  })
+})
+
+describe('Android attach redraw', () => {
+  const local = { cols: 46, rows: 32 }
+
+  it('redraws when the session grid differs from this device', () => {
+    expect(attachNeedsRedraw({ data: 'x', cols: 100, rows: 32 }, local)).toBe(true)
+    expect(attachNeedsRedraw({ data: 'x', cols: 46, rows: 40 }, local)).toBe(true)
+  })
+
+  it('keeps the normal path for a matching grid or a chunk without a grid', () => {
+    expect(attachNeedsRedraw({ data: 'x', cols: 46, rows: 32 }, local)).toBe(false)
+    expect(attachNeedsRedraw('YmFzZTY0', local)).toBe(false)
+    expect(attachNeedsRedraw(undefined, local)).toBe(false)
   })
 })
 

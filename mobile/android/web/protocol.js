@@ -31,6 +31,12 @@ export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColu
   };
 }
 
+/** 接入时后端画面的网格和本机不同：要先改尺寸等程序重绘，不能直接显示旧尺寸的画面。 */
+export function attachNeedsRedraw(snapshot, local) {
+  return Number.isFinite(snapshot?.cols) && Number.isFinite(snapshot?.rows)
+    && (snapshot.cols !== local.cols || snapshot.rows !== local.rows);
+}
+
 /**
  * 程序标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与圆形/方块转圈。
  * 须与电脑端 `is_spinner_glyph`（src-tauri/src/mobile.rs）保持一致。

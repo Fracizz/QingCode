@@ -3,6 +3,7 @@
 // composeStatus / terminalSettings / shortcutBar；纯逻辑放在 protocol / composer / keyLayout 等文件并有 Vitest 覆盖。
 import {
   applyModifiers,
+  attachNeedsRedraw,
   consumeModifier,
   keySequence,
   mergeSessionActivity,
@@ -1619,10 +1620,35 @@ async function selectSession(session, { keepDrawer = false } = {}) {
   void poll(session, epoch);
 }
 
+/** 接管时等待程序重绘的上限：程序持续输出时等不到安静，到点就取当前画面。 */
+const ATTACH_REDRAW_MAX_MS = 1500;
+
+/**
+ * 终端网格和本机不同时不显示旧尺寸画面：写进 xterm 后再改尺寸会被重新折行，程序重绘叠在上面留下残影。
+ * 这里先改尺寸并等输出安静，随后由调用方取后端最新整屏；普通 Shell 不重绘时也靠这份快照显示。
+ */
+async function redrawAfterAttach(id, epoch, from, previous) {
+  const startedAt = Date.now();
+  const size = dimensions();
+  await remote('resize', { id, ...size });
+  let next = from;
+  let chunks = 0;
+  while (epoch === viewEpoch && Date.now() - startedAt < ATTACH_REDRAW_MAX_MS) {
+    const data = await remote('poll', { id, from: next, latest: false, tail: false });
+    next = data.next;
+    if (data.exit || !data.chunks.length) break;
+    chunks += data.chunks.length;
+  }
+  if (epoch !== viewEpoch) return;
+  // 验证用提示：确认走了重绘流程、程序有没有输出，验证结束后删除。
+  showTerminalToast(`${previous.cols}×${previous.rows} → ${size.cols}×${size.rows} · ${chunks ? `重绘 ${chunks} 段` : '无重绘，用快照'} · ${Date.now() - startedAt}ms`, 4000);
+}
+
 async function poll(session, epoch) {
   let next = 0;
   let latest = true;
   let backoff = 350;
+  let attaching = true;
   while (epoch === viewEpoch) {
     if (document.hidden) {
       await new Promise(resolve => setTimeout(resolve, 350));
@@ -1640,6 +1666,13 @@ async function poll(session, epoch) {
     try {
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true });
       if (epoch !== viewEpoch) return;
+      if (attaching) {
+        attaching = false;
+        if (data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
+          await redrawAfterAttach(session.id, epoch, data.next, data.chunks[0]);
+          continue;
+        }
+      }
       const current = sessions.find(item => item.id === session.id);
       const renamed = current ? mergeSessionName(current, data) : false;
       if (mergeSessionActivity(current, data) || renamed) drawer.render();
