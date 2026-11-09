@@ -1,4 +1,4 @@
-# Local companion APK packaging. Desktop-only/version-only changes reuse the existing APK.
+# Local companion APK packaging. Always rebuilds the APK so local packaging never ships a stale artifact.
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
@@ -41,38 +41,6 @@ if ($keystore -and -not (Test-Path -LiteralPath $keystore -PathType Leaf)) {
 $legacyKey = Join-Path $projectRoot '.dev/android-build/qingcode-android-debug.jks'
 if (-not $keystore -and (Test-Path -LiteralPath $legacyKey)) { $keystore = $legacyKey }
 if (-not $keystore) { $keystore = Join-Path $env:USERPROFILE '.android/debug.keystore' }
-$statePath = Join-Path $projectRoot '.dev/android-build/package-state.json'
-$inputs = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'mobile/android') -File -Recurse | ForEach-Object FullName)
-$inputs += @('scripts/build-android.ps1', 'scripts/android-version.mjs', 'scripts/package-android-if-needed.ps1',
-  'src-tauri/icons/128x128@2x.png', 'node_modules/@xterm/xterm/lib/xterm.js',
-  'node_modules/@xterm/xterm/css/xterm.css', 'node_modules/@xterm/addon-fit/lib/addon-fit.js',
-  'node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js', 'node_modules/@xterm/addon-webgl/lib/addon-webgl.js',
-  'node_modules/jsqr/dist/jsQR.js', 'node_modules/@xterm/xterm/LICENSE',
-  'node_modules/@xterm/addon-fit/LICENSE', 'node_modules/jsqr/LICENSE') | ForEach-Object { Join-Path $projectRoot $_ }
-function Get-AndroidFingerprint {
-  $files = @($inputs)
-  if (Test-Path -LiteralPath $keystore) { $files += $keystore }
-  $parts = @($files | Sort-Object | ForEach-Object { "$_=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" })
-  $parts += "alias=$env:QINGCODE_ANDROID_KEY_ALIAS"
-  $bytes = [Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
-  [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
-}
-$fingerprint = Get-AndroidFingerprint
-if (Test-Path -LiteralPath $statePath) {
-  try {
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-    if ($state.fingerprint -eq $fingerprint -and (Test-Path -LiteralPath $state.artifact) -and
-        (Get-FileHash -LiteralPath $state.artifact -Algorithm SHA256).Hash -eq $state.sha256) {
-      $aliasPath = Join-Path $projectRoot 'release/QingCode-Android.apk'
-      if (-not (Test-Path -LiteralPath $aliasPath) -or
-          (Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash -ne $state.sha256) {
-        Copy-Item -LiteralPath $state.artifact -Destination $aliasPath -Force
-      }
-      Write-Host "  APK unchanged; reuse $($state.artifact)"
-      return
-    }
-  } catch { Write-Host '  APK cache invalid; rebuild.' }
-}
 $version = (Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json).version
 $artifact = Join-Path $projectRoot "release/QingCode_${version}-android.apk"
 $buildArgs = @{ SdkPlatform = $platform; BuildTools = $buildTools; Jdk = $jdk; OutputApk = $artifact }
@@ -80,6 +48,3 @@ if (Test-Path -LiteralPath $keystore) { $buildArgs.Keystore = $keystore }
 & (Join-Path $PSScriptRoot 'build-android.ps1') @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "Android build failed: $LASTEXITCODE" }
 Copy-Item -LiteralPath $artifact -Destination (Join-Path $projectRoot 'release/QingCode-Android.apk') -Force
-New-Item -ItemType Directory -Path (Split-Path -Parent $statePath) -Force | Out-Null
-@{ fingerprint = Get-AndroidFingerprint; artifact = $artifact; sha256 = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash } |
-  ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding utf8

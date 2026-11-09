@@ -4,11 +4,10 @@
 
 ## APK 打包与发布
 
-本地 `pnpm package:exe` / `pnpm package:installer` 会检查 Android 输入文件和已生成 APK 的摘要。
-有更新或 APK 缺失/损坏时构建 `release/QingCode_<版本>-android.apk`，并更新 `QingCode-Android.apk`；
-无更新时保留原 APK 的版本和文件。仅桌面版本号变化不触发 APK 构建。
+本地 `pnpm package:local` / `pnpm package:exe` / `pnpm package:installer` 每次都会重新构建
+`release/QingCode_<版本>-android.apk`，并更新 `QingCode-Android.apk`；不再按输入摘要复用旧 APK。
 需要 `ANDROID_HOME` / `JAVA_HOME`，也支持本项目现有 `.dev/android-build/sdk` 工具目录；
-缺少工具链时提示跳过。签名沿用已有本地密钥；缓存保存在 `.dev/android-build/package-state.json`。
+缺少工具链时提示跳过。签名沿用已有本地密钥。
 
 Release 工作流每次发布（含 beta 等预发布）都构建并上传 `QingCode_<版本>-android.apk`，Gitee 同步时一并镜像，供手机端在线更新取用。
 必须配置固定发布签名密钥（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`，可选 `ANDROID_KEY_PASSWORD`）；

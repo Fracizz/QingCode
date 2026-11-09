@@ -191,7 +191,7 @@ try {
   }
 
   Write-Host ""
-  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
+  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android.ps1') }
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   if (-not $SkipLatestAlias) {

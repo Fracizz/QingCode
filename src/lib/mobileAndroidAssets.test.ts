@@ -28,7 +28,6 @@ it('loads the offline symbol font with a matching preload, CSP, MIME type, and b
   const java = readFileSync(resolve(root, 'mobile/android/MainActivity.java'), 'utf8')
   const packaging = readFileSync(resolve(root, 'scripts/build-android.ps1'), 'utf8')
   const fixture = readFileSync(resolve(root, 'vite.web-test.config.ts'), 'utf8')
-  const cache = readFileSync(resolve(root, 'scripts/package-android-if-needed.ps1'), 'utf8')
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1]
   expect(csp).toBeDefined()
   expect(csp?.split(';').map(directive => directive.trim())).toContain("font-src 'self'")
@@ -47,7 +46,6 @@ it('loads the offline symbol font with a matching preload, CSP, MIME type, and b
     expect(packaging, `APK must contain ${asset}`).toContain(`'${asset}'`)
     expect(readFileSync(resolve(root, 'mobile/android/web', asset)).length).toBeGreaterThan(0)
   }
-  expect(cache).toContain("Get-ChildItem -LiteralPath (Join-Path $projectRoot 'mobile/android') -File -Recurse")
   const license = readFileSync(resolve(root, 'mobile/android/web/qingcode-symbols-OFL.txt'), 'utf8')
   expect(license).toContain('Copyright 2022 The Noto Project Authors')
   expect(license).toContain('SIL OPEN FONT LICENSE Version 1.1')

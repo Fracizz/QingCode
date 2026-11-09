@@ -72,7 +72,7 @@ export function buildPlan(options = {}) {
     const installerFlags = ['installer', 'local'].includes(only) ? [...flags, '-SkipLatestAlias'] : flags
     add('installer', 'package-installer.ps1', installerFlags, tasks.some(task => task.id === 'exe') ? ['exe'] : ['embed'])
   }
-  if (apk) add('apk', 'package-android-if-needed.ps1', [], tasks.some(task => task.id === 'icons') ? ['icons'] : [])
+  if (apk) add('apk', 'package-android.ps1', [], tasks.some(task => task.id === 'icons') ? ['icons'] : [])
   return tasks
 }
 
