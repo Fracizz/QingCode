@@ -1,7 +1,7 @@
 {
   "name": "qingcode",
   "private": true,
-  "version": "0.1.17-beta.20",
+  "version": "0.1.17-beta.21",
   "type": "module",
   "packageManager": "pnpm@11.0.8",
   "engines": {
