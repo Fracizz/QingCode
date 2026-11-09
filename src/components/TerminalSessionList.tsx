@@ -75,9 +75,9 @@ const HEADER_BUTTON =
   'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
 const BAR_BUTTON =
   'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
-const ROW_BUTTON = 'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded'
+// 行内和组头按钮都不用 ui-chip：它的高度随字号变大且优先级高于 h-*，大字号时底色会撑满甚至超出固定高度的行。
+const ROW_BUTTON = 'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded'
 const GROUP_ACTION = 'text-fg-muted hover:bg-bg-active hover:text-fg'
-// 不用 ui-chip：它的高度随字号变大且优先级高于 h-*，会让行内按钮的底色几乎撑满整行。
 const TERMINAL_ROW_BUTTON = 'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded'
 
 type PickState = 'on' | 'off' | 'mixed'
@@ -673,7 +673,7 @@ export default function TerminalSessionList() {
                 aria-label={translate('为「{name}」选择终端配置', { name: project.name })}
                 aria-haspopup="menu"
                 aria-expanded={profileMenu?.projectId === project.id}
-                className={`flex ui-chip h-6 w-4 flex-shrink-0 items-center justify-center rounded ${GROUP_ACTION}`}
+                className={`flex h-6 w-4 flex-shrink-0 items-center justify-center rounded ${GROUP_ACTION}`}
                 onClick={event => {
                   if (profileMenu?.projectId === project.id) {
                     setProfileMenu(null)
