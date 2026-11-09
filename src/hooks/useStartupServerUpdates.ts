@@ -31,6 +31,42 @@ export function startupServerTargets(
   return [...selected.values()].sort((a, b) => b.last_opened_at - a.last_opened_at)
 }
 
+/** 同时检查/更新的远端数量上限，避免保存了大量连接时启动瞬间并发过多 SSH 与上传。 */
+export const STARTUP_SERVER_UPDATE_CONCURRENCY = 4
+
+/**
+ * 按远端网关分组：不同网关并发，指向同一 endpoint 的连接留在同一组内串行。
+ * 后端更新锁按连接 id 隔离，挡不住两条连接同时重启同一个网关。
+ */
+export function startupServerLanes(
+  targets: readonly Project[],
+  connections: readonly SshConnection[],
+): Project[][] {
+  const byId = new Map(connections.map(connection => [connection.id, connection]))
+  const lanes = new Map<string, Project[]>()
+  for (const project of targets) {
+    const id = sshConnectionIdFromUri(project.path)!
+    const endpoint = byId.get(id)?.agentEndpoint
+    const key = endpoint ? `${endpoint.host.trim().toLowerCase()}:${endpoint.port}` : id
+    lanes.set(key, [...(lanes.get(key) ?? []), project])
+  }
+  return [...lanes.values()]
+}
+
+async function checkStartupServer(project: Project, signal: AbortSignal) {
+  const id = sshConnectionIdFromUri(project.path)!
+  if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) return
+  try {
+    await ensureSshWorkspaceConnected(project, { background: true, signal })
+    signal.throwIfAborted()
+    if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) return
+    await prepareSshWorkspace(project.path, signal, () => {}, { project, background: true })
+  } catch {
+    // Failed updates retain the shared progress card and manual recovery.
+    // Unreachable hosts must not open authentication or update dialogs.
+  }
+}
+
 export function useStartupServerUpdates(ready: boolean) {
   // Listen before project restoration starts; the restored project can update
   // while loadProjects is still pending, before the startup scan is released.
@@ -56,23 +92,18 @@ export function useStartupServerUpdates(ready: boolean) {
       if (signal.aborted) return
       const state = useProjectStore.getState()
       const targets = startupServerTargets(state.projects, state.sshConnections, createProjectTrustChecker())
-      void (async () => {
-        // Sequential per connection: no startup burst and no duplicate roots.
-        for (const project of targets) {
-          if (signal.aborted) return
-          const id = sshConnectionIdFromUri(project.path)!
-          if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) continue
-          try {
-            await ensureSshWorkspaceConnected(project, { background: true, signal })
-            signal.throwIfAborted()
-            if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) continue
-            await prepareSshWorkspace(project.path, signal, () => {}, { project, background: true })
-          } catch {
-            // Failed updates retain the shared progress card and manual recovery.
-            // Unreachable hosts must not open authentication or update dialogs.
+      const lanes = startupServerLanes(targets, state.sshConnections)
+      let next = 0
+      // 各远端互不等待：不可达或上传慢的主机只占一个并发名额。
+      const worker = async () => {
+        while (next < lanes.length && !signal.aborted) {
+          for (const project of lanes[next++]) {
+            if (signal.aborted) return
+            await checkStartupServer(project, signal)
           }
         }
-      })()
+      }
+      for (let i = 0; i < Math.min(STARTUP_SERVER_UPDATE_CONCURRENCY, lanes.length); i++) void worker()
     })
     return () => controller.abort()
   }, [ready])

@@ -31,7 +31,7 @@ vi.mock('../lib/sshWorkspace', () => ({
   isSshBackgroundSuspended: mocks.suspended, sshConnectionIdFromUri: (path: string) => path.match(/^ssh:\/\/([^/]+)/)?.[1],
   SSH_SERVER_UPDATED_EVENT: 'server-updated',
 }))
-const { useStartupServerUpdates, startupServerTargets } = await import('./useStartupServerUpdates')
+const { useStartupServerUpdates, startupServerTargets, startupServerLanes, STARTUP_SERVER_UPDATE_CONCURRENCY } = await import('./useStartupServerUpdates')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -68,16 +68,47 @@ describe('startup Server maintenance', () => {
     expect(ui.getState().serverUpdateRootUri).toBeNull()
   })
 
-  it('checks connections sequentially and continues after an unreachable host', async () => {
+  it('updates different connections concurrently so an unreachable host does not block the others', async () => {
     let fail!: (error: Error) => void
     mocks.connect.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
     renderHook(() => useStartupServerUpdates(true))
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1))
-    expect(mocks.prepare).not.toHaveBeenCalled()
-    await act(async () => { fail(new Error('unreachable')) })
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(mocks.prepare).toHaveBeenCalledTimes(1))
-    expect(mocks.connect).toHaveBeenCalledTimes(2)
+    await act(async () => { fail(new Error('unreachable')) })
+    await act(async () => {})
+    expect(mocks.prepare).toHaveBeenCalledTimes(1)
     expect(ui.getState().serverUpdateRootUri).toBeNull()
+  })
+
+  it('caps concurrent hosts and starts the next one when a slot frees up', async () => {
+    const ids = Array.from({ length: STARTUP_SERVER_UPDATE_CONCURRENCY + 1 }, (_, index) => `h${index}`)
+    store.setState({ projects: ids.map(id => project(`p-${id}`, id)), sshConnections: ids.map(id => connection(id)) })
+    const release: Array<() => void> = []
+    mocks.connect.mockImplementation(() => new Promise<void>(resolve => { release.push(resolve) }))
+    renderHook(() => useStartupServerUpdates(true))
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(STARTUP_SERVER_UPDATE_CONCURRENCY))
+    await act(async () => {})
+    expect(mocks.connect).toHaveBeenCalledTimes(STARTUP_SERVER_UPDATE_CONCURRENCY)
+    await act(async () => { release[0]() })
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(STARTUP_SERVER_UPDATE_CONCURRENCY + 1))
+  })
+
+  it('keeps connections that share one gateway endpoint in a sequential lane', async () => {
+    const shared = (id: string): SshConnection => ({ ...connection(id), agentEndpoint: { host: 'Gateway', port: 48763 } })
+    const targets = [project('one', 'x', 3), project('two', 'y', 2), project('three', 'z', 1)]
+    const connections = [shared('x'), { ...shared('y'), agentEndpoint: { host: 'gateway', port: 48763 } }, connection('z')]
+    expect(startupServerLanes(targets, connections).map(lane => lane.map(p => p.id))).toEqual([['one', 'two'], ['three']])
+
+    store.setState({ projects: targets, sshConnections: connections })
+    let finish!: () => void
+    mocks.connect.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    renderHook(() => useStartupServerUpdates(true))
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
+    await act(async () => {})
+    expect(mocks.connect.mock.calls.map(call => (call[0] as Project).id)).toEqual(['one', 'three'])
+    await act(async () => { finish() })
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(3))
+    expect((mocks.connect.mock.calls[2][0] as Project).id).toBe('two')
   })
 
   it('skips untrusted or explicitly disconnected connections and rechecks trust after registration', async () => {
@@ -112,13 +143,13 @@ describe('startup Server maintenance', () => {
   })
 
   it('cancels registration before service preparation when the app coordinator unmounts', async () => {
-    let finish!: () => void
-    mocks.connect.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    const finish: Array<() => void> = []
+    mocks.connect.mockImplementation(() => new Promise<void>(resolve => { finish.push(resolve) }))
     const view = renderHook(() => useStartupServerUpdates(true))
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
     view.unmount()
-    await act(async () => { finish() })
+    await act(async () => { finish.forEach(resolve => resolve()) })
     expect(mocks.prepare).not.toHaveBeenCalled()
-    expect(mocks.connect).toHaveBeenCalledTimes(1)
+    expect(mocks.connect).toHaveBeenCalledTimes(2)
   })
 })
