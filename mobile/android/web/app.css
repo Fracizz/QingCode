@@ -653,15 +653,17 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .drawer-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; }
 #session-count { color: var(--muted); font-size: 13px; font-weight: 500; }
-#drawer-new-session { width: 100%; flex: none; font-size: 14px; font-weight: 650; }
+#drawer-project-head { flex: none; }
 #session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: transparent; border-radius: 0; padding-block: 2px; }
 /* 会话行：行面盖在关闭按钮上方，左滑或长按露出。 */
 .session-option { position: relative; overflow: hidden; }
 #session-options .session-option { border-radius: var(--control-radius); }
 :is(.session-face, .project-face) { position: relative; background: var(--surface); touch-action: pan-y; transition: transform 180ms var(--ease); }
 .session-face { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; }
-#session-options .session-face { grid-template-columns: minmax(0, 1fr) 44px; }
-#session-options .session-more { color: var(--muted); }
+:is(#session-options, #session-overview) .session-face { grid-template-columns: minmax(0, 1fr) 44px; }
+:is(#session-options, #session-overview) .session-more { color: var(--muted); }
+#session-overview[data-selecting="true"] .session-face { grid-template-columns: minmax(0, 1fr); }
+#session-overview[data-selecting="true"] .session-more { display: none; }
 .swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; font-size: 11px; font-weight: 600; transition: opacity 0s linear 180ms; }
 .swipe-action svg { width: 18px; height: 18px; }
 :not([data-exposed]) > .swipe-action { opacity: 0; }
@@ -713,9 +715,6 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .running-first { flex: none; width: 40px; height: 40px; min-height: 0; padding: 0; border-radius: var(--control-radius); color: var(--muted); }
 .running-first svg { width: 18px; height: 18px; }
 .running-first[aria-pressed="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
-.drawer-project-tools { display: flex; align-items: center; gap: 6px; flex: none; }
-.drawer-project-tools[hidden] { display: none; }
-.drawer-project-tools #drawer-new-session { flex: 1; width: auto; }
 .session-overview .overview-filter { margin-top: 0; }
 .overview-filter button { min-height: 36px; font-size: 13px; }
 .overview-select-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
@@ -742,6 +741,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-toggle[aria-expanded="false"] .session-group-chevron { transform: rotate(-90deg); }
 .session-group-head-tools .icon-button { width: 40px; min-height: 40px; height: 40px; color: var(--muted); }
 .session-group-head-tools .icon-button svg { width: 18px; height: 18px; }
+.session-group-head-tools .running-first[aria-pressed="true"] { color: var(--accent); }
 .session-overview[data-selecting="true"] .session-group-head-tools .icon-button { display: none; }
 /* 没有终端的项目继续显示，名称减弱，也没有可折叠的内容。 */
 .session-group[data-empty="true"] .session-group-toggle { opacity: .6; }

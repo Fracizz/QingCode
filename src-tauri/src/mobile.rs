@@ -39,6 +39,9 @@ pub(crate) const TERMINAL_PREFIX: &str = "mobile-";
 const DEFAULT_PORT: u16 = 48764;
 const MAX_SESSIONS: usize = 16;
 const MAX_DEVICES: usize = 8;
+/// 同时保持的 TLS 连接上限（含空闲 keep-alive），超出的新连接会被直接丢弃。
+/// 手机端有 5 个单线程请求队列，加上空闲连接约占 5～6 条，按每台 8 条留余量，避免多设备互相挤占。
+const MAX_CONNECTIONS: usize = MAX_DEVICES * 8;
 const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
@@ -2200,7 +2203,7 @@ async fn serve(
     acceptor: TlsAcceptor,
     mut stop: watch::Receiver<bool>,
 ) {
-    let capacity = Arc::new(Semaphore::new(16));
+    let capacity = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
         let (stream, peer) = tokio::select! {
             biased;

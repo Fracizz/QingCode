@@ -68,7 +68,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
         await page.waitForFunction(w => innerWidth === w, width)
         const layout = await page.evaluate(() => {
           const drawer = document.querySelector('#session-drawer').getBoundingClientRect()
-          const actions = [...document.querySelectorAll('.session-close, .session-more')].map(button => {
+          const actions = [...document.querySelectorAll('#session-options :is(.session-close, .session-more)')].map(button => {
             const box = button.getBoundingClientRect()
             return box.width >= 44 && box.height >= 44 && box.right <= drawer.right
           })
@@ -87,7 +87,7 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
       await page.evaluate(selector => document.querySelector(selector).click(), row('mobile-2') + ' .session-close')
       await page.waitForSelector('#confirm-dialog[open]')
       assert.match(await page.evaluate(() => document.querySelector('#confirm-text').textContent), /临时终端/)
-      assert.equal(await page.evaluate(() => document.querySelectorAll('#session-drawer button:disabled').length), 0, 'list must not dim while confirming')
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('#session-drawer button:disabled')].filter(node => node.offsetParent).length), 0, 'list must not dim while confirming')
       await page.click('#confirm-dialog [value="cancel"]')
       assert.deepEqual(await page.evaluate(() => window.__mobileFixture.state.ends), [])
       assert.equal(await page.evaluate(() => document.querySelector('#session-options [aria-current="true"]').closest('.session-option').dataset.id), 'mobile-3')

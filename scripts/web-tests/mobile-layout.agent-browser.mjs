@@ -171,7 +171,7 @@ try {
   run('click', '[data-profile="default"]')
   check('new session starts with its own command draft', `document.querySelectorAll('#session-options .session-option').length === 2 && !document.querySelector('#session-rail') && document.querySelector('#compose').value === '' && document.querySelector('#terminal-status').textContent === '会话中'`)
   run('click', '#show-sessions')
-  run('click', '#session-options .session-option:first-child .row')
+  run('click', '#session-options .session-option:last-child .row')
   check('switching sessions restores the unsent draft', `document.querySelector('#compose').value === '未发送的草稿' && document.querySelector('#send').getAttribute('aria-label') === '发送并回车'`)
   run('click', '#show-sessions')
   run('click', '#back')

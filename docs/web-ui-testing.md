@@ -25,6 +25,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 手机会话纵览：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-overview.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖首页「全部会话」默认显示且可在设置中关闭再打开、位于最近打开之前、「运行中优先」点一下运行中会话排在组内最前并提示、再点恢复默认顺序、一次请求列出全部项目、先显示 8 个与展开收起、组头完整数量、上次使用标记、搜索与筛选不截断、其他设备运行中会话的确认说明、多选「选已结束」跨项目批量关闭、批量确认统计与取消保留选择、全选切换、首页点选会话接入；抽屉「全部」项目顺序固定与批量关闭不影响当前终端；横屏矮屏抽屉与 320px 首页多选布局；以及旧电脑缺少 `all_sessions` 时隐藏首页区块并禁用抽屉「全部」。截图和 JSON 位于 `.dev/web-tests/mobile-session-overview/`；会话只存在于内存桥，不代替 Android 真机与多台手机的实际验收。
 
+会话抽屉两个范围的一致性：`scripts/web-tests/mobile-session-parity.ego.mjs`（用法同上）。覆盖「本项目」同款组头、同一会话在两个范围状态行相同、「全部」跨项目置顶 / 重命名 / 结束、长按打开操作菜单、电脑终端只能结束、多选隐藏行内操作、320px 布局，以及从「本项目」移除当前项目时统计其手机会话。截图和 JSON 位于 `.dev/web-tests/mobile-session-parity/`。
+
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
 手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证项目空状态按钮与右上角「+」打开同一「新建会话」弹层、首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。
@@ -37,7 +39,7 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 无交互桌面的 Windows 主机（例如经 SSH 登录、`Get-Process` 看不到任何窗口标题）上 Ego 截图会因窗口不渲染而超时。此时可用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>` 以无头 Chrome 运行同一 `*.ego.mjs` 脚本：适配层实现脚本用到的 `taskSpace` / `page` 子集（`click` 支持 CSS 与 `loc=role:button[name=…]`，等元素位置稳定后再点），失败时也会关闭浏览器。有桌面的环境仍按上文默认使用 Ego。
 
-Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
+Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、终端周期刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
 
 Codex / OpenCode 全屏只读历史：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-tui-history.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖备用屏、鼠标上报和内联 TUI 的上下连续手势、进入历史后不立即退出、Claude 风格普通终端保持自然滚动、无缓存提示、读取失败重试及显式程序模式；只读模式断言没有终端输入。截图与 JSON 位于 `.dev/web-tests/mobile-tui-history/`。Rust `mobile_screen` 测试补充验证真实重绘的纯文本采样、频率、缓存上限、分片转义与 OSC 排除；浏览器模拟程序输出，不能代替 Android WebView 和实际 Codex / OpenCode 验收。
 

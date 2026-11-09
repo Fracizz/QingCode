@@ -39,6 +39,7 @@ import {
   groupProjectsByHost,
   projectLocation,
   sessionIdleInfo,
+  sessionStatusLine,
   swipeRevealOffset,
   swipeRevealSettles,
   recentProjects,
@@ -548,11 +549,31 @@ describe('Android 侧栏项目与手动排序', () => {
     expect(reorderSessionIds(['x', 'a', 'b'], ['a', 'b', 'c'], 2, 0)).toEqual(['c', 'a', 'b', 'x'])
   })
 
+  it('本项目与全部的组内顺序一致：新建的在上，创建时间优先于编号', () => {
+    const local = { id: 'p1', name: 'one', path: '/one', kind: 'local', host: '' }
+    const sessions = [
+      { id: 'old', number: 9, createdAt: 100, name: 'old', exit: null, project: local },
+      { id: 'new', number: 2, createdAt: 300, name: 'new', exit: null, project: local },
+      { id: 'pin', number: 1, createdAt: 50, name: 'pin', exit: null, project: local },
+      { id: 'mid', number: 5, createdAt: 200, name: 'mid', exit: null, project: local },
+    ]
+    for (const options of [{}, { pins: ['pin'] }, { order: ['mid', 'old'] }, { pins: ['pin'], order: ['old', 'new'] }]) {
+      const { pins = [], order = [] } = options as { pins?: string[]; order?: string[] }
+      const scoped = orderSessions(sessions, pins, { order }).map((item: { session: { id: string } }) => item.session.id)
+      const grouped = groupSessionOverview(sessions, { projects: [local], pins: () => pins, sessionOrder: () => order })[0].sessions.map((item: { id: string }) => item.id)
+      expect(scoped).toEqual(grouped)
+    }
+    expect(orderSessions(sessions).map((item: { session: { id: string } }) => item.session.id)).toEqual(['new', 'mid', 'old', 'pin'])
+    // 编号回退：没有创建时间时大的在上。
+    expect(orderSessions([{ id: 'a', number: 1 }, { id: 'b', number: 2 }]).map((item: { session: { id: string } }) => item.session.id)).toEqual(['b', 'a'])
+  })
+
   it('本项目列表：置顶最前，其后按手动顺序，运行中优先时忽略手动顺序', () => {
     const sessions = ['a', 'b', 'c', 'd'].map(id => ({ id, name: id, exit: null, programBusy: id === 'd' }))
     const ids = (options: object, pins: string[] = []) => orderSessions(sessions, pins, options).map((item: { session: { id: string } }) => item.session.id)
-    expect(ids({ order: ['c', 'a'] })).toEqual(['c', 'a', 'b', 'd'])
-    expect(ids({ order: ['c', 'a'] }, ['b'])).toEqual(['b', 'c', 'a', 'd'])
+    // 不在手动顺序里的排在前面，刚新建的终端不会沉到底部。
+    expect(ids({ order: ['c', 'a'] })).toEqual(['b', 'd', 'c', 'a'])
+    expect(ids({ order: ['c', 'a'] }, ['b'])).toEqual(['b', 'd', 'c', 'a'])
     expect(ids({ order: ['c', 'a'], runningFirst: true })).toEqual(['d', 'a', 'b', 'c'])
   })
 
@@ -593,6 +614,32 @@ describe('Android 会话纵览', () => {
     { id: 'm4', number: 4, name: 'build', exit: null, project: gone, deviceName: 'Tablet', ownDevice: false },
   ]
   const projects = [local, { ...remote, connectionName: 'prod' }]
+
+  it('组内置顶的最靠前，优先于运行中优先和手动顺序', () => {
+    const at = (id: string, createdAt: number, programBusy = false) =>
+      ({ id, number: 1, createdAt, programBusy, name: id, exit: null, project: local })
+    const sessions = [at('a', 300), at('b', 200, true), at('c', 100)]
+    const ids = (options: object) => groupSessionOverview(sessions, { projects, pins: () => ['c'], ...options })[0].sessions.map((item: { id: string }) => item.id)
+    expect(ids({})).toEqual(['c', 'a', 'b'])
+    expect(ids({ runningFirst: true })).toEqual(['c', 'b', 'a'])
+    expect(ids({ sessionOrder: () => ['b', 'a'] })).toEqual(['c', 'b', 'a'])
+  })
+
+  it('本项目与全部的信息行字段和顺序一致', () => {
+    const base = { id: 'm1', number: 3, name: 'Claude', exit: null }
+    expect(sessionStatusLine(base, { running: true, active: true })).toBe('终端 3 · 运行中 · 当前会话')
+    expect(sessionStatusLine(base, { pinned: true, fresh: true, last: true })).toBe('已置顶 · 终端 3 · 有新结果 · 上次使用')
+    // 名称已是「终端 N」时不重复编号，当前会话优先于上次使用。
+    expect(sessionStatusLine({ ...base, name: '终端 3' }, { active: true, last: true })).toBe('当前会话')
+    expect(sessionStatusLine({ ...base, exit: { code: 0 } }, { running: true, active: true })).toBe('终端 3 · 已结束')
+    expect(sessionStatusLine({ ...base, inUseHere: false, controllerName: 'Pixel', ownDevice: false, deviceName: 'Tablet' }))
+      .toBe('终端 3 · 在 Pixel 上使用中 · 来自 Tablet')
+    // 已结束的会话没有使用方；电脑终端不显示编号。
+    expect(sessionStatusLine({ ...base, exit: { code: 0 }, inUseHere: false, controllerName: 'Pixel' })).toBe('终端 3 · 已结束')
+    expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
+    // 没有编号时用调用方给的序号。
+    expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
+  })
 
   it('组内新创建的在上，运行中优先时仍先排运行中', () => {
     const at = (id: string, number: number, createdAt?: number, programBusy = false) =>
@@ -692,8 +739,8 @@ describe('session created time and running order', () => {
       { id: 'c', number: 3, programBusy: false, project: { id: 'p', name: 'P' } },
       { id: 'd', number: 4, programBusy: true, exit: { exitCode: 0 }, project: { id: 'p', name: 'P' } },
     ]
-    expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'a', 'b', 'd'])
-    expect(orderSessions(list, ['c'], { runningFirst: true }).map(item => item.session.id)).toEqual(['c', 'b', 'a', 'd'])
+    expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'd', 'b', 'a'])
+    expect(orderSessions(list, ['c'], { runningFirst: true }).map(item => item.session.id)).toEqual(['c', 'b', 'd', 'a'])
     expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['d', 'c', 'b', 'a'])
     expect(groupSessionOverview(list, { runningFirst: true })[0].sessions.map(session => session.id)).toEqual(['b', 'd', 'c', 'a'])
   })

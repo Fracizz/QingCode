@@ -343,7 +343,14 @@
     </div>
     <p id="session-scope-hint" class="hint" hidden>更新电脑端后可查看全部项目的会话。</p>
     <p id="session-context" class="sr-only"></p>
-    <button id="drawer-new-session" class="tonal compact" type="button"><svg><use href="#i-plus"/></svg>新建终端</button>
+    <!-- 「本项目」的组头，与「全部」的项目组头同款；「运行中优先」由 sessionDrawer.js 插在新建按钮前。 -->
+    <div id="drawer-project-head" class="session-group" data-current-project="true">
+      <div class="session-group-head session-group-head-tools">
+        <div class="session-group-toggle"><svg class="session-group-icon" aria-hidden="true"><use href="#i-folder"/></svg><strong id="drawer-project-name"></strong><span id="drawer-project-source" class="session-group-source"></span><span id="drawer-project-count" class="session-group-count"></span></div>
+        <button id="drawer-new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
+        <button id="drawer-project-more" class="icon-button" type="button"><svg><use href="#i-more"/></svg></button>
+      </div>
+    </div>
     <div id="session-options" class="rows" aria-label="项目会话"></div>
     <!-- 「全部」范围的会话纵览，由 sessionOverview.js 渲染（与工作台首页共用）。 -->
     <div id="session-overview" hidden></div>

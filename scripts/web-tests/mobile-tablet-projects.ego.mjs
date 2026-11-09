@@ -189,7 +189,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
     })
     await page.screenshot({ path: resolve(output, 'reordered.png') })
 
-    await step('long-press dragging reorders terminals inside a project; holding still still reveals close', async () => {
+    await step('long-press dragging reorders terminals inside a project; holding still opens the action menu', async () => {
       const before = await rowIds('p-third')
       assert.equal(before.length, 2)
       await longPress(row(before[0]) + ' .row', row(before[1]) + ' .row')
@@ -197,8 +197,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
       assert.deepEqual(await rowIds('p-third'), [before[1], before[0]])
       assert.deepEqual((await stored('session-order')).slice(0, 2), [before[1], before[0]])
       await longPress(row(before[0]) + ' .row')
-      await page.waitForFunction(selector => document.querySelector(selector).dataset.revealed === 'true', row(before[0]))
-      await page.evaluate(() => document.querySelector('.drawer-heading').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })))
+      await page.waitForSelector('#session-actions-dialog[open]')
+      await page.evaluate(() => document.querySelector('#session-actions-dialog').close())
     })
 
     await step('the same order applies in this-project scope and holding still opens the action menu', async () => {

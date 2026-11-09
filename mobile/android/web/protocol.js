@@ -139,14 +139,25 @@ export function prunedSessionPins(pins, sessions) {
  * 返回 { session, index }，index 是原列表位置，用于「终端 N」兜底名称。
  */
 export function orderSessions(sessions, pins = [], { runningFirst = false, order = [] } = {}) {
+  const compare = compareSessions({ pins, runningFirst, order });
+  // 排序稳定：没有创建时间和编号时保持电脑端返回的顺序。
+  return sessions.map((session, index) => ({ session, index })).sort((a, b) => compare(a.session, b.session));
+}
+
+/**
+ * 同一项目内的会话顺序，「本项目」与「全部」共用：置顶 → 运行中优先 → 手动顺序 → 新建的在上。
+ * 不在手动顺序里的会话排在手动顺序之前，刚新建的终端不会沉到列表底部。编号会被复用，创建时间优先于编号。
+ */
+function compareSessions({ pins = [], runningFirst = false, order = [] }) {
   const rank = new Map(pins.map((id, index) => [id, index]));
   const custom = new Map((runningFirst ? [] : order).map((id, index) => [id, index]));
-  const position = id => custom.get(id) ?? custom.size;
-  return sessions.map((session, index) => ({ session, index }))
-    .sort((a, b) => (rank.get(a.session.id) ?? pins.length) - (rank.get(b.session.id) ?? pins.length)
-      || (runningFirst ? Number(sessionRunning(b.session)) - Number(sessionRunning(a.session)) : 0)
-      || position(a.session.id) - position(b.session.id)
-      || a.index - b.index);
+  const pinRank = session => rank.get(session.id) ?? pins.length;
+  const position = session => custom.get(session.id) ?? -1;
+  return (a, b) => pinRank(a) - pinRank(b)
+    || (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0)
+    || position(a) - position(b)
+    || createdTime(b) - createdTime(a)
+    || (b.number ?? 0) - (a.number ?? 0);
 }
 /** 会话纵览筛选：全部 / 未结束 / 已结束。 */
 export const OVERVIEW_FILTERS = ['all', 'live', 'exited'];
@@ -172,7 +183,7 @@ function createdTime(session) {
  * 只因电脑终端而显示的项目排在常驻项目之后，按项目名排序。
  * sessionOrder(projectId)（侧栏）：组内手动顺序；新会话排在已排序会话之前，与默认的新建在上一致；「运行中优先」时不生效。
  */
-export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null } = {}) {
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null, pins = null } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
   const times = new Map();
   for (const item of Array.isArray(history) ? history : []) {
@@ -197,12 +208,7 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     group.sessions.push(session);
   }
   for (const [id, group] of groups) {
-    const custom = new Map((sessionOrder && !runningFirst ? sessionOrder(id) : []).map((item, index) => [item, index]));
-    const position = session => custom.get(session.id) ?? -1;
-    group.sessions.sort((a, b) => (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0)
-      || position(a) - position(b)
-      || createdTime(b) - createdTime(a)
-      || (b.number ?? 0) - (a.number ?? 0));
+    group.sessions.sort(compareSessions({ pins: pins ? pins(id) : [], runningFirst, order: sessionOrder ? sessionOrder(id) : [] }));
   }
   const byName = (a, b) => String(a.project.name ?? '').localeCompare(String(b.project.name ?? ''))
     || a.project.id.localeCompare(b.project.id);
@@ -642,6 +648,23 @@ const IDLE_WARNING_MS = 2 * 60 * 60 * 1000;
  * 会话行的空闲信息：平时只说空闲多久，距自动结束不足 2 小时才带上倒计时并标记 expiring。
  * 已结束或旧版电脑端没有 `idleDeadline` 时 text 为空。
  */
+/**
+ * 会话行的信息行：「本项目」与「全部」共用，字段和顺序保持一致。
+ * running、active、last、pinned、fresh 由调用方按显示偏好和当前选择算好传入；
+ * 接入方和创建设备只有列出全部会话时才有，缺失时不显示。距自动结束不足 2 小时的提醒另起一行，这里不重复。
+ */
+export function sessionStatusLine(session, { fallback = 1, running = false, active = false, last = false, pinned = false, fresh = false, now = Date.now() } = {}) {
+  const identity = session.origin === 'desktop' ? t('电脑终端') : t('终端 {n}', { n: session.number ?? fallback });
+  const status = session.exit ? t('已结束')
+    : [running ? t('运行中') : '', active ? t('当前会话') : last ? t('上次使用') : ''].filter(Boolean).join(' · ');
+  const inUse = !session.exit && session.inUseHere === false && session.controllerName
+    ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
+  const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
+  const idle = sessionIdleInfo(session, now);
+  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, idle.expiring ? '' : idle.text]
+    .filter(Boolean).join(' · ');
+}
+
 export function sessionIdleInfo(item, now = Date.now()) {
   if (item?.exit || !Number.isFinite(item?.idleDeadline)) return { text: '', expiring: false };
   if (idleRemaining(item, now) <= IDLE_WARNING_MS) return { text: idleLabel(item, now), expiring: true };

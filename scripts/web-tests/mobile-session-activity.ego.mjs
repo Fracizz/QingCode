@@ -40,7 +40,7 @@ export async function run({ spaceId, finish = true } = {}) {
     })
     await page.click('#show-sessions', { label: 'open running sessions' })
     await step('both running sessions animate independently of the selected output stream', async () => {
-      await page.waitForFunction(() => document.querySelectorAll('.session-option[data-running="true"]').length === 2)
+      await page.waitForFunction(() => document.querySelectorAll('#session-options .session-option[data-running="true"]').length === 2)
       assert.ok(await page.evaluate(() => [...document.querySelectorAll('.session-spinner')].every(node => getComputedStyle(node).animationName === 'spin')))
       assert.ok(await page.evaluate(() => [...document.querySelectorAll('.session-label')].every(node => !/[\u2800-\u28ff]/u.test(node.textContent))))
       assert.ok(await page.evaluate(() => window.__mobileFixture.state.polls.every(request => request.id === 'mobile-1')))
@@ -99,7 +99,7 @@ export async function run({ spaceId, finish = true } = {}) {
     await step('refresh failures retain rows and recover automatically', async () => {
       await page.evaluate(() => { window.__mobileFixture.state.sessionError = '模拟刷新失败' })
       await page.waitForFunction(() => !document.querySelector('#session-error').hidden)
-      assert.equal(await page.evaluate(() => document.querySelectorAll('.session-option').length), 2)
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#session-options .session-option').length), 2)
       await page.evaluate(() => { window.__mobileFixture.state.sessionError = null })
       await page.waitForFunction(() => document.querySelector('#session-error').hidden)
     })
@@ -109,7 +109,7 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth
         && document.querySelector('#session-options').scrollWidth <= document.querySelector('#session-options').clientWidth))
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.session-spinner')).animationName), 'none')
-      assert.match(await page.evaluate(() => document.querySelector('.session-option small').textContent), /运行中/)
+      assert.match(await page.evaluate(() => document.querySelector('#session-options [data-id="mobile-1"] small').textContent), /运行中/)
     })
     await page.screenshot({ path: resolve(output, 'narrow-reduced-motion.png') })
     await step('native background pauses refresh and foreground resumes it', async () => {

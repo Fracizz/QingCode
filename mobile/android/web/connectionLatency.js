@@ -1,5 +1,6 @@
-export const TERMINAL_LATENCY_INTERVAL = 10_000;
-export const HOME_LATENCY_INTERVAL = 30_000;
+// 需小于 MainActivity 的 http.keepAliveDuration（10 秒）：探测复用已有连接，多台手机时不会反复 TLS 握手。
+export const TERMINAL_LATENCY_INTERVAL = 8_000;
+export const HOME_LATENCY_INTERVAL = 15_000;
 
 export function latencyText(snapshot) {
   const value = snapshot.milliseconds;

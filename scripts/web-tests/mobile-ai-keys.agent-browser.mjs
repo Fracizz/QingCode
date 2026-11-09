@@ -112,7 +112,7 @@ try {
   evaluate(`window.__switchedCount = window.__mobileFixture.state.inputs.join('').length; window.__switchedAt = performance.now()`)
   check('切换会话取消旧会话的长按计时器', `performance.now() - window.__switchedAt > 600 && ${inputs}.length === window.__switchedCount`)
   run('click', '#show-sessions')
-  run('click', '#session-options .session-option:first-child .row')
+  run('click', '#session-options .session-option:last-child .row')
   check('切回会话恢复远端实时输入位置', `${mode} === '终端实时输入' && document.querySelector('#terminal-status').textContent === '会话中' && !document.querySelector('#more-keys').disabled`)
   run('click', '#keyboard')
   run('fill', '#compose', '')

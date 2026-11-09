@@ -70,7 +70,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
 
-    await step('three named sessions keep desktop order before anything is pinned', async () => {
+    await step('three named sessions list newest first before anything is pinned', async () => {
       await drawer()
       await renameCurrent('甲 构建')
       await newSession(2)
@@ -79,7 +79,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await newSession(3)
       await drawer()
       await renameCurrent('丙 部署')
-      assert.deepEqual(await order(), ['甲 构建', '乙 测试', '丙 部署'])
+      assert.deepEqual(await order(), ['丙 部署', '乙 测试', '甲 构建'])
     })
 
     await step('⋯ opens the actions sheet with pin, rename and end', async () => {
@@ -97,12 +97,12 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('pinning moves a session to the top with a marker, newest pin first', async () => {
       await page.click('#session-action-pin', { label: 'pin second session' })
       await page.waitForFunction(() => !document.querySelector('#session-actions-dialog').open)
-      assert.deepEqual(await order(), ['乙 测试', '甲 构建', '丙 部署'])
+      assert.deepEqual(await order(), ['乙 测试', '丙 部署', '甲 构建'])
       assert.equal(await page.evaluate(() => document.querySelector('#session-options .session-option:first-child').dataset.pinned), 'true')
       assert.match(await page.evaluate(() => document.querySelector('#session-options .session-option:first-child small').textContent), /^已置顶/)
       await actions(3, 'open third session actions')
       await page.click('#session-action-pin', { label: 'pin third session' })
-      assert.deepEqual(await order(), ['丙 部署', '乙 测试', '甲 构建'])
+      assert.deepEqual(await order(), ['甲 构建', '乙 测试', '丙 部署'])
     })
     await page.screenshot({ path: resolve(output, 'pinned-order.png') })
 
@@ -121,7 +121,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
 
     // CDP 两次触摸事件之间的实际间隔可达 1 秒，无法稳定模拟短按；短按计时由 Vitest 覆盖，这里用普通点击。
     await step('a plain tap still switches sessions', async () => {
-      await page.click('#session-options .session-option:nth-child(3) .row', { label: 'tap third session' })
+      await page.click('#session-options .session-option:nth-child(1) .row', { label: 'tap pinned session' })
       await page.waitForFunction(() => document.querySelector('#terminal-name').textContent === '甲 构建')
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), false)
     })
@@ -135,15 +135,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await drawer()
-      assert.deepEqual(await order(), ['丙 部署', '乙 测试', '甲 构建'])
+      assert.deepEqual(await order(), ['甲 构建', '乙 测试', '丙 部署'])
       // 电脑端的会话顺序与名称不因手机置顶而改变。
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.name)), renames)
     })
 
-    await step('unpinning restores desktop order for that session', async () => {
+    await step('unpinning restores the default order for that session', async () => {
       await actions(1, 'open pinned session actions')
-      await page.click('#session-action-pin', { label: 'unpin third session' })
-      assert.deepEqual(await order(), ['乙 测试', '甲 构建', '丙 部署'])
+      await page.click('#session-action-pin', { label: 'unpin first session' })
+      assert.deepEqual(await order(), ['乙 测试', '丙 部署', '甲 构建'])
     })
 
     await step('ending a non-current session keeps the drawer, the current session and drops its pin', async () => {
@@ -153,7 +153,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#confirm-title').textContent), '关闭会话？')
       await page.click('#confirm-action', { label: 'confirm ending session' })
       await page.waitForFunction(() => document.querySelectorAll('#session-options .session-option').length === 2)
-      assert.deepEqual(await order(), ['甲 构建', '丙 部署'])
+      assert.deepEqual(await order(), ['丙 部署', '甲 构建'])
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), true)
       assert.equal(await page.evaluate(() => document.querySelector('#terminal-name').textContent), '甲 构建')
       assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => key.includes('session-pins:'))

@@ -2188,7 +2188,7 @@ async function endOverviewSessions(targets, view, { confirm = null, leavingProje
  */
 async function removeSidebarProject(target) {
   if (busy || !profile) return;
-  const items = drawer.overview.list().filter(item => item.project?.id === target.id);
+  const items = drawer.projectSessions(target.id);
   const closable = items.filter(item => item.origin !== 'desktop');
   const summary = summarizeSessionBatch(closable);
   const confirm = {
