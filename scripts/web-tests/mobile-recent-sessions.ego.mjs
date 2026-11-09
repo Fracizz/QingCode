@@ -124,10 +124,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.project).sort()), ['p0', 'p5'])
     })
     await page.screenshot({ path: resolve(output, 'partial-failure.png') })
-    await step('retry ends only the remaining project session and returns home', async () => {
+    await step('retry ends only the remaining project session and stays on the empty project', async () => {
       await page.evaluate(() => window.__mobileFixture.state.endErrors.clear())
       await confirmAll()
-      await page.waitForFunction(() => document.querySelector('#terminal-screen').hidden && !document.querySelector('#home-screen').hidden)
+      await page.waitForFunction(() => !document.querySelector('#terminal-screen').hidden && !document.querySelector('#terminal-empty').hidden)
       assert.deepEqual(await page.evaluate(() => [...window.__mobileFixture.state.sessions.values()].map(item => item.project)), ['p5'])
     })
     await writeFile(resolve(output, 'results.json'), JSON.stringify({ engine: 'ego-browser', nativeAndroid: false, results }, null, 2))

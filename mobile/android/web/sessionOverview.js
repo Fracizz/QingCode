@@ -11,7 +11,8 @@ import {
   sessionRunning,
 } from './protocol.js';
 import { icon, rowText, button } from './dom.js';
-import { attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
+import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
+import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 import { t } from './i18n.js';
 
@@ -24,8 +25,11 @@ import { t } from './i18n.js';
  * omit?(item)（默认视图不重复列出的会话；搜索、筛选和多选时仍会显示）。
  * open(session) 接入会话；end(sessions) 关闭一个或多个会话（确认与结果提示由调用方负责），返回 Promise。
  * onChange() 在列表或数量变化后通知调用方（如更新标题数量、显示/隐藏所在区块）。
+ * groupTools（侧栏）：项目固定顺序与组头操作，含 order()、collapsed(id)、toggle(id)、attention(sessionId)、
+ * add(project)、menu(project)、reorder(visibleIds, from, to)、sessionOrder(projectId)、reorderSessions(projectId, visibleIds, from, to)；
+ * 首页不传，保持按最近打开排序、组头只显示信息。
  */
-export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {} }) {
+export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {}, groupTools = null }) {
   let items = [];
   let address = null;
   let filter = 'all';
@@ -34,6 +38,9 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   let expanded = false;
   let selecting = false;
   let selection = new Set();
+  // 组头按钮点按时取最新的分组数据。
+  const renderedGroups = new Map();
+  const swipes = new WeakMap();
 
   root.classList.add('session-overview');
   root.innerHTML = '';
@@ -121,6 +128,19 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   root.append(tools, filters, bar, error, groupsNode, empty, more);
   onSessionPrefsChange(() => render());
 
+  // 长按组头拖动排序；搜索、筛选和多选时项目列表不完整，不允许拖动。
+  const draggableGroup = '.session-group[data-draggable="true"]';
+  const draggableRow = '.session-option[data-draggable="true"]';
+  if (groupTools) attachDragSort(groupsNode, {
+    rowSelector: draggableGroup,
+    ignoreSelector: '.session-group-rows, .session-group-head .icon-button',
+    targetIndex: dragTargetIndex,
+    onDrop: (_row, from, to) => {
+      groupTools.reorder([...groupsNode.querySelectorAll(draggableGroup)].map(node => node.dataset.project), from, to);
+      render();
+    },
+  });
+
   input.addEventListener('input', () => { query = input.value; render(); });
 
   /** 电脑上开的终端不参与批量关闭，避免「全选」误结束电脑上的任务；单个关闭仍可用。 */
@@ -153,6 +173,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const counts = countSessionOverview(all);
     const grouped = groupSessionOverview(all, {
       projects: state.projects(), current: state.current(), history: state.history(), filter, query, runningFirst: runningFirst(),
+      order: groupTools?.order() ?? null,
+      sessionOrder: groupTools?.sessionOrder ?? null,
     });
     // 搜索、筛选或多选时显示全部结果，避免选中的会话藏在「展开全部」后面。
     const narrowed = !!query.trim() || filter !== 'all' || selecting;
@@ -204,7 +226,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       let node = existing.get(group.project.id);
       if (!node) node = createGroup(group.project.id);
       existing.delete(group.project.id);
-      renderGroup(node, group, busy);
+      renderGroup(node, group, busy, narrowed);
       if (groupsNode.children[position] !== node) groupsNode.insertBefore(node, groupsNode.children[position] ?? null);
     });
     for (const node of existing.values()) node.remove();
@@ -222,14 +244,44 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     source.className = 'session-group-source';
     const count = document.createElement('span');
     count.className = 'session-group-count';
-    head.append(icon('folder', 'session-group-icon'), name, source, count);
+    const summary = [icon('folder', 'session-group-icon'), name, source, count];
+    if (groupTools) {
+      // 触屏没有悬停：新建和项目操作常驻，点组头其余区域折叠；没有会话的项目无可折叠内容。
+      head.classList.add('session-group-head-tools');
+      const toggle = button('session-group-toggle', () => {
+        if (!toggle.hasAttribute('aria-expanded')) return;
+        groupTools.toggle(projectId);
+        render();
+      });
+      const attention = document.createElement('span');
+      attention.className = 'session-attention session-group-attention';
+      toggle.append(...summary, attention, icon('chevron-down', 'session-group-chevron'));
+      const add = button('icon-button session-group-add', () => groupTools.add(renderedGroups.get(projectId).project));
+      add.append(icon('plus'));
+      const actions = button('icon-button session-group-more', () => groupTools.menu(renderedGroups.get(projectId).project));
+      actions.append(icon('more'));
+      head.append(toggle, add, actions);
+    } else {
+      head.append(...summary);
+    }
     const rows = document.createElement('div');
     rows.className = 'rows session-group-rows';
+    // 终端只在所属项目内拖动；原地长按仍露出关闭按钮。
+    if (groupTools) attachDragSort(rows, {
+      rowSelector: draggableRow,
+      ignoreSelector: '.session-close',
+      targetIndex: dragTargetIndex,
+      onHold: row => swipes.get(row)?.open(),
+      onDrop: (_row, from, to) => {
+        groupTools.reorderSessions(projectId, [...rows.querySelectorAll(draggableRow)].map(row => row.dataset.id), from, to);
+        render();
+      },
+    });
     node.append(head, rows);
     return node;
   }
 
-  function renderGroup(node, group, busy) {
+  function renderGroup(node, group, busy, narrowed) {
     const current = group.project.id === state.current();
     const title = group.project.name ?? group.project.id;
     node.dataset.currentProject = String(current);
@@ -240,16 +292,38 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     node.querySelector('.session-group-count').textContent = String(group.total ?? group.sessions.length);
     node.setAttribute('aria-label', title);
     const rows = node.querySelector('.session-group-rows');
+    if (groupTools) renderGroupTools(node, rows, group, busy, narrowed, title);
     const existing = new Map([...rows.children].map(row => [row.dataset.id, row]));
     const last = state.lastSession(group.project.id);
     group.sessions.forEach((session, position) => {
       let row = existing.get(session.id);
       if (!row) row = createRow(session.id);
       existing.delete(session.id);
-      renderRow(row, session, { current, last: session.id === last, busy });
+      renderRow(row, session, { current, last: session.id === last, busy, draggable: !!groupTools && !narrowed && !runningFirst() });
       if (rows.children[position] !== row) rows.insertBefore(row, rows.children[position] ?? null);
     });
     for (const row of existing.values()) row.remove();
+  }
+
+  function renderGroupTools(node, rows, group, busy, narrowed, title) {
+    const id = group.project.id;
+    renderedGroups.set(id, group);
+    const collapsible = group.sessions.length > 0 && !narrowed;
+    const collapsed = collapsible && groupTools.collapsed(id);
+    node.dataset.empty = String(!group.sessions.length);
+    node.dataset.draggable = String(!!group.member && !narrowed);
+    // 折叠后行内圆点看不到，提到组头。
+    node.dataset.attention = String(collapsed && group.sessions.some(session => groupTools.attention(session.id)));
+    rows.hidden = collapsed;
+    const toggle = node.querySelector('.session-group-toggle');
+    if (collapsible) toggle.setAttribute('aria-expanded', String(!collapsed));
+    else toggle.removeAttribute('aria-expanded');
+    const add = node.querySelector('.session-group-add');
+    add.disabled = busy || !!group.missing;
+    add.setAttribute('aria-label', t('在 {name} 新建终端', { name: title }));
+    const actions = node.querySelector('.session-group-more');
+    actions.disabled = busy;
+    actions.setAttribute('aria-label', t('{name} 的项目操作', { name: title }));
   }
 
   function createRow(id) {
@@ -274,7 +348,10 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const heading = text.querySelector('strong');
     const name = document.createElement('span');
     name.className = 'session-label';
-    heading.append(icon('loader-circle', 'session-spinner'), name);
+    const attention = document.createElement('span');
+    attention.className = 'session-attention';
+    attention.setAttribute('aria-hidden', 'true');
+    heading.append(icon('loader-circle', 'session-spinner'), attention, name);
     const idle = document.createElement('small');
     idle.className = 'session-idle';
     text.append(idle);
@@ -289,16 +366,20 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     row.append(close, face);
     // 左滑露出关闭；长按同样展开。多选时用勾选，不响应手势。
     const swipe = attachSwipeReveal(row, face, { enabled: () => !selecting && !state.busy() });
-    attachLongPress(option, swipe.open);
+    swipes.set(row, swipe);
+    attachLongPress(option, swipe.open, { enabled: () => row.dataset.draggable !== 'true' });
     return row;
   }
 
-  function renderRow(row, session, { current, last, busy }) {
+  function renderRow(row, session, { current, last, busy, draggable }) {
+    row.dataset.draggable = String(draggable);
     const label = sessionName(session);
     const active = current && session.id === state.selected();
     // 只影响显示；「运行中优先」排序仍按真实状态。
     const running = runningStatusEnabled() && sessionRunning(session);
     const checked = selection.has(session.id);
+    const fresh = !!groupTools?.attention(session.id);
+    row.dataset.attention = String(fresh);
     row.dataset.current = String(active);
     row.dataset.running = String(running);
     row.dataset.checked = String(checked);
@@ -323,7 +404,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
     // 空闲时长并入一行；快到自动结束时才单独提醒。
     const idleInfo = sessionIdleInfo(session);
-    row.querySelector('small').textContent = [label === identity ? '' : identity, status, inUse, device, idleInfo.expiring ? '' : idleInfo.text].filter(Boolean).join(' · ');
+    row.querySelector('small').textContent = [label === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, idleInfo.expiring ? '' : idleInfo.text].filter(Boolean).join(' · ');
     const idle = row.querySelector('.session-idle');
     idle.textContent = idleInfo.expiring ? idleInfo.text : '';
     idle.hidden = !idle.textContent;

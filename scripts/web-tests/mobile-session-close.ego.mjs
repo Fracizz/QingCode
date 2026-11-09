@@ -126,9 +126,9 @@ export async function run({ spaceId, finish = true, regression = true } = {}) {
       assert.equal(await page.evaluate(() => window.__drawerCloses), 0, 'drawer must stay open without sliding out and back')
       assert.deepEqual(await page.evaluate(() => window.__removedRows), [{ id: 'mobile-3', leaving: 'true' }], 'row must collapse instead of being cut off')
     })
-    await step('closing the last session returns to the home page', async () => {
+    await step('closing the last session stays on the empty project', async () => {
       await close('mobile-1')
-      await page.waitForFunction(() => document.querySelector('#terminal-screen').hidden && !document.querySelector('#home-screen').hidden)
+      await page.waitForFunction(() => !document.querySelector('#terminal-screen').hidden && !document.querySelector('#terminal-empty').hidden)
       assert.equal(await page.evaluate(() => window.__mobileFixture.state.sessions.size), 0)
     })
     if (regression) {

@@ -203,12 +203,12 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.equal(await text('#terminal-name'), '部署 api')
     })
 
-    await step('the drawer keeps the same overview with current project first and batch close', async () => {
+    await step('the drawer keeps the same overview with a stable project order and batch close', async () => {
       await drawer()
       assert.equal(await page.evaluate(() => document.querySelector('[data-scope="project"]').getAttribute('aria-checked')), 'true')
       await page.click('[data-scope="all"]')
       await page.waitForFunction(selector => document.querySelectorAll(selector + ' .session-option').length === 9, drawerView)
-      assert.deepEqual(await groupIds(drawerView), ['p-ssh', 'p-local'])
+      assert.deepEqual(await groupIds(drawerView), ['p-local', 'p-ssh'], 'projects keep the order they joined the sidebar')
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' [data-current="true"]')?.dataset.id, drawerView), 'mobile-2')
       assert.match(await text('#session-context'), /2 个项目/)
       await tap(drawerView + ' .overview-manage')

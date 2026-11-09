@@ -20,6 +20,12 @@ import {
   matchesProject,
   nextModifierState,
   orderSessions,
+  joinProjectIds,
+  parseIdList,
+  phoneSessionProjectIds,
+  reorderSessionIds,
+  reorderVisibleProjects,
+  updateSessionAttention,
   outputBatches,
   outputChunk,
   parsePairingLink,
@@ -519,6 +525,61 @@ describe('Android terminal quote', () => {
   })
 })
 
+describe('Android 侧栏项目与手动排序', () => {
+  it('解析本地 id 列表时容错、去重并限制数量', () => {
+    expect(parseIdList('oops')).toEqual([])
+    expect(parseIdList('{"a":1}')).toEqual([])
+    expect(parseIdList('["a","a",1,"","b"]')).toEqual(['a', 'b'])
+    expect(parseIdList(JSON.stringify(Array.from({ length: 150 }, (_, i) => `p${i}`)))).toHaveLength(100)
+  })
+
+  it('新项目追加在末尾，已有项目不动', () => {
+    expect(joinProjectIds(['a', 'b'], ['b', 'c'])).toEqual(['a', 'b', 'c'])
+  })
+
+  it('项目拖动只在可见项目间换位，看不到的留在原位', () => {
+    expect(reorderVisibleProjects(['a', 'hidden', 'b', 'c'], ['a', 'b', 'c'], 2, 0)).toEqual(['c', 'hidden', 'a', 'b'])
+    expect(reorderVisibleProjects(['a', 'b'], ['a', 'b'], 0, 1)).toEqual(['b', 'a'])
+  })
+
+  it('终端拖动后可见项在前，其余已保存项保留在后', () => {
+    expect(reorderSessionIds(['x', 'a', 'b'], ['a', 'b', 'c'], 2, 0)).toEqual(['c', 'a', 'b', 'x'])
+  })
+
+  it('本项目列表：置顶最前，其后按手动顺序，运行中优先时忽略手动顺序', () => {
+    const sessions = ['a', 'b', 'c', 'd'].map(id => ({ id, name: id, exit: null, programBusy: id === 'd' }))
+    const ids = (options: object, pins: string[] = []) => orderSessions(sessions, pins, options).map((item: { session: { id: string } }) => item.session.id)
+    expect(ids({ order: ['c', 'a'] })).toEqual(['c', 'a', 'b', 'd'])
+    expect(ids({ order: ['c', 'a'] }, ['b'])).toEqual(['b', 'c', 'a', 'd'])
+    expect(ids({ order: ['c', 'a'], runningFirst: true })).toEqual(['d', 'a', 'b', 'c'])
+  })
+
+  it('只有手机会话的项目自动加入侧栏，电脑终端不算', () => {
+    expect(phoneSessionProjectIds([
+      { id: '1', project: { id: 'p1' } },
+      { id: '2', project: { id: 'p1' } },
+      { id: '3', origin: 'desktop', project: { id: 'p2' } },
+      { id: '4' },
+    ])).toEqual(['p1'])
+  })
+
+  it('有新结果：看不到的会话停下时标记，看过或重新工作时清除', () => {
+    const tracker = { busy: new Set<string>(), attention: new Set<string>() }
+    const session = (id: string, programBusy: boolean, exit: object | null = null) => ({ id, programBusy, exit })
+    updateSessionAttention(tracker, [session('a', true), session('b', true), session('c', false)], 'b')
+    expect([...tracker.attention]).toEqual([])
+    updateSessionAttention(tracker, [session('a', false), session('b', false), session('c', false)], 'b')
+    // 当前会话 b 停下不标记；c 一直没工作也不标记。
+    expect([...tracker.attention]).toEqual(['a'])
+    updateSessionAttention(tracker, [session('a', true)], 'b')
+    expect([...tracker.attention]).toEqual([])
+    updateSessionAttention(tracker, [session('a', false, { code: 0 })], 'b')
+    expect([...tracker.attention]).toEqual(['a'])
+    updateSessionAttention(tracker, [], 'a')
+    expect([...tracker.attention]).toEqual([])
+  })
+})
+
 describe('Android 会话纵览', () => {
   const local = { id: 'p1', name: 'Alpha', kind: 'local', path: 'D:/a', host: '' }
   const remote = { id: 'p2', name: 'Beta', kind: 'ssh', path: '/srv/b', host: '10.0.0.2' }
@@ -550,6 +611,33 @@ describe('Android 会话纵览', () => {
     expect(groups[1].missing).toBe(true)
     expect(groups[2].sessions.map(session => session.id)).toEqual(['m2', 'm1'])
     expect(groupSessionOverview(list, { projects }).map(group => group.project.id)).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('侧栏固定顺序：切换当前项目和最近打开时间都不改变分组位置', () => {
+    const ids = (current: string, openedAt: number) => groupSessionOverview(list, {
+      projects, current, history: [{ id: 'p1', openedAt }], order: ['p2', 'p1'],
+    }).map(group => group.project.id)
+    expect(ids('p1', 5)).toEqual(['p2', 'p1', 'p3'])
+    expect(ids('p2', 9)).toEqual(['p2', 'p1', 'p3'])
+  })
+
+  it('常驻项目没有会话时显示空分组，筛选、搜索和电脑端已移除时不显示', () => {
+    const groups = groupSessionOverview([], { projects, order: ['p2', 'p9'] })
+    expect(groups.map(group => [group.project.id, group.sessions.length, group.member])).toEqual([['p2', 0, true]])
+    expect(groupSessionOverview([], { projects, order: ['p2'], filter: 'live' })).toEqual([])
+    expect(groupSessionOverview([], { projects, order: ['p2'], query: 'beta' })).toEqual([])
+    expect(groupSessionOverview(list, { projects, order: ['p2'] }).at(-1)?.member).toBe(false)
+  })
+
+  it('组内手动顺序优先，新会话在已排序会话之前，运行中优先时不生效', () => {
+    const at = (id: string, createdAt: number, programBusy = false) =>
+      ({ id, createdAt, programBusy, name: id, exit: null, project: local })
+    const sessions = [at('a', 100), at('b', 200, true), at('c', 300), at('new', 400)]
+    const ids = (runningFirst = false) => groupSessionOverview(sessions, {
+      projects, runningFirst, order: ['p1'], sessionOrder: () => ['a', 'c', 'b'],
+    })[0].sessions.map((item: { id: string }) => item.id)
+    expect(ids()).toEqual(['new', 'a', 'c', 'b'])
+    expect(ids(true)).toEqual(['b', 'new', 'c', 'a'])
   })
 
   it('筛选未结束/已结束，计数与搜索多个关键词', () => {
