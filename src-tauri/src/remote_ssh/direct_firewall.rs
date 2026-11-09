@@ -234,6 +234,65 @@ async fn execute(
     action.map(|value| (value, fingerprint))
 }
 
+/// 非登录 shell 的普通用户 PATH 常常不含 sbin，而 ufw 就在 /usr/sbin 下。
+const PLATFORM_PROBE: &str = "PATH=\"$PATH:/usr/sbin:/sbin\"; case \"$(uname -s)\" in Darwin) echo macos;; Linux) if command -v firewall-cmd >/dev/null 2>&1; then echo firewalld; elif command -v ufw >/dev/null 2>&1; then echo ufw; fi;; esac";
+
+fn parse_firewall_platform(stdout: &str) -> Option<String> {
+    let value = stdout.trim();
+    matches!(value, "firewalld" | "ufw" | "macos").then(|| value.to_string())
+}
+
+/// 只读识别远端系统，用于选中手动放行命令。只复用已有的已信任会话，不新建 SSH
+/// 认证；识别不了时返回 None，由用户自己选择，不猜测默认系统。
+#[tauri::command]
+pub async fn direct_agent_firewall_platform(
+    connection_id: String,
+    ssh_connection_id: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<Option<String>, String> {
+    for id in ssh_connection_id
+        .iter()
+        .chain(std::iter::once(&connection_id))
+    {
+        let Some(root) = manager
+            .roots_for_connection(id)
+            .into_iter()
+            .find(|root| root.trusted)
+        else {
+            continue;
+        };
+        if windows_native_path(&root.canonical_path).is_some() {
+            return Ok(Some("windows".into()));
+        }
+        let tunneled = manager
+            .direct_config(id)
+            .is_some_and(|config| config.tunnel.is_some());
+        let maintenance;
+        let target: &SshManager = if tunneled {
+            let Ok(session) = tunnel::tunnel_maintenance(&manager, id, &root) else {
+                continue;
+            };
+            maintenance = session;
+            &maintenance
+        } else {
+            &manager
+        };
+        if let Ok(output) = target
+            .exec_command(
+                &root.uri,
+                PLATFORM_PROBE,
+                None,
+                true,
+                Duration::from_secs(10),
+            )
+            .await
+        {
+            return Ok(parse_firewall_platform(&output.stdout));
+        }
+    }
+    Ok(None)
+}
+
 #[tauri::command]
 pub async fn direct_agent_firewall_plan(
     connection_id: String,
@@ -289,6 +348,18 @@ pub async fn direct_agent_firewall_apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn firewall_platform_probe_accepts_only_known_tools() {
+        assert_eq!(
+            parse_firewall_platform("firewalld\n").as_deref(),
+            Some("firewalld")
+        );
+        assert_eq!(parse_firewall_platform("ufw").as_deref(), Some("ufw"));
+        assert_eq!(parse_firewall_platform("macos").as_deref(), Some("macos"));
+        for output in ["", "windows", "firewalld\nsomething else"] {
+            assert_eq!(parse_firewall_platform(output), None, "{output:?}");
+        }
+    }
     fn sample() -> SshConnectionConfig {
         SshConnectionConfig {
             id: "ssh".into(),

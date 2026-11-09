@@ -53,6 +53,7 @@ export function DirectAgentAcceptancePage() {
       setEvents(value => [...value, `save:${target.enabled}:${target.port}`])
       serviceRef.current = { ...serviceRef.current, enabled: target.enabled, host: target.host, port: target.port, certificateFingerprint: target.certificateFingerprint }
     },
+    firewallPlatform: async () => 'windows',
     firewallPlan: async target => {
       setEvents(value => [...value, `firewall-plan:${target.port}`])
       return {

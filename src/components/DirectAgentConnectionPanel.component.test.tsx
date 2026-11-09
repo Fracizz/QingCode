@@ -256,8 +256,46 @@ describe('direct Agent connection panel', () => {
     await openPanel(api, [{ ...ssh, host: 'other.test' }])
     expect(screen.queryByRole('button', { name: '通过 SSH 授权放行' })).toBeNull()
     expect(screen.getByText(/未找到此主机的 SSH 连接/)).toBeVisible()
+    fireEvent.change(screen.getByLabelText('远端系统'), { target: { value: 'windows' } })
     expect(screen.getByRole('button', { name: '复制防火墙命令' })).toBeVisible()
     expect(api.firewallPlan).not.toHaveBeenCalled()
+  })
+
+  it('shows no firewall command until the remote system is known', async () => {
+    await openPanel(apiMock())
+    expect(screen.getByLabelText('远端系统')).toHaveValue('')
+    expect(screen.queryByRole('button', { name: '复制防火墙命令' })).toBeNull()
+    expect(screen.queryByText(/New-NetFirewallRule/)).toBeNull()
+  })
+
+  it('selects the detected remote system and keeps a later manual choice', async () => {
+    const api = { ...apiMock(), firewallPlatform: vi.fn().mockResolvedValue('firewalld') }
+    await openPanel(api, [ssh])
+    await waitFor(() => expect(screen.getByLabelText('远端系统')).toHaveValue('firewalld'))
+    expect(api.firewallPlatform).toHaveBeenCalledWith('c1', ssh.id)
+    expect(screen.getByText(/firewall-cmd --permanent --add-port=48763\/tcp/)).toBeVisible()
+    expect(screen.getByText('已根据 SSH 连接自动识别，可手动修改。')).toBeVisible()
+    fireEvent.change(screen.getByLabelText('远端系统'), { target: { value: 'ufw' } })
+    expect(screen.getByText('sudo ufw allow 48763/tcp')).toBeVisible()
+    expect(screen.queryByText('已根据 SSH 连接自动识别，可手动修改。')).toBeNull()
+  })
+
+  it('explains macOS without offering a port command', async () => {
+    await openPanel(apiMock())
+    fireEvent.change(screen.getByLabelText('远端系统'), { target: { value: 'macos' } })
+    expect(screen.getByText(/应用防火墙按程序放行/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: '复制防火墙命令' })).toBeNull()
+  })
+
+  it('finishes installation with autostart off and the remote reason when enabling startup fails', async () => {
+    const api = apiMock(null)
+    vi.mocked(api.provision).mockResolvedValue({ ...info, autoStart: false, startupWarning: 'Could not enable linger: Access denied' })
+    await openPanel(api)
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    expect(await screen.findByText(/未能配置开机自启.*Could not enable linger: Access denied/)).toBeVisible()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('服务已准备。请开放显示的 TCP 端口，再测试直连。')).toBeVisible()
+    expect(screen.getByRole('switch', { name: '开机自启 Server' })).not.toBeChecked()
   })
 
   it('uses the locally saved SSH password when the field is left blank', async () => {

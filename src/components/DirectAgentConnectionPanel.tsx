@@ -11,10 +11,13 @@ import {
   directAgentApi,
   directAgentErrorKey,
   directAgentFirewallCommand,
+  directAgentFirewallHintKey,
   directAgentSshCandidates,
+  isDirectAgentPort,
   parseDirectAgentPairing,
   validateDirectAgentTarget,
   type DirectAgentApi,
+  type DirectAgentFirewallPlatform,
   type DirectAgentInfo,
 } from '../lib/directAgent'
 
@@ -52,6 +55,10 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [sshPassphrase, setSshPassphrase] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [startupWarning, setStartupWarning] = useState('')
+  const [firewallPlatform, setFirewallPlatform] = useState<DirectAgentFirewallPlatform | ''>('')
+  const [firewallPlatformDetected, setFirewallPlatformDetected] = useState(false)
+  const firewallPlatformPicked = useRef(false)
   const [activity, setActivity] = useState('')
   const [savingEnabled, setSavingEnabled] = useState(true)
   const [verified, setVerified] = useState<string | null>(null)
@@ -70,6 +77,19 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const sshConnection = candidates.find(connection => connection.id === sshConnectionId) ??
     candidates.find(connection => connection.id === connectionId) ?? candidates[0]
   const firewallApplying = busy === 'firewallApply'
+  const firewallSshId = sshConnection?.id
+
+  useEffect(() => {
+    if (!open || !api.firewallPlatform) return
+    let stale = false
+    // 识别失败或没有可用会话时保持未选择，绝不回落到某个默认系统。
+    void api.firewallPlatform(connectionId, firewallSshId).then(platform => {
+      if (stale || !platform || firewallPlatformPicked.current) return
+      setFirewallPlatform(platform)
+      setFirewallPlatformDetected(true)
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [api, connectionId, firewallSshId, open])
 
   const fill = (value: DirectAgentInfo) => {
     setInfo(value)
@@ -114,6 +134,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     setVerified(null)
     setError('')
     setNotice('')
+    setStartupWarning('')
   }
 
   const invalidateFirewall = () => {
@@ -141,10 +162,12 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     setBusy('provisioning')
     setError('')
     setNotice('')
+    setStartupWarning('')
     try {
       const result = await api.provision(connectionId, Number(port), autoStart)
       if (request !== requestRef.current) return
       fill(result)
+      setStartupWarning(result.startupWarning ?? '')
       setNotice(t('服务已准备。请开放显示的 TCP 端口，再测试直连。'))
     } catch (reason) {
       if (request === requestRef.current) setError(t(directAgentErrorKey(reason)))
@@ -314,7 +337,8 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     }
   }
 
-  const firewallCommand = directAgentFirewallCommand(Number(port))
+  const validPort = isDirectAgentPort(Number(port))
+  const firewallCommand = firewallPlatform ? directAgentFirewallCommand(Number(port), firewallPlatform) : null
   const firewallButtonLabel = busy === 'firewallConfirm' ? t('等待确认端口放行…')
     : busy === 'firewallPlan' ? t('正在检查 SSH 权限…')
     : busy === 'firewallApply' ? t('正在放行端口…')
@@ -343,6 +367,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           </span>
           <span className="min-w-0 break-words">{feedback}</span>
         </div>}
+        {startupWarning && !busy && <p role="status" className="break-words rounded border border-warn/40 bg-warn/5 p-3 text-ui-sm text-fg">{t('服务已可用，但未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}', { reason: startupWarning })}</p>}
         <div className={`grid grid-cols-1 items-start gap-3 ${info?.enabled ? '@min-[48rem]/direct-agent:grid-cols-2' : ''}`}>
           <div className="min-w-0 space-y-3">
             {!info?.enabled && <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />}
@@ -354,7 +379,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
             <p className="text-ui-sm text-fg-muted">{t(standalone ? '默认端口为 48763，可以修改。端口被占用时请指定其他端口，并同步修改远端监听配置。' : '默认端口为 48763，可以修改。安装使用 SSH，日常直连不使用 SSH。端口被占用时请指定其他端口。')}</p>
             {manualOpen && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
               <p className="text-ui-sm text-fg-muted">{t('也可在远端手动启动服务，将 direct-info --include-secret 输出的配对 JSON 粘贴到此处。配对信息包含凭据，请勿分享。')}</p>
-              <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {directAgentFirewallCommand(Number(port)) ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
+              <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {validPort ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
               <label className="block text-ui-sm text-dialog-label">{t('配对 JSON')}<textarea value={pairing} onChange={event => setPairing(event.target.value)} spellCheck={false} autoComplete="off" rows={3} className={`${fieldClass} font-mono`} /></label>
               <button type="button" disabled={Boolean(busy) || !pairing.trim()} onClick={importPairing} className={buttonClass}>{t('应用配对信息')}</button>
             </div>}
@@ -372,14 +397,24 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           </div>
           {info?.enabled && <DirectServerRecoveryPanel key={`${connectionId}:${info.host}:${info.port}`} connectionId={connectionId} info={info} connections={sshConnections} api={api} onUpdated={async value => { setInfo(value); await onUpdated?.(value) }} />}
         </div>
-        {firewallCommand && <details className="rounded border border-warn/40 bg-warn/5 text-ui-sm">
+        {validPort && <details className="rounded border border-warn/40 bg-warn/5 text-ui-sm">
           <summary className="cursor-pointer px-3 py-2 font-medium text-warn">{t('远端需要开放 TCP {port}', { port })}</summary>
           <div className="grid grid-cols-1 items-start gap-3 border-t border-warn/20 p-3 @min-[48rem]/direct-agent:grid-cols-2">
             <div className="min-w-0 space-y-2">
-              <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
-              <p className="text-fg-muted">{t('Windows：在远端以管理员身份运行以下命令，放行专用和域网络。其他网络配置请由管理员调整。')}</p>
-              <code className="block break-all rounded bg-dialog-input p-2 font-mono text-fg">{firewallCommand}</code>
-              <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={`${buttonClass} inline-flex items-center gap-1`}><Copy size={13} />{t('复制防火墙命令')}</button>
+              <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口（仅支持 Windows 远端）；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
+              <label className="block text-dialog-label">{t('远端系统')}<select value={firewallPlatform} onChange={event => { firewallPlatformPicked.current = true; setFirewallPlatformDetected(false); setFirewallPlatform(event.target.value as DirectAgentFirewallPlatform | '') }} className={fieldClass}>
+                <option value="">{t('请选择')}</option>
+                <option value="windows">Windows</option>
+                <option value="firewalld">Linux（firewalld）</option>
+                <option value="ufw">Linux（ufw）</option>
+                <option value="macos">macOS</option>
+              </select></label>
+              {firewallPlatformDetected && <p className="text-fg-muted">{t('已根据 SSH 连接自动识别，可手动修改。')}</p>}
+              {firewallPlatform && <p className="text-fg-muted">{t(directAgentFirewallHintKey(firewallPlatform))}</p>}
+              {firewallCommand && <>
+                <code className="block break-all rounded bg-dialog-input p-2 font-mono text-fg">{firewallCommand}</code>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={`${buttonClass} inline-flex items-center gap-1`}><Copy size={13} />{t('复制防火墙命令')}</button>
+              </>}
             </div>
             {api.firewallPlan && api.firewallApply && <div className="min-w-0 space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-2.5">
               {sshConnection ? <>

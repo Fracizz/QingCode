@@ -32,6 +32,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [warning, setWarning] = useState('')
   const request = useRef(0)
   useEffect(() => () => { request.current += 1 }, [connectionId, info.host, info.port])
 
@@ -42,6 +43,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     onBusyChange?.(true)
     setError('')
     setNotice('')
+    setWarning('')
     try {
       await hydrateSshSecrets(ssh.id)
       if (current !== request.current) return
@@ -54,7 +56,12 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
       setPassphrase('')
       await onUpdated?.(result)
       if (current !== request.current) return
-      setNotice(start ? 'Server 已启动，正在重新连接…' : '开机自启设置已应用。')
+      if (result.startupWarning) {
+        setAutoStart(false)
+        setWarning(result.startupWarning)
+      }
+      if (start) setNotice('Server 已启动，正在重新连接…')
+      else if (!result.startupWarning) setNotice('开机自启设置已应用。')
       if (start) await onStarted?.()
     } catch (reason) {
       if (current === request.current) setError(directAgentErrorKey(reason))
@@ -91,6 +98,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
       <code className="block whitespace-pre-wrap break-all rounded bg-dialog-input p-2 font-mono">{`qingcode-server direct --port ${info.port} --detach\nqingcode-server startup ${autoStart ? 'enable' : 'disable'}`}</code>
     </details>
     {error && <p role="alert" className="text-ui-sm text-danger">{t(error)}</p>}
+    {warning && !busy && <p role="status" className="break-words text-ui-sm text-warn">{t('未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}', { reason: warning })}</p>}
     {(busy || notice) && <p role="status" className="text-ui-sm text-fg-muted">{busy ? t('正在通过 SSH 管理 Server…') : t(notice)}</p>}
   </section>
 }

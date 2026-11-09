@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { directAgentApi, directAgentErrorKey, directAgentFirewallCommand, directAgentSshCandidates, enrichDirectAgentConnections, parseDirectAgentPairing, validateDirectAgentTarget } from './directAgent'
+import { directAgentApi, directAgentErrorKey, directAgentFirewallCommand, directAgentFirewallHintKey, directAgentSshCandidates, enrichDirectAgentConnections, parseDirectAgentPairing, validateDirectAgentTarget } from './directAgent'
 import type { SshConnection } from '../types'
 
 afterEach(() => vi.restoreAllMocks())
@@ -37,9 +37,18 @@ describe('direct Agent pairing import', () => {
 
 describe('direct Agent network instructions', () => {
   it('only builds firewall commands for valid ports, without executing them', () => {
-    expect(directAgentFirewallCommand(48763)).toContain('-Protocol TCP -LocalPort 48763')
-    expect(directAgentFirewallCommand(48763)).toContain('-Profile Private,Domain')
-    for (const value of [0, 65536, NaN, 123.5]) expect(directAgentFirewallCommand(value)).toBeNull()
+    expect(directAgentFirewallCommand(48763, 'windows')).toContain('-Protocol TCP -LocalPort 48763')
+    expect(directAgentFirewallCommand(48763, 'windows')).toContain('-Profile Private,Domain')
+    for (const value of [0, 65536, NaN, 123.5]) expect(directAgentFirewallCommand(value, 'firewalld')).toBeNull()
+  })
+
+  it('builds the firewall command for the selected remote system', () => {
+    expect(directAgentFirewallCommand(51234, 'firewalld')).toBe('sudo firewall-cmd --permanent --add-port=51234/tcp && sudo firewall-cmd --reload')
+    expect(directAgentFirewallCommand(51234, 'ufw')).toBe('sudo ufw allow 51234/tcp')
+    expect(directAgentFirewallCommand(51234, 'macos')).toBeNull()
+    expect(directAgentFirewallHintKey('macos')).toContain('macOS')
+    expect(directAgentFirewallHintKey('ufw')).toContain('Linux')
+    expect(directAgentFirewallHintKey('windows')).toContain('Windows')
   })
 
   it('distinguishes unreachable ports, authorization and changed identities without echoing errors or secrets', () => {

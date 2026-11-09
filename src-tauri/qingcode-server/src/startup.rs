@@ -186,18 +186,31 @@ fn linux(
     match action {
         "enable" => {
             if !root {
-                checked(
-                    Command::new("loginctl")
-                        .args(["enable-linger", &unsafe { libc::geteuid() }.to_string()]),
-                )?;
+                // 旧版 systemd 即使 linger 已开启，普通用户再次设置也要管理员认证；
+                // 管理员预先开启后这里必须跳过，否则普通用户永远无法注册自启。
+                let uid = unsafe { libc::geteuid() }.to_string();
+                let lingering = Command::new("loginctl")
+                    .args(["show-user", &uid, "--property=Linger"])
+                    .output()
+                    .is_ok_and(|output| {
+                        output.status.success()
+                            && String::from_utf8_lossy(&output.stdout).trim() == "Linger=yes"
+                    });
+                if !lingering {
+                    checked(Command::new("loginctl").args(["enable-linger", &uid]))?;
+                }
             }
             let info = info.ok_or("missing paired gateway descriptor")?;
             let text = format!("{marker}[Unit]\nDescription=QingCode direct gateway\nAfter=network.target\n[Service]\nType=simple\nExecStart={} direct --hostname {} --port {} --state-dir {}\nRestart=always\nRestartSec=5\nKillMode=process\nUMask=0077\n[Install]\nWantedBy={}\n", systemd_quote(&binary.to_string_lossy()), systemd_quote(&info.hostname), info.port, systemd_quote(&state.to_string_lossy()), if root { "multi-user.target" } else { "default.target" });
             crate::direct::protect_private_directory(state)?;
             std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
             std::fs::write(&path, text).map_err(|e| e.to_string())?;
-            ctl(&["daemon-reload"])?;
-            ctl(&["enable", &unit])?;
+            let registered = ctl(&["daemon-reload"]).and_then(|()| ctl(&["enable", &unit]));
+            // 用户级 systemd 不可用时不留下新单元，否则之后的 disable 会因此失败。
+            if registered.is_err() && existing.is_none() {
+                let _ = std::fs::remove_file(&path);
+            }
+            registered?;
         }
         "disable" if existing.is_some() => {
             ctl(&["disable", &unit])?;

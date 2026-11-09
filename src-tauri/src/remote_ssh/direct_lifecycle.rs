@@ -135,18 +135,16 @@ pub async fn direct_agent_manage(
             let output = execute(unix, windows).await?;
             check_identity(&descriptor(&output)?, &paired)?;
         }
-        let (unix, windows) = direct_settings::startup_commands(
-            &staged,
-            if auto_start { "enable" } else { "disable" },
-        );
-        let output = execute(unix, windows).await?;
-        if output.exit_code != 0 {
-            return Err(
-                "[direct:startup] 开机自启配置失败，请检查远端管理员权限；可关闭自启后重试启动"
-                    .into(),
-            );
-        }
-        let info = direct_settings::record_startup(&app, &connection_id, auto_start)?;
+        let action = if auto_start { "enable" } else { "disable" };
+        let (unix, windows) = direct_settings::startup_commands(&staged, action);
+        let startup_warning =
+            direct_settings::startup_outcome(action, execute(unix, windows).await)?;
+        let mut info = direct_settings::record_startup(
+            &app,
+            &connection_id,
+            auto_start && startup_warning.is_none(),
+        )?;
+        info.startup_warning = startup_warning;
         if start {
             direct::test(&paired).await?;
         }

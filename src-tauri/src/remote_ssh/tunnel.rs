@@ -365,7 +365,7 @@ fn listens_at(
 }
 
 /// 主管理器看到隧道登记后一律走网关，这里用独立管理器复用隧道的 SSH 会话执行维护命令。
-fn tunnel_maintenance(
+pub(super) fn tunnel_maintenance(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
@@ -461,7 +461,7 @@ pub(super) async fn expose_gateway(
     root: &RegisteredRoot,
     port: u16,
     startup: &str,
-) -> Result<qingcode_server::direct::DirectInfo, String> {
+) -> Result<(qingcode_server::direct::DirectInfo, Option<String>), String> {
     let id = parse_remote_uri(&root.uri)?.connection_id;
     let gate = manager.server_gate(&format!("tunnel|{id}"))?;
     let _guard = gate.lock().await;
@@ -473,11 +473,8 @@ pub(super) async fn expose_gateway(
         root,
         direct_settings::startup_commands(&staged, startup),
     )
-    .await?;
-    if configured.exit_code != 0 {
-        return Err("[direct:startup] 开机自启配置失败，请检查远端管理员权限".into());
-    }
-    Ok(info)
+    .await;
+    Ok((info, direct_settings::startup_outcome(startup, configured)?))
 }
 
 /// 端口直连接管后摘除隧道登记；SSH 会话仍由主管理器持有，随连接一起断开。

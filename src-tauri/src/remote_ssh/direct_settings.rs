@@ -28,6 +28,9 @@ pub struct DirectAgentInfo {
     previous_ports: Vec<u16>,
     #[serde(default)]
     auto_start: Option<bool>,
+    /// 本次操作中「开启自启」失败的原因；只随本次返回，不持久化。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) startup_warning: Option<String>,
 }
 impl Saved {
     fn info(&self) -> DirectAgentInfo {
@@ -39,6 +42,7 @@ impl Saved {
             token_saved: !self.token.is_empty(),
             previous_ports: self.previous_ports.clone(),
             auto_start: self.auto_start,
+            startup_warning: None,
         }
     }
     fn config(&self) -> Result<DirectConnectionConfig, String> {
@@ -456,6 +460,40 @@ pub(super) fn startup_commands(bin: &str, action: &str) -> (String, String) {
     )
 }
 
+/// 取远端 `[direct:startup]` 行的原因，限制长度并去掉控制字符后才交给界面显示。
+fn startup_failure_reason(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|line| {
+            line.split_once("[direct:startup]")
+                .map(|(_, rest)| rest.trim())
+        })
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("远端未返回具体原因")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect()
+}
+
+/// 网关此时已在运行，开启自启失败只返回警告，不让安装失败；关闭自启失败仍报错，
+/// 否则用户会以为已取消，实际重启后服务仍会拉起。
+pub(super) fn startup_outcome(
+    action: &str,
+    result: Result<RemoteExecResult, String>,
+) -> Result<Option<String>, String> {
+    let reason = match result {
+        Ok(output) if output.exit_code == 0 => return Ok(None),
+        Ok(output) => startup_failure_reason(&output.stderr),
+        Err(error) => error,
+    };
+    if action == "enable" {
+        Ok(Some(reason))
+    } else {
+        Err(format!("[direct:startup] 开机自启配置失败：{reason}"))
+    }
+}
+
 // SFTP returns /C:/... on Windows; PowerShell requires a native drive path.
 pub(super) fn provision_commands(bin: &str, port: u16) -> (String, String) {
     let unix = format!(
@@ -474,30 +512,35 @@ async fn provision_over_ssh(
     root: &RegisteredRoot,
     port: u16,
     startup: &str,
-) -> Result<qingcode_server::direct::DirectInfo, String> {
+) -> Result<(qingcode_server::direct::DirectInfo, Option<String>), String> {
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
     let staged = server::stage_direct_gateway(manager, root).await?;
-    let (mut unix, mut windows) = provision_commands(&staged, port);
-    // Configure after startup has produced its descriptor, then return pairing info.
-    let (start_unix, start_windows) = startup_commands(&staged, startup);
-    unix = unix.replace(" && ", &format!(" && {start_unix} && "));
-    windows = windows.replace("; & ", &format!("; {start_windows}; & "));
+    let (unix, windows) = provision_commands(&staged, port);
     let result = manager
         .exec_remote_shell(&root.uri, &unix, &windows, true, Duration::from_secs(40))
         .await?;
     if result.exit_code != 0 {
-        if result.stderr.contains("[direct:startup]") {
-            return Err("[direct:startup] 开机自启配置失败，请检查远端管理员权限".into());
-        }
         return Err("启动直连服务失败，请查看远端 direct 日志或检查监听端口是否被占用".into());
     }
-    result
+    let descriptor = result
         .stdout
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str(line).ok())
-        .ok_or_else(|| "未取得 Server 配对信息，请手动启动服务并导入".to_string())
+        .ok_or_else(|| "未取得 Server 配对信息，请手动启动服务并导入".to_string())?;
+    // 单独执行：自启失败时网关已运行，配对信息也要照常返回。
+    let (start_unix, start_windows) = startup_commands(&staged, startup);
+    let configured = manager
+        .exec_remote_shell(
+            &root.uri,
+            &start_unix,
+            &start_windows,
+            true,
+            Duration::from_secs(40),
+        )
+        .await;
+    Ok((descriptor, startup_outcome(startup, configured)?))
 }
 
 #[tauri::command]
@@ -531,7 +574,7 @@ pub async fn direct_agent_provision(
     } else {
         "disable"
     };
-    let descriptor = if tunneled {
+    let (descriptor, startup_warning) = if tunneled {
         tunnel::expose_gateway(&manager, &root, port, startup).await?
     } else {
         provision_over_ssh(&manager, &root, port, startup).await?
@@ -563,14 +606,50 @@ pub async fn direct_agent_provision(
         certificate_fingerprint: descriptor.certificate_sha256,
         token: descriptor.token.ok_or("配对信息没有凭据")?,
         previous_ports: previous,
-        auto_start: Some(auto_start.unwrap_or(true)),
+        auto_start: Some(auto_start.unwrap_or(true) && startup_warning.is_none()),
     };
-    Ok(persist(&app, &connection_id, saved)?.info())
+    let mut info = persist(&app, &connection_id, saved)?.info();
+    info.startup_warning = startup_warning;
+    Ok(info)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn exec_result(exit_code: u32, stderr: &str) -> Result<RemoteExecResult, String> {
+        Ok(RemoteExecResult {
+            stdout: String::new(),
+            stderr: stderr.into(),
+            exit_code,
+        })
+    }
+    #[test]
+    fn enabling_startup_warns_with_the_remote_reason_instead_of_failing() {
+        assert_eq!(startup_outcome("enable", exec_result(0, "")), Ok(None));
+        let denied = "[direct:startup] Could not enable linger: Access denied\nsecond line";
+        assert_eq!(
+            startup_outcome("enable", exec_result(1, denied)),
+            Ok(Some("Could not enable linger: Access denied".into()))
+        );
+        assert_eq!(
+            startup_outcome("enable", Err("SSH closed".into())),
+            Ok(Some("SSH closed".into()))
+        );
+        let untagged = startup_outcome("enable", exec_result(1, "boom")).unwrap();
+        assert_eq!(untagged.as_deref(), Some("远端未返回具体原因"));
+    }
+    #[test]
+    fn failing_to_disable_startup_stays_an_error() {
+        let error = startup_outcome("disable", exec_result(1, "[direct:startup] denied"));
+        assert!(error.unwrap_err().starts_with("[direct:startup]"));
+    }
+    #[test]
+    fn startup_failure_reason_is_bounded_and_has_no_control_characters() {
+        let long = format!("[direct:startup] a\u{1b}[31m{}", "x".repeat(500));
+        let reason = startup_failure_reason(&long);
+        assert_eq!(reason.chars().count(), 300);
+        assert!(!reason.chars().any(char::is_control));
+    }
     #[test]
     fn provisioning_converts_sftp_windows_paths_and_quotes_both_commands() {
         let (_, windows) = provision_commands("/C:/Users/O'Brien/Agent Folder/server.exe", 48763);

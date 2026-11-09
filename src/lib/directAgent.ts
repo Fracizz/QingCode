@@ -11,7 +11,11 @@ export interface DirectAgentInfo {
   tokenSaved: boolean
   previousPorts: number[]
   autoStart?: boolean | null
+  /** Why enabling startup failed in this call; the gateway itself is running. */
+  startupWarning?: string | null
 }
+
+export type DirectAgentFirewallPlatform = 'windows' | 'firewalld' | 'ufw' | 'macos'
 
 export interface DirectAgentTarget {
   connectionId: string
@@ -70,6 +74,7 @@ export interface DirectAgentApi {
   probe(host: string, port: number): Promise<{ certificateFingerprint: string }>
   test(target: DirectAgentTarget): Promise<{ version: string; protocol: number }>
   save(target: DirectAgentTarget & { enabled: boolean }): Promise<void>
+  firewallPlatform?(connectionId: string, sshConnectionId?: string): Promise<DirectAgentFirewallPlatform | null>
   firewallPlan?(target: DirectAgentFirewallTarget): Promise<DirectAgentFirewallPlan>
   firewallApply?(target: DirectAgentFirewallTarget & { expectedPlanSha256: string }): Promise<DirectAgentFirewallResult>
 }
@@ -81,6 +86,7 @@ export const directAgentApi: DirectAgentApi = {
   probe: (host, port) => safeInvoke('检查 Server 服务器身份', 'direct_agent_probe', { host, port }),
   test: target => safeInvoke('测试 Server 直连', 'direct_agent_test', { ...target }),
   save: target => safeInvoke('保存 Server 直连配置', 'direct_agent_save', { ...target }),
+  firewallPlatform: (connectionId, sshConnectionId) => safeInvoke('识别远端系统', 'direct_agent_firewall_platform', { connectionId, sshConnectionId }),
   firewallPlan: target => safeInvoke('检查 SSH 防火墙授权', 'direct_agent_firewall_plan', { ...target }),
   firewallApply: target => safeInvoke('通过 SSH 放行 Server 端口', 'direct_agent_firewall_apply', { ...target }),
 }
@@ -151,10 +157,29 @@ export function parseDirectAgentPairing(text: string): DirectAgentPairing {
   }
 }
 
-/** Only a validated integer can enter the copyable administration command. */
-export function directAgentFirewallCommand(port: number): string | null {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
-  return `New-NetFirewallRule -DisplayName 'QingCode Server TCP ${port}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${port} -Profile Private,Domain`
+export function isDirectAgentPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+}
+
+/** Only a validated integer can enter the copyable administration command. macOS filters by application, so it has no port command. */
+export function directAgentFirewallCommand(port: number, platform: DirectAgentFirewallPlatform): string | null {
+  if (!isDirectAgentPort(port)) return null
+  switch (platform) {
+    case 'windows':
+      return `New-NetFirewallRule -DisplayName 'QingCode Server TCP ${port}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${port} -Profile Private,Domain`
+    case 'firewalld':
+      return `sudo firewall-cmd --permanent --add-port=${port}/tcp && sudo firewall-cmd --reload`
+    case 'ufw':
+      return `sudo ufw allow ${port}/tcp`
+    case 'macos':
+      return null
+  }
+}
+
+export function directAgentFirewallHintKey(platform: DirectAgentFirewallPlatform): string {
+  if (platform === 'windows') return 'Windows：在远端以管理员身份运行以下命令，放行专用和域网络。其他网络配置请由管理员调整。'
+  if (platform === 'macos') return 'macOS：应用防火墙按程序放行。已开启防火墙时，请在「系统设置 → 网络 → 防火墙 → 选项」中允许 qingcode-server。'
+  return 'Linux：在远端以 root 或可使用 sudo 的账户运行以下命令。此命令对所有来源放行，需要限定来源请由管理员调整；云服务器还需配置安全组。'
 }
 
 export function directAgentErrorKey(error: unknown): string {
