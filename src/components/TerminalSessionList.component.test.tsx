@@ -386,12 +386,6 @@ describe('TerminalSessionList', () => {
     expect(row('today').querySelector('[data-tooltip*="09:05"]')).not.toBeNull()
   })
 
-  it('marks only the current row with the brand rail', () => {
-    render(<TerminalSessionList />)
-    expect(row('t1').querySelector('[data-terminal-active-rail]')).not.toBeNull()
-    expect(row('t2').querySelector('[data-terminal-active-rail]')).toBeNull()
-  })
-
   it('keeps abnormal status text next to the close slot', () => {
     mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2', status: 'exited', exitCode: 1 })]
     render(<TerminalSessionList />)

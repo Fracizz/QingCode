@@ -368,13 +368,6 @@ export default function TerminalSessionList() {
             }`}
           />
         )}
-        {!managing && isActive && (
-          <span
-            aria-hidden="true"
-            data-terminal-active-rail
-            className="pointer-events-none absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-brand"
-          />
-        )}
         {managing && (
           <span className="-ml-5 flex flex-shrink-0">
             <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
