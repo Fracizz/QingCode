@@ -129,6 +129,7 @@ export const EN = Object.freeze({
   'AI 编程快捷键': 'AI coding shortcuts',
   '发送 Ctrl+C': 'Send Ctrl+C',
   '发送 Shift+Tab': 'Send Shift+Tab',
+  '发送 Shift+←': 'Send Shift+←',
   '向上': 'Up',
   '向下': 'Down',
   '退格': 'Backspace',

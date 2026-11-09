@@ -67,6 +67,19 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.click('#pair-submit')
     await page.waitForFunction(() => document.querySelector('#active-host').dataset.state === 'online')
 
+    await step('a successful probe on the dashboard flashes the top badge dot and value once', async () => {
+      await started()
+      // 回到前台会立即补测，不必等工作台 30 秒的间隔。
+      await page.evaluate(() => { window.qingVisibility(false); window.qingVisibility(true) })
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'ping-value' && item.id === 'home-latency'), undefined, { timeout: 13000 })
+      await page.waitForTimeout(600)
+      const flashes = await started()
+      assert.equal(flashes.filter(item => item.name === 'ping-dot' && String(item.className).includes('dot')).length, 1)
+      assert.equal(flashes.filter(item => item.name === 'ping-value' && item.id === 'home-latency').length, 1)
+      // 自动化窗口被节流时 animationend 会延后，等类名清掉即可。
+      await page.waitForFunction(() => !document.querySelector('#active-host .dot').classList.contains('ping-flash'), undefined, { timeout: 13000 })
+    })
+
     await step('switching dashboard pages plays the entrance once', async () => {
       await started()
       await page.click('#dashboard-nav [data-page="project"]')

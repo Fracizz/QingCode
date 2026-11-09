@@ -215,6 +215,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .session-label').textContent, row), '第二个会话')
       await swipeLeft(row + ' .session-face', 90)
       assert.equal(await page.evaluate(selector => document.querySelector(selector).dataset.revealed, row), 'true')
+      assert.deepEqual(await page.evaluate(selector => {
+        const close = document.querySelector(selector + ' .session-close')
+        return { text: close.textContent, background: getComputedStyle(close).backgroundColor }
+      }, row), { text: '关闭', background: 'rgb(255, 157, 140)' })
       await shot('drawer-swipe.png')
       const selected = await page.evaluate(() => document.querySelector('#session-options [data-current="true"]').dataset.id)
       await page.evaluate(selector => document.querySelector(selector + ' .row').click(), row)

@@ -348,6 +348,8 @@ describe('Android terminal protocol', () => {
     expect(keySequence('esc')).toBe('\x1b')
     expect(keySequence('backspace')).toBe('\x7f')
     expect(keySequence('shift-tab')).toBe('\x1b[Z')
+    expect(keySequence('shift-left')).toBe('\x1b[1;2D')
+    expect(keySequence('shift-left', { applicationCursor: true })).toBe('\x1b[1;2D')
     expect(keySequence('delete-word')).toBe('\x17')
     expect(keySequence('delete-line-start')).toBe('\x15')
     expect(keySequence('clear-input')).toBe('\x05\x15')

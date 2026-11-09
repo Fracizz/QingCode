@@ -536,6 +536,8 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';
   if (key === 'shift-tab') return '\x1b[Z';
+  // 带修饰的方向键始终是 CSI 形式，不受应用光标模式影响。
+  if (key === 'shift-left') return '\x1b[1;2D';
   if (key === 'backspace') return '\x7f';
   if (key === 'delete-word') return '\x17';
   if (key === 'delete-line-start') return '\x15';

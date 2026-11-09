@@ -366,8 +366,6 @@ const homeOverview = createSessionOverview({
     selected: () => null,
     lastSession: projectId => lastSessionOf(projectId),
     busy: () => busy,
-    // 「继续终端」卡片已经展示这个会话；只有一个会话时仍保留在列表里，方便管理。
-    omit: session => homeOverview.list().length > 1 && session.id === resumeSession()?.id,
   },
   open: session => openOverviewSession(session, homeOverview),
   end: list => endOverviewSessions(list, homeOverview),
@@ -549,7 +547,10 @@ function renderLatency() {
   // 每次探测成功闪一下状态圆点和延迟值；语言切换等重绘不闪，失败也不闪。
   if (isFreshLatency(snapshot, latencyFlashedAt)) {
     latencyFlashedAt = snapshot.checkedAt;
-    if (!terminalScreen.hidden) for (const id of ['terminal-dot', 'terminal-latency']) replayAnimation(get(id), 'ping-flash');
+    const targets = terminalScreen.hidden
+      ? [get('active-host').querySelector('.dot'), get('home-latency')]
+      : [get('terminal-dot'), get('terminal-latency')];
+    for (const element of targets) replayAnimation(element, 'ping-flash');
   }
   get('terminal-latency').textContent = t('电脑 {value}', { value });
   get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));

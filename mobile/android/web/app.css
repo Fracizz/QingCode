@@ -330,9 +330,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .row[data-grouped] { grid-template-columns: minmax(0, 1fr); gap: 8px; min-height: 56px; padding-block: 8px; }
 .project-row { position: relative; overflow: hidden; }
 .project-row .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.project-copy { background: var(--accent-surface); color: var(--accent); font-size: 11px; font-weight: 600; }
+.project-copy { background: var(--accent-surface); color: var(--accent); }
 .project-copy:active:not(:disabled), .project-copy:focus-visible { background: var(--accent-pressed); transform: none; }
-.project-copy svg { width: 18px; height: 18px; }
 .row-badge { color: var(--accent); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .row, .connection-main {
   display: grid;
@@ -525,7 +524,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #special-keys > button { min-width: 44px; padding-inline: 4px; }
 /* 方向、退格用 SVG：字体字形的基线和宽度因机型而异，按键里对不齐。 */
 :is(#special-keys, .extra-keys) button svg { width: 18px; height: 18px; }
-#special-keys [data-key="shift-tab"] svg { width: 14px; height: 14px; }
+#special-keys [data-key="shift-tab"] svg, #keys-dialog [data-key="shift-left"] svg { width: 14px; height: 14px; }
 #special-keys > #slash-command { font-family: system-ui, sans-serif; }
 /* 「更多」弹层底色与按键同为 surface，按键改用更深的底色，看得出是可点的键。 */
 #keys-dialog .extra-keys button { background: var(--paper); font-family: system-ui, sans-serif; }
@@ -663,9 +662,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-face { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; }
 #session-options .session-face { grid-template-columns: minmax(0, 1fr) 44px; }
 #session-options .session-more { color: var(--muted); }
-.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; }
-.session-close { background: var(--error-surface); color: var(--error); }
-.session-close:active:not(:disabled), .session-close:focus-visible { background: #4c2822; transform: none; }
+.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; font-size: 11px; font-weight: 600; }
+.swipe-action svg { width: 18px; height: 18px; }
+.session-close { background: var(--error); color: #38150f; }
+.session-close:active:not(:disabled), .session-close:focus-visible { background: #ffc2b7; transform: none; }
 .session-option .row { grid-template-columns: minmax(0, 1fr); min-height: 56px; padding: 10px 12px; text-align: left; }
 .session-option .row[aria-current="true"], .session-option .row[aria-current="true"]:is(:active, :focus-visible) { color: inherit; background: transparent; }
 .session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
@@ -881,11 +881,11 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
 #font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
-#terminal-dot[data-state="online"].ping-flash { animation: ping-dot 460ms ease-out; }
-#terminal-latency.ping-flash { animation: ping-value 460ms ease-out; }
+#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
+#terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop { transition: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #terminal-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {

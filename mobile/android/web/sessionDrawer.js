@@ -238,6 +238,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       row.querySelector('.session-more').disabled = busy;
       const close = row.querySelector('.session-close');
       close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
+      close.querySelector('span').textContent = t(session.exit ? '移除' : '关闭');
       close.disabled = busy;
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
@@ -341,7 +342,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const more = button('icon-button session-more', () => { if (latest()) openActions(latest()); });
     more.append(icon('more'));
     const close = button('swipe-action session-close', () => { void endSession(session.id); });
-    close.append(icon('close'));
+    close.append(icon('close'), document.createElement('span'));
     const face = document.createElement('div');
     face.className = 'session-face';
     face.append(option, more);
