@@ -405,7 +405,7 @@ describe('TerminalSessionList', () => {
     ]
     render(<TerminalSessionList />)
     expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
-    expect(within(row('other')).getByText('waiting')).toHaveClass('text-fg-muted')
+    expect(within(row('other')).getByText('waiting')).toHaveClass('text-fg-dim')
     expect(within(row('other')).queryByText('待恢复')).toBeNull()
     expect(within(row('other')).queryByText('已退出')).toBeNull()
     expect(within(row('other')).queryByRole('button', { name: /重启/ })).toBeNull()
