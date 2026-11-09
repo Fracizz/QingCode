@@ -1621,6 +1621,8 @@
     "取消打开": "Cancel opening",
     "后台运行": "Run in background",
     "正在后台打开远程项目，点击查看进度": "Opening remote project in background, click to view progress",
+    "正在后台更新远端服务，点击查看进度": "Updating remote service in background, click to view progress",
+    "正在后台安装远端服务，点击查看进度": "Installing remote service in background, click to view progress",
     "打开远程项目超时，请检查连接或远端服务后重试。": "Opening the remote project timed out. Check the connection or remote service, then retry.",
     "正在打开项目 {name}…": "Opening project {name}…",
     "命令（按运行系统）": "Command (workspace OS)",
