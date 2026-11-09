@@ -5,7 +5,7 @@ import { startSshWarmupQueue, stopSshWarmupQueue, useSshWarmupStore } from '../s
 import { selectWarmupTargets, type SshWarmupQueue } from '../lib/sshWarmupQueue'
 import type { FileNode } from '../lib/fileTreeCache'
 import { createProjectTrustChecker, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
-import { isSshBackgroundSuspended, SSH_CONNECTION_INVALIDATED_EVENT } from '../lib/sshWorkspace'
+import { isSshBackgroundSuspended, SSH_CONNECTION_INVALIDATED_EVENT, SSH_SERVER_UPDATED_EVENT } from '../lib/sshWorkspace'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 
@@ -49,11 +49,15 @@ export function useSshWarmup(ready: boolean) {
         // An initial authentication failure must remain visible as a failed
         // preparation; only invalidate previously ready cached roots here.
         if (useSshWarmupStore.getState().statuses.get(event.payload.rootUri)?.phase === 'ready') {
-          queue.invalidateConnection(event.payload.connectionId)
+          // 用户主动断开时不恢复；意外断开（含更新时网关重启）延迟后重新预热。
+          if (isSshBackgroundSuspended(event.payload.connectionId)) queue.invalidateConnection(event.payload.connectionId)
+          else queue.connectionLost(event.payload.connectionId)
         }
       }
     ).catch(() => () => {})
+    const serverUpdated = () => queue.retryFailed()
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, refresh)
+    window.addEventListener(SSH_SERVER_UPDATED_EVENT, serverUpdated)
     window.addEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
     window.addEventListener('storage', storage)
     document.addEventListener('visibilitychange', visibility)
@@ -63,6 +67,7 @@ export function useSshWarmup(ready: boolean) {
       disposed = true
       void unlisten.then(stop => stop())
       window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, refresh)
+      window.removeEventListener(SSH_SERVER_UPDATED_EVENT, serverUpdated)
       window.removeEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
       window.removeEventListener('storage', storage)
       document.removeEventListener('visibilitychange', visibility)

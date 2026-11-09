@@ -82,7 +82,8 @@ import {
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
 import { cancelSshOpening, runSshOpening, SshPreparationError } from './sshOpeningStore'
-import { beginSshForeground, cancelSshWarmup, takeSshWarmup } from './sshWarmupStore'
+import { beginSshForeground, cancelSshWarmup, peekSshWarmup, takeSshWarmup } from './sshWarmupStore'
+import { recordSshOpenDiagnostic, type SshOpenDiagnostic } from '../lib/sshOpenDiagnostics'
 
 export type { FileNode }
 
@@ -189,39 +190,71 @@ let projectSwitchGeneration = 0
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
   return runSshOpening(project, async (signal, report) => {
-    const pendingWarmup = takeSshWarmup(project.path)
-    let warmedTree: FileNode[] | null | undefined
-    if (pendingWarmup) {
-      report('service')
-      try { warmedTree = await pendingWarmup } catch { /* Foreground owns retry and diagnostics. */ }
-      signal.throwIfAborted()
+    const before = peekSshWarmup(project.path)
+    const diagnostic: SshOpenDiagnostic = {
+      projectId: project.id,
+      connectionId: project.connection_id ?? undefined,
+      warmup: before?.phase ?? 'none',
+      warmupDetail: before?.detail,
+      reused: false,
+      outcome: 'failed',
+      warmupMs: 0, connectMs: 0, prepareMs: 0, filesMs: 0,
     }
-    const sharedReady = await isSshSharedServerReady(project.path)
-    signal.throwIfAborted()
-    if (sharedReady) report('mounting')
-    // 必须在重连之前判断：预热结果只对当时那条连接有效，重连后要重新准备。
-    const warmedReady = warmedTree != null && await isSshWorkspaceReady(project.path)
-    signal.throwIfAborted()
-    await ensureSshWorkspaceConnected(project)
-    signal.throwIfAborted()
-    report('service')
+    let lapStart = Date.now()
+    const lap = () => {
+      const now = Date.now()
+      const elapsed = now - lapStart
+      lapStart = now
+      return elapsed
+    }
     try {
-      if (!warmedReady) await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
+      const pendingWarmup = takeSshWarmup(project.path)
+      let warmedTree: FileNode[] | null | undefined
+      let warmupPrepared = false
+      if (pendingWarmup) {
+        report('service')
+        try {
+          warmedTree = await pendingWarmup
+          warmupPrepared = true
+        } catch { /* Foreground owns retry and diagnostics. */ }
+        signal.throwIfAborted()
+      }
+      const sharedReady = await isSshSharedServerReady(project.path)
       signal.throwIfAborted()
-      report('files')
-      // Verify a real directory read before exposing editor/terminal actions.
-      const fresh = warmedTree ?? await loadProjectRootTree(project)
+      if (sharedReady) report('mounting')
+      // 必须在重连之前判断：预热结果只对当时那条连接有效，重连后要重新准备。
+      const warmedReady = warmupPrepared && await isSshWorkspaceReady(project.path)
       signal.throwIfAborted()
-      const tree = previousTree ? await reloadLoadedChildren(fresh, previousTree, project.path) : fresh
+      diagnostic.reused = warmedReady
+      diagnostic.warmupMs = lap()
+      await ensureSshWorkspaceConnected(project)
       signal.throwIfAborted()
-      const recentFiles = await touchAndLoadRecentFiles(project.id)
-      signal.throwIfAborted()
-      await activateSshWorkspace(project.path)
-      signal.throwIfAborted()
-      return { tree, recentFiles, warmed: warmedTree != null }
-    } catch (error) {
-      signal.throwIfAborted()
-      throw new SshPreparationError(String(error))
+      diagnostic.connectMs = lap()
+      report('service')
+      try {
+        if (!warmedReady) await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
+        signal.throwIfAborted()
+        diagnostic.prepareMs = lap()
+        report('files')
+        // Verify a real directory read before exposing editor/terminal actions.
+        const fresh = warmedTree ?? await loadProjectRootTree(project)
+        signal.throwIfAborted()
+        const tree = previousTree ? await reloadLoadedChildren(fresh, previousTree, project.path) : fresh
+        signal.throwIfAborted()
+        const recentFiles = await touchAndLoadRecentFiles(project.id)
+        signal.throwIfAborted()
+        await activateSshWorkspace(project.path)
+        signal.throwIfAborted()
+        diagnostic.filesMs = lap()
+        diagnostic.outcome = 'opened'
+        return { tree, recentFiles, warmed: warmedTree != null }
+      } catch (error) {
+        signal.throwIfAborted()
+        throw new SshPreparationError(String(error))
+      }
+    } finally {
+      if (signal.aborted) diagnostic.outcome = 'cancelled'
+      recordSshOpenDiagnostic(diagnostic)
     }
   })
 }

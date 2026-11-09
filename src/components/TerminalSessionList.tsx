@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -26,6 +25,7 @@ import {
 } from 'lucide-react'
 import { useTerminalTabActions } from '../hooks/useTerminalTabActions'
 import { useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
+import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useTerminalStore, MAX_TERMINALS_PER_PROJECT } from '../store/terminalStore'
@@ -68,6 +68,7 @@ import { ProjectKindIcon } from './ProjectKindMark'
 import TerminalActivityDot from './TerminalActivityDot'
 import TerminalRenameInput from './TerminalRenameInput'
 import Tooltip from './Tooltip'
+import { TooltipSuppressionContext } from './tooltipContext'
 import type { TerminalTab } from '../types'
 
 const HEADER_BUTTON =
@@ -76,6 +77,8 @@ const BAR_BUTTON =
   'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
 const ROW_BUTTON = 'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded'
 const GROUP_ACTION = 'text-fg-muted hover:bg-bg-active hover:text-fg'
+// 不用 ui-chip：它的高度随字号变大且优先级高于 h-*，会让行内按钮的底色几乎撑满整行。
+const TERMINAL_ROW_BUTTON = 'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded'
 
 type PickState = 'on' | 'off' | 'mixed'
 
@@ -124,7 +127,7 @@ function useNowRefreshedDaily(): number {
 
 /** 终端工作台左栏：按项目分组列出全部终端，替代横向标签栏。 */
 export default function TerminalSessionList() {
-  const actions = useTerminalTabActions({ dropAxis: 'vertical' })
+  const actions = useTerminalTabActions()
   const now = useNowRefreshedDaily()
   const {
     translate,
@@ -141,8 +144,6 @@ export default function TerminalSessionList() {
     renamingId,
     renameDraft,
     setRenameDraft,
-    draggedTerminalId,
-    dropTarget,
     renameInputRef,
     renameCommittingRef,
     handleCloseClick,
@@ -153,10 +154,6 @@ export default function TerminalSessionList() {
     cancelRename,
     handleNewTerminal,
     profileMenuItems,
-    clearTerminalDrag,
-    handleTabDragStart,
-    handleTabDragOver,
-    handleTabDrop,
     menuItems,
     reloadTerminal,
   } = actions
@@ -164,6 +161,7 @@ export default function TerminalSessionList() {
   const sshConnections = useProjectStore(s => s.sshConnections)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
   const allTerminals = useTerminalStore(s => s.terminals)
+  const reorderTerminal = useTerminalStore(s => s.reorderTerminal)
   const { pendingTerminalId, selectTerminal: selectAcrossProjects } = useTerminalProjectSelection()
   const attentionIds = useSyncExternalStore(subscribeTerminalAttention, getTerminalAttentionSnapshot)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
@@ -174,8 +172,6 @@ export default function TerminalSessionList() {
   const currentProjectId = currentProject?.id ?? null
   const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects)
   const [seenProjectId, setSeenProjectId] = useState<string | null>(null)
-  const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
-  const [projectDrop, setProjectDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ x: number; y: number; projectId: string } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [manageMode, setManageMode] = useState(false)
@@ -245,43 +241,36 @@ export default function TerminalSessionList() {
     target?.scrollIntoView?.({ block: 'nearest' })
   }, [paneActiveId, currentProjectId])
 
-  const clearProjectDrag = () => {
-    setDraggedProjectId(null)
-    setProjectDrop(null)
-  }
-
-  const projectMoveAt = (event: ReactDragEvent<HTMLElement>, targetId: string) => {
-    if (!draggedProjectId) return null
-    const rect = event.currentTarget.getBoundingClientRect()
-    const position: 'before' | 'after' =
-      event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
-    const move = terminalProjectMove(projects, draggedProjectId, targetId, position)
-    return move ? { ...move, position } : null
-  }
-
-  const onProjectDragOver = (event: ReactDragEvent<HTMLElement>, targetId: string) => {
-    if (!draggedProjectId) return
-    const move = projectMoveAt(event, targetId)
-    if (!move) {
-      setProjectDrop(null)
-      return
-    }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    setProjectDrop(current =>
-      current?.id === targetId && current.position === move.position
-        ? current
-        : { id: targetId, position: move.position },
-    )
-  }
-
-  const onProjectDrop = (event: ReactDragEvent<HTMLElement>, targetId: string) => {
-    if (!draggedProjectId) return
-    event.preventDefault()
-    const move = projectMoveAt(event, targetId)
-    if (move) void reorderVisibleProjects(move.fromIndex, move.toIndex)
-    clearProjectDrag()
-  }
+  const projectOfTerminal = (id: string) => allTerminals.find(terminal => terminal.id === id)?.projectId
+  const {
+    draggedId: draggedTerminalId,
+    drop: dropTarget,
+    start: startTerminalDrag,
+  } = useVerticalPointerReorder({
+    targetSelector: '[data-terminal-session-row]',
+    targetIdOf: element => element.dataset.terminalSessionRow,
+    ignoreSelector: 'button, input',
+    listRef,
+    // 终端的 cwd 和连接绑定项目，只允许在同一项目内排序。
+    canDrop: (sourceId, drop) => projectOfTerminal(sourceId) === projectOfTerminal(drop.id),
+    onDrop: (sourceId, drop) => reorderTerminal(sourceId, drop.id, drop.position),
+  })
+  const {
+    draggedId: draggedProjectId,
+    drop: projectDrop,
+    start: startProjectDrag,
+  } = useVerticalPointerReorder({
+    targetSelector: '[data-terminal-project-group]',
+    targetIdOf: element => element.dataset.terminalProjectGroup,
+    // 组头大部分是折叠按钮，要能从这里拖；只排除右侧操作和管理模式的勾选框。
+    ignoreSelector: '[data-terminal-group-actions], [role="checkbox"]',
+    listRef,
+    canDrop: (sourceId, drop) => terminalProjectMove(projects, sourceId, drop.id, drop.position) !== null,
+    onDrop: (sourceId, drop) => {
+      const move = terminalProjectMove(projects, sourceId, drop.id, drop.position)
+      if (move) void reorderVisibleProjects(move.fromIndex, move.toIndex)
+    },
+  })
 
   const setProjectCollapsed = (projectId: string, collapsed: boolean) => {
     if (collapsedProjects.has(projectId) === collapsed) return
@@ -358,16 +347,12 @@ export default function TerminalSessionList() {
         tabIndex={term.id === rovingTerminalId ? 0 : -1}
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
-        draggable={!isRenaming && !managing}
         className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-fg'
             : 'text-tree-fg hover:bg-bg-hover hover:text-fg'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
-        onDragStart={event => handleTabDragStart(event, term.id)}
-        onDragOver={event => handleTabDragOver(event, term.id)}
-        onDrop={event => handleTabDrop(event, term.id)}
-        onDragEnd={clearTerminalDrag}
+        onPointerDown={isRenaming || managing ? undefined : event => startTerminalDrag(event, term.id)}
         onClick={() => selectTerminal(term)}
         onKeyDown={event => {
           if (event.target !== event.currentTarget) return
@@ -452,13 +437,13 @@ export default function TerminalSessionList() {
             <button
               type="button"
               aria-label={translate(restartLabel, { exitCode: '' })}
-              className={`${ROW_BUTTON} hover:bg-bg-active`}
+              className={`${TERMINAL_ROW_BUTTON} hover:bg-bg-active`}
               onClick={event => {
                 event.stopPropagation()
                 void reloadTerminal(term)
               }}
             >
-              <RotateCcw size={14} />
+              <RotateCcw size={13} />
             </button>
           </Tooltip>
         )}
@@ -498,14 +483,14 @@ export default function TerminalSessionList() {
                 type="button"
                 aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
                 data-terminal-close={term.id}
-                className={`${ROW_BUTTON} ${
+                className={`${TERMINAL_ROW_BUTTON} ${
                   isCloseArmed
                     ? 'bg-danger/15 text-danger'
                     : 'opacity-0 hover:bg-bg-active focus-visible:opacity-100 group-hover:opacity-100'
                 }`}
                 onClick={event => handleCloseClick(event, term.id)}
               >
-                {isCloseArmed ? <Circle size={10} fill="currentColor" /> : <X size={15} />}
+                {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={13} />}
               </button>
             </Tooltip>
           )}
@@ -519,6 +504,8 @@ export default function TerminalSessionList() {
     const isCurrent = project.id === currentProjectId
     const isEmpty = terminals.length === 0
     const expanded = isExpanded(group)
+    // 当前终端行已经高亮时组头不再铺底色，避免同一项目出现两块高亮。
+    const rowHighlighted = !managing && expanded && terminals.some(term => term.id === paneActiveId)
     const source = projectSources.get(project.id)
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
@@ -537,8 +524,6 @@ export default function TerminalSessionList() {
         aria-current={isCurrent ? 'true' : undefined}
         data-terminal-project-group={project.id}
         className={`relative ${draggedProjectId === project.id ? 'opacity-45' : ''}`}
-        onDragOver={event => onProjectDragOver(event, project.id)}
-        onDrop={event => onProjectDrop(event, project.id)}
       >
         {projectDrop?.id === project.id && (
           <span
@@ -551,17 +536,13 @@ export default function TerminalSessionList() {
         )}
         <div
           data-terminal-project-header={project.id}
-          draggable={sortable}
-          onDragStart={event => {
-            event.dataTransfer.effectAllowed = 'move'
-            event.dataTransfer.setData('application/x-qingcode-project', project.id)
-            setDraggedProjectId(project.id)
-            setProjectDrop(null)
-          }}
-          onDragEnd={clearProjectDrag}
-          className={`group/project flex h-7 items-center gap-1 rounded-md pr-1 transition-colors ${
+          data-terminal-project-sortable={sortable ? 'true' : undefined}
+          onPointerDown={sortable ? event => startProjectDrag(event, project.id) : undefined}
+          className={`group/project flex h-7 select-none items-center gap-1 rounded-md pr-1 transition-colors ${
             isCurrent
-              ? 'bg-brand/10 text-fg hover:bg-brand/15'
+              ? rowHighlighted
+                ? 'text-fg hover:bg-bg-hover'
+                : 'bg-brand/10 text-fg hover:bg-brand/15'
               : `text-fg-muted hover:bg-bg-hover ${isEmpty ? 'opacity-70 hover:opacity-100' : ''}`
           }`}
         >
@@ -591,7 +572,7 @@ export default function TerminalSessionList() {
             // 不用 disabled：禁用按钮吃掉鼠标事件，空项目的组头就拖不动了。
             aria-disabled={isEmpty || undefined}
             tabIndex={isEmpty ? -1 : undefined}
-            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui-sm aria-disabled:cursor-default"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui aria-disabled:cursor-default"
             onClick={() => {
               if (!isEmpty) setProjectCollapsed(project.id, expanded)
             }}
@@ -613,7 +594,7 @@ export default function TerminalSessionList() {
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
               <span className="block min-w-0 max-w-[70%] flex-none truncate font-medium">{project.name}</span>
               {source && (
-                <span className="min-w-0 truncate rounded border border-border-strong px-1 py-px text-ui-badge leading-tight text-fg-dim">
+                <span className="project-source-badge min-w-0 shrink! truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted">
                   {source}
                 </span>
               )}
@@ -861,7 +842,9 @@ export default function TerminalSessionList() {
           className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1.5 pb-1.5"
           onKeyDown={onListKeyDown}
         >
-          {groups.map(renderGroup)}
+          <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
+            {groups.map(renderGroup)}
+          </TooltipSuppressionContext>
           {totalTerminals === 0 && currentProject && (
             <EmptyState
               className="min-h-0 flex-1"

@@ -50,8 +50,13 @@ export function beginSshForeground(): () => void {
   return queue?.beginForeground() ?? (() => {})
 }
 
-export function takeSshWarmup(path: string): Promise<FileNode[] | null> | undefined {
+export function takeSshWarmup(path: string): Promise<FileNode[] | null | undefined> | undefined {
   return queue?.take(path)
+}
+
+/** 取走之前的状态，用于记录这次打开为什么没命中预热。 */
+export function peekSshWarmup(path: string): WarmupStatus | undefined {
+  return useSshWarmupStore.getState().statuses.get(path)
 }
 
 export function cancelSshWarmup(path: string) {

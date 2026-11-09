@@ -910,6 +910,7 @@ pub fn run() {
             set_terminal_output_paused,
             kill_terminal,
             terminal_diagnostics::terminal_diagnostic_event,
+            terminal_diagnostics::ssh_open_diagnostic_event,
             terminal_diagnostics::terminal_diagnostic_log,
             terminal_session_open,
             resize_terminal,

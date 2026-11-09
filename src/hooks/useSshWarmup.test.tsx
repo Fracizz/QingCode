@@ -31,6 +31,7 @@ vi.mock('../lib/sshWorkspace', () => ({
   prepareSshWorkspace: mocks.run,
   isSshBackgroundSuspended: () => false,
   SSH_CONNECTION_INVALIDATED_EVENT: 'connection-invalidated',
+  SSH_SERVER_UPDATED_EVENT: 'server-updated',
 }))
 vi.mock('../lib/fileTreeCache', () => ({ loadWarmupRootTree: async () => [] }))
 

@@ -51,6 +51,7 @@ vi.mock('../lib/pathAllowlist', () => ({
 vi.mock('./sshWarmupStore', () => ({
   beginSshForeground: () => () => {},
   takeSshWarmup: mocks.takeSshWarmup,
+  peekSshWarmup: () => undefined,
   cancelSshWarmup: vi.fn(),
 }))
 vi.mock('../lib/windowSession', async importOriginal => ({
@@ -127,6 +128,23 @@ describe('SSH project availability', () => {
     expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
     expect(mocks.ensureSshWorkspaceConnected).toHaveBeenCalledWith(remote)
     expect(mocks.prepareSshWorkspace).toHaveBeenCalledWith(remote.path, expect.any(AbortSignal), expect.any(Function), { project: remote })
+  })
+
+  it('skips preparation but reads the directory when the warmed service kept no tree', async () => {
+    mocks.takeSshWarmup.mockReturnValueOnce(Promise.resolve(undefined))
+    mocks.isSshWorkspaceReady.mockResolvedValueOnce(true)
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
+    expect(mocks.loadProjectRootTree).toHaveBeenCalledTimes(1)
+  })
+
+  it('records why an open missed background preparation and where the time went', async () => {
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    const call = mocks.safeInvoke.mock.calls.find(item => item[1] === 'ssh_open_diagnostic_event')
+    expect(call?.[2]).toEqual({ event: expect.objectContaining({
+      projectId: remote.id, connectionId: 'connection', warmup: 'none', reused: false, outcome: 'opened',
+      prepareMs: expect.any(Number), filesMs: expect.any(Number),
+    }) })
   })
 
   it('joins background preparation without activating early, then opens without preparing twice', async () => {

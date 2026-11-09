@@ -41,15 +41,10 @@ import { useI18n } from '../lib/i18n'
 
 const CLOSE_ARM_MS = 4000
 
-/** 拖拽落点在目标元素的前半还是后半；标签栏按横向判断，终端列表按纵向判断。 */
-function dropPositionOf(
-  event: ReactDragEvent<HTMLElement>,
-  axis: 'horizontal' | 'vertical',
-): 'before' | 'after' {
+/** 拖拽落点在目标标签的左半还是右半。 */
+function dropPositionOf(event: ReactDragEvent<HTMLElement>): 'before' | 'after' {
   const rect = event.currentTarget.getBoundingClientRect()
-  return axis === 'horizontal'
-    ? event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
-    : event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
 }
 
 /**
@@ -58,11 +53,9 @@ function dropPositionOf(
  */
 export function useTerminalTabActions({
   pane,
-  dropAxis = 'horizontal',
 }: {
   /** When set, this view owns one dual-terminal pane. */
   pane?: TerminalFocusPane
-  dropAxis?: 'horizontal' | 'vertical'
 } = {}) {
   const { t: translate } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
@@ -454,7 +447,7 @@ export function useTerminalTabActions({
     }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-    const position = dropPositionOf(event, dropAxis)
+    const position = dropPositionOf(event)
     setDropTarget(current =>
       current?.id === targetId && current.position === position
         ? current
@@ -466,7 +459,7 @@ export function useTerminalTabActions({
     event.preventDefault()
     const sourceId = draggedTerminalId || event.dataTransfer.getData('text/plain')
     if (sourceId && sourceId !== targetId && sameProjectTerminals(sourceId, targetId)) {
-      reorderTerminal(sourceId, targetId, dropPositionOf(event, dropAxis))
+      reorderTerminal(sourceId, targetId, dropPositionOf(event))
     }
     clearTerminalDrag()
   }

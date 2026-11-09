@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { createEvent, fireEvent, render, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '@/types'
 
 const mocks = vi.hoisted(() => {
@@ -107,7 +107,36 @@ const row = (id: string) =>
 const group = (id: string) =>
   document.querySelector<HTMLElement>(`[data-terminal-project-group="${id}"]`) as HTMLElement
 
+// jsdom 没有布局也没有 PointerEvent，这里补上元素位置和带 pointerId 的事件。
+const layOut = (find: (id: string) => HTMLElement, spans: Record<string, [number, number]>) => {
+  for (const [id, [top, bottom]] of Object.entries(spans)) {
+    vi.spyOn(find(id), 'getBoundingClientRect').mockReturnValue({
+      top,
+      bottom,
+      left: 0,
+      right: 200,
+      width: 200,
+      height: bottom - top,
+    } as DOMRect)
+  }
+}
+const pointer = (type: string, target: EventTarget, clientY: number) => {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: 10, clientY })
+  Object.defineProperty(event, 'pointerId', { value: 1 })
+  act(() => {
+    target.dispatchEvent(event)
+  })
+}
+const dragFrom = (handle: HTMLElement, toY: number, fromY = 10) => {
+  pointer('pointerdown', handle, fromY)
+  pointer('pointermove', window, toY)
+}
+const release = () => pointer('pointerup', window, 0)
+
 describe('TerminalSessionList', () => {
+  // 拖动结束后吞 click 的监听在下一个宏任务才移除，不能漏到下一个用例。
+  afterEach(() => new Promise<void>(resolve => { window.setTimeout(resolve, 0) }))
+
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
@@ -140,6 +169,14 @@ describe('TerminalSessionList', () => {
     expect(group('p3').querySelector('[data-terminal-group-count]')).toBeNull()
     expect(group('p1').querySelector('[data-terminal-group-current="true"]')).not.toBeNull()
     expect(group('p2').querySelector('[data-terminal-group-current="true"]')).toBeNull()
+  })
+
+  it('tints the current project header only while no terminal row is highlighted', () => {
+    render(<TerminalSessionList />)
+    const header = group('p1').querySelector('[data-terminal-project-header]') as HTMLElement
+    expect(header).not.toHaveClass('bg-brand/10')
+    fireEvent.click(screen.getByRole('button', { name: '展开或收起「app」' }))
+    expect(header).toHaveClass('bg-brand/10')
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {
@@ -241,17 +278,6 @@ describe('TerminalSessionList', () => {
       [...document.querySelectorAll<HTMLElement>('[data-terminal-project-group]')].map(
         node => node.dataset.terminalProjectGroup,
       )
-    const dataTransfer = { setData: vi.fn(), getData: () => '', effectAllowed: '', dropEffect: '' }
-    const dragEvent = (kind: 'dragOver' | 'drop', target: HTMLElement, clientY: number) => {
-      const event = createEvent[kind](target, { dataTransfer })
-      Object.defineProperty(event, 'clientY', { value: clientY })
-      fireEvent(target, event)
-    }
-    const measured = (id: string) => {
-      const target = group(id)
-      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 40, left: 0, width: 200 } as DOMRect)
-      return target
-    }
 
     it('keeps the project order when the current project changes', () => {
       mocks.projectState.currentProject = mocks.projectState.projects[2]
@@ -261,30 +287,67 @@ describe('TerminalSessionList', () => {
 
     it('moves a project with its header and shows where it will land', () => {
       render(<TerminalSessionList />)
-      fireEvent.dragStart(header('p1'), { dataTransfer })
-      const target = measured('p3')
-      dragEvent('dragOver', target, 130)
-      expect(target.querySelector('[data-terminal-project-drop="after"]')).not.toBeNull()
-      dragEvent('drop', target, 130)
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
+      dragFrom(header('p1'), 130)
+      expect(group('p1').className).toContain('opacity-45')
+      expect(group('p3').querySelector('[data-terminal-project-drop="after"]')).not.toBeNull()
+      release()
       expect(mocks.projectState.reorderVisibleProjects).toHaveBeenCalledWith(0, 2)
       expect(document.querySelector('[data-terminal-project-drop]')).toBeNull()
+      expect(group('p1').className).not.toContain('opacity-45')
     })
 
-    it('does not reorder when a terminal row is dragged over another project', () => {
+    it('can start from the collapse button but not from the header actions', () => {
       render(<TerminalSessionList />)
-      fireEvent.dragStart(row('t1'), { dataTransfer: { ...dataTransfer, getData: () => 't1' } })
-      const target = measured('p3')
-      dragEvent('dragOver', target, 130)
-      dragEvent('drop', target, 130)
-      expect(target.querySelector('[data-terminal-project-drop]')).toBeNull()
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
+      dragFrom(within(header('p1')).getByRole('button', { name: '在「app」新建终端' }), 130)
+      release()
+      expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
+      dragFrom(within(header('p1')).getByRole('button', { name: '展开或收起「app」' }), 130)
+      release()
+      expect(mocks.projectState.reorderVisibleProjects).toHaveBeenCalledWith(0, 2)
+    })
+
+    it('does not collapse the project when the drag ends on its button', () => {
+      render(<TerminalSessionList />)
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
+      const toggle = within(header('p1')).getByRole('button', { name: '展开或收起「app」' })
+      dragFrom(toggle, 130)
+      release()
+      fireEvent.click(toggle)
+      expect(row('t1')).not.toBeNull()
+    })
+
+    it('cancels with Escape and ignores a click that never moved', () => {
+      render(<TerminalSessionList />)
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
+      dragFrom(header('p1'), 130)
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      })
+      release()
+      expect(document.querySelector('[data-terminal-project-drop]')).toBeNull()
+      pointer('pointerdown', header('p1'), 10)
+      release()
+      expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
+    })
+
+    it('does not reorder projects when a terminal row is dragged over another project', () => {
+      render(<TerminalSessionList />)
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
+      dragFrom(row('t1'), 130)
+      release()
+      expect(document.querySelector('[data-terminal-project-drop]')).toBeNull()
       expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
     })
 
     it('turns off project dragging in manage mode', () => {
       render(<TerminalSessionList />)
-      expect(header('p1')).toHaveAttribute('draggable', 'true')
+      layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
       fireEvent.click(screen.getByRole('button', { name: '管理' }))
-      expect(header('p1')).toHaveAttribute('draggable', 'false')
+      dragFrom(header('p1'), 130)
+      release()
+      expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
     })
   })
 
@@ -297,9 +360,9 @@ describe('TerminalSessionList', () => {
 
   it('does not reorder onto a terminal of another project', () => {
     render(<TerminalSessionList />)
-    const dataTransfer = { setData: vi.fn(), getData: () => 't1', effectAllowed: '', dropEffect: '' }
-    fireEvent.dragStart(row('t1'), { dataTransfer })
-    fireEvent.drop(row('other'), { dataTransfer })
+    layOut(row, { t1: [0, 28], t2: [30, 58], other: [100, 128] })
+    dragFrom(row('t1'), 110)
+    release()
     expect(mocks.state.reorderTerminal).not.toHaveBeenCalled()
   })
 
@@ -370,23 +433,30 @@ describe('TerminalSessionList', () => {
 
   it('reorders along the vertical axis', () => {
     render(<TerminalSessionList />)
-    const target = row('t1')
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 40, left: 0, width: 200 } as DOMRect)
-    const dataTransfer = { setData: vi.fn(), getData: () => 't2', effectAllowed: '', dropEffect: '' }
-    fireEvent.dragStart(row('t2'), { dataTransfer })
-    // jsdom 的拖放事件不带坐标，手动补上；同一横坐标下只有纵坐标决定落点。
-    const dropAt = (clientY: number) => {
-      const event = createEvent.drop(target, { dataTransfer })
-      Object.defineProperties(event, {
-        clientX: { value: 500 },
-        clientY: { value: clientY },
-      })
-      fireEvent(target, event)
-    }
-    dropAt(110)
+    layOut(row, { t1: [100, 140], t2: [150, 190], other: [300, 340] })
+    dragFrom(row('t2'), 110, 170)
+    release()
     expect(mocks.state.reorderTerminal).toHaveBeenLastCalledWith('t2', 't1', 'before')
-    dropAt(130)
+    dragFrom(row('t2'), 130, 170)
+    release()
     expect(mocks.state.reorderTerminal).toHaveBeenLastCalledWith('t2', 't1', 'after')
+  })
+
+  it('does not select a terminal when a drag ends on it', () => {
+    render(<TerminalSessionList />)
+    layOut(row, { t1: [100, 140], t2: [150, 190], other: [300, 340] })
+    dragFrom(row('t2'), 110, 170)
+    release()
+    fireEvent.click(row('t2'))
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+  })
+
+  it('does not start a terminal drag from its close button', () => {
+    render(<TerminalSessionList />)
+    layOut(row, { t1: [100, 140], t2: [150, 190], other: [300, 340] })
+    dragFrom(within(row('t2')).getByRole('button', { name: '关闭终端' }), 110, 170)
+    release()
+    expect(mocks.state.reorderTerminal).not.toHaveBeenCalled()
   })
 
   it('offers restart for an exited terminal', () => {

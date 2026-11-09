@@ -4,8 +4,11 @@ import {
   selectWarmupTargets,
   SshWarmupQueue,
   SSH_WARMUP_CONCURRENCY,
+  SSH_WARMUP_CONNECTION_CONCURRENCY,
   SSH_WARMUP_CONNECTION_LIMIT,
   SSH_WARMUP_DELAY_MS,
+  SSH_WARMUP_RECOVERY_DELAY_MS,
+  SSH_WARMUP_RETRY_DELAYS_MS,
   type WarmupStatus,
   type WarmupTarget,
 } from './sshWarmupQueue'
@@ -120,7 +123,7 @@ describe('bounded SSH background preparation', () => {
     expect(hosts.run).toHaveBeenCalledTimes(SSH_WARMUP_CONNECTION_LIMIT)
   })
 
-  it('warms different connections concurrently, one root per connection, up to the cap', async () => {
+  it('warms different connections concurrently, one unproven root per connection, up to the cap', async () => {
     const finish: Array<() => void> = []
     const started: string[] = []
     const run = vi.fn((value: WarmupTarget) => new Promise<number[]>(resolve => {
@@ -214,12 +217,95 @@ describe('bounded SSH background preparation', () => {
     const { queue } = harness(vi.fn(async () => Array(256).fill(1) as number[]))
     queue.update(Array.from({ length: 12 }, (_, i) => target(i)))
     await vi.runAllTimersAsync()
-    expect(queue.take(target(7).project.path)).toBeDefined()
-    expect(queue.take(target(8).project.path)).toBeUndefined()
+    await expect(queue.take(target(7).project.path)).resolves.toHaveLength(256)
+    // 目录超预算没留下，但服务已准备好，取到的是“已准备、无目录”。
+    await expect(queue.take(target(8).project.path)).resolves.toBeUndefined()
     const big = harness(vi.fn(async () => Array(257).fill(1) as number[]))
     big.queue.update([target(1)])
     await vi.runAllTimersAsync()
-    expect(big.queue.take(target(1).project.path)).toBeUndefined()
+    await expect(big.queue.take(target(1).project.path)).resolves.toBeUndefined()
+  })
+
+  it('runs the first root of a connection alone, then fans out once it succeeded', async () => {
+    const finish: Array<() => void> = []
+    const run = vi.fn(() => new Promise<number[]>(resolve => finish.push(() => resolve([1]))))
+    const { queue } = harness(run)
+    queue.update(Array.from({ length: 6 }, (_, i) => target(i, 'a')))
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    expect(run).toHaveBeenCalledTimes(1)
+    finish[0]()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(1 + SSH_WARMUP_CONNECTION_CONCURRENCY)
+  })
+
+  it('retries a failed connection with one attempt per round and stops at the budget', async () => {
+    const run = vi.fn(async (): Promise<number[]> => {
+      throw new Error('network unreachable')
+    })
+    const { queue, statuses } = harness(run)
+    queue.update([target(1, 'a'), target(2, 'a'), target(3, 'a')])
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(statuses().get(target(3, 'a').project.path)?.phase).toBe('failed')
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(1 + SSH_WARMUP_RETRY_DELAYS_MS.length)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('tries another root on retry so one stale project cannot block its connection', async () => {
+    const run = vi.fn(async (value: WarmupTarget) => {
+      if (value.project.id === '1') throw new Error('目录不存在')
+      return [1]
+    })
+    const { queue, statuses } = harness(run)
+    queue.update([target(1, 'a'), target(2, 'a')])
+    await vi.runAllTimersAsync()
+    expect(statuses().get(target(2, 'a').project.path)?.phase).toBe('ready')
+    expect(statuses().get(target(1, 'a').project.path)?.phase).toBe('failed')
+  })
+
+  it('never retries failures that need the user', async () => {
+    const run = vi.fn(async (): Promise<number[]> => {
+      throw new Error('SSH authentication failed')
+    })
+    const { queue } = harness(run)
+    queue.update([target(1)])
+    await vi.runAllTimersAsync()
+    queue.retryFailed()
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('warms again after an unexpected disconnect but leaves the active root until reopened', async () => {
+    const { queue, run, statuses } = harness()
+    const targets = [target(1, 'a'), target(2, 'a')]
+    queue.update(targets, targets[0].project.path)
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(1)
+    queue.connectionLost('a')
+    expect(statuses().has(targets[0].project.path)).toBe(false)
+    expect(statuses().get(targets[1].project.path)?.phase).toBe('queued')
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_RECOVERY_DELAY_MS - 1)
+    expect(run).toHaveBeenCalledTimes(1)
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(statuses().get(targets[1].project.path)?.phase).toBe('ready')
+  })
+
+  it('retries exhausted failures right after a server update', async () => {
+    let healthy = false
+    const run = vi.fn(async (): Promise<number[]> => {
+      if (!healthy) throw new Error('gateway restarting')
+      return [1]
+    })
+    const { queue, statuses } = harness(run)
+    queue.update([target(1)])
+    await vi.runAllTimersAsync()
+    expect(statuses().get(target(1).project.path)?.phase).toBe('failed')
+    healthy = true
+    queue.retryFailed()
+    await vi.runAllTimersAsync()
+    expect(statuses().get(target(1).project.path)?.phase).toBe('ready')
   })
 
   it('pauses the queue when the window is hidden and invalidates changed configurations', async () => {
