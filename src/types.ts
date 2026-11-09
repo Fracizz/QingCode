@@ -134,6 +134,8 @@ export interface TerminalTab {
   disconnectReason?: string | null
   /** Current persistent reconnect attempt reported by the backend. */
   connectionAttempt?: number
+  /** 终端标签首次创建的时间（毫秒）；重启进程、重启应用恢复都不会改变。 */
+  createdAt?: number
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
   /**

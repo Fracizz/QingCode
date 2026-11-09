@@ -92,7 +92,7 @@ type Translate = ReturnType<typeof useI18n>['t']
 /** 行内展示与搜索共用：来源图标、来源标签与状态明细。 */
 function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) {
   if (entry.source === 'desktop') {
-    const created = formatCreatedTime(entry.tab.startedAt, now)
+    const created = formatCreatedTime(entry.tab.createdAt ?? entry.tab.startedAt, now)
     const status = entry.tab.status === 'running'
       ? isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) ? t('运行中') : t('未结束')
       : t(DESKTOP_STATUS[entry.tab.status])

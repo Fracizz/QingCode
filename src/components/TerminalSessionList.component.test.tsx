@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => {
       { id: 'p3', path: '/home/docs', name: 'docs' },
     ],
     sshConnections: [],
+    reorderVisibleProjects: vi.fn(),
     addEmptyProject: vi.fn(),
     switchProject: vi.fn(),
     pushToast: vi.fn(),
@@ -230,7 +231,61 @@ describe('TerminalSessionList', () => {
   it('shows a project without terminals as a header only', () => {
     render(<TerminalSessionList />)
     expect(within(group('p3')).queryByRole('tab')).toBeNull()
-    expect(within(group('p3')).getByRole('button', { name: '展开或收起「docs」' })).toBeDisabled()
+    expect(within(group('p3')).getByRole('button', { name: '展开或收起「docs」' })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  describe('project ordering', () => {
+    const header = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-terminal-project-header="${id}"]`) as HTMLElement
+    const groupIds = () =>
+      [...document.querySelectorAll<HTMLElement>('[data-terminal-project-group]')].map(
+        node => node.dataset.terminalProjectGroup,
+      )
+    const dataTransfer = { setData: vi.fn(), getData: () => '', effectAllowed: '', dropEffect: '' }
+    const dragEvent = (kind: 'dragOver' | 'drop', target: HTMLElement, clientY: number) => {
+      const event = createEvent[kind](target, { dataTransfer })
+      Object.defineProperty(event, 'clientY', { value: clientY })
+      fireEvent(target, event)
+    }
+    const measured = (id: string) => {
+      const target = group(id)
+      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 40, left: 0, width: 200 } as DOMRect)
+      return target
+    }
+
+    it('keeps the project order when the current project changes', () => {
+      mocks.projectState.currentProject = mocks.projectState.projects[2]
+      render(<TerminalSessionList />)
+      expect(groupIds()).toEqual(['p1', 'p2', 'p3'])
+    })
+
+    it('moves a project with its header and shows where it will land', () => {
+      render(<TerminalSessionList />)
+      fireEvent.dragStart(header('p1'), { dataTransfer })
+      const target = measured('p3')
+      dragEvent('dragOver', target, 130)
+      expect(target.querySelector('[data-terminal-project-drop="after"]')).not.toBeNull()
+      dragEvent('drop', target, 130)
+      expect(mocks.projectState.reorderVisibleProjects).toHaveBeenCalledWith(0, 2)
+      expect(document.querySelector('[data-terminal-project-drop]')).toBeNull()
+    })
+
+    it('does not reorder when a terminal row is dragged over another project', () => {
+      render(<TerminalSessionList />)
+      fireEvent.dragStart(row('t1'), { dataTransfer: { ...dataTransfer, getData: () => 't1' } })
+      const target = measured('p3')
+      dragEvent('dragOver', target, 130)
+      dragEvent('drop', target, 130)
+      expect(target.querySelector('[data-terminal-project-drop]')).toBeNull()
+      expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
+    })
+
+    it('turns off project dragging in manage mode', () => {
+      render(<TerminalSessionList />)
+      expect(header('p1')).toHaveAttribute('draggable', 'true')
+      fireEvent.click(screen.getByRole('button', { name: '管理' }))
+      expect(header('p1')).toHaveAttribute('draggable', 'false')
+    })
   })
 
   it('does not activate a terminal of another project when arming its close button', () => {
@@ -246,6 +301,22 @@ describe('TerminalSessionList', () => {
     fireEvent.dragStart(row('t1'), { dataTransfer })
     fireEvent.drop(row('other'), { dataTransfer })
     expect(mocks.state.reorderTerminal).not.toHaveBeenCalled()
+  })
+
+  it('appends the creation time after the subtitle: time today, date on earlier days', () => {
+    const today = new Date()
+    today.setHours(9, 5, 0, 0)
+    mocks.state.terminals = [
+      terminal({ id: 'today', launchCommand: 'pnpm dev', createdAt: today.getTime(), startedAt: Date.now() }),
+      terminal({ id: 'old', createdAt: new Date(2020, 0, 3, 18, 30).getTime() }),
+      terminal({ id: 'legacy', startedAt: today.getTime() }),
+      terminal({ id: 'none' }),
+    ]
+    render(<TerminalSessionList />)
+    expect(row('today')).toHaveTextContent('pnpm dev · 09:05')
+    expect(row('old').querySelector('[data-terminal-created]')).toHaveTextContent(/^2020-01-03$/)
+    expect(row('legacy').querySelector('[data-terminal-created]')).toHaveTextContent(/^09:05$/)
+    expect(row('none').querySelector('[data-terminal-created]')).toBeNull()
   })
 
   it('shows a waiting state instead of restart for terminals not restored yet', () => {

@@ -1358,6 +1358,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       allowTitleRename: true,
       status: 'starting',
       exitCode: null,
+      createdAt: Date.now(),
       startedAt: Date.now(),
       ptySpawnPending: true,
     }
@@ -1416,6 +1417,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       allowTitleRename: false,
       status: 'starting',
       exitCode: null,
+      createdAt: Date.now(),
       startedAt: Date.now(),
       ptySpawnPending: true,
       ...(linkage?.runConfigId && linkage.runTaskId
@@ -1832,6 +1834,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         pane,
         status: 'starting',
         exitCode: null,
+        createdAt: Date.now(),
         startedAt: Date.now(),
         persistent: true,
         ptyId: terminal.ptyId,
@@ -2584,6 +2587,7 @@ export function captureTerminalForMirror(id: string): Promise<TerminalCapture> {
 export async function openMobileSessionTab(session: {
   id: string
   name: string
+  createdAt?: number | null
   project: { id: string; path: string }
 }): Promise<TerminalTab> {
   const state = useTerminalStore.getState()
@@ -2599,6 +2603,7 @@ export async function openMobileSessionTab(session: {
     pane,
     status: 'running',
     exitCode: null,
+    createdAt: session.createdAt ?? Date.now(),
     startedAt: Date.now(),
   }
   // 先建标签再打开：首屏快照到达时要能找到它。

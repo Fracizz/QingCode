@@ -3,6 +3,7 @@ import type { Project, SshConnection, TerminalTab } from '../../types'
 import {
   groupTerminalSessions,
   parseCollapsedProjects,
+  terminalProjectMove,
   terminalProjectSources,
 } from './terminalSessionGroups'
 
@@ -13,16 +14,23 @@ const terminal = (id: string, projectId: string, status: TerminalTab['status'] =
   ({ id, projectId, status }) as TerminalTab
 
 describe('groupTerminalSessions', () => {
-  it('keeps project order and puts the pinned project first', () => {
-    const groups = groupTerminalSessions([project('a'), project('b'), project('c')], [], 'c')
-    expect(groups.map(group => group.project.id)).toEqual(['c', 'a', 'b'])
+  it('follows the title-bar order and lists hidden projects last', () => {
+    const groups = groupTerminalSessions(
+      [
+        project('hidden', { hidden: 1, sort_order: 0 }),
+        project('c', { sort_order: 2 }),
+        project('a', { sort_order: 0 }),
+        project('b', { sort_order: 1 }),
+      ],
+      [terminal('1', 'hidden')],
+    )
+    expect(groups.map(group => group.project.id)).toEqual(['a', 'b', 'c', 'hidden'])
   })
 
   it('assigns terminals to their project', () => {
     const [a, b] = groupTerminalSessions(
       [project('a'), project('b')],
       [terminal('1', 'a'), terminal('2', 'b', 'exited'), terminal('3', 'a', 'starting')],
-      null,
     )
     expect(a.terminals.map(t => t.id)).toEqual(['1', '3'])
     expect(b.terminals.map(t => t.id)).toEqual(['2'])
@@ -32,15 +40,33 @@ describe('groupTerminalSessions', () => {
     const groups = groupTerminalSessions(
       [project('empty'), project('hidden', { hidden: 1 }), project('busy', { hidden: 1 })],
       [terminal('1', 'busy')],
-      null,
     )
     expect(groups.map(group => group.project.id)).toEqual(['empty', 'busy'])
   })
 
   it('leaves out terminals whose project is gone', () => {
-    const groups = groupTerminalSessions([project('a')], [terminal('1', 'removed')], 'removed')
+    const groups = groupTerminalSessions([project('a')], [terminal('1', 'removed')])
     expect(groups).toHaveLength(1)
     expect(groups[0].terminals).toEqual([])
+  })
+})
+
+describe('terminalProjectMove', () => {
+  const list = [project('a'), project('b'), project('c'), project('hidden', { hidden: 1 })]
+
+  it('converts a drop position into reorder indexes in both directions', () => {
+    expect(terminalProjectMove(list, 'a', 'c', 'after')).toEqual({ fromIndex: 0, toIndex: 2 })
+    expect(terminalProjectMove(list, 'a', 'c', 'before')).toEqual({ fromIndex: 0, toIndex: 1 })
+    expect(terminalProjectMove(list, 'c', 'a', 'before')).toEqual({ fromIndex: 2, toIndex: 0 })
+    expect(terminalProjectMove(list, 'c', 'a', 'after')).toEqual({ fromIndex: 2, toIndex: 1 })
+  })
+
+  it('ignores drops that change nothing and hidden projects', () => {
+    expect(terminalProjectMove(list, 'a', 'b', 'before')).toBeNull()
+    expect(terminalProjectMove(list, 'b', 'a', 'after')).toBeNull()
+    expect(terminalProjectMove(list, 'a', 'a', 'after')).toBeNull()
+    expect(terminalProjectMove(list, 'hidden', 'a', 'before')).toBeNull()
+    expect(terminalProjectMove(list, 'a', 'hidden', 'after')).toBeNull()
   })
 })
 

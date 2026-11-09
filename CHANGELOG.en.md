@@ -9,6 +9,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 ### Added
 
 - New "Terminal workbench (list on left)" panel layout: terminals of all projects grouped on the left (clicking one switches the workspace to its project, and finished background tasks get a review marker), the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes)
+- The terminal workbench list shows when each terminal was created: the time for today, the date for earlier days, and the full date and time on hover; it stays the same after restarting the terminal or the app
 
 ### Fixed
 

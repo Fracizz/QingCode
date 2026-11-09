@@ -48,3 +48,8 @@
 .xterm-viewport::-webkit-scrollbar {
   width: 10px;
 }
+
+/* xterm 6 的滚动条是自绘 DOM，不走 ::-webkit-scrollbar，需单独加圆角 */
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 999px;
+}

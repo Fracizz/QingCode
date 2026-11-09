@@ -66,7 +66,7 @@ async function listDesktopTerminals() {
       customName: null,
       programTitle: null,
       programBusy: isTerminalProgramBusy(tab.id),
-      createdAt: tab.startedAt ?? null,
+      createdAt: tab.createdAt ?? tab.startedAt ?? null,
       lastActiveAt: 0,
       idleDeadline: null,
       project,

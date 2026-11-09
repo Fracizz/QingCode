@@ -129,6 +129,13 @@ describe('workspace session restore journey', () => {
   })
 })
 
+it('restores the original terminal creation time', () => {
+  const tab = terminalFromPersisted('p1', {
+    id: 'dated', name: 'Claude', cwd: 'D:/app', launchCommand: 'claude', createdAt: 12345,
+  })
+  expect(tab.createdAt).toBe(12345)
+})
+
 // A confirmed exit survives a full app reload; restoring it must not rerun Claude.
 it('restores confirmed ended terminals without scheduling a process', () => {
   const tab = terminalFromPersisted('p1', {

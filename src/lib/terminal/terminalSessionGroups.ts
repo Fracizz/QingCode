@@ -1,3 +1,4 @@
+import { insertIndexToReorderTarget, sortVisibleProjects } from '@/lib/projectChipOrder'
 import { isSshProject, sshConnectionIdFromUri, sshRemotePathFromUri } from '@/lib/sshWorkspace'
 import { isWslProject, wslDistroNameFromPath } from '@/lib/wslWorkspace'
 import type { Project, SshConnection, TerminalTab } from '../../types'
@@ -12,23 +13,40 @@ export interface TerminalSessionGroup {
 }
 
 /**
- * 工作台列表的项目分组：置顶项目在最前，其余沿用项目列表的顺序。
+ * 工作台列表的项目分组：顺序与顶部项目标签一致，隐藏项目排在最后。
  * 隐藏的项目没有终端时不列出；列表外的终端（项目已移除）不显示。
  */
 export function groupTerminalSessions(
   projects: readonly Project[],
   terminals: readonly TerminalTab[],
-  pinnedProjectId: string | null,
 ): TerminalSessionGroup[] {
-  const groups = projects
+  return [...sortVisibleProjects([...projects]), ...projects.filter(project => project.hidden)]
     .map(project => ({
       project,
       terminals: terminals.filter(terminal => terminal.projectId === project.id),
     }))
     .filter(group => !group.project.hidden || group.terminals.length > 0)
-  const pinned = groups.findIndex(group => group.project.id === pinnedProjectId)
-  if (pinned > 0) groups.unshift(...groups.splice(pinned, 1))
-  return groups
+}
+
+/**
+ * 把项目组拖到目标组前或后，换算成 `reorderVisibleProjects` 的下标。
+ * 隐藏项目不参与排序；位置没有变化时返回 null。
+ */
+export function terminalProjectMove(
+  projects: readonly Project[],
+  sourceId: string,
+  targetId: string,
+  position: 'before' | 'after',
+): { fromIndex: number; toIndex: number } | null {
+  const visible = sortVisibleProjects([...projects])
+  const fromIndex = visible.findIndex(project => project.id === sourceId)
+  const targetIndex = visible.findIndex(project => project.id === targetId)
+  if (fromIndex < 0 || targetIndex < 0 || sourceId === targetId) return null
+  const toIndex = insertIndexToReorderTarget(
+    fromIndex,
+    position === 'before' ? targetIndex : targetIndex + 1,
+  )
+  return toIndex === fromIndex ? null : { fromIndex, toIndex }
 }
 
 function projectSource(

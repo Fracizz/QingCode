@@ -7,6 +7,7 @@ import {
   loadWorkspaceSession,
   parseWorkspaceSession,
   saveWorkspaceSession,
+  serializeTerminalMeta,
 } from './workspaceSessionPersist'
 
 function installMemoryLocalStorage() {
@@ -118,6 +119,35 @@ describe('parseWorkspaceSession', () => {
     expect(parsed!.projects.p1.terminals[1].persistent).toBeUndefined()
     expect(parsed!.projects.p1.terminals[1].ptyId).toBeUndefined()
     expect(parsed!.projects.p1.terminals[1].connectionId).toBeUndefined()
+  })
+
+  it('keeps a valid terminal creation time and ignores invalid ones', () => {
+    const base = { name: 'shell', cwd: 'D:/app', launchCommand: '' }
+    const parsed = parseWorkspaceSession({
+      version: 1,
+      updatedAt: 10,
+      projects: {
+        p1: {
+          tabs: [],
+          activeTabId: null,
+          terminals: [
+            { ...base, id: 'dated', createdAt: 1234 },
+            { ...base, id: 'bad', createdAt: 'yesterday' },
+          ],
+          activeTerminalId: null,
+        },
+      },
+    })
+
+    expect(parsed!.projects.p1.terminals[0].createdAt).toBe(1234)
+    expect(parsed!.projects.p1.terminals[1].createdAt).toBeUndefined()
+  })
+
+  it('persists the creation time instead of the latest process start', () => {
+    const base = { id: 't', name: 'shell', projectId: 'p1', cwd: 'D:/app', launchCommand: '' }
+    expect(serializeTerminalMeta({ ...base, createdAt: 100, startedAt: 900 }).createdAt).toBe(100)
+    expect(serializeTerminalMeta({ ...base, startedAt: 900 }).createdAt).toBe(900)
+    expect(serializeTerminalMeta(base).createdAt).toBeUndefined()
   })
 
   it('drops empty project sessions', () => {

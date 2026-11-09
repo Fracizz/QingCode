@@ -232,14 +232,39 @@ export function summarizeTerminalOverviewBatch(entries: readonly TerminalOvervie
  * 手机端 protocol.js 的 createdLabel 使用相同格式。
  */
 export function formatCreatedTime(createdAt: number | null | undefined, now: number): string | null {
+  const parts = createdTimeParts(createdAt)
+  if (!parts) return null
+  const today = new Date(now)
+  if (parts.date.toDateString() === today.toDateString()) return parts.time
+  return parts.date.getFullYear() === today.getFullYear() ? `${parts.day} ${parts.time}` : `${parts.fullDay} ${parts.time}`
+}
+
+/** 列表行用的最短文本：当天「HH:mm」，同年「MM-DD」，跨年「YYYY-MM-DD」；无效时间返回 null。 */
+export function formatCompactCreatedTime(createdAt: number | null | undefined, now: number): string | null {
+  const parts = createdTimeParts(createdAt)
+  if (!parts) return null
+  const today = new Date(now)
+  if (parts.date.toDateString() === today.toDateString()) return parts.time
+  return parts.date.getFullYear() === today.getFullYear() ? parts.day : parts.fullDay
+}
+
+/** 悬停提示用的完整文本「YYYY-MM-DD HH:mm」；无效时间返回 null。 */
+export function formatFullCreatedTime(createdAt: number | null | undefined): string | null {
+  const parts = createdTimeParts(createdAt)
+  return parts && `${parts.fullDay} ${parts.time}`
+}
+
+function createdTimeParts(createdAt: number | null | undefined) {
   if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) return null
   const date = new Date(createdAt)
-  const today = new Date(now)
   const pad = (value: number) => String(value).padStart(2, '0')
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
   const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-  if (date.toDateString() === today.toDateString()) return time
-  return date.getFullYear() === today.getFullYear() ? `${day} ${time}` : `${date.getFullYear()}-${day} ${time}`
+  return {
+    date,
+    day,
+    fullDay: `${date.getFullYear()}-${day}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+  }
 }
 
 /** 「空闲 N 分钟」等，用于手机会话；不足 1 分钟返回 null。 */

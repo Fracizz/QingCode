@@ -4,7 +4,9 @@ import type { MobileSessionSummary } from '../ipc/mobileSessions'
 import { parseMobileSessionSummary } from '../ipc/mobileSessions'
 import {
   countTerminalOverview,
+  formatCompactCreatedTime,
   formatCreatedTime,
+  formatFullCreatedTime,
   groupTerminalOverview,
   idleMinutes,
   isTerminalOverviewEntryExited,
@@ -216,6 +218,19 @@ describe('terminal overview running state and created time', () => {
     expect(formatCreatedTime(new Date(2025, 11, 31, 8, 0).getTime(), now)).toBe('2025-12-31 08:00')
     expect(formatCreatedTime(null, now)).toBeNull()
     expect(formatCreatedTime(0, now)).toBeNull()
+  })
+
+  it('shortens created time for list rows: time today, date on earlier days', () => {
+    const now = new Date(2026, 10, 7, 23, 40).getTime()
+    expect(formatCompactCreatedTime(new Date(2026, 10, 7, 9, 5).getTime(), now)).toBe('09:05')
+    expect(formatCompactCreatedTime(new Date(2026, 10, 6, 23, 59).getTime(), now)).toBe('11-06')
+    expect(formatCompactCreatedTime(new Date(2025, 11, 31, 8, 0).getTime(), now)).toBe('2025-12-31')
+    expect(formatCompactCreatedTime(undefined, now)).toBeNull()
+  })
+
+  it('formats the full created time for tooltips', () => {
+    expect(formatFullCreatedTime(new Date(2026, 0, 3, 18, 30).getTime())).toBe('2026-01-03 18:30')
+    expect(formatFullCreatedTime(null)).toBeNull()
   })
 
   it('treats only working programs as running and sorts them first within a project', () => {
