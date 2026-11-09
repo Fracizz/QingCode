@@ -11,7 +11,8 @@ import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 
 function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => {
@@ -172,7 +173,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         aria-modal="true"
         aria-labelledby="project-add-title"
         aria-describedby="project-add-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[420px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
         <h2 id="project-add-title" className="sr-only">
@@ -202,7 +203,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
           ref={listRef}
           role="listbox"
           aria-label={t('选择项目')}
-          className="max-h-[min(240px,36vh)] overflow-y-auto py-0.5"
+          className="max-h-[min(340px,44vh)] overflow-y-auto py-0.5"
         >
           {filtered.length === 0 ? (
             <p className="text-ui-sm px-3 py-5 text-center text-fg-dim">
@@ -218,6 +219,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                 <Tooltip
                   key={project.id}
                   label={projectChipTooltipLabel(project, sshConnections, t)}
+                  content={<InfoTipCard {...projectHoverDetails(project, sshConnections, t)} />}
                   side="right"
                   wrapperClassName="block w-full"
                 >

@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
   Check,
   Circle,
+  Copy,
   FolderOpen,
   ListChecks,
   LoaderCircle,
@@ -25,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { useTerminalTabActions } from '../hooks/useTerminalTabActions'
+import { copyPathAction } from '../lib/copyFileActions'
 import { switchToTerminalProject, useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
 import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useProjectStore } from '../store/projectStore'
@@ -888,6 +890,11 @@ export default function TerminalSessionList() {
                 icon: <FolderOpen size={14} />,
                 disabled: isCurrentGroup || unavailableProjectIds.includes(group.project.id),
                 action: () => switchToTerminalProject(group.project.id),
+              },
+              {
+                label: translate('复制项目路径'),
+                icon: <Copy size={14} />,
+                action: () => void copyPathAction(group.project.path),
               },
               {
                 label: expanded ? translate('收起分组') : translate('展开分组'),

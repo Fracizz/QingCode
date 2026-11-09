@@ -31,7 +31,8 @@ import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 import { isSshProject } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
 import SshServerStatusChip from './SshServerStatusChip'
@@ -438,6 +439,7 @@ export default function StatusBar() {
               {currentProject ? (
                 <StatusTip
                   label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+                  content={<InfoTipCard {...projectHoverDetails(currentProject, sshConnections, t)} />}
                   wrapperClassName="status-project-label min-w-0 max-w-[45%] shrink! font-medium"
                 >
                   <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />

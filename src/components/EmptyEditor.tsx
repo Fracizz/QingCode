@@ -12,7 +12,8 @@ import { openFileFromDialog } from '../lib/openFileDialog'
 import { sshFileDisplayPath, sshRemotePathFromUri } from '../lib/sshWorkspace'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 export default function EmptyEditor() {
@@ -136,6 +137,7 @@ export default function EmptyEditor() {
               <Tooltip
                 key={project.id}
                 label={projectChipTooltipLabel(project, sshConnections, t)}
+                content={<InfoTipCard {...projectHoverDetails(project, sshConnections, t)} />}
                 side="bottom"
                 wrapperClassName="max-w-[180px]"
               >

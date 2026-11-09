@@ -45,6 +45,13 @@ const mocks = vi.hoisted(() => {
   return { state, ui, projectState }
 })
 
+const copyPathAction = vi.hoisted(() => vi.fn())
+
+vi.mock('../lib/copyFileActions', async importOriginal => ({
+  ...(await importOriginal<typeof import('../lib/copyFileActions')>()),
+  copyPathAction,
+}))
+
 vi.mock('../store/terminalStore', () => ({
   MAX_TERMINALS_PER_PROJECT: 10,
   terminalPaneOf: (terminal: TerminalTab) => terminal.pane ?? 'primary',
@@ -537,6 +544,13 @@ describe('TerminalSessionList', () => {
     await vi.waitFor(() =>
       expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1]),
     )
+  })
+
+  it('copies the path of the project the menu was opened from', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    fireEvent.click(screen.getByText('复制项目路径'))
+    expect(copyPathAction).toHaveBeenCalledWith('/home/api')
   })
 
   it('does not offer switching to the current or an unavailable project', () => {

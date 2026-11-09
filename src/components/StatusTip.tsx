@@ -4,6 +4,8 @@ import { useStatusBarRowTop } from './statusBarRowContext'
 
 type Props = {
   label: string
+  /** 结构化内容（如 InfoTipCard），透传给 Tooltip。 */
+  content?: ReactNode
   delay?: number
   onShow?: () => void
   onHide?: () => void
@@ -19,6 +21,7 @@ type Props = {
  */
 export default function StatusTip({
   label,
+  content,
   delay,
   onShow,
   onHide,
@@ -29,6 +32,7 @@ export default function StatusTip({
   return (
     <Tooltip
       label={label}
+      content={content}
       side="top"
       arrow
       anchor="wrapper"

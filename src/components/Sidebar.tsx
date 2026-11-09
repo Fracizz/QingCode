@@ -45,7 +45,8 @@ import Tooltip from './Tooltip'
 import { ProjectKindIcon } from './ProjectKindMark'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -1770,6 +1771,7 @@ export default function Sidebar() {
                     )}
                     <Tooltip
                       label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+                      content={<InfoTipCard {...projectHoverDetails(currentProject, sshConnections, t)} />}
                       side="bottom"
                       wrapperClassName="flex min-w-0 items-center"
                     >

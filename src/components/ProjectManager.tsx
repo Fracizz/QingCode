@@ -52,7 +52,8 @@ import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 import { buildProjectFilterData } from '../lib/projectManagerFilters'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
@@ -573,6 +574,11 @@ export default function ProjectManager() {
                               unavailable
                                 ? t('目录不可用，请重新定位')
                                 : projectChipTooltipLabel(project, sshConnections, t)
+                            }
+                            content={
+                              unavailable
+                                ? undefined
+                                : <InfoTipCard {...projectHoverDetails(project, sshConnections, t)} />
                             }
                             side="bottom"
                             wrapperClassName="min-w-0 flex-1"

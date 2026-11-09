@@ -10,7 +10,8 @@ import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { isSshResource } from '../lib/tauri'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
@@ -85,7 +86,12 @@ export default function EditorBreadcrumbs() {
   return (
     <div className="ui-font-scaled flex h-[calc(var(--ui-line-height)+2px)] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-ui-xs text-fg-muted select-none">
       {currentProject && (
-        <Tooltip label={projectChipTooltipLabel(currentProject, sshConnections, t)} side="bottom" wrapperClassName="max-w-[280px] shrink-0">
+        <Tooltip
+          label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+          content={<InfoTipCard {...projectHoverDetails(currentProject, sshConnections, t)} />}
+          side="bottom"
+          wrapperClassName="max-w-[280px] shrink-0"
+        >
           <button
             type="button"
             className="flex max-w-full cursor-pointer rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
