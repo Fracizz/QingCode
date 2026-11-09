@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
     reorderVisibleProjects: vi.fn(),
     addEmptyProject: vi.fn(),
     switchProject: vi.fn(),
+    unavailableProjectIds: [] as string[],
     pushToast: vi.fn(),
   }
   return { state, ui, projectState }
@@ -142,6 +143,7 @@ describe('TerminalSessionList', () => {
     localStorage.clear()
     pruneTerminalAttention(new Set())
     mocks.projectState.currentProject = mocks.projectState.projects[0]
+    mocks.projectState.unavailableProjectIds = []
     mocks.projectState.switchProject.mockResolvedValue(true)
     mocks.state.activeTerminalId = 't1'
     mocks.state.terminals = [
@@ -526,6 +528,25 @@ describe('TerminalSessionList', () => {
     fireEvent.click(screen.getByText('关闭此项目的全部终端'))
     await vi.waitFor(() => expect(mocks.state.closeAllProjectTerminals).toHaveBeenCalledWith('p2'))
     expect(mocks.state.closeAllProjectTerminals).toHaveBeenCalledTimes(1)
+  })
+
+  it('switches to another project from its actions menu', async () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    fireEvent.click(screen.getByText('切换到此项目'))
+    await vi.waitFor(() =>
+      expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1]),
+    )
+  })
+
+  it('does not offer switching to the current or an unavailable project', () => {
+    mocks.projectState.unavailableProjectIds = ['p2']
+    render(<TerminalSessionList />)
+    fireEvent.click(within(group('p1')).getByRole('button', { name: '「app」的项目操作' }))
+    expect(screen.getByText('当前项目').closest('button')).toBeDisabled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    expect(screen.getByText('切换到此项目').closest('button')).toBeDisabled()
   })
 
   it('creates a terminal with the chosen profile in the project of the header', async () => {

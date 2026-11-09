@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
   Check,
   Circle,
+  FolderOpen,
   ListChecks,
   LoaderCircle,
   Minus,
@@ -24,7 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { useTerminalTabActions } from '../hooks/useTerminalTabActions'
-import { useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
+import { switchToTerminalProject, useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
 import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -146,6 +147,7 @@ export default function TerminalSessionList() {
   } = actions
   const projects = useProjectStore(s => s.projects)
   const sshConnections = useProjectStore(s => s.sshConnections)
+  const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
   const allTerminals = useTerminalStore(s => s.terminals)
   const reorderTerminal = useTerminalStore(s => s.reorderTerminal)
@@ -875,11 +877,18 @@ export default function TerminalSessionList() {
         const group = groups.find(item => item.project.id === projectMenu.projectId)
         if (!group) return null
         const expanded = isExpanded(group)
+        const isCurrentGroup = group.project.id === currentProjectId
         return (
           <ContextMenu
             x={projectMenu.x}
             y={projectMenu.y}
             items={[
+              {
+                label: isCurrentGroup ? translate('当前项目') : translate('切换到此项目'),
+                icon: <FolderOpen size={14} />,
+                disabled: isCurrentGroup || unavailableProjectIds.includes(group.project.id),
+                action: () => switchToTerminalProject(group.project.id),
+              },
               {
                 label: expanded ? translate('收起分组') : translate('展开分组'),
                 icon: expanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />,
