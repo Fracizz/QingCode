@@ -426,6 +426,8 @@ pub enum Event {
         kind: String,
         is_dir: bool,
     },
+    /// 「Git 多端同步」的推送事件。
+    GitPush(crate::git_push_watch::PushEvent),
 }
 
 /// `STREAM_DATA` 负载：一个逻辑数据块的分片。

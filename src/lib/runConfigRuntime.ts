@@ -211,7 +211,7 @@ export interface RunStartResult {
 export async function runConfig(
   project: Project,
   config: RunConfig,
-  options?: { throwOnError?: boolean }
+  options?: { throwOnError?: boolean; promptTrust?: boolean }
 ): Promise<RunStartResult | undefined> {
   try {
     if (!hasBackend()) {
@@ -221,6 +221,10 @@ export async function runConfig(
       throw new Error(
         `「${config.name}」没有可运行的任务，请检查 ${RUN_CONFIG_RELATIVE_PATH} 的 target`
       )
+    }
+    // CLI 调用不能弹窗等人：请求会超时，而用户之后点确认时任务仍会启动。
+    if (options?.promptTrust === false && !project.ephemeral && !isProjectTrusted(project)) {
+      throw new Error(`project is not trusted: ${project.path}`)
     }
     if (!(await ensureRunTrust(project))) {
       if (options?.throwOnError) throw new Error('项目未信任或运行已取消')
@@ -276,20 +280,26 @@ export async function runConfig(
   }
 }
 
-export async function stopConfig(config: Pick<RunConfig, 'id'>, projectId?: string): Promise<void> {
-  const terminalIds = activeTerminalsForConfig(
-    config.id,
-    useTerminalStore.getState().terminals,
+function stoppableTerminalIds(configId: string, projectId?: string, taskId?: string): string[] {
+  const terminals = useTerminalStore.getState().terminals
+  return activeTerminalsForConfig(
+    configId,
+    taskId ? terminals.filter(terminal => terminal.runTaskId === taskId) : terminals,
     projectId
   )
+}
+
+export async function stopConfig(
+  config: Pick<RunConfig, 'id'>,
+  projectId?: string,
+  taskId?: string
+): Promise<void> {
+  const terminalIds = stoppableTerminalIds(config.id, projectId, taskId)
   const closeTerminal = useTerminalStore.getState().closeTerminal
   await Promise.all(terminalIds.map(id => closeTerminal(id)))
-  const remaining = activeTerminalsForConfig(
-    config.id,
-    useTerminalStore.getState().terminals,
-    projectId
-  )
-  if (remaining.length) throw new Error('部分任务未能停止，请查看终端错误后重试')
+  if (stoppableTerminalIds(config.id, projectId, taskId).length) {
+    throw new Error('部分任务未能停止，请查看终端错误后重试')
+  }
 }
 
 export async function removeRunConfig(project: Project, configId: string): Promise<void> {

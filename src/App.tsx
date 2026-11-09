@@ -56,6 +56,7 @@ import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
 import { listenForMobileRequests } from './lib/mobileBridge'
 import { useSshWarmup } from './hooks/useSshWarmup'
 import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
+import { useGitPushSync } from './features/gitPushSync/useGitPushSync'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import TerminalSessionList from './components/TerminalSessionList'
@@ -251,6 +252,7 @@ function App() {
   }, [projectsReady])
   useSshWarmup(projectsReady)
   useStartupServerUpdates(projectsReady)
+  useGitPushSync(projectsReady)
 
   useEffect(() => {
     let cancelled = false

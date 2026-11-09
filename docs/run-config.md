@@ -120,6 +120,9 @@ SSH CRUD 与启动、状态、停止仍需运行中的 QingCode。
 `run start` 异步创建任务，返回原字段及所选 `environment`、任务终端 ID。
 `run status` 保留原 `running` / `terminals`，补充各任务 `status`、`exitCode`、
 实际 `target`、`cwd`、执行环境；不返回环境变量值。进程存在与服务就绪需要分别验证。
+`run start --wait-text <text>` 会等到任务输出出现该文本，默认最多 60 秒，超时退出码为 4
+且任务继续运行；`run logs` 读取任务最近的显示内容，`--task` 可把启动、停止、重启限定到单个任务。
+未受信任的项目由 CLI 启动时立即失败，不会弹窗等待确认。
 
 验收应检查前后端实际服务地址、Celery 执行测试任务、停止后进程退出及端口释放，并再次启动。
 WSL 服务需从 Windows 验证；SSH 使用远端可达地址或明确配置的端口隧道，当前功能不自动创建隧道。

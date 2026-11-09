@@ -1,19 +1,23 @@
-import { listen } from '@tauri-apps/api/event'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { safeInvoke, isTauri } from './tauri'
 import { authorizePaths } from './pathAllowlist'
 import {
+  getWorkspaceTrust,
   isProjectTrusted,
   normalizeProjectPath,
   pushTrustedRootsToNative,
+  trustedPathsOutsideProjects,
   trustProject,
+  untrustProject,
 } from './workspaceTrust'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
-import { useTerminalStore } from '../store/terminalStore'
+import { getTerminalRawScrollback, useTerminalStore } from '../store/terminalStore'
 import {
   runConfigPath,
   useRunConfigStore,
   type RunConfig,
+  type RunTask,
   type RunTaskType,
 } from '../store/runConfigStore'
 import {
@@ -30,6 +34,8 @@ import { writeTerminal } from './ipc/terminal'
 import {
   assertCliTerminalWritable,
   cliTerminalSummary,
+  latestRunTerminals,
+  readCliTerminal,
   resolveCliTerminal,
 } from './terminal/cliTerminal'
 
@@ -41,6 +47,41 @@ interface CliRequest {
   path?: string | null
   paths?: string[] | null
   content?: string | null
+  options?: Record<string, unknown> | null
+}
+
+function optionString(req: CliRequest, key: string): string | undefined {
+  const value = req.options?.[key]
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function optionNumber(req: CliRequest, key: string): number | undefined {
+  const value = req.options?.[key]
+  return typeof value === 'number' ? value : undefined
+}
+
+function projectSummary(project: Project) {
+  return { id: project.id, name: project.name, path: project.path }
+}
+
+/** 读写终端、启动进程等同于执行命令或查看其输出，都受工作区信任约束。 */
+function requireTrusted(project: Project): void {
+  if (!isProjectTrusted(project)) throw new Error(`project is not trusted: ${project.path}`)
+}
+
+export function selectCliRunTask(config: RunConfig, query?: string): RunTask | undefined {
+  const q = query?.trim()
+  if (!q) return undefined
+  const byId = config.tasks.find(task => task.id === q)
+  if (byId) return byId
+  const byName = config.tasks.filter(task => task.name === q)
+  if (byName.length === 1) return byName[0]
+  if (byName.length > 1) throw new Error(`ambiguous task name '${q}'; use the task id`)
+  throw new Error(`task not found in run config: ${q}`)
+}
+
+function configWithTask(config: RunConfig, task: RunTask | undefined): RunConfig {
+  return task ? { ...config, tasks: [task] } : config
 }
 
 const CLI_RUN_TASK_TYPES = new Set<RunTaskType>(['ps1', 'bat', 'sh', 'command', 'script'])
@@ -190,9 +231,23 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (project) await ensureSshWorkspaceConnected(project)
       return resetSettings(scope, project)
     }
+    case 'app.status': {
+      const { currentProject, projects } = useProjectStore.getState()
+      return {
+        currentProject:
+          currentProject && !currentProject.ephemeral ? projectSummary(currentProject) : null,
+        projects: projects.filter(p => !p.ephemeral).length,
+        terminals: useTerminalStore.getState().terminals.length,
+      }
+    }
     case 'projects.reload': {
       await useProjectStore.getState().reloadProjectsAfterExternalChange()
       return { count: useProjectStore.getState().projects.filter(p => !p.ephemeral).length }
+    }
+    case 'run.reload': {
+      const project = resolveProject(req.project)
+      const configs = await useRunConfigStore.getState().loadConfigs(project)
+      return { count: configs.length }
     }
     case 'project.switch': {
       const project = resolveProject(req.project)
@@ -200,12 +255,61 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!ok) throw new Error('switch cancelled or failed')
       return { id: project.id, name: project.name, path: project.path }
     }
-    case 'run.start': {
+    case 'run.start':
+    case 'run.task.start': {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      const result = await runConfig(project, config, { throwOnError: true })
+      const selected = configWithTask(config, selectCliRunTask(config, optionString(req, 'task')))
+      const result = await runConfig(project, selected, { throwOnError: true, promptTrust: false })
       return { project: project.path, config: { id: config.id, name: config.name }, ...result }
+    }
+    case 'run.restart': {
+      if (!req.config) throw new Error('config is required')
+      const project = resolveProject(req.project)
+      // 先检查信任，避免停掉任务后才发现无法重新启动。
+      requireTrusted(project)
+      const config = await resolveConfig(project, req.config)
+      const task = selectCliRunTask(config, optionString(req, 'task'))
+      await stopConfig(config, project.id, task?.id)
+      const result = await runConfig(project, configWithTask(config, task), {
+        throwOnError: true,
+        promptTrust: false,
+      })
+      return { project: project.path, config: { id: config.id, name: config.name }, ...result }
+    }
+    case 'run.logs': {
+      if (!req.config) throw new Error('config is required')
+      const project = resolveProject(req.project)
+      requireTrusted(project)
+      const config = await resolveConfig(project, req.config)
+      const task = selectCliRunTask(config, optionString(req, 'task'))
+      const tail = optionNumber(req, 'tail')
+      const terminals = latestRunTerminals(
+        useTerminalStore
+          .getState()
+          .terminals.filter(
+            terminal =>
+              terminal.projectId === project.id &&
+              terminal.runConfigId === config.id &&
+              (!task || terminal.runTaskId === task.id)
+          )
+      )
+      return {
+        project: projectSummary(project),
+        config: { id: config.id, name: config.name },
+        tasks: await Promise.all(
+          terminals.map(async terminal => ({
+            id: terminal.runTaskId,
+            terminalId: terminal.id,
+            status: terminal.status,
+            exitCode: terminal.exitCode,
+            ...(await readCliTerminal(terminal.id, 'buffer', tail, () =>
+              getTerminalRawScrollback(terminal.id)
+            )),
+          }))
+        ),
+      }
     }
     case 'run.list': {
       const project = resolveProject(req.project)
@@ -249,11 +353,13 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         removed: target,
       }
     }
-    case 'run.stop': {
+    case 'run.stop':
+    case 'run.task.stop': {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await stopConfig(config, project.id)
+      const task = selectCliRunTask(config, optionString(req, 'task'))
+      await stopConfig(config, project.id, task?.id)
       return { project: project.path, config: { id: config.id, name: config.name } }
     }
     case 'run.status': {
@@ -300,10 +406,7 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!req.config) throw new Error('terminal is required')
       if (!req.content) throw new Error('content is required')
       const project = resolveProject(req.project)
-      // 向终端写入等同于执行命令，必须和运行配置一样受工作区信任约束。
-      if (!isProjectTrusted(project)) {
-        throw new Error(`project is not trusted: ${project.path}`)
-      }
+      requireTrusted(project)
       const terminal = resolveCliTerminal(
         useTerminalStore.getState().terminals,
         project.id,
@@ -316,6 +419,90 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         terminal: { id: terminal.id, name: terminal.name },
         bytes: new TextEncoder().encode(req.content).length,
       }
+    }
+    case 'terminal.read': {
+      if (!req.config) throw new Error('terminal is required')
+      const project = resolveProject(req.project)
+      requireTrusted(project)
+      const terminal = resolveCliTerminal(
+        useTerminalStore.getState().terminals,
+        project.id,
+        req.config
+      )
+      const scope = optionString(req, 'scope') === 'screen' ? 'screen' : 'buffer'
+      const { available, ...output } = await readCliTerminal(
+        terminal.id,
+        scope,
+        optionNumber(req, 'tail'),
+        () => getTerminalRawScrollback(terminal.id)
+      )
+      if (!available) throw new Error(`terminal output is not available yet: ${terminal.id}`)
+      return {
+        project: projectSummary(project),
+        terminal: cliTerminalSummary(terminal),
+        scope,
+        ...output,
+      }
+    }
+    case 'terminal.create': {
+      const project = resolveProject(req.project)
+      requireTrusted(project)
+      await ensureSshWorkspaceConnected(project)
+      const id = await useTerminalStore.getState().addTerminal(project.path, project.id)
+      const terminal = useTerminalStore.getState().terminals.find(item => item.id === id)
+      if (!terminal) throw new Error('could not create a terminal (limit reached or app closing)')
+      return { project: projectSummary(project), terminal: cliTerminalSummary(terminal) }
+    }
+    case 'terminal.restart': {
+      if (!req.config) throw new Error('terminal is required')
+      const project = resolveProject(req.project)
+      requireTrusted(project)
+      const { id } = resolveCliTerminal(
+        useTerminalStore.getState().terminals,
+        project.id,
+        req.config
+      )
+      await useTerminalStore.getState().restartTerminal(id)
+      const terminal = useTerminalStore.getState().terminals.find(item => item.id === id)
+      if (!terminal) throw new Error(`terminal not found after restart: ${id}`)
+      return { project: projectSummary(project), terminal: cliTerminalSummary(terminal) }
+    }
+    case 'terminal.close': {
+      if (!req.config) throw new Error('terminal is required')
+      const project = resolveProject(req.project)
+      const terminal = resolveCliTerminal(
+        useTerminalStore.getState().terminals,
+        project.id,
+        req.config
+      )
+      await useTerminalStore.getState().closeTerminal(terminal.id)
+      // closeTerminal 失败时只提示不抛错，需要确认标签确实已关闭。
+      if (useTerminalStore.getState().terminals.some(item => item.id === terminal.id)) {
+        throw new Error(`could not close terminal: ${terminal.id}`)
+      }
+      return {
+        project: projectSummary(project),
+        closed: { id: terminal.id, name: terminal.name },
+      }
+    }
+    case 'trust.list': {
+      const projects = useProjectStore.getState().projects.filter(p => !p.ephemeral)
+      return {
+        projects: projects.map(project => ({
+          ...projectSummary(project),
+          trust: getWorkspaceTrust(project),
+        })),
+        trustedPathsOutsideProjects: trustedPathsOutsideProjects(projects),
+      }
+    }
+    case 'trust.revoke': {
+      if (!req.path) throw new Error('path is required')
+      const projects = useProjectStore.getState().projects
+      const n = normalizePath(req.path)
+      const match = projects.find(p => normalizePath(p.path) === n)
+      untrustProject(match ?? { id: `cli:${n}`, path: req.path })
+      await pushTrustedRootsToNative(projects)
+      return { path: match?.path ?? req.path, trusted: false }
     }
     case 'trust.grant': {
       if (!req.path) throw new Error('path is required')
@@ -359,7 +546,8 @@ async function respond(id: string, ok: boolean, data?: unknown, error?: string):
 export async function listenForCliRequests(): Promise<() => void> {
   if (!isTauri()) return () => {}
   try {
-    const unlisten = await listen<CliRequest>('cli-request', event => {
+    // 全局 listen 不区分目标窗口：独立文件窗口也会收到，同一请求会被执行多次。
+    const unlisten = await getCurrentWebviewWindow().listen<CliRequest>('cli-request', event => {
       const req = event.payload
       void (async () => {
         try {
@@ -369,6 +557,9 @@ export async function listenForCliRequests(): Promise<() => void> {
           await respond(req.id, false, undefined, String(e))
         }
       })()
+    })
+    void safeInvoke('标记 CLI 桥接就绪', 'cli_bridge_ready').catch(error => {
+      console.warn('cli bridge ready failed:', error)
     })
     return unlisten
   } catch {

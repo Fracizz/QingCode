@@ -1,6 +1,6 @@
 import { SHORTCUT_SEARCH_TERMS } from './shortcutSettings'
 
-export type SettingsCategoryId = 'appearance' | 'editor' | 'terminal' | 'projects' | 'remote' | 'mobile' | 'tools' | 'shortcuts' | 'about'
+export type SettingsCategoryId = 'appearance' | 'editor' | 'terminal' | 'projects' | 'remote' | 'gitPushSync' | 'mobile' | 'tools' | 'shortcuts' | 'about'
 
 /** Navigation order and search category titles share this registry. */
 export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = [
@@ -9,6 +9,7 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
   { id: 'terminal', label: '终端' },
   { id: 'projects', label: '项目与会话' },
   { id: 'remote', label: '远程连接' },
+  { id: 'gitPushSync', label: 'Git 多端同步' },
   { id: 'mobile', label: '移动连接' },
   { id: 'tools', label: '工具与集成' },
   { id: 'shortcuts', label: '快捷键' },
@@ -45,6 +46,7 @@ const groups: SearchGroup[] = [
   { category: 'about', terms: ['检查更新', '启动时自动检查更新', '自动检查更新', '更新', 'qingcode.update.checkOnStartup'], userOnly: true },
   { category: 'tools', terms: ['打开方式', 'Windows 打开方式', 'Open with', 'Windows'], userOnly: true, windowsOnly: true },
   { category: 'shortcuts', terms: SHORTCUT_SEARCH_TERMS, userOnly: true },
+  { category: 'gitPushSync', terms: ['Git 多端同步', '自动同步', '自动拉取', '快进', '推送', 'git push', 'auto pull', 'sync'], userOnly: true },
   { category: 'mobile', terms: ['Android', '安卓', '移动连接', '手机', '配对', '二维码', '端口', '密码', '验证码', '证书指纹', '局域网', 'Tailscale', 'mobile', 'pairing'], userOnly: true, windowsOnly: true },
   { category: 'appearance', terms: ['语言', '显示语言', '自定义语言包', '简体中文', 'English', '语言包', '自定义语言', 'language'], userOnly: true },
   { category: 'about', terms: ['关于', 'QingCode', '版本', '版本未知', '源代码仓库', '协议', 'git', '仓库', 'Gitee', 'GitHub', '开源', 'License', 'MIT'], userOnly: true },

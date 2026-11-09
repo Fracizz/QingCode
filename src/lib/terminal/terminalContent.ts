@@ -1,9 +1,43 @@
 import type { Terminal } from '@xterm/xterm'
 
+export type TerminalContentScope = 'screen' | 'buffer'
+
+type TerminalReader = (scope: TerminalContentScope) => Promise<string>
+
+const readers = new Map<string, TerminalReader>()
+
+/** xterm 实例常驻，切换项目后仍可读取；CLI 按终端 ID 取用。 */
+export function registerTerminalReader(id: string, reader: TerminalReader) {
+  readers.set(id, reader)
+  return () => {
+    if (readers.get(id) === reader) readers.delete(id)
+  }
+}
+
+export function terminalReader(id: string) {
+  return readers.get(id)
+}
+
+/**
+ * 从原始 PTY 输出近似还原文本：去掉控制序列，`\r` 覆盖的行只留最后一段。
+ * 不解析光标移动，TUI 重绘的内容不准确，仅用于没有 xterm 实例的终端。
+ */
+export function plainTerminalText(raw: string): string {
+  const lines = raw
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[()][0-9A-Za-z]/g, '')
+    .replace(/\x1b[@-Z\\^_=>]/g, '')
+    .split(/\r?\n/)
+    .map(line => line.split('\r').filter(Boolean).at(-1) ?? '')
+  while (lines.at(-1) === '') lines.pop()
+  return lines.join('\n')
+}
+
 /** Read displayed cells, never the PTY stream (which contains TUI repaint commands). */
 export function terminalContent(
   term: Pick<Terminal, 'buffer' | 'rows' | 'cols'>,
-  scope: 'screen' | 'buffer'
+  scope: TerminalContentScope
 ): string {
   const buffer = term.buffer.active
   const start = scope === 'screen' ? buffer.viewportY : 0

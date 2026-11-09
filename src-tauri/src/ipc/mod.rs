@@ -2,15 +2,26 @@
 
 use crate::app_paths;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// CLI 与 GUI 之间的请求约定版本；新增或改变 op 语义时递增。
+pub const PROTOCOL_VERSION: u32 = 2;
+
+const FRONTEND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+/// 必须长于服务端等待，超时结论统一由服务端给出，客户端不会先放弃。
+const CLIENT_READ_TIMEOUT: Duration = Duration::from_secs(75);
+const BRIDGE_READY_WAIT: Duration = Duration::from_secs(10);
+const FRONTEND_TIMEOUT_ERROR: &str =
+    "QingCode did not finish within 60s; the operation may still be running. Check its state before retrying";
+const UI_NOT_READY_ERROR: &str = "QingCode is still loading its UI; retry shortly";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IpcRequest {
     pub id: String,
     pub op: String,
@@ -24,6 +35,9 @@ pub struct IpcRequest {
     pub paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// 各 op 自己的附加参数，例如 `task`、`tail`、`scope`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +77,69 @@ fn pending() -> &'static PendingMap {
 
 pub enum ClientError {
     AppNotRunning(String),
+    Timeout(String),
     Other(String),
+}
+
+/// 已完成 `cli-request` 订阅的窗口。事件不排队，订阅前发出的请求会丢失。
+fn bridge_ready_windows() -> &'static Mutex<HashSet<String>> {
+    static READY: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    READY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub fn mark_bridge_ready(label: &str) {
+    if let Ok(mut ready) = bridge_ready_windows().lock() {
+        ready.insert(label.to_string());
+    }
+}
+
+fn is_bridge_ready(label: &str) -> bool {
+    bridge_ready_windows()
+        .lock()
+        .map(|ready| ready.contains(label))
+        .unwrap_or(false)
+}
+
+fn wait_for_bridge(label: &str) -> bool {
+    let begin = Instant::now();
+    while !is_bridge_ready(label) {
+        if begin.elapsed() >= BRIDGE_READY_WAIT {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+fn preferred_window(app: &AppHandle) -> Option<String> {
+    if app.get_webview_window("main").is_some() {
+        Some("main".to_string())
+    } else {
+        app.webview_windows().keys().next().cloned()
+    }
+}
+
+fn write_response(writer: &mut TcpStream, response: &IpcResponse) -> Result<(), String> {
+    let out = serde_json::to_string(response).map_err(|e| e.to_string())?;
+    writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))
+}
+
+fn ok_response(id: String, data: serde_json::Value) -> IpcResponse {
+    IpcResponse {
+        id,
+        ok: true,
+        data: Some(data),
+        error: None,
+    }
+}
+
+fn error_response(id: String, error: impl Into<String>) -> IpcResponse {
+    IpcResponse {
+        id,
+        ok: false,
+        data: None,
+        error: Some(error.into()),
+    }
 }
 
 /// Start the IPC listener in a background thread and publish the endpoint file.
@@ -168,17 +244,22 @@ fn handle_client(app: AppHandle, stream: TcpStream, token: &str) -> Result<(), S
     let req = match parse_authorized_request(&line, token) {
         Ok(req) => req,
         Err(error) => {
-            let response = IpcResponse {
-                id: String::new(),
-                ok: false,
-                data: None,
-                error: Some(error.clone()),
-            };
-            let out = serde_json::to_string(&response).map_err(|e| e.to_string())?;
-            writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))?;
+            write_response(&mut writer, &error_response(String::new(), error.clone()))?;
             return Err(error);
         }
     };
+
+    // 原生层直接回答，界面还在加载时也能用来判断应用状态。
+    if req.op == "app.info" {
+        let ui_ready = preferred_window(&app).is_some_and(|label| is_bridge_ready(&label));
+        let data = serde_json::json!({
+            "pid": std::process::id(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "protocol": PROTOCOL_VERSION,
+            "uiReady": ui_ready,
+        });
+        return write_response(&mut writer, &ok_response(req.id, data));
+    }
 
     // `qingcode open ...` follows Explorer's independent-file-window model.
     // Acknowledging the native queue keeps this reliable even before its WebView
@@ -186,31 +267,21 @@ fn handle_client(app: AppHandle, stream: TcpStream, token: &str) -> Result<(), S
     if req.op == "open" {
         let targets = req.paths.clone().unwrap_or_default();
         let response = if targets.is_empty() {
-            IpcResponse {
-                id: req.id,
-                ok: false,
-                data: None,
-                error: Some("paths required".into()),
-            }
+            error_response(req.id, "paths required")
         } else {
             match crate::route_external_file_targets(&app, targets.clone()) {
-                Ok(()) => IpcResponse {
-                    id: req.id,
-                    ok: true,
-                    data: Some(serde_json::json!({ "queued": targets })),
-                    error: None,
-                },
-                Err(error) => IpcResponse {
-                    id: req.id,
-                    ok: false,
-                    data: None,
-                    error: Some(error),
-                },
+                Ok(()) => ok_response(req.id, serde_json::json!({ "queued": targets })),
+                Err(error) => error_response(req.id, error),
             }
         };
-        let out = serde_json::to_string(&response).map_err(|e| e.to_string())?;
-        writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))?;
-        return Ok(());
+        return write_response(&mut writer, &response);
+    }
+
+    let Some(target) = preferred_window(&app) else {
+        return Err("no QingCode window is available".into());
+    };
+    if !wait_for_bridge(&target) {
+        return write_response(&mut writer, &error_response(req.id, UI_NOT_READY_ERROR));
     }
 
     let (tx, rx) = channel::<IpcResponse>();
@@ -219,33 +290,17 @@ fn handle_client(app: AppHandle, stream: TcpStream, token: &str) -> Result<(), S
         .map_err(|e| e.to_string())?
         .insert(req.id.clone(), tx);
 
-    let target = if app.get_webview_window("main").is_some() {
-        Some("main".to_string())
-    } else {
-        app.webview_windows().keys().next().cloned()
-    };
-    let Some(target) = target else {
-        pending().lock().ok().map(|mut g| g.remove(&req.id));
-        return Err("no QingCode window is available".into());
-    };
     if let Err(e) = app.emit_to(&target, "cli-request", &req) {
         pending().lock().ok().map(|mut g| g.remove(&req.id));
         return Err(format!("emit cli-request: {e}"));
     }
 
     let resp = rx
-        .recv_timeout(Duration::from_secs(60))
-        .unwrap_or_else(|_| IpcResponse {
-            id: req.id.clone(),
-            ok: false,
-            data: None,
-            error: Some("frontend did not respond in time".into()),
-        });
+        .recv_timeout(FRONTEND_RESPONSE_TIMEOUT)
+        .unwrap_or_else(|_| error_response(req.id.clone(), FRONTEND_TIMEOUT_ERROR));
     pending().lock().ok().map(|mut g| g.remove(&req.id));
 
-    let out = serde_json::to_string(&resp).map_err(|e| e.to_string())?;
-    writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))?;
-    Ok(())
+    write_response(&mut writer, &resp)
 }
 
 pub fn resolve_request(id: &str, ok: bool, data: Option<serde_json::Value>, error: Option<String>) {
@@ -271,7 +326,7 @@ pub fn client_request(req: &IpcRequest) -> Result<IpcResponse, ClientError> {
             endpoint.port
         ))
     })?;
-    stream.set_read_timeout(Some(Duration::from_secs(20))).ok();
+    stream.set_read_timeout(Some(CLIENT_READ_TIMEOUT)).ok();
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
     let body = serde_json::to_string(&IpcEnvelope {
         token: endpoint.token,
@@ -281,15 +336,31 @@ pub fn client_request(req: &IpcRequest) -> Result<IpcResponse, ClientError> {
     writeln!(stream, "{body}").map_err(|e| ClientError::Other(format!("send: {e}")))?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| ClientError::Other(format!("recv: {e}")))?;
+    reader.read_line(&mut line).map_err(|e| match e.kind() {
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => {
+            ClientError::Timeout(FRONTEND_TIMEOUT_ERROR.to_string())
+        }
+        _ => ClientError::Other(format!("recv: {e}")),
+    })?;
     if line.trim().is_empty() {
         return Err(ClientError::Other(
             "empty response from QingCode app (is the UI still loading?)".into(),
         ));
     }
-    serde_json::from_str(line.trim()).map_err(|e| ClientError::Other(format!("bad response: {e}")))
+    let response: IpcResponse = serde_json::from_str(line.trim())
+        .map_err(|e| ClientError::Other(format!("bad response: {e}")))?;
+    classify_response(response)
+}
+
+/// 超时和界面未就绪需要调用方采取不同动作，不能和普通失败共用退出码。
+fn classify_response(response: IpcResponse) -> Result<IpcResponse, ClientError> {
+    match response.error.as_deref() {
+        Some(FRONTEND_TIMEOUT_ERROR) => {
+            Err(ClientError::Timeout(FRONTEND_TIMEOUT_ERROR.to_string()))
+        }
+        Some(UI_NOT_READY_ERROR) => Err(ClientError::AppNotRunning(UI_NOT_READY_ERROR.to_string())),
+        _ => Ok(response),
+    }
 }
 
 fn read_live_endpoint() -> Result<EndpointFile, String> {
@@ -329,9 +400,41 @@ mod tests {
                 path: None,
                 paths: None,
                 content: Some("x".into()),
+                options: None,
             },
         })
         .unwrap()
+    }
+
+    #[test]
+    fn client_waits_longer_than_the_server_so_timeouts_are_never_premature() {
+        assert!(CLIENT_READ_TIMEOUT > FRONTEND_RESPONSE_TIMEOUT + BRIDGE_READY_WAIT);
+    }
+
+    #[test]
+    fn timeout_and_loading_responses_get_their_own_client_errors() {
+        let timed_out = classify_response(error_response("1".into(), FRONTEND_TIMEOUT_ERROR));
+        assert!(matches!(timed_out, Err(ClientError::Timeout(_))));
+        let loading = classify_response(error_response("1".into(), UI_NOT_READY_ERROR));
+        assert!(matches!(loading, Err(ClientError::AppNotRunning(_))));
+        let failed = classify_response(error_response("1".into(), "boom"))
+            .ok()
+            .unwrap();
+        assert_eq!(failed.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn bridge_readiness_is_tracked_per_window() {
+        assert!(!is_bridge_ready("test-window-a"));
+        mark_bridge_ready("test-window-a");
+        assert!(is_bridge_ready("test-window-a"));
+        assert!(!is_bridge_ready("test-window-b"));
+    }
+
+    #[test]
+    fn older_requests_without_options_still_parse() {
+        let request: IpcRequest = serde_json::from_str(r#"{"id":"1","op":"run.status"}"#).unwrap();
+        assert!(request.options.is_none());
     }
 
     #[test]

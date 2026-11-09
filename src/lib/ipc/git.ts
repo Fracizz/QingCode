@@ -102,8 +102,15 @@ export function commitGit(path: string, message: string): Promise<string> {
   return safeInvoke('提交 Git 更改', 'git_commit', { path, message })
 }
 
-export function pushGit(path: string): Promise<string> {
-  return safeInvoke('推送 Git 提交', 'git_push', { path })
+/** 推送成功后派发；「Git 多端同步」用它覆盖没有 reflog 监听的连接方式。 */
+export const GIT_PUSHED_EVENT = 'qingcode:git-pushed'
+
+export async function pushGit(path: string): Promise<string> {
+  const summary = await safeInvoke<string>('推送 Git 提交', 'git_push', { path })
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(GIT_PUSHED_EVENT, { detail: { path } }))
+  }
+  return summary
 }
 
 export function fetchGit(path: string): Promise<string> {

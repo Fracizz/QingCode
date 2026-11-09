@@ -113,7 +113,7 @@ import {
 } from '@/lib/terminal/terminalContextMenu'
 import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
 import { getTerminalLargePasteAsFile } from '../lib/terminal/terminalLargePasteSettings'
-import { terminalContent } from '../lib/terminal/terminalContent'
+import { registerTerminalReader, terminalContent } from '../lib/terminal/terminalContent'
 import { exportTerminalContent } from '../lib/terminal/terminalExport'
 import {
   isTerminalAgentForeground,
@@ -912,6 +912,9 @@ export default function TerminalView({
         rows: term.rows,
       }))
     }))
+    const unregisterReader = registerTerminalReader(terminalId, scope => new Promise(resolve => {
+      term.write('', () => resolve(terminalContent(term, scope)))
+    }))
 
     const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
     previousStatusRef.current = tab?.status
@@ -1344,6 +1347,7 @@ export default function TerminalView({
       disposeHostScrollLock()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
       unregisterCapture()
+      unregisterReader()
       term.dispose()
       container.replaceChildren()
       xtermRef.current = null

@@ -175,6 +175,12 @@ export function restrictProject(project: Pick<Project, 'id' | 'path'>): void {
   writeStore(store)
 }
 
+/** 已授予信任、但还没有对应项目的路径（CLI 可以先授予再添加项目）。 */
+export function trustedPathsOutsideProjects(projects: ReadonlyArray<Pick<Project, 'path'>>): string[] {
+  const known = new Set(projects.map(project => normalizeProjectPath(project.path)))
+  return readStore().trustedPaths.filter(path => !known.has(path))
+}
+
 /** Clear decision so the next open asks again. */
 export function untrustProject(project: Pick<Project, 'id' | 'path'>): void {
   writeStore(removeFromLists(readStore(), project))

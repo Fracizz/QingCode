@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { parseCliRunConfig, parseOpenTarget } from './cliBridge'
+import { parseCliRunConfig, parseOpenTarget, selectCliRunTask } from './cliBridge'
+
+describe('selectCliRunTask', () => {
+  const task = (id: string, name?: string) => ({ id, name, type: 'command' as const, target: 'x' })
+  const config = {
+    id: 'dev',
+    name: 'dev',
+    tasks: [task('a', 'api'), task('b', 'web'), task('c', 'web')],
+  }
+
+  it('returns undefined when no task filter is given', () => {
+    expect(selectCliRunTask(config)).toBeUndefined()
+  })
+
+  it('matches by id first, then by unique name', () => {
+    expect(selectCliRunTask(config, 'b')?.id).toBe('b')
+    expect(selectCliRunTask(config, 'api')?.id).toBe('a')
+  })
+
+  it('never falls back to every task when the filter does not match', () => {
+    expect(() => selectCliRunTask(config, 'web')).toThrow('ambiguous task name')
+    expect(() => selectCliRunTask(config, 'nope')).toThrow('task not found')
+  })
+})
 
 describe('parseOpenTarget', () => {
   it('parses unix path with line and column', () => {

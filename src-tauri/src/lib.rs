@@ -13,6 +13,7 @@ mod fonts;
 mod format;
 mod git;
 mod git_command;
+mod git_push_sync;
 mod git_status;
 mod ipc;
 mod local_pty_host;
@@ -519,17 +520,28 @@ fn resolve_cli_request(
     ipc::resolve_request(&id, ok, data, error);
 }
 
+/// 窗口完成 `cli-request` 订阅后调用，此后发给它的 CLI 请求才不会丢失。
+#[tauri::command]
+fn cli_bridge_ready(window: tauri::WebviewWindow) {
+    ipc::mark_bridge_ready(window.label());
+}
+
 #[tauri::command]
 fn is_dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
-/// Absolute path of the running QingCode executable (for Settings → copy CLI skill).
+/// Skill 里写入的 CLI 路径：Windows 发布版优先用控制台 shim，调用方才能拿到退出码。
 #[tauri::command]
-fn app_exe_path() -> Result<String, String> {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| format!("locate exe: {e}"))
+fn cli_exe_path() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("locate exe: {e}"))?;
+    let shim = exe.with_file_name("qingcode-cli.exe");
+    let path = if cfg!(windows) && !cfg!(debug_assertions) && shim.is_file() {
+        shim
+    } else {
+        exe
+    };
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Consume launch targets queued specifically for the calling window.
@@ -797,6 +809,7 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(mobile::MobileState::default())
         .manage(FileWatcherManager::new())
+        .manage(git_push_sync::GitPushSyncManager::default())
         .manage(PathAllowlist::new())
         .manage(remote_ssh::SshManager::new())
         .manage(LaunchFiles::new(launch_files))
@@ -912,6 +925,9 @@ pub fn run() {
             git::git_push,
             git::git_fetch,
             git::git_pull,
+            git_push_sync::git_push_sync_set_watches,
+            git_push_sync::git_push_sync_fetch,
+            git_push_sync::git_push_sync_merge_ff,
             git::git_branch_list,
             git::git_remotes,
             git::git_switch,
@@ -936,7 +952,6 @@ pub fn run() {
             remote_ssh::ssh_run_environment,
             db_url,
             default_settings_path,
-            app_exe_path,
             user_locales::user_locales_dir,
             user_locales::list_user_locales,
             is_dev_build,
@@ -947,6 +962,8 @@ pub fn run() {
             release_external_file_window,
             sync_open_file_paths,
             resolve_cli_request,
+            cli_bridge_ready,
+            cli_exe_path,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,
             file_associations::unregister_file_open_with,

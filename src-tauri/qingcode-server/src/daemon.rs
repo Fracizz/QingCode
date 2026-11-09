@@ -41,6 +41,8 @@ use crate::proto::{
 use crate::pty::{InputError, InputOutcome, PtyCreateOptions, PtyEvent, PtyHost};
 use crate::{ops, proto, watch, SERVER_VERSION};
 
+mod git_push;
+
 /// 每个 daemon 的 PTY 数量上限（设计 §6.3）。
 pub const MAX_PTYS: usize = 64;
 
@@ -85,6 +87,7 @@ pub const CAPABILITIES: &[&str] = &[
     // 终端兼容级别，须与 proto::PTY_COMPAT_LEVEL 一致（见测试）。
     "pty.compat.1",
     "server.shutdown",
+    "git.watchPush",
 ];
 
 /// daemon 启动参数。
@@ -1486,7 +1489,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
                                 // 等待异步 dispatch 获得调度后才找到取消标记。
                                 let cancellable = matches!(
                                     request.method.as_str(),
-                                    "search.content" | "watch.subscribe" | "pty.attach"
+                                    "search.content" | "watch.subscribe" | "pty.attach" | "git.watchPush"
                                 );
                                 if cancellable {
                                     ctx.cancel_flag(request.id);
@@ -1800,6 +1803,7 @@ async fn dispatch(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
         }
         "search.content" => search_content(daemon, conn, request).await,
         "watch.subscribe" => watch_subscribe(daemon, conn, request).await,
+        "git.watchPush" => git_push::subscribe(daemon, conn, request).await,
         method if method.starts_with("pty.") => pty_method(daemon, conn, request).await,
         other => conn.fail(id, "unknownMethod", format!("未知方法: {other}")),
     }
@@ -3892,6 +3896,74 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    /// 「Git 多端同步」：真实 git push 经 daemon 以 GitPush 事件送达，CANCEL 后收尾。
+    #[tokio::test]
+    async fn git_watch_push_streams_real_push_until_cancelled() {
+        fn git(dir: &Path, args: &[&str]) {
+            let output = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        }
+        let (run_dir, handle) = start_daemon("git-push").await;
+        let token = run_dir.read_token().unwrap();
+        let base = temp_dir("git-push-root");
+        let (remote, work) = (base.join("r.git"), base.join("work"));
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        git(&remote, &["init", "--bare", "-b", "main"]);
+        git(&work, &["init", "-b", "main"]);
+        git(&work, &["remote", "add", "origin", "../r.git"]);
+        git(&work, &["commit", "--allow-empty", "-m", "one"]);
+        git(&work, &["push", "-u", "origin", "main"]);
+
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let id = client
+            .request("git.watchPush", &json!({ "root": work }))
+            .await;
+        let ack = client.wait_response(id).await;
+        assert_eq!(ack["subscribed"], true);
+        assert!(ack["now"].as_i64().unwrap() > 0);
+
+        // 应答只表示已受理，监听在后台注册：重复推送直到收到事件。
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut seen = None;
+        while Instant::now() < deadline && seen.is_none() {
+            git(&work, &["commit", "--allow-empty", "-m", "next"]);
+            git(&work, &["push"]);
+            while let Some(frame) = client.poll_frame(Duration::from_millis(800)).await {
+                if frame.kind == Kind::Event && frame.stream_id == id {
+                    if let Ok(Event::GitPush(push)) = decode_value(&frame.payload) {
+                        seen = Some(push);
+                        break;
+                    }
+                }
+            }
+        }
+        let push = seen.expect("未收到 GitPush 事件");
+        assert_eq!(
+            (push.remote.as_str(), push.branch.as_str()),
+            ("origin", "main")
+        );
+
+        client.send(Kind::Cancel, id, &[]).await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut ended = false;
+        while Instant::now() < deadline && !ended {
+            if let Some(frame) = client.poll_frame(Duration::from_secs(1)).await {
+                ended = frame.kind == Kind::StreamEnd && frame.stream_id == id;
+            }
+        }
+        assert!(ended, "CANCEL 后未收尾");
+
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
     }
 
     /// 文件监视走同一个 daemon：订阅后写入文件应收到 fsChange 事件，CANCEL 后收尾。

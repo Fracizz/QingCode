@@ -178,6 +178,16 @@ try {
   # 便携版没有安装目录，server 二进制与 exe 同目录（运行时「exe 目录/servers」）。
   if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
 
+  # 控制台版 CLI 按同目录的 qingcode.exe 转发，只有默认文件名的主机构建才能配对。
+  $cliShim = Join-Path $releaseDir 'qingcode-cli.exe'
+  if (-not $archSuffix -and (Test-Path $cliShim)) {
+    try {
+      Copy-Item $cliShim (Join-Path $outDir 'qingcode-cli.exe') -Force
+    } catch {
+      Write-Host "  warning: failed to update qingcode-cli.exe - $_" -ForegroundColor Yellow
+    }
+  }
+
   $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
   # Keep unversioned QingCode.exe for the default (host) build only.
   $latest = if ($archSuffix) {

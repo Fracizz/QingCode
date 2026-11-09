@@ -20,5 +20,6 @@ fn main() {
         // tauri-build already embeds this binary's manifest in resource.lib.
         // Only lib/unit-test link targets need the linker-generated manifest.
         println!("cargo:rustc-link-arg-bin=qingcode=/MANIFEST:NO");
+        println!("cargo:rustc-link-arg-bin=qingcode-cli=/MANIFEST:NO");
     }
 }

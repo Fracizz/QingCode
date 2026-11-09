@@ -35,6 +35,7 @@ mod live_acceptance;
 pub(crate) mod mobile_restore;
 mod search;
 mod server;
+pub(crate) use server::git_push_sync;
 mod server_status;
 mod sshd_limits;
 mod terminal_exit;

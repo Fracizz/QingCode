@@ -20,6 +20,7 @@ pub mod connect;
 pub mod daemon;
 pub mod diagnostics;
 pub mod direct;
+pub mod git_push_watch;
 pub mod ipc;
 pub mod proto;
 pub mod service;

@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
+import GitPushSyncSection from '../features/gitPushSync/GitPushSyncSection'
 import { revealItemInDir, openUrl } from '@tauri-apps/plugin-opener'
 import {
   DEFAULT_FONT_SETTINGS,
@@ -1512,6 +1513,12 @@ export default function SettingsEditor() {
               </Section>
             )}
 
+            {sectionVisible('gitPushSync') && (
+              <Section id="gitPushSync" title={t('Git 多端同步')} onSectionRef={onSectionRef}>
+                <GitPushSyncSection />
+              </Section>
+            )}
+
             {sectionVisible('mobile') && (
               <Section id="mobile" title={t('移动连接')} onSectionRef={onSectionRef}>
                 <MobileConnectionSettings />
@@ -1539,8 +1546,9 @@ export default function SettingsEditor() {
                         void (async () => {
                           try {
                             let exe =
+                              (isTauri() ? await safeInvoke<string>('获取程序路径', 'cli_exe_path') : '') ||
                               openWith?.exe_path?.trim() ||
-                              (isTauri() ? await safeInvoke<string>('获取程序路径', 'app_exe_path') : '')
+                              ''
                             if (!exe.trim()) exe = 'QingCode.exe'
                             await copyToClipboard(buildQingcodeCliSkillMarkdown(exe, language))
                             pushToast('success', t('已复制 CLI skills，请粘贴到你的 AI Agent 中安装。'))

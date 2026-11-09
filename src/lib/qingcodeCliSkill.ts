@@ -35,7 +35,10 @@ Prefer these subcommands over hand-editing SQLite, directly rewriting
 ## Output contract
 
 - Command results write JSON \`{ ok, data?, error? }\` to stdout; \`--help\` writes plain text.
-- Exit: \`0\` ok · \`1\` error · \`2\` usage · \`3\` app not running.
+- Exit: \`0\` ok · \`1\` error · \`2\` usage · \`3\` app not running or UI still loading ·
+  \`4\` timed out. After \`4\` the operation may still be running: inspect state before retrying.
+- Unknown commands and options are rejected with \`2\`; they never fall back to defaults.
+- \`version\` prints the CLI version offline. \`status\` reports GUI state and CLI compatibility.
 - Check both the exit code and \`ok\`; surface \`error\` to the user instead of guessing.
 
 ## Project and local run-config commands
@@ -201,14 +204,26 @@ ${quoted} settings reset --scope workspace --project <id|path|name> --yes
 
 \`\`\`text
 ${quoted} project switch <id|path|name>
-${quoted} run start <name|id> [--project ...]
-${quoted} run stop <name|id> [--project ...]
+${quoted} run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]
+${quoted} run stop <name|id> [--project ...] [--task <id|name>]
+${quoted} run restart <name|id> [--project ...] [--task <id|name>]
+${quoted} run logs <name|id> [--project ...] [--task <id|name>] [--tail <n>]
 ${quoted} run status [--project ...]
 ${quoted} trust grant <path>
+${quoted} trust revoke <path>
+${quoted} trust list
 ${quoted} open <file>[:line[:col]] ...
 \`\`\`
 
-- If \`--project\` is omitted for \`run start|stop|status\`, the GUI current project is used.
+- If \`--project\` is omitted for \`run start|stop|restart|logs|status\`, the GUI current project is used.
+- \`run start\` fails at once for a project that is not trusted; it never waits on a GUI dialog.
+- \`--wait\` returns once every task has started. \`--wait-text\` also requires that text in a task's
+  recent output, which is the better readiness signal for a service. The default timeout is 60s;
+  on timeout exit is \`4\` and the tasks keep running. A task that exits non-zero fails the wait.
+- \`run logs\` returns recent displayed output per task (default 200 lines, needs a trusted project).
+- Relative paths for \`open\`, \`trust grant\`, and \`trust revoke\` use this command's working directory.
+  \`trust grant\` requires an existing directory or an \`ssh://\` root. \`trust revoke\` clears the
+  decision, so QingCode asks again next time.
 - If exit \`3\`, tell the user to start QingCode first; do not invent a headless runner. This also
   applies to run-config CRUD for SSH projects.
 - \`run start\` executes the commands stored in the selected config.
@@ -217,11 +232,18 @@ ${quoted} open <file>[:line[:col]] ...
 
 \`\`\`text
 ${quoted} terminal list [--project ...]
+${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+${quoted} terminal create [--project ...]
+${quoted} terminal restart <id|name> [--project ...]
+${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
-- Works for terminals already open in QingCode, local and SSH alike; the same command drives a
-  remote project's terminal through the GUI's authenticated session. It cannot create a terminal.
+- Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
+  terminal through the GUI's authenticated session.
+- \`terminal create\` opens a default-profile terminal and returns its \`id\`. It starts asynchronously:
+  poll \`terminal list\` until \`writable\` is true before sending input.
+- \`terminal close\` ends the process in that terminal and requires \`--yes\`; use it only when asked.
 - \`--project\` omitted means the GUI current project. Terminals are looked up only inside that
   project; prefer the \`id\` from \`terminal list\`, because a duplicate name is rejected.
 - \`send\` writes raw input exactly as given. Nothing is appended unless \`--enter\` adds a CR, so
@@ -229,9 +251,11 @@ ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--e
   shell. A single send is limited to 1 MB.
 - It is rejected when the project is not trusted or the terminal is not \`writable\` (starting,
   reconnecting, or exited). Do not grant trust just to get past this; follow the Safety rules.
-- Success means the input was queued, not that it ran. There is no command to read terminal
-  output, and the CLI cannot see what the terminal is doing. Verify effects another way, such as
-  through a file or service the command changes.
+- Success means the input was queued, not that it ran. Use \`terminal read\` to see the result; it
+  returns displayed text (default: last 200 lines of the buffer), not the raw stream, and there is
+  no exit status for a command sent to a shell. Terminal output can contain secrets: do not repeat
+  more of it than the task needs. \`approximate: true\` means the project has not been opened in
+  QingCode, so the text was rebuilt from raw output and can be imprecise for full-screen programs.
 - Treat \`send\` like running that command on the host: only send what the user asked for. Whatever
   has focus in the terminal receives the input, including an AI agent or a confirmation prompt.
 
@@ -241,9 +265,9 @@ ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--e
    \`run list --project <id>\`.
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
-4. Start the config, then inspect \`run status\`. For SSH/WSL projects, also verify
-   the actual service URL from Windows or the intended client.
-5. If restricted mode blocks execution, explain it and ask for explicit approval before \`trust grant\`.
+4. Start the config, preferably with \`--wait-text\`, and read \`run logs\` on failure. For SSH/WSL
+   projects, also verify the actual service URL from Windows or the intended client.
+5. If the project is not trusted, explain it and ask for explicit approval before \`trust grant\`.
 
 ## Safety
 
@@ -285,7 +309,10 @@ QingCode 只提供文本，不会自动注册或适配任何 Agent。
 ## 输出约定
 
 - 命令结果向 stdout 输出 JSON \`{ ok, data?, error? }\`；\`--help\` 输出纯文本。
-- 退出码：\`0\` 成功 · \`1\` 错误 · \`2\` 用法错误 · \`3\` 应用未运行。
+- 退出码：\`0\` 成功 · \`1\` 错误 · \`2\` 用法错误 · \`3\` 应用未运行或界面仍在加载 ·
+  \`4\` 等待超时。返回 \`4\` 时操作可能仍在进行，重试前先查询状态。
+- 未知命令和选项一律以 \`2\` 报错，不会退回默认行为。
+- \`version\` 离线输出 CLI 版本；\`status\` 报告 GUI 状态和 CLI 兼容性。
 - 同时检查退出码和 \`ok\`；应向用户展示 \`error\`，不要自行猜测原因。
 
 ## 项目与本地运行配置命令
@@ -436,14 +463,25 @@ ${quoted} settings reset --scope workspace --project <id|path|name> --yes
 
 \`\`\`text
 ${quoted} project switch <id|path|name>
-${quoted} run start <name|id> [--project ...]
-${quoted} run stop <name|id> [--project ...]
+${quoted} run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]
+${quoted} run stop <name|id> [--project ...] [--task <id|name>]
+${quoted} run restart <name|id> [--project ...] [--task <id|name>]
+${quoted} run logs <name|id> [--project ...] [--task <id|name>] [--tail <n>]
 ${quoted} run status [--project ...]
 ${quoted} trust grant <path>
+${quoted} trust revoke <path>
+${quoted} trust list
 ${quoted} open <file>[:line[:col]] ...
 \`\`\`
 
-- \`run start|stop|status\` 未提供 \`--project\` 时使用 GUI 当前项目。
+- \`run start|stop|restart|logs|status\` 未提供 \`--project\` 时使用 GUI 当前项目。
+- 项目未受信任时 \`run start\` 立即失败，不会等待 GUI 弹窗。
+- \`--wait\` 在所有任务启动后返回；\`--wait-text\` 还要求任务近期输出中出现该文本，判断服务就绪时
+  优先使用。默认超时 60 秒，超时退出码为 \`4\`，任务继续运行。任务以非零状态退出时等待失败。
+- \`run logs\` 按任务返回最近的显示内容（默认 200 行，要求项目受信任）。
+- \`open\`、\`trust grant\`、\`trust revoke\` 的相对路径按当前命令的工作目录解析。
+  \`trust grant\` 要求目录真实存在或为 \`ssh://\` 根路径。\`trust revoke\` 清除信任决定，
+  之后 QingCode 会重新询问。
 - 如果退出码为 \`3\`，告诉用户先启动 QingCode；不要虚构无界面的运行器。SSH 项目的运行配置
   增删改查也遵循此规则。
 - \`run start\` 执行所选配置中保存的命令。
@@ -452,19 +490,27 @@ ${quoted} open <file>[:line[:col]] ...
 
 \`\`\`text
 ${quoted} terminal list [--project ...]
+${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+${quoted} terminal create [--project ...]
+${quoted} terminal restart <id|name> [--project ...]
+${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
-- 适用于 QingCode 中已打开的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的
-  终端。此命令不能新建终端。
+- 适用于 QingCode 中的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的终端。
+- \`terminal create\` 用默认配置新建终端并返回 \`id\`。终端异步启动，发送输入前先轮询
+  \`terminal list\`，直到 \`writable\` 为 true。
+- \`terminal close\` 会结束该终端里的进程，必须提供 \`--yes\`，只在用户要求时使用。
 - 未提供 \`--project\` 时使用 GUI 当前项目，且只在该项目内查找终端；优先使用
   \`terminal list\` 返回的 \`id\`，因为重名会被拒绝。
 - \`send\` 原样写入输入。除非用 \`--enter\` 追加 CR，否则不会追加任何内容，命令也不会提交。
   多行输入中的每个换行都可能在普通 Shell 中触发执行。单次发送上限为 1 MB。
 - 项目未受信任，或终端不可写（\`writable\` 为 false：启动中、重连中或已退出）时会被拒绝。
   不要为了绕过拒绝而授予信任，请遵循“安全”一节。
-- 成功只表示输入已进入队列，不代表已经执行。目前没有读取终端输出的命令，CLI 也无法得知终端
-  正在做什么。请通过其他方式验证结果，例如命令修改的文件或服务。
+- 成功只表示输入已进入队列，不代表已经执行。用 \`terminal read\` 查看结果：它返回显示内容
+  （默认缓冲区最后 200 行）而不是原始字节流，发送给 Shell 的命令也没有退出状态。终端输出可能
+  包含密钥，只转述任务需要的部分。\`approximate: true\` 表示项目尚未在 QingCode 中打开，
+  文本由原始输出还原，全屏程序的内容可能不准确。
 - 把 \`send\` 当作在该主机上执行命令：只发送用户要求的内容。输入会交给终端当前的前台程序，
   可能是 AI Agent 或确认提示。
 
@@ -474,8 +520,9 @@ ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--e
    \`run list --project <id>\`。
 2. 创建配置；更新现有配置时遵循上面的完整对象更新流程。
 3. 执行任务以及操作 SSH 运行配置前，确保 GUI 正在运行。
-4. 启动配置后检查 \`run status\`；SSH/WSL 项目再从 Windows 或实际使用端验证服务地址。
-5. 如果受限模式阻止执行，说明原因，并在执行 \`trust grant\` 前取得用户明确授权。
+4. 启动配置时优先使用 \`--wait-text\`，失败时读取 \`run logs\`；SSH/WSL 项目再从 Windows 或
+   实际使用端验证服务地址。
+5. 如果项目未受信任，说明原因，并在执行 \`trust grant\` 前取得用户明确授权。
 
 ## 安全
 

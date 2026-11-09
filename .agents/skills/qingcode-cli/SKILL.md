@@ -26,7 +26,10 @@ Prefer these subcommands over hand-editing SQLite, directly rewriting
 ## Output contract
 
 - Command results write JSON `{ ok, data?, error? }` to stdout; `--help` writes plain text.
-- Exit: `0` ok · `1` error · `2` usage · `3` app not running.
+- Exit: `0` ok · `1` error · `2` usage · `3` app not running or UI still loading ·
+  `4` timed out. After `4` the operation may still be running: inspect state before retrying.
+- Unknown commands and options are rejected with `2`; they never fall back to defaults.
+- `version` prints the CLI version offline. `status` reports GUI state and CLI compatibility.
 - Check both the exit code and `ok`; surface `error` to the user instead of guessing.
 
 ## Project and local run-config commands
@@ -192,14 +195,26 @@ matching ID is supplied. It is not a partial patch.
 
 ```text
 .\src-tauri\target\debug\qingcode.exe project switch <id|path|name>
-.\src-tauri\target\debug\qingcode.exe run start <name|id> [--project ...]
-.\src-tauri\target\debug\qingcode.exe run stop <name|id> [--project ...]
+.\src-tauri\target\debug\qingcode.exe run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]
+.\src-tauri\target\debug\qingcode.exe run stop <name|id> [--project ...] [--task <id|name>]
+.\src-tauri\target\debug\qingcode.exe run restart <name|id> [--project ...] [--task <id|name>]
+.\src-tauri\target\debug\qingcode.exe run logs <name|id> [--project ...] [--task <id|name>] [--tail <n>]
 .\src-tauri\target\debug\qingcode.exe run status [--project ...]
 .\src-tauri\target\debug\qingcode.exe trust grant <path>
+.\src-tauri\target\debug\qingcode.exe trust revoke <path>
+.\src-tauri\target\debug\qingcode.exe trust list
 .\src-tauri\target\debug\qingcode.exe open <file>[:line[:col]] ...
 ```
 
-- If `--project` is omitted for `run start|stop|status`, the GUI current project is used.
+- If `--project` is omitted for `run start|stop|restart|logs|status`, the GUI current project is used.
+- `run start` fails at once for a project that is not trusted; it never waits on a GUI dialog.
+- `--wait` returns once every task has started. `--wait-text` also requires that text in a task's
+  recent output, which is the better readiness signal for a service. The default timeout is 60s;
+  on timeout exit is `4` and the tasks keep running. A task that exits non-zero fails the wait.
+- `run logs` returns recent displayed output per task (default 200 lines, needs a trusted project).
+- Relative paths for `open`, `trust grant`, and `trust revoke` use this command's working directory.
+  `trust grant` requires an existing directory or an `ssh://` root. `trust revoke` clears the
+  decision, so QingCode asks again next time.
 - If exit `3`, tell the user to start QingCode first; do not invent a headless runner. This also
   applies to run-config CRUD for SSH projects.
 - `run start` executes the commands stored in the selected config.
@@ -208,11 +223,18 @@ matching ID is supplied. It is not a partial patch.
 
 ```text
 .\src-tauri\target\debug\qingcode.exe terminal list [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 .\src-tauri\target\debug\qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
+.\src-tauri\target\debug\qingcode.exe terminal create [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal restart <id|name> [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal close <id|name> --yes [--project ...]
 ```
 
-- Works for terminals already open in QingCode, local and SSH alike; the same command drives a
-  remote project's terminal through the GUI's authenticated session. It cannot create a terminal.
+- Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
+  terminal through the GUI's authenticated session.
+- `terminal create` opens a default-profile terminal and returns its `id`. It starts asynchronously:
+  poll `terminal list` until `writable` is true before sending input.
+- `terminal close` ends the process in that terminal and requires `--yes`; use it only when asked.
 - `--project` omitted means the GUI current project. Terminals are looked up only inside that
   project; prefer the `id` from `terminal list`, because a duplicate name is rejected.
 - `send` writes raw input exactly as given. Nothing is appended unless `--enter` adds a CR, so
@@ -220,9 +242,11 @@ matching ID is supplied. It is not a partial patch.
   shell. A single send is limited to 1 MB.
 - It is rejected when the project is not trusted or the terminal is not `writable` (starting,
   reconnecting, or exited). Do not grant trust just to get past this; follow the Safety rules.
-- Success means the input was queued, not that it ran. There is no command to read terminal
-  output, and the CLI cannot see what the terminal is doing. Verify effects another way, such as
-  through a file or service the command changes.
+- Success means the input was queued, not that it ran. Use `terminal read` to see the result; it
+  returns displayed text (default: last 200 lines of the buffer), not the raw stream, and there is
+  no exit status for a command sent to a shell. Terminal output can contain secrets: do not repeat
+  more of it than the task needs. `approximate: true` means the project has not been opened in
+  QingCode, so the text was rebuilt from raw output and can be imprecise for full-screen programs.
 - Treat `send` like running that command on the host: only send what the user asked for. Whatever
   has focus in the terminal receives the input, including an AI agent or a confirmation prompt.
 
@@ -232,9 +256,9 @@ matching ID is supplied. It is not a partial patch.
    `run list --project <id>`.
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
-4. Start the config, then inspect `run status`. For SSH/WSL projects, also verify
-   the actual service URL from Windows or the intended client.
-5. If restricted mode blocks execution, explain it and ask for explicit approval before `trust grant`.
+4. Start the config, preferably with `--wait-text`, and read `run logs` on failure. For SSH/WSL
+   projects, also verify the actual service URL from Windows or the intended client.
+5. If the project is not trusted, explain it and ask for explicit approval before `trust grant`.
 
 ## Safety
 

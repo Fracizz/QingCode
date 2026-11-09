@@ -7,6 +7,8 @@ pub const EXIT_OK: i32 = 0;
 pub const EXIT_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_APP_NOT_RUNNING: i32 = 3;
+/// 等待超时，操作可能仍在 GUI 中继续；调用方应先查询状态再决定是否重试。
+pub const EXIT_TIMEOUT: i32 = 4;
 
 #[derive(Serialize)]
 pub struct CliResponse<T: Serialize> {
@@ -140,6 +142,15 @@ pub fn fail(code: i32, error: impl Into<String>) -> i32 {
     code
 }
 
+pub fn fail_with_data<T: Serialize>(code: i32, error: impl Into<String>, data: T) -> i32 {
+    print_json(&CliResponse {
+        ok: false,
+        data: Some(data),
+        error: Some(error.into()),
+    });
+    code
+}
+
 pub fn usage(msg: impl Into<String>) -> i32 {
     fail(EXIT_USAGE, msg)
 }
@@ -148,6 +159,10 @@ pub fn help_text() -> &'static str {
     r#"QingCode CLI — AI-friendly project & run-config commands
 
 Usage:
+  qingcode.exe version
+  qingcode.exe status
+  status reports whether the GUI is running, its version, and CLI compatibility.
+
   qingcode.exe project list
   qingcode.exe project add <dir> [<dir>...]
   qingcode.exe project remove <id|path|name>
@@ -157,19 +172,26 @@ Usage:
   qingcode.exe run get <name|id> [--project ...]
   qingcode.exe run upsert --json <file|-> [--project ...]
   qingcode.exe run remove <name|id> [--project ...]
-  qingcode.exe run start <name|id> [--project ...]
-  qingcode.exe run stop <name|id> [--project ...]
+  qingcode.exe run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]
+  qingcode.exe run stop <name|id> [--project ...] [--task <id|name>]
+  qingcode.exe run restart <name|id> [--project ...] [--task <id|name>]
+  qingcode.exe run logs <name|id> [--project ...] [--task <id|name>] [--tail <n>]
   qingcode.exe run status [--project ...]
 
   Task OS overrides: os.windows / os.linux / os.macos override type, target, cwd, env.
   Common task fields are defaults; env merges by name. WSL uses linux; SSH uses remote OS.
   Existing configs and commands remain supported. start/stop/status require the running app.
-  run start submits tasks asynchronously; inspect run status and verify service readiness.
+  run start submits tasks asynchronously and fails at once for an untrusted project.
+  --wait waits until tasks started; --wait-text also waits for that text in task output.
 
   qingcode.exe terminal list [--project ...]
+  qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
   qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-  Terminal commands require the GUI. send writes raw input to a running terminal in a trusted
-  project (local or SSH); --enter appends CR. Success means queued, not executed.
+  qingcode.exe terminal create [--project ...]
+  qingcode.exe terminal restart <id|name> [--project ...]
+  qingcode.exe terminal close <id|name> --yes [--project ...]
+  Terminal commands require the GUI. read/send/create/restart need a trusted project (local or
+  SSH). send writes raw input; --enter appends CR. Success means queued, not executed.
 
   qingcode.exe settings export [--scope user|workspace] [--project ...] [--output <file>]
   qingcode.exe settings import --json <file|-> [--scope user|workspace] [--project ...]
@@ -177,9 +199,12 @@ Usage:
   Settings commands require the GUI. Default scope: user. Export refuses to overwrite files.
 
   qingcode.exe trust grant <path>
+  qingcode.exe trust revoke <path>
+  qingcode.exe trust list
   qingcode.exe open <file>[:line[:col]] ...
+  Relative paths are resolved against this command's working directory.
 
-Exit codes: 0 ok | 1 error | 2 usage | 3 app not running
+Exit codes: 0 ok | 1 error | 2 usage | 3 app not running or still loading | 4 timed out
 Output: JSON on stdout
 "#
 }

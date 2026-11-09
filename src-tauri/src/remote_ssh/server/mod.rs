@@ -25,6 +25,7 @@ use super::*;
 mod daemon;
 mod deploy;
 mod download;
+pub(crate) mod git_push_sync;
 mod host_runtime;
 mod install_cache;
 mod paths;

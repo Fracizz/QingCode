@@ -673,6 +673,11 @@ function cachedScrollbackText(id: string): string {
   return text
 }
 
+/** 未打开过的项目没有 xterm 实例，CLI 用这份原始输出（含控制序列）兜底。 */
+export function getTerminalRawScrollback(id: string): string {
+  return cachedScrollbackText(id)
+}
+
 function maxBufferedBytes(): number {
   return scrollbackMaxChars(getTerminalScrollback())
 }
