@@ -2053,6 +2053,15 @@ struct PtyInfoDto {
     rows: u16,
     exited: Option<i32>,
     detached: bool,
+    /// 距 TTL 回收还有多久。给时长而不是时间点，客户端与远端时钟不一致时也准确。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detached_remaining_ms: Option<u64>,
+}
+
+/// 只有 `pty.list` 知道 TTL，其他应答不带这个字段。
+fn detached_remaining_ms(info: &crate::pty::PtyInfo, ttl: Duration) -> Option<u64> {
+    info.detached_for
+        .map(|elapsed| ttl.saturating_sub(elapsed).as_millis() as u64)
 }
 
 impl From<crate::pty::PtyInfo> for PtyInfoDto {
@@ -2068,6 +2077,7 @@ impl From<crate::pty::PtyInfo> for PtyInfoDto {
             rows: info.rows,
             exited: info.exited,
             detached: info.detached,
+            detached_remaining_ms: None,
         }
     }
 }
@@ -2357,7 +2367,13 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             let ptys: Vec<PtyInfoDto> =
                 filter_pty_list(daemon.pty.list(), params.client_id.as_deref())
                     .into_iter()
-                    .map(Into::into)
+                    .map(|info| {
+                        let remaining = detached_remaining_ms(&info, daemon.detached_ttl);
+                        PtyInfoDto {
+                            detached_remaining_ms: remaining,
+                            ..PtyInfoDto::from(info)
+                        }
+                    })
                     .collect();
             conn.respond(id, json!({ "ptys": ptys }));
         }
@@ -2509,7 +2525,19 @@ mod tests {
             rows: 24,
             exited,
             detached,
+            detached_for: None,
         }
+    }
+
+    #[test]
+    fn detached_remaining_time_counts_down_to_the_ttl() {
+        let ttl = Duration::from_secs(600);
+        let mut info = test_pty_info("pty", None, true, None);
+        assert_eq!(detached_remaining_ms(&info, ttl), None);
+        info.detached_for = Some(Duration::from_secs(60));
+        assert_eq!(detached_remaining_ms(&info, ttl), Some(540_000));
+        info.detached_for = Some(Duration::from_secs(601));
+        assert_eq!(detached_remaining_ms(&info, ttl), Some(0));
     }
 
     #[test]

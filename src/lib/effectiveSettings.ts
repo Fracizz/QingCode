@@ -46,6 +46,9 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     import('./terminal/terminalShiftEnterSettings').then(mod =>
       mod.loadEffectiveTerminalShiftEnterNewline(project),
     ),
+    import('./terminal/terminalPersistLocalSettings').then(mod =>
+      mod.loadEffectiveTerminalPersistLocalSessions(project),
+    ),
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)

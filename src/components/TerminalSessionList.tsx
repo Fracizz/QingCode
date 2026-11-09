@@ -15,6 +15,8 @@ import {
   Check,
   Circle,
   Copy,
+  Eye,
+  EyeOff,
   FolderOpen,
   ListChecks,
   LoaderCircle,
@@ -158,6 +160,8 @@ export default function TerminalSessionList() {
   const sshConnections = useProjectStore(s => s.sshConnections)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
+  const hideProject = useProjectStore(s => s.hideProject)
+  const unhideProject = useProjectStore(s => s.unhideProject)
   const allTerminals = useTerminalStore(s => s.terminals)
   const reorderTerminal = useTerminalStore(s => s.reorderTerminal)
   const { pendingTerminalId, selectTerminal: selectAcrossProjects } = useTerminalProjectSelection()
@@ -612,7 +616,7 @@ export default function TerminalSessionList() {
               wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
             >
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-semibold">{project.name}</span>
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-semibold text-fg">{project.name}</span>
               {source && (
                 <span className="project-source-badge min-w-0 shrink! truncate font-normal text-fg-dim">
                   {source}
@@ -988,6 +992,18 @@ export default function TerminalSessionList() {
                 disabled: group.terminals.length === 0 || searching,
                 action: () => setProjectCollapsed(group.project.id, expanded),
               },
+              // 隐藏的项目有终端时仍排在列表末尾，这里给恢复入口。
+              group.project.hidden
+                ? {
+                    label: translate('恢复显示'),
+                    icon: <Eye size={14} />,
+                    action: () => void unhideProject(group.project.id),
+                  }
+                : {
+                    label: translate('从顶栏隐藏'),
+                    icon: <EyeOff size={14} />,
+                    action: () => void hideProject(group.project.id),
+                  },
               {
                 label: translate('关闭此项目的全部终端'),
                 icon: <X size={14} />,

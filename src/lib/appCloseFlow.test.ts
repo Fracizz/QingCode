@@ -129,6 +129,43 @@ describe('app close decisions', () => {
     ] }))
   })
 
+  const hosted = (id: string, overrides: Partial<TerminalTab> = {}) =>
+    tab(id, false, { persistent: true, ptyId: `pty-${id}`, connectionId: '__local__', ...overrides })
+
+  it('offers to keep locally hosted terminals and detaches them instead of closing', async () => {
+    const tabs = [hosted('kept'), tab('plain', false)]
+    const { deps, events } = fixture(tabs)
+    await runAppClose(deps)
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining('1 个本地终端可以保留'),
+      options: expect.arrayContaining([
+        expect.objectContaining({ id: 'preserve', label: '保留本地终端并退出', primary: true }),
+        expect.objectContaining({ id: 'terminate', label: '结束本地终端并退出', danger: true }),
+      ]),
+    }))
+    expect(deps.finishRemote).toHaveBeenCalledExactlyOnceWith(tabs[0], 'preserve')
+    expect(deps.markDetached).toHaveBeenCalledExactlyOnceWith(tabs[0])
+    expect(events).toContain('close:plain')
+    expect(events).not.toContain('close:kept')
+  })
+
+  it('confirms termination of locally hosted terminals through the host', async () => {
+    const tabs = [hosted('gone')]
+    const { deps, events } = fixture(tabs, ['terminate'])
+    await runAppClose(deps)
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'terminate')
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+    expect(events).toContain('ended:gone')
+  })
+
+  it('names both kinds when remote and local terminals can be kept', async () => {
+    const { deps } = fixture([tab('remote'), hosted('local')])
+    await runAppClose(deps)
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.arrayContaining([expect.objectContaining({ id: 'preserve', label: '保留终端并退出' })]),
+    }))
+  })
+
   it('ignores ended and not-yet-created tabs, but includes temporarily unavailable persistent PTYs', () => {
     const unrestored = tab('unavailable', true, { status: 'exited', restoreUnavailable: true })
     expect(appExitTerminals([tab('ended', true, { status: 'exited', endedAt: 123 }),

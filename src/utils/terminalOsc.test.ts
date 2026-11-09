@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  parseProgramStateOsc,
   parseShellIntegrationOsc,
   registerTerminalOscHandlers,
   SUPPRESSED_OSC_IDENTS,
@@ -31,7 +32,34 @@ describe('parseShellIntegrationOsc', () => {
   })
 })
 
+describe('parseProgramStateOsc', () => {
+  it('maps the sequences Codex and OpenCode actually emit', () => {
+    expect(parseProgramStateOsc('state=working:app=codex')).toBe('working')
+    expect(parseProgramStateOsc('state=done:app=codex')).toBe('idle')
+    expect(parseProgramStateOsc('state=idle:app=opencode')).toBe('idle')
+    expect(parseProgramStateOsc('state=blocked:kind=permission:app=codex')).toBe('idle')
+    expect(parseProgramStateOsc('state=clear')).toBe('clear')
+    expect(parseProgramStateOsc('state=working:app=opencode:title=TmV3')).toBe('working')
+  })
+
+  it('ignores per-session details, queries and unknown states', () => {
+    expect(parseProgramStateOsc('state=working:id=ses_1:app=opencode')).toBe(null)
+    expect(parseProgramStateOsc('state=clear:id=ses_1')).toBe(null)
+    expect(parseProgramStateOsc('?')).toBe(null)
+    expect(parseProgramStateOsc('state=paused')).toBe(null)
+  })
+})
+
 describe('registerTerminalOscHandlers', () => {
+  it('routes program state reports and swallows them', () => {
+    const { registry, emit } = fakeRegistry()
+    const onProgramState = vi.fn()
+    registerTerminalOscHandlers(registry, { onProgramState })
+    expect(emit(7501, 'state=working:app=codex')).toEqual([true])
+    expect(emit(7501, '?')).toEqual([true])
+    expect(onProgramState.mock.calls).toEqual([['working']])
+  })
+
   it('routes titles and shell-integration markers and swallows them', () => {
     const { registry, emit } = fakeRegistry()
     const onTitle = vi.fn()

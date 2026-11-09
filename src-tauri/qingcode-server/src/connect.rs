@@ -38,6 +38,8 @@ pub struct ConnectOptions {
     pub ensure_daemon: bool,
     /// 等 daemon 就绪的上限。
     pub start_timeout: Duration,
+    /// 拉起 daemon 用的可执行文件；`None` 时用当前进程自身。
+    pub daemon_program: Option<PathBuf>,
 }
 
 impl Default for ConnectOptions {
@@ -46,6 +48,7 @@ impl Default for ConnectOptions {
             state_dir: None,
             ensure_daemon: false,
             start_timeout: Duration::from_secs(10),
+            daemon_program: None,
         }
     }
 }
@@ -89,7 +92,10 @@ pub fn ensure_daemon_token(options: &ConnectOptions) -> Result<String, String> {
         // daemon 留下的旧 token，交给新 daemon 会被判为凭据错误。
         let stale = run_dir.read_token().ok();
         let started = Instant::now();
-        let mut child = spawn_daemon(options.state_dir.as_deref())?;
+        let mut child = spawn_daemon(
+            options.state_dir.as_deref(),
+            options.daemon_program.as_deref(),
+        )?;
         wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
         let remaining = options.start_timeout.saturating_sub(started.elapsed());
         return wait_rotated_token(&run_dir, stale.as_deref(), remaining, &mut child);
@@ -135,7 +141,10 @@ fn connect_blocking_or_spawn(
                     endpoint.describe()
                 ));
             }
-            let mut child = spawn_daemon(options.state_dir.as_deref())?;
+            let mut child = spawn_daemon(
+                options.state_dir.as_deref(),
+                options.daemon_program.as_deref(),
+            )?;
             wait_ready(endpoint, run_dir, options.start_timeout, &mut child)?;
             endpoint
                 .blocking_connect()
@@ -224,7 +233,10 @@ fn pump_windows(
                     endpoint.describe()
                 ));
             }
-            let mut child = spawn_daemon(options.state_dir.as_deref())?;
+            let mut child = spawn_daemon(
+                options.state_dir.as_deref(),
+                options.daemon_program.as_deref(),
+            )?;
             wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
             runtime
                 .block_on(connect_async(&endpoint))
@@ -312,8 +324,7 @@ fn pump_windows(
 }
 
 /// 异步连接 + 与阻塞版本一致的瞬态重试（acceptor 补建实例的空窗）。
-#[cfg(windows)]
-async fn connect_async(endpoint: &IpcEndpoint) -> std::io::Result<crate::ipc::IpcStream> {
+pub async fn connect_async(endpoint: &IpcEndpoint) -> std::io::Result<crate::ipc::IpcStream> {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         match endpoint.connect().await {
@@ -413,11 +424,14 @@ impl SpawnedDaemon {
 ///
 /// Unix：`setsid` + stdio 全 null。Windows：CreateProcessW + 空句柄继承表
 /// （std spawn 会把 SSH 会话的 stdout 管道一并继承，详见 `winproc` 模块注释）。
-fn spawn_daemon(state_dir: Option<&Path>) -> Result<SpawnedDaemon, String> {
+fn spawn_daemon(state_dir: Option<&Path>, program: Option<&Path>) -> Result<SpawnedDaemon, String> {
     #[cfg(unix)]
     {
         use std::process::{Command, Stdio};
-        let exe = std::env::current_exe().map_err(|e| format!("无法定位自身可执行文件: {e}"))?;
+        let exe = match program {
+            Some(program) => program.to_path_buf(),
+            None => std::env::current_exe().map_err(|e| format!("无法定位自身可执行文件: {e}"))?,
+        };
         let mut command = Command::new(exe);
         command
             .arg("daemon")
@@ -449,7 +463,7 @@ fn spawn_daemon(state_dir: Option<&Path>) -> Result<SpawnedDaemon, String> {
     }
     #[cfg(windows)]
     {
-        crate::winproc::spawn_detached_daemon(state_dir).map(SpawnedDaemon::Windows)
+        crate::winproc::spawn_detached_daemon_with(program, state_dir).map(SpawnedDaemon::Windows)
     }
 }
 

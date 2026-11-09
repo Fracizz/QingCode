@@ -22,6 +22,13 @@ pub(super) use workspace_http::{discard_tunnel_idle, WorkspaceClient};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
+/// TCP 拨号失败文案的固定开头，前端 serverModeError.ts 靠它提供“重试”。
+const DIAL_FAILED_PREFIX: &str = "[direct:unreachable] 无法连接";
+/// 建立终端通道时的拨号重试间隔，用来跨过客户端更新重启、链路抖动这类短暂中断。
+/// 总耗时受 CONNECT_TIMEOUT 约束；设置页的连接测试不重试，保持快速失败。
+const DIAL_RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1_000)];
+/// 把连接判定为断开前，健康检查失败后再确认一次的等待时间。
+const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 /// 直连通道的探活参数。路径上的设备可能静默丢弃已建立的 TCP 连接（无 FIN/RST），
 /// 只能靠应用层探测发现。有入站数据就不发 ping，正常使用时几乎没有额外流量。
@@ -455,14 +462,101 @@ async fn dial(endpoint: &Endpoint, tunnel: Option<&str>) -> Result<Box<dyn Trans
     }
     let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
         .await
-        .map_err(|_| {
-            format!(
-                "[direct:unreachable] 无法连接 {}，请确认 Server 已启动且 TCP {} 已放行",
-                endpoint.authority, endpoint.port
-            )
+        .map_err(|error| {
+            qingcode_server::diagnostics::record(
+                "direct.dial_failed",
+                serde_json::json!({
+                    "port": endpoint.port,
+                    "kind": format!("{:?}", error.kind()),
+                    "osError": error.raw_os_error(),
+                }),
+                false,
+                false,
+            );
+            dial_failure_message(endpoint, error.raw_os_error())
         })?;
     let _ = stream.set_nodelay(true);
     Ok(Box::new(stream))
+}
+
+fn dial_failure_message(endpoint: &Endpoint, os_error: Option<i32>) -> String {
+    let code = os_error
+        .map(|code| format!("（系统错误 {code}）"))
+        .unwrap_or_default();
+    format!(
+        "{DIAL_FAILED_PREFIX} {}{code}，请确认 Server 已启动且 TCP {} 已放行",
+        endpoint.authority, endpoint.port
+    )
+}
+
+/// 拨号失败时还没有发送任何数据，重试是安全的；TLS、认证等其他失败立即返回。
+async fn retry_dial<T, F, Fut>(mut attempt: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let mut delays = DIAL_RETRY_DELAYS.into_iter();
+    loop {
+        match attempt().await {
+            Err(error) if error.starts_with(DIAL_FAILED_PREFIX) => match delays.next() {
+                Some(delay) => tokio::time::sleep(delay).await,
+                None => return Err(error),
+            },
+            result => return result,
+        }
+    }
+}
+
+/// 认证、证书身份、协议版本错误重试也不会变好，应立即反馈给用户。
+fn health_failure_is_transient(error: &str) -> bool {
+    !["[direct:auth]", "[direct:identity]", "[direct:version]"]
+        .iter()
+        .any(|tag| error.starts_with(tag))
+}
+
+/// 单次健康检查可能撞上网络瞬断；失败后再确认一次，避免把仍在线的连接标记为断开。
+async fn retry_transient_health<T, F, Fut>(mut attempt: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    match attempt().await {
+        Err(error) if health_failure_is_transient(&error) => {
+            // 只记录错误类别：完整消息带有目标地址。
+            qingcode_server::diagnostics::record(
+                "direct.health_retry",
+                serde_json::json!({ "cause": error.split(' ').next().unwrap_or_default() }),
+                false,
+                false,
+            );
+            tokio::time::sleep(HEALTH_RETRY_DELAY).await;
+            attempt().await
+        }
+        result => result,
+    }
+}
+
+/// 用于判定连接存活的健康检查，结果会写入断开状态，因此容忍一次瞬时失败。
+pub(super) async fn confirm_health(
+    config: &DirectConnectionConfig,
+) -> Result<DirectHealth, String> {
+    retry_transient_health(|| test(config)).await
+}
+
+/// 直连断开时给用户的提示：带上最近一次探测失败的真实原因，去掉内部分类标签。
+pub(super) fn disconnected_message(reason: Option<&str>) -> String {
+    let detail = reason
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            text.strip_prefix("[direct:")
+                .and_then(|rest| rest.split_once(']'))
+                .map_or(text, |(_, message)| message.trim())
+        });
+    match detail {
+        Some(detail) if !detail.is_empty() => format!("Server 连接已断开：{detail}"),
+        _ => "Server 连接已断开".into(),
+    }
 }
 
 async fn tls(
@@ -488,13 +582,16 @@ async fn tls(
     let stream = TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
-        .map_err(|_| {
+        .map_err(|error| {
             let actual = observed.lock().unwrap_or_else(|error| error.into_inner());
             if actual.is_some() {
                 "[direct:identity] Server TLS 身份验证失败；请核对证书指纹，未发送连接凭据"
                     .to_string()
             } else {
-                "[direct:tls] TLS 握手失败，请确认该端口运行 QingCode HTTPS Server".to_string()
+                format!(
+                    "[direct:tls] TLS 握手失败（{:?}），请确认该端口运行 QingCode HTTPS Server",
+                    error.kind()
+                )
             }
         })?;
     let fingerprint = observed
@@ -549,10 +646,10 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
             endpoint.authority, config.token
         );
         write_http_request(&mut stream, &request, &[]).await
-            .map_err(|_| "[direct:unreachable] Server 健康检查发送失败".to_string())?;
+            .map_err(|error| format!("[direct:unreachable] Server 健康检查发送失败（{:?}）", error.kind()))?;
         let mut bytes = Vec::new();
         stream.take((MAX_HEALTH_BYTES + 1) as u64).read_to_end(&mut bytes).await
-            .map_err(|_| "[direct:protocol] Server 健康检查响应中断".to_string())?;
+            .map_err(|error| format!("[direct:protocol] Server 健康检查响应中断（{:?}）", error.kind()))?;
         if bytes.len() > MAX_HEALTH_BYTES {
             return Err("[direct:protocol] Server 健康检查响应过大".into());
         }
@@ -629,7 +726,8 @@ pub(super) async fn open_stream_for(
     let expected = normalized_fingerprint(&config.certificate_fingerprint)?;
     let cancelled = register_stream(&config.endpoint, connection_id);
     let connect = tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (stream, _) = tls(&endpoint, config.tunnel.as_deref(), Some(expected)).await?;
+        let (stream, _) =
+            retry_dial(|| tls(&endpoint, config.tunnel.as_deref(), Some(expected.clone()))).await?;
         let mut request = format!("wss://{}/connect", endpoint.authority)
             .into_client_request()
             .map_err(|_| "[direct:protocol] Server WebSocket 地址无效".to_string())?;
@@ -919,6 +1017,11 @@ pub(super) mod tests {
         let _ = gateway.await;
         manager.refresh_direct_status(id).await.unwrap();
         assert!(!manager.connection_is_open(id));
+        let error = manager.sftp_for_uri(uri, false).await.err().unwrap();
+        assert!(
+            error.starts_with("Server 连接已断开：") && error.contains("无法连接"),
+            "断开提示必须带上探测失败的真实原因：{error}"
+        );
         let state = server_status::state_for_uri(&manager, uri).unwrap();
         assert_eq!(state.phase, server_status::ServerPhase::Disconnected);
         assert_eq!(state.transport, Some(server_status::ServerTransport::Agent));
@@ -1190,6 +1293,121 @@ pub(super) mod tests {
         gateway.abort();
         let _ = gateway.await;
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn dial_failure_message_keeps_the_prefix_and_reports_the_os_error() {
+        let target = endpoint("https://192.0.2.1:48763").unwrap();
+        let message = dial_failure_message(&target, Some(10061));
+        assert!(message.starts_with(DIAL_FAILED_PREFIX));
+        assert!(message.contains("192.0.2.1:48763（系统错误 10061）"));
+        assert!(!dial_failure_message(&target, None).contains("系统错误"));
+    }
+
+    #[tokio::test]
+    async fn health_retry_keeps_connection_online_after_one_transient_failure() {
+        let mut attempts = 0;
+        let result = retry_transient_health(|| {
+            attempts += 1;
+            let current = attempts;
+            async move {
+                if current == 1 {
+                    Err(timeout_error())
+                } else {
+                    Ok(current)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok(2));
+    }
+
+    #[tokio::test]
+    async fn health_retry_reports_the_last_failure_after_one_retry() {
+        let mut attempts = 0;
+        let result: Result<(), String> = retry_transient_health(|| {
+            attempts += 1;
+            let current = attempts;
+            async move { Err(format!("[direct:tls] attempt {current}")) }
+        })
+        .await;
+        assert_eq!(result, Err("[direct:tls] attempt 2".to_string()));
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn health_retry_does_not_repeat_permanent_failures() {
+        for error in [
+            "[direct:auth] a",
+            "[direct:identity] b",
+            "[direct:version] c",
+        ] {
+            let mut attempts = 0;
+            let result: Result<(), String> = retry_transient_health(|| {
+                attempts += 1;
+                async move { Err(error.to_string()) }
+            })
+            .await;
+            assert_eq!(result, Err(error.to_string()));
+            assert_eq!(attempts, 1, "{error}");
+        }
+    }
+
+    #[test]
+    fn disconnected_message_shows_the_reason_without_internal_tag() {
+        assert_eq!(
+            disconnected_message(Some("[direct:timeout] Server 连接超时")),
+            "Server 连接已断开：Server 连接超时"
+        );
+        assert_eq!(
+            disconnected_message(Some("未分类原因")),
+            "Server 连接已断开：未分类原因"
+        );
+        for empty in [None, Some(""), Some("  "), Some("[direct:timeout] ")] {
+            assert_eq!(disconnected_message(empty), "Server 连接已断开");
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_dial_recovers_from_transient_dial_failures() {
+        let mut attempts = 0;
+        let result = retry_dial(|| {
+            attempts += 1;
+            let current = attempts;
+            async move {
+                if current < 3 {
+                    Err(format!("{DIAL_FAILED_PREFIX} target"))
+                } else {
+                    Ok(current)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok(3));
+    }
+
+    #[tokio::test]
+    async fn retry_dial_gives_up_after_the_last_delay() {
+        let mut attempts = 0;
+        let result: Result<(), String> = retry_dial(|| {
+            attempts += 1;
+            async { Err(format!("{DIAL_FAILED_PREFIX} target")) }
+        })
+        .await;
+        assert!(result.unwrap_err().starts_with(DIAL_FAILED_PREFIX));
+        assert_eq!(attempts, DIAL_RETRY_DELAYS.len() + 1);
+    }
+
+    #[tokio::test]
+    async fn retry_dial_does_not_repeat_other_failures() {
+        let mut attempts = 0;
+        let result: Result<(), String> = retry_dial(|| {
+            attempts += 1;
+            async { Err("[direct:tls] TLS 握手失败".to_string()) }
+        })
+        .await;
+        assert!(result.unwrap_err().starts_with("[direct:tls]"));
+        assert_eq!(attempts, 1);
     }
 
     #[tokio::test]

@@ -1,4 +1,5 @@
 import type { TerminalTab } from '@/types'
+import { LOCAL_TERMINAL_CONNECTION_ID } from './terminalRestorePlan'
 
 export type TerminalConnectionRestore = 'replay' | 'snapshot' | 'none'
 
@@ -63,7 +64,7 @@ function parseRestore(value: unknown): TerminalConnectionRestore | null | undefi
  * one notice per disconnect cycle. Repeated reconnect attempts stay quiet.
  */
 export function planTerminalConnectionEvent(
-  tab: Pick<TerminalTab, 'status'>,
+  tab: Pick<TerminalTab, 'status'> & Partial<Pick<TerminalTab, 'connectionId'>>,
   payload: unknown,
 ): TerminalConnectionPlan | null {
   if (!payload || typeof payload !== 'object') return null
@@ -81,6 +82,16 @@ export function planTerminalConnectionEvent(
 
   if (event.state === 'reconnecting') {
     const firstAttempt = tab.status !== 'reconnecting'
+    if (tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
+      // 本机宿主不经网络，没有「SSH 断线」和逐次重连可言，只在首次提示一次。
+      return {
+        status: 'reconnecting',
+        notice: firstAttempt ? { key: '本地终端宿主连接已断开，正在重新连接…' } : null,
+        reason,
+        attempt,
+        restore,
+      }
+    }
     return {
       status: 'reconnecting',
       notice: firstAttempt

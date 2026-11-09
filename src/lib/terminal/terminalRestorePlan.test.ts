@@ -37,6 +37,30 @@ describe('planTerminalRestore', () => {
     })
   })
 
+  it('falls back to create only for locally hosted terminals', () => {
+    expect(
+      planTerminalRestore({
+        persistent: true,
+        ptyId: 'pty-1',
+        connectionId: '__local__',
+        cwd: 'D:\\work\\app',
+        awaitingRestoreSpawn: true,
+      })
+    ).toEqual({
+      mode: 'attach',
+      ptyId: 'pty-1',
+      connectionId: '__local__',
+      cwd: 'D:\\work\\app',
+      fallback: 'create',
+    })
+    expect(
+      planTerminalRestore({
+        cwd: 'D:\\work\\app',
+        awaitingRestoreSpawn: true,
+      })
+    ).toEqual({ mode: 'create' })
+  })
+
   it('uses create for legacy snapshots and explicit restarts', () => {
     expect(
       planTerminalRestore({
@@ -166,5 +190,11 @@ describe('detached terminal filtering', () => {
         rows: 30,
       })
     ).toBeNull()
+  })
+
+  it('converts the remaining detached time to a local deadline', () => {
+    const base = { ptyId: 'pty-2', connectionId: 'conn', cwd: 'ssh://conn/srv/app', cols: 100, rows: 30 }
+    expect(parseSshDetachedTerminal({ ...base, detachedRemainingMs: 60_000 }, 1_000)?.expiresAt).toBe(61_000)
+    expect(parseSshDetachedTerminal(base, 1_000)).not.toHaveProperty('expiresAt')
   })
 })

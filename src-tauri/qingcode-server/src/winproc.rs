@@ -26,6 +26,8 @@ pub struct DetachedSpawn {
     /// Some(handle) 时 stdin/stdout/stderr 全接它（serve 的日志句柄）。
     /// 句柄必须同时出现在 `inherit` 里才会传给子进程。
     pub stdio_handle: Option<*mut core::ffi::c_void>,
+    /// 要启动的可执行文件；`None` 时启动当前进程自身。
+    pub program: Option<std::path::PathBuf>,
 }
 
 /// 由 CreateProcessW 拉起的子进程句柄，只保留 hProcess 供 `try_wait` 轮询。
@@ -243,7 +245,10 @@ pub fn spawn_detached(spawn: DetachedSpawn) -> Result<WindowsChild, String> {
         STARTF_USESTDHANDLES, STARTUPINFOEXW,
     };
 
-    let exe = std::env::current_exe().map_err(|e| format!("定位自身二进制失败: {e}"))?;
+    let exe = match spawn.program {
+        Some(program) => program,
+        None => std::env::current_exe().map_err(|e| format!("定位自身二进制失败: {e}"))?,
+    };
     let mut cmdline: Vec<u16> = spawn.command_line.encode_utf16().collect();
     cmdline.push(0);
     let exe_wide: Vec<u16> = exe
@@ -390,7 +395,18 @@ pub fn quote_windows_arg(value: &OsStr) -> String {
 /// 由 connect 代理拉起 daemon：不继承任何句柄（日志由 daemon 自己写到 run
 /// 目录），CREATE_NO_WINDOW + BREAKAWAY 脱离 SSH 会话。
 pub fn spawn_detached_daemon(state_dir: Option<&Path>) -> Result<WindowsChild, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("定位自身二进制失败: {e}"))?;
+    spawn_detached_daemon_with(None, state_dir)
+}
+
+/// 同 [`spawn_detached_daemon`]，但可指定 daemon 可执行文件（桌面端本机 PTY 宿主用）。
+pub fn spawn_detached_daemon_with(
+    program: Option<&Path>,
+    state_dir: Option<&Path>,
+) -> Result<WindowsChild, String> {
+    let exe = match program {
+        Some(program) => program.to_path_buf(),
+        None => std::env::current_exe().map_err(|e| format!("定位自身二进制失败: {e}"))?,
+    };
     let mut line = format!("{} daemon", quote_windows_arg(exe.as_os_str()));
     if let Some(dir) = state_dir {
         line.push_str(&format!(
@@ -427,6 +443,7 @@ pub fn spawn_detached_daemon(state_dir: Option<&Path>) -> Result<WindowsChild, S
         command_line: line,
         inherit: vec![handle],
         stdio_handle: Some(handle),
+        program: Some(exe),
     });
     if let Ok(child) = &child {
         use std::io::Write;
@@ -504,5 +521,6 @@ pub fn spawn_detached_direct(
         command_line,
         inherit: vec![handle],
         stdio_handle: Some(handle),
+        program: None,
     })
 }

@@ -15,6 +15,7 @@ mod git;
 mod git_command;
 mod git_status;
 mod ipc;
+mod local_pty_host;
 mod path_guard;
 mod remote_ssh;
 mod run_environment;
@@ -564,10 +565,14 @@ fn sync_open_file_paths(
 }
 
 #[tauri::command]
-fn terminal_has_child_processes(
+async fn terminal_has_child_processes(
     id: String,
     state: tauri::State<'_, TerminalManager>,
+    ssh: tauri::State<'_, remote_ssh::SshManager>,
 ) -> Result<bool, String> {
+    if let Some(pty_id) = ssh.local_hosted_pty_id(&id) {
+        return remote_ssh::local_terminal::has_children(&pty_id, &ssh).await;
+    }
     state.has_child_processes(&id)
 }
 
@@ -742,6 +747,10 @@ fn configure_ssh_client_id(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 必须最先判断：宿主副本不带界面，也不参与单实例仲裁。
+    if let Some(code) = local_pty_host::try_run_host() {
+        std::process::exit(code);
+    }
     if let Some(code) = cli::try_run_as_cli() {
         std::process::exit(code);
     }
@@ -1041,6 +1050,11 @@ pub fn run() {
             remote_ssh::ssh_kill_detached_terminal,
             remote_ssh::ssh_list_detached_terminals,
             remote_ssh::ssh_attach_terminal,
+            remote_ssh::local_terminal::local_host_create_terminal,
+            remote_ssh::local_terminal::local_host_spawn_profile,
+            remote_ssh::local_terminal::local_host_attach_terminal,
+            remote_ssh::local_terminal::local_host_kill_detached_terminal,
+            remote_ssh::local_terminal::local_host_finish_terminal_on_exit,
             remote_ssh::ssh_forget_workspace_root,
         ])
         .run(tauri::generate_context!())

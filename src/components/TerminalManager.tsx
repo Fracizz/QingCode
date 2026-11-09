@@ -89,6 +89,14 @@ function validateSessionName(value: string) {
 
 type Translate = ReturnType<typeof useI18n>['t']
 
+/** 自动结束的具体时间，精确到分钟；没有截止时间（已结束或旧版后端）时为空。 */
+function autoEndText(deadline: number | null | undefined, now: number, t: Translate) {
+  if (deadline == null) return ''
+  if (deadline <= now) return t('即将自动结束')
+  const time = formatCreatedTime(deadline, now)
+  return time ? t('{time} 自动结束', { time }) : ''
+}
+
 /** 行内展示与搜索共用：来源图标、来源标签与状态明细。 */
 function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) {
   if (entry.source === 'desktop') {
@@ -115,11 +123,17 @@ function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) 
         session.deviceName ?? t('设备已移除'),
         created ? t('创建于 {time}', { time: created }) : '',
         idle === null ? '' : t('空闲 {n} 分钟', { n: idle }),
+        autoEndText(session.idleDeadline, now, t),
         t('仅手机可操作'),
       ].filter(Boolean),
     }
   }
-  return { icon: <Cloud size={14} />, sourceLabel: t('远端'), details: [t('未接回 · 仍在远端运行')] }
+  const autoEnd = autoEndText(entry.terminal.expiresAt, now, t)
+  return {
+    icon: <Cloud size={14} />,
+    sourceLabel: t('远端'),
+    details: autoEnd ? [t('未接回'), autoEnd] : [t('未接回 · 仍在远端运行')],
+  }
 }
 
 /** 原生复选框，支持半选状态。 */

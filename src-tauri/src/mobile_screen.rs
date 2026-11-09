@@ -19,6 +19,7 @@ struct History {
     next: u64,
     truncated: bool,
     title: Option<String>,
+    program_state: Option<ProgramState>,
     /// 程序主动发出的提醒次数（BEL、OSC 9 / OSC 777 通知），供手机后台提醒比较增量。
     attention: u64,
     /// 只用于判断上一行是否自动换行（vt100 在下一行开头写 `\n` 表示上一行未换行）。
@@ -27,6 +28,32 @@ struct History {
     last_scroll_line: Option<u64>,
     /// 调整尺寸时 vt100 把挤出屏幕顶部的行也报给 on_scroll；这些行程序随后会重绘，不能计入历史。
     resizing: bool,
+}
+
+/// 程序通过 OSC 7501 主动上报的工作状态（Codex、OpenCode）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProgramState {
+    Working,
+    Idle,
+}
+
+/// 解析 OSC 7501，规则同 src/utils/terminalOsc.ts 的 `parseProgramStateOsc`：
+/// 外层 `None` 表示不是有效上报（含带 `id=` 的单个会话明细），`Some(None)` 表示程序撤销上报。
+fn parse_program_state(params: &[&[u8]]) -> Option<Option<ProgramState>> {
+    let [b"7501", body, ..] = params else {
+        return None;
+    };
+    let mut fields = body.split(|byte| *byte == b':');
+    let state = fields.next()?.strip_prefix(b"state=")?;
+    if fields.any(|field| field.starts_with(b"id=")) {
+        return None;
+    }
+    match state {
+        b"working" => Some(Some(ProgramState::Working)),
+        b"idle" | b"done" | b"blocked" => Some(Some(ProgramState::Idle)),
+        b"clear" => Some(None),
+        _ => None,
+    }
 }
 
 /// OSC 9（iTerm2 / Windows Terminal 通知，`9;4` 是进度条而不是通知）和 OSC 777;notify。
@@ -44,6 +71,9 @@ impl vt100::Callbacks for History {
     }
 
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        if let Some(state) = parse_program_state(params) {
+            self.program_state = state;
+        }
         if is_notification_osc(params) {
             self.attention += 1;
         }
@@ -169,6 +199,31 @@ fn nonzero(value: u16) -> NonZeroU16 {
 impl MobileScreen {
     pub(super) fn title(&self) -> Option<&str> {
         self.parser.callbacks().title.as_deref()
+    }
+
+    pub(super) fn program_state(&self) -> Option<ProgramState> {
+        self.parser.callbacks().program_state
+    }
+
+    pub(super) fn clear_program_state(&mut self) {
+        self.parser.callbacks_mut().program_state = None;
+    }
+
+    /// 屏幕快照不带窗口标题和程序上报，断线期间错过的结束信号不会再来：
+    /// 作废上报并去掉标题开头的转圈字符，保留标题文字。
+    pub(super) fn forget_program_status(&mut self, is_spinner: impl Fn(char) -> bool) {
+        let history = self.parser.callbacks_mut();
+        history.program_state = None;
+        let stripped = history.title.as_deref().and_then(|title| {
+            let mut chars = title.chars();
+            chars
+                .next()
+                .is_some_and(is_spinner)
+                .then(|| chars.as_str().trim_start().to_string())
+        });
+        if let Some(title) = stripped {
+            history.title = (!title.is_empty()).then_some(title);
+        }
     }
 
     pub(super) fn attention_count(&self) -> u64 {
@@ -307,6 +362,37 @@ impl MobileScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_state_follows_reports_and_ignores_session_details() {
+        let mut screen = MobileScreen::new();
+        assert_eq!(screen.program_state(), None);
+        screen.process(b"\x1b]7501;?\x1b\\");
+        assert_eq!(screen.program_state(), None);
+        screen.process(b"\x1b]7501;state=working:app=codex\x1b\\");
+        assert_eq!(screen.program_state(), Some(ProgramState::Working));
+        screen.process(b"\x1b]7501;state=clear:id=ses_1\x1b\\");
+        assert_eq!(screen.program_state(), Some(ProgramState::Working));
+        screen.process(b"\x1b]7501;state=done:app=codex\x07");
+        assert_eq!(screen.program_state(), Some(ProgramState::Idle));
+        screen.process(b"\x1b]7501;state=working:app=opencode\x1b\\");
+        screen.process(b"\x1b]7501;state=blocked:kind=permission:app=codex\x1b\\");
+        assert_eq!(screen.program_state(), Some(ProgramState::Idle));
+        screen.process(b"\x1b]7501;state=clear\x1b\\");
+        assert_eq!(screen.program_state(), None);
+    }
+
+    #[test]
+    fn forget_program_status_keeps_title_text_but_drops_the_spinner() {
+        let mut screen = MobileScreen::new();
+        screen.process("\x1b]2;⠼ 构建\x07\x1b]7501;state=working:app=codex\x07".as_bytes());
+        screen.forget_program_status(|character| character == '⠼');
+        assert_eq!(screen.title(), Some("构建"));
+        assert_eq!(screen.program_state(), None);
+        screen.process("\x1b]2;⠼\x07".as_bytes());
+        screen.forget_program_status(|character| character == '⠼');
+        assert_eq!(screen.title(), None);
+    }
 
     #[test]
     fn program_title_handles_split_osc_and_survives_screen_replacement() {

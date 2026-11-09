@@ -10,6 +10,9 @@ import { sshServerVersionMismatch } from './sshServerStatus'
 /** 后端在 Server 模式无法继续时给错误消息加的统一前缀。 */
 export const SERVER_MODE_ERROR_PREFIX = 'Server 模式：'
 
+/** 端口直连 TCP 拨号失败，与 direct.rs 的 DIAL_FAILED_PREFIX 保持一致。 */
+const DIRECT_DIAL_FAILURE = '[direct:unreachable] 无法连接'
+
 type Translator = (source: string, values?: Record<string, string | number>) => string
 
 function errorMessage(error: unknown): string {
@@ -29,13 +32,18 @@ export function isServerModeError(error: unknown): boolean {
  * 版本不匹配时更新服务，其余 Server 错误重启服务；不改变连接模式。
  * 调用方在异步请求开始前捕获完整项目根，不能从报错时的当前项目或连接猜测。
  * 后端仍负责信任门禁；没有明确的 SSH 根时不提供操作。
+ * 端口直连拨号失败时 Server 多半正常，调用方提供 `retry` 则重试原操作，不提示重启。
  */
 export function serverModeErrorAction(
   error: unknown,
   rootUri: string,
   t: Translator = translate,
-): { label: string; onAction: () => Promise<void> } | undefined {
+  retry?: () => void | Promise<void>,
+): { label: string; onAction: () => void | Promise<void> } | undefined {
   if (!isServerModeError(error) || !sshConnectionIdFromUri(rootUri)) return undefined
+  if (retry && errorMessage(error).includes(DIRECT_DIAL_FAILURE)) {
+    return { label: t('重试'), onAction: retry }
+  }
   const update = sshServerVersionMismatch(errorMessage(error))
   const label = update ? t('更新远端服务') : t('重启远端服务')
   let pending = false

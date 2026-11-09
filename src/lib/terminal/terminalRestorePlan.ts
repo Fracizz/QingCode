@@ -13,7 +13,12 @@ export type SshDetachedTerminal = {
   rows: number
   /** Optional display name from the daemon. */
   name?: string
+  /** 无人接回时自动结束的时间（本机毫秒）；旧版 daemon 没有。 */
+  expiresAt?: number
 }
+
+/** 本机 PTY 宿主托管的终端在标签上的连接标识，须与后端 `LOCAL_CONNECTION_ID` 一致。 */
+export const LOCAL_TERMINAL_CONNECTION_ID = '__local__'
 
 export type TerminalRestorePlan =
   | {
@@ -21,8 +26,11 @@ export type TerminalRestorePlan =
       ptyId: string
       connectionId: string
       cwd: string
-      /** Preserve the failed session; an explicit action may create a replacement. */
-      fallback: 'stop'
+      /**
+       * 原 PTY 确认不存在时的处理。`stop` 保留现场，由用户决定是否新建；
+       * `create` 只用于本地托管终端：宿主随电脑重启消失很常见，沿用本地终端按原配置重建的语义。
+       */
+      fallback: 'stop' | 'create'
     }
   | { mode: 'create' }
 
@@ -51,7 +59,7 @@ export function planTerminalRestore(tab: RestorableTerminal): TerminalRestorePla
     ptyId: tab.ptyId.trim(),
     connectionId: tab.connectionId.trim(),
     cwd: tab.cwd,
-    fallback: 'stop',
+    fallback: tab.connectionId.trim() === LOCAL_TERMINAL_CONNECTION_ID ? 'create' : 'stop',
   }
 }
 
@@ -74,7 +82,7 @@ function isPositiveSize(value: unknown): value is number {
 }
 
 /** Validate one IPC result before it reaches the terminal store. */
-export function parseSshDetachedTerminal(value: unknown): SshDetachedTerminal | null {
+export function parseSshDetachedTerminal(value: unknown, now = Date.now()): SshDetachedTerminal | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   if (typeof record.ptyId !== 'string' || !record.ptyId.trim()) return null
@@ -88,6 +96,10 @@ export function parseSshDetachedTerminal(value: unknown): SshDetachedTerminal | 
     cols: record.cols,
     rows: record.rows,
     ...(typeof record.name === 'string' && record.name.trim() ? { name: record.name.trim() } : {}),
+    // 远端只报剩余时长，用本机时钟换算，两台机器时间不一致也不影响。
+    ...(typeof record.detachedRemainingMs === 'number' && record.detachedRemainingMs >= 0
+      ? { expiresAt: now + record.detachedRemainingMs }
+      : {}),
   }
 }
 

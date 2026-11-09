@@ -15,6 +15,59 @@ beforeEach(() => {
   mocks.safeInvoke.mockReset()
 })
 
+describe('locally hosted terminal routing', () => {
+  const base = { cwd: 'D:\\work\\app', cols: 80, rows: 24 }
+
+  it('keeps the in-process command unless the setting asks for hosting', async () => {
+    const { createTerminal } = await import('./terminal')
+    mocks.safeInvoke.mockResolvedValueOnce({})
+    await createTerminal({ id: 'plain', ...base })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('新建终端', 'create_terminal', { id: 'plain', ...base })
+  })
+
+  it('routes input through the shared table only after the backend confirms hosting', async () => {
+    const { createTerminal, writeTerminal } = await import('./terminal')
+    mocks.safeInvoke.mockResolvedValueOnce({ persistent: true, ptyId: 'pty', connectionId: '__local__' })
+    await createTerminal({ id: 'hosted', ...base, persistLocal: true })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('新建终端', 'local_host_create_terminal', { id: 'hosted', ...base })
+    mocks.safeInvoke.mockResolvedValueOnce(undefined)
+    await writeTerminal('hosted', 'x')
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('终端输入', 'ssh_write_terminal', { id: 'hosted', data: 'x' })
+
+    mocks.safeInvoke.mockResolvedValueOnce({ persistent: false, persistentFallbackReason: 'wsl' })
+    await createTerminal({ id: 'fallback', ...base, persistLocal: true })
+    mocks.safeInvoke.mockResolvedValueOnce(undefined)
+    await writeTerminal('fallback', 'x')
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('终端输入', 'write_terminal', { id: 'fallback', data: 'x' })
+  })
+
+  it('hosts terminal profiles but never one-shot tasks', async () => {
+    const { spawnTerminalScript } = await import('./terminal')
+    const script = { id: 'p', ...base, target: 'claude', env: {} }
+    mocks.safeInvoke.mockResolvedValueOnce({ persistent: true })
+    await spawnTerminalScript({ ...script, shellKind: 'interactive', persistLocal: true })
+    expect(mocks.safeInvoke.mock.lastCall?.[1]).toBe('local_host_spawn_profile')
+    mocks.safeInvoke.mockResolvedValueOnce({})
+    await spawnTerminalScript({ ...script, shellKind: 'command', persistLocal: true })
+    expect(mocks.safeInvoke.mock.lastCall?.[1]).toBe('spawn_script')
+  })
+
+  it('uses local commands for attach, detached kill and exit decisions', async () => {
+    const { attachTerminal, finishRemoteTerminalOnExit } = await import('./terminal')
+    mocks.safeInvoke.mockResolvedValue({ persistent: true })
+    await attachTerminal({ id: 'a', ptyId: 'pty', cwd: base.cwd, cols: null, rows: null, fromSeq: 7 })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('接回本地终端', 'local_host_attach_terminal', {
+      id: 'a', ptyId: 'pty', cols: null, rows: null, fromSeq: 7,
+    })
+    await killDetachedTerminal({ ptyId: 'pty', cwd: base.cwd })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('结束本地终端', 'local_host_kill_detached_terminal', { ptyId: 'pty' })
+    await finishRemoteTerminalOnExit({ id: 'a', ptyId: 'pty', cwd: base.cwd, action: 'preserve' })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('处理退出时的本地终端', 'local_host_finish_terminal_on_exit', {
+      id: 'a', ptyId: 'pty', action: 'preserve',
+    })
+  })
+})
+
 describe('SSH detached terminal IPC contract', () => {
   it('uses explicit PTY metadata for exit decisions without sweeping a connection', async () => {
     const { finishRemoteTerminalOnExit } = await import('./terminal')

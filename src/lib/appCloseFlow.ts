@@ -8,8 +8,24 @@ export function hasRemoteSession(tab: TerminalTab): boolean {
   return tab.cwd.startsWith('ssh://') && tab.persistent === true && !!tab.ptyId && !tab.endedAt
 }
 
+/** 本机宿主托管的本地终端：退出应用后进程继续运行，下次启动可接回。 */
+export function hasLocalHostedSession(tab: TerminalTab): boolean {
+  return !tab.cwd.startsWith('ssh://') && tab.persistent === true && !!tab.ptyId && !tab.endedAt
+}
+
+function hasPreservableSession(tab: TerminalTab): boolean {
+  return hasRemoteSession(tab) || hasLocalHostedSession(tab)
+}
+
 export function appExitTerminals(tabs: TerminalTab[]): TerminalTab[] {
-  return tabs.filter(tab => hasRemoteSession(tab) || (tab.status !== 'exited' && !tab.ptySpawnPending))
+  return tabs.filter(tab => hasPreservableSession(tab) || (tab.status !== 'exited' && !tab.ptySpawnPending))
+}
+
+/** 保留/结束按钮的文案按实际涉及的终端种类命名，避免只有本地终端时说「远程」。 */
+function preserveActionLabels(hasRemote: boolean, hasLocal: boolean): { terminate: string; preserve: string } {
+  if (hasRemote && hasLocal) return { terminate: t('结束终端并退出'), preserve: t('保留终端并退出') }
+  if (hasLocal) return { terminate: t('结束本地终端并退出'), preserve: t('保留本地终端并退出') }
+  return { terminate: t('结束远程终端并退出'), preserve: t('保留远程终端并退出') }
 }
 
 /** Shared by the native window and Web fixture; only native boundaries are injected. */
@@ -33,23 +49,27 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     await deps.pauseSpawns()
     const tabs = appExitTerminals(deps.terminals())
     const persistent = tabs.filter(hasRemoteSession)
-    const local = tabs.filter(tab => !tab.cwd.startsWith('ssh://'))
+    const hosted = tabs.filter(hasLocalHostedSession)
+    const preservable = persistent.length + hosted.length
+    const local = tabs.filter(tab => !tab.cwd.startsWith('ssh://') && !hasLocalHostedSession(tab))
     const compatible = tabs.filter(tab => tab.cwd.startsWith('ssh://') && !hasRemoteSession(tab))
     const transfers = deps.transferCount()
+    const labels = preserveActionLabels(persistent.length > 0, hosted.length > 0)
     const detail = [
       persistent.length > 0 ? t('有 {count} 个远程终端可以保留。保留后远端进程继续运行，重新连接时可接回。默认在连续断开 24 小时后自动结束。', { count: persistent.length }) : '',
+      hosted.length > 0 ? t('有 {count} 个本地终端可以保留。保留后进程继续运行，下次打开 QingCode 时可接回，电脑重启后失效。默认在连续断开 24 小时后自动结束。', { count: hosted.length }) : '',
       local.length > 0 ? t('{count} 个本地终端将关闭。', { count: local.length }) : '',
       compatible.length > 0 ? t('{count} 个远程终端不支持持久化，退出后将断开。', { count: compatible.length }) : '',
       transfers > 0 ? t('{count} 项文件传输尚未完成，退出后将中断。', { count: transfers }) : '',
     ].filter(Boolean).join('\n\n')
     const action = await deps.choose({
       title: t('退出 QingCode'), message: t('确定要关闭应用程序吗？'), detail,
-      wideActions: persistent.length > 0,
+      wideActions: preservable > 0,
       options: [
         { id: 'cancel', label: t('取消') },
-        ...(persistent.length > 0 ? [
-          { id: 'terminate', label: t('结束远程终端并退出'), danger: true },
-          { id: 'preserve', label: t('保留远程终端并退出'), primary: true },
+        ...(preservable > 0 ? [
+          { id: 'terminate', label: labels.terminate, danger: true },
+          { id: 'preserve', label: labels.preserve, primary: true },
         ] : [{ id: 'terminate', label: t('退出'), primary: true }]),
       ],
     })
@@ -57,11 +77,11 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     if (!(await deps.confirmFiles())) return
 
     // No terminal side effects before all cancellable save confirmations finish.
-    let pending = tabs.filter(tab => !hasRemoteSession(tab) || action === 'terminate')
+    let pending = tabs.filter(tab => !hasPreservableSession(tab) || action === 'terminate')
     let endedCount = 0
     while (pending.length > 0) {
       const results = await Promise.allSettled(pending.map(async tab => {
-        if (hasRemoteSession(tab)) await deps.finishRemote(tab, 'terminate')
+        if (hasPreservableSession(tab)) await deps.finishRemote(tab, 'terminate')
         else await deps.closeTerminal(tab)
         deps.markEnded(tab)
       }))
@@ -91,7 +111,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     }
 
     // Stop only this window's proxies, including failed kills. Keep their recoverable PTY ids.
-    for (const tab of appExitTerminals(deps.terminals()).filter(hasRemoteSession)) {
+    for (const tab of appExitTerminals(deps.terminals()).filter(hasPreservableSession)) {
       await deps.finishRemote(tab, 'preserve')
       deps.markDetached(tab)
     }

@@ -1,15 +1,19 @@
 /**
- * 电脑终端的「程序正在工作」状态，两路信号任一成立即视为运行中：
+ * 电脑终端的「程序正在工作」状态。程序用 OSC 7501 主动上报时（Codex、OpenCode）以上报为准；
+ * 上报在用户回车提交后失效（OpenCode 退出时不撤销，否则会盖住之后的 Shell 命令），由程序重新上报；
+ * 屏幕快照不带窗口标题和上报，收到快照时也一并作废，否则断线期间错过的结束信号会让状态永远停在运行中。
+ * 没有上报时，两路信号任一成立即视为运行中：
  * 1. 标题转圈（强信号）：程序设置的原始窗口标题（OSC 0/1/2）以转圈帧字符开头，
  *    或最近 SPINNER_HOLD 内出现过转圈帧。适合 Claude Code / Codex 等 AI CLI。
  * 2. 输出活跃（弱信号）：持续输出至少 OUTPUT_STREAK_MS，且最近 SPINNER_HOLD 内仍有输出。
  *    覆盖 build / test / 日志等不改标题的命令。紧跟输入或改尺寸的输出（回显、重绘）不计；
  *    shell 集成（OSC 133/633）明确报告停在提示符时也不计。
- * 两路规则须与 src-tauri/src/mobile.rs 的手机会话 `programBusy` 一致。
+ * 上述规则须与 src-tauri/src/mobile.rs 的手机会话 `programBusy` 一致。
  *
  * 性能：每块输出只做 O(1) 的时间戳记录，不逐块通知；状态翻转时才通知，
  * 并且每个终端最多挂一个到期定时器。不轮询进程树。
  */
+import type { TerminalProgramReport } from '@/utils/terminalOsc'
 import { getTerminalCommandRunning } from './terminalCommandActivity'
 
 /** 转圈帧/输出之间的空档保持「运行中」，避免状态闪烁。须与后端 SPINNER_HOLD 一致。 */
@@ -29,6 +33,8 @@ interface Activity {
   /** 当前这段连续输出的开始时间（间隔达到 SPINNER_HOLD 即断开）。 */
   streakStart: number | null
   lastOutput: number | null
+  /** 程序主动上报的状态；有值时不看标题和输出。 */
+  reported: Exclude<TerminalProgramReport, 'clear'> | null
   /** 上次通知时的状态，只在翻转时通知。 */
   busy: boolean
   timer: ReturnType<typeof setTimeout> | null
@@ -76,6 +82,7 @@ function activityFor(terminalId: string): Activity {
       lastInput: null,
       streakStart: null,
       lastOutput: null,
+      reported: null,
       busy: false,
       timer: null,
     }
@@ -93,6 +100,7 @@ function outputBusy(terminalId: string, activity: Activity, now: number): boolea
 }
 
 function computeBusy(terminalId: string, activity: Activity, now: number): boolean {
+  if (activity.reported) return activity.reported === 'working'
   if (isSpinnerGlyph([...activity.title][0])) return true
   if (activity.lastFrame !== null && now - activity.lastFrame < SPINNER_HOLD_MS) return true
   return outputBusy(terminalId, activity, now)
@@ -105,7 +113,7 @@ function refresh(terminalId: string, activity: Activity, now: number) {
     activity.busy = busy
     notify(terminalId)
   }
-  if (!busy || activity.timer || isSpinnerGlyph([...activity.title][0])) return
+  if (!busy || activity.timer || activity.reported || isSpinnerGlyph([...activity.title][0])) return
   const expiry = Math.max(activity.lastFrame ?? 0, activity.lastOutput ?? 0) + SPINNER_HOLD_MS
   activity.timer = setTimeout(() => {
     activity.timer = null
@@ -125,6 +133,38 @@ export function noteTerminalTitle(terminalId: string, rawTitle: string, now = Da
 /** 程序最近设置的原始窗口标题（未清洗）。 */
 export function getTerminalProgramTitle(terminalId: string): string {
   return activities.get(terminalId)?.title ?? ''
+}
+
+/** 记录程序通过 OSC 7501 上报的状态。 */
+export function noteTerminalProgramState(
+  terminalId: string,
+  state: TerminalProgramReport,
+  now = Date.now(),
+) {
+  const activity = activityFor(terminalId)
+  activity.reported = state === 'clear' ? null : state
+  refresh(terminalId, activity, now)
+}
+
+/** 用户回车提交：之前的上报可能来自已退出的程序，作废后等程序重新上报。 */
+export function noteTerminalSubmit(terminalId: string, now = Date.now()) {
+  const activity = activities.get(terminalId)
+  if (!activity?.reported) return
+  activity.reported = null
+  refresh(terminalId, activity, now)
+}
+
+/**
+ * 视图写入了屏幕快照：快照之前的上报和标题转圈帧都可能已过期。
+ * 只去掉转圈字符、保留标题文字；程序若仍在工作，下一帧转圈会马上恢复状态。
+ */
+export function noteTerminalScreenSnapshot(terminalId: string, now = Date.now()) {
+  const activity = activities.get(terminalId)
+  if (!activity) return
+  activity.reported = null
+  const [first, ...rest] = [...activity.title]
+  if (isSpinnerGlyph(first)) activity.title = rest.join('').trimStart()
+  refresh(terminalId, activity, now)
 }
 
 /** 记录一块程序输出（不含回放/快照）。 */

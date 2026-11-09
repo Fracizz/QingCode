@@ -23,6 +23,26 @@ const OFFLINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 type InputSendFailure = (String, Vec<u8>);
 
+pub(crate) mod local;
+
+/// 持久化终端的 daemon 所在位置，决定重连与离线结束走哪条路。
+#[derive(Clone)]
+pub(crate) enum TerminalHost {
+    /// SSH / 直连到远端 daemon。
+    Remote(RegisteredRoot),
+    /// 本机 PTY 宿主：不经网络，断开只可能是宿主退出或管道异常。
+    Local,
+}
+
+impl TerminalHost {
+    fn root_uri(&self) -> String {
+        match self {
+            Self::Remote(root) => normalize_remote_uri(&root.uri),
+            Self::Local => String::new(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct PersistentLaunch {
     pub(crate) shell: Option<String>,
@@ -379,6 +399,9 @@ struct PtyInfoWire {
     #[serde(default)]
     exited: Option<i32>,
     detached: bool,
+    /// 旧版 daemon 不返回。
+    #[serde(default)]
+    detached_remaining_ms: Option<u64>,
 }
 
 impl PtyInfoWire {
@@ -406,6 +429,8 @@ pub(crate) struct DetachedTerminal {
     rows: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detached_remaining_ms: Option<u64>,
 }
 
 /// 电脑重启后仍在 daemon 上、可由手机接回的终端。
@@ -505,6 +530,7 @@ fn detached_terminal_from_info(
         cols: info.cols,
         rows: info.rows,
         name: info.name.filter(|name| !name.trim().is_empty()),
+        detached_remaining_ms: info.detached_remaining_ms,
     })
 }
 
@@ -647,6 +673,7 @@ impl Drop for ActiveSession {
 pub(super) enum SessionTransport {
     Ssh(TerminalTransportLease),
     Direct,
+    Local,
 }
 
 impl SessionTransport {
@@ -660,21 +687,23 @@ impl SessionTransport {
     pub(super) fn into_ssh(self) -> Result<TerminalTransportLease, String> {
         match self {
             Self::Ssh(transport) => Ok(transport),
-            Self::Direct => Err("live SSH acceptance expected an SSH transport".into()),
+            Self::Direct | Self::Local => {
+                Err("live SSH acceptance expected an SSH transport".into())
+            }
         }
     }
 
     fn notice(&self) -> Option<&str> {
         match self {
             Self::Ssh(transport) => transport.notice(),
-            Self::Direct => None,
+            Self::Direct | Self::Local => None,
         }
     }
 
     fn closed_reason(&self) -> Option<String> {
         match self {
             Self::Ssh(transport) => transport.closed_reason(),
-            Self::Direct => None,
+            Self::Direct | Self::Local => None,
         }
     }
 }
@@ -1112,7 +1141,7 @@ pub(crate) async fn attach_persistent_terminal(
         .as_ref()
         .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
-    let (transport, mut session) = open_terminal_daemon_session(
+    let (transport, session) = open_terminal_daemon_session(
         manager,
         &parsed.connection_id,
         &root.uri,
@@ -1121,7 +1150,37 @@ pub(crate) async fn attach_persistent_terminal(
     )
     .await?;
     emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
+    attach_terminal_on_session(
+        id,
+        pty_id,
+        TerminalHost::Remote(root),
+        parsed.connection_id,
+        client_id,
+        size,
+        from_seq,
+        transport,
+        session,
+        app,
+        manager,
+    )
+    .await
+}
 
+/// 在已建立的 daemon 会话上接回 PTY；远端与本机宿主共用。
+#[allow(clippy::too_many_arguments)]
+async fn attach_terminal_on_session(
+    id: String,
+    pty_id: String,
+    host: TerminalHost,
+    connection_id: String,
+    client_id: String,
+    size: Option<(u16, u16)>,
+    from_seq: Option<u64>,
+    transport: SessionTransport,
+    mut session: DaemonSession,
+    app: AppHandle,
+    manager: &SshManager,
+) -> Result<TerminalSpawnResult, String> {
     // The orphan list hides exited/attached/foreign PTYs. Query full metadata here
     // so absence is distinguishable from an ownership or transient attach conflict.
     let candidate = async {
@@ -1139,15 +1198,18 @@ pub(crate) async fn attach_persistent_terminal(
             return Err(error);
         }
     };
-    let Some(cwd) = info.cwd.as_deref() else {
-        session.shutdown();
-        transport.release();
-        return Err(format!("PTY 缺少工作目录，无法安全接回：{pty_id}"));
-    };
-    if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
-        session.shutdown();
-        transport.release();
-        return Err("PTY 工作目录不在当前可信项目根内".to_string());
+    // 本机宿主没有项目根边界：管道只放行当前用户，归属已由 owner 校验。
+    if let TerminalHost::Remote(root) = &host {
+        let Some(cwd) = info.cwd.as_deref() else {
+            session.shutdown();
+            transport.release();
+            return Err(format!("PTY 缺少工作目录，无法安全接回：{pty_id}"));
+        };
+        if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
+            session.shutdown();
+            transport.release();
+            return Err("PTY 工作目录不在当前可信项目根内".to_string());
+        }
     }
 
     // 前端带回重启前持久化的续传序号时只补发之后的输出，和同一会话内断线重连一样无缝；
@@ -1210,8 +1272,8 @@ pub(crate) async fn attach_persistent_terminal(
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),
         pty_id: pty_id.clone(),
-        connection_id: parsed.connection_id.clone(),
-        root_uri: normalize_remote_uri(&root.uri),
+        connection_id: connection_id.clone(),
+        root_uri: host.root_uri(),
         // 补发路径按这个起点校验序号连续；快照路径会直接改成 seq_end。
         next_seq: AtomicU64::new(if from_seq == COLD_ATTACH_FROM_SEQ {
             0
@@ -1279,7 +1341,7 @@ pub(crate) async fn attach_persistent_terminal(
     tauri::async_runtime::spawn(async move {
         run_persistent_terminal(
             task_terminal,
-            root,
+            host,
             task_app,
             ActiveSession {
                 transport,
@@ -1309,7 +1371,7 @@ pub(crate) async fn attach_persistent_terminal(
         fallback_from: None,
         persistent: true,
         pty_id: Some(pty_id),
-        connection_id: Some(parsed.connection_id),
+        connection_id: Some(connection_id),
         persistent_fallback_reason: None,
     })
 }
@@ -1321,14 +1383,10 @@ pub(crate) async fn spawn_persistent_terminal(
     working_directory: String,
     cols: u16,
     rows: u16,
-    mut launch: PersistentLaunch,
+    launch: PersistentLaunch,
     app: AppHandle,
     manager: &SshManager,
 ) -> Result<TerminalSpawnResult, String> {
-    // 由客户端传入，已部署的旧版 daemon 无需升级也能拿到终端身份。
-    launch.env.extend(
-        crate::terminal::terminal_identity_env(&id).map(|(name, value)| (name.to_string(), value)),
-    );
     let parsed = parse_remote_uri(&root.uri)?;
     // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
     let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
@@ -1337,7 +1395,7 @@ pub(crate) async fn spawn_persistent_terminal(
         .as_ref()
         .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
-    let (transport, mut session) = open_terminal_daemon_session(
+    let (transport, session) = open_terminal_daemon_session(
         manager,
         &parsed.connection_id,
         &root.uri,
@@ -1346,6 +1404,41 @@ pub(crate) async fn spawn_persistent_terminal(
     )
     .await?;
     emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
+    spawn_terminal_on_session(
+        id,
+        TerminalHost::Remote(root),
+        parsed.connection_id,
+        working_directory,
+        cols,
+        rows,
+        launch,
+        transport,
+        session,
+        app,
+        manager,
+    )
+    .await
+}
+
+/// 在已建立的 daemon 会话上新建 PTY；远端与本机宿主共用。
+#[allow(clippy::too_many_arguments)]
+async fn spawn_terminal_on_session(
+    id: String,
+    host: TerminalHost,
+    connection_id: String,
+    working_directory: String,
+    cols: u16,
+    rows: u16,
+    mut launch: PersistentLaunch,
+    transport: SessionTransport,
+    mut session: DaemonSession,
+    app: AppHandle,
+    manager: &SshManager,
+) -> Result<TerminalSpawnResult, String> {
+    // 由客户端传入，已部署的旧版 daemon 无需升级也能拿到终端身份。
+    launch.env.extend(
+        crate::terminal::terminal_identity_env(&id).map(|(name, value)| (name.to_string(), value)),
+    );
     let opened = async {
         let response = session
             .request(
@@ -1393,8 +1486,8 @@ pub(crate) async fn spawn_persistent_terminal(
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),
         pty_id: pty_id.clone(),
-        connection_id: parsed.connection_id.clone(),
-        root_uri: normalize_remote_uri(&root.uri),
+        connection_id: connection_id.clone(),
+        root_uri: host.root_uri(),
         next_seq: AtomicU64::new(seq),
         next_input_seq: AtomicU64::new(next_input_seq),
         size: Mutex::new((cols.max(1), rows.max(1))),
@@ -1432,7 +1525,7 @@ pub(crate) async fn spawn_persistent_terminal(
     tauri::async_runtime::spawn(async move {
         run_persistent_terminal(
             task_terminal,
-            root,
+            host,
             app,
             ActiveSession {
                 transport,
@@ -1449,14 +1542,14 @@ pub(crate) async fn spawn_persistent_terminal(
         fallback_from: launch.fallback_from,
         persistent: true,
         pty_id: Some(pty_id),
-        connection_id: Some(parsed.connection_id),
+        connection_id: Some(connection_id),
         persistent_fallback_reason: None,
     })
 }
 
 async fn run_persistent_terminal(
     terminal: Arc<PersistentTerminal>,
-    root: RegisteredRoot,
+    host: TerminalHost,
     app: AppHandle,
     mut active: ActiveSession,
     command_rx: mpsc::Receiver<TerminalCommand>,
@@ -1464,7 +1557,7 @@ async fn run_persistent_terminal(
     tokio::select! {
         biased;
         _ = terminal.detach_requested.notified() => {},
-        _ = run_persistent_terminal_inner(Arc::clone(&terminal), root, app.clone(), &mut active, command_rx) => {},
+        _ = run_persistent_terminal_inner(Arc::clone(&terminal), host, app.clone(), &mut active, command_rx) => {},
     }
     active.session.shutdown();
     active.transport.release();
@@ -1475,7 +1568,7 @@ async fn run_persistent_terminal(
 
 async fn run_persistent_terminal_inner(
     terminal: Arc<PersistentTerminal>,
-    root: RegisteredRoot,
+    host: TerminalHost,
     app: AppHandle,
     active: &mut ActiveSession,
     mut command_rx: mpsc::Receiver<TerminalCommand>,
@@ -1550,7 +1643,7 @@ async fn run_persistent_terminal_inner(
                         break;
                     }
                     let prefer_screen = attach_should_prefer_screen(attach_failures);
-                    match reconnect_terminal(&terminal, &root, &app, &manager, prefer_screen).await
+                    match reconnect_terminal(&terminal, &host, &app, &manager, prefer_screen).await
                     {
                         ReconnectEnd::Connected(connected) => {
                             *active = connected;
@@ -1598,7 +1691,7 @@ async fn run_persistent_terminal_inner(
                     }
                 }
                 if terminal.closed.load(Ordering::Acquire) {
-                    kill_offline(&terminal, &root, &app).await;
+                    kill_offline(&terminal, &host, &app).await;
                     for ack in kill_acks {
                         let _ = ack.send(());
                     }
@@ -1731,39 +1824,52 @@ async fn resize_active(
         .map(|_| ())
 }
 
+/// 打开重连用的 daemon 会话；连接尚不可用时交回重连循环的处置。
+async fn open_host_session(
+    terminal: &PersistentTerminal,
+    host: &TerminalHost,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(SessionTransport, DaemonSession), ReconnectEnd> {
+    if terminal.closed.load(Ordering::Acquire) {
+        return Err(ReconnectEnd::Closed);
+    }
+    let opened = match host {
+        TerminalHost::Remote(root) => {
+            let parsed = parse_remote_uri(&root.uri).map_err(ReconnectEnd::Terminated)?;
+            manager
+                .ensure_connection_alive(&parsed.connection_id)
+                .await
+                .map_err(ReconnectEnd::Retry)?;
+            // A project slot may still contain the token from a previous daemon. Unlike
+            // the file-operation fast path, reconnect must acquire a healthy host runtime.
+            open_reconnect_daemon_session(manager, root, Some(app)).await
+        }
+        TerminalHost::Local => local::open_local_session(manager).await,
+    };
+    // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
+    // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
+    // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
+    opened.map_err(|error| {
+        eprintln!(
+            "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
+            terminal.id
+        );
+        ReconnectEnd::Retry(error)
+    })
+}
+
 async fn reconnect_terminal(
     terminal: &PersistentTerminal,
-    root: &RegisteredRoot,
+    host: &TerminalHost,
     app: &AppHandle,
     manager: &SshManager,
     prefer_screen: bool,
 ) -> ReconnectEnd {
-    let parsed = match parse_remote_uri(&root.uri) {
-        Ok(parsed) => parsed,
-        Err(error) => return ReconnectEnd::Terminated(error),
+    let (transport, mut session) = match open_host_session(terminal, host, app, manager).await {
+        Ok(opened) => opened,
+        Err(end) => return end,
     };
-    if terminal.closed.load(Ordering::Acquire) {
-        return ReconnectEnd::Closed;
-    }
-    if let Err(error) = manager.ensure_connection_alive(&parsed.connection_id).await {
-        return ReconnectEnd::Retry(error);
-    }
-    // A project slot may still contain the token from a previous daemon. Unlike
-    // the file-operation fast path, reconnect must acquire a healthy host runtime.
-    // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
-    // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
-    // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
-    let (transport, mut session) =
-        match open_reconnect_daemon_session(manager, root, Some(app)).await {
-            Ok(opened) => opened,
-            Err(error) => {
-                eprintln!(
-                    "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
-                    terminal.id
-                );
-                return ReconnectEnd::Retry(error);
-            }
-        };
     let Some(events) = session.take_events() else {
         session.shutdown();
         transport.release();
@@ -1802,7 +1908,10 @@ async fn reconnect_terminal(
         Err(error) if attach_terminal_is_gone(&error) => {
             active.session.shutdown();
             active.transport.release();
-            return ReconnectEnd::Terminated("远端终端已结束或被回收".to_string());
+            return ReconnectEnd::Terminated(match host {
+                TerminalHost::Remote(_) => "远端终端已结束或被回收".to_string(),
+                TerminalHost::Local => "本地终端宿主已退出，终端已结束".to_string(),
+            });
         }
         Err(error) => {
             active.session.shutdown();
@@ -1990,8 +2099,22 @@ fn attach_screen_size(response: &serde_json::Value, fallback: (u16, u16)) -> (u1
     )
 }
 
-async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app: &AppHandle) {
+async fn kill_offline(terminal: &PersistentTerminal, host: &TerminalHost, app: &AppHandle) {
     let manager = app.state::<SshManager>();
+    let root = match host {
+        TerminalHost::Remote(root) => root,
+        TerminalHost::Local => {
+            if let Err(error) =
+                local::kill_owned(terminal.pty_id(), "backend_cleanup", false, &manager).await
+            {
+                eprintln!(
+                    "[WARN] persistent terminal {} could not end local PTY {}: {error}",
+                    terminal.id, terminal.pty_id
+                );
+            }
+            return;
+        }
+    };
     let deadline = tokio::time::Instant::now() + OFFLINE_KILL_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
         let parsed = match parse_remote_uri(&root.uri) {
@@ -2472,6 +2595,7 @@ mod tests {
             rows: 40,
             exited: None,
             detached: true,
+            detached_remaining_ms: Some(60_000),
         }
     }
 
@@ -2561,6 +2685,7 @@ mod tests {
         let json = serde_json::to_value(&terminal).unwrap();
         assert_eq!(json["ptyId"], "pty-1");
         assert_eq!(json["connectionId"], "remote-a");
+        assert_eq!(json["detachedRemainingMs"], 60_000);
         assert!(json.get("pty_id").is_none());
 
         let windows_roots = vec![RegisteredRoot {

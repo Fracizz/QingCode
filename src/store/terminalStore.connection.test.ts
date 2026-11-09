@@ -232,8 +232,34 @@ describe('terminal persistent connection events', () => {
     try {
       rejectSpawn(error)
       await spawning
-      expect(mocks.serverModeErrorAction).toHaveBeenCalledWith(error, root)
+      expect(mocks.serverModeErrorAction).toHaveBeenCalledWith(error, root, undefined, expect.any(Function))
     } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('retries a failed spawn only while the terminal is still exited', async () => {
+    mocks.createTerminal.mockRejectedValueOnce(new Error('Server 模式：[direct:unreachable] 无法连接'))
+    useTerminalStore.setState({
+      terminals: [terminal({ status: 'starting', ptySpawnPending: true })],
+    })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const originalRestart = useTerminalStore.getState().restartTerminal
+    const restartTerminal = vi.fn().mockResolvedValue(undefined)
+    try {
+      await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+      const retry = mocks.serverModeErrorAction.mock.calls[0][3] as () => void
+      useTerminalStore.setState({ restartTerminal })
+
+      retry()
+      expect(restartTerminal).toHaveBeenCalledExactlyOnceWith('t1', { preserveOutput: true })
+
+      restartTerminal.mockClear()
+      useTerminalStore.setState({ terminals: [terminal({ status: 'running' })] })
+      retry()
+      expect(restartTerminal).not.toHaveBeenCalled()
+    } finally {
+      useTerminalStore.setState({ restartTerminal: originalRestart })
       log.mockRestore()
     }
   })

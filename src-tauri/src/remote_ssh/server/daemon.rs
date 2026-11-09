@@ -181,16 +181,20 @@ pub(crate) fn compare_server_versions(left: &str, right: &str) -> Option<std::cm
 enum DaemonTransport {
     Ssh(russh::Channel<client::Msg>),
     Direct(tokio::io::DuplexStream),
+    /// 本机 PTY 宿主的命名管道，访问控制由管道 DACL 与 token 承担。
+    Local(qingcode_server::ipc::IpcStream),
 }
 
 enum DaemonReader {
     Ssh(russh::ChannelReadHalf),
     Direct(tokio::io::ReadHalf<tokio::io::DuplexStream>),
+    Local(tokio::io::ReadHalf<qingcode_server::ipc::IpcStream>),
 }
 
 enum DaemonWriter {
     Ssh(russh::ChannelWriteHalf<client::Msg>),
     Direct(tokio::io::WriteHalf<tokio::io::DuplexStream>),
+    Local(tokio::io::WriteHalf<qingcode_server::ipc::IpcStream>),
 }
 
 impl DaemonTransport {
@@ -201,6 +205,10 @@ impl DaemonTransport {
                 .write_all(bytes)
                 .await
                 .map_err(|error| error.to_string()),
+            Self::Local(stream) => stream
+                .write_all(bytes)
+                .await
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -208,6 +216,7 @@ impl DaemonTransport {
         match self {
             Self::Ssh(channel) => channel.wait().await,
             Self::Direct(stream) => read_direct_message(stream).await,
+            Self::Local(stream) => read_direct_message(stream).await,
         }
     }
 
@@ -215,6 +224,7 @@ impl DaemonTransport {
         match self {
             Self::Ssh(channel) => channel.eof().await.map_err(|error| error.to_string()),
             Self::Direct(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
+            Self::Local(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
         }
     }
 
@@ -222,6 +232,7 @@ impl DaemonTransport {
         match self {
             Self::Ssh(channel) => channel.close().await.map_err(|error| error.to_string()),
             Self::Direct(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
+            Self::Local(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
         }
     }
 
@@ -234,6 +245,10 @@ impl DaemonTransport {
             Self::Direct(stream) => {
                 let (reader, writer) = tokio::io::split(stream);
                 (DaemonReader::Direct(reader), DaemonWriter::Direct(writer))
+            }
+            Self::Local(stream) => {
+                let (reader, writer) = tokio::io::split(stream);
+                (DaemonReader::Local(reader), DaemonWriter::Local(writer))
             }
         }
     }
@@ -254,6 +269,7 @@ impl DaemonReader {
         match self {
             Self::Ssh(reader) => reader.wait().await,
             Self::Direct(reader) => read_direct_message(reader).await,
+            Self::Local(reader) => read_direct_message(reader).await,
         }
     }
 }
@@ -266,6 +282,10 @@ impl DaemonWriter {
                 .write_all(bytes)
                 .await
                 .map_err(|error| error.to_string()),
+            Self::Local(writer) => writer
+                .write_all(bytes)
+                .await
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -273,6 +293,7 @@ impl DaemonWriter {
         match self {
             Self::Ssh(writer) => writer.eof().await.map_err(|error| error.to_string()),
             Self::Direct(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
+            Self::Local(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
         }
     }
 
@@ -280,6 +301,7 @@ impl DaemonWriter {
         match self {
             Self::Ssh(writer) => writer.close().await.map_err(|error| error.to_string()),
             Self::Direct(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
+            Self::Local(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
         }
     }
 }
@@ -549,6 +571,37 @@ impl DaemonSession {
         .await?;
         Ok(Self::from_channel(channel))
     }
+    /// 在本机 PTY 宿主的命名管道上建立 daemon 会话；不经过 SSH。
+    pub(super) async fn open_local(
+        stream: qingcode_server::ipc::IpcStream,
+        client_id: &str,
+        token: String,
+    ) -> Result<Self, String> {
+        if client_id.trim().is_empty() {
+            return Err("daemon clientId 不能为空".to_string());
+        }
+        let mut channel = DaemonChannel::new(DaemonTransport::Local(stream));
+        let access = DaemonAccess {
+            bin: "local".into(),
+            token,
+        };
+        match daemon_hello(
+            &mut channel,
+            client_id,
+            &access,
+            HelloPolicy::TERMINAL,
+            Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+        )
+        .await
+        {
+            Ok(()) => Ok(Self::from_channel(channel)),
+            Err(error) => {
+                channel.shutdown().await;
+                Err(error)
+            }
+        }
+    }
+
     /// 在调用者明确传入的独占终端连接上建立 daemon 会话。
     ///
     /// 这个构造器刻意不接收 [`SshManager`]，避免持久化终端误把 daemon 帧

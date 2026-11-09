@@ -52,6 +52,7 @@ pub(crate) use paths::{
 };
 pub(crate) use scripts::{kill_server_command, windows_kill_server_script};
 pub(crate) use serve::{server_stream_call, ServerStreamOutcome};
+pub(crate) use terminal::local as local_terminal;
 pub(crate) use terminal::{
     attach_persistent_terminal, kill_detached_terminal, kill_detached_terminals,
     kill_terminal_for_exit, list_detached_mobile_terminals, list_detached_terminals,

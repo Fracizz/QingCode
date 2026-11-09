@@ -69,6 +69,14 @@ pub struct TerminalDataPayload {
     pub data: String,
 }
 
+/// 交给本机 PTY 宿主启动的请求：普通 Shell（`startup` 为空）或终端配置。
+pub(crate) struct HostedLaunchRequest<'a> {
+    pub(crate) shell: Option<&'a str>,
+    pub(crate) startup: Option<&'a str>,
+    pub(crate) env: HashMap<String, String>,
+    pub(crate) name: Option<String>,
+}
+
 const TERMINAL_READ_BUF: usize = 32 * 1024;
 const TERMINAL_EMIT_COALESCE_MAX: usize = 32 * 1024;
 const TERMINAL_EMIT_CHANNEL: usize = 64;
@@ -1081,6 +1089,69 @@ fn apply_terminal_identity(cmd: &mut CommandBuilder, id: &str, program: &str) {
     }
 }
 
+/// 宿主 daemon 不允许覆盖 TERM / COLORTERM / 动态加载器变量；
+/// 名称含 `=` 的是 Windows 的盘符工作目录伪变量（`=C:`），同样不能下发。
+fn hosted_env_allowed(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    !key.is_empty()
+        && !key.contains('=')
+        && !key.contains('\0')
+        && !upper.starts_with("LD_")
+        && !upper.starts_with("DYLD_")
+        && !matches!(upper.as_str(), "TERM" | "COLORTERM")
+}
+
+/// 宿主 daemon 在 Windows 上只接受这几种 Shell。
+fn hosted_shell_supported(shell_id: &str) -> bool {
+    matches!(shell_id, "powershell" | "pwsh" | "cmd")
+}
+
+/// 组装宿主 daemon 的环境：daemon 自身的环境是它启动时的旧快照，这里下发当前进程的
+/// 完整环境（再叠加配置环境），让新终端和进程内 PTY 看到同样的变量。
+fn hosted_env(
+    base: impl IntoIterator<Item = (String, String)>,
+    overlay: HashMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    base.into_iter()
+        .chain(overlay)
+        .filter(|(key, value)| hosted_env_allowed(key) && !value.contains('\0'))
+        .collect()
+}
+
+/// 解析本地终端的宿主启动参数。外层 `Err` 是配置本身错误（进程内 PTY 也会失败）；
+/// 内层 `Err` 是不能托管的原因，调用方应回退进程内 PTY。
+pub(crate) fn hosted_local_launch(
+    cwd: &str,
+    request: HostedLaunchRequest<'_>,
+) -> Result<Result<crate::remote_ssh::HostedLaunch, String>, String> {
+    validate_terminal_cwd(cwd)?;
+    if !crate::local_pty_host::HOST_SUPPORTED {
+        return Ok(Err("当前平台暂不支持本地终端持久化".to_string()));
+    }
+    if crate::run_environment::parse_wsl_path(cwd).is_some() {
+        return Ok(Err("WSL 项目的终端暂不支持持久化".to_string()));
+    }
+    let resolved = resolve_host_shell_with_locator(
+        request.shell,
+        request.startup.map(str::trim),
+        &locate_program,
+    )?;
+    if !hosted_shell_supported(&resolved.id) {
+        return Ok(Err(format!(
+            "{} 终端暂不支持持久化",
+            shell_display_name(&resolved.id)
+        )));
+    }
+    Ok(Ok(crate::remote_ssh::HostedLaunch {
+        shell: Some(resolved.program),
+        args: resolved.args,
+        env: hosted_env(env::vars(), request.env),
+        name: request.name,
+        resolved_shell: resolved.id,
+        fallback_from: resolved.fallback_from,
+    }))
+}
+
 fn build_host_shell_command(
     shell: Option<&str>,
     cwd: &str,
@@ -1427,6 +1498,35 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::{hosted_env, hosted_shell_supported};
+    use std::collections::HashMap;
+
+    #[test]
+    fn hosted_env_drops_values_the_daemon_rejects_and_applies_overlay_last() {
+        let base = [
+            ("PATH".to_string(), "base".to_string()),
+            ("TERM".to_string(), "dumb".to_string()),
+            ("colorterm".to_string(), "24bit".to_string()),
+            ("=C:".to_string(), "C:\\work".to_string()),
+            ("LD_PRELOAD".to_string(), "evil.so".to_string()),
+            ("BAD".to_string(), "a\0b".to_string()),
+        ];
+        let overlay = HashMap::from([("PATH".to_string(), "profile".to_string())]);
+        let env = hosted_env(base, overlay);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("profile"));
+    }
+
+    #[test]
+    fn only_shells_the_daemon_accepts_are_hosted() {
+        for shell in ["powershell", "pwsh", "cmd"] {
+            assert!(hosted_shell_supported(shell));
+        }
+        for shell in ["wsl", "bash", "zsh"] {
+            assert!(!hosted_shell_supported(shell));
+        }
+    }
+
     #[test]
     fn terminal_identity_overrides_inherited_values() {
         let mut cmd = portable_pty::CommandBuilder::new("cmd.exe");

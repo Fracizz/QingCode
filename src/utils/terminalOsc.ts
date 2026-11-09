@@ -15,10 +15,28 @@ export function sanitizeOscTitle(title: string): string {
   return cleaned
 }
 
+/** `clear` 表示程序撤销上报（如 Codex 退出时），之后回到标题/输出判定。 */
+export type TerminalProgramReport = 'working' | 'idle' | 'clear'
+
+/**
+ * 解析 OSC 7501 的内容，如 `state=working:app=codex`。`done` 与 `blocked`（等用户审批）都算没在工作。
+ * 带 `id=` 的是程序内单个会话的明细，整体状态由不带 id 的那条给出；`?` 查询等其余内容忽略。
+ */
+export function parseProgramStateOsc(data: string): TerminalProgramReport | null {
+  const [state, ...fields] = data.split(':')
+  if (fields.some(field => field.startsWith('id='))) return null
+  if (state === 'state=working') return 'working'
+  if (state === 'state=idle' || state === 'state=done' || state === 'state=blocked') return 'idle'
+  if (state === 'state=clear') return 'clear'
+  return null
+}
+
 export type TerminalOscHandlers = {
   onTitle?: (title: string) => void
   /** 未清洗的原始标题（保留开头的转圈字符），用于判断程序是否在工作。 */
   onRawTitle?: (title: string) => void
+  /** 程序通过 OSC 7501 主动上报的工作状态（Codex、OpenCode）。 */
+  onProgramState?: (state: TerminalProgramReport) => void
   /** Foreground command started (FinalTerm / VS Code shell integration). */
   onCommandStart?: () => void
   /** Foreground command finished or prompt returned. */
@@ -104,6 +122,11 @@ export function registerTerminalOscHandlers(
         return true
       }),
     ),
+    parser.registerOscHandler(7501, data => {
+      const state = parseProgramStateOsc(data)
+      if (state) handlers.onProgramState?.(state)
+      return true
+    }),
     ...SHELL_INTEGRATION_OSC_IDENTS.map(ident =>
       parser.registerOscHandler(ident, data => {
         const marker = parseShellIntegrationOsc(`${ident};${data}`)

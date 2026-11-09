@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::mobile_screen::MobileScreen;
+use crate::mobile_screen::{MobileScreen, ProgramState};
 use base64::Engine;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
@@ -579,8 +579,12 @@ impl Session {
         }
     }
 
-    /// 程序是否在忙：标题仍是转圈帧或最近 `SPINNER_HOLD` 内出现过转圈帧，且终端未退出。
+    /// 程序是否在忙：有 OSC 7501 上报时以上报为准，否则看标题仍是转圈帧或最近
+    /// `SPINNER_HOLD` 内出现过转圈帧；终端退出后一律不忙。
     fn program_busy_at(&self, now: Instant) -> bool {
+        if let Some(state) = self.screen.program_state() {
+            return self.exit.is_none() && state == ProgramState::Working;
+        }
         self.exit.is_none()
             && (self
                 .screen
@@ -600,6 +604,9 @@ impl Session {
     /// 覆盖 build / test 等不改标题的命令；只用于列表显示，后台提醒仍只看标题转圈，
     /// 免得 `tail -f` 这类间歇输出反复触发「已停下」通知。
     fn output_busy_at(&self, now: Instant) -> bool {
+        if self.screen.program_state().is_some() {
+            return false;
+        }
         self.exit.is_none()
             && match (self.output_streak_start, self.last_output) {
                 (Some(start), Some(last)) => {
@@ -620,6 +627,14 @@ impl Session {
     fn note_input(&mut self) {
         self.touch();
         self.last_input = Some(self.last_active);
+    }
+
+    /// 用户输入：回车提交时作废之前的上报（可能来自已退出的程序），由程序重新上报。
+    fn note_user_input(&mut self, data: &str) {
+        self.note_input();
+        if data.contains('\r') {
+            self.screen.clear_program_state();
+        }
     }
 
     fn note_output_at(&mut self, now: Instant) {
@@ -659,6 +674,7 @@ impl Session {
             }
             OutputChunk::Screen { data, cols, rows } => {
                 self.screen.replace(data, *cols, *rows);
+                self.screen.forget_program_status(is_spinner_glyph);
                 if let Some(view) = self.view.as_mut() {
                     view.bytes = Vec::new();
                     view.snapshot = true;
@@ -2474,7 +2490,7 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
                 return Err("单次终端输入超过 16 KiB。".into());
             }
             hub.authorize(&id, lease)?;
-            hub.with_session(&id, Session::note_input);
+            hub.with_session(&id, |session| session.note_user_input(&data));
             let kind = hub.session_kind(&id)?;
             write_input(app, kind, id, data).await?;
             Ok(Value::Null)
@@ -2564,13 +2580,22 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
     }
 }
 
+/// 本机宿主托管的电脑终端属于本地项目，但和 SSH 持久终端登记在同一张表。
+fn routes_through_ssh_table(app: &AppHandle, kind: ProjectKind, id: &str) -> bool {
+    kind == ProjectKind::Ssh
+        || app
+            .state::<crate::remote_ssh::SshManager>()
+            .local_hosted_pty_id(id)
+            .is_some()
+}
+
 async fn write_input(
     app: &AppHandle,
     kind: ProjectKind,
     id: String,
     data: String,
 ) -> Result<(), String> {
-    if kind == ProjectKind::Ssh {
+    if routes_through_ssh_table(app, kind, &id) {
         crate::remote_ssh::ssh_write_terminal_unchecked(id, data, app.state()).await
     } else {
         let app = app.clone();
@@ -2590,7 +2615,7 @@ async fn apply_resize(
     rows: u16,
 ) -> Result<(), String> {
     let (cols, rows) = size(cols, rows);
-    if kind == ProjectKind::Ssh {
+    if routes_through_ssh_table(app, kind, id) {
         crate::remote_ssh::ssh_resize_terminal_unchecked(id.to_owned(), cols, rows, app.state())
             .await?;
     } else {
@@ -2824,7 +2849,7 @@ pub fn mobile_view_close(id: String, state: State<'_, MobileState>) {
 pub async fn mobile_view_input(id: String, data: String, app: AppHandle) -> Result<(), String> {
     let hub = &app.state::<MobileState>().inner().hub;
     let kind = hub.desktop_controls(&id)?;
-    hub.with_session(&id, Session::note_input);
+    hub.with_session(&id, |session| session.note_user_input(&data));
     write_input(&app, kind, id, data).await
 }
 
@@ -3142,7 +3167,7 @@ async fn restore_detached_sessions(
 }
 
 async fn end(app: &AppHandle, id: String, kind: ProjectKind) -> Result<(), String> {
-    if kind == ProjectKind::Ssh {
+    if routes_through_ssh_table(app, kind, &id) {
         crate::remote_ssh::ssh_kill_terminal_unchecked(id, None, None, app.state()).await
     } else {
         let app = app.clone();
@@ -4173,6 +4198,55 @@ mod tests {
             disconnected: false,
         });
         assert!(!session.program_busy());
+    }
+
+    #[test]
+    fn program_report_overrides_heuristics_until_submit_or_snapshot() {
+        let encode =
+            |text: &str| OutputChunk::Bytes(base64::engine::general_purpose::STANDARD.encode(text));
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(encode(
+            "\x1b]2;⠼ 构建\x07\x1b]7501;state=done:app=codex\x1b\\",
+        ));
+        assert!(!session.program_busy());
+        assert!(!session.display_busy());
+
+        // 上报空闲时持续输出也不算运行中；回车提交后回到输出判定。
+        let start = Instant::now();
+        session.note_output_at(start);
+        session.note_output_at(start + OUTPUT_STREAK);
+        assert!(!session.output_busy_at(start + OUTPUT_STREAK));
+        session.note_user_input("x");
+        assert!(!session.output_busy_at(start + OUTPUT_STREAK));
+        session.note_user_input("build\r");
+        assert!(session.output_busy_at(start + OUTPUT_STREAK));
+
+        session.push(encode(
+            "\x1b]2;构建\x07\x1b]7501;state=working:app=codex\x1b\\",
+        ));
+        assert!(session.program_busy_at(Instant::now() + SPINNER_HOLD * 100));
+        session.finish(Exit {
+            exit_code: 0,
+            disconnected: false,
+        });
+        assert!(!session.program_busy());
+    }
+
+    #[test]
+    fn screen_snapshot_releases_a_spinner_title_that_will_never_finish() {
+        let mut session = Session::new(project(), "phone".into(), 1);
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode("\x1b]2;⠼ 构建\x07"),
+        ));
+        let frame = session.last_spinner_frame.unwrap();
+        assert!(session.program_busy_at(frame + SPINNER_HOLD * 4));
+        session.push(OutputChunk::Screen {
+            data: "\x1b[Hdone".into(),
+            cols: 80,
+            rows: 24,
+        });
+        assert!(!session.program_busy_at(frame + SPINNER_HOLD * 4));
+        assert_eq!(session.name(), "构建");
     }
 
     #[test]

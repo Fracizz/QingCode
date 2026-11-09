@@ -32,6 +32,7 @@ const groups: SearchGroup[] = [
   { category: 'terminal', terms: ['默认启动配置', '终端配置', '默认 Shell', '终端 › 集成: 默认 Shell', 'pwsh', 'WSL', 'Zsh'], userOnly: true },
   { category: 'terminal', terms: ['SSH', '粘贴', '上传', 'terminal-paste', 'sshUploadOnPaste', '终端 › 集成: SSH 粘贴上传', 'terminal.integrated.sshUploadOnPaste', '清理远程粘贴文件'] },
   { category: 'terminal', terms: ['粘贴', '大段', '文件', 'largePasteAsFile', '终端 › 集成: 大段粘贴存为文件', 'terminal.integrated.largePasteAsFile'] },
+  { category: 'terminal', terms: ['持久', '接回', '保留', '本地终端', 'persistLocalSessions', '终端 › 集成: 本地终端可接回', 'terminal.integrated.persistLocalSessions'] },
   { category: 'terminal', terms: ['状态', '运行中', 'tabActivityIndicator', '终端 › 集成: 标签运行状态', 'terminal.integrated.tabActivityIndicator'] },
   { category: 'terminal', terms: ['Shift+Enter', '换行', 'Agent', 'shiftEnterNewline', '终端 › 集成: Shift+Enter 换行', 'terminal.integrated.shiftEnterNewline'] },
   { category: 'tools', terms: ['AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills'], userOnly: true },

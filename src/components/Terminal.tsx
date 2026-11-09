@@ -61,6 +61,8 @@ import {
 } from '@/lib/terminal/terminalCommandActivity'
 import {
   getTerminalProgramTitle,
+  noteTerminalProgramState,
+  noteTerminalScreenSnapshot,
   noteTerminalTitle,
 } from '@/lib/terminal/terminalProgramActivity'
 import {
@@ -1112,6 +1114,7 @@ export default function TerminalView({
         )
       },
       onRawTitle: title => noteTerminalTitle(terminalId, title),
+      onProgramState: state => noteTerminalProgramState(terminalId, state),
       onTitle: title => {
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         // Follow meaningful OSC titles; keep the shell label unless an app renames it.
@@ -1178,6 +1181,8 @@ export default function TerminalView({
         screenWriteLockRef.current += 1
         term.write(snapshot.data, () => {
           screenWriteLockRef.current = Math.max(0, screenWriteLockRef.current - 1)
+          // 放在解析回调里：回放时快照之前的旧标题要先解析完，才能被这里作废。
+          noteTerminalScreenSnapshot(terminalId)
           if (xtermRef.current !== term) return
           if (!fitsGrid) redrawPendingRef.current = true
           // 补上解析期间被推迟的 fit；网格不同时由它 resize 并触发 TUI 重绘。

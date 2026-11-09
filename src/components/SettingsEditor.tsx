@@ -95,6 +95,11 @@ import {
   saveScopedTerminalShiftEnterNewline,
 } from '../lib/terminal/terminalShiftEnterSettings'
 import {
+  getTerminalPersistLocalSessions,
+  loadScopedTerminalPersistLocalSessions,
+  saveScopedTerminalPersistLocalSessions,
+} from '../lib/terminal/terminalPersistLocalSettings'
+import {
   getTerminalLargePasteAsFile,
   loadScopedTerminalLargePasteAsFile,
   saveScopedTerminalLargePasteAsFile,
@@ -226,6 +231,7 @@ export default function SettingsEditor() {
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [largePasteAsFile, setLargePasteAsFile] = useState(getTerminalLargePasteAsFile)
+  const [persistLocalSessions, setPersistLocalSessions] = useState(getTerminalPersistLocalSessions)
   const [shiftEnterNewline, setShiftEnterNewline] = useState(getTerminalShiftEnterNewline)
   const [activityIndicator, setActivityIndicator] = useState(getTerminalActivityIndicator)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
@@ -367,6 +373,9 @@ export default function SettingsEditor() {
     void loadScopedTerminalSshUploadOnPaste(settingsScope, currentProject).then(
       setSshUploadOnPaste,
     )
+    void loadScopedTerminalPersistLocalSessions(settingsScope, currentProject).then(
+      setPersistLocalSessions,
+    )
     void loadScopedTerminalLargePasteAsFile(settingsScope, currentProject).then(
       setLargePasteAsFile,
     )
@@ -499,6 +508,17 @@ export default function SettingsEditor() {
       await saveScopedTerminalSshUploadOnPaste(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存 SSH 终端粘贴上传设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updatePersistLocalSessions = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setPersistLocalSessions(enabled)
+    try {
+      await saveScopedTerminalPersistLocalSessions(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存本地终端接回设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -1192,6 +1212,27 @@ export default function SettingsEditor() {
                       onChange={e => void updateLargePasteAsFile(e.target.value === 'on')}
                       className="setting-control setting-select"
                       aria-label={t('终端 › 集成: 大段粘贴存为文件')}
+                    >
+                      <option value="off">{t('关闭')}</option>
+                      <option value="on">{t('开启')}</option>
+                    </select>
+                  </SettingItem>
+                )}
+                {match('持久', '接回', '保留', '本地终端', 'persistLocalSessions') && (
+                  <SettingItem
+                    title={t('终端 › 集成: 本地终端可接回')}
+                    description={t(
+                      '新建的本地终端由后台宿主进程托管，关闭或升级 QingCode 后进程继续运行，下次打开时接回。仅 Windows 的 PowerShell 和 CMD 终端支持；一次性运行任务和 WSL 终端不受影响。电脑重启后终端会按原配置重新启动，连续断开 24 小时后自动结束。',
+                    )}
+                    modified={
+                      persistLocalSessions !== DEFAULT_GLOBAL_SETTINGS['terminal.integrated.persistLocalSessions']
+                    }
+                  >
+                    <select
+                      value={persistLocalSessions ? 'on' : 'off'}
+                      onChange={e => void updatePersistLocalSessions(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('终端 › 集成: 本地终端可接回')}
                     >
                       <option value="off">{t('关闭')}</option>
                       <option value="on">{t('开启')}</option>

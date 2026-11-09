@@ -5,7 +5,12 @@ import {
   SPINNER_HOLD_MS,
   clearTerminalProgramActivity,
   isSpinnerFrame,
+  getTerminalProgramBusySnapshot,
+  getTerminalProgramTitle,
   isTerminalProgramBusy,
+  noteTerminalProgramState,
+  noteTerminalScreenSnapshot,
+  noteTerminalSubmit,
   noteTerminalInput,
   noteTerminalOutput,
   noteTerminalTitle,
@@ -48,6 +53,78 @@ describe('terminal program activity', () => {
     vi.advanceTimersByTime(100)
     expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
+  })
+
+  it('trusts the program report over the title and output heuristics', () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    noteTerminalTitle('t1', '⠋ idlecwd', start)
+    streamOutput(start, OUTPUT_STREAK_MS * 2)
+    expect(isTerminalProgramBusy('t1', start + 100)).toBe(true)
+    noteTerminalProgramState('t1', 'idle', start + 2100)
+    expect(isTerminalProgramBusy('t1', start + 2100)).toBe(false)
+
+    noteTerminalTitle('t1', 'idlecwd', start + 10_000)
+    noteTerminalProgramState('t1', 'working', start + 10_000)
+    // 模型长时间没有输出也保持运行中。
+    expect(isTerminalProgramBusy('t1', start + 600_000)).toBe(true)
+    noteTerminalProgramState('t1', 'clear', start + 600_000)
+    expect(isTerminalProgramBusy('t1', start + 600_000)).toBe(false)
+  })
+
+  it('stops immediately when the program reports done', () => {
+    vi.useFakeTimers()
+    const listener = vi.fn()
+    const unsubscribe = subscribeTerminalProgramActivity(listener)
+    const start = Date.now()
+    noteTerminalProgramState('t1', 'working', start)
+    expect(listener).toHaveBeenCalledTimes(1)
+    noteTerminalProgramState('t1', 'idle', start + 50)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(getTerminalProgramBusySnapshot('t1')).toBe(false)
+    unsubscribe()
+  })
+
+  it('drops a stale report on submit so later shell commands are detected', () => {
+    const start = Date.now()
+    noteTerminalProgramState('t1', 'idle', start)
+    noteTerminalSubmit('t1', start + 1000)
+    streamOutput(start + 2000, OUTPUT_STREAK_MS)
+    expect(isTerminalProgramBusy('t1', start + 2000 + OUTPUT_STREAK_MS)).toBe(true)
+  })
+
+  it('does not let a report suppress the spinner after submit while still working', () => {
+    const start = Date.now()
+    noteTerminalTitle('t1', '⠋ idlecwd', start)
+    noteTerminalProgramState('t1', 'working', start)
+    noteTerminalSubmit('t1', start + 10)
+    expect(isTerminalProgramBusy('t1', start + 10)).toBe(true)
+  })
+
+  it('releases a spinner title that a screen snapshot can no longer finish', () => {
+    vi.useFakeTimers()
+    const listener = vi.fn()
+    const unsubscribe = subscribeTerminalProgramActivity(listener)
+    const start = Date.now()
+    noteTerminalTitle('t1', '⠼ 关闭终端鼠标接管 | django', start)
+    expect(getTerminalProgramBusySnapshot('t1')).toBe(true)
+    // 断线期间错过了恢复标题的那一帧，接回时只收到快照。
+    vi.setSystemTime(start + 60_000)
+    noteTerminalScreenSnapshot('t1', start + 60_000)
+    expect(getTerminalProgramBusySnapshot('t1')).toBe(false)
+    expect(getTerminalProgramTitle('t1')).toBe('关闭终端鼠标接管 | django')
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
+  it('discards a pre-snapshot report and ignores unknown terminals', () => {
+    const start = Date.now()
+    noteTerminalProgramState('t1', 'working', start)
+    noteTerminalScreenSnapshot('t1', start + 10)
+    expect(isTerminalProgramBusy('t1', start + 10)).toBe(false)
+    noteTerminalScreenSnapshot('missing', start)
+    noteTerminalSubmit('missing', start)
+    expect(isTerminalProgramBusy('missing', start)).toBe(false)
   })
 
   it('forgets a terminal when it is cleared', () => {

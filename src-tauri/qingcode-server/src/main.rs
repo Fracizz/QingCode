@@ -314,6 +314,7 @@ fn spawn_detached_windows_serve(
         command_line: line,
         inherit: h_log.iter().copied().collect(),
         stdio_handle: h_log,
+        program: None,
     };
     match qingcode_server::winproc::spawn_detached(spawn) {
         Ok(_) => ExitCode::SUCCESS,

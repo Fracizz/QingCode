@@ -25,6 +25,7 @@ mod direct_fs;
 mod direct_lifecycle;
 mod direct_settings;
 mod direct_update;
+pub(crate) mod local_terminal;
 pub use direct_firewall::*;
 pub use direct_lifecycle::*;
 pub use direct_settings::*;
@@ -41,6 +42,7 @@ mod terminal_exit;
 mod test_connection;
 mod transfer;
 mod tunnel;
+pub(crate) use server::PersistentLaunch as HostedLaunch;
 pub use terminal_exit::*;
 mod windows_path_guard;
 mod windows_sshd_repair;
@@ -1195,7 +1197,7 @@ impl SshManager {
         {
             return Ok(());
         }
-        let result = direct::test(&config).await;
+        let result = direct::confirm_health(&config).await;
         // Disconnection or re-pairing may have completed while the probe was pending.
         let active = self.direct_active.read().map_err(|_| "Server 状态不可用")?;
         if !active.contains(connection_id)
@@ -1690,6 +1692,17 @@ impl SshManager {
                 .unwrap_or(false)
     }
 
+    /// 该标签由本机 PTY 宿主托管时返回 daemon PTY id。
+    pub(crate) fn local_hosted_pty_id(&self, id: &str) -> Option<String> {
+        let terminals = self.persistent_terminals.read().ok()?;
+        terminals
+            .get(id)
+            .filter(|terminal| {
+                terminal.connection_id() == crate::local_pty_host::LOCAL_CONNECTION_ID
+            })
+            .map(|terminal| terminal.pty_id().to_string())
+    }
+
     pub(crate) fn set_client_id(&self, client_id: String) {
         if let Ok(mut current) = self.client_id.write() {
             *current = client_id;
@@ -1798,7 +1811,7 @@ impl SshManager {
             {
                 return Err("Server 连接已断开，请重新连接工作区".into());
             }
-            let result = direct::test(&config).await.map(|_| ());
+            let result = direct::confirm_health(&config).await.map(|_| ());
             if let Ok(mut failures) = self.direct_failures.write() {
                 match &result {
                     Ok(()) => {
@@ -2270,7 +2283,10 @@ impl SshManager {
         let root = self.root_for_uri(uri, require_trust)?;
         if let Some(config) = self.direct_config(&parsed.connection_id) {
             if !self.connection_is_open(&parsed.connection_id) {
-                return Err("Server 连接已断开".into());
+                return Err(direct::disconnected_message(
+                    self.connection_closed_reason(&parsed.connection_id)
+                        .as_deref(),
+                ));
             }
             let sftp = Arc::new(SftpSession::direct(
                 config,

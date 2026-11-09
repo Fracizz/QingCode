@@ -28,7 +28,9 @@ export function requestAppClose(): Promise<void> {
     markEnded: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
       current.id === tab.id && current.ptyId === tab.ptyId
         ? { ...current, status: 'exited', endedAt: tab.cwd.startsWith('ssh://') ? Date.now() : undefined,
-          awaitingRestoreSpawn: false, ptySpawnPending: false }
+          awaitingRestoreSpawn: false, ptySpawnPending: false,
+          // 已确认结束的本地托管终端：下次启动直接按原配置新建，不再尝试接回。
+          ...(tab.cwd.startsWith('ssh://') ? {} : { persistent: undefined, ptyId: undefined, connectionId: undefined }) }
         : current,
     ) })),
     markDetached: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>

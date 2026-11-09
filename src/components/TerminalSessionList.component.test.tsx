@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => {
     reorderVisibleProjects: vi.fn(),
     addEmptyProject: vi.fn(),
     switchProject: vi.fn(),
+    hideProject: vi.fn(),
+    unhideProject: vi.fn(),
     unavailableProjectIds: [] as string[],
     pushToast: vi.fn(),
   }
@@ -195,6 +197,12 @@ describe('TerminalSessionList', () => {
     expect(header).not.toHaveClass('bg-brand/10')
     fireEvent.click(screen.getByRole('button', { name: '展开或收起「app」' }))
     expect(header).toHaveClass('bg-brand/10')
+  })
+
+  it('keeps project names at full contrast and only dims the source', () => {
+    render(<TerminalSessionList />)
+    expect(within(group('p2')).getByText('api')).toHaveClass('text-fg', 'font-semibold')
+    expect(within(group('p1')).getByText('本机')).toHaveClass('text-fg-dim')
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {
@@ -600,6 +608,23 @@ describe('TerminalSessionList', () => {
     fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
     fireEvent.click(screen.getByText('复制项目路径'))
     expect(copyPathAction).toHaveBeenCalledWith('/home/api')
+  })
+
+  it('hides a project from its menu and restores one that is already hidden', () => {
+    const { rerender } = render(<TerminalSessionList />)
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    fireEvent.click(screen.getByText('从顶栏隐藏'))
+    expect(mocks.projectState.hideProject).toHaveBeenCalledWith('p2')
+
+    const visible = mocks.projectState.projects[1]
+    mocks.projectState.projects[1] = { ...visible, hidden: 1 } as typeof visible
+    mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2' })]
+    rerender(<TerminalSessionList />)
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    expect(screen.queryByText('从顶栏隐藏')).toBeNull()
+    fireEvent.click(screen.getByText('恢复显示'))
+    expect(mocks.projectState.unhideProject).toHaveBeenCalledWith('p2')
+    mocks.projectState.projects[1] = visible
   })
 
   it('does not offer switching to the current or an unavailable project', () => {

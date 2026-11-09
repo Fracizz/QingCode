@@ -63,6 +63,7 @@ import {
   shouldKeepShellAfterExit,
 } from '@/lib/terminal/terminalShellLifecycle'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
+import { getTerminalPersistLocalSessions } from '@/lib/terminal/terminalPersistLocalSettings'
 import {
   effectiveShellForTerminalName,
   isTerminalShellId,
@@ -76,6 +77,7 @@ import {
   getTerminalProgramBusySnapshot,
   noteTerminalInput,
   noteTerminalOutput,
+  noteTerminalSubmit,
   subscribeTerminalProgramActivity,
 } from '@/lib/terminal/terminalProgramActivity'
 import {
@@ -2169,6 +2171,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return
     }
     recordTypedInput(id, data)
+    if (data.includes('\r')) noteTerminalSubmit(id)
     noteTerminalInput(id)
     try {
       await writeTerminal(id, data)
@@ -2280,16 +2283,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           console.warn(`ssh_attach_terminal ${restorePlan.ptyId} failed:`, error)
           recordTerminalDiagnostic('terminal.restore_failed', tab)
           const gone = String(error).includes('QC_PTY_GONE:')
-          set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
-            ...terminal, status: 'exited', exitCode: null, endedAt: gone ? Date.now() : undefined,
-            restoreUnavailable: !gone, awaitingRestoreSpawn: false, ptySpawnPending: false,
-          } : terminal) }))
-          disconnectNoticeShown.add(id)
-          publishTerminalNotice(id, translate(gone
-            ? '终端会话已结束，输出已保留。'
-            : '暂时无法接回终端，输出已保留。'))
-          persistTerminalOutputNow()
-          return
+          if (gone && restorePlan.fallback === 'create') {
+            // 本地托管终端的宿主随电脑重启消失：与普通本地终端一样按原配置新建，下面继续走创建流程。
+            publishTerminalNotice(id, translate('原终端已结束，已按原配置重新启动。'))
+          } else {
+            set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
+              ...terminal, status: 'exited', exitCode: null, endedAt: gone ? Date.now() : undefined,
+              restoreUnavailable: !gone, awaitingRestoreSpawn: false, ptySpawnPending: false,
+            } : terminal) }))
+            disconnectNoticeShown.add(id)
+            publishTerminalNotice(id, translate(gone
+              ? '终端会话已结束，输出已保留。'
+              : '暂时无法接回终端，输出已保留。'))
+            persistTerminalOutputNow()
+            return
+          }
         }
       }
       if (!get().terminals.some(terminal => terminal.id === id)) {
@@ -2323,6 +2331,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             rows: size.rows,
             shell: tab.shell ?? null,
             name: tab.name,
+            persistLocal: getTerminalPersistLocalSessions(),
           })
         } else {
           spawnResult = await createTerminal({
@@ -2331,6 +2340,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             cols: size.cols,
             rows: size.rows,
             shell: tab.shell ?? null,
+            persistLocal: getTerminalPersistLocalSessions(),
           })
         }
       }
@@ -2388,9 +2398,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             : terminal
         ),
       }))
+      // 提示可能停留一段时间：用户若已手动重启，不能再结束正在运行的终端。
+      const retry = () => {
+        if (get().terminals.find(terminal => terminal.id === id)?.status !== 'exited') return
+        return get().restartTerminal(id, { preserveOutput: true })
+      }
       useProjectStore
         .getState()
-        .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e, serverModeRootUri))
+        .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e, serverModeRootUri, undefined, retry))
     } finally {
       ptySpawnInFlight.delete(id)
       deferredPtySync.delete(id)

@@ -68,6 +68,29 @@ describe('serverModeErrorAction', () => {
     store.currentProject = { id: 'p1', name: 'remote', path: 'ssh://c1/home/u/app' }
   })
 
+  describe('direct dial failures', () => {
+    const dialFailure = `新建终端失败: ${SERVER_MODE_ERROR_PREFIX}[direct:unreachable] 无法连接 10.0.0.1:48763（系统错误 10061），请确认 Server 已启动且 TCP 48763 已放行`
+
+    it('offers the caller retry without a restart confirmation', async () => {
+      const retry = vi.fn()
+      const action = serverModeErrorAction(dialFailure, ready.rootUri, t, retry)!
+      expect(action.label).toBe('重试')
+      await action.onAction()
+      expect(retry).toHaveBeenCalledOnce()
+      expect(confirmDialog).not.toHaveBeenCalled()
+      expect(invoke).not.toHaveBeenCalled()
+    })
+
+    it('keeps restart for tunnel failures, which need the gateway started', () => {
+      const tunnelFailure = `${SERVER_MODE_ERROR_PREFIX}[direct:unreachable] 远端 127.0.0.1:48763 没有运行中的 Server 网关，请重新连接以启动服务`
+      expect(serverModeErrorAction(tunnelFailure, ready.rootUri, t, vi.fn())?.label).toBe('重启远端服务')
+    })
+
+    it('keeps restart when the caller has nothing to retry', () => {
+      expect(serverModeErrorAction(dialFailure, ready.rootUri, t)?.label).toBe('重启远端服务')
+    })
+  })
+
   it('returns undefined for unrelated errors', () => {
     expect(serverModeErrorAction(new Error('断开连接'), ready.rootUri, t)).toBeUndefined()
   })

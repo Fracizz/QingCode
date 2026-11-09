@@ -147,6 +147,8 @@ pub struct PtyInfo {
     pub exited: Option<i32>,
     /// 没有客户端接着。
     pub detached: bool,
+    /// 仍在运行且无人接着时，已经断开多久；用于算 TTL 回收的剩余时间。
+    pub detached_for: Option<Duration>,
 }
 
 /// attach 何时改给屏幕快照（缓冲已淘汰或序号超前时无论如何都给快照）。
@@ -688,6 +690,7 @@ impl PtyHost {
             rows,
             exited: None,
             detached: false,
+            detached_for: None,
         })
     }
 
@@ -968,6 +971,10 @@ impl PtyHost {
                             rows: state.rows,
                             exited: state.exited,
                             detached: !state.attached,
+                            detached_for: state
+                                .detached_at
+                                .filter(|_| !state.attached && state.exited.is_none())
+                                .map(|detached_at| detached_at.elapsed()),
                         },
                     )
                 })

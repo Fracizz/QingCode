@@ -58,7 +58,7 @@ vi.mock('../lib/sshWorkspace', () => ({
 }))
 vi.mock('../lib/tauri', () => ({
   isTauri: () => true,
-  isSshResource: () => false,
+  isSshResource: (value: unknown) => typeof value === 'string' && value.startsWith('ssh://'),
   safeInvoke: mocks.safeInvoke,
 }))
 
@@ -291,6 +291,30 @@ describe('TerminalManager', () => {
     expect(mocks.safeInvoke).toHaveBeenCalledWith('结束远端终端', 'ssh_kill_detached_terminal', {
       ptyId: 'pty-1', cwd: 'ssh://connection/srv/test',
     })
+  })
+
+  it('shows the auto-end time to the minute for detached and phone terminals', async () => {
+    mocks.projectState.projects.push({ id: 'c', name: 'Remote', path: 'ssh://connection/srv/test' })
+    mocks.terminalState.findDetachedTerminals.mockResolvedValue({
+      connectionId: 'connection',
+      terminals: [
+        { ptyId: 'pty-1', cwd: 'ssh://connection/srv/test', name: 'expiring', expiresAt: Date.now() + 3_600_000 },
+        { ptyId: 'pty-2', cwd: 'ssh://connection/srv/test', name: 'old daemon' },
+      ],
+    })
+    const original = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation(async (label: string, command: string, args: unknown) => {
+      const result = await original(label, command, args)
+      return command === 'mobile_sessions'
+        ? (result as object[]).map(item => ({ ...item, lastActiveAt: Date.now(), idleDeadline: Date.now() + 3_600_000 }))
+        : result
+    })
+    render(<TerminalManager />)
+    expect(await screen.findByText(/^未接回 · (\d{2}-\d{2} )?\d{2}:\d{2} 自动结束$/)).toBeTruthy()
+    expect(screen.getByText('未接回 · 仍在远端运行')).toBeTruthy()
+    expect(await screen.findByText(/\d{2}:\d{2} 自动结束 · 仅手机可操作$/)).toBeTruthy()
+    // 电脑终端没有自动结束，只有上面两行显示。
+    expect(screen.getAllByText(/自动结束/)).toHaveLength(2)
   })
 
   it('clears hidden selections when the search changes', async () => {

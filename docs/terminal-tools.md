@@ -22,6 +22,15 @@ OSC 8 超链接同样需要 `Ctrl`／`Cmd` 点击：`file:` 与 `vscode://file/.
 
 本地与远程终端都注入 `TERM_PROGRAM=QingCode`、`TERM_PROGRAM_VERSION` 和 `QINGCODE_TERMINAL_ID`，WSL 通过 `WSLENV` 转发。SSH 兼容模式写入启动命令；Windows 远端的兼容模式无法追加，不注入。
 
+## 本地终端接回
+
+默认情况下本地终端由 QingCode 进程直接持有，关闭应用即结束，重启后按原配置新建。开启「终端 › 集成: 本地终端可接回」（`terminal.integrated.persistLocalSessions`，默认关闭）后，新建的本地终端交给后台宿主托管，关闭或升级 QingCode 后进程继续运行，下次打开时按原 PTY ID 接回。
+
+- **宿主**：`qingcode-server` 的 daemon，运行体是当前 QingCode.exe 的版本化副本 `qingcode-pty-host.exe`（`%LOCALAPPDATA%\com.qingcode.app\pty-host`，开发构建在 `.dev/pty-host`），因此不占用安装目录、不影响升级。连接走命名管道，DACL 只放行当前用户并校验 token，运行目录与 SSH 远端 daemon 分开。
+- **范围**：仅 Windows 的 PowerShell / PowerShell 7 / CMD 交互终端和终端配置。一次性运行任务、WSL 与手机端新建的终端仍由 QingCode 进程持有；不能托管或宿主启动失败时回退进程内 PTY，原因记在标签的 `persistentFallbackReason`。
+- **生命周期**：退出确认提供保留/结束。连续断开 24 小时后宿主自动结束终端；宿主在无终端、无连接 10 分钟后退出。电脑重启后原进程不存在，标签按原配置重新启动。
+- **已知限制**：状态栏内存统计不含托管终端的进程树。关闭设置只影响之后新建的终端，已托管的终端继续可接回。
+
 ## 长文本
 
 「编辑长文本」打开非模态浮动面板（不使用 ModalOverlay），不改变底层终端尺寸，也不额外通知 PTY resize。面板无遮罩、不模糊背景，终端在其下仍可滚动、选择和复制，方便对照编写；默认宽 840px、高度约为视口的 70%（上限 700px）；标题副行只显示目标终端，名称放不下时截断并悬停显示全文；附件与提交说明放在输入框的占位提示中，开始输入后不再占用空间。拖动标题栏移动（标题栏始终保留在视口内），右下角调整大小，位置与尺寸记忆在 `localStorage` 的 `qingcode:terminal-composer-rect`，双击标题栏恢复默认居中。Escape 仅在焦点位于面板内时关闭，焦点在终端时照常发给 Claude／OpenCode；再次右键「编辑长文本」会把焦点带回面板。所属终端被切到后台（换标签、项目或布局）时面板随之隐藏、草稿保留，切回后重新出现。拖入文件时只有落在面板上的进入草稿，落在终端上的仍按终端粘贴规则处理。Enter 在文本框中换行，不提交终端。草稿按终端 ID 在内存中隔离，关闭浮层或切换项目后保留；填入成功、关闭终端或重新启动会话后清除；应用重启不恢复草稿。

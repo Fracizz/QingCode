@@ -2,7 +2,15 @@ import type { TerminalActionSource } from '../terminal/terminalDiagnostics'
 import { isSshResource, safeInvoke } from '../tauri'
 import { parseSshDetachedTerminal, type SshDetachedTerminal } from '../terminal/terminalRestorePlan'
 
-const sshTerminalIds = new Set<string>()
+/** 输入、改尺寸、结束走 `ssh_*_terminal` 的标签：SSH 终端，以及本机宿主托管的本地终端。 */
+const sshRoutedTerminalIds = new Set<string>()
+
+/** 本地请求可能回退进程内 PTY，只有后端确认托管才改走 `ssh_*_terminal`。 */
+function trackHostedResult(id: string, result: TerminalSpawnResult): TerminalSpawnResult {
+  if (result.persistent === true) sshRoutedTerminalIds.add(id)
+  else sshRoutedTerminalIds.delete(id)
+  return result
+}
 
 /** 多个 xterm 视图可同时请求暂停同一终端；全部释放后才恢复读取。 */
 const outputPauseHolders = new Map<string, Set<object>>()
@@ -20,7 +28,7 @@ export function setTerminalOutputPaused(id: string, holder: object, paused: bool
   if (holders.size > 0) outputPauseHolders.set(id, holders)
   else outputPauseHolders.delete(id)
   const isPaused = holders.size > 0
-  if (wasPaused === isPaused || sshTerminalIds.has(id)) return
+  if (wasPaused === isPaused || sshRoutedTerminalIds.has(id)) return
   void safeInvoke('终端输出流控', 'set_terminal_output_paused', { id, paused: isPaused }).catch(
     () => {
       // 终端已退出或不存在时忽略。
@@ -56,7 +64,10 @@ export type TerminalAttachArgs = {
   fromSeq?: number | null
 }
 
-export function createTerminal(args: {
+export function createTerminal({
+  persistLocal,
+  ...args
+}: {
   id: string
   cwd: string
   cols: number
@@ -64,17 +75,24 @@ export function createTerminal(args: {
   shell?: string | null
   /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
   name?: string | null
+  /** 本地终端交给本机宿主托管（设置开启时）；SSH 终端忽略。 */
+  persistLocal?: boolean
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
-    sshTerminalIds.add(args.id)
+    sshRoutedTerminalIds.add(args.id)
     return safeInvoke<TerminalSpawnResult>('新建 SSH 终端', 'ssh_create_terminal', args).catch(
       error => {
-        sshTerminalIds.delete(args.id)
+        sshRoutedTerminalIds.delete(args.id)
         throw error
       }
     )
   }
-  sshTerminalIds.delete(args.id)
+  sshRoutedTerminalIds.delete(args.id)
+  if (persistLocal) {
+    return safeInvoke<TerminalSpawnResult>('新建终端', 'local_host_create_terminal', args).then(
+      result => trackHostedResult(args.id, result)
+    )
+  }
   return safeInvoke('新建终端', 'create_terminal', args)
 }
 
@@ -83,17 +101,27 @@ export function createTerminal(args: {
  * The backend returns the same spawn result shape as `ssh_create_terminal`.
  */
 export function attachTerminal(args: TerminalAttachArgs): Promise<TerminalSpawnResult> {
-  sshTerminalIds.add(args.id)
-  return safeInvoke<TerminalSpawnResult>('接回 SSH 终端', 'ssh_attach_terminal', args).catch(
-    error => {
-      sshTerminalIds.delete(args.id)
-      throw error
-    }
-  )
+  sshRoutedTerminalIds.add(args.id)
+  const pending = isSshResource(args.cwd)
+    ? safeInvoke<TerminalSpawnResult>('接回 SSH 终端', 'ssh_attach_terminal', args)
+    : safeInvoke<TerminalSpawnResult>('接回本地终端', 'local_host_attach_terminal', {
+        id: args.id,
+        ptyId: args.ptyId,
+        cols: args.cols,
+        rows: args.rows,
+        fromSeq: args.fromSeq,
+      })
+  return pending.catch(error => {
+    sshRoutedTerminalIds.delete(args.id)
+    throw error
+  })
 }
 
 /** End a detached daemon PTY without attaching or replaying its output. */
 export function killDetachedTerminal(args: { ptyId: string; cwd: string }): Promise<void> {
+  if (!isSshResource(args.cwd)) {
+    return safeInvoke('结束本地终端', 'local_host_kill_detached_terminal', { ptyId: args.ptyId })
+  }
   return safeInvoke('结束远端终端', 'ssh_kill_detached_terminal', args)
 }
 
@@ -103,11 +131,14 @@ export async function listDetachedTerminals(connectionId: string): Promise<SshDe
     connectionId,
   })
   return result
-    .map(parseSshDetachedTerminal)
+    .map(item => parseSshDetachedTerminal(item))
     .filter((terminal): terminal is SshDetachedTerminal => terminal != null)
 }
 
-export function spawnTerminalScript(args: {
+export function spawnTerminalScript({
+  persistLocal,
+  ...args
+}: {
   id: string
   cwd: string
   shellKind: string
@@ -119,15 +150,30 @@ export function spawnTerminalScript(args: {
   shell?: string | null
   /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
   name?: string | null
+  /** 本地终端配置交给本机宿主托管；一次性运行任务始终留在进程内。 */
+  persistLocal?: boolean
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
-    sshTerminalIds.add(args.id)
+    sshRoutedTerminalIds.add(args.id)
     return safeInvoke<TerminalSpawnResult>('启动 SSH 任务', 'ssh_spawn_script', args).catch(
       error => {
-        sshTerminalIds.delete(args.id)
+        sshRoutedTerminalIds.delete(args.id)
         throw error
       }
     )
+  }
+  sshRoutedTerminalIds.delete(args.id)
+  if (persistLocal && args.shellKind === 'interactive') {
+    return safeInvoke<TerminalSpawnResult>('启动终端配置', 'local_host_spawn_profile', {
+      id: args.id,
+      cwd: args.cwd,
+      target: args.target,
+      env: args.env,
+      cols: args.cols,
+      rows: args.rows,
+      shell: args.shell,
+      name: args.name,
+    }).then(result => trackHostedResult(args.id, result))
   }
   return safeInvoke(
     args.shellKind === 'interactive' ? '启动终端配置' : '启动任务',
@@ -137,11 +183,11 @@ export function spawnTerminalScript(args: {
 }
 
 export function killTerminal(id: string, source: TerminalActionSource = 'user_close', operationId = crypto.randomUUID()): Promise<void> {
-  const remote = sshTerminalIds.has(id)
+  const remote = sshRoutedTerminalIds.has(id)
   return safeInvoke<void>('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id, source, operationId }).then(
     () => {
       outputPauseHolders.delete(id)
-      sshTerminalIds.delete(id)
+      sshRoutedTerminalIds.delete(id)
     }
   )
 }
@@ -150,6 +196,11 @@ export function killTerminal(id: string, source: TerminalActionSource = 'user_cl
 export function finishRemoteTerminalOnExit(args: {
   id: string; ptyId: string; cwd: string; action: 'preserve' | 'terminate'
 }): Promise<void> {
+  if (!isSshResource(args.cwd)) {
+    return safeInvoke('处理退出时的本地终端', 'local_host_finish_terminal_on_exit', {
+      id: args.id, ptyId: args.ptyId, action: args.action,
+    })
+  }
   return safeInvoke('处理退出时的远程终端', 'ssh_finish_terminal_on_exit', args)
 }
 
@@ -158,7 +209,7 @@ export async function closeTerminalOnExit(tab: { id: string; cwd: string }): Pro
     id: tab.id, source: 'app_exit', operationId: crypto.randomUUID(),
   })
   outputPauseHolders.delete(tab.id)
-  sshTerminalIds.delete(tab.id)
+  sshRoutedTerminalIds.delete(tab.id)
 }
 
 export function terminalSessionOpen(id: string): Promise<boolean> {
@@ -167,7 +218,7 @@ export function terminalSessionOpen(id: string): Promise<boolean> {
 
 export function writeTerminal(id: string, data: string): Promise<void> {
   if (id.startsWith('mobile-')) return safeInvoke('终端输入', 'mobile_view_input', { id, data })
-  return safeInvoke('终端输入', sshTerminalIds.has(id) ? 'ssh_write_terminal' : 'write_terminal', {
+  return safeInvoke('终端输入', sshRoutedTerminalIds.has(id) ? 'ssh_write_terminal' : 'write_terminal', {
     id,
     data,
   })
@@ -177,7 +228,7 @@ export function resizeTerminal(id: string, cols: number, rows: number): Promise<
   if (id.startsWith('mobile-')) return safeInvoke('终端尺寸', 'mobile_view_resize', { id, cols, rows })
   return safeInvoke(
     '终端尺寸',
-    sshTerminalIds.has(id) ? 'ssh_resize_terminal' : 'resize_terminal',
+    sshRoutedTerminalIds.has(id) ? 'ssh_resize_terminal' : 'resize_terminal',
     { id, cols, rows }
   )
 }
