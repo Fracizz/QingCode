@@ -121,17 +121,27 @@ describe('SSH project availability', () => {
     expect(mocks.safeInvoke.mock.calls.some(call => call[1] === 'ssh_activate_workspace')).toBe(false)
     expect(useProjectStore.getState().currentProject).toBeNull()
   })
-  it('joins background preparation without activating early, then verifies and activates it once', async () => {
+  it('prepares again when the warmed connection is gone by the time the project opens', async () => {
+    mocks.takeSshWarmup.mockReturnValueOnce(Promise.resolve([]))
+    mocks.isSshWorkspaceReady.mockResolvedValueOnce(false)
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(mocks.ensureSshWorkspaceConnected).toHaveBeenCalledWith(remote)
+    expect(mocks.prepareSshWorkspace).toHaveBeenCalledWith(remote.path, expect.any(AbortSignal), expect.any(Function), { project: remote })
+  })
+
+  it('joins background preparation without activating early, then opens without preparing twice', async () => {
     const tree = [{ name: 'remote.txt', path: `${remote.path}/remote.txt`, is_dir: false, loaded: true }]
     let finish!: (value: typeof tree) => void
     mocks.takeSshWarmup.mockReturnValueOnce(new Promise<typeof tree>(resolve => { finish = resolve }))
+    mocks.isSshWorkspaceReady.mockResolvedValueOnce(true)
     const switching = useProjectStore.getState().switchProject(remote)
     await vi.waitFor(() => expect(mocks.takeSshWarmup).toHaveBeenCalled())
     expect(useProjectStore.getState().currentProject).toBeNull()
     expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
     finish(tree)
     expect(await switching).toBe(true)
-    expect(mocks.prepareSshWorkspace).toHaveBeenCalledWith(remote.path, expect.any(AbortSignal), expect.any(Function), { project: remote })
+    expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
+    expect(mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_activate_workspace')).toHaveLength(1)
     expect(mocks.loadProjectRootTree).not.toHaveBeenCalled()
     expect(useProjectStore.getState().fileTree).toEqual(tree)
     expect(useProjectStore.getState().refreshProjectTree).toHaveBeenCalledWith(remote)

@@ -58,7 +58,9 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
   const info = await directAgentApi.info(id)
   if (!info?.enabled) return false
   onStart()
-  let attempt = directUpdateAttempts.get(id)
+  // 按网关而非连接 id 去重：两条连接指向同一网关时不能并发重启它。
+  const gateway = `${info.host.trim().toLowerCase()}:${info.port}`
+  let attempt = directUpdateAttempts.get(gateway)
   if (!attempt) {
     attempt = (async () => {
       const candidates = directAgentSshCandidates(await listSshConnections(), info.host)
@@ -99,7 +101,7 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
         throw error
       }
     })()
-    directUpdateAttempts.set(id, attempt)
+    directUpdateAttempts.set(gateway, attempt)
   }
   await attempt
   signal.throwIfAborted()

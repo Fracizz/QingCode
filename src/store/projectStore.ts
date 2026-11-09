@@ -199,11 +199,14 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
     const sharedReady = await isSshSharedServerReady(project.path)
     signal.throwIfAborted()
     if (sharedReady) report('mounting')
+    // 必须在重连之前判断：预热结果只对当时那条连接有效，重连后要重新准备。
+    const warmedReady = warmedTree != null && await isSshWorkspaceReady(project.path)
+    signal.throwIfAborted()
     await ensureSshWorkspaceConnected(project)
     signal.throwIfAborted()
     report('service')
     try {
-      await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
+      if (!warmedReady) await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
       signal.throwIfAborted()
       report('files')
       // Verify a real directory read before exposing editor/terminal actions.

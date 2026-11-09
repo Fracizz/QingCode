@@ -3,7 +3,9 @@ import type { Project, SshConnection } from '../types'
 // Session budgets, not merely concurrency limits: thousands of saved projects
 // must not eventually establish thousands of transports or retain their trees.
 export const SSH_WARMUP_PROJECT_LIMIT = 12
-export const SSH_WARMUP_CONNECTION_LIMIT = 3
+export const SSH_WARMUP_CONNECTION_LIMIT = 8
+/** 同时预热的连接数；同一连接内仍一次一个项目。 */
+export const SSH_WARMUP_CONCURRENCY = 4
 export const SSH_WARMUP_TREE_LIMIT = 256
 export const SSH_WARMUP_TOTAL_TREE_LIMIT = 2048
 export const SSH_WARMUP_DELAY_MS = 1500
@@ -65,13 +67,13 @@ interface Entry<T> {
   weight: number
 }
 
-/** One real background task at a time, including after cancellation. An aborted
- * IPC can still be executing natively, so never release its slot prematurely. */
+/** One real background task per connection, including after cancellation. An
+ * aborted IPC can still be executing natively, so never release its slot prematurely. */
 export class SshWarmupQueue<T> {
   private entries = new Map<string, Entry<T>>()
   private admitted = new Set<string>()
   private connections = new Set<string>()
-  private running = false
+  private runningConnections = new Set<string>()
   private foreground = 0
   private paused = false
   private timer?: ReturnType<typeof setTimeout>
@@ -191,20 +193,29 @@ export class SshWarmupQueue<T> {
     this.options.changed(new Map([...this.entries].map(([path, entry]) => [path, entry.status])))
   }
 
+  private nextQueued(): Entry<T> | undefined {
+    if (this.runningConnections.size >= SSH_WARMUP_CONCURRENCY) return
+    return [...this.entries.values()].find(
+      item => item.status.phase === 'queued' && !this.runningConnections.has(item.target.connectionId)
+    )
+  }
+
   private schedule() {
-    if (this.disposed || this.paused || this.foreground || this.running || this.timer) return
-    if (![...this.entries.values()].some(entry => entry.status.phase === 'queued')) return
+    if (this.disposed || this.paused || this.foreground || this.timer || !this.nextQueued()) return
     this.timer = setTimeout(() => {
       this.timer = undefined
-      void this.drainOne()
+      this.drain()
     }, SSH_WARMUP_DELAY_MS)
   }
 
-  private async drainOne() {
-    if (this.disposed || this.paused || this.foreground || this.running) return
-    const entry = [...this.entries.values()].find(item => item.status.phase === 'queued')
-    if (!entry) return
-    this.running = true
+  /** 延迟只用于启动和前台结束后的让路；任务结束后空出的名额立即接续。 */
+  private drain() {
+    if (this.disposed || this.paused || this.foreground) return
+    for (let entry = this.nextQueued(); entry; entry = this.nextQueued()) void this.runEntry(entry)
+  }
+
+  private async runEntry(entry: Entry<T>) {
+    this.runningConnections.add(entry.target.connectionId)
     entry.status = { phase: 'preparing' }
     entry.promise = Promise.resolve().then(() =>
       this.options.run(entry.target, entry.controller.signal)
@@ -244,9 +255,9 @@ export class SshWarmupQueue<T> {
     } finally {
       // Drop the settled promise too: it otherwise retains an oversized tree.
       entry.promise = undefined
-      this.running = false
+      this.runningConnections.delete(entry.target.connectionId)
       if (!this.disposed) this.publish()
-      this.schedule()
+      if (!this.timer) this.drain()
     }
   }
 }

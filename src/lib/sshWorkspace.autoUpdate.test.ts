@@ -28,7 +28,7 @@ beforeEach(() => {
   project = { id, connection_id: id, path: `ssh://${id}/project`, name: 'Project', kind: 'ssh', created_at: 1, last_opened_at: 1 }
   ssh = { id, name: 'SSH', host: 'localhost', port: 22, username: 'dev', auth_kind: 'privateKey', private_key_path: '/key', host_key_fingerprint: 'SHA256:confirmed', created_at: 1 }
   mocks.trusted.mockReturnValue(true)
-  mocks.info.mockResolvedValue({ enabled: true, host: 'localhost' })
+  mocks.info.mockResolvedValue({ enabled: true, host: 'localhost', port: 40000 + sequence })
   mocks.list.mockImplementation(async () => [ssh])
   mocks.settings.mockResolvedValue({ autoDownload: true, offlineDir: '/offline' })
   mocks.prepare.mockResolvedValue({ expectedVersion: 'current', packageVersion: 'current', directory: '/offline', problem: null })
@@ -60,6 +60,14 @@ describe('first-open automatic paired Server update', () => {
     expect(results.every(result => result.status === 'rejected')).toBe(true)
     await expect(run()).rejects.toThrow('SSH authentication failed')
     expect(mocks.prepare).toHaveBeenCalledTimes(1)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one attempt across different connections to the same gateway', async () => {
+    const otherId = `${project.id}-other`
+    const other = { ...project, id: otherId, connection_id: otherId, path: `ssh://${otherId}/project` }
+    mocks.list.mockImplementation(async () => [ssh, { ...ssh, id: otherId }])
+    await Promise.allSettled([run(), prepareSshWorkspace(other.path, new AbortController().signal, () => {}, { project: other, background: true })])
     expect(mocks.update).toHaveBeenCalledTimes(1)
   })
 

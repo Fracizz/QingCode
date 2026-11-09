@@ -3,6 +3,8 @@ import type { Project, SshConnection } from '../types'
 import {
   selectWarmupTargets,
   SshWarmupQueue,
+  SSH_WARMUP_CONCURRENCY,
+  SSH_WARMUP_CONNECTION_LIMIT,
   SSH_WARMUP_DELAY_MS,
   type WarmupStatus,
   type WarmupTarget,
@@ -115,7 +117,31 @@ describe('bounded SSH background preparation', () => {
     const hosts = harness()
     hosts.queue.update(Array.from({ length: 50 }, (_, i) => target(i, `host${i}`)))
     await vi.runAllTimersAsync()
-    expect(hosts.run).toHaveBeenCalledTimes(3)
+    expect(hosts.run).toHaveBeenCalledTimes(SSH_WARMUP_CONNECTION_LIMIT)
+  })
+
+  it('warms different connections concurrently, one root per connection, up to the cap', async () => {
+    const finish: Array<() => void> = []
+    const started: string[] = []
+    const run = vi.fn((value: WarmupTarget) => new Promise<number[]>(resolve => {
+      started.push(value.project.path)
+      finish.push(() => resolve([1]))
+    }))
+    const { queue } = harness(run)
+    const count = SSH_WARMUP_CONCURRENCY + 1
+    const targets = Array.from({ length: count }, (_, i) => target(i, `host${i}`))
+    queue.update([target(100, 'host0'), ...targets])
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    expect(run).toHaveBeenCalledTimes(SSH_WARMUP_CONCURRENCY)
+    expect(started).toEqual([
+      target(100, 'host0').project.path,
+      ...targets.slice(1, SSH_WARMUP_CONCURRENCY).map(item => item.project.path),
+    ])
+    // 空出的名额不再等待延迟；host0 的下一个项目可以接续。
+    finish[0]()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(SSH_WARMUP_CONCURRENCY + 1)
+    expect(started.at(-1)).toBe(targets[0].project.path)
   })
 
   it('joins an in-flight task and starts no other background task while foreground is active', async () => {
@@ -161,7 +187,7 @@ describe('bounded SSH background preparation', () => {
     queue.update([target(1, 'a')])
     await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
     queue.invalidateConnection('a')
-    queue.update([target(2, 'b')])
+    queue.update([target(2, 'a')])
     await vi.advanceTimersByTimeAsync(100_000)
     expect(run).toHaveBeenCalledTimes(1)
     finish([99])

@@ -359,7 +359,7 @@ export default function TerminalSessionList() {
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
         draggable={!isRenaming && !managing}
-        className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-0.5 pl-6 pr-1 transition-colors ${
+        className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-fg'
             : 'text-tree-fg hover:bg-bg-hover hover:text-fg'
@@ -401,12 +401,6 @@ export default function TerminalSessionList() {
           <span className="-ml-5 flex flex-shrink-0">
             <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
           </span>
-        )}
-        {isActive && (
-          <span
-            className="pointer-events-none absolute bottom-1.5 left-0 top-1.5 w-[2px] rounded bg-brand"
-            aria-hidden="true"
-          />
         )}
         <div className="flex min-w-0 flex-1 flex-col justify-center">
           {isRenaming ? (
@@ -565,7 +559,7 @@ export default function TerminalSessionList() {
             setProjectDrop(null)
           }}
           onDragEnd={clearProjectDrag}
-          className={`group/project flex h-7 items-center gap-1 rounded pr-1 transition-colors ${
+          className={`group/project flex h-7 items-center gap-1 rounded-md pr-1 transition-colors ${
             isCurrent
               ? 'bg-brand/10 text-fg hover:bg-brand/15'
               : `text-fg-muted hover:bg-bg-hover ${isEmpty ? 'opacity-70 hover:opacity-100' : ''}`
