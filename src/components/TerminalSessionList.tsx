@@ -434,7 +434,7 @@ export default function TerminalSessionList() {
             >
               <span
                 className={`truncate text-ui ${
-                  exited ? 'opacity-60' : awaitingRestore && !isActive ? 'text-fg-muted' : ''
+                  exited ? 'opacity-60' : awaitingRestore && !isActive ? 'text-fg-dim' : ''
                 }`}
               >
                 {formatTerminalName(term.name)}
@@ -612,7 +612,7 @@ export default function TerminalSessionList() {
               wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
             >
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-medium">{project.name}</span>
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-semibold">{project.name}</span>
               {source && (
                 <span className="project-source-badge min-w-0 shrink! truncate font-normal text-fg-dim">
                   {source}
