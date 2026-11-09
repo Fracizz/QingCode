@@ -67,6 +67,73 @@ fn expand_font_family_names(raw: &str) -> Vec<String> {
     out
 }
 
+/// Style words some installers register letter-spaced (`B o l d`, `S e m i B o l d`)
+/// in the Windows Fonts registry. Longest-first so greedy matching of
+/// concatenations (`S e m i B o l d I t a l i c`) works.
+#[cfg(windows)]
+const SPACED_STYLE_WORDS: &[&str] = &[
+    "extralight",
+    "semilight",
+    "extrabold",
+    "condensed",
+    "semibold",
+    "demibold",
+    "regular",
+    "oblique",
+    "italic",
+    "medium",
+    "narrow",
+    "light",
+    "black",
+    "heavy",
+    "bold",
+    "thin",
+];
+
+/// True when single-letter tokens spell only style words, e.g. `B o l d I t a l i c`.
+#[cfg(windows)]
+fn is_spaced_style_run(tokens: &[&str]) -> bool {
+    if tokens.len() < 2
+        || !tokens
+            .iter()
+            .all(|token| token.len() == 1 && token.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut rest: String = tokens
+        .iter()
+        .flat_map(|token| token.bytes())
+        .map(|b| b.to_ascii_lowercase() as char)
+        .collect();
+    while !rest.is_empty() {
+        let Some(word) = SPACED_STYLE_WORDS
+            .iter()
+            .find(|word| rest.starts_with(*word))
+        else {
+            return false;
+        };
+        rest.drain(..word.len());
+    }
+    true
+}
+
+/// Drop a trailing letter-spaced style word; keep real families ending in one letter.
+#[cfg(windows)]
+fn strip_spaced_style_suffix(family: &str) -> String {
+    let tokens: Vec<&str> = family.split_whitespace().collect();
+    let mut end = tokens.len();
+    while end > 0
+        && tokens[end - 1].len() == 1
+        && tokens[end - 1].as_bytes()[0].is_ascii_alphabetic()
+    {
+        end -= 1;
+    }
+    if end == tokens.len() || !is_spaced_style_run(&tokens[end..]) {
+        return family.to_string();
+    }
+    tokens[..end].join(" ")
+}
+
 #[cfg(windows)]
 fn normalize_font_family_name(raw: &str) -> Option<String> {
     let base = raw.split(" (").next().unwrap_or(raw).trim();
@@ -74,6 +141,9 @@ fn normalize_font_family_name(raw: &str) -> Option<String> {
     if base.is_empty() || base.contains(" & ") {
         return None;
     }
+
+    let base = strip_spaced_style_suffix(base);
+    let base = base.as_str();
 
     const SUFFIXES: &[&str] = &[
         " Bold Italic",
@@ -180,6 +250,34 @@ mod tests {
         assert_eq!(
             normalize_font_family_name("Nirmala UI & Nirmala Text"),
             None
+        );
+    }
+
+    #[test]
+    fn collapses_letter_spaced_style_names() {
+        assert_eq!(
+            normalize_font_family_name("Maple Mono CN R e g u l a r (TrueType)").as_deref(),
+            Some("Maple Mono CN")
+        );
+        assert_eq!(
+            normalize_font_family_name("Maple Mono CN B o l d (TrueType)").as_deref(),
+            Some("Maple Mono CN")
+        );
+        assert_eq!(
+            normalize_font_family_name("Maple Mono CN S e m i B o l d I t a l i c").as_deref(),
+            Some("Maple Mono CN")
+        );
+    }
+
+    #[test]
+    fn keeps_family_names_ending_in_a_single_letter() {
+        assert_eq!(
+            normalize_font_family_name("Iosevka A").as_deref(),
+            Some("Iosevka A")
+        );
+        assert_eq!(
+            normalize_font_family_name("Maple Mono X y").as_deref(),
+            Some("Maple Mono X y")
         );
     }
 }

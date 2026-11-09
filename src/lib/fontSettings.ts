@@ -27,6 +27,10 @@ const LEGACY_TERMINAL_MONO_FONT =
 export const JETBRAINS_MONO_FONT =
   '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
+/** CN first so CJK fallback stays inside the same font (stable terminal grid). */
+export const MAPLE_MONO_FONT =
+  '"Maple Mono CN", "Maple Mono", "Maple Mono NF CN", "Maple Mono NF", "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
+
 export type FontOption = {
   label: string
   value: string
@@ -41,6 +45,7 @@ export const INTERFACE_FONT_OPTIONS: FontOption[] = [
 export const MONO_FONT_OPTIONS: FontOption[] = [
   { label: '系统默认', value: SYSTEM_MONO_FONT },
   { label: 'JetBrains Mono', value: JETBRAINS_MONO_FONT },
+  { label: 'Maple Mono', value: MAPLE_MONO_FONT },
   { label: 'Cascadia Code', value: '"Cascadia Code", Consolas, monospace' },
   { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
 ]
@@ -48,6 +53,7 @@ export const MONO_FONT_OPTIONS: FontOption[] = [
 export const TERMINAL_FONT_OPTIONS: FontOption[] = [
   { label: '系统默认', value: TERMINAL_MONO_FONT },
   { label: 'JetBrains Mono', value: JETBRAINS_MONO_FONT },
+  { label: 'Maple Mono', value: MAPLE_MONO_FONT },
   { label: 'Cascadia Code', value: '"Cascadia Code", Consolas, monospace' },
   { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
 ]
@@ -201,9 +207,55 @@ const FONT_STYLE_SUFFIXES = [
   ' Narrow',
 ] as const
 
+/**
+ * Style words some installers register letter-spaced (`B o l d`, `I t a l i c`),
+ * so the family name ends up as `Maple Mono CN B o l d` in the registry.
+ * Kept lowercase and longest-first for greedy matching of concatenations.
+ */
+const SPACED_STYLE_WORDS = [
+  'extralight',
+  'semilight',
+  'extrabold',
+  'condensed',
+  'semibold',
+  'demibold',
+  'regular',
+  'oblique',
+  'italic',
+  'medium',
+  'narrow',
+  'light',
+  'black',
+  'heavy',
+  'bold',
+  'thin',
+] as const
+
+/** True when single-letter tokens spell only style words, e.g. `B o l d I t a l i c`. */
+function isSpacedStyleRun(tokens: string[]): boolean {
+  if (tokens.length < 2) return false
+  if (!tokens.every(token => token.length === 1 && /[A-Za-z]/.test(token))) return false
+  let rest = tokens.join('').toLowerCase()
+  while (rest) {
+    const word = SPACED_STYLE_WORDS.find(candidate => rest.startsWith(candidate))
+    if (!word) return false
+    rest = rest.slice(word.length)
+  }
+  return true
+}
+
+/** Drop a trailing letter-spaced style word; keep real families ending in one letter. */
+function stripSpacedStyleSuffix(family: string): string {
+  const tokens = family.split(/\s+/)
+  let end = tokens.length
+  while (end > 0 && tokens[end - 1].length === 1 && /[A-Za-z]/.test(tokens[end - 1])) end -= 1
+  if (end === tokens.length || !isSpacedStyleRun(tokens.slice(end))) return family
+  return tokens.slice(0, end).join(' ')
+}
+
 /** Strip weight/style suffixes so Bold/Semilight map to one family. */
 export function normalizeFontFamilyLabel(raw: string): string | null {
-  let family = raw.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  let family = stripSpacedStyleSuffix(raw.replace(/\s*\([^)]*\)\s*$/, '').trim())
   if (!family || family.includes('&')) return null
   let changed = true
   while (changed) {
