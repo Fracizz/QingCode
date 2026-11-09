@@ -4,6 +4,7 @@ import {
   getTerminalAttentionSnapshot,
   markTerminalAttention,
   noteTerminalBusyChange,
+  noteTerminalLeftView,
   pruneTerminalAttention,
   subscribeTerminalAttention,
 } from './terminalAttention'
@@ -29,6 +30,21 @@ describe('terminalAttention', () => {
   it('ignores an idle notification without a preceding busy state', () => {
     noteTerminalBusyChange('t1', false, false)
     expect(getTerminalAttentionSnapshot().size).toBe(0)
+  })
+
+  it('does not mark a task that ended before the user switched away', () => {
+    noteTerminalBusyChange('t1', true, true, 1000)
+    noteTerminalLeftView('t1', 2000)
+    // 保持期在切走后才到期，最后的工作信号仍早于切走时刻。
+    noteTerminalBusyChange('t1', false, false, 1000)
+    expect(getTerminalAttentionSnapshot().size).toBe(0)
+  })
+
+  it('marks a task that kept working after the user switched away', () => {
+    noteTerminalBusyChange('t1', true, true, 1000)
+    noteTerminalLeftView('t1', 2000)
+    noteTerminalBusyChange('t1', false, false, 2500)
+    expect(getTerminalAttentionSnapshot().has('t1')).toBe(true)
   })
 
   it('clears a mark and keeps the snapshot stable when nothing changes', () => {

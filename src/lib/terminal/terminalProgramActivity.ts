@@ -2,6 +2,7 @@
  * 电脑终端的「程序正在工作」状态。程序用 OSC 7501 主动上报时（Codex、OpenCode）以上报为准；
  * 上报在用户回车提交后失效（OpenCode 退出时不撤销，否则会盖住之后的 Shell 命令），由程序重新上报；
  * 屏幕快照不带窗口标题和上报，收到快照时也一并作废，否则断线期间错过的结束信号会让状态永远停在运行中。
+ * 视图挂载时回放的历史同理：只取标题文字，其中的转圈帧和上报都不算信号。
  * 没有上报时，两路信号任一成立即视为运行中：
  * 1. 标题转圈（强信号）：程序设置的原始窗口标题（OSC 0/1/2）以转圈帧字符开头，
  *    或最近 SPINNER_HOLD 内出现过转圈帧。适合 Claude Code / Codex 等 AI CLI。
@@ -130,6 +131,21 @@ export function noteTerminalTitle(terminalId: string, rawTitle: string, now = Da
   refresh(terminalId, activity, now)
 }
 
+function withoutSpinnerGlyph(title: string): string {
+  const [first, ...rest] = [...title]
+  return isSpinnerGlyph(first) ? rest.join('').trimStart() : title
+}
+
+/**
+ * 记录回放历史里的标题：只保留文字，历史说明不了程序现在的状态。
+ * 否则旧转圈帧会让已结束的终端在挂载后「运行」几秒，再被当成刚完成。
+ */
+export function noteTerminalReplayedTitle(terminalId: string, rawTitle: string, now = Date.now()) {
+  const activity = activityFor(terminalId)
+  activity.title = withoutSpinnerGlyph(rawTitle.trim())
+  refresh(terminalId, activity, now)
+}
+
 /** 程序最近设置的原始窗口标题（未清洗）。 */
 export function getTerminalProgramTitle(terminalId: string): string {
   return activities.get(terminalId)?.title ?? ''
@@ -162,8 +178,7 @@ export function noteTerminalScreenSnapshot(terminalId: string, now = Date.now())
   const activity = activities.get(terminalId)
   if (!activity) return
   activity.reported = null
-  const [first, ...rest] = [...activity.title]
-  if (isSpinnerGlyph(first)) activity.title = rest.join('').trimStart()
+  activity.title = withoutSpinnerGlyph(activity.title)
   refresh(terminalId, activity, now)
 }
 
@@ -197,6 +212,16 @@ export function isTerminalProgramBusy(terminalId: string, now = Date.now()): boo
  */
 export function getTerminalProgramBusySnapshot(terminalId: string): boolean {
   return activities.get(terminalId)?.busy ?? false
+}
+
+/**
+ * 最后一次看到工作信号的时间，用来还原保持期到期前真正停下的时刻。
+ * 主动上报没有保持期，翻转的此刻就是结束时刻。
+ */
+export function getTerminalLastWorkAt(terminalId: string, now = Date.now()): number {
+  const activity = activities.get(terminalId)
+  if (!activity || activity.reported) return now
+  return Math.max(activity.lastFrame ?? 0, activity.lastOutput ?? 0)
 }
 
 export function clearTerminalProgramActivity(terminalId: string) {

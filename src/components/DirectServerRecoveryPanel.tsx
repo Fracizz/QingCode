@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { LoaderCircle, Play } from 'lucide-react'
-import { directAgentApi, directAgentErrorKey, directAgentSshCandidates, type DirectAgentApi, type DirectAgentInfo } from '../lib/directAgent'
-import { hydrateSshSecrets, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
+import { directAgentApi, directAgentSshCandidates, type DirectAgentApi, type DirectAgentInfo } from '../lib/directAgent'
+import { useDirectServerManage } from '../hooks/useDirectServerManage'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import type { SshConnection } from '../types'
+import DirectSshAuthFields from './DirectSshAuthFields'
 import ServerAutoStartSwitch from './ServerAutoStartSwitch'
 
 interface Props {
@@ -29,48 +30,32 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [autoStart, setAutoStart] = useState(info.autoStart ?? true)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [warning, setWarning] = useState('')
-  const request = useRef(0)
-  useEffect(() => () => { request.current += 1 }, [connectionId, info.host, info.port])
-
-  const manage = async (start: boolean) => {
-    if (!ssh || busy || !api.manage) return
-    const current = ++request.current
-    setBusy(true)
-    onBusyChange?.(true)
-    setError('')
-    setNotice('')
-    setWarning('')
-    try {
-      await hydrateSshSecrets(ssh.id)
-      if (current !== request.current) return
-      const result = await api.manage({
-        connectionId, sshConnectionId: ssh.id, agentHost: info.host, port: info.port, autoStart, start,
-        config: sshRuntimeConfig(ssh, { ...sshSecretsFor(ssh.id), ...(password ? { password } : {}), ...(passphrase ? { passphrase } : {}) }),
-      })
-      if (current !== request.current) return
+  const { busy, manage } = useDirectServerManage({
+    connectionId, info, ssh, password, passphrase, autoStart, api, onStarted, onBusyChange,
+    onManaged: async result => {
       setPassword('')
       setPassphrase('')
       await onUpdated?.(result)
-      if (current !== request.current) return
-      if (result.startupWarning) {
-        setAutoStart(false)
-        setWarning(result.startupWarning)
-      }
-      if (start) setNotice('Server 已启动，正在重新连接…')
-      else if (!result.startupWarning) setNotice('开机自启设置已应用。')
-      if (start) await onStarted?.()
-    } catch (reason) {
-      if (current === request.current) setError(directAgentErrorKey(reason))
-    } finally {
-      if (current === request.current) { setBusy(false); onBusyChange?.(false) }
+    },
+  })
+
+  const run = async (start: boolean) => {
+    setError('')
+    setNotice('')
+    setWarning('')
+    const outcome = await manage(start)
+    if (!outcome) return
+    if (outcome.warning) {
+      setAutoStart(false)
+      setWarning(outcome.warning)
     }
+    setError(outcome.error ?? '')
+    setNotice(outcome.notice ?? '')
   }
   const configure = () => { onConfigure?.(); useUIStore.getState().openRemoteConnections() }
-  const field = 'mt-1 w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg'
   const button = 'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
 
   return <section aria-label={t('启动与开机自启')} className="@container/recovery min-w-0 space-y-2.5 rounded border border-dialog-border bg-dialog-sidebar p-3">
@@ -79,15 +64,18 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     {ssh ? <>
       <p className="text-ui-sm text-fg-muted">{t('此操作通过 SSH 启动已配对的 Server，随后使用原配对凭据直连。')}</p>
       <div className="grid min-w-0 grid-cols-1 gap-2.5 @min-[32rem]/recovery:grid-cols-2">
-        <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 授权连接')}<select disabled={busy} value={ssh.id} onChange={event => { setSshId(event.target.value); setPassword(''); setPassphrase(''); setError('') }} className={field}>
-          {candidates.map(c => <option key={c.id} value={c.id}>{c.name} · {c.username}@{c.host}:{c.port}</option>)}
-        </select></label>
-        {ssh.auth_kind === 'password' ? <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 密码')}<input type="password" disabled={busy} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder={t('留空使用已保存或当前会话中的 SSH 凭据')} className={field} /></label>
-          : <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 私钥口令（可选）')}<input type="password" disabled={busy} value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" className={field} /></label>}
+        <DirectSshAuthFields
+          candidates={candidates}
+          connection={ssh}
+          secret={ssh.auth_kind === 'password' ? password : passphrase}
+          disabled={busy}
+          onSelect={id => { setSshId(id); setPassword(''); setPassphrase(''); setError('') }}
+          onSecretChange={value => { if (ssh.auth_kind === 'password') setPassword(value); else setPassphrase(value) }}
+        />
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy} onClick={() => void manage(true)} className={`${button} inline-flex items-center gap-1.5`}>{busy ? <LoaderCircle size={13} className="animate-spin" /> : <Play size={13} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
-        <button type="button" disabled={busy} onClick={() => void manage(false)} className={button}>{t('应用自启设置')}</button>
+        <button type="button" disabled={busy} onClick={() => void run(true)} className={`${button} inline-flex items-center gap-1.5`}>{busy ? <LoaderCircle size={13} className="animate-spin" /> : <Play size={13} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
+        <button type="button" disabled={busy} onClick={() => void run(false)} className={button}>{t('应用自启设置')}</button>
       </div>
     </> : <>
       <p className="text-ui-sm text-fg-muted">{t('未找到此主机的 SSH 连接。可配置 SSH 后启动，或在远端手动运行以下命令。')}</p>

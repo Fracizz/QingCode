@@ -72,10 +72,22 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
       await page.waitForFunction(() => document.querySelector('[data-testid="calls"]').textContent.includes('save:true:48763'))
     })
     if (screenshots) await page.screenshot({ path: resolve(output, 'dark.png') })
+    await step('enabled connection shows a status card and one expanded row at a time', async () => {
+      await page.waitForSelector('button[data-direct-row="connection"]')
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].some(button => button.textContent === '通过 SSH 启动 Server')), true)
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].some(button => button.textContent === '通过 SSH 安装或读取服务')), false)
+      await page.click('loc=css:button[data-direct-row="startup"]', { label: 'expand startup settings' })
+      await page.click('loc=css:button[data-direct-row="firewall"]', { label: 'expand port access' })
+      assert.equal(await page.evaluate(() => document.querySelectorAll('[aria-expanded="true"][data-direct-row]').length), 1)
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('select')].filter(select => select.closest('label')?.textContent.startsWith('SSH 授权连接')).length), 1)
+      if (screenshots) await page.screenshot({ path: resolve(output, 'managed.png') })
+    })
     await step('editing the port invalidates previous verification', async () => {
+      await page.click('loc=css:button[data-direct-row="connection"]', { label: 'expand connection settings' })
       await page.fill('loc=role:textbox[name="TCP 端口"]', '51235', { label: 'edit direct connection port' })
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '保存并启用直连').disabled), true)
-      assert.match(await page.evaluate(() => document.body.textContent), /远端需要开放 TCP 51235/)
+      assert.match(await page.evaluate(() => document.querySelector('button[data-direct-row="connection"]').textContent), /有未保存修改/)
+      assert.match(await page.evaluate(() => document.querySelector('button[data-direct-row="firewall"]').textContent), /TCP 51235/)
     })
     await step('narrow light layout and English labels', async () => {
       await page.click('loc=role:button[name="切换主题"]', { label: 'inspect light theme' })

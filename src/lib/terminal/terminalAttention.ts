@@ -7,6 +7,8 @@ type Listener = () => void
 let attention: ReadonlySet<string> = new Set()
 /** 正在工作的终端，用来识别「工作 → 空闲」的翻转。 */
 const busyTerminals = new Set<string>()
+/** 终端最近一次离开视野的时间。 */
+const leftViewAt = new Map<string, number>()
 const listeners = new Set<Listener>()
 
 function replaceAttention(next: ReadonlySet<string>) {
@@ -26,19 +28,37 @@ export function clearTerminalAttention(terminalId: string) {
   replaceAttention(next)
 }
 
-/** 记录程序工作状态的翻转；看不到的终端从工作转为空闲时标记。 */
-export function noteTerminalBusyChange(terminalId: string, busy: boolean, inView: boolean) {
+export function noteTerminalLeftView(terminalId: string, now = Date.now()) {
+  leftViewAt.set(terminalId, now)
+}
+
+/**
+ * 记录程序工作状态的翻转；看不到的终端从工作转为空闲时标记。
+ * lastWorkAt 是最后的工作信号时间：早于切走时刻说明用户看着它结束，只是保持期切走后才到期。
+ */
+export function noteTerminalBusyChange(
+  terminalId: string,
+  busy: boolean,
+  inView: boolean,
+  lastWorkAt = Date.now(),
+) {
   if (busy) {
     busyTerminals.add(terminalId)
     return
   }
-  if (busyTerminals.delete(terminalId) && !inView) markTerminalAttention(terminalId)
+  if (!busyTerminals.delete(terminalId) || inView) return
+  const leftAt = leftViewAt.get(terminalId)
+  if (leftAt !== undefined && lastWorkAt < leftAt) return
+  markTerminalAttention(terminalId)
 }
 
 /** 终端关闭后丢弃它的记录。 */
 export function pruneTerminalAttention(existingIds: ReadonlySet<string>) {
   for (const id of busyTerminals) {
     if (!existingIds.has(id)) busyTerminals.delete(id)
+  }
+  for (const id of leftViewAt.keys()) {
+    if (!existingIds.has(id)) leftViewAt.delete(id)
   }
   if ([...attention].every(id => existingIds.has(id))) return
   replaceAttention(new Set([...attention].filter(id => existingIds.has(id))))

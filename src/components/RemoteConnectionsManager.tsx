@@ -18,6 +18,7 @@ import {
   ScrollText,
   Search,
   Server,
+  Settings,
   ShieldCheck,
   ShieldOff,
   X,
@@ -142,6 +143,7 @@ export default function RemoteConnectionsManager() {
   const [directDraft, setDirectDraft] = useState({ dirty: false, busy: false })
   const updateDirectDraft = useCallback((value: { dirty: boolean; busy: boolean }) => setDirectDraft(value), [])
   const [actionMenu, setActionMenu] = useState<{ x: number; y: number } | null>(null)
+  const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null)
   const navigationPending = useRef(false)
   const [importOpen, setImportOpen] = useState(false)
   const [error, setError] = useState('')
@@ -706,6 +708,26 @@ export default function RemoteConnectionsManager() {
 
   const remoteShort = (rootUri: string) => rootUri.replace(/^ssh:\/\/[^/]+/, '') || '/'
 
+  // 已启用直连时放进「SSH 配置」设置行，避免与直连操作在底部并列。
+  const sshFormActions = <>
+    <button
+      type="button"
+      disabled={testing || saving}
+      onClick={() => void testConnection()}
+      className={secondaryButtonClass}
+    >
+      {testing ? t('正在连接…') : t(directEnabled ? '测试 SSH 配置' : '测试连接')}
+    </button>
+    <button
+      type="button"
+      disabled={saving || testing || (selected ? !dirty && !verified : false)}
+      onClick={() => void saveConnection()}
+      className={primaryButtonClass}
+    >
+      {saving ? t('正在保存…') : t(directEnabled ? '保存 SSH 配置' : '保存')}
+    </button>
+  </>
+
   const renderForm = () => (
     <fieldset disabled={saving} className="min-w-0 space-y-5 border-0 p-0">
       <fieldset className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-3 @md:grid-cols-[minmax(0,1fr)_7rem]">
@@ -925,33 +947,18 @@ export default function RemoteConnectionsManager() {
                 <button
                   type="button"
                   disabled={saving || directDraft.busy}
-                  onClick={() => void requestNavigation(() => { setEditing(false); setSelectedId(NEW_SSH_CONNECTION_ID) })}
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(createMenu)}
+                  onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setCreateMenu({ x: rect.left, y: rect.bottom + 4 }) }}
                   className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui transition-colors ${
-                    selectedId === NEW_SSH_CONNECTION_ID
+                    isNew
                       ? 'border-brand/60 bg-brand/10 text-brand'
                       : 'border-dialog-border text-fg hover:bg-bg-hover'
                   }`}
                 >
-                  <Plus size={14} />
-                  {t('新建连接')}
-                </button>
-                <button
-                  type="button"
-                  disabled={saving || directDraft.busy}
-                  onClick={() => void requestNavigation(() => { setAgentDraftId(crypto.randomUUID()); setEditing(false); setSelectedId(NEW_AGENT_CONNECTION_ID) })}
-                  className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui ${isNewAgent ? 'border-brand/60 bg-brand/10 text-brand' : 'border-dialog-border text-fg hover:bg-bg-hover'}`}
-                >
-                  <Plus size={14} />
-                  {t('新建 Server 直连')}
-                </button>
-                <button
-                  type="button"
-                  disabled={saving || directDraft.busy}
-                  onClick={() => void requestNavigation(() => setImportOpen(true))}
-                  className="flex w-full items-center justify-center gap-1.5 rounded px-2 py-1.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
-                >
-                  <Download size={14} />
-                  {t('导入已有连接')}
+                  <Plus size={14} aria-hidden />
+                  {t('新建')}
+                  <ChevronDown size={13} aria-hidden />
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -1075,10 +1082,7 @@ export default function RemoteConnectionsManager() {
                         setSelectedId(agentDraftId)
                         if (creatingForProject) closeRemoteConnections()
                       }}
-                    /> : standaloneAgent ? <p className={helpClass}>{t('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')}</p> : directEnabled ? <details className="rounded border border-dialog-border p-3">
-                      <summary className="cursor-pointer text-ui font-medium text-fg">{t('SSH 安装与兼容配置')}</summary>
-                      <div className="mt-3">{renderForm()}</div>
-                    </details> : <div>{renderForm()}</div>)}
+                    /> : standaloneAgent ? <p className={helpClass}>{t('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')}</p> : directEnabled ? null : <div>{renderForm()}</div>)}
 
                     {!isNew && selected && (
                       <>
@@ -1088,6 +1092,13 @@ export default function RemoteConnectionsManager() {
                           connectionId={selected.id}
                           defaultHost={selected.host}
                           standalone={standaloneAgent}
+                          initiallyOpen={directEnabled}
+                          sshSection={directEnabled && !standaloneAgent ? {
+                            summary: `${sshConnectionTarget(selected)} · ${t('可切回 SSH')}`,
+                            dirty,
+                            form: renderForm(),
+                            actions: sshFormActions,
+                          } : undefined}
                           onUpdated={async info => {
                             // A standalone row carries the accepted TLS identity as its
                             // compatibility fingerprint. Keep that marker after re-pairing.
@@ -1111,7 +1122,7 @@ export default function RemoteConnectionsManager() {
                             <span className="ml-1 text-ui-sm font-normal text-fg-dim">
                               {connectionProjects.length}
                             </span>
-                            <button type="button" className="ml-auto rounded px-2 py-1 text-ui-sm font-normal text-fg-muted hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProjectForConnection(selected.id) }}>{t('添加项目')}</button>
+                            <button type="button" className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded border border-dialog-border px-2.5 py-1 text-ui-sm font-normal text-fg hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProjectForConnection(selected.id) }}><Plus size={13} />{t('添加项目')}</button>
                           </p>
                           {connectionProjects.length === 0 ? (
                             <p className={helpClass}>{t('暂无使用此连接的远程项目。')}</p>
@@ -1211,9 +1222,9 @@ export default function RemoteConnectionsManager() {
                                 closeRemoteConnections()
                                 useUIStore.getState().requestSettings('ssh.server')
                               }}
-                              className="ml-auto rounded px-2 py-1 text-ui-xs font-normal text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded border border-dialog-border px-2.5 py-1 text-ui-sm font-normal text-fg hover:bg-bg-hover"
                             >
-                              {t('服务安装设置')}
+                              <Settings size={13} />{t('服务安装设置')}
                             </button>
                           </div>
                           {detailLoading ? (
@@ -1337,24 +1348,7 @@ export default function RemoteConnectionsManager() {
                   {error && <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>}
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {!isNew && <button type="button" disabled={testing || saving} onClick={() => void leaveEditor()} className={`${secondaryButtonClass} mr-auto`}>{t('返回概览')}</button>}
-                    {!isNewAgent && !standaloneAgent && <>
-                    <button
-                      type="button"
-                      disabled={testing || saving}
-                      onClick={() => void testConnection()}
-                      className={secondaryButtonClass}
-                    >
-                      {testing ? t('正在连接…') : t(directEnabled ? '测试 SSH 配置' : '测试连接')}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving || testing || (selected ? !dirty && !verified : false)}
-                      onClick={() => void saveConnection()}
-                      className={primaryButtonClass}
-                    >
-                      {saving ? t('正在保存…') : t(directEnabled ? '保存 SSH 配置' : '保存')}
-                    </button>
-                    </>}
+                    {!isNewAgent && !standaloneAgent && !directEnabled && sshFormActions}
                   </div>
                 </footer>
               )}
@@ -1362,6 +1356,11 @@ export default function RemoteConnectionsManager() {
           </div>
         </div>
       </ModalOverlay>
+      {createMenu && <ContextMenu x={createMenu.x} y={createMenu.y} zIndex="z-[135]" onClose={() => setCreateMenu(null)} items={[
+        { label: t('新建连接'), icon: <Plus size={14} />, action: () => requestNavigation(() => { setEditing(false); setSelectedId(NEW_SSH_CONNECTION_ID) }) },
+        { label: t('新建 Server 直连'), icon: <Server size={14} />, action: () => requestNavigation(() => { setAgentDraftId(crypto.randomUUID()); setEditing(false); setSelectedId(NEW_AGENT_CONNECTION_ID) }) },
+        { label: t('导入已有连接'), icon: <Download size={14} />, separatorBefore: true, action: () => requestNavigation(() => setImportOpen(true)) },
+      ]} />}
       {actionMenu && selected && <ContextMenu x={actionMenu.x} y={actionMenu.y} zIndex="z-[135]" onClose={() => setActionMenu(null)} items={[
         ...(alive ? [{ label: t('断开连接'), action: () => requestNavigation(() => { void disconnectConnection() }) }] : []),
         { label: t('删除连接'), danger: true, separatorBefore: alive, action: () => requestNavigation(() => { void removeConnection() }) },

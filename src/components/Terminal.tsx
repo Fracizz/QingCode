@@ -62,6 +62,7 @@ import {
 import {
   getTerminalProgramTitle,
   noteTerminalProgramState,
+  noteTerminalReplayedTitle,
   noteTerminalScreenSnapshot,
   noteTerminalTitle,
 } from '@/lib/terminal/terminalProgramActivity'
@@ -1103,18 +1104,23 @@ export default function TerminalView({
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
     // The parser gate is enabled after history has been parsed, not merely enqueued.
-    let clipboardWritesEnabled = false
+    let historyParsed = false
     const disposeOscHandlers = registerTerminalOscHandlers(term.parser, {
       onClipboardWrite: text => {
-        if (!clipboardWritesEnabled) return
+        if (!historyParsed) return
         void copyToClipboard(text).catch(error =>
           useProjectStore
             .getState()
             .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
         )
       },
-      onRawTitle: title => noteTerminalTitle(terminalId, title),
-      onProgramState: state => noteTerminalProgramState(terminalId, state),
+      onRawTitle: title =>
+        historyParsed
+          ? noteTerminalTitle(terminalId, title)
+          : noteTerminalReplayedTitle(terminalId, title),
+      onProgramState: state => {
+        if (historyParsed) noteTerminalProgramState(terminalId, state)
+      },
       onTitle: title => {
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         // Follow meaningful OSC titles; keep the shell label unless an app renames it.
@@ -1191,7 +1197,7 @@ export default function TerminalView({
       })
       replaying = false
       term.write('', () => {
-        clipboardWritesEnabled = true
+        historyParsed = true
         // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
         if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })

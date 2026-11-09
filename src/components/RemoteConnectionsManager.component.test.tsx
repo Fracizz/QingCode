@@ -317,7 +317,9 @@ describe('remote connection compatibility settings', () => {
       return undefined
     })
     render(<RemoteConnectionsManager />)
-    fireEvent.click(screen.getByRole('button', { name: '新建 Server 直连' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '新建 Server 直连' }))
+    await screen.findByLabelText('Server 主机')
     expect(screen.queryByLabelText('用户名')).toBeNull()
     await waitFor(() => expect(screen.getByRole('button', { name: '导入配对信息' })).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
@@ -360,8 +362,7 @@ describe('remote connection compatibility settings', () => {
     render(<RemoteConnectionsManager />)
     fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByText('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')
-    await waitFor(() => expect(screen.getByRole('button', { name: '导入配对信息' })).not.toBeDisabled())
-    fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
+    fireEvent.click(await screen.findByRole('button', { name: /重新配对/ }))
     fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ host: 'other.test', port: 51234, certificateFingerprint: 'new-tls', token: 'new-token' }) } })
     fireEvent.click(screen.getByRole('button', { name: '应用配对信息' }))
     fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
@@ -558,7 +559,12 @@ describe('remote connection compatibility settings', () => {
     fireEvent.change(screen.getByLabelText('连接名称'), { target: { value: 'Keep my draft' } })
     confirmDialog.mockResolvedValue(false)
     for (const label of [/Other/, '新建连接', '新建 Server 直连', '导入已有连接', '关闭']) {
-      fireEvent.click(screen.getByRole('button', { name: label }))
+      if (typeof label === 'string' && label !== '关闭') {
+        fireEvent.click(screen.getByRole('button', { name: '新建' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: label }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: label }))
+      }
       await waitFor(() => expect(confirmDialog).toHaveBeenCalled())
       expect(screen.getByLabelText('连接名称')).toHaveValue('Keep my draft')
       confirmDialog.mockClear()
@@ -573,7 +579,8 @@ describe('remote connection compatibility settings', () => {
   it('protects a new Server endpoint draft when closing is cancelled', async () => {
     useUIStore.setState({ remoteConnectionsCreating: false, remoteConnectionsOpen: true })
     render(<RemoteConnectionsManager />)
-    fireEvent.click(screen.getByRole('button', { name: '新建 Server 直连' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '新建 Server 直连' }))
     const host = await screen.findByLabelText('Server 主机')
     await waitFor(() => expect(screen.getByRole('button', { name: '关闭' })).not.toBeDisabled())
     fireEvent.change(host, { target: { value: 'server.example.test' } })

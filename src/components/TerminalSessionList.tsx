@@ -408,6 +408,23 @@ export default function TerminalSessionList() {
             <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
           </span>
         )}
+        {/* 状态点在名称前，与组头图标同列；管理模式下左侧是勾选框，改为排在勾选框之后。 */}
+        {activityIndicator && (
+          <span
+            className={
+              managing
+                ? 'flex flex-shrink-0'
+                : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
+            }
+          >
+            <TerminalActivityDot
+              terminalId={term.id}
+              exited={term.status === 'exited'}
+              attention={attentionIds.has(term.id) && !isActive}
+              size="md"
+            />
+          </span>
+        )}
         <div className="flex min-w-0 flex-1 flex-col justify-center">
           {isRenaming ? (
             <TerminalRenameInput
@@ -476,27 +493,9 @@ export default function TerminalSessionList() {
             {rowStatus}
           </span>
         )}
-        {/* 状态点和关闭按钮共用最右一格：平时显示状态点，悬停或键盘聚焦时换成关闭按钮。 */}
-        <span className="relative flex h-6 w-5 flex-shrink-0 items-center justify-center">
-          {activityIndicator && (
-            <span
-              className={`flex ${
-                managing
-                  ? ''
-                  : isCloseArmed
-                    ? 'invisible'
-                    : 'group-hover:invisible group-has-[:focus-visible]:invisible'
-              }`}
-            >
-              <TerminalActivityDot
-                terminalId={term.id}
-                exited={term.status === 'exited'}
-                attention={attentionIds.has(term.id) && !isActive}
-                size="md"
-              />
-            </span>
-          )}
-          {!managing && (
+        {/* 关闭按钮固定占最右一格，悬停时出现也不挤动名称。 */}
+        {!managing && (
+          <span className="relative flex h-6 w-5 flex-shrink-0 items-center justify-center">
             <Tooltip
               label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
               side="top"
@@ -517,8 +516,8 @@ export default function TerminalSessionList() {
                 {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={13} />}
               </button>
             </Tooltip>
-          )}
-        </span>
+          </span>
+        )}
       </div>
     )
   }
@@ -616,7 +615,7 @@ export default function TerminalSessionList() {
               wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
             >
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-semibold text-fg">{project.name}</span>
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-fg">{project.name}</span>
               {source && (
                 <span className="project-source-badge min-w-0 shrink! truncate font-normal text-fg-dim">
                   {source}

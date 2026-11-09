@@ -5,10 +5,12 @@ import {
   SPINNER_HOLD_MS,
   clearTerminalProgramActivity,
   isSpinnerFrame,
+  getTerminalLastWorkAt,
   getTerminalProgramBusySnapshot,
   getTerminalProgramTitle,
   isTerminalProgramBusy,
   noteTerminalProgramState,
+  noteTerminalReplayedTitle,
   noteTerminalScreenSnapshot,
   noteTerminalSubmit,
   noteTerminalInput,
@@ -125,6 +127,34 @@ describe('terminal program activity', () => {
     noteTerminalScreenSnapshot('missing', start)
     noteTerminalSubmit('missing', start)
     expect(isTerminalProgramBusy('missing', start)).toBe(false)
+  })
+
+  it('keeps replayed title text without treating history as work', () => {
+    vi.useFakeTimers()
+    const listener = vi.fn()
+    const unsubscribe = subscribeTerminalProgramActivity(listener)
+    const start = Date.now()
+    noteTerminalReplayedTitle('t1', '⠋ build', start)
+    noteTerminalReplayedTitle('t1', '✶ build', start + 1)
+    noteTerminalReplayedTitle('t1', '⠼ Claude Code', start + 2)
+    vi.advanceTimersByTime(SPINNER_HOLD_MS * 2)
+    expect(listener).not.toHaveBeenCalled()
+    expect(isTerminalProgramBusy('t1', start + 3)).toBe(false)
+    expect(getTerminalProgramTitle('t1')).toBe('Claude Code')
+    // 程序仍在工作时，下一帧实时转圈马上恢复状态。
+    noteTerminalTitle('t1', '⠋ Claude Code', start + 10)
+    expect(getTerminalProgramBusySnapshot('t1')).toBe(true)
+    unsubscribe()
+  })
+
+  it('reports when the last work signal was seen', () => {
+    const start = Date.now()
+    noteTerminalTitle('t1', '⠋ build', start)
+    noteTerminalTitle('t1', '✳ build', start + 500)
+    expect(getTerminalLastWorkAt('t1', start + 3000)).toBe(start + 500)
+    // 主动上报没有保持期，翻转的此刻就是结束时刻。
+    noteTerminalProgramState('t1', 'idle', start + 4000)
+    expect(getTerminalLastWorkAt('t1', start + 4000)).toBe(start + 4000)
   })
 
   it('forgets a terminal when it is cleared', () => {

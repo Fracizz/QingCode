@@ -74,6 +74,7 @@ import {
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import {
   clearTerminalProgramActivity,
+  getTerminalLastWorkAt,
   getTerminalProgramBusySnapshot,
   noteTerminalInput,
   noteTerminalOutput,
@@ -84,6 +85,7 @@ import {
   clearTerminalAttention,
   markTerminalAttention,
   noteTerminalBusyChange,
+  noteTerminalLeftView,
   pruneTerminalAttention,
 } from '@/lib/terminal/terminalAttention'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
@@ -2657,12 +2659,18 @@ function isTerminalInView(id: string): boolean {
 }
 
 subscribeTerminalProgramActivity(id => {
-  noteTerminalBusyChange(id, getTerminalProgramBusySnapshot(id), isTerminalInView(id))
+  noteTerminalBusyChange(
+    id,
+    getTerminalProgramBusySnapshot(id),
+    isTerminalInView(id),
+    getTerminalLastWorkAt(id),
+  )
 })
 
 useTerminalStore.subscribe((state, previous) => {
-  if (state.activeTerminalId && state.activeTerminalId !== previous.activeTerminalId) {
-    clearTerminalAttention(state.activeTerminalId)
+  if (state.activeTerminalId !== previous.activeTerminalId) {
+    if (previous.activeTerminalId) noteTerminalLeftView(previous.activeTerminalId)
+    if (state.activeTerminalId) clearTerminalAttention(state.activeTerminalId)
   }
   if (state.terminals !== previous.terminals) {
     pruneTerminalAttention(new Set(state.terminals.map(tab => tab.id)))

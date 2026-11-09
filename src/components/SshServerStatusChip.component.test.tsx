@@ -155,8 +155,9 @@ describe('SshServerStatusChip', () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     fireEvent.click(await screen.findByRole('button', { name: /Server 端口直连/ }))
     fireEvent.click(screen.getByRole('tab', { name: 'Server 端口直连' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '测试直连' })).not.toBeDisabled())
+    await screen.findByRole('button', { name: /连接地址与凭据/ })
     expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /SSH 配置/ })).toBeNull()
     expect(screen.queryByRole('button', { name: '恢复 SSH 连接' })).toBeNull()
   })
 

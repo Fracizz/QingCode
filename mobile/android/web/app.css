@@ -361,7 +361,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .connection-card { display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: center; padding-right: 4px; }
 .connection-main { min-width: 0; border-radius: 0; }
 .connection-main .dot { width: 6px; height: 6px; }
-.connection-main .connection-state { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+/* .row-text small 会裁切溢出：左侧留出 3px 给圆点光晕，负外边距保持圆点与上方文字对齐。 */
+.connection-main .connection-state { display: flex; align-items: center; gap: 6px; margin: 2px 0 0 -3px; padding-left: 3px; color: var(--muted); font-size: 11.5px; }
 .connection-card[data-state="online"] .connection-state { color: var(--accent); }
 .connection-card[data-state="offline"] .connection-state { color: var(--error); }
 .connection-card > .icon-button { color: var(--muted); }

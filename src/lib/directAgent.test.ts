@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { directAgentApi, directAgentErrorKey, directAgentFirewallCommand, directAgentFirewallHintKey, directAgentSshCandidates, enrichDirectAgentConnections, parseDirectAgentPairing, validateDirectAgentTarget } from './directAgent'
+import { directAgentApi, directAgentErrorKey, directAgentFirewallCommand, directAgentFirewallHintKey, directAgentSshCandidates, enrichDirectAgentConnections, parseDirectAgentPairing, shortFingerprint, validateDirectAgentTarget } from './directAgent'
 import type { SshConnection } from '../types'
 
 afterEach(() => vi.restoreAllMocks())
@@ -17,6 +17,13 @@ describe('direct Agent target validation', () => {
     for (const host of ['dev.example.test', '192.168.252.107', '::1']) {
       expect(validateDirectAgentTarget(host, '48763')).toBeNull()
     }
+  })
+})
+
+describe('direct Agent fingerprint summary', () => {
+  it('shortens long fingerprints and leaves short values intact', () => {
+    expect(shortFingerprint('c28d09052919aae17d79b86beaa29486fe119f48d19ca6a00aeae66c555c0153')).toBe('c28d0905…0153')
+    expect(shortFingerprint('SHA256:server')).toBe('SHA256:server')
   })
 })
 

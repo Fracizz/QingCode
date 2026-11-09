@@ -32,6 +32,11 @@ async function openPanel(api: DirectAgentApi, sshConnections: SshConnection[] = 
   fireEvent.click(screen.getByText('远端需要开放 TCP 48763'))
 }
 
+async function openManaged(api: DirectAgentApi, sshConnections: SshConnection[] = []) {
+  render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} initiallyOpen />)
+  await screen.findByRole('button', { name: /连接地址与凭据/ })
+}
+
 describe('direct Agent connection panel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -100,7 +105,8 @@ describe('direct Agent connection panel', () => {
     expect(screen.queryByText('已启用 Server 端口直连。')).toBeNull()
     await act(async () => { finishSave() })
     expect(screen.getByRole('status')).toHaveTextContent('已启用 Server 端口直连。')
-    expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /启动与开机自启/ }))
     expect(screen.getByRole('switch', { name: '开机自启 Server' })).toBeChecked()
   })
 
@@ -188,12 +194,96 @@ describe('direct Agent connection panel', () => {
 
   it('shows historical ports without falling back or overwriting the active target on disable', async () => {
     const api = apiMock({ ...info, enabled: true, previousPorts: [50001, 50002] })
-    await openPanel(api)
+    await openManaged(api)
+    fireEvent.click(screen.getByRole('button', { name: /连接地址与凭据/ }))
     expect(screen.getByText('历史端口：50001、50002')).toBeVisible()
     expect(screen.getByText(/历史端口仅供核对，不会自动回退/)).toBeVisible()
     fireEvent.change(screen.getByLabelText('TCP 端口'), { target: { value: 'bad-port' } })
+    fireEvent.click(screen.getByRole('button', { name: /SSH 配置/ }))
     fireEvent.click(screen.getByRole('button', { name: '恢复 SSH 连接' }))
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ port: 48763, enabled: false })))
+  })
+
+  describe('enabled connection layout', () => {
+    const enabled: DirectAgentInfo = { ...info, enabled: true, certificateFingerprint: 'c28d09052919aae17d79b86beaa29486fe119f48d19ca6a00aeae66c555c0153' }
+    const managedApi = () => ({ ...apiMock(enabled), manage: vi.fn().mockResolvedValue({ ...enabled, autoStart: true }), firewallPlan: vi.fn().mockResolvedValue(firewallPlan), firewallApply: vi.fn() })
+
+    it('summarizes the connection and hides setup-only or duplicate controls', async () => {
+      await openManaged(managedApi(), [ssh])
+      expect(screen.getByText('c28d0905…0153')).toBeVisible()
+      expect(screen.queryByRole('button', { name: 'Server 端口直连' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '保存并启用直连' })).toBeNull()
+      expect(screen.queryByText('远端需要开放 TCP 48763')).toBeNull()
+      expect(screen.getByRole('button', { name: '通过 SSH 启动 Server' })).toBeVisible()
+    })
+
+    it('expands one row at a time so SSH authorization never appears twice', async () => {
+      await openManaged(managedApi(), [ssh])
+      fireEvent.click(screen.getByRole('button', { name: /启动与开机自启/ }))
+      expect(screen.getAllByLabelText('SSH 授权连接')).toHaveLength(1)
+      fireEvent.click(screen.getByRole('button', { name: /端口放行/ }))
+      expect(screen.getAllByLabelText('SSH 授权连接')).toHaveLength(1)
+      expect(screen.queryByRole('switch')).toBeNull()
+    })
+
+    it('shares the entered SSH secret with the start action and clears it afterwards', async () => {
+      const api = managedApi()
+      await openManaged(api, [ssh])
+      fireEvent.click(screen.getByRole('button', { name: /启动与开机自启/ }))
+      fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'transient' } })
+      fireEvent.click(screen.getByRole('button', { name: '通过 SSH 启动 Server' }))
+      await waitFor(() => expect(api.manage).toHaveBeenCalledWith(expect.objectContaining({ start: true, sshConnectionId: ssh.id, config: expect.objectContaining({ password: 'transient' }) })))
+      await waitFor(() => expect(screen.getByLabelText('SSH 密码')).toHaveValue(''))
+      expect(await screen.findByRole('status')).toHaveTextContent('Server 已启动')
+    })
+
+    it('keeps starting the saved host when the host draft points at another SSH connection', async () => {
+      const api = managedApi()
+      const other = { ...ssh, id: 'other-ssh', host: 'other.test' }
+      await openManaged(api, [ssh, other])
+      fireEvent.click(screen.getByRole('button', { name: /连接地址与凭据/ }))
+      fireEvent.change(screen.getByLabelText('Server 主机'), { target: { value: 'other.test' } })
+      fireEvent.click(screen.getByRole('button', { name: '通过 SSH 启动 Server' }))
+      await waitFor(() => expect(api.manage).toHaveBeenCalledWith(expect.objectContaining({ sshConnectionId: ssh.id, agentHost: enabled.host })))
+    })
+
+    it('marks edits in the row summary and explains why saving is locked', async () => {
+      await openManaged(managedApi(), [ssh])
+      fireEvent.click(screen.getByRole('button', { name: /连接地址与凭据/ }))
+      fireEvent.change(screen.getByLabelText('TCP 端口'), { target: { value: '51234' } })
+      expect(screen.getByRole('button', { name: /连接地址与凭据.*有未保存修改/ })).toBeVisible()
+      expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
+      expect(screen.getByText('测试通过后才能保存并启用。')).toBeVisible()
+    })
+
+    it('reveals SSH authorization after a failed start', async () => {
+      const api = managedApi()
+      api.manage.mockRejectedValue(new Error('[direct:startup] private'))
+      await openManaged(api, [ssh])
+      fireEvent.click(screen.getByRole('button', { name: '通过 SSH 启动 Server' }))
+      expect(await screen.findByRole('alert')).not.toHaveTextContent('private')
+      expect(screen.getByLabelText('SSH 授权连接')).toBeVisible()
+    })
+
+    it('hosts the parent SSH form and its actions in the SSH row', async () => {
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={enabled.host} api={managedApi()} sshConnections={[ssh]} initiallyOpen sshSection={{ summary: 'root@host:22', dirty: false, form: <p>SSH 表单</p>, actions: <button type="button">保存 SSH 配置</button> }} />)
+      const row = await screen.findByRole('button', { name: /SSH 配置.*root@host:22/ })
+      expect(screen.queryByText('SSH 表单')).toBeNull()
+      fireEvent.click(row)
+      expect(screen.getByText('SSH 表单')).toBeVisible()
+      expect(screen.getByRole('button', { name: '保存 SSH 配置' })).toBeVisible()
+      expect(screen.getByRole('button', { name: '恢复 SSH 连接' })).toBeVisible()
+    })
+
+    it('moves a re-pairing import to the connection row for testing', async () => {
+      await openManaged(managedApi(), [ssh])
+      fireEvent.click(screen.getByRole('button', { name: /重新配对/ }))
+      fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ port: 51234, certificateFingerprint: 'SHA256:new', token: 'new-token' }) } })
+      fireEvent.click(screen.getByRole('button', { name: '应用配对信息' }))
+      expect(screen.getByLabelText('TCP 端口')).toHaveValue('51234')
+      expect(screen.getByRole('button', { name: '测试直连' })).toBeVisible()
+    })
   })
 
   it('keeps verification and transient credentials for retry when the local connection row cannot be saved', async () => {

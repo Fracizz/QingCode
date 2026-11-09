@@ -201,7 +201,7 @@ describe('TerminalSessionList', () => {
 
   it('keeps project names at full contrast and only dims the source', () => {
     render(<TerminalSessionList />)
-    expect(within(group('p2')).getByText('api')).toHaveClass('text-fg', 'font-semibold')
+    expect(within(group('p2')).getByText('api')).toHaveClass('text-fg', 'font-normal')
     expect(within(group('p1')).getByText('本机')).toHaveClass('text-fg-dim')
   })
 
@@ -425,6 +425,16 @@ describe('TerminalSessionList', () => {
     fireEvent.click(within(row('other')).getByRole('button', { name: /重启/ }))
     expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1])
     await vi.waitFor(() => expect(mocks.state.reopenTerminalShell).toHaveBeenCalledWith('other'))
+  })
+
+  it('places the status dot before the name and keeps close at the end', () => {
+    markTerminalAttention('other')
+    render(<TerminalSessionList />)
+    const dot = row('other').querySelector('[data-terminal-activity="attention"]')!
+    const name = row('other').querySelector('.truncate')!
+    const close = row('other').querySelector('[data-terminal-close]')!
+    expect(dot.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(name.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('marks finished background terminals on the row and on a collapsed project', () => {

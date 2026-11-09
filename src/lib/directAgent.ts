@@ -161,6 +161,11 @@ export function isDirectAgentPort(port: number): boolean {
   return Number.isInteger(port) && port >= 1 && port <= 65535
 }
 
+/** 仅用于摘要展示；核对身份时必须展示完整指纹。 */
+export function shortFingerprint(value: string): string {
+  return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`
+}
+
 /** Only a validated integer can enter the copyable administration command. macOS filters by application, so it has no port command. */
 export function directAgentFirewallCommand(port: number, platform: DirectAgentFirewallPlatform): string | null {
   if (!isDirectAgentPort(port)) return null
