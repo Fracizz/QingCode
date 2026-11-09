@@ -39,9 +39,10 @@ export function createComposeStatus({ receipts, persistenceFailed }) {
     const visible = failed || (!!latest && !(received && expiredReceipt === latest.id));
     get('submission-state').dataset.visible = String(visible);
     chip.dataset.state = failed ? 'error' : latest?.state ?? '';
-    get('submission-status').textContent = failed ? t('⚠ 手机保存失败')
+    // 状态图标由 .compose-note::before 按 data-state 绘制，文案不再带符号。
+    get('submission-status').textContent = failed ? t('手机保存失败')
       : latest?.state === 'sending' ? t('正在发送…')
-        : received ? t('✓ 电脑已接收 · 查看') : t('⚠ 结果未知 · 查看');
+        : received ? t('电脑已接收 · 查看') : t('结果未知 · 查看');
     chip.setAttribute('aria-label', failed ? t('手机保存失败，请保留原文')
       : latest?.state === 'sending' ? t('正在发送') : received ? t('电脑已接收，查看提交原文') : t('提交结果未知，原文已保留，点按查看'));
     renderNotes();

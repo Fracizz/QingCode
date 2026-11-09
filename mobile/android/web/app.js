@@ -2365,13 +2365,13 @@ async function sendImage() {
     });
     if (!current() || !count) return;
     if (get('image-dialog').open) get('image-dialog').close();
-    composeStatus.setImageNote(count === 1 ? t('✓ 图片已插入') : t('✓ 已插入 {n} 张图片', { n: inserted }), { state: 'done', ttl: 2500 });
+    composeStatus.setImageNote(count === 1 ? t('图片已插入') : t('已插入 {n} 张图片', { n: inserted }), { state: 'done', ttl: 2500 });
     compose.focus();
   } catch (error) {
     if (epoch === viewEpoch && selected === id && attempt === imageEpoch) {
       if (error.revoked) handleTerminalError(error);
       else {
-        composeStatus.setImageNote(t('⚠ 图片上传失败'), { state: 'error', ttl: 6000 });
+        composeStatus.setImageNote(t('图片上传失败'), { state: 'error', ttl: 6000 });
         message('image-error', count > 1
           ? t('已插入 {inserted}/{count} 张图片。{error} 请重新选择剩余未上传的图片。', { inserted, count, error: t(error.message) })
           : t(error.message));
