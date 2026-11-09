@@ -40,7 +40,7 @@ import {
   terminalRowStatus,
   terminalTabTooltip,
 } from '@/lib/terminal/terminalTabPresentation'
-import { formatCompactCreatedAge, formatFullCreatedTime } from '@/lib/terminal/terminalOverview'
+import { formatFullCreatedTime } from '@/lib/terminal/terminalOverview'
 import {
   getTerminalAttentionSnapshot,
   subscribeTerminalAttention,
@@ -113,22 +113,9 @@ function saveCollapsedProjects(collapsed: ReadonlySet<string>) {
   }
 }
 
-/** 返回当前时间，并在每天零点刷新，让列表里「今天」的时间过夜后变成日期。 */
-function useNowRefreshedDaily(): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const nextDay = new Date(now)
-    nextDay.setHours(24, 0, 0, 0)
-    const timer = window.setTimeout(() => setNow(Date.now()), nextDay.getTime() - now)
-    return () => window.clearTimeout(timer)
-  }, [now])
-  return now
-}
-
 /** 终端工作台左栏：按项目分组列出全部终端，替代横向标签栏。 */
 export default function TerminalSessionList() {
   const actions = useTerminalTabActions()
-  const now = useNowRefreshedDaily()
   const {
     translate,
     paneActiveId,
@@ -331,14 +318,9 @@ export default function TerminalSessionList() {
     const exitCodeSuffix =
       term.exitCode === null ? '' : translate('（退出码 {code}）', { code: term.exitCode })
     const restartLabel = keepShell ? '重启终端{exitCode}' : '按原运行配置重启{exitCode}'
-    const createdAt = term.createdAt ?? term.startedAt
-    const created = formatCompactCreatedAge(createdAt, now, translate)
-    const fullCreated = formatFullCreatedTime(createdAt)
+    const fullCreated = formatFullCreatedTime(term.createdAt ?? term.startedAt)
     const tooltip = terminalTabTooltip(term, translate)
-    // 关闭活动指示后没有空心点，待恢复要改用文字表达。
-    const trailing =
-      terminalRowStatus(term, translate) ??
-      (awaitingRestore && !activityIndicator ? translate('待恢复') : created)
+    const rowStatus = terminalRowStatus(term, translate)
     return (
       <div
         key={term.id}
@@ -380,6 +362,13 @@ export default function TerminalSessionList() {
             className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded bg-brand ${
               dropTarget.position === 'before' ? '-top-px' : '-bottom-px'
             }`}
+          />
+        )}
+        {!managing && isActive && (
+          <span
+            aria-hidden="true"
+            data-terminal-active-rail
+            className="pointer-events-none absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-brand"
           />
         )}
         {managing && (
@@ -447,21 +436,19 @@ export default function TerminalSessionList() {
             </button>
           </Tooltip>
         )}
-        {activityIndicator && (
-          <TerminalActivityDot
-            terminalId={term.id}
-            exited={term.status === 'exited'}
-            attention={attentionIds.has(term.id) && !isActive}
-            awaitingRestore={awaitingRestore}
-            size="md"
-          />
+        {rowStatus && (
+          <span
+            data-terminal-row-status={term.id}
+            className="flex-shrink-0 whitespace-nowrap text-ui-xs text-fg-dim"
+          >
+            {rowStatus}
+          </span>
         )}
-        {/* 时间和关闭按钮共用一格：平时显示时间，悬停或键盘聚焦时换成关闭按钮。 */}
-        <span className="relative flex h-6 min-w-6 flex-shrink-0 items-center justify-end">
-          {trailing && (
+        {/* 状态点和关闭按钮共用最右一格：平时显示状态点，悬停或键盘聚焦时换成关闭按钮。 */}
+        <span className="relative flex h-6 w-5 flex-shrink-0 items-center justify-center">
+          {activityIndicator && (
             <span
-              data-terminal-created={trailing === created ? term.id : undefined}
-              className={`whitespace-nowrap pr-1 text-ui-xs text-fg-dim ${
+              className={`flex ${
                 managing
                   ? ''
                   : isCloseArmed
@@ -469,7 +456,12 @@ export default function TerminalSessionList() {
                     : 'group-hover:invisible group-has-[:focus-visible]:invisible'
               }`}
             >
-              {trailing}
+              <TerminalActivityDot
+                terminalId={term.id}
+                exited={term.status === 'exited'}
+                attention={attentionIds.has(term.id) && !isActive}
+                size="md"
+              />
             </span>
           )}
           {!managing && (
@@ -477,7 +469,7 @@ export default function TerminalSessionList() {
               label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
               side="top"
               forceOpen={isCloseArmed}
-              wrapperClassName="absolute inset-y-0 right-0 inline-flex items-center"
+              wrapperClassName="absolute inset-0 inline-flex items-center justify-center"
             >
               <button
                 type="button"
@@ -594,7 +586,7 @@ export default function TerminalSessionList() {
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
               <span className="block min-w-0 max-w-[70%] flex-none truncate font-medium">{project.name}</span>
               {source && (
-                <span className="project-source-badge min-w-0 shrink! truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted">
+                <span className="project-source-badge min-w-0 shrink! truncate font-normal text-fg-dim">
                   {source}
                 </span>
               )}
@@ -608,7 +600,7 @@ export default function TerminalSessionList() {
               className="h-2 w-2 flex-shrink-0 rounded-full bg-brand"
             />
           )}
-          {!isEmpty && (
+          {!isEmpty && !expanded && (
             <span
               role="img"
               aria-label={translate('{count} 个终端', { count: terminals.length })}
@@ -620,7 +612,7 @@ export default function TerminalSessionList() {
               {terminals.length}
             </span>
           )}
-          {/* 平时显示数量，悬停或键盘聚焦时换成操作按钮；空项目的切换按钮不可聚焦，靠 opacity 保持按钮可达。 */}
+          {/* 收起时显示数量，悬停或键盘聚焦时换成操作按钮；空项目的切换按钮不可聚焦，靠 opacity 保持按钮可达。 */}
           <span
             data-terminal-group-actions={project.id}
             className={`flex-shrink-0 items-center ${

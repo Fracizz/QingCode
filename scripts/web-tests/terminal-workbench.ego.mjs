@@ -107,11 +107,8 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       const { rows } = await layout()
       assert.equal(rows.filter(row => row.selected).length, 1)
       assert.equal(rows.at(-1).selected, true)
-      // 今天新建的终端只显示时间，且排在副标题之后。
-      await waitFor(() => {
-        const times = [...document.querySelectorAll('[data-terminal-created]')].map(item => item.textContent)
-        return times.length >= 3 && times.every(text => /^( · )?\d{2}:\d{2}$/.test(text))
-      })
+      // 创建时间只放在悬停卡片，列表行不显示。
+      assert.ok(rows.every(row => !/\d{2}:\d{2}/.test(row.text)))
     })
     await shot('list')
 

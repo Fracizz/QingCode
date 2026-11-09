@@ -30,8 +30,8 @@ export function terminalTabTooltip(t: TerminalTab, translate: Translate): string
 }
 
 /**
- * 工作台列表行尾的异常状态短词，占用时间的位置；正常运行时返回 null。
- * 等待恢复不算异常：重启应用后尚未打开过的项目，进程并没有退出，由空心点表达。
+ * 工作台列表行尾的异常状态短词；正常运行时返回 null。
+ * 等待恢复不算异常：重启应用后尚未打开过的项目，进程并没有退出，由弱化名称和悬停卡片表达。
  */
 export function terminalRowStatus(
   t: Pick<TerminalTab, 'status' | 'awaitingRestoreSpawn'>,

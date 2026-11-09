@@ -79,6 +79,26 @@ describe('shouldApplyOscTabTitle', () => {
     expect(shouldApplyOscTabTitle({ shellKind: 'interactive' }, 'OpenCode')).toBe(true)
   })
 
+  it.each([
+    'franciz@hy-ubuntu: ~/django',
+    'root@hy-ubuntu:/srv/django',
+    'admin@windev: D:/code/app',
+    'MINGW64:/d/code/app',
+    '~',
+    '~/django',
+    '/srv/django',
+    'D:\\code\\my app',
+  ])('keeps the shell name when the prompt reports the path %s', title => {
+    expect(shouldApplyOscTabTitle({}, title)).toBe(false)
+  })
+
+  it.each(['Claude Code', 'vim /etc/hosts', 'npm run dev', 'C:\\tools\\node.exe', 'alice@example.com'])(
+    'still follows the program title %s',
+    title => {
+      expect(shouldApplyOscTabTitle({}, title)).toBe(true)
+    },
+  )
+
   it('blocks generic shell noise and run-config tasks', () => {
     expect(shouldApplyOscTabTitle({}, 'powershell')).toBe(false)
     expect(shouldApplyOscTabTitle({}, 'conhost')).toBe(false)

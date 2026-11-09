@@ -162,9 +162,11 @@ describe('TerminalSessionList', () => {
     expect(document.querySelector('[title]')).toBeNull()
   })
 
-  it('shows the source and total terminals on the project header and marks the current project', () => {
+  it('shows the source on the project header, the total only while collapsed, and marks the current project', () => {
     render(<TerminalSessionList />)
     expect(within(group('p1')).getByText('本机')).toBeInTheDocument()
+    expect(group('p1').querySelector('[data-terminal-group-count]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '展开或收起「app」' }))
     expect(group('p1').querySelector('[data-terminal-group-count="p1"]')).toHaveTextContent('2')
     expect(group('p3').querySelector('[data-terminal-group-count]')).toBeNull()
     expect(group('p1').querySelector('[data-terminal-group-current="true"]')).not.toBeNull()
@@ -366,26 +368,35 @@ describe('TerminalSessionList', () => {
     expect(mocks.state.reorderTerminal).not.toHaveBeenCalled()
   })
 
-  it('ends each row with the creation time: time today, age on earlier days', () => {
+  it('keeps the creation time out of the row and in the hover details', () => {
     const today = new Date()
     today.setHours(9, 5, 0, 0)
-    mocks.state.terminals = [
-      terminal({ id: 'today', launchCommand: 'pnpm dev', createdAt: today.getTime(), startedAt: Date.now() }),
-      terminal({ id: 'old', createdAt: new Date(2020, 0, 3, 18, 30).getTime() }),
-      terminal({ id: 'legacy', startedAt: today.getTime() }),
-      terminal({ id: 'none' }),
-    ]
+    mocks.state.terminals = [terminal({ id: 'today', createdAt: today.getTime(), startedAt: Date.now() })]
     render(<TerminalSessionList />)
-    expect(row('today').querySelector('[data-terminal-created]')).toHaveTextContent(/^09:05$/)
-    expect(row('old').querySelector('[data-terminal-created]')).toHaveTextContent(/^\d+年$/)
-    expect(row('legacy').querySelector('[data-terminal-created]')).toHaveTextContent(/^09:05$/)
-    expect(row('none').querySelector('[data-terminal-created]')).toBeNull()
+    expect(row('today')).not.toHaveTextContent('09:05')
+    expect(row('today').querySelector('[data-tooltip*="09:05"]')).not.toBeNull()
   })
 
-  it('shows a waiting state instead of restart for terminals not restored yet', () => {
-    mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2', status: 'exited', awaitingRestoreSpawn: true })]
+  it('marks only the current row with the brand rail', () => {
     render(<TerminalSessionList />)
-    expect(row('other').querySelector('[data-terminal-activity="restore"]')).not.toBeNull()
+    expect(row('t1').querySelector('[data-terminal-active-rail]')).not.toBeNull()
+    expect(row('t2').querySelector('[data-terminal-active-rail]')).toBeNull()
+  })
+
+  it('keeps abnormal status text next to the close slot', () => {
+    mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2', status: 'exited', exitCode: 1 })]
+    render(<TerminalSessionList />)
+    expect(row('other').querySelector('[data-terminal-row-status="other"]')).toHaveTextContent('已退出')
+  })
+
+  it('dims terminals not restored yet without a dot, status text or restart', () => {
+    mocks.state.terminals = [
+      terminal({ id: 'other', name: 'waiting', projectId: 'p2', status: 'exited', awaitingRestoreSpawn: true }),
+    ]
+    render(<TerminalSessionList />)
+    expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
+    expect(within(row('other')).getByText('waiting')).toHaveClass('text-fg-muted')
+    expect(within(row('other')).queryByText('待恢复')).toBeNull()
     expect(within(row('other')).queryByText('已退出')).toBeNull()
     expect(within(row('other')).queryByRole('button', { name: /重启/ })).toBeNull()
   })

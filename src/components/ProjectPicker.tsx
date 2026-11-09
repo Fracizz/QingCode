@@ -937,7 +937,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('在文件管理器中打开')}
-            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip ui-chip-compact h-6"
             onClick={event => {
               event.stopPropagation()
               onOpenInExplorer()
@@ -957,7 +957,7 @@ function Chip({
             <button
               type="button"
               aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
-              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
+              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-5 ui-chip ui-chip-compact h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRelocate()
@@ -974,7 +974,7 @@ function Chip({
             <button
               type="button"
               aria-label={t('移除项目')}
-              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-5 ui-chip h-6"
+              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-5 ui-chip ui-chip-compact h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRemove()
@@ -993,7 +993,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}
-            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip ui-chip-compact h-6"
             onClick={event => {
               event.stopPropagation()
               onRemove()

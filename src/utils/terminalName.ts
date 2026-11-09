@@ -57,17 +57,34 @@ export function windowsSshShellLabel(cwd: string, shell?: string | null): string
   return 'PowerShell'
 }
 
+const SHELL_PROMPT_PATH_TITLES = [
+  // Ubuntu / Debian / RHEL 默认提示符：user@host: ~/app
+  /^[^\s@:]+@[^\s:]+:\s*(?:~|\/|[A-Za-z]:[\\/])/,
+  // Git Bash 默认提示符：MINGW64:/d/code/app
+  /^(?:MINGW|MSYS|UCRT|CLANG)\w*:\//,
+  /^~(?:\/\S*)?$/,
+  /^\/\S*$/,
+  // 以 .exe 结尾的是正在运行的程序，不是当前目录。
+  /^[A-Za-z]:[\\/](?!.*\.exe$)/i,
+]
+
+/** shell 提示符上报的当前目录标题：只反映路径，显示时又只剩最后一段，常与项目名重复。 */
+export function isShellPromptPathTitle(title: string): boolean {
+  const cleaned = title.trim()
+  return SHELL_PROMPT_PATH_TITLES.some(pattern => pattern.test(cleaned))
+}
+
 /**
  * Whether an OSC window title should rename the tab.
- * Keeps run-config labels fixed; blocks generic shell/ConPTY noise; allows
- * cwd / app titles (e.g. OpenCode, `npm run dev`, folder names).
+ * Keeps run-config labels fixed; blocks generic shell/ConPTY noise and prompt
+ * cwd paths; allows app titles (e.g. OpenCode, `npm run dev`).
  */
 export function shouldApplyOscTabTitle(
   tab: { shellKind?: string } | null | undefined,
   title: string,
 ): boolean {
   if (!tab || !title.trim()) return false
-  if (isGenericShellOscTitle(title)) return false
+  if (isGenericShellOscTitle(title) || isShellPromptPathTitle(title)) return false
   // Run-config / script tasks keep their fixed task name.
   if (tab.shellKind && tab.shellKind !== 'interactive') return false
   return true

@@ -68,7 +68,13 @@
 }
 
 /* Integer-sized chrome keeps borders/icons at their native CSS pixel size. */
-.ui-chip { height: var(--ui-chip-height); }
+/* 高度随字号放大，宽度写死的图标按钮会变成竖长条，这里保证悬停底色至少是方形。 */
+.ui-chip {
+  height: var(--ui-chip-height);
+  min-width: var(--ui-chip-height);
+}
+/* 标签 / 项目 chip 内的 20px 行内按钮：放宽会把每个标签都撑宽。 */
+.ui-chip-compact { min-width: 0; }
 .ui-activity-button {
   width: var(--ui-activity-button-size);
   height: var(--ui-activity-button-size);

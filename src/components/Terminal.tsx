@@ -1114,8 +1114,8 @@ export default function TerminalView({
       onRawTitle: title => noteTerminalTitle(terminalId, title),
       onTitle: title => {
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-        // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
-        // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
+        // Follow meaningful OSC titles; keep the shell label unless an app renames it.
+        // Generic ConPTY/PowerShell titles and prompt cwd paths are ignored (see shouldApplyOscTabTitle).
         if (current && shouldApplyOscTabTitle(current, title)) {
           // 同项目内多个终端 cwd 相同时（如都在 /home），标题会重名，需去重。
           const siblings = useTerminalStore

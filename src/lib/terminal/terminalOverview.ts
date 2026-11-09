@@ -239,20 +239,6 @@ export function formatCreatedTime(createdAt: number | null | undefined, now: num
   return parts.date.getFullYear() === today.getFullYear() ? `${parts.day} ${parts.time}` : `${parts.fullDay} ${parts.time}`
 }
 
-/** 列表行用的最短文本：当天「HH:mm」，更早显示「14天」，满一年显示「2年」；无效时间返回 null。 */
-export function formatCompactCreatedAge(
-  createdAt: number | null | undefined,
-  now: number,
-  translate: (source: string, values?: Record<string, string | number>) => string,
-): string | null {
-  const parts = createdTimeParts(createdAt)
-  if (!parts) return null
-  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const days = Math.round((startOfDay(new Date(now)) - startOfDay(parts.date)) / 86_400_000)
-  if (days <= 0) return parts.time
-  return days < 365 ? translate('{count}天', { count: days }) : translate('{count}年', { count: Math.floor(days / 365) })
-}
-
 /** 悬停提示用的完整文本「YYYY-MM-DD HH:mm」；无效时间返回 null。 */
 export function formatFullCreatedTime(createdAt: number | null | undefined): string | null {
   const parts = createdTimeParts(createdAt)

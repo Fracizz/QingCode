@@ -327,7 +327,7 @@ export default function TerminalTabs({
                       type="button"
                       aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
                       data-terminal-close={t.id}
-                      className={`flex items-center justify-center w-5 ui-chip h-6 rounded transition-colors ${
+                      className={`flex items-center justify-center w-5 ui-chip ui-chip-compact h-6 rounded transition-colors ${
                         isCloseArmed
                           ? 'bg-danger/15 text-danger'
                           : 'hover:bg-bg-active'
@@ -405,7 +405,7 @@ export default function TerminalTabs({
                             ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
                             : translate('重启终端{exitCode}', { exitCode: '' })
                         }
-                        className="flex items-center justify-center w-5 ui-chip h-6 rounded hover:bg-bg-active"
+                        className="flex items-center justify-center w-5 ui-chip ui-chip-compact h-6 rounded hover:bg-bg-active"
                         onClick={e => {
                           e.stopPropagation()
                           if (shouldKeepShellAfterExit(t)) void useTerminalStore.getState().reopenTerminalShell(t.id)
@@ -545,12 +545,12 @@ export default function TerminalTabs({
               data-tab-measure-id={term.id}
               className={`flex ui-chip h-6 items-center gap-1 whitespace-nowrap rounded ${terminalTabPaddingClass(term.status)}`}
             >
-              <span className="ui-chip h-6 w-5 flex-shrink-0" />
+              <span className="ui-chip ui-chip-compact h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
               {term.status === 'reconnecting' && (
                 <span className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
               )}
-              {term.status === 'exited' && <span className="ui-chip h-6 w-5 flex-shrink-0" />}
+              {term.status === 'exited' && <span className="ui-chip ui-chip-compact h-6 w-5 flex-shrink-0" />}
               {activityIndicator && <span className="h-3 w-3 flex-shrink-0" />}
             </div>
           ))}
