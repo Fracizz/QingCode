@@ -81,7 +81,6 @@
   .status-app-meta { display: none; }
 }
 @container status-bar (max-width: 58.5em) {
-  .status-terminal-name { display: none; }
   .status-cursor { display: none; }
   .status-branch { max-width: 12ch; }
   .status-bar-shell .status-connection { max-width: 34cqi; }

@@ -32,6 +32,7 @@ import { hasDirectAgentConnection } from '../lib/directAgent'
 import {
   browseSshDirectory,
   hasSshSessionSecrets,
+  hydrateSshSecrets,
   isSshConnectionAlive,
   normalizeRemotePath,
   openSshSession,
@@ -354,6 +355,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     if (epoch !== epochRef.current) return
     const directEnabled = target.auth_kind === 'password' && await hasDirectAgentConnection(target.id)
     if (epoch !== epochRef.current) return
+    if (target.auth_kind === 'password' && !directEnabled) await hydrateSshSecrets(target.id)
     const needsPassword = target.auth_kind === 'password' && !directEnabled && !hasSshSessionSecrets(target.id)
     if (alive || !needsPassword) {
       await connectSsh(target, sshSecretsFor(target.id))

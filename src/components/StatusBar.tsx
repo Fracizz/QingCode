@@ -533,25 +533,18 @@ export default function StatusBar() {
             </>
           )}
 
-          <StatusTip label={[t('切换终端面板'), appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
+          <StatusTip label={[
+            t('切换终端面板'),
+            `${t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}${activeTerm ? ` · ${formatTerminalName(activeTerm.name)}` : ''}`,
+            appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
             <button
               type="button"
-              aria-label={t('切换终端面板')}
-              className={`flex max-w-[180px] items-center gap-1.5 ${STATUS_ACTION}`}
+              aria-label={`${t('切换终端面板')} ${t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}`}
+              className={`flex items-center gap-1.5 ${STATUS_ACTION}`}
               onClick={requestToggleTerminal}
             >
-              <TerminalIcon size={13} className="flex-shrink-0" />
-              <span className="truncate tabular-nums">
-                {t('{running}/{total} 运行中', {
-                  running: runningTerminals,
-                  total: projectTerminals.length,
-                })}
-                {activeTerm ? (
-                  <span
-                    className={`status-terminal-name ${STATUS_SECONDARY}`}
-                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
-                ) : null}
-              </span>
+              <TerminalIcon size={13} className={`flex-shrink-0 ${runningTerminals > 0 ? '' : STATUS_SECONDARY}`} />
+              <span className={`tabular-nums ${runningTerminals > 0 ? '' : STATUS_SECONDARY}`}>{runningTerminals}</span>
             </button>
           </StatusTip>
 

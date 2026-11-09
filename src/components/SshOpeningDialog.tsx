@@ -68,14 +68,14 @@ export default function SshOpeningDialog() {
             {error ? t('无法打开远程项目') : t('正在打开远程项目')}
           </h2>
         </div>
-        <div className="min-h-0 space-y-4 overflow-y-auto px-4 py-4">
+        <div className="min-h-0 space-y-3 overflow-y-auto px-4 py-3">
           <div>
             <div className="text-ui font-medium text-fg">{project.name}</div>
             <div className="mt-1 break-all font-mono text-ui-sm text-fg-muted">
               {sshProjectDisplayPath(project, null, connections)}
             </div>
           </div>
-          <ol className="space-y-2 text-ui-sm">
+          <ol className="space-y-1.5 text-ui-sm">
             {steps.map((label, index) => (
               <li key={label} className={`flex items-center gap-2 ${index === activeStep ? 'text-fg' : 'text-fg-muted'}`}>
                 {index < activeStep ? <Check size={14} className="text-ok" aria-hidden />
@@ -94,7 +94,7 @@ export default function SshOpeningDialog() {
               : t('首次连接可能需要下载、上传和启动远端服务。准备完成后将自动打开项目。')}
           </p>
           {error && (
-            <p role="alert" className="select-text whitespace-pre-wrap break-words rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui-sm text-danger">
+            <p role="alert" className="max-h-24 select-text overflow-y-auto whitespace-pre-wrap break-words rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui-sm text-danger">
               {error}
             </p>
           )}

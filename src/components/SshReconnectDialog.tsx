@@ -9,6 +9,7 @@ import type { Project, SshConnection } from '../types'
 import { getSshConnection, upsertSshConnection } from '../lib/projectRepository'
 import {
   connectSshWorkspace,
+  saveSshSecrets,
   SSH_RECONNECT_REQUEST_EVENT,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
@@ -23,6 +24,7 @@ export default function SshReconnectDialog() {
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [privateKeyPath, setPrivateKeyPath] = useState('')
+  const [remember, setRemember] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [directInfo, setDirectInfo] = useState<DirectAgentInfo | null>(null)
@@ -37,6 +39,7 @@ export default function SshReconnectDialog() {
       setConnection(null)
       setPassword('')
       setPassphrase('')
+      setRemember(false)
       setError('')
       setDirectInfo(null)
       setCheckingProfile(true)
@@ -110,6 +113,10 @@ export default function SshReconnectDialog() {
         await upsertSshConnection(nextConnection)
       }
       await connectSshWorkspace(project, nextConnection, secrets)
+      if (remember && !directInfo?.enabled && (secrets.password || secrets.passphrase)) {
+        // 连接成功后才保存；保存失败不影响本次连接。
+        await saveSshSecrets(connection.id, secrets).catch(reason => setError(`凭据未能保存：${String(reason)}`))
+      }
       const switched = await useProjectStore.getState().switchProject(project)
       if (switched) setProject(null)
     } catch (reason) {
@@ -206,6 +213,16 @@ export default function SshReconnectDialog() {
                 />
               </label>
             </>
+          ) : null}
+          {!checkingProfile && !directInfo?.enabled && connection ? (
+            <label className="flex items-center gap-2 text-ui-sm text-fg-muted">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={event => setRemember(event.target.checked)}
+              />
+              记住凭据（加密保存在本机，下次无需输入）
+            </label>
           ) : null}
           {directInfo?.enabled && <DirectServerRecoveryPanel
             key={project.id}

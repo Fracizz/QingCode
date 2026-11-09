@@ -18,6 +18,7 @@ mod ipc;
 mod path_guard;
 mod remote_ssh;
 mod run_environment;
+mod ssh_secrets;
 mod terminal;
 mod terminal_diagnostics;
 mod update;
@@ -954,6 +955,9 @@ pub fn run() {
             remote_ssh::ssh_test_connection,
             remote_ssh::ssh_browse_directory,
             remote_ssh::ssh_connect,
+            ssh_secrets::ssh_secret_save,
+            ssh_secrets::ssh_secret_load,
+            ssh_secrets::ssh_secret_delete,
             remote_ssh::ssh_disconnect,
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,

@@ -54,14 +54,17 @@ export default function SshServerRecovery({ project, opening, onRetry, onBusyCha
   }
   const buttonClass = 'rounded border border-border-strong px-2.5 py-1.5 text-ui-sm text-fg hover:bg-bg-hover disabled:opacity-50'
   return (
-    <section aria-label={t('修复远端服务包')} className="space-y-3 rounded border border-border p-3 text-ui-sm">
+    <section aria-label={t('修复远端服务包')} className="space-y-2 rounded border border-border p-3 text-ui-sm">
       <p className="text-fg-muted">{t('重新选择与客户端版本一致的 servers 目录，或在线下载。验证通过后仅更新此项目并自动重试。')}</p>
-      {info && <dl className="space-y-1 text-fg-muted">
-        <div><dt className="inline">{t('客户端需要的版本')}：</dt><dd className="inline font-mono text-fg">{info.expectedVersion}</dd></div>
-        <div><dt className="inline">{t('服务包版本')}：</dt><dd className="inline font-mono text-fg">{info.packageVersion || t('未知')}</dd></div>
-        <div><dt>{t('服务包来源')}</dt><dd className="select-text break-all font-mono">{info.sourcePath || t('未找到服务包')}</dd></div>
-      </dl>}
-      {(failure || info?.problem) && <p role="alert" className="select-text break-words text-danger">{failure || info?.problem}</p>}
+      {/* 预留固定高度，避免异步读取服务包信息后弹窗高度跳变 */}
+      <dl className="grid min-h-[4.25rem] grid-cols-[auto_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-fg-muted">
+        {info && <>
+          <dt>{t('客户端需要的版本')}</dt><dd className="font-mono text-fg">{info.expectedVersion}</dd>
+          <dt>{t('服务包版本')}</dt><dd className="font-mono text-fg">{info.packageVersion || t('未知')}</dd>
+          <dt>{t('服务包来源')}</dt><dd className="select-text break-all font-mono line-clamp-2">{info.sourcePath || t('未找到服务包')}</dd>
+        </>}
+      </dl>
+      {(failure || info?.problem) && <p role="alert" className="max-h-16 select-text overflow-y-auto break-words text-danger">{failure || info?.problem}</p>}
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={busy !== null} className={buttonClass} onClick={() => void recover('choose')}>{t('重新选择服务目录')}</button>
         <button type="button" disabled={busy !== null} className={buttonClass} onClick={() => void recover('download')}>{t('在线下载并重试')}</button>

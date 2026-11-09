@@ -62,6 +62,7 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
   if (!attempt) {
     attempt = (async () => {
       const candidates = directAgentSshCandidates(await listSshConnections(), info.host)
+      await Promise.all(candidates.map(item => hydrateSshSecrets(item.id)))
       const ssh = candidates.find(connection => connection.id === id)
         ?? (candidates.length === 1 ? candidates[0] : undefined)
       if (!ssh?.host_key_fingerprint || (ssh.auth_kind === 'password' && !sshSecretsFor(ssh.id).password)) {
@@ -158,6 +159,39 @@ export function hasSshSessionSecrets(id: string): boolean {
 
 export function forgetSshSessionSecrets(id: string): void {
   sessionSecrets.delete(id)
+}
+
+/** 读取本机加密保存的凭据（Windows DPAPI / AES-GCM）；没有或解密失败时返回 null。 */
+export async function loadSavedSshSecrets(id: string): Promise<SshSessionSecrets | null> {
+  try {
+    const value = await safeInvoke<SshSessionSecrets | null>('读取已保存的 SSH 凭据', 'ssh_secret_load', { id })
+    return value && (value.password || value.passphrase) ? value : null
+  } catch {
+    return null
+  }
+}
+
+export async function hasSavedSshSecrets(id: string): Promise<boolean> {
+  return Boolean(await loadSavedSshSecrets(id))
+}
+
+/** 明确勾选“记住”后才调用；两项都为空等同于删除。 */
+export async function saveSshSecrets(id: string, secrets: SshSessionSecrets): Promise<void> {
+  await safeInvoke('保存 SSH 凭据', 'ssh_secret_save', {
+    id,
+    secrets: { password: secrets.password || undefined, passphrase: secrets.passphrase || undefined },
+  })
+}
+
+export async function deleteSavedSshSecrets(id: string): Promise<void> {
+  await safeInvoke('删除已保存的 SSH 凭据', 'ssh_secret_delete', { id })
+}
+
+/** 把已保存的凭据载入内存会话缓存（不覆盖本次已输入的值）；之后同步读取方可直接使用。 */
+export async function hydrateSshSecrets(id: string): Promise<void> {
+  if (hasSshSessionSecrets(id)) return
+  const saved = await loadSavedSshSecrets(id)
+  if (saved) rememberSshSessionSecrets(id, saved)
 }
 
 export interface SshBrowseEntry {
@@ -512,6 +546,7 @@ export async function connectSshWorkspace(
   connection: SshConnection,
   secrets: SshSessionSecrets = {}
 ): Promise<void> {
+  await hydrateSshSecrets(connection.id)
   const merged = sshSecretsFor(connection.id, secrets)
   const mode = resolveSshConnectionMode(connection, getSshServerEnabled())
   // 旧库行没有 mode：按全局默认解析后回填一次；失败不阻断连接。
@@ -627,6 +662,7 @@ export async function ensureSshWorkspaceConnected(
       const connection = await getSshConnection(connectionId)
       if (!connection) throw new Error('SSH 连接配置不存在')
       const connectionAlive = await isSshConnectionAlive(connectionId)
+      if (!connectionAlive) await hydrateSshSecrets(connectionId)
       const directEnabled = !connectionAlive && connection.auth_kind === 'password'
         ? await hasDirectAgentConnection(connectionId)
         : false

@@ -39,6 +39,9 @@ import { useI18n } from '../lib/i18n'
 import {
   disconnectSshSession,
   forgetSshSessionSecrets,
+  deleteSavedSshSecrets,
+  hasSavedSshSecrets,
+  saveSshSecrets,
   isSshConnectionAlive,
   isSshBackgroundSuspended,
   SSH_CONNECTION_INVALIDATED_EVENT,
@@ -125,6 +128,7 @@ export default function RemoteConnectionsManager() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
+  const [remember, setRemember] = useState(false)
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean | null>>({})
@@ -237,6 +241,15 @@ export default function RemoteConnectionsManager() {
     setAdvancedOpen(nextMode === 'ssh')
     setPassword('')
     setPassphrase('')
+    setRemember(false)
+    if (conn) {
+      const requested = conn.id
+      void hasSavedSshSecrets(requested).then(saved => {
+        if (saved && useProjectStore.getState().sshConnections.some(item => item.id === requested)) {
+          setRemember(current => current || saved)
+        }
+      })
+    }
     setVerification(null)
     setTesting(false)
     setError('')
@@ -514,6 +527,12 @@ export default function RemoteConnectionsManager() {
           passphrase: passphrase || undefined,
         })
       }
+      if (remember && (password || passphrase)) {
+        await saveSshSecrets(saved.id, { password, passphrase })
+      } else if (!remember || configChanged) {
+        // 取消勾选，或目标/认证已变化且没有新凭据：旧的加密凭据不再可信，直接清除。
+        await deleteSavedSshSecrets(saved.id)
+      }
       if (reconnectNeeded && selected) {
         if (modeChanged) await switchSshConnectionMode(selected.id, mode)
         else await reconnectSshConnection(selected.id)
@@ -751,7 +770,7 @@ export default function RemoteConnectionsManager() {
             className={`${fieldClass} mt-1`}
           >
             <option value="privateKey">{t('私钥（推荐，WSL 无需密码）')}</option>
-            <option value="password">{t('密码（仅本次会话）')}</option>
+            <option value="password">{t('密码')}</option>
           </select>
         </label>
         {form.authKind === 'privateKey' ? (
@@ -778,13 +797,19 @@ export default function RemoteConnectionsManager() {
           </label>
         ) : null}
         <label className={labelClass}>
-          {isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
+          {remember
+            ? t('密码（加密保存在本机）')
+            : isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
           <input
             type="password"
             value={password}
             onChange={event => { invalidateVerification(); setPassword(event.target.value) }}
             className={`${fieldClass} mt-1`}
           />
+        </label>
+        <label className={`col-span-full flex items-center gap-2 ${labelClass}`}>
+          <input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} />
+          {t('记住凭据（加密保存在本机，下次无需输入）')}
         </label>
         {form.authKind === 'privateKey' ? (
           <label className={labelClass}>

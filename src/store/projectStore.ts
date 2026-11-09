@@ -74,6 +74,8 @@ import {
   isSshWorkspaceReady,
   prepareSshWorkspace,
   requestSshReconnect,
+  forgetSshSessionSecrets,
+  deleteSavedSshSecrets,
   sshRootUri,
   SSH_CONNECTIONS_CHANGED_EVENT,
   waitForSshWorkspaceConnection,
@@ -447,6 +449,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   deleteSshConnection: async id => {
     await deleteSshConnectionRow(id)
+    forgetSshSessionSecrets(id)
+    await deleteSavedSshSecrets(id).catch(() => undefined)
     await get().loadSshConnections()
     window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
   },
