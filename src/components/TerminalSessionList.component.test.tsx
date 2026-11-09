@@ -314,6 +314,73 @@ describe('TerminalSessionList', () => {
     expect(within(row('t1')).getByRole('button', { name: /重启/ })).toBeInTheDocument()
   })
 
+  it('enters manage mode: rows toggle a selection instead of switching terminals', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    expect(screen.getByRole('button', { name: '完成' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 0')
+    expect(within(row('t1')).queryByRole('button', { name: '关闭终端' })).toBeNull()
+    fireEvent.click(row('t2'))
+    fireEvent.click(row('other'))
+    expect(row('t2')).toHaveAttribute('aria-selected', 'true')
+    expect(row('t1')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 2')
+    expect(mocks.projectState.switchProject).not.toHaveBeenCalled()
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+    fireEvent.click(row('t2'))
+    expect(screen.getByRole('status')).toHaveTextContent('已选 1')
+  })
+
+  it('selects all visible or only ended terminals and closes the selection', async () => {
+    mocks.state.terminals = [
+      terminal(),
+      terminal({ id: 't2', name: 'dev', status: 'exited', exitCode: 0 }),
+      terminal({ id: 'other', name: 'elsewhere', projectId: 'p2', status: 'exited', exitCode: 1 }),
+    ]
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    fireEvent.click(screen.getByRole('button', { name: '选已结束' }))
+    expect(screen.getByRole('status')).toHaveTextContent('已选 2')
+    fireEvent.click(screen.getByRole('button', { name: '全选 3' }))
+    expect(screen.getByRole('status')).toHaveTextContent('已选 3')
+    fireEvent.click(screen.getByRole('button', { name: '取消全选' }))
+    fireEvent.click(screen.getByRole('button', { name: '选已结束' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭所选' }))
+    await vi.waitFor(() => expect(mocks.state.closeTerminal).toHaveBeenCalledTimes(2))
+    expect(mocks.state.closeTerminal).toHaveBeenCalledWith('t2')
+    expect(mocks.state.closeTerminal).toHaveBeenCalledWith('other')
+    expect(mocks.state.closeTerminal).not.toHaveBeenCalledWith('t1')
+  })
+
+  it('leaves manage mode with 完成 or Escape and drops the selection', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    fireEvent.click(row('t2'))
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(within(row('t1')).getByRole('button', { name: '关闭终端' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    expect(screen.getByRole('status')).toHaveTextContent('已选 0')
+    fireEvent.keyDown(row('t1'), { key: 'Escape' })
+    expect(screen.getByRole('button', { name: '管理' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('selects a whole project from its tri-state checkbox and via the context menu entry', () => {
+    render(<TerminalSessionList />)
+    fireEvent.contextMenu(row('t2'))
+    fireEvent.click(screen.getByText('批量操作'))
+    expect(screen.getByRole('status')).toHaveTextContent('已选 1')
+    expect(row('t2')).toHaveAttribute('aria-selected', 'true')
+    const box = screen.getByRole('checkbox', { name: '选择「app」的全部终端' })
+    expect(box).toHaveAttribute('aria-checked', 'mixed')
+    fireEvent.click(box)
+    expect(box).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 2')
+    fireEvent.click(box)
+    expect(box).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 0')
+  })
+
   it('shows an empty state that points at the header action', () => {
     mocks.state.terminals = []
     render(<TerminalSessionList />)

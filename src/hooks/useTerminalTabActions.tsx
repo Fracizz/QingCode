@@ -251,6 +251,27 @@ export function useTerminalTabActions({
     await closeAllProjectTerminals(projectId)
   }
 
+  /** 管理模式：关闭所选终端（可跨项目），运行中的合并成一次确认。 */
+  const handleCloseSelected = async (ids: ReadonlyArray<string>) => {
+    const wanted = new Set(ids)
+    const targets = useTerminalStore.getState().terminals.filter(tab => wanted.has(tab.id))
+    if (targets.length === 0) return
+    const running = await listBusyTerminals(targets)
+    if (running.length > 0) {
+      const confirmed = await confirmDialog({
+        title: translate('关闭所选终端'),
+        message: translate('将终止 {count} 个运行中的终端', { count: running.length }),
+        detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
+        kind: 'warning',
+        confirmLabel: translate('终止并关闭'),
+        cancelLabel: translate('取消'),
+      })
+      if (!confirmed) return
+    }
+    setCloseArmId(null)
+    for (const term of targets) await closeTerminal(term.id)
+  }
+
   /** Panel chrome: always close every terminal in the project. */
   const handleCloseAllProject = async () => {
     if (!currentProject) return
@@ -525,6 +546,7 @@ export function useTerminalTabActions({
     renameCommittingRef,
     handleCloseClick,
     handleCloseAllProject,
+    handleCloseSelected,
     startRename,
     commitRename,
     cancelRename,

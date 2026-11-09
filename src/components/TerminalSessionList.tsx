@@ -10,9 +10,12 @@ import {
 import {
   ChevronDown,
   ChevronLeft,
+  Check,
   ChevronRight,
   Circle,
+  ListChecks,
   LoaderCircle,
+  Minus,
   Plus,
   RotateCcw,
   Terminal as TerminalIcon,
@@ -40,6 +43,12 @@ import {
   TERMINAL_LIST_COLLAPSED_KEY,
   type TerminalSessionGroup,
 } from '@/lib/terminal/terminalSessionGroups'
+import {
+  allTerminalsSelected,
+  isEndedTerminal,
+  prunedTerminalSelection,
+  toggleTerminalSelection,
+} from '@/lib/terminal/terminalBatchSelection'
 import { formatTerminalName } from '../utils/terminalName'
 import ContextMenu from './ContextMenu'
 import EmptyState from './EmptyState'
@@ -50,7 +59,28 @@ import type { TerminalTab } from '../types'
 
 const HEADER_BUTTON =
   'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
+const HEADER_TEXT_BUTTON =
+  'flex ui-chip h-6 flex-shrink-0 items-center rounded px-1.5 text-ui-xs font-normal text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:bg-bg-active aria-pressed:text-fg'
+const BAR_BUTTON =
+  'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
 const ROW_BUTTON = 'flex ui-chip h-6 w-5 flex-shrink-0 items-center justify-center rounded'
+
+type PickState = 'on' | 'off' | 'mixed'
+
+function PickBox({ state, ...rest }: { state: PickState } & Record<`data-${string}`, string>) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[4px] border ${
+        state === 'off' ? 'border-border-strong' : 'border-fg bg-fg text-bg'
+      }`}
+      {...rest}
+    >
+      {state === 'on' && <Check size={11} strokeWidth={3} />}
+      {state === 'mixed' && <Minus size={11} strokeWidth={3} />}
+    </span>
+  )
+}
 
 function loadCollapsedProjects(): ReadonlySet<string> {
   try {
@@ -93,6 +123,7 @@ export default function TerminalSessionList() {
     renameCommittingRef,
     handleCloseClick,
     handleCloseAllProject,
+    handleCloseSelected,
     startRename,
     commitRename,
     cancelRename,
@@ -120,6 +151,9 @@ export default function TerminalSessionList() {
   const [pinnedProjectId, setPinnedProjectId] = useState(currentProjectId)
   const [seenProjectId, setSeenProjectId] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const [manageMode, setManageMode] = useState(false)
+  const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
+  const [closingBatch, setClosingBatch] = useState(false)
   const newDisabled = Boolean(currentProject && atLimit) || creatingTerminal
 
   // 鼠标还在列表里时不重排分组：点击后行跳走，双击的第二下会落到别的行上。
@@ -145,6 +179,26 @@ export default function TerminalSessionList() {
     group.terminals.length > 0 && !collapsedProjects.has(group.project.id)
   const visibleTerminals = groups.flatMap(group => (isExpanded(group) ? group.terminals : []))
   const totalTerminals = groups.reduce((sum, group) => sum + group.terminals.length, 0)
+  // 没有终端可管理时自动退出管理模式；只处理当前可见（已展开）的终端，避免关掉折叠分组里看不到的会话。
+  const managing = manageMode && totalTerminals > 0
+  const picked = prunedTerminalSelection(selection, visibleTerminals)
+  const endedVisible = visibleTerminals.filter(isEndedTerminal)
+  const allPicked = allTerminalsSelected(picked, visibleTerminals)
+  const setManaging = (next: boolean) => {
+    setManageMode(next)
+    setSelection(new Set())
+    setCloseArmId(null)
+  }
+  const closePicked = async () => {
+    if (closingBatch || picked.size === 0) return
+    setClosingBatch(true)
+    try {
+      await handleCloseSelected([...picked])
+    } finally {
+      setClosingBatch(false)
+    }
+  }
+
   // 没有当前终端时让第一行可被 Tab 聚焦，否则键盘进不了列表。
   const rovingTerminalId = visibleTerminals.some(term => term.id === paneActiveId)
     ? paneActiveId
@@ -167,12 +221,21 @@ export default function TerminalSessionList() {
   }
 
   const selectTerminal = (term: TerminalTab) => {
+    if (managing) {
+      setSelection(toggleTerminalSelection(picked, term.id))
+      return
+    }
     void selectAcrossProjects(term)
     if (closeArmId && closeArmId !== term.id) setCloseArmId(null)
   }
 
   const onListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLInputElement) return
+    if (managing && event.key === 'Escape') {
+      event.preventDefault()
+      setManaging(false)
+      return
+    }
     const count = visibleTerminals.length
     if (count === 0) return
     const focusedId = (event.target as Element).closest<HTMLElement>('[data-terminal-session-row]')
@@ -196,6 +259,7 @@ export default function TerminalSessionList() {
 
   const renderRow = (term: TerminalTab) => {
     const isActive = term.id === paneActiveId
+    const isPicked = managing && picked.has(term.id)
     const isCloseArmed = closeArmId === term.id
     const isRenaming = renamingId === term.id
     const isPending = term.id === pendingTerminalId
@@ -212,11 +276,13 @@ export default function TerminalSessionList() {
         role="tab"
         data-terminal-session-row={term.id}
         tabIndex={term.id === rovingTerminalId ? 0 : -1}
-        aria-selected={isActive}
+        aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
-        draggable={!isRenaming}
+        draggable={!isRenaming && !managing}
         className={`group relative flex min-h-9 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-1 pl-4 pr-1 transition-colors ${
-          isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+          isPicked || (!managing && isActive)
+            ? 'bg-bg-active text-fg'
+            : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
         onDragStart={event => handleTabDragStart(event, term.id)}
         onDragOver={event => handleTabDragOver(event, term.id)}
@@ -232,6 +298,7 @@ export default function TerminalSessionList() {
         }}
         onDoubleClick={event => {
           // 行内按钮的双击不能进入重命名（连点关闭时很常见）。
+          if (managing) return
           if ((event.target as Element | null)?.closest?.('button, input, [data-terminal-close]')) return
           event.preventDefault()
           startRename(term.id, term.name)
@@ -249,6 +316,11 @@ export default function TerminalSessionList() {
               dropTarget.position === 'before' ? '-top-px' : '-bottom-px'
             }`}
           />
+        )}
+        {managing && (
+          <span className="-ml-3 flex flex-shrink-0">
+            <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
+          </span>
         )}
         {isActive && (
           <span
@@ -288,7 +360,7 @@ export default function TerminalSessionList() {
             className={`flex-shrink-0 animate-spin ${isPending ? 'text-fg-muted' : 'text-warn'}`}
           />
         )}
-        {exited && !isRenaming && (
+        {exited && !isRenaming && !managing && (
           <Tooltip label={translate(restartLabel, { exitCode: exitCodeSuffix })} side="top">
             <button
               type="button"
@@ -310,7 +382,7 @@ export default function TerminalSessionList() {
             attention={attentionIds.has(term.id) && !isActive}
           />
         )}
-        <Tooltip
+        {!managing && <Tooltip
           label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
           side="top"
           forceOpen={isCloseArmed}
@@ -330,7 +402,7 @@ export default function TerminalSessionList() {
           >
             {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={13} />}
           </button>
-        </Tooltip>
+        </Tooltip>}
       </div>
     )
   }
@@ -343,6 +415,9 @@ export default function TerminalSessionList() {
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
     const groupAtLimit = terminals.length >= MAX_TERMINALS_PER_PROJECT
+    const pickedInGroup = terminals.filter(term => picked.has(term.id)).length
+    const groupPick: PickState =
+      pickedInGroup === 0 ? 'off' : pickedInGroup === terminals.length ? 'on' : 'mixed'
     return (
       <section
         key={project.id}
@@ -360,6 +435,25 @@ export default function TerminalSessionList() {
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
           }`}
         >
+          {managing && expanded && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={groupPick === 'mixed' ? 'mixed' : groupPick === 'on'}
+              aria-label={translate('选择「{name}」的全部终端', { name: project.name })}
+              className="ml-1 flex h-full flex-shrink-0 items-center"
+              onClick={() => {
+                const next = new Set(picked)
+                for (const term of terminals) {
+                  if (groupPick === 'on') next.delete(term.id)
+                  else next.add(term.id)
+                }
+                setSelection(next)
+              }}
+            >
+              <PickBox state={groupPick} data-terminal-group-pick={project.id} />
+            </button>
+          )}
           <button
             type="button"
             aria-expanded={isEmpty ? undefined : expanded}
@@ -487,6 +581,15 @@ export default function TerminalSessionList() {
           </button>
         </Tooltip>
         <span className="mx-0.5 h-4 w-px flex-shrink-0 bg-border" aria-hidden="true" />
+        <button
+          type="button"
+          aria-pressed={managing}
+          className={HEADER_TEXT_BUTTON}
+          disabled={totalTerminals === 0 && !managing}
+          onClick={() => setManaging(!managing)}
+        >
+          {managing ? translate('完成') : translate('管理')}
+        </button>
         <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="bottom">
           <button
             type="button"
@@ -509,6 +612,43 @@ export default function TerminalSessionList() {
           </button>
         </Tooltip>
       </div>
+
+      {managing && (
+        <div
+          data-terminal-manage-bar
+          className="flex flex-shrink-0 flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-border px-2.5 pb-1.5"
+        >
+          <span role="status" className="mr-auto text-ui-xs text-fg-dim">
+            {translate('已选 {n}', { n: picked.size })}
+          </span>
+          <button
+            type="button"
+            className={BAR_BUTTON}
+            disabled={closingBatch || visibleTerminals.length === 0}
+            onClick={() =>
+              setSelection(allPicked ? new Set() : new Set(visibleTerminals.map(term => term.id)))
+            }
+          >
+            {allPicked ? translate('取消全选') : translate('全选 {n}', { n: visibleTerminals.length })}
+          </button>
+          <button
+            type="button"
+            className={BAR_BUTTON}
+            disabled={closingBatch || endedVisible.length === 0}
+            onClick={() => setSelection(new Set(endedVisible.map(term => term.id)))}
+          >
+            {translate('选已结束')}
+          </button>
+          <button
+            type="button"
+            className={`${BAR_BUTTON} text-danger hover:text-danger`}
+            disabled={closingBatch || picked.size === 0}
+            onClick={() => void closePicked()}
+          >
+            {translate('关闭所选')}
+          </button>
+        </div>
+      )}
 
       {groups.length === 0 ? (
         <EmptyState
@@ -537,7 +677,23 @@ export default function TerminalSessionList() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={menuItems(contextMenu.terminal)}
+          items={[
+            ...menuItems(contextMenu.terminal),
+            ...(managing
+              ? []
+              : [
+                  {
+                    label: translate('批量操作'),
+                    icon: <ListChecks size={14} />,
+                    separatorBefore: true,
+                    action: () => {
+                      setManageMode(true)
+                      setSelection(new Set([contextMenu.terminal.id]))
+                      setCloseArmId(null)
+                    },
+                  },
+                ]),
+          ]}
           onClose={() => setContextMenu(null)}
         />
       )}
