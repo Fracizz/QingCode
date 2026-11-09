@@ -59,8 +59,6 @@ import type { TerminalTab } from '../types'
 
 const HEADER_BUTTON =
   'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
-const HEADER_TEXT_BUTTON =
-  'flex ui-chip h-6 flex-shrink-0 items-center rounded px-1.5 text-ui-xs font-normal text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:bg-bg-active aria-pressed:text-fg'
 const BAR_BUTTON =
   'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
 const ROW_BUTTON = 'flex ui-chip h-6 w-5 flex-shrink-0 items-center justify-center rounded'
@@ -581,15 +579,18 @@ export default function TerminalSessionList() {
           </button>
         </Tooltip>
         <span className="mx-0.5 h-4 w-px flex-shrink-0 bg-border" aria-hidden="true" />
-        <button
-          type="button"
-          aria-pressed={managing}
-          className={HEADER_TEXT_BUTTON}
-          disabled={totalTerminals === 0 && !managing}
-          onClick={() => setManaging(!managing)}
-        >
-          {managing ? translate('完成') : translate('管理')}
-        </button>
+        <Tooltip label={managing ? translate('完成') : translate('管理')} side="bottom">
+          <button
+            type="button"
+            aria-label={managing ? translate('完成') : translate('管理')}
+            aria-pressed={managing}
+            className={`${HEADER_BUTTON} aria-pressed:bg-bg-active aria-pressed:text-fg`}
+            disabled={totalTerminals === 0 && !managing}
+            onClick={() => setManaging(!managing)}
+          >
+            {managing ? <Check size={15} /> : <ListChecks size={15} />}
+          </button>
+        </Tooltip>
         <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="bottom">
           <button
             type="button"
