@@ -298,6 +298,86 @@ fn marker_command(client: &Client, marker: &str) -> serde_json::Value {
     }
 }
 
+/// 端口直连换绑：占用端口时回滚、换绑到对外地址、重复执行不重启，结束后恢复原监听。
+/// 只验证换绑本身，不改动测试机的开机自启。`--ignored` 运行：
+/// `cargo test --lib live_tunnel_gateway_rebinds_for_port_direct -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "requires QC_TUNNEL_HOST / QC_TUNNEL_ROOT and an authorized SSH key"]
+async fn live_tunnel_gateway_rebinds_for_port_direct() {
+    let client = connect("expose").await;
+    activate(&client, "expose").await;
+    let maintenance = tunnel_maintenance(&client.manager, &client.id, &client.root).unwrap();
+    let staged = server::stage_direct_gateway(&maintenance, &client.root)
+        .await
+        .expect("暂存网关");
+    let original = read_gateway(&maintenance, &client.root, &staged)
+        .await
+        .expect("读取网关")
+        .expect("隧道网关应已存在");
+    println!(
+        "[expose] 原网关 {}:{} pid={}",
+        original.hostname, original.port, original.pid
+    );
+    let healthy = |label: &'static str| {
+        let config = client.manager.direct_config(&client.id).expect("隧道登记");
+        async move {
+            let health = direct::test(&config)
+                .await
+                .unwrap_or_else(|error| panic!("[{label}] 健康检查失败：{error}"));
+            println!("[expose][{label}] 经隧道 {} 正常", config.endpoint);
+            health
+        }
+    };
+
+    // SSH 端口必然被 sshd 占用：换绑失败后原网关必须恢复，隧道继续可用。
+    let ssh_port = env("QC_TUNNEL_PORT")
+        .and_then(|port| port.parse().ok())
+        .unwrap_or(22);
+    let error = rebind_gateway(
+        &client.manager,
+        &maintenance,
+        &client.root,
+        &staged,
+        ssh_port,
+    )
+    .await
+    .expect_err("占用端口应当失败");
+    assert!(!error.contains("恢复原网关也失败"), "{error}");
+    println!("[expose] 占用端口按预期失败：{error}");
+    healthy("rollback").await;
+
+    let port = env("QC_TUNNEL_EXPOSE_PORT")
+        .and_then(|port| port.parse().ok())
+        .unwrap_or(original.port + 1);
+    let exposed = rebind_gateway(&client.manager, &maintenance, &client.root, &staged, port)
+        .await
+        .expect("换绑到对外地址");
+    assert_eq!(exposed.port, port);
+    assert_eq!(exposed.hostname, public_listen_host(&original.hostname));
+    assert_eq!(exposed.token, original.token, "换绑不得更换配对凭据");
+    assert_eq!(exposed.certificate_sha256, original.certificate_sha256);
+    let config = client.manager.direct_config(&client.id).expect("隧道登记");
+    assert!(config.endpoint.ends_with(&format!(":{port}")));
+    assert_eq!(config.tunnel.as_deref(), Some(client.id.as_str()));
+    healthy("exposed").await;
+
+    let again = rebind_gateway(&client.manager, &maintenance, &client.root, &staged, port)
+        .await
+        .expect("重复换绑");
+    assert_eq!(again.pid, exposed.pid, "已在目标地址时不得重启网关");
+
+    let restored = move_gateway(&maintenance, &client.root, &staged, &again, &original)
+        .await
+        .expect("恢复原监听");
+    reattach_tunnel(&client.manager, &client.id, &restored)
+        .await
+        .expect("隧道接回原端口");
+    assert_eq!(restored.port, original.port);
+    assert_eq!(restored.hostname, original.hostname);
+    healthy("restored").await;
+    close(&client.id).await;
+}
+
 #[tokio::test]
 #[ignore = "requires QC_TUNNEL_HOST / QC_TUNNEL_ROOT and an authorized SSH key"]
 async fn live_ssh_tunnel_acceptance() {

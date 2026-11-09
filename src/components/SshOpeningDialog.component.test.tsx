@@ -44,6 +44,20 @@ describe('SshOpeningDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
     expect((await opening).name).toBe('AbortError')
   })
+  it('hides the progress card when run in background but keeps opening and re-shows on error', async () => {
+    let fail!: (error: Error) => void
+    const opening = runSshOpening(project, () => new Promise((_resolve, reject) => { fail = reject })).catch(error => error)
+    render(<SshOpeningDialog />)
+    await screen.findByRole('status')
+    fireEvent.click(screen.getByRole('button', { name: '后台运行' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(useSshOpeningStore.getState().attempt?.background).toBe(true)
+    expect(useSshOpeningStore.getState().attempt?.controller.signal.aborted).toBe(false)
+    await act(async () => { fail(new SshPreparationError('boom')) })
+    expect(await opening).toBeInstanceOf(SshPreparationError)
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+  })
+
   it('shows the terminal preparation stage and allows cancelling without activating a project', async () => {
     const opening = runSshOpening(project, async (_signal, report) => {
       report('service', { rootUri: project.path, connectionId: 'c', connectionMode: 'server', phase: 'readyServer', mode: 'server', transport: 'serve', reason: null, version: '1' })

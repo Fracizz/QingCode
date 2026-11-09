@@ -40,7 +40,6 @@ import {
   disconnectSshSession,
   forgetSshSessionSecrets,
   deleteSavedSshSecrets,
-  hasSavedSshSecrets,
   saveSshSecrets,
   isSshConnectionAlive,
   isSshBackgroundSuspended,
@@ -128,7 +127,7 @@ export default function RemoteConnectionsManager() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
-  const [remember, setRemember] = useState(false)
+  const [remember, setRemember] = useState(true)
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean | null>>({})
@@ -241,15 +240,7 @@ export default function RemoteConnectionsManager() {
     setAdvancedOpen(nextMode === 'ssh')
     setPassword('')
     setPassphrase('')
-    setRemember(false)
-    if (conn) {
-      const requested = conn.id
-      void hasSavedSshSecrets(requested).then(saved => {
-        if (saved && useProjectStore.getState().sshConnections.some(item => item.id === requested)) {
-          setRemember(current => current || saved)
-        }
-      })
-    }
+    setRemember(true)
     setVerification(null)
     setTesting(false)
     setError('')
@@ -813,7 +804,7 @@ export default function RemoteConnectionsManager() {
         </label>
         {form.authKind === 'privateKey' ? (
           <label className={labelClass}>
-            {t('私钥口令（如有，仅本次会话）')}
+            {remember ? t('私钥口令（如有，加密保存在本机）') : t('私钥口令（如有，仅本次会话）')}
             <input
               type="password"
               value={passphrase}

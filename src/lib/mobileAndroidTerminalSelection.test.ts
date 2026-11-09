@@ -83,7 +83,7 @@ describe('Android selection quote to conversation', () => {
     selection.start({ x: 25, y: 5 })
     expect(quoteButton().hidden).toBe(false)
     quoteButton().click()
-    expect(term.paste).toHaveBeenCalledWith('> alpha\n> beta\n\n')
+    expect(term.paste).toHaveBeenCalledWith('> alpha\n> beta\n')
     expect(selection.isActive()).toBe(false)
   })
 

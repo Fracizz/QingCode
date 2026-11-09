@@ -1197,6 +1197,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         navigationHistory: EMPTY_NAVIGATION_HISTORY,
       }
     })
+    // 工作台从有文件的项目切到没文件的项目时，不留一列空编辑器。
+    if (get().tabs.length === 0) useUIStore.getState().collapseEmptyWorkbenchEditor()
   },
 
   deactivateProjectSession: projectId => {

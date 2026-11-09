@@ -24,7 +24,7 @@ export default function SshReconnectDialog() {
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [privateKeyPath, setPrivateKeyPath] = useState('')
-  const [remember, setRemember] = useState(false)
+  const [remember, setRemember] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [directInfo, setDirectInfo] = useState<DirectAgentInfo | null>(null)
@@ -39,7 +39,7 @@ export default function SshReconnectDialog() {
       setConnection(null)
       setPassword('')
       setPassphrase('')
-      setRemember(false)
+      setRemember(true)
       setError('')
       setDirectInfo(null)
       setCheckingProfile(true)
@@ -115,7 +115,7 @@ export default function SshReconnectDialog() {
       await connectSshWorkspace(project, nextConnection, secrets)
       if (remember && !directInfo?.enabled && (secrets.password || secrets.passphrase)) {
         // 连接成功后才保存；保存失败不影响本次连接。
-        await saveSshSecrets(connection.id, secrets).catch(reason => setError(`凭据未能保存：${String(reason)}`))
+        await saveSshSecrets(connection.id, secrets).catch(reason => setError(`${t('凭据未能保存：')}${String(reason)}`))
       }
       const switched = await useProjectStore.getState().switchProject(project)
       if (switched) setProject(null)
@@ -167,7 +167,7 @@ export default function SshReconnectDialog() {
           </div>
           {checkingProfile ? <p className="text-ui-sm text-fg-muted">{t('正在检查连接方式…')}</p> : directInfo?.enabled ? <p className="text-ui-sm text-fg-muted">{t('使用已保存的 Server 配对凭据连接，无需 SSH 密码。请确认远端服务正在运行，并开放 TCP {port}。', { port: directInfo.port })}</p> : connection?.auth_kind === 'password' ? (
             <label className="block text-ui-sm text-fg-muted">
-              密码（仅本次会话）
+              {t('密码（仅本次会话）')}
               <input
                 autoFocus
                 type="password"
@@ -200,7 +200,7 @@ export default function SshReconnectDialog() {
                 </div>
               </label>
               <label className="block text-ui-sm text-fg-muted">
-                私钥口令（如有，仅本次会话）
+                {remember ? t('私钥口令（如有，加密保存在本机）') : t('私钥口令（如有，仅本次会话）')}
                 <input
                   autoFocus
                   type="password"

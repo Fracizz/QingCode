@@ -86,14 +86,7 @@ pub async fn direct_agent_manage(
     ) {
         return Err("[direct:ssh-identity] SSH 主机与已保存的 Server 主机不一致".into());
     }
-    let maintenance = SshManager::new();
-    maintenance.set_server_binary_dirs(manager.server_binary_dirs());
-    maintenance
-        .server_auto_download
-        .store(manager.server_auto_download(), Ordering::SeqCst);
-    if let Ok(mut cache) = maintenance.server_cache_dir.write() {
-        *cache = manager.server_cache_dir.read().ok().and_then(|v| v.clone());
-    }
+    let maintenance = manager.maintenance_manager();
     let id = config.id.clone();
     let (session, _) = store_authenticated_session(&maintenance, config)
         .await

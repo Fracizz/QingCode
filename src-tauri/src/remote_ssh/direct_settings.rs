@@ -358,6 +358,9 @@ pub async fn direct_agent_save(
     }
     if let Some(old) = previous {
         direct::close_connection(&old.endpoint, &connection_id);
+        if old.tunnel.is_some() {
+            tunnel::forget(&connection_id);
+        }
     }
     if enabled {
         manager
@@ -466,39 +469,16 @@ pub(super) fn provision_commands(bin: &str, port: u16) -> (String, String) {
     (unix, windows)
 }
 
-#[tauri::command]
-pub async fn direct_agent_provision(
-    connection_id: String,
-    port: Option<u16>,
-    auto_start: Option<bool>,
-    app: AppHandle,
-    manager: State<'_, SshManager>,
-) -> Result<DirectAgentInfo, String> {
-    let gate = manager.server_gate(&format!("direct-config|{connection_id}"))?;
-    let _guard = gate.lock().await;
-    if manager.direct_config(&connection_id).is_some() {
-        return Err(
-            "请通过远端控制台修改服务监听端口，再导入配对信息；直连不会暗中使用 SSH".into(),
-        );
-    }
-    let port = port.unwrap_or(qingcode_server::direct::DEFAULT_DIRECT_PORT);
-    if port == 0 {
-        return Err("监听端口必须为 1–65535".into());
-    }
-    let root = manager
-        .roots_for_connection(&connection_id)
-        .into_iter()
-        .find(|r| r.trusted)
-        .ok_or("请先连接一个已信任的 SSH 项目，或手动启动 Server 后导入配对信息")?;
+async fn provision_over_ssh(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    port: u16,
+    startup: &str,
+) -> Result<qingcode_server::direct::DirectInfo, String> {
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
-    let staged = server::stage_direct_gateway(&manager, &root).await?;
+    let staged = server::stage_direct_gateway(manager, root).await?;
     let (mut unix, mut windows) = provision_commands(&staged, port);
-    let startup = if auto_start.unwrap_or(true) {
-        "enable"
-    } else {
-        "disable"
-    };
     // Configure after startup has produced its descriptor, then return pairing info.
     let (start_unix, start_windows) = startup_commands(&staged, startup);
     unix = unix.replace(" && ", &format!(" && {start_unix} && "));
@@ -512,13 +492,55 @@ pub async fn direct_agent_provision(
         }
         return Err("启动直连服务失败，请查看远端 direct 日志或检查监听端口是否被占用".into());
     }
-    let descriptor: qingcode_server::direct::DirectInfo = result
+    result
         .stdout
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str(line).ok())
-        .ok_or("未取得 Server 配对信息，请手动启动服务并导入")?;
-    let session = manager.session(&connection_id)?;
+        .ok_or_else(|| "未取得 Server 配对信息，请手动启动服务并导入".to_string())
+}
+
+#[tauri::command]
+pub async fn direct_agent_provision(
+    connection_id: String,
+    port: Option<u16>,
+    auto_start: Option<bool>,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<DirectAgentInfo, String> {
+    let gate = manager.server_gate(&format!("direct-config|{connection_id}"))?;
+    let _guard = gate.lock().await;
+    let existing = manager.direct_config(&connection_id);
+    if existing.as_ref().is_some_and(|c| c.tunnel.is_none()) {
+        return Err(
+            "请通过远端控制台修改服务监听端口，再导入配对信息；直连不会暗中使用 SSH".into(),
+        );
+    }
+    let tunneled = existing.is_some();
+    let port = port.unwrap_or(qingcode_server::direct::DEFAULT_DIRECT_PORT);
+    if port == 0 {
+        return Err("监听端口必须为 1–65535".into());
+    }
+    let root = manager
+        .roots_for_connection(&connection_id)
+        .into_iter()
+        .find(|r| r.trusted)
+        .ok_or("请先连接一个已信任的 SSH 项目，或手动启动 Server 后导入配对信息")?;
+    let startup = if auto_start.unwrap_or(true) {
+        "enable"
+    } else {
+        "disable"
+    };
+    let descriptor = if tunneled {
+        tunnel::expose_gateway(&manager, &root, port, startup).await?
+    } else {
+        provision_over_ssh(&manager, &root, port, startup).await?
+    };
+    let session = if tunneled {
+        tunnel::sessions().session(&connection_id)?
+    } else {
+        manager.session(&connection_id)?
+    };
     let host = session
         .config
         .lock()

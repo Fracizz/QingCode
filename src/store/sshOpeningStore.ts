@@ -14,6 +14,8 @@ interface SshOpeningAttempt {
   error: string | null
   controller: AbortController
   reusingServer: boolean
+  /** 用户点了“后台运行”：隐藏进度卡，打开流程继续；出错时仍会弹出错误框。 */
+  background: boolean
 }
 
 export const useSshOpeningStore = create<{ attempt: SshOpeningAttempt | null }>(() => ({
@@ -29,6 +31,13 @@ export function cancelSshOpening(): void {
   useSshOpeningStore.setState({ attempt: null })
 }
 
+/** 切到后台运行 / 重新展开进度卡，不影响打开流程本身。 */
+export function setSshOpeningBackground(background: boolean): void {
+  useSshOpeningStore.setState(state => ({
+    attempt: state.attempt && state.attempt.background !== background ? { ...state.attempt, background } : state.attempt,
+  }))
+}
+
 /** Cancel opening, not the shared SSH session or a deployment used by other roots. */
 export async function runSshOpening<T>(
   project: Project,
@@ -42,7 +51,7 @@ export async function runSshOpening<T>(
   const controller = new AbortController()
   const { signal } = controller
   const attempt: SshOpeningAttempt = {
-    id: ++openingSequence, startedAt: Date.now(), project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
+    id: ++openingSequence, startedAt: Date.now(), project, stage: 'connecting', server: null, error: null, controller, reusingServer: false, background: false,
   }
   useSshOpeningStore.setState({ attempt })
   const report = (stage: SshOpeningStage, server?: SshServerState) => {

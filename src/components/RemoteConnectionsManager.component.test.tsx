@@ -207,10 +207,19 @@ describe('remote connection compatibility settings', () => {
     await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'server' })))
   })
 
+  it('checks remember-credentials by default and relabels the password field when cleared', () => {
+    render(<RemoteConnectionsManager />)
+    const remember = screen.getByRole('checkbox', { name: '记住凭据（加密保存在本机，下次无需输入）' })
+    expect(remember).toBeChecked()
+    expect(screen.getByLabelText('密码（加密保存在本机）')).toBeTruthy()
+    fireEvent.click(remember)
+    expect(screen.getByLabelText('密码（测试连接用，不会保存）')).toBeTruthy()
+  })
+
   it('remembers the tested password for this session when saving a new connection', async () => {
     render(<RemoteConnectionsManager />)
     fireEvent.change(screen.getByLabelText('认证方式'), { target: { value: 'password' } })
-    fireEvent.change(screen.getByLabelText('密码（测试连接用，不会保存）'), { target: { value: 'secret' } })
+    fireEvent.change(screen.getByLabelText('密码（加密保存在本机）'), { target: { value: 'secret' } })
     await testNewConnection()
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveConnection).toHaveBeenCalledTimes(1))
@@ -506,7 +515,7 @@ describe('remote connection compatibility settings', () => {
     expect(saveConnection).not.toHaveBeenCalled()
   })
 
-  it.each(['认证方式','密码（测试连接用，不会保存）','私钥口令（如有，仅本次会话）','兼容模式（SSH 直连）'])('invalidates verified configuration after editing %s', async label => {
+  it.each(['认证方式','密码（加密保存在本机）','私钥口令（如有，加密保存在本机）','兼容模式（SSH 直连）'])('invalidates verified configuration after editing %s', async label => {
     render(<RemoteConnectionsManager />)
     await testNewConnection()
     if (label === '兼容模式（SSH 直连）') {

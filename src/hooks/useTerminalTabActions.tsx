@@ -25,6 +25,7 @@ import {
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
+import { switchToTerminalProject } from './useTerminalProjectSelection'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '@/lib/terminal/terminalProfiles'
 import {
@@ -152,6 +153,11 @@ export function useTerminalTabActions({
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [closeArmId])
 
+  /** activeTerminalId 只能指向当前项目；全项目列表里操作其他项目的行时不激活。 */
+  const activateIfCurrentProject = (terminal: TerminalTab | undefined) => {
+    if (terminal?.projectId === currentProject?.id && terminal) setActiveTerminal(terminal.id)
+  }
+
   const handleCloseTab = async (id: string) => {
     setCloseArmId(null)
     await closeTerminal(id)
@@ -167,7 +173,7 @@ export function useTerminalTabActions({
     }
     if (action !== 'arm') return
     if (pane) setTerminalFocusPane(pane)
-    setActiveTerminal(id)
+    activateIfCurrentProject(terminal)
     setCloseArmId(id)
   }
 
@@ -215,16 +221,20 @@ export function useTerminalTabActions({
   }
 
   /** Context menu: close sessions owned by this pane (or all in classic mode). */
-  const handleCloseAllInStrip = async () => {
-    if (!currentProject) return
-    const targets = pane ? projectTerminals : allProjectTerminals
+  const handleCloseAllInStrip = async (projectId: string | undefined = currentProject?.id) => {
+    if (!projectId) return
+    const targets = pane
+      ? projectTerminals
+      : terminals.filter(terminal => terminal.projectId === projectId)
     const running = await listBusyTerminals(targets)
     if (running.length > 0) {
       const confirmed = await confirmDialog({
         title: translate('关闭全部终端'),
         message: pane
           ? translate('将终止本窗格的 {count} 个运行中终端', { count: running.length })
-          : translate('将终止当前项目的 {count} 个运行中终端', { count: running.length }),
+          : projectId === currentProject?.id
+            ? translate('将终止当前项目的 {count} 个运行中终端', { count: running.length })
+            : translate('将终止该项目的 {count} 个运行中终端', { count: running.length }),
         detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
         kind: 'warning',
         confirmLabel: translate('终止并关闭'),
@@ -238,7 +248,7 @@ export function useTerminalTabActions({
       }
       return
     }
-    await closeAllProjectTerminals(currentProject.id)
+    await closeAllProjectTerminals(projectId)
   }
 
   /** Panel chrome: always close every terminal in the project. */
@@ -264,7 +274,7 @@ export function useTerminalTabActions({
   const startRename = (id: string, currentName: string) => {
     setCloseArmId(null)
     if (pane) setTerminalFocusPane(pane)
-    setActiveTerminal(id)
+    activateIfCurrentProject(terminals.find(terminal => terminal.id === id))
     setRenamingId(id)
     setRenameDraft(currentName)
   }
@@ -305,9 +315,15 @@ export function useTerminalTabActions({
     return created ? useProjectStore.getState().currentProject : null
   }
 
-  const handleNewTerminal = (profileId?: string) => {
+  /** targetProjectId 指向其他项目时，先切过去再新建（同样经过信任与 SSH 检查）。 */
+  const handleNewTerminal = (profileId?: string, targetProjectId?: string) => {
     if (creatingTerminal) return
-    if (currentProject && atLimit) {
+    const crossProjectId =
+      targetProjectId && targetProjectId !== currentProject?.id ? targetProjectId : null
+    const limited = crossProjectId
+      ? terminals.filter(terminal => terminal.projectId === crossProjectId).length >= MAX_TERMINALS_PER_PROJECT
+      : Boolean(currentProject && atLimit)
+    if (limited) {
       useProjectStore.getState().pushToast(
         'info',
         translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
@@ -319,7 +335,11 @@ export function useTerminalTabActions({
     void (async () => {
       try {
         if (pane) setTerminalFocusPane(pane)
-        const project = currentProject ?? (await ensureProjectForTerminal())
+        // 切换失败时信任弹窗或 SSH 流程已经给出提示，这里不重复。
+        if (crossProjectId && !(await switchToTerminalProject(crossProjectId))) return
+        const project = crossProjectId
+          ? useProjectStore.getState().currentProject
+          : currentProject ?? (await ensureProjectForTerminal())
         if (!project) {
           useProjectStore
             .getState()
@@ -381,6 +401,12 @@ export function useTerminalTabActions({
     setDropTarget(null)
   }
 
+  /** 终端的 cwd 和连接绑定项目，只允许在同一项目内排序。 */
+  const sameProjectTerminals = (sourceId: string, targetId: string) => {
+    const projectOf = (id: string) => terminals.find(terminal => terminal.id === id)?.projectId
+    return projectOf(sourceId) === projectOf(targetId)
+  }
+
   const handleTabDragStart = (event: ReactDragEvent<HTMLDivElement>, id: string) => {
     if ((event.target as Element).closest('button, input')) {
       event.preventDefault()
@@ -394,7 +420,7 @@ export function useTerminalTabActions({
 
   const handleTabDragOver = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
     const sourceId = draggedTerminalId || event.dataTransfer.getData('text/plain')
-    if (!sourceId || sourceId === targetId) {
+    if (!sourceId || sourceId === targetId || !sameProjectTerminals(sourceId, targetId)) {
       setDropTarget(null)
       return
     }
@@ -411,10 +437,18 @@ export function useTerminalTabActions({
   const handleTabDrop = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
     event.preventDefault()
     const sourceId = draggedTerminalId || event.dataTransfer.getData('text/plain')
-    if (sourceId && sourceId !== targetId) {
+    if (sourceId && sourceId !== targetId && sameProjectTerminals(sourceId, targetId)) {
       reorderTerminal(sourceId, targetId, dropPositionOf(event, dropAxis))
     }
     clearTerminalDrag()
+  }
+
+  /** 重启要用该项目的信任与 SSH 连接，其他项目的终端先切过去。 */
+  const reloadTerminal = async (terminal: TerminalTab) => {
+    if (terminal.projectId !== currentProject?.id && !(await switchToTerminalProject(terminal.projectId))) return
+    await (terminal.status === 'exited' && shouldKeepShellAfterExit(terminal)
+      ? useTerminalStore.getState().reopenTerminalShell(terminal.id)
+      : restartTerminal(terminal.id))
   }
 
   const menuItems = (terminal: TerminalTab): ContextMenuItem[] => [
@@ -430,9 +464,7 @@ export function useTerminalTabActions({
       label: terminal.restoreUnavailable ? translate('重试接回') : translate('重新加载'),
       icon: <RotateCcw size={14} />,
       action: () => {
-        void (terminal.status === 'exited' && shouldKeepShellAfterExit(terminal)
-          ? useTerminalStore.getState().reopenTerminalShell(terminal.id)
-          : restartTerminal(terminal.id))
+        void reloadTerminal(terminal)
       },
     },
     {
@@ -446,8 +478,9 @@ export function useTerminalTabActions({
     {
       label: translate('新建终端（默认配置）'),
       icon: <Plus size={14} />,
-      disabled: atLimit,
-      action: () => handleNewTerminal(),
+      disabled:
+        terminals.filter(tab => tab.projectId === terminal.projectId).length >= MAX_TERMINALS_PER_PROJECT,
+      action: () => handleNewTerminal(undefined, terminal.projectId),
     },
     {
       label: translate('关闭'),
@@ -463,7 +496,7 @@ export function useTerminalTabActions({
     {
       label: translate('关闭全部'),
       icon: <Files size={14} />,
-      action: handleCloseAllInStrip,
+      action: () => handleCloseAllInStrip(terminal.projectId),
     },
   ]
 
@@ -503,5 +536,6 @@ export function useTerminalTabActions({
     handleTabDrop,
     menuItems,
     restartTerminal,
+    reloadTerminal,
   }
 }

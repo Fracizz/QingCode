@@ -514,7 +514,7 @@ describe('Android 终端空闲自动结束提示', () => {
 
 describe('Android terminal quote', () => {
   it('matches the desktop Markdown quote format', () => {
-    expect(formatTerminalQuote('\r\n  a  \r\n\r\nb\n\n')).toBe('>   a\n>\n> b\n\n')
+    expect(formatTerminalQuote('\r\n  a  \r\n\r\nb\n\n')).toBe('>   a\n>\n> b\n')
     expect(formatTerminalQuote('   \n ')).toBe('')
   })
 })

@@ -63,7 +63,7 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       })),
     }
   })
-  const rowSelector = index => `[data-terminal-session-list] [role="tab"]:nth-child(${index})`
+  const rowSelector = index => `[data-terminal-project-group]:nth-of-type(1) [role="tab"]:nth-child(${index})`
 
   try {
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false })
@@ -140,6 +140,81 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       await waitFor(count => document.querySelectorAll('[data-terminal-session-row]').length === count, before - 1)
     })
 
+    await step('添加第二个项目后按项目分组，当前项目置顶', async () => {
+      await page.click('button[aria-label="添加项目"]', { label: 'open add project' })
+      await page.waitForSelector('button[aria-label^="草稿项目"]')
+      await page.click('button[aria-label^="草稿项目"]', { label: 'create draft project' })
+      // 添加项目后默认看新项目的文件树，这里回到列表。
+      await waitFor(() => document.body.textContent.includes('临时项目'))
+      await clickButton('终端列表', 'back to terminal list')
+      await waitFor(() => document.querySelectorAll('[data-terminal-project-group]').length === 2)
+      await waitFor(() => document.querySelector('[data-terminal-project-group]').getAttribute('aria-current') === 'true')
+      const empty = await page.evaluate(() => {
+        const first = document.querySelector('[data-terminal-project-group]')
+        return { rows: first.querySelectorAll('[role="tab"]').length, disabled: first.querySelector('button[aria-expanded], button:disabled') !== null }
+      })
+      assert.deepEqual(empty, { rows: 0, disabled: true })
+    })
+
+    await step('在分组标题新建终端', async () => {
+      await page.hover('[data-terminal-project-group]:nth-of-type(1) > div', { label: 'hover project header' })
+      await page.click('[data-terminal-project-group]:nth-of-type(1) button[aria-label^="在「"]', { label: 'new terminal in group' })
+      await waitFor(() => document.querySelector('[data-terminal-project-group]').querySelectorAll('[role="tab"]').length === 1)
+    })
+    await shot('all-projects')
+
+    const groupRow = (group, index = 1) => `[data-terminal-project-group]:nth-of-type(${group}) [role="tab"]:nth-child(${index})`
+    const moveOutOfList = () => page.mouse.move(900, 400, { label: 'leave terminal list' })
+
+    await step('点击其他项目的终端切换工作区，鼠标移出列表后才重排', async () => {
+      const target = await page.evaluate(selector => document.querySelector(selector).dataset.terminalSessionRow, groupRow(2))
+      await page.click(groupRow(2), { label: 'select other project terminal' })
+      await waitFor(id => document.querySelector(`[data-terminal-session-row="${id}"]`).getAttribute('aria-selected') === 'true', target)
+      const beforeLeave = await page.evaluate(() => [...document.querySelectorAll('[data-terminal-project-group]')].map(group => group.getAttribute('aria-current')))
+      assert.deepEqual(beforeLeave, [null, 'true'], '鼠标在列表内时分组不移动')
+      await moveOutOfList()
+      await waitFor(() => document.querySelector('[data-terminal-project-group]').getAttribute('aria-current') === 'true')
+      assert.equal(await page.evaluate(() => document.body.textContent.includes('README.md') || document.querySelector('[data-terminal-session-list]') !== null), true)
+    })
+
+    await step('后台项目的任务运行时亮点，结束后显示待查看，切过去后清除', async () => {
+      const target = await page.evaluate(selector => document.querySelector(selector).dataset.terminalSessionRow, groupRow(2))
+      // 持续输出约 1.5 秒，达到“运行中”的判定。
+      await page.evaluate(async id => {
+        for (let i = 0; i < 16; i += 1) {
+          window.__QINGCODE_TEST__.output(id, `line ${i}\r\n`)
+          await new Promise(done => setTimeout(done, 100))
+        }
+      }, target)
+      await waitFor(id => document.querySelector(`[data-terminal-session-row="${id}"] [data-terminal-activity="running"]`) !== null, target)
+      await waitFor(id => document.querySelector(`[data-terminal-session-row="${id}"] [data-terminal-activity="attention"]`) !== null, target)
+      await shot('attention')
+      await page.click(groupRow(2), { label: 'open finished terminal' })
+      await waitFor(id => document.querySelector(`[data-terminal-session-row="${id}"]`).getAttribute('aria-selected') === 'true', target)
+      assert.equal(await page.evaluate(id => document.querySelector(`[data-terminal-session-row="${id}"] [data-terminal-activity="attention"]`), target), null)
+      await moveOutOfList()
+      await waitFor(() => document.querySelector('[data-terminal-project-group]').getAttribute('aria-current') === 'true')
+    })
+
+    await step('折叠其他项目后行隐藏，再展开恢复', async () => {
+      const toggle = '[data-terminal-project-group]:nth-of-type(2) button[aria-expanded]'
+      await page.click(toggle, { label: 'collapse project' })
+      await waitFor(() => document.querySelectorAll('[data-terminal-project-group]:nth-of-type(2) [role="tab"]').length === 0)
+      await page.click(toggle, { label: 'expand project' })
+      await waitFor(() => document.querySelectorAll('[data-terminal-project-group]:nth-of-type(2) [role="tab"]').length > 0)
+      await moveOutOfList()
+    })
+
+    await step('回到有文件树的示例项目', async () => {
+      const demo = await page.evaluate(() => [...document.querySelectorAll('[data-terminal-project-group]')].findIndex(group => group.querySelector('[role="tab"]') && group.getAttribute('aria-label') === 'demo') + 1)
+      assert.ok(demo > 0, '应能找到示例项目分组')
+      if (demo === 2) {
+        await page.click(groupRow(2), { label: 'back to demo project' })
+        await moveOutOfList()
+      }
+      await waitFor(() => document.querySelector('[data-terminal-project-group]').getAttribute('aria-label') === 'demo')
+    })
+
     await step('切到文件树时列表隐藏、横向标签栏接管切换', async () => {
       await clickButton('资源管理器', 'show file tree')
       await waitFor(() => !document.querySelector('[data-terminal-session-list]'))
@@ -190,6 +265,27 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
         return Math.abs(terminal.left - list.right) <= 8 && Math.abs(terminal.right - innerWidth) <= 1
       })
       assert.equal((await layout()).editor, null)
+    })
+
+    await step('切到没有打开文件的项目时收起编辑器', async () => {
+      await clickButton('资源管理器', 'show file tree')
+      await page.evaluate(() => {
+        const target = [...document.querySelectorAll('.workspace-grid-sidebar *')].find(el => el.children.length === 0 && el.textContent === 'README.md')
+        target.click()
+      })
+      await waitFor(() => document.querySelector('.workspace-grid').dataset.editorSlot === 'visible')
+      await clickButton('终端列表', 'back to terminal list')
+      await page.waitForSelector('[data-terminal-session-list]')
+      await page.click('[data-terminal-project-group]:nth-of-type(2) [role="tab"]:nth-child(1)', { label: 'switch to project without files' })
+      await waitFor(() => document.querySelector('.workspace-grid').dataset.editorSlot === 'collapsed')
+      await page.click('[data-terminal-project-group]:nth-of-type(1) [role="tab"]:nth-child(1)', { label: 'back to demo project' })
+      await waitFor(() => document.querySelector('[data-terminal-project-group]:nth-of-type(1)').getAttribute('aria-current') === 'true')
+      assert.equal(await page.evaluate(() => document.querySelector('.workspace-grid').dataset.editorSlot), 'collapsed', '切回时不抢终端宽度')
+      await page.mouse.move(900, 400, { label: 'leave terminal list' })
+      await clickButton('显示编辑器', 'show editor')
+      await waitFor(() => document.querySelector('[aria-label="关闭文件"]'))
+      await page.evaluate(() => document.querySelector('[aria-label="关闭文件"]').click())
+      await waitFor(() => document.querySelector('.workspace-grid').dataset.editorSlot === 'collapsed')
     })
 
     await step('收起终端后点列表行重新展开', async () => {

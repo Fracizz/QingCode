@@ -1,5 +1,6 @@
 import { AlertTriangle, Cloud, LoaderCircle } from 'lucide-react'
 import { useSshWarmupStore } from '../store/sshWarmupStore'
+import { useSshOpeningStore } from '../store/sshOpeningStore'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
 
@@ -14,6 +15,19 @@ export default function SshPreparationIcon({
 }) {
   const status = useSshWarmupStore(state => state.statuses.get(path))
   const { t } = useI18n()
+  const openingInBackground = useSshOpeningStore(
+    state => state.attempt?.background === true && !state.attempt.error && state.attempt.project.path === path
+  )
+  if (openingInBackground) {
+    const label = t('正在后台打开远程项目，点击查看进度')
+    return (
+      <Tooltip label={label} side="bottom" wrapperClassName="inline-flex">
+        <span role="img" aria-label={label}>
+          <LoaderCircle size={size} className="animate-spin text-accent" aria-hidden />
+        </span>
+      </Tooltip>
+    )
+  }
   if (!status || status.phase === 'ready') return <Cloud size={size} className={className} />
   const label =
     status.phase === 'queued'

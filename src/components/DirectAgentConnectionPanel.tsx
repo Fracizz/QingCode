@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Copy, LoaderCircle, ShieldCheck, CircleCheck
 import { translate, useI18n } from '../lib/i18n'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
-import { sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
+import { hydrateSshSecrets, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
 import ServerAutoStartSwitch from './ServerAutoStartSwitch'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import type { SshConnection } from '../types'
@@ -253,18 +253,21 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     if (invalid) { setError(t(invalid)); return }
     if (!sshConnection || !api.firewallPlan || !api.firewallApply) return
     const request = ++requestRef.current
-    const target = {
-      connectionId, sshConnectionId: sshConnection.id, agentHost: host.trim(), port: Number(port),
-      config: sshRuntimeConfig(sshConnection, {
-        ...sshSecretsFor(sshConnection.id),
-        ...(sshSecretsConnectionId === sshConnection.id && sshPassword ? { password: sshPassword } : {}),
-        ...(sshSecretsConnectionId === sshConnection.id && sshPassphrase ? { passphrase: sshPassphrase } : {}),
-      }),
-    }
     setBusy('firewallPlan')
     setError('')
     setNotice('')
     try {
+      // 应用重启后内存里没有凭据，需先载入本机加密保存的密码或口令。
+      await hydrateSshSecrets(sshConnection.id)
+      if (request !== requestRef.current) return
+      const target = {
+        connectionId, sshConnectionId: sshConnection.id, agentHost: host.trim(), port: Number(port),
+        config: sshRuntimeConfig(sshConnection, {
+          ...sshSecretsFor(sshConnection.id),
+          ...(sshSecretsConnectionId === sshConnection.id && sshPassword ? { password: sshPassword } : {}),
+          ...(sshSecretsConnectionId === sshConnection.id && sshPassphrase ? { passphrase: sshPassphrase } : {}),
+        }),
+      }
       const plan = await api.firewallPlan(target)
       if (request !== requestRef.current) return
       if (!plan.canApply) {
@@ -385,8 +388,8 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
                 </select></label>
                 <p className="break-all text-fg-muted">{t('SSH 授权仅用于配置远端防火墙，日常 Server 通信继续使用独立端口。')}</p>
                 {sshConnection.auth_kind === 'password'
-                  ? <label className="block text-dialog-label">{t('SSH 密码')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassword : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassword(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>
-                  : <label className="block text-dialog-label">{t('SSH 私钥口令（可选）')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassphrase : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassphrase(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>}
+                  ? <label className="block text-dialog-label">{t('SSH 密码')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassword : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassword(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用已保存或当前会话中的 SSH 凭据')} className={fieldClass} /></label>
+                  : <label className="block text-dialog-label">{t('SSH 私钥口令（可选）')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassphrase : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassphrase(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用已保存或当前会话中的 SSH 凭据')} className={fieldClass} /></label>}
                 <button type="button" disabled={Boolean(busy)} onClick={() => void authorizeFirewall()} className={`${buttonClass} inline-flex items-center gap-1`}>{busy?.startsWith('firewall') ? <LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ShieldCheck size={13} />}{firewallButtonLabel}</button>
               </> : <p className="text-fg-muted">{t('未找到此主机的 SSH 连接。请先在远程连接中添加并确认 SSH 主机指纹，或使用下方命令手动放行。')}</p>}
             </div>}

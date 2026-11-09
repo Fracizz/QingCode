@@ -61,7 +61,6 @@ import {
 } from '@/lib/terminal/terminalCommandActivity'
 import {
   getTerminalProgramTitle,
-  noteTerminalOutput,
   noteTerminalTitle,
 } from '@/lib/terminal/terminalProgramActivity'
 import {
@@ -100,7 +99,7 @@ import {
 } from '@/lib/terminal/terminalWebglBudget'
 import { createGlyphAtlasRepairScheduler, type GlyphAtlasRepairScheduler } from '@/lib/terminal/terminalGlyphAtlasRepair'
 import { registerTerminalOscHandlers } from '../utils/terminalOsc'
-import { shouldApplyOscTabTitle } from '../utils/terminalName'
+import { disambiguateTerminalName, shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import { isSshResource, isTauri } from '../lib/tauri'
 import { TERMINAL_DROP_ATTR } from '../lib/sshTerminalPaste'
@@ -1117,8 +1116,15 @@ export default function TerminalView({
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
         // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
-        if (shouldApplyOscTabTitle(current, title)) {
-          useTerminalStore.getState().renameTerminal(terminalId, title)
+        if (current && shouldApplyOscTabTitle(current, title)) {
+          // 同项目内多个终端 cwd 相同时（如都在 /home），标题会重名，需去重。
+          const siblings = useTerminalStore
+            .getState()
+            .terminals.filter(t => t.id !== terminalId && t.projectId === current.projectId)
+            .map(t => t.name)
+          useTerminalStore
+            .getState()
+            .renameTerminal(terminalId, disambiguateTerminalName(title.trim(), siblings))
         }
       },
       onCommandStart: () => markTerminalCommandStarted(terminalId),
@@ -1139,8 +1145,6 @@ export default function TerminalView({
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
-        // 回放的历史输出不代表程序此刻在工作。
-        if (!isReplay) noteTerminalOutput(terminalId)
         writeFlow.written(size)
         term.write(data, () => {
           writeFlow.parsed(size)

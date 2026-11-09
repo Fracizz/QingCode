@@ -8,7 +8,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Added
 
-- New "Terminal workbench (list on left)" panel layout: a vertical list of the project's terminals on the left, the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes)
+- New "Terminal workbench (list on left)" panel layout: terminals of all projects grouped on the left (clicking one switches the workspace to its project, and finished background tasks get a review marker), the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes)
 
 ### Fixed
 

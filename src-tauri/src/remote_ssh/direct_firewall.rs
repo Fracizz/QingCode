@@ -77,8 +77,10 @@ pub(super) fn management_config(
     if config.id != ssh_id {
         return Err("[direct:ssh-identity] SSH 连接与所选授权记录不一致".into());
     }
+    // Server 模式的隧道登记指向远端回环地址，不是用户配置的 Server 主机，不参与比对。
     let direct_host = manager
         .direct_config(connection_id)
+        .filter(|c| c.tunnel.is_none())
         .map(|c| {
             url::Url::parse(&c.endpoint)
                 .map_err(|_| "[direct:ssh-identity] Server 地址无效")
@@ -370,6 +372,36 @@ mod tests {
             Some("server.example")
         )
         .is_ok());
+    }
+    #[test]
+    fn tunnel_loopback_endpoint_is_not_treated_as_server_host() {
+        let manager = SshManager::new();
+        manager.direct_connections.write().unwrap().insert(
+            "ssh".into(),
+            direct::DirectConnectionConfig {
+                endpoint: "https://127.0.0.1:48763".into(),
+                certificate_fingerprint: "a".repeat(64),
+                token: "agent-secret".into(),
+                tunnel: Some("ssh".into()),
+            },
+        );
+        assert!(management_config(
+            &manager,
+            "ssh",
+            Some("ssh"),
+            Some(sample()),
+            Some("server.example")
+        )
+        .is_ok());
+        // 隧道不放宽校验：填写的 Server 主机仍必须与 SSH 主机一致。
+        assert!(management_config(
+            &manager,
+            "ssh",
+            Some("ssh"),
+            Some(sample()),
+            Some("other.example")
+        )
+        .is_err());
     }
     #[test]
     fn fixed_length_stdin_script_fits_cmd_limit_without_waiting_for_eof() {

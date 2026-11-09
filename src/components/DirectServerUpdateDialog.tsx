@@ -9,7 +9,7 @@ import {
 } from '../lib/directServerUpdate'
 import type { ServerPackageInfo } from '../lib/sshServerRecovery'
 import { directAgentSshCandidates } from '../lib/directAgent'
-import { sshConnectionIdFromUri, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
+import { hydrateSshSecrets, sshConnectionIdFromUri, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
 import { parseSshServerState } from '../lib/sshServerStatus'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -121,6 +121,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
     let localPackage = true
     let updating = false
     try {
+      await hydrateSshSecrets(ssh.id)
+      if (request !== generation.current) return
       const value = await api.prepare(
         {
           ...target(),
@@ -251,7 +253,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                       invalidate()
                     }}
                     autoComplete="new-password"
-                    placeholder={t('留空使用当前会话中已有的 SSH 凭据')}
+                    placeholder={t('留空使用已保存或当前会话中的 SSH 凭据')}
                     className={field}
                   />
                 </label>

@@ -1917,6 +1917,19 @@ impl SshManager {
         self.server_auto_download.load(Ordering::SeqCst)
     }
 
+    /// 维护命令用的独立管理器：沿用服务包设置，不带会话、项目根和直连登记。
+    fn maintenance_manager(&self) -> SshManager {
+        let maintenance = SshManager::new();
+        maintenance.set_server_binary_dirs(self.server_binary_dirs());
+        maintenance
+            .server_auto_download
+            .store(self.server_auto_download(), Ordering::SeqCst);
+        if let Ok(mut cache) = maintenance.server_cache_dir.write() {
+            *cache = self.server_cache_dir.read().ok().and_then(|v| v.clone());
+        }
+        maintenance
+    }
+
     /// 设置本地 server 二进制查找目录：去重且仅保留真实存在的目录。
     pub(crate) fn set_server_binary_dirs(&self, dirs: Vec<PathBuf>) {
         let mut seen = std::collections::HashSet::new();

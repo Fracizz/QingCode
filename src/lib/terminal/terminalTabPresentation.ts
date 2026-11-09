@@ -32,9 +32,14 @@ export function terminalTabTooltip(t: TerminalTab, translate: Translate): string
  * 没有可显示内容时返回空串，列表行只占一行名称。
  */
 export function terminalSessionMeta(
-  t: Pick<TerminalTab, 'status' | 'exitCode' | 'launchCommand' | 'name' | 'resolvedShell'>,
+  t: Pick<
+    TerminalTab,
+    'status' | 'exitCode' | 'launchCommand' | 'name' | 'resolvedShell' | 'awaitingRestoreSpawn'
+  >,
   translate: Translate,
 ): string {
+  // 重启应用后尚未打开过的项目，终端要等切到该项目时才恢复，并不是真的退出了。
+  if (t.status === 'exited' && t.awaitingRestoreSpawn) return translate('切换到项目后恢复')
   if (t.status === 'exited') {
     return t.exitCode === null
       ? translate('已退出')

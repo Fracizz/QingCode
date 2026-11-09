@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Play } from 'lucide-react'
 import { directAgentApi, directAgentErrorKey, directAgentSshCandidates, type DirectAgentApi, type DirectAgentInfo } from '../lib/directAgent'
-import { sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
+import { hydrateSshSecrets, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
@@ -43,6 +43,8 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     setError('')
     setNotice('')
     try {
+      await hydrateSshSecrets(ssh.id)
+      if (current !== request.current) return
       const result = await api.manage({
         connectionId, sshConnectionId: ssh.id, agentHost: info.host, port: info.port, autoStart, start,
         config: sshRuntimeConfig(ssh, { ...sshSecretsFor(ssh.id), ...(password ? { password } : {}), ...(passphrase ? { passphrase } : {}) }),
@@ -73,7 +75,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
         <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 授权连接')}<select disabled={busy} value={ssh.id} onChange={event => { setSshId(event.target.value); setPassword(''); setPassphrase(''); setError('') }} className={field}>
           {candidates.map(c => <option key={c.id} value={c.id}>{c.name} · {c.username}@{c.host}:{c.port}</option>)}
         </select></label>
-        {ssh.auth_kind === 'password' ? <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 密码')}<input type="password" disabled={busy} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={field} /></label>
+        {ssh.auth_kind === 'password' ? <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 密码')}<input type="password" disabled={busy} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder={t('留空使用已保存或当前会话中的 SSH 凭据')} className={field} /></label>
           : <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 私钥口令（可选）')}<input type="password" disabled={busy} value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" className={field} /></label>}
       </div>
       <div className="flex flex-wrap gap-2">

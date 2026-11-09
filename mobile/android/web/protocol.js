@@ -19,7 +19,7 @@ export function formatTerminalQuote(selection) {
   while (lines.length && !lines[0]) lines.shift();
   while (lines.length && !lines[lines.length - 1]) lines.pop();
   if (!lines.length) return '';
-  return `${lines.map(line => (line ? `> ${line}` : '>')).join('\n')}\n\n`;
+  return `${lines.map(line => (line ? `> ${line}` : '>')).join('\n')}\n`;
 }
 
 /** Dimensions are the viewport's content box, with padding already deducted. */

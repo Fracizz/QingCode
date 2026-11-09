@@ -73,8 +73,17 @@ import {
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import {
   clearTerminalProgramActivity,
+  getTerminalProgramBusySnapshot,
   noteTerminalInput,
+  noteTerminalOutput,
+  subscribeTerminalProgramActivity,
 } from '@/lib/terminal/terminalProgramActivity'
+import {
+  clearTerminalAttention,
+  markTerminalAttention,
+  noteTerminalBusyChange,
+  pruneTerminalAttention,
+} from '@/lib/terminal/terminalAttention'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import {
@@ -2401,6 +2410,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ] = await Promise.all([
       listen<{ id: string; data: unknown; nextSeq?: unknown }>('terminal-data', event => {
         if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
+          // 在这里记录而不是在 xterm 订阅里：没挂载 xterm 的后台项目终端也要有运行状态。
+          noteTerminalOutput(event.payload.id)
           publishTerminalOutput(event.payload.id, event.payload.data, event.payload.nextSeq)
         }
       }),
@@ -2464,7 +2475,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               : terminal
           ),
         }))
-        if (quickFail) {
+        if (!isTerminalInView(id)) markTerminalAttention(id)
+        // 后台项目的终端不抢当前终端：activeTerminalId 只能指向当前项目，由列表上的标记提示。
+        if (quickFail && tab.projectId === useProjectStore.getState().currentProject?.id) {
           // 进程秒退且非零退出：切到该终端并提示，便于直接看到报错。
           useUIStore.getState().openTerminalPanel()
           get().setActiveTerminal(id)
@@ -2608,3 +2621,30 @@ export async function openMobileSessionTab(session: {
     throw error
   }
 }
+
+/** 终端此刻是否显示在界面上；已关闭的终端视为无需提示。 */
+function isTerminalInView(id: string): boolean {
+  const state = useTerminalStore.getState()
+  const terminal = state.terminals.find(tab => tab.id === id)
+  if (!terminal) return true
+  if (terminal.projectId !== useProjectStore.getState().currentProject?.id) return false
+  if (state.activeTerminalId === id) return true
+  // 单窗格的工作台里，副窗格绑定只是保留给切回分屏用，并不显示。
+  return (
+    useUIStore.getState().panelLayout !== 'terminalWorkbench' &&
+    TERMINAL_FOCUS_PANES.some(pane => readPaneTerminalId(state, pane) === id)
+  )
+}
+
+subscribeTerminalProgramActivity(id => {
+  noteTerminalBusyChange(id, getTerminalProgramBusySnapshot(id), isTerminalInView(id))
+})
+
+useTerminalStore.subscribe((state, previous) => {
+  if (state.activeTerminalId && state.activeTerminalId !== previous.activeTerminalId) {
+    clearTerminalAttention(state.activeTerminalId)
+  }
+  if (state.terminals !== previous.terminals) {
+    pruneTerminalAttention(new Set(state.terminals.map(tab => tab.id)))
+  }
+})

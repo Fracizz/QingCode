@@ -4,10 +4,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import type { DirectAgentApi, DirectAgentFirewallPlan, DirectAgentInfo } from '../lib/directAgent'
+import { forgetSshSessionSecrets } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
 
-const { confirm } = vi.hoisted(() => ({ confirm: vi.fn() }))
+const { confirm, safeInvoke } = vi.hoisted(() => ({ confirm: vi.fn(), safeInvoke: vi.fn() }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog: confirm }))
+vi.mock('../lib/tauri', async importOriginal => ({ ...await importOriginal<typeof import('../lib/tauri')>(), safeInvoke }))
 
 const info: DirectAgentInfo = { enabled: false, host: '192.168.252.107', port: 48763, certificateFingerprint: 'SHA256:server', tokenSaved: true, previousPorts: [] }
 const ssh: SshConnection = { id: 'ssh-win', name: 'WinDev', host: info.host, port: 22, username: 'Administrator', auth_kind: 'password', host_key_fingerprint: 'SHA256:ssh', created_at: 1, updated_at: 1 }
@@ -34,6 +36,7 @@ describe('direct Agent connection panel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     confirm.mockResolvedValue(true)
+    safeInvoke.mockResolvedValue(null)
     localStorage.clear()
   })
 
@@ -255,6 +258,18 @@ describe('direct Agent connection panel', () => {
     expect(screen.getByText(/未找到此主机的 SSH 连接/)).toBeVisible()
     expect(screen.getByRole('button', { name: '复制防火墙命令' })).toBeVisible()
     expect(api.firewallPlan).not.toHaveBeenCalled()
+  })
+
+  it('uses the locally saved SSH password when the field is left blank', async () => {
+    safeInvoke.mockImplementation(async (_label: string, command: string) => command === 'ssh_secret_load' ? { password: 'saved-ssh-password' } : null)
+    const api = { ...apiMock(), firewallPlan: vi.fn().mockResolvedValue({ ...firewallPlan, alreadyEnabled: true }), firewallApply: vi.fn() }
+    const saved = { ...ssh, id: 'ssh-with-saved-password' }
+    await openPanel(api, [saved])
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 授权放行' }))
+    await waitFor(() => expect(api.firewallPlan).toHaveBeenCalled())
+    expect(safeInvoke).toHaveBeenCalledWith(expect.anything(), 'ssh_secret_load', { id: saved.id })
+    expect(api.firewallPlan.mock.calls[0][0].config.password).toBe('saved-ssh-password')
+    forgetSshSessionSecrets(saved.id)
   })
 
   it('clears manually entered SSH credentials when switching Server hosts', async () => {

@@ -171,11 +171,7 @@ export async function loadSavedSshSecrets(id: string): Promise<SshSessionSecrets
   }
 }
 
-export async function hasSavedSshSecrets(id: string): Promise<boolean> {
-  return Boolean(await loadSavedSshSecrets(id))
-}
-
-/** 明确勾选“记住”后才调用；两项都为空等同于删除。 */
+/** 仅在“记住凭据”保持勾选时调用；两项都为空等同于删除。 */
 export async function saveSshSecrets(id: string, secrets: SshSessionSecrets): Promise<void> {
   await safeInvoke('保存 SSH 凭据', 'ssh_secret_save', {
     id,

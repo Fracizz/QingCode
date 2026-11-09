@@ -334,6 +334,160 @@ pub(super) async fn update(
     Ok(())
 }
 
+/// 端口直连要求网关可从网络访问：回环监听改为通配地址，其余监听地址保持不变。
+fn public_listen_host(hostname: &str) -> String {
+    let host = hostname.trim().trim_matches(['[', ']']);
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        return "0.0.0.0".into();
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) if ip.is_loopback() && ip.is_ipv6() => "::".into(),
+        Ok(ip) if ip.is_loopback() => "0.0.0.0".into(),
+        _ => host.into(),
+    }
+}
+
+fn port_direct_target(
+    current: Option<&qingcode_server::direct::DirectInfo>,
+    port: u16,
+) -> qingcode_server::direct::DirectInfo {
+    let mut target = current.cloned().unwrap_or_else(loopback_gateway);
+    target.hostname = public_listen_host(&target.hostname);
+    target.port = port;
+    target
+}
+
+fn listens_at(
+    info: &qingcode_server::direct::DirectInfo,
+    target: &qingcode_server::direct::DirectInfo,
+) -> bool {
+    info.port == target.port && info.hostname.trim().trim_matches(['[', ']']) == target.hostname
+}
+
+/// 主管理器看到隧道登记后一律走网关，这里用独立管理器复用隧道的 SSH 会话执行维护命令。
+fn tunnel_maintenance(
+    manager: &SshManager,
+    connection_id: &str,
+    root: &RegisteredRoot,
+) -> Result<SshManager, String> {
+    let session = sessions()
+        .session(connection_id)
+        .map_err(|_| "[direct:unreachable] SSH 隧道尚未建立，请重新连接".to_string())?;
+    let maintenance = manager.maintenance_manager();
+    maintenance
+        .sessions
+        .write()
+        .map_err(|_| "SSH 连接状态不可用".to_string())?
+        .insert(connection_id.to_string(), session);
+    maintenance
+        .roots
+        .write()
+        .map_err(|_| "SSH 状态不可用".to_string())?
+        .insert(root.uri.clone(), root.clone());
+    Ok(maintenance)
+}
+
+/// 停止网关并在目标地址重启；目标不可用（如端口被占）时恢复原网关，隧道继续可用。
+async fn move_gateway(
+    maintenance: &SshManager,
+    root: &RegisteredRoot,
+    staged: &str,
+    current: &qingcode_server::direct::DirectInfo,
+    target: &qingcode_server::direct::DirectInfo,
+) -> Result<qingcode_server::direct::DirectInfo, String> {
+    let stopped = run(
+        maintenance,
+        root,
+        direct_update::stop_commands(staged, current),
+    )
+    .await?;
+    if stopped.exit_code != 0 {
+        return Err(format!(
+            "停止远端 Server 网关失败：{}",
+            stopped.stderr.trim()
+        ));
+    }
+    match start_gateway(maintenance, root, staged, target).await {
+        Ok(info) => Ok(info),
+        Err(error) => {
+            if let Err(restore) = start_gateway(maintenance, root, staged, current).await {
+                return Err(format!("{error}；恢复原网关也失败：{restore}"));
+            }
+            Err(error)
+        }
+    }
+}
+
+/// 网关换绑后把隧道指向新的监听端口，并丢弃经旧网关建立的连接。
+async fn reattach_tunnel(
+    manager: &SshManager,
+    connection_id: &str,
+    info: &qingcode_server::direct::DirectInfo,
+) -> Result<(), String> {
+    if let Some(previous) = manager.direct_config(connection_id) {
+        direct::close_connection(&previous.endpoint, connection_id);
+    }
+    let config = tunnel_config(connection_id, info)?;
+    switch_to_tunnel(manager, connection_id, config.clone())?;
+    let health = direct::test(&config).await?;
+    direct::require_usable_gateway(&config, &health)
+}
+
+/// 让隧道正在使用的网关可被端口直连访问；已在目标地址监听时不重启。
+async fn rebind_gateway(
+    manager: &SshManager,
+    maintenance: &SshManager,
+    root: &RegisteredRoot,
+    staged: &str,
+    port: u16,
+) -> Result<qingcode_server::direct::DirectInfo, String> {
+    let id = parse_remote_uri(&root.uri)?.connection_id;
+    let current = read_gateway(maintenance, root, staged).await?;
+    let target = port_direct_target(current.as_ref(), port);
+    match current.filter(|info| !listens_at(info, &target)) {
+        Some(old) => {
+            let info = move_gateway(maintenance, root, staged, &old, &target).await?;
+            reattach_tunnel(manager, &id, &info).await?;
+            Ok(info)
+        }
+        // `direct --detach` 对运行中的同端口网关是幂等的，只在已退出时才启动。
+        None => start_gateway(maintenance, root, staged, &target).await,
+    }
+}
+
+/// 在已建立隧道的连接上准备端口直连：换绑网关并配置开机自启，返回配对信息。
+pub(super) async fn expose_gateway(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    port: u16,
+    startup: &str,
+) -> Result<qingcode_server::direct::DirectInfo, String> {
+    let id = parse_remote_uri(&root.uri)?.connection_id;
+    let gate = manager.server_gate(&format!("tunnel|{id}"))?;
+    let _guard = gate.lock().await;
+    let maintenance = tunnel_maintenance(manager, &id, root)?;
+    let staged = server::stage_direct_gateway(&maintenance, root).await?;
+    let info = rebind_gateway(manager, &maintenance, root, &staged, port).await?;
+    let configured = run(
+        &maintenance,
+        root,
+        direct_settings::startup_commands(&staged, startup),
+    )
+    .await?;
+    if configured.exit_code != 0 {
+        return Err("[direct:startup] 开机自启配置失败，请检查远端管理员权限".into());
+    }
+    Ok(info)
+}
+
+/// 端口直连接管后摘除隧道登记；SSH 会话仍由主管理器持有，随连接一起断开。
+pub(super) fn forget(connection_id: &str) {
+    direct::discard_tunnel_idle(connection_id);
+    if let Ok(mut tunnels) = sessions().sessions.write() {
+        tunnels.remove(connection_id);
+    }
+}
+
 /// 把连接登记为隧道直连；该连接下其他项目的旧服务状态作废，下次按 Server 路径重新就绪。
 fn switch_to_tunnel(
     manager: &SshManager,
@@ -501,6 +655,35 @@ mod tests {
         let mut unpaired = paired("127.0.0.1");
         unpaired.token = None;
         assert!(tunnel_config("conn", &unpaired).is_err());
+    }
+
+    #[test]
+    fn port_direct_exposes_loopback_gateways_and_keeps_other_listen_addresses() {
+        for (hostname, expected) in [
+            ("127.0.0.1", "0.0.0.0"),
+            ("localhost", "0.0.0.0"),
+            ("", "0.0.0.0"),
+            ("::1", "::"),
+            ("[::1]", "::"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("::", "::"),
+            ("192.168.1.9", "192.168.1.9"),
+        ] {
+            let target = port_direct_target(Some(&paired(hostname)), 50000);
+            assert_eq!(target.hostname, expected, "{hostname}");
+            assert_eq!(target.port, 50000);
+        }
+        assert_eq!(port_direct_target(None, 48763).hostname, "0.0.0.0");
+    }
+
+    #[test]
+    fn gateway_is_only_restarted_when_address_or_port_differs() {
+        let target = port_direct_target(Some(&paired("127.0.0.1")), 48763);
+        assert!(!listens_at(&paired("127.0.0.1"), &target));
+        assert!(listens_at(&paired("0.0.0.0"), &target));
+        let mut other_port = paired("0.0.0.0");
+        other_port.port = 50000;
+        assert!(!listens_at(&other_port, &target));
     }
 
     #[test]

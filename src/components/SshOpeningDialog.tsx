@@ -4,7 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey, sshServerVersionMismatch } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
-import { cancelSshOpening, useSshOpeningStore } from '../store/sshOpeningStore'
+import { cancelSshOpening, setSshOpeningBackground, useSshOpeningStore } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
@@ -30,7 +30,7 @@ export default function SshOpeningDialog() {
     const timer = setTimeout(() => setVisibleController(controller), 300)
     return () => clearTimeout(timer)
   }, [controller])
-  if (!attempt || (!attempt.error && visibleController !== controller)) return null
+  if (!attempt || (!attempt.error && (attempt.background || visibleController !== controller))) return null
 
   const { project, stage, server, error } = attempt
   if (!error) {
@@ -43,7 +43,10 @@ export default function SshOpeningDialog() {
     return (
       <ServerOperationProgress name={project.name} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
         label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
-        actions={<button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>} />
+        actions={<>
+          <button type="button" onClick={() => setSshOpeningBackground(true)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
+          <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
+        </>} />
     )
   }
   const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
