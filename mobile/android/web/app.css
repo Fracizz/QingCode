@@ -723,6 +723,9 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
 /* 项目名优先完整显示，来源信息用剩余宽度省略；上限 70% 防止超长项目名把来源完全挤掉。 */
 .session-group-head strong { flex: none; max-width: 70%; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 文件夹图标与桌面终端列表一致；当前项目用强调色。 */
+.session-group-head .session-group-icon { flex: none; align-self: center; width: 15px; height: 15px; }
+.session-group[data-current-project="true"] .session-group-icon { color: var(--accent); }
 .session-group-head span { flex: none; }
 .session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-empty { margin: 8px 4px; text-align: center; }

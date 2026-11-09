@@ -11,8 +11,9 @@ import {
   ChevronDown,
   ChevronLeft,
   Check,
-  ChevronRight,
   Circle,
+  Folder,
+  FolderOpen,
   ListChecks,
   LoaderCircle,
   Minus,
@@ -41,8 +42,10 @@ import {
   groupTerminalSessions,
   parseCollapsedProjects,
   TERMINAL_LIST_COLLAPSED_KEY,
+  terminalProjectSources,
   type TerminalSessionGroup,
 } from '@/lib/terminal/terminalSessionGroups'
+import { projectChipTooltipLabel } from '@/lib/projectChipTooltip'
 import {
   allTerminalsSelected,
   isEndedTerminal,
@@ -135,6 +138,7 @@ export default function TerminalSessionList() {
     reloadTerminal,
   } = actions
   const projects = useProjectStore(s => s.projects)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const allTerminals = useTerminalStore(s => s.terminals)
   const { pendingTerminalId, selectTerminal: selectAcrossProjects } = useTerminalProjectSelection()
   const attentionIds = useSyncExternalStore(subscribeTerminalAttention, getTerminalAttentionSnapshot)
@@ -173,6 +177,11 @@ export default function TerminalSessionList() {
         : projects
     return groupTerminalSessions(listed, allTerminals, pinnedProjectId)
   }, [allTerminals, currentProject, pinnedProjectId, projects])
+  const projectSources = terminalProjectSources(
+    groups.map(group => group.project),
+    sshConnections,
+    translate,
+  )
   const isExpanded = (group: TerminalSessionGroup) =>
     group.terminals.length > 0 && !collapsedProjects.has(group.project.id)
   const visibleTerminals = groups.flatMap(group => (isExpanded(group) ? group.terminals : []))
@@ -277,7 +286,7 @@ export default function TerminalSessionList() {
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
         draggable={!isRenaming && !managing}
-        className={`group relative flex min-h-9 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-1 pl-4 pr-1 transition-colors ${
+        className={`group relative flex min-h-9 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-1 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-fg'
             : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -316,7 +325,7 @@ export default function TerminalSessionList() {
           />
         )}
         {managing && (
-          <span className="-ml-3 flex flex-shrink-0">
+          <span className="-ml-5 flex flex-shrink-0">
             <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
           </span>
         )}
@@ -406,10 +415,12 @@ export default function TerminalSessionList() {
   }
 
   const renderGroup = (group: TerminalSessionGroup) => {
-    const { project, terminals, running } = group
+    const { project, terminals } = group
     const isCurrent = project.id === currentProjectId
     const isEmpty = terminals.length === 0
     const expanded = isExpanded(group)
+    const source = projectSources.get(project.id)
+    const FolderIcon = expanded ? FolderOpen : Folder
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
     const groupAtLimit = terminals.length >= MAX_TERMINALS_PER_PROJECT
@@ -425,12 +436,8 @@ export default function TerminalSessionList() {
         data-terminal-project-group={project.id}
       >
         <div
-          className={`group/project flex h-7 items-center gap-1 rounded pr-1 transition-colors ${
-            isCurrent
-              ? 'bg-bg-hover font-semibold text-fg'
-              : isEmpty
-                ? 'text-fg-dim hover:bg-bg-hover'
-                : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+          className={`group/project flex h-7 items-center gap-1 rounded pr-1 transition-colors hover:bg-bg-hover ${
+            isEmpty && !isCurrent ? 'text-fg-dim' : 'text-fg'
           }`}
         >
           {managing && expanded && (
@@ -457,17 +464,26 @@ export default function TerminalSessionList() {
             aria-expanded={isEmpty ? undefined : expanded}
             aria-label={translate('展开或收起「{name}」', { name: project.name })}
             disabled={isEmpty}
-            className="flex h-full min-w-0 flex-1 items-center gap-1 rounded pl-1 text-left text-ui-xs disabled:cursor-default"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui disabled:cursor-default"
             onClick={() => setProjectCollapsed(project.id, expanded)}
           >
-            <ChevronRight
-              size={12}
+            <FolderIcon
+              size={14}
               aria-hidden="true"
-              className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''} ${isEmpty ? 'opacity-0' : ''}`}
+              data-terminal-group-current={isCurrent ? 'true' : undefined}
+              className={`flex-shrink-0 ${isCurrent ? 'text-brand' : isEmpty ? '' : 'text-fg-muted'}`}
             />
-            <Tooltip label={project.name} side="right" wrapperClassName="min-w-0">
-              <span className="block truncate">{project.name}</span>
+            {/* 项目名优先完整显示，来源只用剩余宽度。 */}
+            <Tooltip
+              label={projectChipTooltipLabel(project, sshConnections, translate)}
+              side="right"
+              wrapperClassName="min-w-0 max-w-[70%] flex-none"
+            >
+              <span className="block truncate font-medium">{project.name}</span>
             </Tooltip>
+            {source && (
+              <span className="min-w-0 flex-1 truncate text-ui-xs text-fg-dim">{source}</span>
+            )}
           </button>
           {hasAttention && (
             <span
@@ -477,32 +493,40 @@ export default function TerminalSessionList() {
               className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand"
             />
           )}
-          {running > 0 && (
-            <Tooltip label={translate('{count} 个运行中', { count: running })} side="top">
-              <span className="flex-shrink-0 text-ui-xs font-normal text-fg-dim">{running}</span>
-            </Tooltip>
-          )}
-          <Tooltip
-            label={
-              groupAtLimit
-                ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
-                : translate('在「{name}」新建终端', { name: project.name })
-            }
-            side="top"
-          >
-            <button
-              type="button"
-              aria-label={translate('在「{name}」新建终端', { name: project.name })}
-              disabled={groupAtLimit || creatingTerminal}
-              className={`${ROW_BUTTON} text-fg-muted opacity-0 hover:bg-bg-active hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 disabled:cursor-not-allowed`}
-              onClick={() => {
-                setProjectCollapsed(project.id, false)
-                handleNewTerminal(undefined, project.id)
-              }}
+          {/* 数量和新建共用一格：平时显示数量，悬停或键盘聚焦时换成 +。 */}
+          <span className="relative flex flex-shrink-0 [&:has(button:focus-visible)>[data-terminal-group-count]]:invisible">
+            {!isEmpty && (
+              <span
+                role="img"
+                aria-label={translate('{count} 个终端', { count: terminals.length })}
+                data-terminal-group-count={project.id}
+                className="pointer-events-none absolute inset-0 flex items-center justify-center text-ui-xs text-fg-dim group-hover/project:invisible"
+              >
+                {terminals.length}
+              </span>
+            )}
+            <Tooltip
+              label={
+                groupAtLimit
+                  ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
+                  : translate('在「{name}」新建终端', { name: project.name })
+              }
+              side="top"
             >
-              <Plus size={13} />
-            </button>
-          </Tooltip>
+              <button
+                type="button"
+                aria-label={translate('在「{name}」新建终端', { name: project.name })}
+                disabled={groupAtLimit || creatingTerminal}
+                className={`${ROW_BUTTON} text-fg-muted opacity-0 hover:bg-bg-active hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 disabled:cursor-not-allowed`}
+                onClick={() => {
+                  setProjectCollapsed(project.id, false)
+                  handleNewTerminal(undefined, project.id)
+                }}
+              >
+                <Plus size={13} />
+              </button>
+            </Tooltip>
+          </span>
         </div>
         {expanded && (
           <div

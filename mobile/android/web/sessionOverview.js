@@ -222,7 +222,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     source.className = 'session-group-source';
     const count = document.createElement('span');
     count.className = 'session-group-count';
-    head.append(name, source, count);
+    head.append(icon('folder', 'session-group-icon'), name, source, count);
     const rows = document.createElement('div');
     rows.className = 'rows session-group-rows';
     node.append(head, rows);
@@ -232,6 +232,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   function renderGroup(node, group, busy) {
     const current = group.project.id === state.current();
     const title = group.project.name ?? group.project.id;
+    node.dataset.currentProject = String(current);
     node.querySelector('strong').textContent = title;
     // 组头只留连接名，地址在项目页和搜索中可见。
     node.querySelector('.session-group-source').textContent = [projectSourceLabel({ ...group.project, host: '' }), current ? t('当前项目') : '',

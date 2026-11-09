@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
       { id: 'p2', path: '/home/api', name: 'api' },
       { id: 'p3', path: '/home/docs', name: 'docs' },
     ],
+    sshConnections: [],
     addEmptyProject: vi.fn(),
     switchProject: vi.fn(),
     pushToast: vi.fn(),
@@ -129,6 +130,15 @@ describe('TerminalSessionList', () => {
     expect(row('other')).toHaveAttribute('aria-selected', 'false')
     expect(within(row('t2')).getByText('pnpm dev')).toBeInTheDocument()
     expect(document.querySelector('[title]')).toBeNull()
+  })
+
+  it('shows the source and total terminals on the project header and marks the current project', () => {
+    render(<TerminalSessionList />)
+    expect(within(group('p1')).getByText('本机')).toBeInTheDocument()
+    expect(group('p1').querySelector('[data-terminal-group-count="p1"]')).toHaveTextContent('2')
+    expect(group('p3').querySelector('[data-terminal-group-count]')).toBeNull()
+    expect(group('p1').querySelector('[data-terminal-group-current="true"]')).not.toBeNull()
+    expect(group('p2').querySelector('[data-terminal-group-current="true"]')).toBeNull()
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {

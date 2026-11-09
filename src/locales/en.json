@@ -961,7 +961,7 @@
     "正在切换项目…": "Switching project…",
     "有新结果待查看": "New result to review",
     "在「{name}」新建终端": "New terminal in \"{name}\"",
-    "{count} 个运行中": "{count} running",
+    "{count} 个终端": "{count} terminal(s)",
     "展开或收起「{name}」": "Expand or collapse \"{name}\"",
     "「{name}」有新结果待查看": "\"{name}\" has new results to review",
     "将终止该项目的 {count} 个运行中终端": "This will terminate {count} running terminals in this project",
