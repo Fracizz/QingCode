@@ -13,6 +13,7 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
   const calls = () => page.evaluate(() => JSON.parse(document.querySelector('[data-testid="calls"]').textContent))
   const step = async (name, work) => { await work(); results.push({ name, status: 'passed' }) }
   try {
+    await page.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1500, deviceScaleFactor: 1, mobile: false })
     await page.goto('http://127.0.0.1:38439/web-tests/direct-agent.html')
     await page.click('loc=role:button[name="Server 端口直连"]', { label: 'inspect independent Agent connection settings' })
     await page.waitForSelector('loc=role:button[name="测试直连"]')
@@ -20,11 +21,11 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
       await page.click('loc=role:button[name="通过 SSH 安装或读取服务"]', { label: 'prepare Agent service' })
       const pending = await page.evaluate(() => {
         const button = document.querySelector('button[aria-busy="true"]')
-        return { text: button?.textContent, disabled: button?.disabled, animation: button ? getComputedStyle(button.querySelector('svg')).animationName : null }
+        return { text: button?.textContent, disabled: button?.disabled, animation: button ? getComputedStyle(button.querySelector('svg')).animationName : null, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches }
       })
       assert.equal(pending.text, '正在准备服务…')
       assert.equal(pending.disabled, true)
-      assert.equal(pending.animation, 'spin')
+      assert.equal(pending.animation, pending.reducedMotion ? 'none' : 'spin')
       if (screenshots) await page.screenshot({ path: resolve(output, 'provisioning.png') })
       await page.click('loc=role:button[name="完成模拟服务准备"]', { label: 'complete simulated preparation' })
       await page.waitForFunction(() => !document.querySelector('button[aria-busy="true"]'))
@@ -84,7 +85,7 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
     })
     await step('editing the port invalidates previous verification', async () => {
       await page.click('loc=css:button[data-direct-row="connection"]', { label: 'expand connection settings' })
-      await page.fill('loc=role:textbox[name="TCP 端口"]', '51235', { label: 'edit direct connection port' })
+      await page.fill('loc=role:textbox[name="TCP 端口"]', '51235')
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '保存并启用直连').disabled), true)
       assert.match(await page.evaluate(() => document.querySelector('button[data-direct-row="connection"]').textContent), /有未保存修改/)
       assert.match(await page.evaluate(() => document.querySelector('button[data-direct-row="firewall"]').textContent), /TCP 51235/)
