@@ -572,15 +572,21 @@ fn terminal_has_child_processes(
 }
 
 /// Status-bar memory: main + WebView2 + associated terminal process trees.
-/// Pass `force: true` to bypass the short TTL cache (hover tip / terminal churn).
+/// Pass `force: true` for a fresher sample than the TTL cache (hover tip open).
+/// 全进程枚举放到阻塞线程池，避免同步 command 占用主线程。
 #[tauri::command]
-fn get_app_memory(
+async fn get_app_memory(
     force: Option<bool>,
     terminal_ids: Option<Vec<String>>,
     state: tauri::State<'_, TerminalManager>,
-) -> app_memory::AppMemoryInfo {
+) -> Result<app_memory::AppMemoryInfo, String> {
     let project_pids = state.shell_pids_for_ids(terminal_ids.as_deref().unwrap_or(&[]));
-    app_memory::sample_app_memory(&state.shell_pids(), &project_pids, force.unwrap_or(false))
+    let shell_pids = state.shell_pids();
+    tauri::async_runtime::spawn_blocking(move || {
+        app_memory::sample_app_memory(&shell_pids, &project_pids, force.unwrap_or(false))
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

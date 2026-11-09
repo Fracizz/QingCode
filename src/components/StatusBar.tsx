@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { GitBranch, Folder, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -49,9 +49,9 @@ type AppMemoryInfo = {
 }
 
 /** Background poll while the window is visible. */
-const APP_MEMORY_REFRESH_MS = 10_000
+const APP_MEMORY_REFRESH_MS = 30_000
 /** Faster poll while the memory tip is open. */
-const APP_MEMORY_TIP_REFRESH_MS = 5_000
+const APP_MEMORY_TIP_REFRESH_MS = 10_000
 
 /** Subtle vertical rule between logical status-bar groups. */
 function StatusDivider() {
@@ -130,14 +130,6 @@ export default function StatusBar() {
   const activeTab = tabs.find(t => t.id === activeTabId)
   const standaloneFiles = isExternalFileWindow() && !currentProject
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
-  const projectTerminalIds = useMemo(
-    () =>
-      terminals
-        .filter(t => t.projectId === currentProject?.id && t.status !== 'exited')
-        .map(t => t.id)
-        .sort(),
-    [currentProject?.id, terminals]
-  )
   const activeTerm = projectTerminals.find(t => t.id === focusedTerminalId)
   const runningTerminals = projectTerminals.filter(t => t.status !== 'exited').length
 
@@ -164,54 +156,40 @@ export default function StatusBar() {
     }
   }, [])
 
-  // Memory refresh strategy:
-  // - background poll every 10s while visible (uses Rust TTL cache)
-  // - focus / tab visible → refresh
-  // - tip open → force sample + 3s poll so the breakdown stays live
-  // - terminal count changes → force sample (shell trees moved)
+  // 内存刷新策略（信息不紧急，优先省开销）：
+  // - 可见时低频轮询；窗口隐藏时跳过，重新可见补一次
+  // - 只有打开悬停提示才强制取新值
+  // - 终端 id 在采样时现取：终端列表变化不触发采样，也不重置定时器
+  const loadAppMemory = useCallback((force = false) => {
+    if (!isTauri() || (document.hidden && !force)) return
+    const projectId = useProjectStore.getState().currentProject?.id
+    const terminalIds = useTerminalStore
+      .getState()
+      .terminals.filter(t => t.projectId === projectId && t.status !== 'exited')
+      .map(t => t.id)
+    safeInvoke<AppMemoryInfo>('读取应用内存', 'get_app_memory', { force, terminalIds }).then(
+      setAppMemory,
+      () => setAppMemory(null)
+    )
+  }, [])
+
   useEffect(() => {
-    if (!isTauri()) {
-      queueMicrotask(() => setAppMemory(null))
-      return
-    }
-
-    let cancelled = false
-
-    const loadMemory = async (force = false) => {
-      if (typeof document !== 'undefined' && document.hidden && !force) return
-      try {
-        const info = await safeInvoke<AppMemoryInfo>('读取应用内存', 'get_app_memory', {
-          force,
-          terminalIds: projectTerminalIds,
-        })
-        if (!cancelled) setAppMemory(info)
-      } catch {
-        if (!cancelled) setAppMemory(null)
-      }
-    }
-
-    // Tip open / terminal churn both want a fresh sample immediately.
-    void loadMemory(true)
-    const onFocus = () => {
-      void loadMemory(true)
-    }
+    loadAppMemory()
     const onVisibility = () => {
-      if (!document.hidden) void loadMemory(true)
+      if (!document.hidden) loadAppMemory()
     }
-    window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
-    const intervalMs = memoryTipOpen ? APP_MEMORY_TIP_REFRESH_MS : APP_MEMORY_REFRESH_MS
-    const intervalId = window.setInterval(() => {
-      void loadMemory(memoryTipOpen)
-    }, intervalMs)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [loadAppMemory])
 
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.clearInterval(intervalId)
-    }
-  }, [memoryTipOpen, projectTerminalIds])
+  useEffect(() => {
+    if (memoryTipOpen) loadAppMemory(true)
+    const intervalId = window.setInterval(
+      () => loadAppMemory(),
+      memoryTipOpen ? APP_MEMORY_TIP_REFRESH_MS : APP_MEMORY_REFRESH_MS
+    )
+    return () => window.clearInterval(intervalId)
+  }, [memoryTipOpen, loadAppMemory])
 
   useEffect(() => {
     const projectPath = currentProject?.path

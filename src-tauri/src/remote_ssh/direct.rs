@@ -8,18 +8,240 @@ use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
 use tokio::net::TcpStream;
 use tokio_rustls::{client::TlsStream, TlsConnector};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http, Message};
+use tokio_tungstenite::WebSocketStream;
 
 mod workspace_http;
 pub(super) use workspace_http::{discard_tunnel_idle, WorkspaceClient};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
+
+/// 直连通道的探活参数。路径上的设备可能静默丢弃已建立的 TCP 连接（无 FIN/RST），
+/// 只能靠应用层探测发现。有入站数据就不发 ping，正常使用时几乎没有额外流量。
+#[derive(Clone, Copy)]
+struct StreamProbeTimings {
+    /// 入站静默多久后发一次 ping。
+    idle_ms: u64,
+    /// 发出数据后多久仍无任何入站就提前 ping，让正在输入的终端更快发现断流。
+    after_send_ms: u64,
+    /// ping 发出后多久仍无任何入站，判定连接已死。
+    timeout_ms: u64,
+}
+
+const STREAM_PROBE_DIRECT: StreamProbeTimings = StreamProbeTimings {
+    idle_ms: 5_000,
+    after_send_ms: 1_000,
+    timeout_ms: 4_000,
+};
+
+/// SSH 隧道延迟更高且有自己的 keepalive，放宽判定，避免慢链路上误重连。
+const STREAM_PROBE_TUNNEL: StreamProbeTimings = StreamProbeTimings {
+    idle_ms: 10_000,
+    after_send_ms: 3_000,
+    timeout_ms: 15_000,
+};
+
+#[derive(Debug, PartialEq, Eq)]
+enum ProbeStep {
+    /// 什么都不用做，到这个时刻（毫秒）再检查。
+    Wait(u64),
+    Ping,
+    Dead,
+}
+
+#[derive(Default)]
+struct StreamProbe {
+    last_sent: Option<u64>,
+    ping_at: Option<u64>,
+}
+
+impl StreamProbe {
+    /// `consumer_busy`：本端正等上层腾出缓冲，此时收不到 pong 不代表连接已死。
+    fn step(
+        &mut self,
+        timings: &StreamProbeTimings,
+        now: u64,
+        last_inbound: u64,
+        consumer_busy: bool,
+    ) -> ProbeStep {
+        if consumer_busy {
+            self.ping_at = None;
+            return ProbeStep::Wait(now + timings.idle_ms);
+        }
+        if self.ping_at.is_some_and(|at| last_inbound >= at) {
+            self.ping_at = None;
+        }
+        if let Some(at) = self.ping_at {
+            let deadline = at + timings.timeout_ms;
+            return if now >= deadline {
+                ProbeStep::Dead
+            } else {
+                ProbeStep::Wait(deadline)
+            };
+        }
+        let mut due = last_inbound + timings.idle_ms;
+        if let Some(sent) = self.last_sent.filter(|sent| *sent >= last_inbound) {
+            due = due.min(sent + timings.after_send_ms);
+        }
+        if now >= due {
+            self.ping_at = Some(now);
+            ProbeStep::Ping
+        } else {
+            ProbeStep::Wait(due)
+        }
+    }
+}
+
+/// 通道异常结束的真实原因，只写入诊断日志；本端主动关闭不算异常。
+#[derive(Debug)]
+struct StreamFailure {
+    cause: &'static str,
+    detail: Option<String>,
+    os_error: Option<i32>,
+    idle_ms: u64,
+}
+
+impl StreamFailure {
+    fn new(cause: &'static str) -> Self {
+        Self {
+            cause,
+            detail: None,
+            os_error: None,
+            idle_ms: 0,
+        }
+    }
+
+    fn websocket(cause: &'static str, error: &tokio_tungstenite::tungstenite::Error) -> Self {
+        let os_error = match error {
+            tokio_tungstenite::tungstenite::Error::Io(error) => error.raw_os_error(),
+            _ => None,
+        };
+        Self {
+            detail: Some(qingcode_server::diagnostics::error_summary(
+                &error.to_string(),
+            )),
+            os_error,
+            ..Self::new(cause)
+        }
+    }
+}
+
+/// 在 WebSocket 与上层字节流之间转发，并探测连接存活。上传、探活共用一个循环和
+/// 一个定时器，定时器只在到期时检查，不随每条消息重置，高吞吐时没有额外开销。
+async fn bridge_stream<S>(
+    socket: WebSocketStream<S>,
+    network: DuplexStream,
+    cancelled: Arc<tokio::sync::Notify>,
+    timings: StreamProbeTimings,
+) -> Result<(), StreamFailure>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let started = tokio::time::Instant::now();
+    let elapsed_ms = || started.elapsed().as_millis() as u64;
+    let last_inbound = AtomicU64::new(0);
+    let consumer_busy = AtomicBool::new(false);
+    let local_closing = AtomicBool::new(false);
+    let (mut sender, mut receiver) = socket.split();
+    let (mut input, mut output) = tokio::io::split(network);
+    let upload = async {
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut probe = StreamProbe::default();
+        loop {
+            let step = probe.step(
+                &timings,
+                elapsed_ms(),
+                last_inbound.load(Ordering::Relaxed),
+                consumer_busy.load(Ordering::Relaxed),
+            );
+            let wake_at = match step {
+                ProbeStep::Dead => return Err(StreamFailure::new("probe_timeout")),
+                ProbeStep::Ping => {
+                    sender
+                        .send(Message::Ping(Vec::new().into()))
+                        .await
+                        .map_err(|error| StreamFailure::websocket("write_error", &error))?;
+                    continue;
+                }
+                ProbeStep::Wait(at) => at,
+            };
+            tokio::select! {
+                read = input.read(&mut buffer) => {
+                    let size = read.unwrap_or(0);
+                    if size == 0 {
+                        break;
+                    }
+                    sender
+                        .send(Message::Binary(buffer[..size].to_vec().into()))
+                        .await
+                        .map_err(|error| StreamFailure::websocket("write_error", &error))?;
+                    probe.last_sent = Some(elapsed_ms());
+                }
+                _ = tokio::time::sleep_until(started + Duration::from_millis(wake_at)) => {}
+            }
+        }
+        local_closing.store(true, Ordering::Relaxed);
+        let _ = sender.close().await;
+        Ok(())
+    };
+    let download = async {
+        while let Some(message) = receiver.next().await {
+            let message =
+                message.map_err(|error| StreamFailure::websocket("read_error", &error))?;
+            match message {
+                Message::Binary(bytes) => {
+                    consumer_busy.store(true, Ordering::Relaxed);
+                    let written = output.write_all(&bytes).await;
+                    consumer_busy.store(false, Ordering::Relaxed);
+                    if written.is_err() {
+                        return Ok(());
+                    }
+                }
+                Message::Close(_) => break,
+                Message::Ping(_) | Message::Pong(_) => {}
+                _ => return Err(StreamFailure::new("protocol_error")),
+            }
+            last_inbound.store(elapsed_ms(), Ordering::Relaxed);
+        }
+        if local_closing.load(Ordering::Relaxed) {
+            Ok(())
+        } else {
+            Err(StreamFailure::new("peer_closed"))
+        }
+    };
+    let result = tokio::select! {
+        result = upload => result,
+        result = download => result,
+        _ = cancelled.notified() => Ok(()),
+    };
+    result.map_err(|mut failure| {
+        failure.idle_ms = elapsed_ms().saturating_sub(last_inbound.load(Ordering::Relaxed));
+        failure
+    })
+}
+
+fn record_stream_failure(connection_id: &str, tunnel: bool, failure: &StreamFailure) {
+    qingcode_server::diagnostics::record(
+        "direct.stream_closed",
+        serde_json::json!({
+            "connectionId": qingcode_server::diagnostics::identifier(Some(connection_id)),
+            "tunnel": tunnel,
+            "cause": failure.cause,
+            "detail": failure.detail,
+            "osError": failure.os_error,
+            "idleMs": failure.idle_ms,
+        }),
+        false,
+        false,
+    );
+}
 
 /// TLS 之下的字节流：TCP 直连，或 SSH 隧道的 `direct-tcpip` 通道。
 pub(super) trait Transport: AsyncRead + AsyncWrite + Unpin + Send {
@@ -436,36 +658,17 @@ pub(super) async fn open_stream_for(
         _ = cancelled.notified() => return Err("[direct:unreachable] Server 连接已由当前连接配置关闭".into()),
     };
     let (client, network) = tokio::io::duplex(256 * 1024);
+    let tunnel = config.tunnel.is_some();
+    let timings = if tunnel {
+        STREAM_PROBE_TUNNEL
+    } else {
+        STREAM_PROBE_DIRECT
+    };
+    let connection_id = connection_id.to_string();
     tauri::async_runtime::spawn(async move {
-        let (mut sender, mut receiver) = socket.split();
-        let (mut input, mut output) = tokio::io::split(network);
-        let upload = async {
-            let mut buffer = vec![0u8; 64 * 1024];
-            loop {
-                let size = input.read(&mut buffer).await.map_err(|_| ())?;
-                if size == 0 {
-                    break;
-                }
-                sender
-                    .send(Message::Binary(buffer[..size].to_vec().into()))
-                    .await
-                    .map_err(|_| ())?;
-            }
-            let _ = sender.close().await;
-            Ok::<(), ()>(())
-        };
-        let download = async {
-            while let Some(message) = receiver.next().await {
-                match message.map_err(|_| ())? {
-                    Message::Binary(bytes) => output.write_all(&bytes).await.map_err(|_| ())?,
-                    Message::Close(_) => break,
-                    Message::Ping(_) | Message::Pong(_) => {}
-                    _ => return Err(()),
-                }
-            }
-            Ok::<(), ()>(())
-        };
-        tokio::select! { _ = upload => {}, _ = download => {}, _ = cancelled.notified() => {} }
+        if let Err(failure) = bridge_stream(socket, network, cancelled, timings).await {
+            record_stream_failure(&connection_id, tunnel, &failure);
+        }
     });
     Ok(client)
 }
@@ -473,6 +676,171 @@ pub(super) async fn open_stream_for(
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    use tokio_tungstenite::tungstenite::protocol::Role;
+
+    const TEST_TIMINGS: StreamProbeTimings = StreamProbeTimings {
+        idle_ms: 60,
+        after_send_ms: 20,
+        timeout_ms: 80,
+    };
+
+    const PROBE: StreamProbeTimings = StreamProbeTimings {
+        idle_ms: 5_000,
+        after_send_ms: 1_000,
+        timeout_ms: 4_000,
+    };
+
+    #[test]
+    fn probe_stays_quiet_while_inbound_traffic_is_recent() {
+        let mut probe = StreamProbe::default();
+        assert_eq!(
+            probe.step(&PROBE, 3_000, 2_000, false),
+            ProbeStep::Wait(7_000)
+        );
+        assert_eq!(
+            probe.step(&PROBE, 9_000, 8_500, false),
+            ProbeStep::Wait(13_500)
+        );
+    }
+
+    #[test]
+    fn probe_pings_when_idle_and_declares_dead_after_timeout() {
+        let mut probe = StreamProbe::default();
+        assert_eq!(probe.step(&PROBE, 5_000, 0, false), ProbeStep::Ping);
+        assert_eq!(probe.step(&PROBE, 8_999, 0, false), ProbeStep::Wait(9_000));
+        assert_eq!(probe.step(&PROBE, 9_000, 0, false), ProbeStep::Dead);
+    }
+
+    #[test]
+    fn probe_recovers_when_anything_arrives_after_ping() {
+        let mut probe = StreamProbe::default();
+        assert_eq!(probe.step(&PROBE, 5_000, 0, false), ProbeStep::Ping);
+        assert_eq!(
+            probe.step(&PROBE, 5_100, 5_050, false),
+            ProbeStep::Wait(10_050)
+        );
+    }
+
+    #[test]
+    fn probe_pings_early_when_sent_data_gets_no_reply() {
+        let mut probe = StreamProbe {
+            last_sent: Some(2_000),
+            ping_at: None,
+        };
+        assert_eq!(
+            probe.step(&PROBE, 2_500, 1_900, false),
+            ProbeStep::Wait(3_000)
+        );
+        assert_eq!(probe.step(&PROBE, 3_000, 1_900, false), ProbeStep::Ping);
+    }
+
+    #[test]
+    fn probe_ignores_send_already_answered_by_inbound() {
+        let mut probe = StreamProbe {
+            last_sent: Some(2_000),
+            ping_at: None,
+        };
+        assert_eq!(
+            probe.step(&PROBE, 3_500, 2_010, false),
+            ProbeStep::Wait(7_010)
+        );
+    }
+
+    #[test]
+    fn probe_never_declares_dead_while_the_local_consumer_is_blocked() {
+        let mut probe = StreamProbe::default();
+        assert_eq!(probe.step(&PROBE, 5_000, 0, false), ProbeStep::Ping);
+        assert_eq!(probe.step(&PROBE, 20_000, 0, true), ProbeStep::Wait(25_000));
+        assert_eq!(probe.ping_at, None);
+    }
+
+    async fn bridged(
+        peer_buffer: usize,
+        local_buffer: usize,
+    ) -> (
+        tokio::task::JoinHandle<Result<(), StreamFailure>>,
+        DuplexStream,
+        WebSocketStream<DuplexStream>,
+        Arc<tokio::sync::Notify>,
+    ) {
+        let (near, far) = tokio::io::duplex(peer_buffer);
+        let (client, network) = tokio::io::duplex(local_buffer);
+        let cancelled = Arc::new(tokio::sync::Notify::new());
+        let socket = WebSocketStream::from_raw_socket(near, Role::Client, None).await;
+        let peer = WebSocketStream::from_raw_socket(far, Role::Server, None).await;
+        let task = tokio::spawn(bridge_stream(
+            socket,
+            network,
+            Arc::clone(&cancelled),
+            TEST_TIMINGS,
+        ));
+        (task, client, peer, cancelled)
+    }
+
+    #[tokio::test]
+    async fn bridge_closes_a_silently_dropped_connection() {
+        // 对端保持 TCP 打开但不再读写，等同路径上静默丢弃连接。
+        let (task, mut client, _silent_peer, _cancelled) = bridged(64 * 1024, 64 * 1024).await;
+        let failure = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("死连接必须被探活发现")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(failure.cause, "probe_timeout");
+        assert!(failure.idle_ms >= TEST_TIMINGS.timeout_ms);
+        // 上层字节流随之 EOF，RPC 才能立刻失败并进入重连。
+        let mut byte = [0u8; 1];
+        assert_eq!(client.read(&mut byte).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn bridge_stays_open_when_peer_answers_pings() {
+        let (task, _client, mut peer, cancelled) = bridged(64 * 1024, 64 * 1024).await;
+        let responder = tokio::spawn(async move {
+            while let Some(Ok(message)) = peer.next().await {
+                if let Message::Ping(bytes) = message {
+                    if peer.send(Message::Pong(bytes)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!task.is_finished(), "有 pong 的连接不能被判死");
+        cancelled.notify_one();
+        assert!(task.await.unwrap().is_ok(), "主动取消不算异常");
+        responder.abort();
+    }
+
+    #[tokio::test]
+    async fn bridge_does_not_kill_a_connection_blocked_on_a_slow_local_reader() {
+        // 本端不读：下载卡在写缓冲上，收不到 pong 不代表连接已死。
+        let (task, mut client, mut peer, cancelled) = bridged(256 * 1024, 1024).await;
+        peer.send(Message::Binary(vec![7u8; 32 * 1024].into()))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(!task.is_finished(), "慢消费者不能触发重连");
+        let mut received = vec![0u8; 32 * 1024];
+        client.read_exact(&mut received).await.unwrap();
+        assert!(received.iter().all(|byte| *byte == 7));
+        cancelled.notify_one();
+        assert!(task.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn bridge_reports_peer_close_but_not_local_close() {
+        let (task, _client, mut peer, _cancelled) = bridged(64 * 1024, 64 * 1024).await;
+        peer.close(None).await.unwrap();
+        let failure = task.await.unwrap().unwrap_err();
+        assert_eq!(failure.cause, "peer_closed");
+
+        let (task, client, mut peer, _cancelled) = bridged(64 * 1024, 64 * 1024).await;
+        let drain = tokio::spawn(async move { while peer.next().await.is_some() {} });
+        drop(client);
+        assert!(task.await.unwrap().is_ok(), "本端关闭不写诊断");
+        drain.abort();
+    }
 
     #[tokio::test]
     async fn latency_requires_an_active_trusted_root_and_does_not_change_health() {

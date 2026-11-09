@@ -1,7 +1,7 @@
 //! Lightweight app memory sampling for the status bar.
 //!
-//! Uses a short TTL cache and memory-only process refresh so a 10s UI poll
-//! stays cheap. Totals: QingCode main + WebView2 + associated descendants
+//! Uses a short TTL cache and memory-only process refresh so the status-bar
+//! poll stays cheap. Totals: QingCode main + WebView2 + associated descendants
 //! (integrated terminal shells and their children).
 
 use std::collections::{HashMap, HashSet};
@@ -9,7 +9,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
-const CACHE_TTL: Duration = Duration::from_millis(2_500);
+const CACHE_TTL: Duration = Duration::from_millis(5_000);
+/// 强制采样也不能短于这个间隔：全进程枚举的开销不应由调用频率决定。
+const FORCED_MIN_INTERVAL: Duration = Duration::from_millis(1_000);
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -36,17 +38,21 @@ fn is_webview2_name(name: &str) -> bool {
 
 /// Sample memory for this process tree (+ associated WebView2).
 /// `extra_roots` are known terminal shell PIDs (still counted if briefly reparented).
-/// When `force` is true, bypass the short TTL cache (e.g. status-bar tip open).
+/// When `force` is true, use the much shorter forced interval instead of the
+/// TTL cache (e.g. status-bar tip open).
 pub fn sample_app_memory(extra_roots: &[u32], project_roots: &[u32], force: bool) -> AppMemoryInfo {
     let mut project_roots_key = project_roots.to_vec();
     project_roots_key.sort_unstable();
     project_roots_key.dedup();
-    if !force {
-        if let Ok(guard) = CACHE.lock() {
-            if let Some(cache) = guard.as_ref() {
-                if cache.at.elapsed() < CACHE_TTL && cache.project_roots == project_roots_key {
-                    return cache.info.clone();
-                }
+    let max_age = if force {
+        FORCED_MIN_INTERVAL
+    } else {
+        CACHE_TTL
+    };
+    if let Ok(guard) = CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.at.elapsed() < max_age && cache.project_roots == project_roots_key {
+                return cache.info.clone();
             }
         }
     }
