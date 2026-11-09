@@ -104,19 +104,20 @@ export async function run({ spaceId, finish = true } = {}) {
         .filter(node => !node.hidden).map(node => node.id).filter(Boolean))
       assert.ok(order.indexOf('home-sessions') < order.indexOf('home-projects'), JSON.stringify(order))
       assert.equal((await rowIds(home)).length, 8)
-      assert.equal(await text(home + ' .overview-more'), '展开全部（还有 2 个）')
-      // 「继续终端」已展示 mobile-1，默认列表不重复；组头数量仍是完整数量。
+      assert.equal(await text(home + ' .overview-more'), '展开全部（还有 3 个）')
+      // 「继续终端」只是快捷入口：mobile-1 仍在所属项目组中，只有这一个会话的项目也不会消失。
       assert.equal(await text('#resume-name'), 'Claude Code')
-      assert.deepEqual(await groupIds(home), ['p-ssh'])
+      assert.equal((await rowIds(home)).includes('mobile-1'), true)
+      assert.match(await text(home + ' [data-id="mobile-1"]'), /上次使用/)
+      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh'])
       assert.equal(await text(home + ' [data-project="p-ssh"] .session-group-count'), '9', 'group header keeps the full count')
-      assert.equal((await rowIds(home)).includes('mobile-1'), false)
       assert.equal(await page.evaluate(() => document.querySelector('#session-drawer').open), false)
       const last = (await page.evaluate(() => window.__mobileFixture.state.sessionRequests)).at(-1)
       assert.equal(last.project, undefined, 'home reads every project in one request')
       await page.screenshot({ path: resolve(output, 'home-390.png') })
       await tap(home + ' .overview-more')
-      assert.equal((await rowIds(home)).length, 10)
-      assert.deepEqual(await groupIds(home), ['p-ssh', 'p-gone'])
+      assert.equal((await rowIds(home)).length, 11)
+      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh', 'p-gone'])
       await tap(home + ' .overview-more')
       assert.equal((await rowIds(home)).length, 8)
     })
@@ -197,18 +198,20 @@ export async function run({ spaceId, finish = true } = {}) {
     })
 
     await step('tapping a session on home opens its project and session', async () => {
+      // mobile-1 占用前 8 行之一，mobile-2 可能排在「展开全部」之后。
+      if (!(await rowIds(home)).includes('mobile-2')) await tap(home + ' .overview-more')
       await tap(home + ' [data-id="mobile-2"] .row', { label: 'open session from home' })
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中'
         && document.querySelector('#terminal-host').textContent.includes('api-server'))
       assert.equal(await text('#terminal-name'), '部署 api')
     })
 
-    await step('the drawer keeps the same overview with current project first and batch close', async () => {
+    await step('the drawer keeps the same overview with a stable project order and batch close', async () => {
       await drawer()
       assert.equal(await page.evaluate(() => document.querySelector('[data-scope="project"]').getAttribute('aria-checked')), 'true')
       await page.click('[data-scope="all"]')
       await page.waitForFunction(selector => document.querySelectorAll(selector + ' .session-option').length === 9, drawerView)
-      assert.deepEqual(await groupIds(drawerView), ['p-ssh', 'p-local'])
+      assert.deepEqual(await groupIds(drawerView), ['p-local', 'p-ssh'], 'projects keep the order they joined the sidebar')
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' [data-current="true"]')?.dataset.id, drawerView), 'mobile-2')
       assert.match(await text('#session-context'), /2 个项目/)
       await tap(drawerView + ' .overview-manage')

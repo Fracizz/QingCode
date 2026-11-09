@@ -27,6 +27,8 @@ export function attachSwipeReveal(row, face, { width = 76, enabled = () => true 
   function place(offset, animate) {
     face.style.transition = animate ? '' : 'none';
     face.style.transform = offset ? `translateX(${offset}px)` : '';
+    // 行面归位后隐藏下层按钮，避免其底色从圆角的抗锯齿边缘漏出。
+    row.toggleAttribute('data-exposed', offset !== 0);
   }
 
   function outside(event) {
@@ -62,6 +64,8 @@ export function attachSwipeReveal(row, face, { width = 76, enabled = () => true 
     const dy = event.clientY - drag.y;
     if (!drag.axis) {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      // 长按已进入拖动排序：这次手势交给排序，不再左滑。
+      if (row.classList.contains('dragging')) { drag = null; return; }
       drag.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
       if (drag.axis === 'y') { drag = null; return; }
       face.setPointerCapture?.(event.pointerId);
@@ -273,8 +277,9 @@ export function attachKeyRepeat(button, fire, { delay = 420, interval = 70 } = {
 /**
  * 长按触发（会话列表的操作菜单）：按住 delay 毫秒且移动不超过 slop 像素时调用 onLongPress。
  * 系统 contextmenu（WebView 长按、鼠标右键）同样触发并阻止默认菜单；触发后吞掉随后的 click。
+ * enabled() 为假时不触发（可拖动的行由 attachDragSort 的 onHold 接管），系统菜单仍被阻止。
  */
-export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 } = {}) {
+export function attachLongPress(element, onLongPress, { delay = 480, slop = 10, enabled = () => true } = {}) {
   let timer = null;
   let origin = null;
   let fired = false;
@@ -296,7 +301,7 @@ export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 }
     stop();
     fired = false;
     // 鼠标右键只走 contextmenu，不计时。
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (!enabled() || (event.pointerType === 'mouse' && event.button !== 0)) return;
     origin = { x: event.clientX, y: event.clientY };
     timer = setTimeout(fire, delay);
   }
@@ -307,7 +312,7 @@ export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 }
 
   function context(event) {
     event.preventDefault();
-    if (!fired) fire();
+    if (!fired && enabled()) fire();
   }
 
   function click(event) {
@@ -336,9 +341,9 @@ export function attachLongPress(element, onLongPress, { delay = 480, slop = 10 }
  * 长按拖动排序（快捷键栏布局等短列表）：在 rowSelector 行上按住 delay 毫秒进入拖动，
  * 被拖行跟随手指，其余行让位；松手调用 onDrop(row, from, to)。按住期间移动超过 slop 视为滚动，放弃拖动。
  * 拖动后吞掉随后的 click，避免松手时误触行内的开关；ignoreSelector 内的控件（如上移 / 下移按钮）不触发拖动。
- * 落点计算在 keyLayout.js 的 dragTargetIndex。
+ * 落点计算在 keyLayout.js 的 dragTargetIndex。onHold(row)：进入拖动后原地松手时调用，行的长按操作不被拖动占掉。
  */
-export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, targetIndex, delay = 320, slop = 8 }) {
+export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, onHold, targetIndex, delay = 320, slop = 8 }) {
   let pending = null;
   let drag = null;
   let swallowClick = false;
@@ -369,8 +374,8 @@ export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, targ
     drag = {
       row, pointerId, y, from, to: from, rows: all,
       mids: rects.map(rect => rect.top + rect.height / 2),
-      // 让位距离取相邻行的间距（含分隔线）；只有一行时不会让位。
-      step: all.length > 1 ? (rects[all.length - 1].top - rects[0].top) / (all.length - 1) : rects[from].height,
+      // 让位距离取被拖行的高度加行间距（含分隔线），行高不一时也准确；只有一行时不会让位。
+      step: rects[from].height + (all.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0),
       // 被拖行不超出列表上下边界。
       min: listRect.top - rects[from].top,
       max: listRect.bottom - rects[from].bottom,
@@ -398,6 +403,7 @@ export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, targ
     if (!drag || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
     const offset = Math.max(drag.min, Math.min(drag.max, event.clientY - drag.y));
+    if (Math.abs(event.clientY - drag.y) > slop) drag.moved = true;
     drag.row.style.transform = `translateY(${offset}px)`;
     drag.to = targetIndex(drag.mids, drag.from, drag.mids[drag.from] + offset);
     for (const [index, item] of drag.rows.entries()) {
@@ -410,12 +416,13 @@ export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, targ
   function up(event) {
     if (pending && event.pointerId === pending.pointerId) { clear(); return; }
     if (!drag || event.pointerId !== drag.pointerId) return;
-    const { row, from, to } = drag;
+    const { row, from, to, moved } = drag;
     swallowClick = true;
     // click 只在 pointerup 后同步派发；下一帧仍未出现说明不会再来，解除吞掉。
     setTimeout(() => { swallowClick = false; }, 0);
     clear();
     if (to !== from) onDrop(row, from, to);
+    else if (!moved) onHold?.(row);
   }
 
   function cancel(event) {

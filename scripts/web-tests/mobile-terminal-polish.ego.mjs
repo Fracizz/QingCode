@@ -174,6 +174,16 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('').includes('\x1b[Z'))
       assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog').open), false)
 
+      // Shift+← 只在「更多」中，不进快捷键栏；草稿模式下也直接发给终端。
+      assert.ok(!(await barKeys()).includes('shift-left'))
+      await page.click('#more-keys', { label: 'open More for Shift+Left' })
+      await settled('#keys-dialog')
+      await capture('06b-more-shift-left')
+      await resetInputs()
+      await page.click('#keys-dialog [data-key="shift-left"]', { label: 'send Shift+Left from More' })
+      await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('') === '\x1b[1;2D')
+      assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog').open), false)
+
       await page.reload()
       await metrics(390, 844)
       await connect()

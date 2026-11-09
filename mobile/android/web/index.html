@@ -315,11 +315,12 @@
       <button type="button" data-key="clear">清空草稿</button>
     </div>
     <h3 class="keys-group-title">导航</h3>
-    <div class="extra-keys" aria-label="导航按键">
+    <div class="extra-keys extra-keys-five" aria-label="导航按键">
       <button type="button" data-key="home">Home</button>
       <button type="button" data-key="end">End</button>
       <button type="button" data-key="pgup" data-repeat>PgUp</button>
       <button type="button" data-key="pgdn" data-repeat>PgDn</button>
+      <button type="button" data-key="shift-left" aria-label="发送 Shift+←"><svg><use href="#i-shift"/></svg><svg><use href="#i-arrow-left"/></svg></button>
     </div>
     <h3 class="keys-group-title">修饰键与符号</h3>
     <div class="extra-keys extra-keys-five" aria-label="修饰键与符号">
@@ -365,6 +366,17 @@
     </div>
     <p id="session-actions-hint" class="hint">置顶只保存在这台手机上，不改变电脑端终端顺序。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="session-actions-dialog">关闭</button></div>
+  </dialog>
+
+  <dialog id="project-actions-dialog" class="sheet" aria-labelledby="project-actions-title">
+    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+    <h2 tabindex="-1" id="project-actions-title">项目操作</h2><p id="project-actions-context"></p>
+    <div class="rows terminal-actions">
+      <button id="project-action-switch" type="button"><svg><use href="#i-folder"/></svg><span>切换到此项目</span></button>
+      <button id="project-action-remove" class="danger" type="button"><svg><use href="#i-trash"/></svg><span>移除项目</span></button>
+    </div>
+    <p class="hint">移除只影响这台设备的侧栏，不改动电脑端的项目和文件。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="project-actions-dialog">关闭</button></div>
   </dialog>
 
   <dialog id="rename-session-dialog" aria-labelledby="rename-session-title">
@@ -495,10 +507,10 @@
 
   <dialog id="new-session-dialog" class="sheet" aria-labelledby="new-session-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
-    <h2 tabindex="-1" id="new-session-title">新建会话</h2>
+    <h2 tabindex="-1" id="new-session-title">新建会话</h2><p id="new-session-context"></p>
     <div id="terminal-profiles" class="rows session-shortcuts" aria-label="终端配置"></div>
     <p id="terminal-profiles-error" class="error" role="alert" hidden></p>
-    <p class="hint">选项来自电脑端「设置 → 终端 → 终端配置」，在当前项目环境中执行。</p>
+    <p class="hint">选项来自电脑端「设置 → 终端 → 终端配置」，在所选项目环境中执行。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="new-session-dialog">取消</button></div>
   </dialog>
 

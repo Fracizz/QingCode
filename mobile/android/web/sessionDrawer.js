@@ -2,20 +2,27 @@
 // 「全部」范围显示这台电脑上所有项目的手机会话纵览（按项目分组、筛选、搜索）。
 import {
   createdLabel,
+  joinProjectIds,
   mergeSessionActivity,
   mergeSessionList,
   mergeSessionName,
   orderSessions,
+  parseIdList,
   parseSessionPins,
+  phoneSessionProjectIds,
   prunedSessionPins,
   projectSessionsFromOverview,
   projectSourceLabel,
+  reorderSessionIds,
+  reorderVisibleProjects,
   sessionIdleInfo,
   sessionName,
   sessionRunning,
   toggleSessionPin,
+  updateSessionAttention,
 } from './protocol.js';
-import { attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
+import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
+import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
@@ -31,8 +38,9 @@ const DOCKED_REFRESH_INTERVAL = 3000;
  * allSupported() 返回电脑端是否支持一次列出全部会话（Promise<boolean>）。
  * setSessions(list) 写回会话列表；selectSession / endSession 由 app 执行；
  * openOverviewSession / endOverviewSessions 处理纵览中（可能属于其他项目）的会话，后者接收会话数组并负责确认。
+ * addProjectSession / switchProject / removeProject 响应「全部」范围项目组头上的新建、切换和移除。
  */
-export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSessions }) {
+export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSessions, addProjectSession, switchProject, removeProject }) {
   const drawer = get('session-drawer');
   let drawerEpoch = 0;
   let refreshTimer;
@@ -45,6 +53,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   // null：尚未确认电脑端是否支持；切换连接后重新确认。
   let allAvailable = null;
   let availabilityAddress = null;
+  let actionProject = null;
+  const tracker = { busy: new Set(), attention: new Set() };
 
   // 「本项目」列表的「运行中优先」，与纵览中的按钮同步。
   // 与「新建终端」同一行，放在右侧。
@@ -58,7 +68,58 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
 
   function allMode() { return scope === 'all' && allAvailable === true && availabilityAddress === state.profile()?.id; }
 
-  // 「全部」范围的纵览；当前项目里已被关闭的会话立即从纵览中去掉，不等下一次刷新。
+  function readProjectIds(scope) {
+    const profile = state.profile();
+    return profile ? parseIdList(localStorage.getItem(prefix + scope + profile.id)) : [];
+  }
+
+  function writeProjectIds(scope, list) {
+    const profile = state.profile();
+    if (!profile) return;
+    try {
+      if (list.length) localStorage.setItem(prefix + scope + profile.id, JSON.stringify(list));
+      else localStorage.removeItem(prefix + scope + profile.id);
+    } catch { /* 只是显示偏好，保存失败不影响终端。 */ }
+  }
+
+  const sidebarProjects = () => readProjectIds('sidebar-projects:');
+  const collapsedProjects = () => readProjectIds('session-groups-collapsed:');
+
+  // 终端手动顺序按连接 + 项目保存，「本项目」与「全部」共用，不改变电脑端终端顺序。
+  function sessionOrderKey(projectId) {
+    return prefix + 'session-order:' + state.profile().id + ':' + projectId;
+  }
+
+  function sessionOrder(projectId) {
+    return state.profile() && projectId ? parseIdList(localStorage.getItem(sessionOrderKey(projectId))) : [];
+  }
+
+  function reorderSessions(projectId, visible, from, to) {
+    try {
+      localStorage.setItem(sessionOrderKey(projectId), JSON.stringify(reorderSessionIds(sessionOrder(projectId), visible, from, to)));
+    } catch { /* 只是显示偏好，保存失败不影响终端。 */ }
+  }
+
+  function joinProjects(ids) {
+    const current = sidebarProjects();
+    const next = joinProjectIds(current, ids);
+    if (next.length !== current.length) writeProjectIds('sidebar-projects:', next);
+  }
+
+  /** 打开项目：加入侧栏；折叠着就展开，否则当前会话藏在组里看不到。 */
+  function enterProject(id) {
+    joinProjects([id]);
+    const collapsed = collapsedProjects();
+    if (collapsed.includes(id)) writeProjectIds('session-groups-collapsed:', collapsed.filter(item => item !== id));
+  }
+
+  function forgetProject(id) {
+    writeProjectIds('sidebar-projects:', sidebarProjects().filter(item => item !== id));
+    writeProjectIds('session-groups-collapsed:', collapsedProjects().filter(item => item !== id));
+    try { localStorage.removeItem(sessionOrderKey(id)); } catch { /* 只是显示偏好。 */ }
+  }
+
+  // 「全部」范围的纵览。
   const overview = createSessionOverview({
     root: get('session-overview'),
     state: {
@@ -69,10 +130,20 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       selected: state.selected,
       lastSession: state.lastSession,
       busy: state.locked,
-      visible: item => {
-        const project = state.project();
-        return item.project?.id !== project?.id || state.sessions().some(session => session.id === item.id);
+    },
+    groupTools: {
+      order: sidebarProjects,
+      collapsed: id => collapsedProjects().includes(id),
+      toggle: id => {
+        const collapsed = collapsedProjects();
+        writeProjectIds('session-groups-collapsed:', collapsed.includes(id) ? collapsed.filter(item => item !== id) : [...collapsed, id]);
       },
+      attention: id => tracker.attention.has(id),
+      add: project => addProjectSession(project),
+      menu: project => openProjectActions(project),
+      reorder: (visible, from, to) => writeProjectIds('sidebar-projects:', reorderVisibleProjects(sidebarProjects(), visible, from, to)),
+      sessionOrder,
+      reorderSessions,
     },
     open: session => openOverviewSession(session),
     end: sessions => endOverviewSessions(sessions),
@@ -115,6 +186,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   function render() {
     const sessions = state.sessions();
     const selected = state.selected();
+    tracker.attention.delete(selected);
     const busy = state.locked();
     const project = state.project();
     const profile = state.profile();
@@ -135,16 +207,20 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     get('end-all-sessions').disabled = busy || !sessions.length;
     get('drawer-new-session').disabled = busy;
     const pinned = new Set(pins());
-    for (const [position, { session, index }] of orderSessions(sessions, [...pinned], { runningFirst: runningFirst() }).entries()) {
+    for (const [position, { session, index }] of orderSessions(sessions, [...pinned], { runningFirst: runningFirst(), order: sessionOrder(project?.id) }).entries()) {
       const label = sessionName(session, index + 1);
       let row = existingRows.get(session.id);
       if (!row) row = createRow(session);
       existingRows.delete(session.id);
       row.dataset.current = String(session.id === selected);
       row.dataset.pinned = String(pinned.has(session.id));
+      // 置顶的会话固定在最前；「运行中优先」是临时排序，都不参与拖动。
+      row.dataset.draggable = String(!busy && !pinned.has(session.id) && !runningFirst());
       // 只影响显示；「运行中优先」排序仍按真实状态。
       const running = runningStatusEnabled() && sessionRunning(session);
       row.dataset.running = String(running);
+      const fresh = tracker.attention.has(session.id);
+      row.dataset.attention = String(fresh);
       const option = row.querySelector('.row');
       option.disabled = busy;
       option.setAttribute('aria-label', t('切换到 {name}', { name: label }));
@@ -153,7 +229,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       row.querySelector('.session-label').textContent = label;
       // 空闲时长并入一行；快到自动结束时才单独提醒。
       const idleInfo = sessionIdleInfo(session);
-      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, status, idleInfo.expiring ? '' : idleInfo.text]
+      row.querySelector('small').textContent = [pinned.has(session.id) ? t('已置顶') : '', label === identity ? '' : identity, fresh ? t('有新结果') : '', status, idleInfo.expiring ? '' : idleInfo.text]
         .filter(Boolean).join(' · ');
       const idle = row.querySelector('.session-idle');
       idle.textContent = idleInfo.expiring ? idleInfo.text : '';
@@ -162,6 +238,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       row.querySelector('.session-more').disabled = busy;
       const close = row.querySelector('.session-close');
       close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
+      close.querySelector('span').textContent = t(session.exit ? '移除' : '关闭');
       close.disabled = busy;
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
@@ -218,6 +295,23 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     void refresh();
   }
 
+  // 长按后拖动排序，原地松手打开操作菜单。
+  const draggableRow = '.session-option[data-draggable="true"]';
+  attachDragSort(get('session-options'), {
+    rowSelector: draggableRow,
+    ignoreSelector: '.session-close, .session-more',
+    targetIndex: dragTargetIndex,
+    onHold: row => {
+      const session = state.sessions().find(item => item.id === row.dataset.id);
+      if (session) openActions(session);
+    },
+    onDrop: (_row, from, to) => {
+      const visible = [...get('session-options').querySelectorAll(draggableRow)].map(row => row.dataset.id);
+      reorderSessions(state.project().id, visible, from, to);
+      render();
+    },
+  });
+
   get('session-scope').addEventListener('click', event => {
     const target = event.target.closest?.('[data-scope]');
     if (target && !target.disabled) setScope(target.dataset.scope);
@@ -234,18 +328,21 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     const heading = text.querySelector('strong');
     const name = document.createElement('span');
     name.className = 'session-label';
-    heading.append(icon('loader-circle', 'session-spinner'), icon('pin', 'session-pin'), name);
+    const attention = document.createElement('span');
+    attention.className = 'session-attention';
+    attention.setAttribute('aria-hidden', 'true');
+    heading.append(icon('loader-circle', 'session-spinner'), attention, icon('pin', 'session-pin'), name);
     // 空闲 24 小时无输入也无输出时电脑端自动结束会话。
     const idle = document.createElement('small');
     idle.className = 'session-idle';
     text.append(idle);
     option.append(text);
     // 长按整行或点 ⋯ 打开会话操作（置顶、重命名、结束）。
-    attachLongPress(option, () => { if (latest()) openActions(latest()); });
+    attachLongPress(option, () => { if (latest()) openActions(latest()); }, { enabled: () => row.dataset.draggable !== 'true' });
     const more = button('icon-button session-more', () => { if (latest()) openActions(latest()); });
     more.append(icon('more'));
     const close = button('swipe-action session-close', () => { void endSession(session.id); });
-    close.append(icon('close'));
+    close.append(icon('close'), document.createElement('span'));
     const face = document.createElement('div');
     face.className = 'session-face';
     face.append(option, more);
@@ -270,6 +367,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     if (currentDrawer !== drawerEpoch || !drawer.open) return;
     render();
     await refresh();
+    // 分组不再把当前项目置顶，打开时滚到当前会话。
+    if (currentDrawer === drawerEpoch && drawer.open) drawer.querySelector('.row[aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
   }
 
   async function refresh() {
@@ -290,7 +389,11 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
       setSessions(mergeSessionList(list, state.sessions()));
       prunePins(state.sessions());
       message('session-error', '');
-      if (all) overview.setList(response, address);
+      updateSessionAttention(tracker, all ? response : list, state.selected());
+      if (all) {
+        joinProjects(phoneSessionProjectIds(response));
+        overview.setList(response, address);
+      }
       render();
     } catch (error) {
       if (epoch === state.viewEpoch() && currentDrawer === drawerEpoch && drawer.open) message('session-error', error.message);
@@ -365,6 +468,22 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     return state.sessions().find(item => item.id === target.id) ?? null;
   }
 
+  function openProjectActions(project) {
+    if (state.busy()) return;
+    actionProject = project;
+    get('project-actions-title').textContent = project.name ?? project.id;
+    get('project-actions-context').textContent = projectSourceLabel({ ...project, host: '' });
+    // 当前项目无需切换；电脑端已移除的项目打不开，只能移除。
+    get('project-action-switch').hidden = project.id === state.project()?.id || !state.projects().some(item => item.id === project.id);
+    get('project-actions-dialog').showModal();
+  }
+
+  function takeActionProject() {
+    const target = actionProject;
+    get('project-actions-dialog').close();
+    return state.busy() ? null : target;
+  }
+
   function openRename(session) {
     if (state.busy()) return;
     renamingSession = { id: session.id, address: state.profile().id, epoch: state.viewEpoch() };
@@ -390,6 +509,15 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
     if (session) void endSession(session.id);
   });
   get('session-actions-dialog').addEventListener('close', () => { actionSession = null; });
+  get('project-action-switch').addEventListener('click', () => {
+    const project = takeActionProject();
+    if (project) switchProject(project);
+  });
+  get('project-action-remove').addEventListener('click', () => {
+    const project = takeActionProject();
+    if (project) void removeProject(project);
+  });
+  get('project-actions-dialog').addEventListener('close', () => { actionProject = null; });
 
   get('rename-session-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -428,7 +556,8 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   });
 
   return {
-    render, open, close, dock, isDocked: () => docked, refresh, pause, scheduleRefresh, wake, sleep, pins, savePins, prunePins,
+    render, open, close, dock, isDocked: () => docked, allMode, refresh, pause, scheduleRefresh, wake, sleep, pins, savePins, prunePins,
+    enterProject, forgetProject, sidebarProjects,
     overview,
   };
 }

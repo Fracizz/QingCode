@@ -213,8 +213,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
       await page.waitForFunction(() => document.querySelectorAll('#session-options .session-option').length === 2)
       const row = '#session-options .session-option[data-current="false"]'
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .session-label').textContent, row), '第二个会话')
+      const closeStyle = () => page.evaluate(selector => {
+        const close = document.querySelector(selector + ' .session-close')
+        const style = getComputedStyle(close)
+        return { text: close.textContent, background: style.backgroundColor, opacity: style.opacity }
+      }, row)
+      assert.equal((await closeStyle()).opacity, '0', 'collapsed rows must not leak the action color')
       await swipeLeft(row + ' .session-face', 90)
       assert.equal(await page.evaluate(selector => document.querySelector(selector).dataset.revealed, row), 'true')
+      assert.deepEqual(await closeStyle(), { text: '关闭', background: 'rgb(255, 157, 140)', opacity: '1' })
       await shot('drawer-swipe.png')
       const selected = await page.evaluate(() => document.querySelector('#session-options [data-current="true"]').dataset.id)
       await page.evaluate(selector => document.querySelector(selector + ' .row').click(), row)

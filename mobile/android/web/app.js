@@ -153,6 +153,10 @@ let terminalLinks;
 // 链接弹层当前显示的目标：{ url, open, note }。
 let linkTarget = null;
 let terminalReady = false;
+// 切换终端时旧画面留在新终端上方，新终端写好第一屏再撤掉，避免黑屏。
+let heldFrame = null;
+let frameStatusTimer;
+let frameReleaseTimer;
 // 当前终端的使用权编号；旧版电脑端不支持时保持 null。
 let currentLease = null;
 // 被其他设备接入时记下的会话，点「接回」后重新接入。
@@ -163,7 +167,8 @@ const modifiers = { ctrl: 'off', alt: 'off' };
 const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
 // 关闭单个会话时只在逻辑上加锁，列表不变暗，避免确认和请求期间闪一下。
-let endingSession = false;
+// 忙碌但列表不变暗：关闭单个会话、切换项目、新建终端时，整列闪一下比禁用态更打扰。
+let quietBusy = false;
 let inputFailed = false;
 let resizing = null;
 let composing = false;
@@ -312,7 +317,7 @@ const drawer = createSessionDrawer({
     sessions: () => sessions,
     selected: () => selected,
     busy: () => busy,
-    locked: () => busy && !endingSession,
+    locked: () => busy && !quietBusy,
     viewEpoch: () => viewEpoch,
     foreground: () => foreground,
     projects: () => projects,
@@ -330,6 +335,13 @@ const drawer = createSessionDrawer({
   endSession,
   openOverviewSession: session => openOverviewSession(session, drawer.overview),
   endOverviewSessions: list => endOverviewSessions(list, drawer.overview),
+  addProjectSession: item => {
+    if (busy) return;
+    drawer.close();
+    void openNewSessionDialog(item);
+  },
+  switchProject: item => { void openProject(projects.find(candidate => candidate.id === item.id)); },
+  removeProject: item => removeSidebarProject(item),
 });
 
 // 工作台首页「全部会话」：首页可见、App 在前台且电脑在线时定时刷新；与抽屉的「全部」共用组件。
@@ -354,8 +366,6 @@ const homeOverview = createSessionOverview({
     selected: () => null,
     lastSession: projectId => lastSessionOf(projectId),
     busy: () => busy,
-    // 「继续终端」卡片已经展示这个会话；只有一个会话时仍保留在列表里，方便管理。
-    omit: session => homeOverview.list().length > 1 && session.id === resumeSession()?.id,
   },
   open: session => openOverviewSession(session, homeOverview),
   end: list => endOverviewSessions(list, homeOverview),
@@ -537,7 +547,10 @@ function renderLatency() {
   // 每次探测成功闪一下状态圆点和延迟值；语言切换等重绘不闪，失败也不闪。
   if (isFreshLatency(snapshot, latencyFlashedAt)) {
     latencyFlashedAt = snapshot.checkedAt;
-    if (!terminalScreen.hidden) for (const id of ['terminal-dot', 'terminal-latency']) replayAnimation(get(id), 'ping-flash');
+    const targets = terminalScreen.hidden
+      ? [get('active-host').querySelector('.dot'), get('home-latency')]
+      : [get('terminal-dot'), get('terminal-latency')];
+    for (const element of targets) replayAnimation(element, 'ping-flash');
   }
   get('terminal-latency').textContent = t('电脑 {value}', { value });
   get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));
@@ -578,7 +591,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
@@ -690,13 +703,15 @@ function forgetProfile(item) {
   profiles = profiles.filter(saved => saved.id !== item.id);
   health.delete(item.id);
   for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':')) {
+    if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':') || key.startsWith(prefix + 'session-order:' + item.id + ':')) {
       localStorage.removeItem(key);
     }
   }
   workspace.removeHost(item.id);
   localStorage.removeItem(prefix + 'project:' + item.id);
   localStorage.removeItem(prefix + 'recent-projects:' + item.id);
+  localStorage.removeItem(prefix + 'sidebar-projects:' + item.id);
+  localStorage.removeItem(prefix + 'session-groups-collapsed:' + item.id);
   if (profile?.id === item.id) {
     profileEpoch += 1;
     profile = null;
@@ -1052,7 +1067,39 @@ get('toggle-keys').addEventListener('click', () => {
 });
 renderShortcutVisibility();
 
-function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) {
+/** 旧画面保留时长：超过 FRAME_STATUS_DELAY 才显示接入状态；接入重绘最多 1.5 秒，到 FRAME_HOLD_LIMIT 仍未就绪就露出新终端。 */
+const FRAME_STATUS_DELAY = 400;
+const FRAME_HOLD_LIMIT = 3000;
+/** 新终端写完后约两帧才撤旧画面，等 WebGL 画出第一帧。 */
+const FRAME_SWAP_DELAY = 34;
+
+function releaseTerminalFrame({ immediate = false } = {}) {
+  clearTimeout(frameStatusTimer);
+  clearTimeout(frameReleaseTimer);
+  const frame = heldFrame;
+  if (!frame) return;
+  heldFrame = null;
+  const dispose = () => {
+    frame.renderer?.dispose();
+    frame.term.dispose();
+  };
+  if (immediate) dispose();
+  else setTimeout(dispose, FRAME_SWAP_DELAY);
+}
+
+/** 旧画面还在时先不改状态行和按钮，短暂切换看不出中间态；没有旧画面（从工作台进入）立即显示状态。 */
+function awaitNewFrame(text) {
+  if (!heldFrame) {
+    terminalState(text);
+    return;
+  }
+  clearTimeout(frameStatusTimer);
+  clearTimeout(frameReleaseTimer);
+  frameStatusTimer = setTimeout(() => terminalState(text, 'idle', false, { holdFrame: true }), FRAME_STATUS_DELAY);
+  frameReleaseTimer = setTimeout(releaseTerminalFrame, FRAME_HOLD_LIMIT);
+}
+
+function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFrame = false } = {}) {
   if (!keepDrawer) drawer.close();
   get('rename-session-dialog').close();
   cancelKeyRepeats();
@@ -1072,7 +1119,19 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) 
   deferredLatest = false;
   terminalLinks?.dispose();
   terminalLinks = undefined;
-  terminalRenderer?.dispose();
+  // 连续切换时保留最早那张完整画面，中间还没写完的终端直接释放。
+  const holding = holdFrame && !!term && !heldFrame;
+  if (holding) {
+    const { offsetLeft, offsetTop } = term.element;
+    term.element.classList.add('terminal-held-frame');
+    term.element.style.left = offsetLeft + 'px';
+    term.element.style.top = offsetTop + 'px';
+    term.blur();
+    heldFrame = { term, renderer: terminalRenderer };
+  } else {
+    terminalRenderer?.dispose();
+  }
+  if (!holdFrame) releaseTerminalFrame({ immediate: true });
   terminalRenderer = undefined;
   if (get('link-dialog').open) get('link-dialog').close();
   terminalReady = false;
@@ -1100,7 +1159,7 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false } = {}) 
   disposeTouchScroll = undefined;
   disposeTouchGuard?.();
   disposeTouchGuard = undefined;
-  term?.dispose();
+  if (!holding) term?.dispose();
   term = undefined;
   fit = undefined;
 }
@@ -1525,7 +1584,8 @@ function sendSize() {
   });
 }
 
-function terminalState(text, state = 'idle', retry = false) {
+function terminalState(text, state = 'idle', retry = false, { holdFrame = false } = {}) {
+  if (!holdFrame) releaseTerminalFrame();
   inputFailed = false;
   terminalReady = state === 'online';
   get('expanded-send').disabled = !terminalReady;
@@ -1552,9 +1612,13 @@ function handleTerminalError(error, retry = true) {
 async function openProject(item, resumeOnly = false, target = null) {
   if (!item || busy) return;
   busy = true;
-  leaveTerminal();
+  quietBusy = true;
+  // 已在终端页时是切换项目：保留旧画面，也不退出沉浸模式再进入。
+  const switching = !terminalScreen.hidden;
+  leaveTerminal({ preserveFullscreen: switching, holdFrame: switching });
   const epoch = viewEpoch;
   project = item;
+  drawer.enterProject(item.id);
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
@@ -1564,11 +1628,10 @@ async function openProject(item, resumeOnly = false, target = null) {
   terminalScreen.hidden = false;
   syncSessionDock();
   void syncTerminalFullscreen();
-  terminalState(t('正在连接终端…'));
+  awaitNewFrame(t('正在连接终端…'));
   try {
     await loadTerminalFont();
     if (epoch !== viewEpoch) return;
-    makeTerminal();
     drawer.render();
     renderInputTip();
     const list = await remote('sessions', { project: item.id });
@@ -1590,6 +1653,7 @@ async function openProject(item, resumeOnly = false, target = null) {
     if (epoch === viewEpoch) handleTerminalError(error);
   } finally {
     busy = false;
+    quietBusy = false;
     // 常驻侧栏在打开项目期间已显示，结束忙碌后立即恢复按钮可用。
     if (drawer.isDocked()) drawer.render();
   }
@@ -1597,8 +1661,18 @@ async function openProject(item, resumeOnly = false, target = null) {
 
 // 进入没有终端的项目时不再自动新建，只显示空状态，由用户点「新建终端」。
 function showEmptyProject() {
+  // 新建时按真实行列创建，避免以默认 80×24 启动后马上重绘。
+  if (!term) makeTerminal();
   terminalState(t('暂无终端'));
   get('terminal-empty').hidden = false;
+}
+
+/** 项目的终端全部关闭后留在项目里（侧栏不消失），由用户新建终端或返回工作台。 */
+function stayOnEmptyProject(projectId) {
+  localStorage.removeItem(sessionKey(projectId));
+  // 手机「本项目」收起抽屉，露出「新建终端」；「全部」可能还要继续清理其他项目，平板常驻侧栏由 close 保持。
+  leaveTerminal({ preserveFullscreen: true, keepDrawer: drawer.allMode() });
+  showEmptyProject();
 }
 
 async function createSession(epoch, terminalProfile = null) {
@@ -1637,7 +1711,12 @@ function renderTerminalProfiles(choices, state = '') {
   message('terminal-profiles-error', state === 'error' ? t(t('无法读取电脑端终端配置，已仅显示普通终端。')) : '');
 }
 
-async function openNewSessionDialog() {
+/** target 是侧栏里的其他项目；不传时在当前项目新建。 */
+async function openNewSessionDialog(target = null) {
+  newSessionProject = target && target.id !== project?.id ? target : null;
+  const destination = newSessionProject ?? project;
+  get('new-session-context').textContent = destination ? destination.name + ' · ' + projectSourceLabel({ ...destination, host: '' }) : '';
+  message('terminal-profiles-error', '');
   const address = profile?.id;
   const cached = terminalProfiles.get(address);
   renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
@@ -1663,7 +1742,7 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
     if (take && takenSession) retakeSession();
     return;
   }
-  leaveTerminal({ preserveFullscreen: true, keepDrawer });
+  leaveTerminal({ preserveFullscreen: true, keepDrawer, holdFrame: true });
   const epoch = viewEpoch;
   selected = session.id;
   workspace.context(draftKey(selected), project.id, project.name);
@@ -1677,7 +1756,7 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
   } catch { /* Terminal access remains available when history cannot be saved. */ }
   localStorage.setItem(prefix + 'open', profile.id);
   dashboard.renderHome();
-  terminalState(t('正在接入终端…'));
+  awaitNewFrame(t('正在接入终端…'));
   await loadTerminalFont();
   if (epoch !== viewEpoch) return;
   makeTerminal();
@@ -1696,23 +1775,17 @@ const ATTACH_REDRAW_MAX_MS = 1500;
  * 终端网格和本机不同时不显示旧尺寸画面：写进 xterm 后再改尺寸会被重新折行，程序重绘叠在上面留下残影。
  * 这里先改尺寸并等输出安静，随后由调用方取后端最新整屏；普通 Shell 不重绘时也靠这份快照显示。
  */
-async function redrawAfterAttach(id, epoch, from, previous) {
+async function redrawAfterAttach(id, epoch, from) {
   const startedAt = Date.now();
-  const size = dimensions();
-  await remote('resize', { id, ...size });
+  await remote('resize', { id, ...dimensions() });
   let next = from;
-  let chunks = 0;
   while (epoch === viewEpoch && Date.now() - startedAt < ATTACH_REDRAW_MAX_MS) {
     const data = await remote('poll', { id, from: next, latest: false, tail: false, ...(currentLease !== null ? { lease: currentLease } : {}) });
     // 等待期间被其他设备接入：交给主循环的下一次轮询显示提示。
     if (data.takenOver) return;
     next = data.next;
     if (data.exit || !data.chunks.length) break;
-    chunks += data.chunks.length;
   }
-  if (epoch !== viewEpoch) return;
-  // 验证用提示：确认走了重绘流程、程序有没有输出，验证结束后删除。
-  showTerminalToast(`${previous.cols}×${previous.rows} → ${size.cols}×${size.rows} · ${chunks ? `重绘 ${chunks} 段` : '无重绘，用快照'} · ${Date.now() - startedAt}ms`, 4000);
 }
 
 function clearTakenOver() {
@@ -1787,7 +1860,7 @@ async function poll(session, epoch, take = false) {
       if (attaching) {
         attaching = false;
         if (data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
-          await redrawAfterAttach(session.id, epoch, data.next, data.chunks[0]);
+          await redrawAfterAttach(session.id, epoch, data.next);
           continue;
         }
       }
@@ -1851,6 +1924,7 @@ async function poll(session, epoch, take = false) {
       if (SESSION_GONE_ERRORS.includes(error.message)) {
         saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
+        drawer.overview.remove([session.id]);
         drawer.render();
         terminalState(t('原会话已不存在 · 草稿保留，可新建终端恢复'), 'offline');
         return;
@@ -1883,12 +1957,41 @@ get('drawer-settings').addEventListener('click', () => { drawer.close(); get('se
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
-// 空状态与右上角「＋」、会话抽屉共用「新建会话」弹层，可先选普通终端或电脑端终端配置。
+// 空状态、右上角「＋」、会话抽屉与项目组头共用「新建会话」弹层，可先选普通终端或电脑端终端配置。
+let newSessionProject = null;
 get('terminal-empty-new').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
+
+/** 在侧栏的其他项目上新建：先在电脑端创建再切过去，不经过空项目页。失败时留在弹层里提示。 */
+async function newSessionInProject(target, terminalProfile) {
+  busy = true;
+  quietBusy = true;
+  const epoch = viewEpoch;
+  try {
+    const args = { project: target.id, ...dimensions() };
+    if (terminalProfile) args.terminal_profile = terminalProfile;
+    const session = await remote('create', args);
+    if (epoch !== viewEpoch) return;
+    get('new-session-dialog').close();
+    busy = false;
+    await openProject(target, false, session);
+  } catch (error) {
+    if (error.revoked) handleTerminalError(error);
+    else message('terminal-profiles-error', error.message);
+  } finally {
+    busy = false;
+    quietBusy = false;
+    drawer.scheduleRefresh();
+  }
+}
 
 async function newSession(terminalProfile) {
   if (busy) return;
+  if (newSessionProject) {
+    await newSessionInProject(newSessionProject, terminalProfile);
+    return;
+  }
   busy = true;
+  quietBusy = true;
   const epoch = viewEpoch;
   const wasReady = terminalReady;
   if (!selected) terminalState(t('正在新建终端…'));
@@ -1907,6 +2010,7 @@ async function newSession(terminalProfile) {
     }
   } finally {
     busy = false;
+    quietBusy = false;
     if (drawer.isDocked()) drawer.render();
   }
 }
@@ -1918,7 +2022,7 @@ async function endSession(id) {
   const address = profile.id;
   const ended = target.exit;
   busy = true;
-  endingSession = true;
+  quietBusy = true;
   drawer.pause();
   message('session-error', '');
   drawer.render();
@@ -1929,6 +2033,7 @@ async function endSession(id) {
     await remote('end', { id }, address);
     if (epoch !== viewEpoch) return;
     sessions = sessions.filter(item => item.id !== id);
+    drawer.overview.remove([id]);
     drawer.savePins(drawer.pins().filter(pin => pin !== id));
     // 先收起这一行，再切换终端；抽屉全程不关，不会滑出再滑入。
     drawer.render();
@@ -1937,8 +2042,7 @@ async function endSession(id) {
       if (sessions.length) {
         await selectSession(sessions.find(item => !item.exit) ?? sessions[0], { keepDrawer: true });
       } else {
-        localStorage.removeItem(sessionKey(project.id));
-        returnToDashboard('home');
+        stayOnEmptyProject(project.id);
       }
     }
     drafts.delete(draftKey(id));
@@ -1949,7 +2053,7 @@ async function endSession(id) {
     }
   } finally {
     busy = false;
-    endingSession = false;
+    quietBusy = false;
     drawer.render();
     drawer.scheduleRefresh();
   }
@@ -1987,11 +2091,13 @@ function overviewConfirmText(target) {
 /**
  * 纵览中关闭一个或多个会话（可跨项目）。终端页当前项目的单个会话沿用 endSession（收起动画与接回剩余会话）；
  * 其余情况确认后逐个结束，失败的保留并提示，不自动重试。view 为发起操作的纵览，用于显示错误。
+ * options.confirm 替换确认文案；options.leavingProject 表示调用方随后会离开当前项目，全部关闭成功时不再接回其他会话。
+ * 确认并执行后返回 { failed }，取消或出错时返回 undefined。
  */
-async function endOverviewSessions(targets, view) {
+async function endOverviewSessions(targets, view, { confirm = null, leavingProject = false } = {}) {
   if (busy || !profile || !targets.length) return;
   const inTerminal = !terminalScreen.hidden;
-  if (targets.length === 1 && inTerminal && targets[0].project?.id === project?.id && targets[0].origin !== 'desktop') {
+  if (!confirm && targets.length === 1 && inTerminal && targets[0].project?.id === project?.id && targets[0].origin !== 'desktop') {
     await endSession(targets[0].id);
     return;
   }
@@ -2000,7 +2106,7 @@ async function endOverviewSessions(targets, view) {
   const single = targets.length === 1;
   busy = true;
   // 单个关闭确认期间列表不变暗，与抽屉逐项关闭一致。
-  endingSession = single;
+  quietBusy = single;
   drawer.pause();
   clearTimeout(homeSessionsTimer);
   homeSessionsTimer = null;
@@ -2010,7 +2116,9 @@ async function endOverviewSessions(targets, view) {
   homeOverview.render();
   try {
     let title, text, action;
-    if (single) {
+    if (confirm) {
+      ({ title, text, action } = confirm);
+    } else if (single) {
       const [target] = targets;
       title = target.exit ? t('移除会话？') : t('关闭会话？');
       text = overviewConfirmText(target);
@@ -2048,17 +2156,16 @@ async function endOverviewSessions(targets, view) {
       const projectId = project.id;
       sessions = sessions.filter(item => !removed.has(item.id));
       drawer.savePins(drawer.pins().filter(pin => !removed.has(pin)));
-      if (removed.has(selected)) {
+      if (removed.has(selected) && (failed || !leavingProject)) {
         compose.value = '';
         if (sessions.length) {
           await selectSession(sessions.find(item => !item.exit) ?? sessions[0], { keepDrawer: true });
         } else {
-          localStorage.removeItem(sessionKey(projectId));
-          leaveTerminal({ preserveFullscreen: true, keepDrawer: true });
-          showEmptyProject();
+          stayOnEmptyProject(projectId);
         }
       }
     }
+    return { failed };
   } catch (error) {
     if (profile?.id === address) {
       if (error.revoked && inTerminal) handleTerminalError(error);
@@ -2067,12 +2174,49 @@ async function endOverviewSessions(targets, view) {
     }
   } finally {
     busy = false;
-    endingSession = false;
+    quietBusy = false;
     drawer.render();
     drawer.scheduleRefresh();
     homeOverview.render();
     syncHomeSessions();
   }
+}
+
+/**
+ * 从这台设备的侧栏移除项目：确认后关闭其中的手机会话，不动电脑端项目列表。
+ * 电脑上开的终端不关闭，项目在它们结束前继续显示；有会话关闭失败时项目保留，便于重试。
+ */
+async function removeSidebarProject(target) {
+  if (busy || !profile) return;
+  const items = drawer.overview.list().filter(item => item.project?.id === target.id);
+  const closable = items.filter(item => item.origin !== 'desktop');
+  const summary = summarizeSessionBatch(closable);
+  const confirm = {
+    title: t('移除项目？'),
+    action: t('移除'),
+    text: [
+      t('将「{name}」从这台设备的侧栏移除，电脑端的项目和文件不受影响。', { name: target.name ?? target.id }),
+      summary.total ? t('同时关闭其中 {n} 个手机会话。', { n: summary.total }) : '',
+      summary.others ? t('其中 {n} 个由其他设备创建。', { n: summary.others }) : '',
+      items.length > closable.length ? t('电脑上开的 {n} 个终端不受影响，项目在它们结束前仍会显示。', { n: items.length - closable.length }) : '',
+    ].filter(Boolean).join(''),
+  };
+  const leaving = !terminalScreen.hidden && project?.id === target.id;
+  if (closable.length) {
+    const outcome = await endOverviewSessions(closable, drawer.overview, { confirm, leavingProject: leaving });
+    if (!outcome || outcome.failed) return;
+  } else if (!await confirmAction(confirm.title, confirm.text, confirm.action)) {
+    return;
+  }
+  drawer.forgetProject(target.id);
+  localStorage.removeItem(sessionKey(target.id));
+  if (!leaving) {
+    drawer.render();
+    return;
+  }
+  const next = drawer.sidebarProjects().map(id => projects.find(item => item.id === id)).find(Boolean);
+  if (next) await openProject(next);
+  else returnToDashboard('home');
 }
 
 get('end-all-sessions').addEventListener('click', async () => {
@@ -2093,8 +2237,7 @@ get('end-all-sessions').addEventListener('click', async () => {
     drawer.render();
     if (!targets.length) {
       drawer.close();
-      localStorage.removeItem(sessionKey(projectId));
-      returnToDashboard('home');
+      stayOnEmptyProject(projectId);
       return;
     }
     if (!await confirmAction(t('结束全部会话？'),
@@ -2117,11 +2260,11 @@ get('end-all-sessions').addEventListener('click', async () => {
     }
     if (epoch !== viewEpoch) return;
     for (const id of ended) drafts.delete(draftKey(id));
+    drawer.overview.remove(ended);
     sessions = targets.filter(item => !ended.has(item.id));
     compose.value = '';
     if (!sessions.length) {
-      localStorage.removeItem(sessionKey(projectId));
-      returnToDashboard('home');
+      stayOnEmptyProject(projectId);
     } else {
       await selectSession(sessions.find(item => item.id === previous) ?? sessions.find(item => !item.exit) ?? sessions[0]);
       message('session-error', t('已结束 {ended} 个会话，{failed} 个未确认结束，请核对后重试。', { ended: ended.size, failed: failed.length }));

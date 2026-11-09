@@ -330,9 +330,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .row[data-grouped] { grid-template-columns: minmax(0, 1fr); gap: 8px; min-height: 56px; padding-block: 8px; }
 .project-row { position: relative; overflow: hidden; }
 .project-row .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.project-copy { background: var(--accent-surface); color: var(--accent); font-size: 11px; font-weight: 600; }
+.project-copy { background: var(--accent-surface); color: var(--accent); }
 .project-copy:active:not(:disabled), .project-copy:focus-visible { background: var(--accent-pressed); transform: none; }
-.project-copy svg { width: 18px; height: 18px; }
 .row-badge { color: var(--accent); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .row, .connection-main {
   display: grid;
@@ -439,7 +438,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-content .history-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; color: var(--muted); font: 600 11px/1.6 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
 #history-content .history-divider::before, #history-content .history-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 #history-content .history-divider:first-child { margin-top: 0; }
-#viewport { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
+#viewport { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
+/* 切换终端时盖在新终端上的旧画面，只看不点。 */
+#viewport .terminal-held-frame { position: absolute; z-index: 1; pointer-events: none; }
 #scroll-bottom { position: absolute; z-index: 3; right: 40px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
 #scroll-bottom svg { width: 16px; height: 16px; }
 /* 自绘的加粗触摸滚动条：替代 xterm 与历史面板的细滚动条；透明的宽轨道便于手指抓取。 */
@@ -523,7 +524,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #special-keys > button { min-width: 44px; padding-inline: 4px; }
 /* 方向、退格用 SVG：字体字形的基线和宽度因机型而异，按键里对不齐。 */
 :is(#special-keys, .extra-keys) button svg { width: 18px; height: 18px; }
-#special-keys [data-key="shift-tab"] svg { width: 14px; height: 14px; }
+#special-keys [data-key="shift-tab"] svg, #keys-dialog [data-key="shift-left"] svg { width: 14px; height: 14px; }
 #special-keys > #slash-command { font-family: system-ui, sans-serif; }
 /* 「更多」弹层底色与按键同为 surface，按键改用更深的底色，看得出是可点的键。 */
 #keys-dialog .extra-keys button { background: var(--paper); font-family: system-ui, sans-serif; }
@@ -661,9 +662,12 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-face { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; }
 #session-options .session-face { grid-template-columns: minmax(0, 1fr) 44px; }
 #session-options .session-more { color: var(--muted); }
-.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; }
-.session-close { background: var(--error-surface); color: var(--error); }
-.session-close:active:not(:disabled), .session-close:focus-visible { background: #4c2822; transform: none; }
+.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; font-size: 11px; font-weight: 600; transition: opacity 0s linear 180ms; }
+.swipe-action svg { width: 18px; height: 18px; }
+:not([data-exposed]) > .swipe-action { opacity: 0; }
+[data-exposed] > .swipe-action { transition: none; }
+.session-close { background: var(--error); color: #38150f; }
+.session-close:active:not(:disabled), .session-close:focus-visible { background: #ffc2b7; transform: none; }
 .session-option .row { grid-template-columns: minmax(0, 1fr); min-height: 56px; padding: 10px 12px; text-align: left; }
 .session-option .row[aria-current="true"], .session-option .row[aria-current="true"]:is(:active, :focus-visible) { color: inherit; background: transparent; }
 .session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
@@ -729,6 +733,26 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group[data-current-project="true"] .session-group-icon { color: var(--accent); }
 .session-group-head span { flex: none; }
 .session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 侧栏组头：点按折叠，长按拖动排序，右侧常驻新建与项目操作。 */
+.session-group-head.session-group-head-tools { align-items: center; gap: 0; padding: 0 0 0 8px; }
+.session-group-toggle { display: flex; flex: 1; align-items: baseline; gap: 6px; min-width: 0; min-height: 40px; padding: 0; border-radius: 0; color: inherit; font: inherit; text-align: left; line-height: 40px; }
+.session-group-toggle:active:not(:disabled), .session-group-toggle:focus-visible { background: transparent; transform: none; }
+.session-group-head .session-group-toggle .session-group-source { min-width: 0; }
+.session-group-chevron { flex: none; align-self: center; width: 14px; height: 14px; margin-right: 2px; transition: transform 160ms var(--ease); }
+.session-group-toggle[aria-expanded="false"] .session-group-chevron { transform: rotate(-90deg); }
+.session-group-head-tools .icon-button { width: 40px; min-height: 40px; height: 40px; color: var(--muted); }
+.session-group-head-tools .icon-button svg { width: 18px; height: 18px; }
+.session-overview[data-selecting="true"] .session-group-head-tools .icon-button { display: none; }
+/* 没有终端的项目继续显示，名称减弱，也没有可折叠的内容。 */
+.session-group[data-empty="true"] .session-group-toggle { opacity: .6; }
+.session-group[data-empty="true"] .session-group-chevron { visibility: hidden; }
+.session-group.dragging { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
+:is(.overview-groups, .session-group-rows, #session-options)[data-dragging] { overflow: visible; }
+.session-option.dragging { z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
+/* 看不到的终端跑完时的标记；信息行同时有文字，不只靠颜色。 */
+.session-attention { display: none; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.session-option[data-attention="true"] .session-attention { display: block; margin-top: calc((1.45em - 8px) / 2); }
+.session-group[data-attention="true"] .session-group-attention { display: block; align-self: center; }
 .overview-empty { margin: 8px 4px; text-align: center; }
 .overview-more { align-self: center; min-height: 44px; font-size: 13px; }
 /* 多选：行首显示勾选框，隐藏单行关闭按钮，点整行切换选择。 */
@@ -753,7 +777,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #session-overview .overview-groups { flex: none; overflow: visible; }
   #session-overview .overview-search { min-height: 40px; }
   #session-overview .overview-manage { min-height: 40px; }
-  #session-overview .session-group-head { padding-block: 2px; }
+  #session-overview .session-group-head:not(.session-group-head-tools) { padding-block: 2px; }
   #session-overview .session-group + .session-group { margin-top: 6px; }
   #session-scope button, #session-overview .overview-filter button { min-height: 32px; }
   /* 底部操作并成一行，给列表留出至少一整行。 */
@@ -859,15 +883,15 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
 #font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
-#terminal-dot[data-state="online"].ping-flash { animation: ping-dot 460ms ease-out; }
-#terminal-latency.ping-flash { animation: ping-value 460ms ease-out; }
+#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
+#terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop { transition: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #terminal-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  button, .pull-badge, .pull-ring circle, .nav-icon, .session-face, .project-face, .switch::before, .switch::after, .switch-check, .switch-check::after, .project-group-chevron { transition: none; }
+  button, .pull-badge, .pull-ring circle, .nav-icon, .session-face, .project-face, .switch::before, .switch::after, .switch-check, .switch-check::after, .project-group-chevron, .session-group-chevron { transition: none; }
   dialog[open], dialog.sheet[open], dialog.session-drawer[open], [data-state="checking"] .dot { animation: none; }
   .session-spinner, .pull-indicator[data-state="refreshing"] .pull-ring { animation: none; }
 }

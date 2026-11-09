@@ -134,14 +134,18 @@ export function prunedSessionPins(pins, sessions) {
 }
 
 /**
- * 显示顺序：置顶会话按置顶顺序在前；按下「运行中优先」时其余运行中（程序在工作）的排前面，再保持电脑端顺序。
+ * 显示顺序：置顶会话按置顶顺序在前；按下「运行中优先」时其余运行中（程序在工作）的排前面，否则按手动顺序 order，再保持电脑端顺序。
+ * 没有手动顺序记录的新会话排在已排序会话之后。
  * 返回 { session, index }，index 是原列表位置，用于「终端 N」兜底名称。
  */
-export function orderSessions(sessions, pins = [], { runningFirst = false } = {}) {
+export function orderSessions(sessions, pins = [], { runningFirst = false, order = [] } = {}) {
   const rank = new Map(pins.map((id, index) => [id, index]));
+  const custom = new Map((runningFirst ? [] : order).map((id, index) => [id, index]));
+  const position = id => custom.get(id) ?? custom.size;
   return sessions.map((session, index) => ({ session, index }))
     .sort((a, b) => (rank.get(a.session.id) ?? pins.length) - (rank.get(b.session.id) ?? pins.length)
       || (runningFirst ? Number(sessionRunning(b.session)) - Number(sessionRunning(a.session)) : 0)
+      || position(a.session.id) - position(b.session.id)
       || a.index - b.index);
 }
 /** 会话纵览筛选：全部 / 未结束 / 已结束。 */
@@ -164,8 +168,11 @@ function createdTime(session) {
  * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内新创建的在上，旧版电脑端没有创建时间时按编号倒序（runningFirst 时运行中的排最前）。
  * 电脑端项目列表中仍存在的项目使用列表里的完整信息（含连接名），否则用会话自带的项目信息并标记 missing。
  * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
+ * order（侧栏）：常驻项目的固定顺序。给出后切换项目不再改变分组位置，常驻项目没有会话时也显示空分组（筛选、搜索时除外）；
+ * 只因电脑终端而显示的项目排在常驻项目之后，按项目名排序。
+ * sessionOrder(projectId)（侧栏）：组内手动顺序；新会话排在已排序会话之前，与默认的新建在上一致；「运行中优先」时不生效。
  */
-export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false } = {}) {
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
   const times = new Map();
   for (const item of Array.isArray(history) ? history : []) {
@@ -189,16 +196,90 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     if (!group) groups.set(id, group = { project, missing: !known.has(id), sessions: [] });
     group.sessions.push(session);
   }
-  for (const group of groups.values()) {
+  for (const [id, group] of groups) {
+    const custom = new Map((sessionOrder && !runningFirst ? sessionOrder(id) : []).map((item, index) => [item, index]));
+    const position = session => custom.get(session.id) ?? -1;
     group.sessions.sort((a, b) => (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0)
+      || position(a) - position(b)
       || createdTime(b) - createdTime(a)
       || (b.number ?? 0) - (a.number ?? 0));
+  }
+  const byName = (a, b) => String(a.project.name ?? '').localeCompare(String(b.project.name ?? ''))
+    || a.project.id.localeCompare(b.project.id);
+  if (order) {
+    if (filter === 'all' && !needles.length) {
+      for (const id of order) if (!groups.has(id) && known.has(id)) groups.set(id, { project: known.get(id), missing: false, sessions: [] });
+    }
+    const rank = new Map(order.map((id, index) => [id, index]));
+    const position = group => rank.get(group.project.id) ?? order.length;
+    return [...groups.values()]
+      .sort((a, b) => position(a) - position(b) || byName(a, b))
+      .map(group => ({ ...group, member: rank.has(group.project.id) }));
   }
   return [...groups.values()].sort((a, b) =>
     Number(b.project.id === current) - Number(a.project.id === current)
     || opened(b.project) - opened(a.project)
-    || String(a.project.name ?? '').localeCompare(String(b.project.name ?? ''))
-    || a.project.id.localeCompare(b.project.id));
+    || byName(a, b));
+}
+
+// 侧栏常驻项目只保存在手机本地（按连接），不改变电脑端的项目列表和顺序。
+export const SIDEBAR_PROJECT_LIMIT = 100;
+
+/** 读取本地保存的 id 列表（常驻项目、折叠项目、终端手动顺序）：容错损坏数据，去重并限制数量。 */
+export function parseIdList(raw) {
+  try {
+    const value = JSON.parse(raw || '[]');
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.filter(id => typeof id === 'string' && id))].slice(0, SIDEBAR_PROJECT_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+/** 新项目追加在末尾，已有项目保持原位。 */
+export function joinProjectIds(order, ids) {
+  return [...new Set([...order, ...ids])].slice(0, SIDEBAR_PROJECT_LIMIT);
+}
+
+/** 拖动排序：只在当前可见的项目之间换位，暂时看不到的项目（如电脑端已取消信任）留在原位。 */
+export function reorderVisibleProjects(order, visible, from, to) {
+  const next = [...visible];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  const slots = new Set(visible);
+  let index = 0;
+  return order.map(id => (slots.has(id) ? next[index++] : id));
+}
+
+/** 终端拖动排序：可见的终端按新顺序排在前面，其余已保存的（如另一范围才显示的）放在后面，超限时先丢弃它们。 */
+export function reorderSessionIds(saved, visible, from, to) {
+  const next = [...visible];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return [...next, ...saved.filter(id => !visible.includes(id))].slice(0, SIDEBAR_PROJECT_LIMIT);
+}
+
+/** 手机会话所在的项目，自动加入侧栏；只有电脑终端的项目不加入，这些终端结束后项目自然消失。 */
+export function phoneSessionProjectIds(list) {
+  return [...new Set((Array.isArray(list) ? list : [])
+    .filter(session => session?.origin !== 'desktop' && typeof session?.project?.id === 'string')
+    .map(session => session.project.id))];
+}
+
+/**
+ * 「有新结果」：看不到的会话从工作转为停下（含退出）时标记，看过或重新开始工作时清除。
+ * tracker 为 { busy: Set, attention: Set }，只存内存，与电脑端语义一致。
+ */
+export function updateSessionAttention({ busy, attention }, list, selected) {
+  for (const session of Array.isArray(list) ? list : []) {
+    if (sessionRunning(session)) {
+      busy.add(session.id);
+      attention.delete(session.id);
+    } else if (busy.delete(session.id) && session.id !== selected) {
+      attention.add(session.id);
+    }
+  }
+  attention.delete(selected);
 }
 
 /**
@@ -455,6 +536,8 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';
   if (key === 'shift-tab') return '\x1b[Z';
+  // 带修饰的方向键始终是 CSI 形式，不受应用光标模式影响。
+  if (key === 'shift-left') return '\x1b[1;2D';
   if (key === 'backspace') return '\x7f';
   if (key === 'delete-word') return '\x17';
   if (key === 'delete-line-start') return '\x15';
@@ -472,7 +555,7 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
 export function renameProfileKeys(keys, prefix, from, to) {
   const moves = [];
   for (const key of keys) {
-    for (const scope of ['session:', 'session-pins:', 'project:', 'recent-projects:']) {
+    for (const scope of ['session:', 'session-pins:', 'project:', 'recent-projects:', 'sidebar-projects:', 'session-groups-collapsed:', 'session-order:']) {
       const old = prefix + scope + from;
       if (key === old || key.startsWith(old + ':')) moves.push([key, prefix + scope + to + key.slice(old.length)]);
     }
