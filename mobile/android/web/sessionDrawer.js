@@ -556,7 +556,7 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   });
 
   return {
-    render, open, close, dock, isDocked: () => docked, refresh, pause, scheduleRefresh, wake, sleep, pins, savePins, prunePins,
+    render, open, close, dock, isDocked: () => docked, allMode, refresh, pause, scheduleRefresh, wake, sleep, pins, savePins, prunePins,
     enterProject, forgetProject, sidebarProjects,
     overview,
   };

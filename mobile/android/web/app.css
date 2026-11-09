@@ -662,8 +662,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-face { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; }
 #session-options .session-face { grid-template-columns: minmax(0, 1fr) 44px; }
 #session-options .session-more { color: var(--muted); }
-.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; font-size: 11px; font-weight: 600; }
+.swipe-action { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; align-content: center; gap: 2px; width: 76px; min-height: 0; border-radius: 0; font-size: 11px; font-weight: 600; transition: opacity 0s linear 180ms; }
 .swipe-action svg { width: 18px; height: 18px; }
+:not([data-exposed]) > .swipe-action { opacity: 0; }
+[data-exposed] > .swipe-action { transition: none; }
 .session-close { background: var(--error); color: #38150f; }
 .session-close:active:not(:disabled), .session-close:focus-visible { background: #ffc2b7; transform: none; }
 .session-option .row { grid-template-columns: minmax(0, 1fr); min-height: 56px; padding: 10px 12px; text-align: left; }

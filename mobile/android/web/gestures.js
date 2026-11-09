@@ -27,6 +27,8 @@ export function attachSwipeReveal(row, face, { width = 76, enabled = () => true 
   function place(offset, animate) {
     face.style.transition = animate ? '' : 'none';
     face.style.transform = offset ? `translateX(${offset}px)` : '';
+    // 行面归位后隐藏下层按钮，避免其底色从圆角的抗锯齿边缘漏出。
+    row.toggleAttribute('data-exposed', offset !== 0);
   }
 
   function outside(event) {

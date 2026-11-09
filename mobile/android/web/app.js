@@ -1670,7 +1670,8 @@ function showEmptyProject() {
 /** 项目的终端全部关闭后留在项目里（侧栏不消失），由用户新建终端或返回工作台。 */
 function stayOnEmptyProject(projectId) {
   localStorage.removeItem(sessionKey(projectId));
-  leaveTerminal({ preserveFullscreen: true, keepDrawer: true });
+  // 手机「本项目」收起抽屉，露出「新建终端」；「全部」可能还要继续清理其他项目，平板常驻侧栏由 close 保持。
+  leaveTerminal({ preserveFullscreen: true, keepDrawer: drawer.allMode() });
   showEmptyProject();
 }
 
