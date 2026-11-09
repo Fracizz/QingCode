@@ -1111,7 +1111,7 @@ export default function RemoteConnectionsManager() {
                             <span className="ml-1 text-ui-sm font-normal text-fg-dim">
                               {connectionProjects.length}
                             </span>
-                            <button type="button" className="ml-auto rounded px-2 py-1 text-ui-sm font-normal text-fg-muted hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProject() }}>{t('添加项目')}</button>
+                            <button type="button" className="ml-auto rounded px-2 py-1 text-ui-sm font-normal text-fg-muted hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProjectForConnection(selected.id) }}>{t('添加项目')}</button>
                           </p>
                           {connectionProjects.length === 0 ? (
                             <p className={helpClass}>{t('暂无使用此连接的远程项目。')}</p>

@@ -67,6 +67,8 @@ interface UIState {
   remoteConnectionsCreating: boolean
   /** Whether the unified create-project dialog is open. */
   createProjectOpen: boolean
+  /** 从连接管理打开时预选的远程连接；其余入口为 null，来源默认本机。 */
+  createProjectConnectionId: string | null
   /** 进入整页视图（源代码管理/设置）前的布局快照，离开时恢复；null 表示不在整页视图。 */
   fullPageRestore: FullPageRestore | null
   setView: (view: View) => void
@@ -112,6 +114,7 @@ interface UIState {
   openTerminalManager: () => void
   closeTerminalManager: () => void
   openCreateProject: () => void
+  openCreateProjectForConnection: (connectionId: string) => void
   closeCreateProject: () => void
   /** 项目创建成功：关闭创建对话框及其来源的项目管理页，并回到资源管理器。 */
   finishCreateProject: () => void
@@ -231,6 +234,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   serverUpdateRootUri: null,
   remoteConnectionsCreating: false,
   createProjectOpen: false,
+  createProjectConnectionId: null,
   fullPageRestore: null,
   setView: view =>
     set(state => {
@@ -411,7 +415,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   closeRemoteConnections: () => set({ remoteConnectionsOpen: false, remoteConnectionsCreating: false }),
   openTerminalManager: () => set({ terminalManagerOpen: true }),
   closeTerminalManager: () => set({ terminalManagerOpen: false }),
-  openCreateProject: () => set({ createProjectOpen: true }),
+  openCreateProject: () => set({ createProjectOpen: true, createProjectConnectionId: null }),
+  openCreateProjectForConnection: connectionId =>
+    set({ createProjectOpen: true, createProjectConnectionId: connectionId }),
   closeCreateProject: () => set({ createProjectOpen: false }),
   finishCreateProject: () => {
     set({ createProjectOpen: false, projectManagerOpen: false })

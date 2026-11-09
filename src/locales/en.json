@@ -760,6 +760,7 @@
     "工作区": "Workspace",
     "搜索设置": "Search settings",
     "清除搜索": "Clear search",
+    "搜索终端、项目或来源": "Search terminals, projects, or sources",
     "此设置仅在用户作用域中可用": "This setting can only be applied in the User scope",
     "颜色主题": "Color Theme",
     "指定 QingCode 使用的颜色主题。选择“跟随系统”时随操作系统明暗切换。": "Specifies the QingCode color theme. Choose “Auto” to follow the OS light/dark mode.",

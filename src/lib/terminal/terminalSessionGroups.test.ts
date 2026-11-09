@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, SshConnection, TerminalTab } from '../../types'
 import {
+  filterTerminalSessionGroups,
   groupTerminalSessions,
   parseCollapsedProjects,
   terminalProjectMove,
@@ -12,6 +13,44 @@ const project = (id: string, overrides: Partial<Project> = {}) =>
 
 const terminal = (id: string, projectId: string, status: TerminalTab['status'] = 'running') =>
   ({ id, projectId, status }) as TerminalTab
+
+describe('filterTerminalSessionGroups', () => {
+  const named = (id: string, name: string, projectId: string) =>
+    ({ ...terminal(id, projectId), name }) as TerminalTab
+  const groups = [
+    { project: project('web', { name: 'web' }), terminals: [named('1', 'claude', 'web'), named('2', 'dev server', 'web')] },
+    { project: project('api', { name: 'api' }), terminals: [named('3', 'claude', 'api')] },
+    { project: project('empty', { name: 'empty' }), terminals: [] },
+  ]
+  const sources = new Map([['web', '本机'], ['api', 'WinDev']])
+  const ids = (result: ReturnType<typeof filterTerminalSessionGroups>) =>
+    result.map(group => [group.project.id, group.terminals.map(item => item.id)])
+
+  it('keeps every group, including empty ones, without a query', () => {
+    expect(ids(filterTerminalSessionGroups(groups, { query: '  ', sources }))).toEqual([
+      ['web', ['1', '2']],
+      ['api', ['3']],
+      ['empty', []],
+    ])
+  })
+
+  it('matches terminal names case-insensitively and drops groups without results', () => {
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'SERVER', sources }))).toEqual([['web', ['2']]])
+  })
+
+  it('matches the project name and source, requiring every keyword', () => {
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'api', sources }))).toEqual([['api', ['3']]])
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'windev claude', sources }))).toEqual([['api', ['3']]])
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'windev dev', sources }))).toEqual([['api', ['3']]])
+    expect(ids(filterTerminalSessionGroups(groups, { query: '本机 missing', sources }))).toEqual([])
+  })
+
+  it('moves running terminals first within a group and keeps their order', () => {
+    const running = (item: TerminalTab) => item.id === '2'
+    expect(ids(filterTerminalSessionGroups(groups, { query: '', sources, running }))[0]).toEqual(['web', ['2', '1']])
+    expect(groups[0].terminals.map(item => item.id)).toEqual(['1', '2'])
+  })
+})
 
 describe('groupTerminalSessions', () => {
   it('follows the title-bar order and lists hidden projects last', () => {

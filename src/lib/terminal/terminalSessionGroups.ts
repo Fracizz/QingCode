@@ -1,6 +1,7 @@
 import { insertIndexToReorderTarget, sortVisibleProjects } from '@/lib/projectChipOrder'
 import { isSshProject, sshConnectionIdFromUri, sshRemotePathFromUri } from '@/lib/sshWorkspace'
 import { isWslProject, wslDistroNameFromPath } from '@/lib/wslWorkspace'
+import { formatTerminalName } from '@/utils/terminalName'
 import type { Project, SshConnection, TerminalTab } from '../../types'
 
 export const TERMINAL_LIST_COLLAPSED_KEY = 'qingcode:terminal-list-collapsed'
@@ -26,6 +27,40 @@ export function groupTerminalSessions(
       terminals: terminals.filter(terminal => terminal.projectId === project.id),
     }))
     .filter(group => !group.project.hidden || group.terminals.length > 0)
+}
+
+/**
+ * 列表的搜索与「运行中优先」，只影响显示。关键词按空白分隔、全部命中才保留，
+ * 匹配终端名、项目名和来源；搜索时没有结果的项目组不列出。运行中的排在组内最前，彼此保持原顺序。
+ */
+export function filterTerminalSessionGroups(
+  groups: readonly TerminalSessionGroup[],
+  {
+    query,
+    sources,
+    running,
+  }: {
+    query: string
+    sources: ReadonlyMap<string, string>
+    running?: (terminal: TerminalTab) => boolean
+  },
+): TerminalSessionGroup[] {
+  const needles = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return groups.flatMap(group => {
+    let terminals = group.terminals
+    if (needles.length > 0) {
+      const context = [group.project.name, sources.get(group.project.id) ?? '']
+      terminals = terminals.filter(terminal => {
+        const haystack = [formatTerminalName(terminal.name), ...context].join('\n').toLowerCase()
+        return needles.every(needle => haystack.includes(needle))
+      })
+      if (terminals.length === 0) return []
+    }
+    if (running) {
+      terminals = [...terminals].sort((a, b) => Number(running(b)) - Number(running(a)))
+    }
+    return [{ project: group.project, terminals }]
+  })
 }
 
 /**

@@ -46,6 +46,12 @@ const mocks = vi.hoisted(() => {
 })
 
 const copyPathAction = vi.hoisted(() => vi.fn())
+const busyTerminals = vi.hoisted(() => new Set<string>())
+
+vi.mock('@/lib/terminal/terminalProgramActivity', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/terminal/terminalProgramActivity')>()),
+  isTerminalProgramBusy: (id: string) => busyTerminals.has(id),
+}))
 
 vi.mock('../lib/copyFileActions', async importOriginal => ({
   ...(await importOriginal<typeof import('../lib/copyFileActions')>()),
@@ -151,6 +157,7 @@ describe('TerminalSessionList', () => {
     pruneTerminalAttention(new Set())
     mocks.projectState.currentProject = mocks.projectState.projects[0]
     mocks.projectState.unavailableProjectIds = []
+    busyTerminals.clear()
     mocks.projectState.switchProject.mockResolvedValue(true)
     mocks.state.activeTerminalId = 't1'
     mocks.state.terminals = [
@@ -538,6 +545,54 @@ describe('TerminalSessionList', () => {
     await vi.waitFor(() =>
       expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1]),
     )
+  })
+
+  const search = (value: string) =>
+    fireEvent.change(screen.getByLabelText('搜索终端、项目或来源'), { target: { value } })
+  const rowOrder = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-terminal-session-row]')].map(
+      item => item.dataset.terminalSessionRow,
+    )
+
+  it('filters rows by the search box and clears with Escape', () => {
+    render(<TerminalSessionList />)
+    search('dev')
+    expect(rowOrder()).toEqual(['t2'])
+    fireEvent.keyDown(screen.getByLabelText('搜索终端、项目或来源'), { key: 'Escape' })
+    expect(rowOrder()).toEqual(['t1', 't2', 'other'])
+  })
+
+  it('shows an empty state when nothing matches', () => {
+    render(<TerminalSessionList />)
+    search('nothing-here')
+    expect(rowOrder()).toEqual([])
+    expect(screen.getByText('没有匹配的终端')).toBeInTheDocument()
+  })
+
+  it('reveals matches inside collapsed groups without changing the saved collapse', () => {
+    mocks.state.terminals = [terminal(), terminal({ id: 'other', name: 'hidden-one', projectId: 'p2' })]
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '展开或收起「api」' }))
+    expect(row('other')).toBeNull()
+    const saved = localStorage.getItem('qingcode:terminal-list-collapsed')
+    search('hidden-one')
+    expect(row('other')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '展开或收起「api」' }))
+    expect(localStorage.getItem('qingcode:terminal-list-collapsed')).toBe(saved)
+    search('')
+    expect(row('other')).toBeNull()
+  })
+
+  it('toggles running-first ordering without saving it', () => {
+    busyTerminals.add('t2')
+    render(<TerminalSessionList />)
+    expect(rowOrder()).toEqual(['t1', 't2', 'other'])
+    const toggle = screen.getByRole('button', { name: '运行中优先' })
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(rowOrder()).toEqual(['t2', 't1', 'other'])
+    fireEvent.click(toggle)
+    expect(rowOrder()).toEqual(['t1', 't2', 'other'])
   })
 
   it('copies the path of the project the menu was opened from', () => {

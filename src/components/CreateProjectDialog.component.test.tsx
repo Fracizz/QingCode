@@ -106,6 +106,22 @@ describe('CreateProjectDialog', () => {
     }
   })
 
+  it('opens straight into the connection preselected by the connection manager', async () => {
+    useUIStore.setState({ createProjectConnectionId: 'c-key' })
+    render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+    await waitFor(() =>
+      expect(browseSshDirectory).toHaveBeenCalledWith('c-key', '/root'),
+    )
+    expect(screen.queryByRole('menu', { name: '源文件夹位置' })).toBeNull()
+  })
+
+  it('stays on the local source when no connection is preselected', async () => {
+    render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+    await waitFor(() => expect(useProjectStore.getState().loadSshConnections).toHaveBeenCalled())
+    await act(async () => {})
+    expect(openSshSession).not.toHaveBeenCalled()
+  })
+
   it('creates a local project from the chosen folder with a custom name', async () => {
     vi.mocked(open).mockResolvedValue('D:\\code\\demo')
     const onCreated = vi.fn()

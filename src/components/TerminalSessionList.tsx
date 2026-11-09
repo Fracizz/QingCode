@@ -18,10 +18,12 @@ import {
   FolderOpen,
   ListChecks,
   LoaderCircle,
+  MessageCircleMore,
   Minus,
   MoreHorizontal,
   Plus,
   RotateCcw,
+  Search,
   Terminal as TerminalIcon,
   X,
 } from 'lucide-react'
@@ -55,7 +57,12 @@ import {
   terminalProjectMove,
   terminalProjectSources,
   type TerminalSessionGroup,
+  filterTerminalSessionGroups,
 } from '@/lib/terminal/terminalSessionGroups'
+import {
+  isTerminalProgramBusy,
+  subscribeTerminalProgramActivity,
+} from '@/lib/terminal/terminalProgramActivity'
 import { projectChipTooltipLabel, projectHoverDetails } from '@/lib/projectChipTooltip'
 import {
   allTerminalsSelected,
@@ -168,7 +175,16 @@ export default function TerminalSessionList() {
   const [manageMode, setManageMode] = useState(false)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
   const [closingBatch, setClosingBatch] = useState(false)
-  const newDisabled = Boolean(currentProject && atLimit) || creatingTerminal
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [query, setQuery] = useState('')
+  // 与手机和终端管理一致的临时排序：再点恢复默认顺序，不保存。
+  const [runningFirst, setRunningFirst] = useState(false)
+  const [busyCheckedAt, setBusyCheckedAt] = useState(() => Date.now())
+  useEffect(() => {
+    if (!runningFirst) return
+    return subscribeTerminalProgramActivity(() => setBusyCheckedAt(Date.now()))
+  }, [runningFirst])
+  const newDisabled =Boolean(currentProject && atLimit) || creatingTerminal
 
   // 切到某个项目时展开它，否则当前终端藏在折叠的分组里。
   if (seenProjectId !== currentProjectId) {
@@ -180,7 +196,7 @@ export default function TerminalSessionList() {
     }
   }
 
-  const groups = useMemo(() => {
+  const allGroups = useMemo(() => {
     const listed =
       currentProject && !projects.some(project => project.id === currentProject.id)
         ? [currentProject, ...projects]
@@ -188,14 +204,25 @@ export default function TerminalSessionList() {
     return groupTerminalSessions(listed, allTerminals)
   }, [allTerminals, currentProject, projects])
   const projectSources = terminalProjectSources(
-    groups.map(group => group.project),
+    allGroups.map(group => group.project),
     sshConnections,
     translate,
   )
+  const totalTerminals = allGroups.reduce((sum, group) => sum + group.terminals.length, 0)
+  const searching = totalTerminals > 0 && query.trim() !== ''
+  const groups = filterTerminalSessionGroups(allGroups, {
+    query,
+    sources: projectSources,
+    running: runningFirst
+      ? term => term.status !== 'exited' && isTerminalProgramBusy(term.id, busyCheckedAt)
+      : undefined,
+  })
+  // 搜索和「运行中优先」下显示的不是保存的顺序，此时拖动的落点没有意义。
+  const terminalOrderLocked = searching || runningFirst
+  // 搜索时展开命中的分组，否则结果藏在折叠的分组里。
   const isExpanded = (group: TerminalSessionGroup) =>
-    group.terminals.length > 0 && !collapsedProjects.has(group.project.id)
+    group.terminals.length > 0 && (searching || !collapsedProjects.has(group.project.id))
   const visibleTerminals = groups.flatMap(group => (isExpanded(group) ? group.terminals : []))
-  const totalTerminals = groups.reduce((sum, group) => sum + group.terminals.length, 0)
   // 没有终端可管理时自动退出管理模式；只处理当前可见（已展开）的终端，避免关掉折叠分组里看不到的会话。
   const managing = manageMode && totalTerminals > 0
   const picked = prunedTerminalSelection(selection, visibleTerminals)
@@ -338,7 +365,11 @@ export default function TerminalSessionList() {
             ? 'bg-bg-active text-fg'
             : 'text-tree-fg hover:bg-bg-hover hover:text-fg'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
-        onPointerDown={isRenaming || managing ? undefined : event => startTerminalDrag(event, term.id)}
+        onPointerDown={
+          isRenaming || managing || terminalOrderLocked
+            ? undefined
+            : event => startTerminalDrag(event, term.id)
+        }
         onClick={() => selectTerminal(term)}
         onKeyDown={event => {
           if (event.target !== event.currentTarget) return
@@ -498,7 +529,7 @@ export default function TerminalSessionList() {
     const source = projectSources.get(project.id)
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
-    const sortable = !managing && !project.hidden && projects.some(item => item.id === project.id)
+    const sortable = !managing && !searching && !project.hidden && projects.some(item => item.id === project.id)
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
     const groupAtLimit = terminals.length >= MAX_TERMINALS_PER_PROJECT
@@ -563,7 +594,7 @@ export default function TerminalSessionList() {
             tabIndex={isEmpty ? -1 : undefined}
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui aria-disabled:cursor-default"
             onClick={() => {
-              if (!isEmpty) setProjectCollapsed(project.id, expanded)
+              if (!isEmpty && !searching) setProjectCollapsed(project.id, expanded)
             }}
           >
             <span
@@ -670,7 +701,7 @@ export default function TerminalSessionList() {
                 aria-label={translate('为「{name}」选择终端配置', { name: project.name })}
                 aria-haspopup="menu"
                 aria-expanded={profileMenu?.projectId === project.id}
-                className={`flex h-6 w-4 flex-shrink-0 items-center justify-center rounded ${GROUP_ACTION}`}
+                className={`${ROW_BUTTON} ${GROUP_ACTION}`}
                 onClick={event => {
                   if (profileMenu?.projectId === project.id) {
                     setProfileMenu(null)
@@ -782,6 +813,61 @@ export default function TerminalSessionList() {
         </Tooltip>
       </div>
 
+      {totalTerminals > 0 && (
+        <div data-terminal-list-search className="flex flex-shrink-0 items-center gap-1 pb-1.5 pl-3 pr-1.5">
+          <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded border border-border-strong bg-bg px-1.5">
+            <Search size={13} className="flex-shrink-0 text-fg-dim" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Escape' && query) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setQuery('')
+                }
+              }}
+              placeholder={translate('搜索终端、项目或来源')}
+              aria-label={translate('搜索终端、项目或来源')}
+              className="h-full min-w-0 flex-1 bg-transparent text-ui outline-none placeholder:text-fg-dim"
+            />
+            {query && (
+              <Tooltip label={translate('清除搜索')} side="bottom">
+                <button
+                  type="button"
+                  aria-label={translate('清除搜索')}
+                  className="flex rounded text-fg-dim hover:text-fg"
+                  onClick={() => {
+                    setQuery('')
+                    searchRef.current?.focus()
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </Tooltip>
+            )}
+          </label>
+          <Tooltip
+            label={runningFirst ? translate('运行中优先 · 再点恢复默认顺序') : translate('运行中优先')}
+            side="bottom"
+          >
+            <button
+              type="button"
+              aria-label={translate('运行中优先')}
+              aria-pressed={runningFirst}
+              className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
+              onClick={() => {
+                setBusyCheckedAt(Date.now())
+                setRunningFirst(value => !value)
+              }}
+            >
+              <MessageCircleMore size={15} />
+            </button>
+          </Tooltip>
+        </div>
+      )}
+
       {managing && (
         <div
           data-terminal-manage-bar
@@ -819,7 +905,7 @@ export default function TerminalSessionList() {
         </div>
       )}
 
-      {groups.length === 0 ? (
+      {allGroups.length === 0 ? (
         <EmptyState
           className="min-h-0 flex-1"
           icon={<TerminalIcon size={28} strokeWidth={1.2} />}
@@ -834,6 +920,13 @@ export default function TerminalSessionList() {
           <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
             {groups.map(renderGroup)}
           </TooltipSuppressionContext>
+          {searching && groups.length === 0 && (
+            <EmptyState
+              className="min-h-0 flex-1"
+              icon={<Search size={28} strokeWidth={1.2} />}
+              title={translate('没有匹配的终端')}
+            />
+          )}
           {totalTerminals === 0 && currentProject && (
             <EmptyState
               className="min-h-0 flex-1"
@@ -892,7 +985,7 @@ export default function TerminalSessionList() {
               {
                 label: expanded ? translate('收起分组') : translate('展开分组'),
                 icon: expanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />,
-                disabled: group.terminals.length === 0,
+                disabled: group.terminals.length === 0 || searching,
                 action: () => setProjectCollapsed(group.project.id, expanded),
               },
               {

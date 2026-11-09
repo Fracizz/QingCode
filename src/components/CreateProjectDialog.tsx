@@ -133,13 +133,21 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     setBrowsing(false)
     setSubmitting(false)
     setError('')
-    void loadSshConnections()
+    const epoch = epochRef.current
+    const presetConnectionId = useUIStore.getState().createProjectConnectionId
+    void loadSshConnections().then(() => {
+      if (!presetConnectionId || epoch !== epochRef.current) return
+      const target = useProjectStore.getState().sshConnections.find(item => item.id === presetConnectionId)
+      if (target) void chooseSsh(target)
+    })
     const timer = window.setTimeout(() => nameRef.current?.focus(), 0)
     return () => {
       window.clearTimeout(timer)
       epochRef.current += 1
       browseRequestRef.current += 1
     }
+    // chooseSsh 每次渲染重建，但只依赖 ref 与 setter，无需进依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, loadSshConnections])
 
   // 管理页里增删连接后同步；从这里发起的「添加远程主机」保存后自动选中新连接。
