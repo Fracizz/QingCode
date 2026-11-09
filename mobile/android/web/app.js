@@ -2271,8 +2271,8 @@ get('compose-form').addEventListener('submit', event => {
   dispatchComposer('submit');
 });
 
-// 首页与项目页下拉刷新：重新读取项目，离线时等同重连。
-for (const [screen, indicator] of [['home-screen', 'home-pull'], ['project-screen', 'project-pull']]) {
+// 首页、项目页与连接页下拉刷新：重新读取项目，离线时等同重连。
+for (const [screen, indicator] of [['home-screen', 'home-pull'], ['project-screen', 'project-pull'], ['connection-screen', 'connection-pull']]) {
   attachPullToRefresh(get(screen), get(indicator), {
     enabled: () => !!profile && hostState(profile) !== 'checking' && hostState(profile) !== 'expired',
     onRefresh: async () => {

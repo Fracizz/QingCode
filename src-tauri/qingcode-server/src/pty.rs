@@ -50,6 +50,15 @@ const READ_WAIT_TIMEOUT_MS: libc::c_int = 250;
 /// 非阻塞写入遇到 `WouldBlock` 后的重试间隔。队列 task 在此期间仍可被取消。
 const WRITE_RETRY_DELAY: Duration = Duration::from_millis(1);
 
+/// 关闭终端时两次 Ctrl+C 的间隔：要落在 TUI「再按一次退出」的窗口内。
+pub const INTERRUPT_SECOND_DELAY: Duration = Duration::from_millis(500);
+
+/// 从第一次 Ctrl+C 算起，留给前台程序收尾的总时长，超时后强制结束。
+pub const INTERRUPT_TOTAL: Duration = Duration::from_millis(3500);
+
+/// 等待前台程序退出时的轮询间隔。
+const FOREGROUND_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// 已退出终端在没有连接接手时的保留时长。保留 ring 与 parser 是为了让
 /// 断线期间结束的进程仍能在重连后补发最后输出和退出码。
 const EXITED_RETENTION: Duration = Duration::from_secs(30 * 60);
@@ -442,6 +451,8 @@ struct PtyTerm {
     /// 之前，新连接对同一序号的重发在这里等待，再按已推进的序号判定是否重复。
     input_gate: Arc<tokio::sync::Mutex<()>>,
     termination_requested: AtomicBool,
+    /// 宽限已用尽并进入强杀：Windows 等待线程不再为后代进程推迟关闭 ConPTY。
+    force_killed: AtomicBool,
 }
 
 #[cfg(unix)]
@@ -597,6 +608,7 @@ impl PtyHost {
             }),
             input_gate: Arc::new(tokio::sync::Mutex::new(())),
             termination_requested: AtomicBool::new(false),
+            force_killed: AtomicBool::new(false),
         });
         crate::diagnostics::record(
             "pty.created",
@@ -633,6 +645,7 @@ impl PtyHost {
                         "terminationRequested":term_for_waiter.termination_requested.load(Ordering::Acquire)
                     }), true, code != Some(0) && !term_for_waiter.termination_requested.load(Ordering::Acquire));
                     let _ = code_tx.send(code);
+                    wait_for_console_clients(&term_for_waiter);
                     crate::diagnostics::record("pty.console_closing", serde_json::json!({"ptyId":term_for_waiter.id}), true, false);
                     let master = lock(&term_for_waiter.master).take();
                     drop(master);
@@ -895,7 +908,8 @@ impl PtyHost {
     }
 
     /// 进程退出前等 PTY 完成回收。普通 kill 保持异步，但 daemon 不能先于
-    /// 一秒强杀看门狗退出，否则忽略 HUP 的 shell 会变成无人管理的进程。
+    /// 中断宽限与一秒强杀看门狗退出，否则前台程序来不及收尾，忽略 HUP 的
+    /// shell 也会变成无人管理的进程。
     pub async fn shutdown(&self) {
         let terms: Vec<_> = {
             let inner = lock(&self.inner);
@@ -909,7 +923,7 @@ impl PtyHost {
         for term in &terms {
             let _ = terminate(term, "daemon_shutdown");
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let deadline = tokio::time::Instant::now() + INTERRUPT_TOTAL + Duration::from_secs(2);
         loop {
             if terms.iter().all(|term| lock(&term.state).exited.is_some()) {
                 return;
@@ -1706,10 +1720,104 @@ fn hangup(pid: Option<u32>, term: &PtyTerm) {
     force_kill(term);
 }
 
-/// 终止一个仍在运行的终端：先发 HUP 给进程组，给 shell 一秒收尾时间，
-/// 到时仍未退出就强制结束。kill 与超时 reap 共用同一套看门狗。
+/// 空闲时也挂在 shell 下的控制台宿主，不算用户程序。
+pub fn is_console_noise_process(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "conhost.exe"
+            | "conhost"
+            | "openconsole.exe"
+            | "openconsole"
+            | "winpty-agent.exe"
+            | "winpty-agent"
+            | "wslhost.exe"
+            | "wslhost"
+    )
+}
+
+/// shell 里是否还有前台程序在跑，决定关闭时要不要走中断宽限。
+fn has_foreground_processes(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unix_has_live_children(pid)
+    }
+    #[cfg(windows)]
+    {
+        crate::winproc::has_live_descendants(pid)
+    }
+}
+
+/// 写入可能卡在已满的管道上，放到独立线程，不能耽误后面的强杀。
+fn send_interrupt(term: &Arc<PtyTerm>, cancel: &Arc<AtomicBool>) {
+    let term = Arc::clone(term);
+    let cancel = Arc::clone(cancel);
+    let _ = std::thread::Builder::new()
+        .name("pty-interrupt".to_string())
+        .spawn(move || {
+            let _ = write_blocking(&term, b"\x03", None, Some(cancel.as_ref()));
+        });
+}
+
+/// 等前台程序结束；到 `deadline` 仍在运行返回 false。
+fn wait_foreground_exit(term: &PtyTerm, pid: u32, deadline: Instant) -> bool {
+    loop {
+        if lock(&term.state).exited.is_some() || !has_foreground_processes(pid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(FOREGROUND_POLL_INTERVAL);
+    }
+}
+
+/// 模拟用户连按两次 Ctrl+C：Claude、OpenCode 等 TUI 第一次只提示，第二次才
+/// 正常退出并保存会话。第一次就退出的普通程序不会收到第二次。
+fn interrupt_foreground(term: &Arc<PtyTerm>, pid: u32) {
+    let started = Instant::now();
+    let cancel = Arc::new(AtomicBool::new(false));
+    send_interrupt(term, &cancel);
+    let mut interrupts = 1;
+    let mut exited = wait_foreground_exit(term, pid, started + INTERRUPT_SECOND_DELAY);
+    if !exited {
+        send_interrupt(term, &cancel);
+        interrupts = 2;
+        exited = wait_foreground_exit(term, pid, started + INTERRUPT_TOTAL);
+    }
+    cancel.store(true, Ordering::SeqCst);
+    crate::diagnostics::record(
+        "pty.interrupt_finished",
+        serde_json::json!({"ptyId":term.id,"shellPid":pid,"interrupts":interrupts,
+        "foregroundExited":exited,"elapsedMs":started.elapsed().as_millis() as u64}),
+        true,
+        false,
+    );
+}
+
+/// shell 退出后关闭 ConPTY 会连带结束控制台上的其他进程，先给仍在收尾的后代
+/// 留出时间。已进入强杀说明宽限用尽，不再等待。
+#[cfg(windows)]
+fn wait_for_console_clients(term: &PtyTerm) {
+    let Some(pid) = lock(&term.proc).pid else {
+        return;
+    };
+    let deadline = Instant::now() + INTERRUPT_TOTAL;
+    while !term.force_killed.load(Ordering::Acquire)
+        && Instant::now() < deadline
+        && has_foreground_processes(pid)
+    {
+        std::thread::sleep(FOREGROUND_POLL_INTERVAL);
+    }
+}
+
+/// 终止一个仍在运行的终端。有前台程序时先连按两次 Ctrl+C 让它自行收尾；
+/// 之后对 shell 发 HUP，再给一秒，仍未退出就强制结束。kill、超时 reap 与
+/// daemon 关闭共用这套流程，同一终端只执行一次，避免重复 Ctrl+C 打断收尾。
 fn terminate(term: &Arc<PtyTerm>, source: &str) -> Result<(), String> {
-    term.termination_requested.store(true, Ordering::Release);
+    if term.termination_requested.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
     crate::diagnostics::record(
         "pty.termination_requested",
         serde_json::json!({"ptyId":term.id,
@@ -1721,12 +1829,22 @@ fn terminate(term: &Arc<PtyTerm>, source: &str) -> Result<(), String> {
         return Ok(());
     }
     let pid = lock(&term.proc).pid;
-    hangup(pid, term);
+    let foreground_pid = pid.filter(|pid| has_foreground_processes(*pid));
+    if foreground_pid.is_none() {
+        hangup(pid, term);
+    }
     let term_for_watchdog = Arc::clone(term);
     let id = term.id.clone();
     std::thread::Builder::new()
         .name(format!("pty-terminate-{id}"))
         .spawn(move || {
+            if let Some(pid) = foreground_pid {
+                interrupt_foreground(&term_for_watchdog, pid);
+                if lock(&term_for_watchdog.state).exited.is_some() {
+                    return;
+                }
+                hangup(Some(pid), &term_for_watchdog);
+            }
             std::thread::sleep(Duration::from_secs(1));
             if lock(&term_for_watchdog.state).exited.is_none() {
                 force_kill(&term_for_watchdog);
@@ -1741,6 +1859,7 @@ fn terminate(term: &Arc<PtyTerm>, source: &str) -> Result<(), String> {
 }
 
 fn force_kill(term: &PtyTerm) {
+    term.force_killed.store(true, Ordering::Release);
     crate::diagnostics::record(
         "pty.force_kill",
         serde_json::json!({"ptyId":term.id,
@@ -2941,5 +3060,118 @@ mod tests {
         host.write(&info.id, b"\x03").unwrap();
         // 忽略 Ctrl+C 时循环永不结束，wait_for_exit 会超时失败。
         wait_for_exit(&mut rx, &info.id).await;
+    }
+
+    #[cfg(windows)]
+    fn windows_script_fixture(name: &str, script: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("qc-pty-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("program.ps1");
+        std::fs::write(&path, script).unwrap();
+        (dir, path)
+    }
+
+    /// `prefix` 是 cmd 的参数，让 PowerShell 成为 shell 的子进程，即前台程序。
+    #[cfg(windows)]
+    fn windows_program_options(prefix: &[&str], script: &std::path::Path) -> PtyCreateOptions {
+        let mut args: Vec<String> = prefix.iter().map(|arg| arg.to_string()).collect();
+        args.extend(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ]
+            .map(str::to_string),
+        );
+        args.push(script.to_string_lossy().into_owned());
+        PtyCreateOptions {
+            cwd: std::env::temp_dir(),
+            shell: Some("cmd.exe".to_string()),
+            args,
+            env: BTreeMap::new(),
+            name: Some("windows-program".to_string()),
+            cols: 80,
+            rows: 24,
+            scrollback_bytes: 1024 * 1024,
+            client_id: "windows-test".to_string(),
+        }
+    }
+
+    /// 与 Claude、OpenCode 相同的退出语义：第一次 Ctrl+C 不退出，第二次才保存并退出。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_close_lets_double_ctrl_c_program_save() {
+        let (dir, script) = windows_script_fixture(
+            "double-ctrl-c",
+            "[Console]::TreatControlCAsInput = $true\n\
+             Write-Output 'PROGRAM_READY'\n\
+             $count = 0\n\
+             while ($count -lt 2) {\n\
+               $key = [Console]::ReadKey($true)\n\
+               if ($key.Key -eq 'C' -and ($key.Modifiers -band [ConsoleModifiers]::Control)) { $count++ }\n\
+             }\n\
+             Set-Content -LiteralPath (Join-Path $PSScriptRoot 'saved.txt') 'saved'\n",
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let info = host
+            .create(windows_program_options(&["/d", "/k"], &script))
+            .expect("ConPTY 创建失败");
+        wait_for_text(&mut rx, &info.id, "PROGRAM_READY").await;
+        host.kill(&info.id).unwrap();
+        wait_for_exit(&mut rx, &info.id).await;
+        assert!(dir.join("saved.txt").exists(), "程序没有等到第二次 Ctrl+C");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_close_force_stops_program_after_interrupt_grace() {
+        let (dir, script) = windows_script_fixture(
+            "ignore-ctrl-c",
+            "[Console]::TreatControlCAsInput = $true\n\
+             Write-Output 'PROGRAM_READY'\n\
+             while ($true) { [void][Console]::ReadKey($true) }\n",
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let info = host
+            .create(windows_program_options(&["/d", "/k"], &script))
+            .expect("ConPTY 创建失败");
+        wait_for_text(&mut rx, &info.id, "PROGRAM_READY").await;
+        let started = Instant::now();
+        host.kill(&info.id).unwrap();
+        tokio::time::timeout(
+            INTERRUPT_TOTAL + Duration::from_secs(10),
+            wait_for_exit(&mut rx, &info.id),
+        )
+        .await
+        .expect("宽限结束后应强制结束");
+        assert!(started.elapsed() >= INTERRUPT_TOTAL - Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// shell 先退出时，ConPTY 必须等仍在收尾的后代写完才关闭。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_shell_exit_waits_for_program_still_saving() {
+        let (dir, script) = windows_script_fixture(
+            "shell-exits-first",
+            "Start-Sleep -Milliseconds 300\n\
+             Set-Content -LiteralPath (Join-Path $PSScriptRoot 'saved.txt') 'saved'\n",
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let info = host
+            .create(windows_program_options(
+                &["/d", "/c", "start", "/b"],
+                &script,
+            ))
+            .expect("ConPTY 创建失败");
+        wait_for_exit(&mut rx, &info.id).await;
+        assert!(dir.join("saved.txt").exists(), "后代进程被提前结束");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

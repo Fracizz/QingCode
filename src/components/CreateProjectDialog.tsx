@@ -41,6 +41,7 @@ import {
   SSH_CONNECTIONS_CHANGED_EVENT,
   sshConnectionTarget,
   sshRuntimeConfig,
+  sshSecretsFor,
   type SshBrowseEntry,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
@@ -355,7 +356,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     if (epoch !== epochRef.current) return
     const needsPassword = target.auth_kind === 'password' && !directEnabled && !hasSshSessionSecrets(target.id)
     if (alive || !needsPassword) {
-      await connectSsh(target, {})
+      await connectSsh(target, sshSecretsFor(target.id))
       return
     }
     setSshPhase('auth')

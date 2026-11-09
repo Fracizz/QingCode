@@ -82,8 +82,83 @@ describe('setPanelLayoutMode', () => {
   })
 })
 
+describe('terminal workbench', () => {
+  it('opens the terminal list with the editor collapsed and keeps dual flags for later', () => {
+    useUIStore.setState({ sideDualTerminal: true, sideEditorVisible: true })
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    const state = useUIStore.getState()
+    expect(state.panelLayout).toBe('terminalWorkbench')
+    expect(state.view).toBe('terminals')
+    expect(state.sidebarOpen).toBe(true)
+    expect(state.sideEditorVisible).toBe(false)
+    expect(state.sideDualTerminal).toBe(true)
+    expect(memory.get(PANEL_LAYOUT_KEY)).toBe('terminalWorkbench')
+    expect(JSON.parse(memory.get(SIDE_WORKSPACE_KEY) ?? '{}').editorVisible).toBe(false)
+  })
+
+  it('stays on the preset while the editor is toggled', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().toggleSideEditorVisible()
+    useUIStore.setState({ view: 'explorer' })
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    // 已处于该预设时再次选择不重置视图和编辑器。
+    expect(useUIStore.getState().view).toBe('explorer')
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+  })
+
+  it('leaves the terminal list view when switching to another preset', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().setPanelLayoutMode('classic')
+    expect(useUIStore.getState().view).toBe('explorer')
+  })
+
+  it('takes over from a full-page view on entry', () => {
+    useUIStore.getState().setView('settings')
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    const state = useUIStore.getState()
+    expect(state.view).toBe('terminals')
+    expect(state.fullPageRestore).toBeNull()
+    expect(state.sideEditorVisible).toBe(false)
+  })
+
+  it('returns to the list and re-collapses the editor after a full-page view', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState().view).toBe('terminals')
+    expect(useUIStore.getState().sideEditorVisible).toBe(false)
+  })
+
+  it('collapses the editor only when empty inside the workbench', () => {
+    useUIStore.getState().collapseEmptyWorkbenchEditor()
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().expandSideEditor()
+    useUIStore.getState().collapseEmptyWorkbenchEditor()
+    expect(useUIStore.getState().sideEditorVisible).toBe(false)
+  })
+
+  it('keeps the shared column during a full-page view', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().setView('settings')
+    useUIStore.getState().collapseEmptyWorkbenchEditor()
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+  })
+
+  it('keeps the list when switching projects, except from the file tree', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().showExplorerViewKeepingSidebar()
+    expect(useUIStore.getState().view).toBe('terminals')
+    useUIStore.setState({ view: 'explorer' })
+    useUIStore.getState().showExplorerViewKeepingSidebar()
+    expect(useUIStore.getState().view).toBe('explorer')
+  })
+})
+
 describe('togglePanelLayout', () => {
-  it('cycles classic → side → dual+editor', () => {
+  it('cycles classic → side → dual+editor → workbench', () => {
     useUIStore.getState().togglePanelLayout()
     expect(useUIStore.getState().panelLayout).toBe('sideTerminal')
     expect(useUIStore.getState().sideDualTerminal).toBe(false)
@@ -93,6 +168,9 @@ describe('togglePanelLayout', () => {
     useUIStore.getState().togglePanelLayout()
     expect(useUIStore.getState().sideDualTerminal).toBe(true)
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
+
+    useUIStore.getState().togglePanelLayout()
+    expect(useUIStore.getState().panelLayout).toBe('terminalWorkbench')
 
     useUIStore.getState().togglePanelLayout()
     expect(useUIStore.getState().panelLayout).toBe('classic')

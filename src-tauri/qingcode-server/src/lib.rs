@@ -12,6 +12,7 @@
 // 实现层：文件系统操作、文件监视与 PTY 宿主，协议契约全部在本文件内定义。
 mod ops;
 mod pty;
+pub use pty::{is_console_noise_process, INTERRUPT_SECOND_DELAY, INTERRUPT_TOTAL};
 mod watch;
 
 // 协议 v1 + daemon/connect：与上面的 `serve` 契约并存，互不影响。

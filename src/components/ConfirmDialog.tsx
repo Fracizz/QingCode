@@ -37,9 +37,12 @@ export default function ConfirmDialog() {
   const Icon = meta.icon
   const hasAlt = Boolean(request.altLabel)
   const detailText = request.detail ? t(request.detail) : ''
-  // Paths / multi-line dumps keep mono; short prose tips (e.g. busy terminals) use a callout.
+  // 路径、多行内容和指纹等连续长串用等宽换行样式；只匹配 ASCII，避免无空格的中文长句被误判。
   const detailIsTechnical =
-    detailText.includes('\n') || /[\\/]/.test(detailText) || detailText.length > 120
+    detailText.includes('\n') ||
+    /[\\/]/.test(detailText) ||
+    /[\x21-\x7e]{32,}/.test(detailText) ||
+    detailText.length > 120
   const wide = hasAlt || detailIsTechnical
 
   return (
@@ -71,7 +74,7 @@ export default function ConfirmDialog() {
                 className={
                   detailIsTechnical
                     ? 'text-ui-sm mt-2.5 max-h-[240px] overflow-auto rounded-md border border-border bg-bg-deep/70 px-2.5 py-2 font-mono leading-relaxed text-fg-muted whitespace-pre-wrap break-all'
-                    : 'text-ui-sm mt-2.5 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 leading-[var(--ui-line-height)] text-fg'
+                    : 'text-ui-sm mt-2.5 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 leading-[var(--ui-line-height)] text-fg break-words'
                 }
               >
                 {detailText}

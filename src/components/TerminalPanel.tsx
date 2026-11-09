@@ -84,6 +84,10 @@ export interface TerminalPanelProps {
   quadTerminal?: boolean
   /** Side layout: editor column is visible (outer terminal|editor drag applies). */
   editorVisible?: boolean
+  /** Side layout: which edge carries the terminal|editor width sash. */
+  widthResizerEdge?: 'start' | 'end'
+  /** 终端工作台列表可见时由列表切换终端，隐藏横向标签栏。 */
+  hideTabs?: boolean
   isTerminalResizing: boolean
   layoutSwitching?: boolean
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
@@ -104,6 +108,8 @@ export default function TerminalPanel({
   dualTerminal = false,
   quadTerminal = false,
   editorVisible = true,
+  widthResizerEdge = 'start',
+  hideTabs = false,
   isTerminalResizing,
   layoutSwitching = false,
   onResizerPointerDown,
@@ -194,6 +200,16 @@ export default function TerminalPanel({
     blTerminalId,
     brTerminalId,
   ])
+
+  // 单窗格与分屏的窗格归属判定不同（见 terminalPaneOf），切换时按新规则重选各窗格的当前终端。
+  const activateProject = useTerminalStore(s => s.activateProject)
+  const previousMultiPane = useRef(multiPane)
+  useEffect(() => {
+    if (previousMultiPane.current === multiPane) return
+    previousMultiPane.current = multiPane
+    const projectId = useProjectStore.getState().currentProject?.id
+    if (projectId) activateProject(projectId)
+  }, [multiPane, activateProject])
 
   useEffect(() => {
     if (quadMode) return
@@ -347,12 +363,15 @@ export default function TerminalPanel({
     handle.addEventListener('lostpointercapture', onLostCapture)
   }
 
-  const layoutKey = `${position}:${terminalOpen}:${terminalHeight}:${sideSplit}:${dualTerminal}:${quadTerminal}:${editorVisible}:${terminalWidth}:${
+  // 列表显隐会带出/收起标签栏，改变终端高度，也要触发重新适配行列。
+  const layoutKey = `${position}:${terminalOpen}:${terminalHeight}:${sideSplit}:${dualTerminal}:${quadTerminal}:${editorVisible}:${terminalWidth}:${hideTabs}:${
     quadMode ? `q${quadRatios.col}:${quadRatios.row}` : dualMode ? dualRatio : 'single'
   }`
 
   const primaryEmpty = currentProject
-    ? t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
+    ? hideTabs
+      ? t('当前项目「{name}」暂无终端，点击上方 + 新建', { name: currentProject.name })
+      : t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
     : t('请先选择或添加项目，终端将默认基于当前项目创建')
 
   const emptyTitleForPane = (pane: TerminalFocusPane) => {
@@ -561,7 +580,7 @@ export default function TerminalPanel({
     dualBody
   ) : (
     <>
-      <TerminalTabs />
+      {!hideTabs && <TerminalTabs />}
       <div className="relative flex-1 min-w-0 bg-bg-terminal overflow-hidden min-h-0">
         {projectTerminals.length === 0 && (
           <div className="absolute inset-0">
@@ -579,6 +598,22 @@ export default function TerminalPanel({
 
   // 宿主固定在片段首位：侧边/底部切换只换外层 div，常驻终端视图不受影响。
   if (isSide) {
+    const atEnd = widthResizerEdge === 'end'
+    const widthResizer = terminalOpen && editorVisible && (
+      <PanelResizer
+        orientation="vertical"
+        active={isTerminalResizing}
+        tooltip={terminalWidthResizerHint(currentSideWidth, t)}
+        tooltipSide={atEnd ? 'right' : 'left'}
+        onPointerDown={onWidthResizerPointerDown}
+        onValueChange={onWidthChange}
+        onReset={onWidthReset}
+        keyboardDirection={atEnd ? 1 : -1}
+        ariaValueNow={currentSideWidth}
+        ariaValueMin={getTerminalMinWidth()}
+        ariaValueMax={getTerminalMaxWidth()}
+      />
+    )
     return (
       <>
       {terminalHosts}
@@ -598,24 +633,11 @@ export default function TerminalPanel({
           width: terminalOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
         }}
       >
-        {terminalOpen && editorVisible && (
-          <PanelResizer
-            orientation="vertical"
-            active={isTerminalResizing}
-            tooltip={terminalWidthResizerHint(currentSideWidth, t)}
-            tooltipSide="left"
-            onPointerDown={onWidthResizerPointerDown}
-            onValueChange={onWidthChange}
-            onReset={onWidthReset}
-            keyboardDirection={-1}
-            ariaValueNow={currentSideWidth}
-            ariaValueMin={getTerminalMinWidth()}
-            ariaValueMax={getTerminalMaxWidth()}
-          />
-        )}
+        {widthResizerEdge === 'start' && widthResizer}
         <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
           {body}
         </div>
+        {widthResizerEdge === 'end' && widthResizer}
       </div>
       </>
     )

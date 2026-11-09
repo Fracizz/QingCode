@@ -334,7 +334,10 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       {open && <fieldset disabled={busy === 'saving'} className="min-w-0 space-y-3 border-0 border-t border-dialog-separator p-3">
         <p className="text-ui-sm leading-relaxed text-fg-muted">{t(standalone ? '通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。' : '通过独立 TLS 端口连接远端服务，通信不经过 SSH。现有 SSH 配置保留，可随时切回。')}</p>
         {feedback && <div role={error && !busy ? 'alert' : 'status'} aria-live={error && !busy ? 'assertive' : 'polite'} aria-atomic="true" className={`sticky top-0 z-10 flex items-start gap-2 rounded border p-3 text-ui-sm shadow-sm ${busy ? 'border-accent/40 bg-dialog text-fg' : error ? 'border-danger/40 bg-dialog text-danger' : 'border-ok/40 bg-dialog text-fg'}`}>
-          {busy ? <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" /> : error ? <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> : <CircleCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden="true" />}
+          {/* 图标占一整行行高并居中，字号缩放后仍与首行文字对齐。 */}
+          <span className="flex h-[1lh] shrink-0 items-center">
+            {busy ? <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" /> : error ? <CircleAlert size={16} aria-hidden="true" /> : <CircleCheck size={16} className="text-ok" aria-hidden="true" />}
+          </span>
           <span className="min-w-0 break-words">{feedback}</span>
         </div>}
         <div className={`grid grid-cols-1 items-start gap-3 ${info?.enabled ? '@min-[48rem]/direct-agent:grid-cols-2' : ''}`}>

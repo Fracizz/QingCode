@@ -7,7 +7,7 @@ import type { SideWorkspaceColumns } from './sideWorkspaceLayout'
  * icon toggles (side layout only). `resolvePanelLayoutMode` returns null in those
  * fine-tuned states so the menu checkmark and preset no-op stay accurate.
  */
-export type PanelLayoutMode = 'classic' | 'sideTerminal' | 'sideDualEditor'
+export type PanelLayoutMode = 'classic' | 'sideTerminal' | 'sideDualEditor' | 'terminalWorkbench'
 
 /** Legacy aliases still accepted by setters / commands. */
 export type PanelLayoutPreset = PanelLayoutMode | 'sideDual' | 'sideTerminalCollapsed'
@@ -17,6 +17,7 @@ export const PANEL_LAYOUT_MODES: PanelLayoutMode[] = [
   'classic',
   'sideTerminal',
   'sideDualEditor',
+  'terminalWorkbench',
 ]
 
 /** Title-bar menu order. */
@@ -24,17 +25,20 @@ export const PANEL_LAYOUT_MENU_MODES: PanelLayoutMode[] = [
   'classic',
   'sideTerminal',
   'sideDualEditor',
+  'terminalWorkbench',
 ]
 
 /**
  * Which title-bar preset matches the current dock + columns.
  * `null` = side dock with editor hidden (fine-tuned; not a menu preset).
+ * 工作台的编辑器可随时开关，所以按模板判定，不看 columns。
  */
 export function resolvePanelLayoutMode(
   panelLayout: PanelLayoutTemplate,
   columns: SideWorkspaceColumns,
 ): PanelLayoutMode | null {
   if (panelLayout === 'classic') return 'classic'
+  if (panelLayout === 'terminalWorkbench') return 'terminalWorkbench'
   if (!columns.editorVisible) return null
   // 田 layout is title-bar fine-tune only (not a menu preset).
   if (columns.quadTerminal) return null
@@ -56,6 +60,9 @@ export function panelLayoutModeParts(mode: PanelLayoutPreset): {
   switch (mode) {
     case 'classic':
       return { panelLayout: 'classic', columns: null }
+    case 'terminalWorkbench':
+      // 编辑器列由 uiStore 在进入时收起；双/四终端标记保留给切回侧栏预设时使用。
+      return { panelLayout: 'terminalWorkbench', columns: null }
     case 'sideTerminal':
       return {
         panelLayout: 'sideTerminal',
@@ -86,6 +93,8 @@ export function panelLayoutModeLabel(mode: PanelLayoutPreset): string {
     case 'sideTerminalCollapsed':
     case 'sideDualEditor':
       return '编辑器+双终端'
+    case 'terminalWorkbench':
+      return '终端工作台（左侧列表）'
   }
 }
 

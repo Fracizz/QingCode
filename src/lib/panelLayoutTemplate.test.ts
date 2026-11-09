@@ -8,6 +8,7 @@ import {
   parsePanelLayoutTemplate,
   savePanelLayoutTemplate,
   terminalPositionForTemplate,
+  terminalWidthDragSign,
 } from './panelLayoutTemplate'
 
 const memory = new Map<string, string>()
@@ -36,6 +37,7 @@ describe('parsePanelLayoutTemplate', () => {
   it('accepts known templates and defaults otherwise', () => {
     expect(parsePanelLayoutTemplate('classic')).toBe('classic')
     expect(parsePanelLayoutTemplate('sideTerminal')).toBe('sideTerminal')
+    expect(parsePanelLayoutTemplate('terminalWorkbench')).toBe('terminalWorkbench')
     expect(parsePanelLayoutTemplate('other')).toBe(DEFAULT_PANEL_LAYOUT)
     expect(parsePanelLayoutTemplate(null)).toBe(DEFAULT_PANEL_LAYOUT)
   })
@@ -52,6 +54,14 @@ describe('terminalPositionForTemplate', () => {
   it('maps templates to dock positions', () => {
     expect(terminalPositionForTemplate('classic')).toBe('bottom')
     expect(terminalPositionForTemplate('sideTerminal')).toBe('side')
+    expect(terminalPositionForTemplate('terminalWorkbench')).toBe('side')
+  })
+})
+
+describe('terminalWidthDragSign', () => {
+  it('follows the edge that carries the sash', () => {
+    expect(terminalWidthDragSign('sideTerminal')).toBe(-1)
+    expect(terminalWidthDragSign('terminalWorkbench')).toBe(1)
   })
 })
 

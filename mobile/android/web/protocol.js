@@ -154,9 +154,14 @@ export function countSessionOverview(list) {
   return { all: items.length, live: items.length - exited, exited };
 }
 
+/** 会话创建时间；缺失（旧版电脑端、部分电脑终端）时为 0，排在有创建时间的会话之后。 */
+function createdTime(session) {
+  return Number.isFinite(session?.createdAt) ? session.createdAt : 0;
+}
+
 /**
  * 会话纵览：把电脑端返回的全部手机会话按项目分组。
- * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内按会话编号（runningFirst 时运行中的排最前）。
+ * 当前项目排第一，其余按手机/电脑的最近打开时间，再按项目名；组内新创建的在上，旧版电脑端没有创建时间时按编号倒序（runningFirst 时运行中的排最前）。
  * 电脑端项目列表中仍存在的项目使用列表里的完整信息（含连接名），否则用会话自带的项目信息并标记 missing。
  * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
  */
@@ -185,7 +190,9 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     group.sessions.push(session);
   }
   for (const group of groups.values()) {
-    group.sessions.sort((a, b) => (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0) || (a.number ?? 0) - (b.number ?? 0));
+    group.sessions.sort((a, b) => (runningFirst ? Number(sessionRunning(b)) - Number(sessionRunning(a)) : 0)
+      || createdTime(b) - createdTime(a)
+      || (b.number ?? 0) - (a.number ?? 0));
   }
   return [...groups.values()].sort((a, b) =>
     Number(b.project.id === current) - Number(a.project.id === current)

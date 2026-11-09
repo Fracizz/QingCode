@@ -20,7 +20,7 @@ import {
 } from '../lib/sideWorkspaceLayout'
 import { isExternalFileWindow } from '../lib/windowSession'
 
-export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
+export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings' | 'terminals'
 
 interface UIState {
   serverUpdateRootUri: string | null
@@ -100,6 +100,8 @@ interface UIState {
   toggleSideEditorVisible: () => void
   /** Ensure the editor column is visible (open file / SCM / Settings); keeps dual/quad. */
   expandSideEditor: () => void
+  /** 终端工作台中最后一个编辑器标签关闭后收起编辑器列，其余布局不受影响。 */
+  collapseEmptyWorkbenchEditor: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
   openWorkspaceManager: () => void
@@ -123,6 +125,24 @@ interface FullPageRestore {
 
 function isFullPageView(view: View) {
   return view === 'sourceControl' || view === 'settings'
+}
+
+/** 离开整页视图或切换项目时回到的侧栏视图：工作台回终端列表，其余布局回资源管理器。 */
+function homeView(panelLayout: PanelLayoutTemplate): View {
+  return panelLayout === 'terminalWorkbench' ? 'terminals' : 'explorer'
+}
+
+/** 进入工作台：显示终端列表并收起编辑器；离开工作台：终端列表视图不再可用，退回资源管理器。 */
+function workbenchTransition(state: UIState, next: PanelLayoutTemplate): Partial<UIState> {
+  if (next === 'terminalWorkbench') {
+    const columns = normalizeSideWorkspaceColumns({
+      ...columnsFromState(state),
+      editorVisible: false,
+    })
+    persistColumns(columns)
+    return { ...applyColumns(columns), view: 'terminals', sidebarOpen: true, fullPageRestore: null }
+  }
+  return state.view === 'terminals' ? { view: 'explorer' } : {}
 }
 
 /** 进入整页视图：临时显示编辑器列（不持久化），并记录进入前的布局以便离开时恢复。 */
@@ -188,7 +208,7 @@ function applyColumns(columns: SideWorkspaceColumns) {
 const initialColumns = loadSideWorkspaceColumns()
 
 export const useUIStore = create<UIState>((set, get) => ({
-  view: 'explorer',
+  view: homeView(loadPanelLayoutTemplate()),
   sidebarOpen: !isExternalFileWindow(),
   activityBarHidden: loadActivityBarHidden(),
   searchRoot: null,
@@ -221,7 +241,8 @@ export const useUIStore = create<UIState>((set, get) => ({
     set(state => {
       const restore = state.fullPageRestore
       return {
-        view: 'explorer',
+        // 工作台里正在看文件树时保持文件树，否则回到终端列表。
+        view: state.view === 'explorer' ? 'explorer' : homeView(state.panelLayout),
         ...leaveFullPage(state),
         ...(restore ? { sidebarOpen: restore.sidebarOpen } : {}),
       }
@@ -230,10 +251,10 @@ export const useUIStore = create<UIState>((set, get) => ({
     set(state => {
       if (isFullPageView(view)) {
         if (state.view !== view) return enterFullPage(state, view)
-        // 再次点击整页视图图标：回到资源管理器，并恢复进入前的侧栏与编辑器列状态。
+        // 再次点击整页视图图标：回到侧栏主视图，并恢复进入前的侧栏与编辑器列状态。
         const restore = state.fullPageRestore
         return {
-          view: 'explorer',
+          view: homeView(state.panelLayout),
           ...leaveFullPage(state),
           sidebarOpen: restore ? restore.sidebarOpen : true,
         }
@@ -301,6 +322,7 @@ export const useUIStore = create<UIState>((set, get) => ({
       return {
         panelLayout,
         ...(columns ? { ...applyColumns(columns), ...keepEditorAfterFullPage(state) } : {}),
+        ...workbenchTransition(state, panelLayout),
         panelLayoutSwitching: dockChanged,
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
@@ -363,6 +385,18 @@ export const useUIStore = create<UIState>((set, get) => ({
       const columns = normalizeSideWorkspaceColumns({
         ...columnsFromState(state),
         editorVisible: true,
+      })
+      persistColumns(columns)
+      return applyColumns(columns)
+    }),
+  collapseEmptyWorkbenchEditor: () =>
+    set(state => {
+      if (state.panelLayout !== 'terminalWorkbench' || !state.sideEditorVisible) return state
+      // 整页视图（SCM / 设置）占用的是同一列，不能因为编辑器标签关完而收起。
+      if (state.fullPageRestore) return state
+      const columns = normalizeSideWorkspaceColumns({
+        ...columnsFromState(state),
+        editorVisible: false,
       })
       persistColumns(columns)
       return applyColumns(columns)

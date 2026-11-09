@@ -123,7 +123,8 @@ export async function run({ spaceId, finish = true } = {}) {
 
     await step('home search and filters show every match without the eight-row limit', async () => {
       await fillIn(home + ' .overview-search', 'galaxy')
-      assert.deepEqual(await rowIds(home), ['mobile-3', 'mobile-11'])
+      // 组内新创建的在上。
+      assert.deepEqual(await rowIds(home), ['mobile-11', 'mobile-3'])
       await fillIn(home + ' .overview-search', '')
       await tap(home + ' .overview-filter-toggle')
       await tap(home + ' [data-filter="live"]')

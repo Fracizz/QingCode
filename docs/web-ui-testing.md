@@ -191,6 +191,8 @@ Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tes
 
 远程项目后台准备的状态图标场景位于 <http://127.0.0.1:38439/web-tests/ssh-warmup.html>，复用生产项目图标、Tooltip 和状态 store。运行 `scripts/web-tests/ssh-warmup.ego.mjs` 的 `run()` 可验证准备完成后恢复普通云图标且无成功提示，其余四种状态的提示与点击、浅色、英文和窄窗；默认保存截图与 `results.json`。若环境的 `Page.captureScreenshot` 超时，可传 `screenshots: false` 继续 DOM 交互验收，报告会明确记录截图未完成。该场景不建立 SSH；队列的 10 万项目选择、会话预算、前后台复用与取消由 Vitest 覆盖，原生连接、信任、SFTP 与服务仍需 Rust 和真实 SSH 验收。
 
+终端工作台布局：先启动 `pnpm dev:web-test`（端口 **38419**），Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/terminal-workbench.ego.mjs').then(m=>m.run())"`（路径按检出目录调整）。使用完整 App 与内存后端，覆盖菜单进入、列表显示与标题栏细调、新建/点击/方向键切换、双击重命名、关闭二次确认、切到文件树时标签栏接管、打开文件后编辑器在终端右侧、分隔条向右拖宽并在编辑器开合后保留、关闭最后一个文件自动收起、收起终端后点列表展开、重载恢复、800px 窄窗和切回其他预设。截图与 JSON 位于 `.dev/web-tests/terminal-workbench/`；终端与文件均为模拟，不代替 Tauri 下真实 PTY、SSH 与原生窗口验收。
+
 ## 验收边界
 
 SCM 分支菜单场景位于 `/web-tests/scm-branches.html`，使用 `pnpm test:web` 和

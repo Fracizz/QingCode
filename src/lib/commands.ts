@@ -468,6 +468,12 @@ export function buildCommands(): AppCommand[] {
       run: () => useUIStore.getState().setPanelLayoutMode('sideDualEditor'),
     },
     {
+      id: 'view.panelLayout.terminalWorkbench',
+      title: '终端工作台（左侧列表）',
+      keywords: 'layout terminal workbench list session ai',
+      run: () => useUIStore.getState().setPanelLayoutMode('terminalWorkbench'),
+    },
+    {
       id: 'view.toggleSideDualTerminal',
       title: '切换双终端',
       keywords: 'layout dual terminal side',
@@ -485,7 +491,7 @@ export function buildCommands(): AppCommand[] {
       id: 'view.toggleSideEditor',
       title: '切换侧栏布局编辑器',
       keywords: 'layout editor collapse expand side terminal',
-      when: () => useUIStore.getState().panelLayout === 'sideTerminal',
+      when: () => useUIStore.getState().panelLayout !== 'classic',
       run: () => useUIStore.getState().toggleSideEditorVisible(),
     },
     {

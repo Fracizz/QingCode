@@ -7,6 +7,7 @@ import {
   PanelBottom,
   PanelLeft,
   Columns3,
+  LayoutList,
   SquareSplitHorizontal,
   LayoutGrid,
   SquareCode,
@@ -41,6 +42,8 @@ function layoutModeIcon(mode: PanelLayoutMode) {
       return <PanelLeft size={14} strokeWidth={1.5} />
     case 'sideDualEditor':
       return <Columns3 size={14} strokeWidth={1.5} />
+    case 'terminalWorkbench':
+      return <LayoutList size={14} strokeWidth={1.5} />
   }
 }
 
@@ -74,6 +77,9 @@ export default function TitleBar({
   const nativeWindowDrag = windowDragMode === 'native'
   const tauriWindowDragFallback = windowDragMode === 'tauri-fallback'
   const sideLayoutActive = panelLayout === 'sideTerminal'
+  // 顶栏只保留编辑器开关；双/四终端收在布局菜单，且仅侧栏预设提供。
+  const workbenchActive = panelLayout === 'terminalWorkbench'
+  const editorToggleActive = sideLayoutActive || workbenchActive
   const currentProject = useProjectStore(s => s.currentProject)
   const standaloneFiles = isExternalFileWindow() && !currentProject
 
@@ -172,25 +178,28 @@ export default function TitleBar({
   if (sideLayoutActive) {
     layoutMenuItems.push(
       {
-        label: t(sideDualTerminal && terminalOpen ? '关闭双终端' : '开启双终端'),
+        label: t(sideDualTerminal ? (terminalOpen ? '关闭双终端' : '展开双终端') : '开启双终端'),
         icon: <SquareSplitHorizontal size={14} />,
         separatorBefore: true,
         checked: sideDualTerminal && terminalOpen,
         action: () => sideDualTerminal && !terminalOpen ? openTerminalPanel() : toggleSideDualTerminal(),
       },
       {
-        label: t(sideQuadTerminal && terminalOpen ? '关闭四终端' : '开启四终端'),
+        label: t(sideQuadTerminal ? (terminalOpen ? '关闭四终端' : '展开四终端') : '开启四终端'),
         icon: <LayoutGrid size={14} />,
         checked: sideQuadTerminal && terminalOpen,
         action: () => sideQuadTerminal && !terminalOpen ? openTerminalPanel() : toggleSideQuadTerminal(),
       },
-      {
-        label: t(sideEditorVisible ? '隐藏编辑器' : '显示编辑器'),
-        icon: <SquareCode size={14} />,
-        checked: sideEditorVisible,
-        action: () => toggleSideEditorVisible(),
-      },
     )
+  }
+  if (editorToggleActive) {
+    layoutMenuItems.push({
+      label: t(sideEditorVisible ? '隐藏编辑器' : '显示编辑器'),
+      icon: <SquareCode size={14} />,
+      separatorBefore: workbenchActive,
+      checked: sideEditorVisible,
+      action: () => toggleSideEditorVisible(),
+    })
   }
 
   return (
@@ -260,82 +269,8 @@ export default function TitleBar({
         className="flex h-full flex-shrink-0 items-center gap-1 pl-1 pr-2"
         onDoubleClick={event => event.stopPropagation()}
       >
-        {sideLayoutActive && (
+        {editorToggleActive && (
           <span className="title-layout-detail contents">
-            <Tooltip
-              label={
-                sideDualTerminal && terminalOpen
-                  ? t('关闭双终端')
-                  : sideDualTerminal
-                    ? t('展开双终端')
-                    : t('开启双终端')
-              }
-              side="bottom"
-            >
-              <button
-                type="button"
-                aria-label={
-                  sideDualTerminal && terminalOpen
-                    ? t('关闭双终端')
-                    : sideDualTerminal
-                      ? t('展开双终端')
-                      : t('开启双终端')
-                }
-                aria-pressed={sideDualTerminal && terminalOpen}
-                className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
-                  sideDualTerminal && terminalOpen
-                    ? 'bg-bg-active text-brand'
-                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                }`}
-                onPointerDown={event => event.stopPropagation()}
-                onClick={() => {
-                  if (sideDualTerminal && !terminalOpen) {
-                    openTerminalPanel()
-                    return
-                  }
-                  toggleSideDualTerminal()
-                }}
-              >
-                <SquareSplitHorizontal size={14} strokeWidth={1.5} />
-              </button>
-            </Tooltip>
-            <Tooltip
-              label={
-                sideQuadTerminal && terminalOpen
-                  ? t('关闭四终端')
-                  : sideQuadTerminal
-                    ? t('展开四终端')
-                    : t('开启四终端')
-              }
-              side="bottom"
-            >
-              <button
-                type="button"
-                aria-label={
-                  sideQuadTerminal && terminalOpen
-                    ? t('关闭四终端')
-                    : sideQuadTerminal
-                      ? t('展开四终端')
-                      : t('开启四终端')
-                }
-                aria-pressed={sideQuadTerminal && terminalOpen}
-                className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
-                  sideQuadTerminal && terminalOpen
-                    ? 'bg-bg-active text-brand'
-                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                }`}
-                onPointerDown={event => event.stopPropagation()}
-                onClick={() => {
-                  if (sideQuadTerminal && !terminalOpen) {
-                    openTerminalPanel()
-                    return
-                  }
-                  toggleSideQuadTerminal()
-                }}
-              >
-                <LayoutGrid size={14} strokeWidth={1.5} />
-              </button>
-            </Tooltip>
             <Tooltip
               label={sideEditorVisible ? t('隐藏编辑器') : t('显示编辑器')}
               side="bottom"

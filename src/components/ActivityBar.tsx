@@ -2,6 +2,7 @@ import {
   FolderCode,
   Search,
   Terminal,
+  SquareTerminal,
   Settings,
   FolderPlus,
   BugPlay,
@@ -14,12 +15,12 @@ import {
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { useActiveGitDirtyCount } from '../hooks/useActiveGitDirtyCount'
-import { useUIStore } from '../store/uiStore'
+import { useUIStore, type View } from '../store/uiStore'
 
 interface Props {
-  active: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
+  active: View
   sidebarOpen: boolean
-  onActiveChange: (v: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings') => void
+  onActiveChange: (v: View) => void
   onToggleTerminal: () => void
   onAddProject: () => void
   onManageProjects: () => void
@@ -40,6 +41,7 @@ export default function ActivityBar({
   const activityBarHidden = useUIStore(s => s.activityBarHidden)
   const setActivityBarHidden = useUIStore(s => s.setActivityBarHidden)
   const openRemoteConnections = useUIStore(s => s.openRemoteConnections)
+  const terminalWorkbench = useUIStore(s => s.panelLayout === 'terminalWorkbench')
 
   if (activityBarHidden) {
     return (
@@ -58,6 +60,14 @@ export default function ActivityBar({
 
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
+      {terminalWorkbench && (
+        <Item
+          icon={<SquareTerminal size={22} />}
+          label={t('终端列表')}
+          active={active === 'terminals' && sidebarOpen}
+          onClick={() => onActiveChange('terminals')}
+        />
+      )}
       <Item
         icon={<FolderCode size={22} />}
         label={t('资源管理器')}

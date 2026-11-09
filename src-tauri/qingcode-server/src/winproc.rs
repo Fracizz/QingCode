@@ -68,6 +68,152 @@ impl Drop for WindowsChild {
     }
 }
 
+/// 进程快照里的一项：只保留判定后代关系需要的字段。
+struct ProcessEntry {
+    pid: u32,
+    parent: u32,
+    name: String,
+}
+
+/// 枚举当前存活的进程；快照失败返回空，调用方按「没有后代」处理。
+fn process_snapshot() -> Vec<ProcessEntry> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut entries = Vec::new();
+    // SAFETY: 快照句柄只在本函数内使用并关闭；entry 是按 dwSize 初始化的栈上结构。
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return entries;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|unit| *unit == 0)
+                .unwrap_or(entry.szExeFile.len());
+            entries.push(ProcessEntry {
+                pid: entry.th32ProcessID,
+                parent: entry.th32ParentProcessID,
+                name: String::from_utf16_lossy(&entry.szExeFile[..len]),
+            });
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    entries
+}
+
+/// 进程创建时间（FILETIME，100ns）。无法打开进程时返回 `None`。
+fn process_creation_time(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let empty = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (empty, empty, empty, empty);
+    // SAFETY: 句柄只在本函数内使用并关闭；四个输出参数都是栈上 FILETIME。
+    let ok = unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let ok = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
+        CloseHandle(process);
+        ok
+    };
+    (ok != 0).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// 沿父进程关系查找存活的后代。Windows 的父 PID 不随父进程退出而失效，PID 还可能
+/// 被复用，所以要求子进程不早于父进程创建。控制台宿主不计数，但继续向下查找。
+fn any_live_descendant(
+    root: u32,
+    root_created: u64,
+    entries: &[ProcessEntry],
+    created: impl Fn(u32) -> Option<u64>,
+) -> bool {
+    let mut seen = std::collections::HashSet::from([root]);
+    let mut stack = vec![(root, root_created)];
+    while let Some((parent, parent_created)) = stack.pop() {
+        for entry in entries.iter().filter(|entry| entry.parent == parent) {
+            if !seen.insert(entry.pid) {
+                continue;
+            }
+            let Some(entry_created) = created(entry.pid).filter(|time| *time >= parent_created)
+            else {
+                continue;
+            };
+            if !crate::pty::is_console_noise_process(&entry.name) {
+                return true;
+            }
+            stack.push((entry.pid, entry_created));
+        }
+    }
+    false
+}
+
+/// `root` 是否还有存活的后代进程。`root` 可以已经退出，只要调用方仍持有它的
+/// 进程句柄（PID 不会被复用，创建时间也还能读到）。
+pub fn has_live_descendants(root: u32) -> bool {
+    let Some(root_created) = process_creation_time(root) else {
+        return false;
+    };
+    any_live_descendant(
+        root,
+        root_created,
+        &process_snapshot(),
+        process_creation_time,
+    )
+}
+
+#[cfg(test)]
+mod descendant_tests {
+    use super::*;
+
+    fn entry(pid: u32, parent: u32, name: &str) -> ProcessEntry {
+        ProcessEntry {
+            pid,
+            parent,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn descendant_search_finds_program_below_console_host() {
+        let entries = [entry(2, 1, "conhost.exe"), entry(3, 2, "claude.exe")];
+        assert!(any_live_descendant(1, 10, &entries, |_| Some(20)));
+    }
+
+    #[test]
+    fn descendant_search_ignores_console_host_only() {
+        let entries = [entry(2, 1, "OpenConsole.exe")];
+        assert!(!any_live_descendant(1, 10, &entries, |_| Some(20)));
+    }
+
+    #[test]
+    fn descendant_search_rejects_stale_parent_pid() {
+        // 比 root 更早创建：它的父 PID 指向的是被复用前的旧进程。
+        let entries = [entry(2, 1, "unrelated.exe")];
+        assert!(!any_live_descendant(1, 10, &entries, |_| Some(5)));
+    }
+
+    #[test]
+    fn descendant_search_survives_parent_pid_cycles() {
+        let entries = [entry(2, 3, "conhost.exe"), entry(3, 2, "conhost.exe")];
+        assert!(!any_live_descendant(2, 10, &entries, |_| Some(20)));
+    }
+}
+
 /// 让之后创建的子进程正常响应 Ctrl+C。
 ///
 /// 「忽略 Ctrl+C」是进程属性，会被子进程继承：daemon 经 sshd 的 exec 会话拉起，

@@ -90,6 +90,16 @@ fn is_spinner_glyph(character: char) -> bool {
     )
 }
 
+/// 去掉标题开头的转圈帧和装饰符，动画不会引起落盘；只剩动画时返回 `None`。
+fn stable_title(title: &str) -> Option<String> {
+    let title = title.trim();
+    let text = match title.chars().next() {
+        Some(first) if is_spinner_glyph(first) => title[first.len_utf8()..].trim_start(),
+        _ => split_title_glyph(title).map_or(title, |(_, rest)| rest),
+    };
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
 /// 拆出标题开头的单个符号（非字母数字、非空白）与其后的文本。
 fn split_title_glyph(title: &str) -> Option<(char, &str)> {
     let mut chars = title.chars();
@@ -126,6 +136,10 @@ fn is_spinner_frame(previous: Option<&str>, current: Option<&str>) -> bool {
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// 手机拉会话列表时，最多隔这么久扫描一次远端遗留的手机终端。
 const RESTORE_SCAN_INTERVAL: Duration = Duration::from_secs(10);
+/// 检查手机会话名称是否需要落盘的间隔。内容没变不写文件。
+const SESSION_NAMES_SAVE_INTERVAL: Duration = Duration::from_secs(2);
+/// 重启后等待接回的名称最多保留这么久，超过默认的 daemon 回收时长，留足余量。
+const SAVED_NAME_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 #[cfg(not(test))]
 const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 // Unoptimized test builds would spend seconds per derivation.
@@ -183,6 +197,8 @@ struct HubState {
     desktop_terminals: bool,
     next_number: u64,
     restore: RestoreScan,
+    /// 上次运行保存、还没接回的手机会话名称，接回成功后移除。
+    pending_names: HashMap<String, SavedSessionName>,
 }
 
 /// 电脑重启后接回手机终端的扫描进度，只在本次运行内有效。
@@ -371,6 +387,54 @@ fn update_settings(change: impl FnOnce(&mut SavedSettings)) -> Result<(), String
     save_settings(&settings)
 }
 
+fn session_names_path() -> PathBuf {
+    crate::app_paths::app_data_dir()
+        .join("mobile")
+        .join("session-names.json")
+}
+
+/// 名称文件只影响显示，读取失败按没有保存过处理，不影响接回终端。
+fn load_session_names() -> HashMap<String, SavedSessionName> {
+    let path = session_names_path();
+    if std::fs::symlink_metadata(&path).is_err() {
+        return HashMap::new();
+    }
+    qingcode_server::direct::private_read(&path)
+        .and_then(|content| serde_json::from_slice(&content).map_err(|error| error.to_string()))
+        .unwrap_or_else(|error| {
+            eprintln!("[WARN] 读取手机会话名称失败：{error}");
+            HashMap::new()
+        })
+}
+
+fn save_session_names(names: &HashMap<String, SavedSessionName>) -> Result<(), String> {
+    let path = session_names_path();
+    qingcode_server::direct::protect_private_directory(path.parent().unwrap())?;
+    let content = serde_json::to_vec(names).map_err(|error| error.to_string())?;
+    qingcode_server::direct::private_write(&path, &content)
+}
+
+/// 定期把手机会话名称写入磁盘，电脑重启或升级后接回时恢复。只有这一个写入方。
+async fn persist_session_names(app: AppHandle, mut written: HashMap<String, SavedSessionName>) {
+    loop {
+        tokio::time::sleep(SESSION_NAMES_SAVE_INTERVAL).await;
+        let names = app.state::<MobileState>().hub.session_names_snapshot();
+        if names == written {
+            continue;
+        }
+        let content = names.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || save_session_names(&content))
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|saved| saved);
+        if let Err(error) = result {
+            eprintln!("[WARN] 保存手机会话名称失败：{error}");
+        }
+        // 失败也更新：下次内容变化时重试，避免磁盘问题时每两秒写一次日志。
+        written = names;
+    }
+}
+
 fn fingerprint(certificate: &[u8]) -> String {
     format!("{:x}", Sha256::digest(certificate))
 }
@@ -424,6 +488,20 @@ enum ProjectKind {
     Ssh,
 }
 
+/// 随电脑重启保留的手机会话名称信息，接回时按会话 id 恢复。
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+struct SavedSessionName {
+    number: u64,
+    custom_name: Option<String>,
+    label: Option<String>,
+    /// 去掉转圈帧的程序标题。daemon 的屏幕快照不带标题，接回后只能靠这里。
+    title: Option<String>,
+    created_at_ms: u64,
+    /// 开始等待接回的时间（Unix 毫秒），用于淘汰再也接不回的记录；在线会话为空。
+    detached_since_ms: Option<u64>,
+}
+
 struct Session {
     project: Project,
     owner: String,
@@ -431,6 +509,8 @@ struct Session {
     custom_name: Option<String>,
     /// 带启动命令的终端配置名；程序未设置标题时代替「终端 N」。
     label: Option<String>,
+    /// 重启前最后的程序标题，程序发出新标题后不再使用。
+    restored_title: Option<String>,
     name_revision: u64,
     activity_revision: AtomicU64,
     ready: bool,
@@ -477,6 +557,7 @@ impl Session {
             number,
             custom_name: None,
             label: None,
+            restored_title: None,
             name_revision: 0,
             activity_revision: AtomicU64::new(0),
             ready: false,
@@ -645,9 +726,33 @@ impl Session {
         self.custom_name
             .as_deref()
             .or_else(|| self.screen.title())
+            .or(self.restored_title.as_deref())
             .or(self.label.as_deref())
             .map(str::to_owned)
             .unwrap_or_else(|| format!("终端 {}", self.number))
+    }
+
+    fn saved_name(&self) -> SavedSessionName {
+        SavedSessionName {
+            number: self.number,
+            custom_name: self.custom_name.clone(),
+            label: self.label.clone(),
+            title: self
+                .screen
+                .title()
+                .and_then(stable_title)
+                .or_else(|| self.restored_title.clone()),
+            created_at_ms: self.created_at_ms,
+            detached_since_ms: None,
+        }
+    }
+
+    fn restore_name(&mut self, saved: SavedSessionName) {
+        self.number = saved.number;
+        self.custom_name = saved.custom_name;
+        self.label = saved.label;
+        self.restored_title = saved.title;
+        self.created_at_ms = saved.created_at_ms;
     }
 
     fn rename(&mut self, name: &str) -> Result<(), String> {
@@ -1116,11 +1221,57 @@ impl Hub {
             .get(id)
             .is_some_and(|session| require_device(&inner, &session.owner).is_ok());
         if !succeeded || !authorized {
+            // 保留 pending_names：这次没接回，下一轮扫描还要用。
             inner.sessions.remove(id);
             return false;
         }
         inner.sessions.get_mut(id).unwrap().ready = true;
+        inner.pending_names.remove(id);
         true
+    }
+
+    /// 载入上次保存的名称并淘汰过期记录。新终端的编号排在待接回的之后，不会撞号。
+    fn load_session_names(&self, saved: HashMap<String, SavedSessionName>, now_ms: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        for (id, mut name) in saved {
+            let since = *name.detached_since_ms.get_or_insert(now_ms);
+            if now_ms.saturating_sub(since) < SAVED_NAME_RETENTION.as_millis() as u64 {
+                inner.next_number = inner.next_number.max(name.number);
+                inner.pending_names.insert(id, name);
+            }
+        }
+    }
+
+    /// 需要落盘的名称：能在电脑重启后接回的在线会话，加上还没接回的记录。
+    /// 已结束或被关闭的会话不在其中，记录随下一次写入消失。
+    fn session_names_snapshot(&self) -> HashMap<String, SavedSessionName> {
+        let inner = self.inner.lock().unwrap();
+        let mut names = inner.pending_names.clone();
+        names.extend(
+            inner
+                .sessions
+                .iter()
+                .filter(|(_, session)| {
+                    session.ready
+                        && session.project.kind == ProjectKind::Ssh
+                        && session.exit.as_ref().is_none_or(|exit| exit.disconnected)
+                })
+                .map(|(id, session)| (id.clone(), session.saved_name())),
+        );
+        names
+    }
+
+    /// 接回时恢复名称。版本号改用当前时间：手机可能还留着重启前较大的版本号，
+    /// 从 0 重新计数的名称会被它当成迟到的旧响应丢弃。
+    fn restore_session_name(&self, id: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let saved = inner.pending_names.get(id).cloned();
+        if let Some(session) = inner.sessions.get_mut(id) {
+            if let Some(saved) = saved {
+                session.restore_name(saved);
+            }
+            session.name_revision = unix_now_ms();
+        }
     }
 
     /// 单飞且限频；返回 false 表示这次不用扫描。
@@ -1753,6 +1904,11 @@ pub fn initialize(app: &AppHandle) {
         }
     });
     let state = app.state::<MobileState>();
+    let saved_names = load_session_names();
+    state
+        .hub
+        .load_session_names(saved_names.clone(), unix_now_ms());
+    tauri::async_runtime::spawn(persist_session_names(app.clone(), saved_names));
     let settings = match load_settings() {
         Ok(Some(settings)) => settings,
         Ok(None) => return,
@@ -2968,6 +3124,7 @@ async fn restore_detached_sessions(
             eprintln!("[WARN] 手机终端未接回：{error}");
             return false;
         }
+        hub.restore_session_name(&id);
         hub.with_session(&id, |session| {
             session.screen.resize(terminal.cols, terminal.rows)
         });
@@ -3738,6 +3895,222 @@ mod tests {
         assert!(session.rename(&"中".repeat(81)).is_err());
         assert!(session.rename("bad\nname").is_err());
         assert_eq!(session.name(), "Claude");
+    }
+
+    fn ssh_session(hub: &Hub, id: &str, number: u64) {
+        let mut session = Session::new(
+            Project {
+                kind: ProjectKind::Ssh,
+                ..project()
+            },
+            "phone".into(),
+            number,
+        );
+        session.ready = true;
+        hub.inner
+            .lock()
+            .unwrap()
+            .sessions
+            .insert(id.into(), session);
+    }
+
+    fn push_title(hub: &Hub, id: &str, title: &str) {
+        hub.with_session(id, |session| {
+            session.push(OutputChunk::Bytes(
+                base64::engine::general_purpose::STANDARD.encode(format!("\x1b]2;{title}\x07")),
+            ))
+        });
+    }
+
+    /// 模拟电脑重启：快照经 JSON 落盘，新进程载入后接回同一个 id。
+    fn restart_hub(previous: &Hub) -> Hub {
+        let file = serde_json::to_vec(&previous.session_names_snapshot()).unwrap();
+        let hub = accepting_hub(vec![device("phone")]);
+        hub.load_session_names(serde_json::from_slice(&file).unwrap(), unix_now_ms());
+        hub
+    }
+
+    fn reserve_restored(hub: &Hub, id: &str) {
+        let project = Project {
+            kind: ProjectKind::Ssh,
+            ..project()
+        };
+        hub.reserve_session(id.into(), project, "phone", None)
+            .unwrap();
+        hub.restore_session_name(id);
+    }
+
+    #[test]
+    fn restored_session_keeps_manual_name_and_identity_after_restart() {
+        let before = accepting_hub(vec![device("phone")]);
+        ssh_session(&before, "mobile-a", 5);
+        before.rename_session("mobile-a", "修复登录").unwrap();
+        let created_at = before.inner.lock().unwrap().sessions["mobile-a"].created_at_ms;
+
+        let hub = restart_hub(&before);
+        reserve_restored(&hub, "mobile-a");
+        let inner = hub.inner.lock().unwrap();
+        let session = &inner.sessions["mobile-a"];
+        assert_eq!(session.name(), "修复登录");
+        assert_eq!(session.custom_name.as_deref(), Some("修复登录"));
+        assert_eq!(session.number, 5);
+        assert_eq!(session.created_at_ms, created_at);
+    }
+
+    #[test]
+    fn restored_session_shows_last_program_title_until_a_new_one_arrives() {
+        let before = accepting_hub(vec![device("phone")]);
+        ssh_session(&before, "mobile-a", 1);
+        push_title(&before, "mobile-a", "✳ Claude Code");
+
+        let hub = restart_hub(&before);
+        reserve_restored(&hub, "mobile-a");
+        hub.with_session("mobile-a", |session| {
+            // daemon 的屏幕快照不带标题。
+            session.push(OutputChunk::Screen {
+                data: "prompt".into(),
+                cols: 80,
+                rows: 24,
+            });
+            assert_eq!(session.name(), "Claude Code");
+        });
+        push_title(&hub, "mobile-a", "OpenCode");
+        hub.with_session("mobile-a", |session| assert_eq!(session.name(), "OpenCode"));
+    }
+
+    #[test]
+    fn restored_label_is_kept_when_the_program_has_no_title() {
+        let before = accepting_hub(vec![device("phone")]);
+        ssh_session(&before, "mobile-a", 2);
+        before
+            .inner
+            .lock()
+            .unwrap()
+            .sessions
+            .get_mut("mobile-a")
+            .unwrap()
+            .label = Some("Claude".into());
+
+        let hub = restart_hub(&before);
+        reserve_restored(&hub, "mobile-a");
+        assert_eq!(
+            hub.inner.lock().unwrap().sessions["mobile-a"].name(),
+            "Claude"
+        );
+    }
+
+    #[test]
+    fn restored_name_outranks_revisions_the_phone_kept_from_before_restart() {
+        let hub = accepting_hub(vec![device("phone")]);
+        reserve_restored(&hub, "mobile-a");
+        let revision = hub.inner.lock().unwrap().sessions["mobile-a"].name_revision;
+        assert!(revision > 1_000_000_000_000);
+    }
+
+    #[test]
+    fn new_sessions_are_numbered_after_terminals_waiting_for_restore() {
+        let before = accepting_hub(vec![device("phone")]);
+        ssh_session(&before, "mobile-a", 9);
+        let hub = restart_hub(&before);
+        ready_session(&hub, "mobile-b", "phone");
+        assert_eq!(hub.inner.lock().unwrap().sessions["mobile-b"].number, 10);
+    }
+
+    #[test]
+    fn spinner_frames_do_not_change_saved_names() {
+        let hub = accepting_hub(vec![device("phone")]);
+        ssh_session(&hub, "mobile-a", 1);
+        push_title(&hub, "mobile-a", "⠋ 正在构建");
+        let first = hub.session_names_snapshot();
+        push_title(&hub, "mobile-a", "⠙ 正在构建");
+        assert_eq!(hub.session_names_snapshot(), first);
+        assert_eq!(first["mobile-a"].title.as_deref(), Some("正在构建"));
+    }
+
+    #[test]
+    fn only_sessions_that_can_be_reattached_are_saved() {
+        let hub = accepting_hub(vec![device("phone")]);
+        ready_session(&hub, "mobile-local", "phone");
+        ssh_session(&hub, "mobile-exited", 1);
+        ssh_session(&hub, "mobile-lost", 2);
+        for (id, disconnected) in [("mobile-exited", false), ("mobile-lost", true)] {
+            hub.with_session(id, |session| {
+                session.finish(Exit {
+                    exit_code: 0,
+                    disconnected,
+                })
+            });
+        }
+        let names = hub.session_names_snapshot();
+        assert_eq!(names.keys().collect::<Vec<_>>(), vec!["mobile-lost"]);
+    }
+
+    #[test]
+    fn saved_name_survives_failed_restore_until_attach_succeeds() {
+        let before = accepting_hub(vec![device("phone")]);
+        ssh_session(&before, "mobile-a", 3);
+        before.rename_session("mobile-a", "构建").unwrap();
+        let hub = restart_hub(&before);
+
+        reserve_restored(&hub, "mobile-a");
+        assert!(!hub.finish_create("mobile-a", false));
+        assert_eq!(
+            hub.session_names_snapshot()["mobile-a"]
+                .custom_name
+                .as_deref(),
+            Some("构建")
+        );
+
+        reserve_restored(&hub, "mobile-a");
+        assert!(hub.finish_create("mobile-a", true));
+        assert!(hub.inner.lock().unwrap().pending_names.is_empty());
+        assert_eq!(
+            hub.inner.lock().unwrap().sessions["mobile-a"].name(),
+            "构建"
+        );
+    }
+
+    #[test]
+    fn ended_sessions_drop_their_saved_name() {
+        let hub = accepting_hub(vec![device("phone")]);
+        ssh_session(&hub, "mobile-a", 1);
+        assert!(hub.session_names_snapshot().contains_key("mobile-a"));
+        hub.inner.lock().unwrap().sessions.remove("mobile-a");
+        assert!(hub.session_names_snapshot().is_empty());
+    }
+
+    #[test]
+    fn saved_names_expire_and_keep_their_original_wait_start() {
+        let now = unix_now_ms();
+        let retention = SAVED_NAME_RETENTION.as_millis() as u64;
+        let saved = |since: Option<u64>| SavedSessionName {
+            detached_since_ms: since,
+            ..SavedSessionName::default()
+        };
+        let hub = accepting_hub(vec![device("phone")]);
+        hub.load_session_names(
+            HashMap::from([
+                ("expired".to_string(), saved(Some(now - retention))),
+                ("waiting".to_string(), saved(Some(now - 1000))),
+                ("fresh".to_string(), saved(None)),
+            ]),
+            now,
+        );
+        let names = hub.session_names_snapshot();
+        assert!(!names.contains_key("expired"));
+        assert_eq!(names["waiting"].detached_since_ms, Some(now - 1000));
+        assert_eq!(names["fresh"].detached_since_ms, Some(now));
+    }
+
+    #[test]
+    fn stable_title_strips_animation_and_keeps_plain_titles() {
+        assert_eq!(stable_title("⠋ 构建").as_deref(), Some("构建"));
+        assert_eq!(
+            stable_title("✳ Claude Code").as_deref(),
+            Some("Claude Code")
+        );
+        assert_eq!(stable_title("OpenCode").as_deref(), Some("OpenCode"));
+        assert_eq!(stable_title("\u{2800}"), None);
     }
 
     #[test]

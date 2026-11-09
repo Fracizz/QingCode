@@ -288,6 +288,33 @@ export function terminalFileCandidates(
   return results
 }
 
+/** 项目内搜索用的文件名；绝对路径含义明确，指向的文件不存在就是不存在，不做搜索。 */
+export function terminalFileSearchName(rawPath: string): string | null {
+  if (/^(?:[A-Za-z]:)?[\\/]/.test(rawPath)) return null
+  const name = rawPath.split(/[\\/]+/).filter(Boolean).pop()
+  return name && name !== '.' && name !== '..' ? name : null
+}
+
+/**
+ * 从文件名搜索结果里挑出真正指向 rawPath 的文件：搜索是子串匹配，这里要求完整文件名相同，
+ * 带目录时相对路径还须以该目录结尾。大小写完全一致的结果优先，避免在区分大小写的系统上选错。
+ */
+export function matchTerminalFileHits<T extends { relative: string; is_dir: boolean }>(
+  rawPath: string,
+  hits: readonly T[],
+): T[] {
+  const wanted = rawPath.replace(/\\/g, '/').replace(/^(?:\.{1,2}\/+)+/, '')
+  const endsWithPath = (relative: string, path: string) => relative === path || relative.endsWith(`/${path}`)
+  const files = hits
+    .filter(hit => !hit.is_dir)
+    .map(hit => ({ hit, relative: hit.relative.replace(/\\/g, '/') }))
+  const exact = files.filter(file => endsWithPath(file.relative, wanted))
+  const matched = exact.length
+    ? exact
+    : files.filter(file => endsWithPath(file.relative.toLowerCase(), wanted.toLowerCase()))
+  return matched.map(file => file.hit)
+}
+
 /** xterm buffer 中本模块用到的最小接口，便于单测。 */
 export interface TerminalBufferLike {
   getLine(y: number):

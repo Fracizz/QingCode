@@ -32,6 +32,7 @@
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6Z"></path><path d="m14 5 5 5"></path></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"></path></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5v10"></path><path d="M12 19.5h.01"></path></symbol>
     <symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></symbol>
     <!-- 「运行中优先」排序按钮（lucide message-square-more：会话气泡里的「…」表示正在进行）。 -->
     <symbol id="i-message-more" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path></symbol>
@@ -72,7 +73,7 @@
       </header>
 
       <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
-        <div id="home-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-close"/></svg></span></div>
+        <div id="home-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
         <h1 id="home-title" class="sr-only">终端</h1>
         <div id="home-context" class="context-card" hidden>
           <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span></small></div>
@@ -114,7 +115,7 @@
       </section>
 
       <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
-        <div id="project-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-close"/></svg></span></div>
+        <div id="project-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
         <header class="page-heading with-action">
           <div><h1 id="project-title">项目</h1><p id="project-subtitle"></p></div>
           <button id="refresh" class="icon-button" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
@@ -133,6 +134,7 @@
       </section>
 
       <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
+        <div id="connection-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
         <header class="page-heading with-action">
           <h1 id="connection-title">连接</h1>
           <button id="add-host" class="secondary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>

@@ -8,6 +8,18 @@ import {
 } from './panelLayoutMode'
 
 describe('resolvePanelLayoutMode', () => {
+  it('keeps the workbench preset whether or not its editor is open', () => {
+    for (const editorVisible of [true, false]) {
+      expect(
+        resolvePanelLayoutMode('terminalWorkbench', {
+          dualTerminal: true,
+          quadTerminal: false,
+          editorVisible,
+        }),
+      ).toBe('terminalWorkbench')
+    }
+  })
+
   it('maps classic / side / dual+editor; editor-hidden / 田 are not presets', () => {
     expect(
       resolvePanelLayoutMode('classic', {
@@ -68,6 +80,10 @@ describe('panelLayoutModeParts', () => {
       panelLayout: 'sideTerminal',
       columns: { dualTerminal: true, quadTerminal: false, editorVisible: true },
     })
+    expect(panelLayoutModeParts('terminalWorkbench')).toEqual({
+      panelLayout: 'terminalWorkbench',
+      columns: null,
+    })
   })
 
   it('maps legacy dual-only aliases to dual+editor', () => {
@@ -79,10 +95,11 @@ describe('panelLayoutModeParts', () => {
 })
 
 describe('nextPanelLayoutMode', () => {
-  it('cycles classic → side → dual+editor', () => {
+  it('cycles classic → side → dual+editor → workbench', () => {
     expect(nextPanelLayoutMode('classic')).toBe('sideTerminal')
     expect(nextPanelLayoutMode('sideTerminal')).toBe('sideDualEditor')
-    expect(nextPanelLayoutMode('sideDualEditor')).toBe('classic')
+    expect(nextPanelLayoutMode('sideDualEditor')).toBe('terminalWorkbench')
+    expect(nextPanelLayoutMode('terminalWorkbench')).toBe('classic')
   })
 
   it('treats fine-tuned null as before classic in the cycle', () => {
@@ -95,6 +112,7 @@ describe('panelLayoutModeLabel', () => {
     expect(panelLayoutModeLabel('classic')).toBe('经典布局（终端在底部）')
     expect(panelLayoutModeLabel('sideTerminal')).toBe('编辑器+终端')
     expect(panelLayoutModeLabel('sideDualEditor')).toBe('编辑器+双终端')
+    expect(panelLayoutModeLabel('terminalWorkbench')).toBe('终端工作台（左侧列表）')
   })
 })
 

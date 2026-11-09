@@ -188,8 +188,9 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 | Classic (terminal at bottom) | Editor first; drag terminal height |
 | Terminal + Editor | Side single terminal \| editor (~1:1 by default) |
 | Dual Terminals + Editor | Term A \| Term B \| editor (~1:1:1); both splits drag (~10%–90%) |
+| Terminal workbench (list on left) | Built for AI coding: terminal list \| current terminal \| editor, which opens to the right of the terminal only when you open a file |
 
-Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual terminals, a draggable 2×2 quad-terminal grid, or the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
+Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, the title-bar layout menu toggles dual terminals or a draggable 2×2 quad-terminal grid, and the icon left of the layout picker shows or hides the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
 
 A pulsing dot on a terminal tab means its program is working (the title shows a spinner, or output keeps flowing). It is on by default and can be turned off in **Settings → Terminal → Tab Activity Status**. See [DESIGN.md](./DESIGN.md) (Chinese) for details.
 

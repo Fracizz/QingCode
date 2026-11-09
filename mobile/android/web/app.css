@@ -304,7 +304,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* ---------- 项目页 ---------- */
 #project-filters { position: sticky; z-index: 2; top: -12px; margin: 0 -2px; padding: 8px 2px 2px; background: var(--paper); }
 .search-field { position: relative; }
-.search-field > svg { position: absolute; left: 16px; top: 15px; color: var(--muted); width: 18px; height: 18px; }
+.search-field > svg { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--muted); width: 18px; height: 18px; }
 #search, .overview-search { min-height: 48px; padding-left: 44px; border-radius: var(--control-radius); }
 #search:focus, .overview-search:focus { border-color: var(--accent-border); }
 .list-meta { display: flex; justify-content: space-between; gap: 8px; }
@@ -359,7 +359,6 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 
 /* ---------- 连接页 ---------- */
 .connection-card { display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: center; padding-right: 4px; }
-.connection-card[data-current="true"] { box-shadow: inset 3px 0 0 var(--accent); }
 .connection-main { min-width: 0; border-radius: 0; }
 .connection-main .dot { width: 6px; height: 6px; }
 .connection-main .connection-state { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
@@ -677,7 +676,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .session-pin { display: none; flex: none; color: var(--muted); }
 .session-option[data-pinned="true"] .session-pin { display: block; }
-.session-option[data-current="true"] .session-face { background: var(--surface-high); box-shadow: inset 3px 0 0 var(--accent); }
+.session-option[data-current="true"] .session-face { background: var(--surface-high); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
 #session-scope { flex: none; margin-top: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #session-scope button { min-height: 36px; font-size: 13px; }
@@ -690,7 +689,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 /* 自绘搜索提示：原生占位文字聚焦时会被硬切。 */
 .overview-search-hint { position: absolute; left: 37px; right: 10px; top: 50%; transform: translateY(-50%); overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .overview-search:not(:placeholder-shown) + .overview-search-hint { display: none; }
-.session-overview .search-field > svg { left: 11px; top: 11px; }
+.session-overview .search-field > svg { left: 11px; }
 .overview-manage { flex: none; min-width: 44px; min-height: 40px; padding-inline: 6px; font-size: 13px; font-weight: 650; }
 .overview-filter-toggle { width: 40px; height: 40px; min-height: 0; color: var(--muted); }
 .overview-filter-toggle svg { width: 18px; height: 18px; }

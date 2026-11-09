@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '../types'
 import {
   inferTerminalPaneOwnership,
@@ -9,6 +9,7 @@ import {
 
 vi.mock('../lib/tauri', () => ({
   safeInvoke: vi.fn(async () => undefined),
+  isTauri: () => false,
 }))
 
 vi.mock('./projectStore', () => ({
@@ -21,10 +22,15 @@ vi.mock('./projectStore', () => ({
   },
 }))
 
+const uiMock = vi.hoisted(() => ({ panelLayout: 'sideTerminal', sideDualTerminal: true }))
+
 vi.mock('./uiStore', () => ({
   useUIStore: {
     getState: () => ({
       openTerminalPanel: vi.fn(),
+      panelLayout: uiMock.panelLayout,
+      sideDualTerminal: uiMock.sideDualTerminal,
+      sideQuadTerminal: false,
     }),
   },
 }))
@@ -175,6 +181,71 @@ describe('terminal pane isolation', () => {
     expect(s.secondaryTerminalId).toBe('tr')
     expect(s.blTerminalId).toBe('bl')
     expect(s.brTerminalId).toBe('br')
+  })
+
+  describe.each([
+    ['classic', 'classic', true],
+    ['single side terminal', 'sideTerminal', false],
+    ['workbench', 'terminalWorkbench', true],
+  ])('with one visible pane (%s)', (_name, panelLayout, sideDualTerminal) => {
+    beforeEach(() => {
+      uiMock.panelLayout = panelLayout
+      uiMock.sideDualTerminal = sideDualTerminal
+    })
+    afterEach(() => {
+      uiMock.panelLayout = 'sideTerminal'
+      uiMock.sideDualTerminal = true
+    })
+
+    it('treats every session as primary without rewriting ownership', () => {
+      const session = tab('b', 'secondary')
+      expect(terminalPaneOf(session)).toBe('primary')
+      expect(session.pane).toBe('secondary')
+    })
+
+    it('activates a session owned by a hidden pane', () => {
+      useTerminalStore.setState({
+        terminals: [tab('a', 'primary'), tab('b', 'secondary')],
+        activeTerminalId: 'a',
+        secondaryTerminalId: 'b',
+      })
+      useTerminalStore.getState().setActiveTerminal('b')
+      const state = useTerminalStore.getState()
+      expect(state.activeTerminalId).toBe('b')
+      expect(state.terminalFocusPane).toBe('primary')
+      expect(state.terminals.find(t => t.id === 'b')?.pane).toBe('secondary')
+    })
+
+    it('hands the active slot to a session from a hidden pane when the last primary closes', async () => {
+      useTerminalStore.setState({
+        terminals: [tab('a', 'primary'), tab('b', 'secondary')],
+        activeTerminalId: 'a',
+        activeTerminalByProject: { p1: 'a' },
+      })
+      await useTerminalStore.getState().closeTerminal('a')
+      expect(useTerminalStore.getState().activeTerminalId).toBe('b')
+    })
+
+    it('closes every other visible session', async () => {
+      useTerminalStore.setState({
+        terminals: [tab('a', 'primary'), tab('b', 'secondary'), tab('c', 'bl')],
+        activeTerminalId: 'a',
+      })
+      await useTerminalStore.getState().closeOtherTerminals('a')
+      expect(useTerminalStore.getState().terminals.map(t => t.id)).toEqual(['a'])
+    })
+
+    it('keeps hidden pane bindings when the project is reactivated', () => {
+      useTerminalStore.setState({
+        terminals: [tab('a', 'primary'), tab('b', 'secondary'), tab('c', 'secondary')],
+        activeTerminalByProject: { p1: 'a' },
+        secondaryTerminalByProject: { p1: 'c' },
+      })
+      useTerminalStore.getState().activateProject('p1')
+      const state = useTerminalStore.getState()
+      expect(state.activeTerminalId).toBe('a')
+      expect(state.secondaryTerminalId).toBe('c')
+    })
   })
 
   it('setActiveTerminal activates inside the session home pane', () => {

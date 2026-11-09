@@ -59,7 +59,7 @@ export const SHORTCUT_COMMANDS: { id: ShortcutCommand; label: string; descriptio
   {
     id: 'togglePanelLayout',
     label: '切换面板布局',
-    description: '依次切换：经典 → 编辑器+终端 → 编辑器+双终端。标题栏可直接选择。',
+    description: '依次切换：经典 → 编辑器+终端 → 编辑器+双终端 → 终端工作台。标题栏可直接选择。',
   },
   {
     id: 'renameInExplorer',

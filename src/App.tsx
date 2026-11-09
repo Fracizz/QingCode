@@ -58,6 +58,7 @@ import { useSshWarmup } from './hooks/useSshWarmup'
 import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
+import TerminalSessionList from './components/TerminalSessionList'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
 import {
   markWorkspaceSessionPersistReady,
@@ -205,11 +206,13 @@ function App() {
   const terminalPosition = terminalPositionForTemplate(panelLayout)
   // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
   const sideEditorSlotVisible =
-    panelLayout !== 'sideTerminal' || sideEditorVisible || !terminalOpen
+    terminalPosition !== 'side' || sideEditorVisible || !terminalOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const sidebarSlotVisible =
-    sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
+    sidebarOpen &&
+    (view === 'explorer' || view === 'search' || view === 'run' || view === 'terminals')
+  const terminalWorkbench = panelLayout === 'terminalWorkbench'
   const editorBody = editorSurface({
     activeTabId,
     hasProject: currentProject !== null,
@@ -381,7 +384,7 @@ function App() {
           data-terminal-quad={sideQuadActive ? 'true' : undefined}
           data-terminal-slot={terminalOpen ? 'visible' : 'collapsed'}
           data-terminal-split={
-            panelLayout === 'sideTerminal' && sideEditorSlotVisible ? sideSplit : undefined
+            terminalPosition === 'side' && sideEditorSlotVisible ? sideSplit : undefined
           }
         >
           <div className="workspace-grid-activity">
@@ -432,6 +435,18 @@ function App() {
             </div>
           )}
 
+          {sidebarSlotVisible && view === 'terminals' && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar
+                width={sidebarWidth}
+                onWidthChange={setSidebarWidth}
+                className="ui-font-scaled bg-bg-sidebar"
+              >
+                <TerminalSessionList />
+              </ResizableSidebar>
+            </div>
+          )}
+
           <Suspense fallback={null}>
             <TerminalPanel
               position={terminalPosition}
@@ -442,6 +457,8 @@ function App() {
               dualTerminal={sideDualActive}
               quadTerminal={sideQuadActive}
               editorVisible={sideEditorSlotVisible}
+              widthResizerEdge={terminalWorkbench ? 'end' : 'start'}
+              hideTabs={terminalWorkbench && sidebarSlotVisible && view === 'terminals'}
               isTerminalResizing={isTerminalResizing}
               layoutSwitching={panelLayoutSwitching}
               onResizerPointerDown={onResizerPointerDown}

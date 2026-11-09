@@ -531,12 +531,24 @@ describe('Android 会话纵览', () => {
   ]
   const projects = [local, { ...remote, connectionName: 'prod' }]
 
-  it('按项目分组，当前项目在前，其余按最近打开，组内按编号；电脑端已移除的项目标记 missing', () => {
+  it('组内新创建的在上，运行中优先时仍先排运行中', () => {
+    const at = (id: string, number: number, createdAt?: number, programBusy = false) =>
+      ({ id, number, createdAt, programBusy, name: id, exit: null, project: local })
+    const ids = (sessions: unknown[], runningFirst = false) =>
+      groupSessionOverview(sessions, { projects, runningFirst })[0].sessions.map((item: { id: string }) => item.id)
+    // 编号会被复用，创建时间优先于编号。
+    expect(ids([at('old', 9, 100), at('new', 2, 300), at('mid', 5, 200)])).toEqual(['new', 'mid', 'old'])
+    // 没有创建时间的排在后面，彼此按编号倒序。
+    expect(ids([at('a', 1), at('b', 2), at('c', 3, 100)])).toEqual(['c', 'b', 'a'])
+    expect(ids([at('new', 2, 300), at('busy', 1, 100, true)], true)).toEqual(['busy', 'new'])
+  })
+
+  it('按项目分组，当前项目在前，其余按最近打开，组内编号倒序；电脑端已移除的项目标记 missing', () => {
     const groups = groupSessionOverview(list, { projects, current: 'p2', history: [{ id: 'p3', openedAt: 5 }, { id: 'p1', openedAt: 2 }] })
     expect(groups.map(group => group.project.id)).toEqual(['p2', 'p3', 'p1'])
     expect(groups[0].project.connectionName).toBe('prod')
     expect(groups[1].missing).toBe(true)
-    expect(groups[2].sessions.map(session => session.id)).toEqual(['m1', 'm2'])
+    expect(groups[2].sessions.map(session => session.id)).toEqual(['m2', 'm1'])
     expect(groupSessionOverview(list, { projects }).map(group => group.project.id)).toEqual(['p1', 'p2', 'p3'])
   })
 
@@ -554,7 +566,7 @@ describe('Android 会话纵览', () => {
     const groups = groupSessionOverview(list, { projects })
     const limited = limitSessionGroups(groups, 3)
     expect(limited.hidden).toBe(1)
-    expect(limited.groups.map(group => [group.project.id, group.sessions.map(item => item.id), group.total])).toEqual([['p1', ['m1', 'm2'], 2], ['p2', ['m3'], 1]])
+    expect(limited.groups.map(group => [group.project.id, group.sessions.map(item => item.id), group.total])).toEqual([['p1', ['m2', 'm1'], 2], ['p2', ['m3'], 1]])
     expect(limitSessionGroups(groups, 8)).toEqual({ groups, hidden: 0 })
     expect(limitSessionGroups(groups, Infinity).hidden).toBe(0)
   })
@@ -592,7 +604,7 @@ describe('session created time and running order', () => {
     ]
     expect(orderSessions(list, ['c']).map(item => item.session.id)).toEqual(['c', 'a', 'b', 'd'])
     expect(orderSessions(list, ['c'], { runningFirst: true }).map(item => item.session.id)).toEqual(['c', 'b', 'a', 'd'])
-    expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['a', 'b', 'c', 'd'])
-    expect(groupSessionOverview(list, { runningFirst: true })[0].sessions.map(session => session.id)).toEqual(['b', 'a', 'c', 'd'])
+    expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['d', 'c', 'b', 'a'])
+    expect(groupSessionOverview(list, { runningFirst: true })[0].sessions.map(session => session.id)).toEqual(['b', 'd', 'c', 'a'])
   })
 })

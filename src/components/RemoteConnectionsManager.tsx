@@ -506,9 +506,10 @@ export default function RemoteConnectionsManager() {
       } else {
         await saveSshConnection({ ...saved, mode })
       }
-      if (configChanged && selected) {
-        forgetSshSessionSecrets(selected.id)
-        rememberSshSessionSecrets(selected.id, {
+      // 新建连接同样要记住刚通过测试的凭据，否则创建项目时还会再次要求输入。
+      if (!selected || configChanged) {
+        if (selected) forgetSshSessionSecrets(selected.id)
+        rememberSshSessionSecrets(saved.id, {
           password: password || undefined,
           passphrase: passphrase || undefined,
         })

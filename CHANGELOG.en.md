@@ -6,6 +6,14 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- New "Terminal workbench (list on left)" panel layout: a vertical list of the project's terminals on the left, the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes)
+
+### Fixed
+
+- After leaving dual or quad terminals for a single-pane layout, clicking a tab that belonged to another pane did nothing; "Close Others" and the fallback after closing a terminal also skipped those terminals
+
 ## [0.1.17-beta.3] - 2026-11-07
 
 A beta after v0.1.16 focused on the terminal context menu, IME input, and the Android companion.

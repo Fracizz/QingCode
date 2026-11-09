@@ -57,6 +57,31 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
       await shot('projects.png')
     })
 
+    await step('搜索图标在不同输入框高度下都与输入框垂直居中', async () => {
+      // 真机输入框会比样式 min-height 略高，这里用 46px 复现，防止回到固定 top。
+      const offset = selector => page.evaluate(target => {
+        const field = document.querySelector(target)
+        const tools = field.closest('.overview-tools')
+        const hidden = [field.hidden, tools?.hidden]
+        field.hidden = false
+        if (tools) tools.hidden = false
+        const input = field.querySelector('input')
+        input.style.minHeight = '46px'
+        const center = element => { const box = element.getBoundingClientRect(); return box.top + box.height / 2 }
+        const result = Math.abs(center(field.querySelector(':scope > svg')) - center(input))
+        input.style.minHeight = ''
+        field.hidden = hidden[0]
+        if (tools) tools.hidden = hidden[1]
+        return result
+      }, selector)
+      assert.ok(await offset('#project-screen .search-field') <= 0.5)
+      await page.click('#dashboard-nav [data-page="home"]')
+      await page.waitForSelector('.session-overview .search-field', { state: 'attached' }).catch(() => {})
+      assert.ok(await offset('.session-overview .search-field') <= 0.5)
+      await shot('home-search.png')
+      await page.click('#dashboard-nav [data-page="project"]')
+    })
+
     await step('项目行左滑复制显示路径，复制后收起且不打开项目', async () => {
       const row = '#project-list .project-group:nth-child(2) .project-row'
       await swipeLeft(row + ' .project-face', 90)
@@ -85,6 +110,41 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
       await shot('pull-done.png')
       await page.waitForFunction(() => document.querySelector('#project-pull').dataset.state === undefined)
       assert.equal(await top(), before)
+    })
+
+    await step('连接页支持下拉刷新，当前电脑卡片没有左缘色条', async () => {
+      await page.click('#dashboard-nav [data-page="connection"]')
+      const state = () => page.evaluate(() => document.querySelector('#connection-pull').dataset.state)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.connection-card[data-current="true"]')).boxShadow), 'none')
+      const x = 195
+      await touch('touchStart', x, 300)
+      for (let y = 312; y <= 540; y += 12) await touch('touchMove', x, y)
+      assert.equal(await state(), 'ready')
+      await shot('connection-pull-ready.png')
+      await touch('touchEnd')
+      await page.waitForFunction(() => document.querySelector('#connection-pull').dataset.state === 'done')
+      await page.waitForFunction(() => document.querySelector('#connection-pull').dataset.state === undefined)
+      await shot('connection-no-rail.png')
+      // 失败态直接置状态，只验收图标呈现；失败流程由内存桥之外的真机覆盖。
+      await page.evaluate(() => {
+        const indicator = document.querySelector('#connection-pull')
+        indicator.dataset.state = 'failed'
+        indicator.style.setProperty('--pull', '76px')
+        indicator.style.setProperty('--pull-progress', '1')
+      })
+      assert.deepEqual(await page.evaluate(() => {
+        const icon = document.querySelector('#connection-pull .pull-failed')
+        return { display: getComputedStyle(icon).display, href: icon.querySelector('use').getAttribute('href') }
+      }), { display: 'block', href: '#i-alert' })
+      await page.waitForTimeout(260)
+      await shot('connection-pull-failed.png')
+      await page.evaluate(() => {
+        const indicator = document.querySelector('#connection-pull')
+        delete indicator.dataset.state
+        indicator.style.setProperty('--pull', '0px')
+        indicator.style.setProperty('--pull-progress', '0')
+      })
+      await page.click('#dashboard-nav [data-page="project"]')
     })
 
     await page.click('#project-list > :first-child .project-row:first-child .row')

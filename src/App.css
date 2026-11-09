@@ -218,6 +218,50 @@ body {
     'activity editor terminal';
 }
 
-.workspace-grid[data-panel-layout='sideTerminal'][data-editor-slot='collapsed'] .workspace-grid-editor {
+/* 终端工作台：终端列表（侧栏槽）| 终端 | 编辑器，编辑器按需展开。 */
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='visible'] {
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    'activity sidebar terminal editor';
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='visible'][data-terminal-split='custom'] {
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='visible'][data-editor-slot='collapsed'] {
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'activity sidebar terminal';
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='visible'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto auto 0px minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='hidden'] {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal editor';
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='hidden'][data-terminal-split='custom'] {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'] {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal';
+}
+
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-sidebar-slot='hidden'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto 0px minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-editor-slot='collapsed'] .workspace-grid-editor,
+.workspace-grid[data-panel-layout='terminalWorkbench'][data-editor-slot='collapsed'] .workspace-grid-editor {
   display: none;
 }

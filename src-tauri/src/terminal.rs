@@ -1,4 +1,5 @@
 use portable_pty::{ChildKiller, CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use qingcode_server::{is_console_noise_process, INTERRUPT_SECOND_DELAY, INTERRUPT_TOTAL};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -459,6 +460,17 @@ impl TerminalManager {
             );
             // 进程已退出：放开可能被前端暂停的读线程，让它读到 EOF 后结束。
             output_gate.set_paused(false);
+            #[cfg(windows)]
+            wait_for_console_clients(child.process_id(), || {
+                should_emit_terminal_exit(
+                    sessions
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .map(|session| session.generation),
+                    generation,
+                )
+            });
             let is_current = {
                 let mut sessions = sessions.lock().unwrap();
                 if should_emit_terminal_exit(
@@ -564,8 +576,14 @@ impl TerminalManager {
                 // 宽限期放到后台线程：同步 Tauri 命令运行在主线程，不能阻塞 UI。
                 // 会话已从表中移除，同 id 的新终端不受影响；shell 可能已随 Ctrl+C 自行退出，
                 // 因此这里的 kill 失败不再回滚。
+                let started = Instant::now();
                 std::thread::spawn(move || {
-                    force_stop_after(&owned, Instant::now() + GRACEFUL_STOP_TIMEOUT);
+                    send_second_interrupt(
+                        &session.writer,
+                        &owned,
+                        started + INTERRUPT_SECOND_DELAY,
+                    );
+                    force_stop_after(&owned, started + INTERRUPT_TOTAL);
                     if let Some(k) = session.killer.as_mut() {
                         let _ = k.kill();
                     }
@@ -639,7 +657,11 @@ impl TerminalManager {
             stopping.push((session, owned));
         }
         // 所有终端共享同一个宽限期，退出应用最多额外等待一次。
-        let deadline = Instant::now() + GRACEFUL_STOP_TIMEOUT;
+        let started = Instant::now();
+        for (session, owned) in &stopping {
+            send_second_interrupt(&session.writer, owned, started + INTERRUPT_SECOND_DELAY);
+        }
+        let deadline = started + INTERRUPT_TOTAL;
         for (mut session, owned) in stopping {
             force_stop_after(&owned, deadline);
             if let Some(mut killer) = session.killer.take() {
@@ -1221,9 +1243,6 @@ fn process_exists(pid: u32) -> bool {
     system.process(Pid::from_u32(pid)).is_some()
 }
 
-/// 关闭终端时留给前台程序自行退出的宽限期，超时后强制结束。
-const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(1500);
-
 /// Descendant of an owned PTY. Start time guards against PID reuse during the grace period.
 struct OwnedProcess {
     pid: Pid,
@@ -1281,6 +1300,47 @@ fn live_owned<'a>(system: &'a System, owned: &OwnedProcess) -> Option<&'a sysinf
     })
 }
 
+fn any_owned_pending(system: &System, processes: &[OwnedProcess]) -> bool {
+    processes
+        .iter()
+        .any(|owned| !owned.noise && live_owned(system, owned).is_some())
+}
+
+/// 第二次 Ctrl+C：Claude、OpenCode 等 TUI 第一次只提示，第二次才正常退出并保存会话。
+/// 等到 `at` 前程序已退出就不再发送。
+fn send_second_interrupt(
+    writer: &std::sync::mpsc::SyncSender<Vec<u8>>,
+    processes: &[OwnedProcess],
+    at: Instant,
+) {
+    loop {
+        if !any_owned_pending(&refresh_owned(processes), processes) {
+            return;
+        }
+        if Instant::now() >= at {
+            let _ = writer.try_send(b"\x03".to_vec());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// shell 退出后释放会话会关闭 ConPTY 并连带结束控制台上的其他进程，先给仍在收尾的
+/// 后代留出时间。会话已被 kill 接管时由 kill 的宽限流程负责，这里不再等待。
+#[cfg(windows)]
+fn wait_for_console_clients(pid: Option<u32>, is_current: impl Fn() -> bool) {
+    let Some(pid) = pid else {
+        return;
+    };
+    let deadline = Instant::now() + INTERRUPT_TOTAL;
+    while Instant::now() < deadline
+        && is_current()
+        && qingcode_server::winproc::has_live_descendants(pid)
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// 先礼：向 PTY 写入 Ctrl+C（前台程序收到 SIGINT / CTRL_C_EVENT），POSIX 上再补发 SIGTERM。
 /// 返回是否存在需要等待的前台程序；空闲 shell 无需宽限期。
 fn request_graceful_stop(session: &TerminalSession, processes: &[OwnedProcess]) -> bool {
@@ -1302,10 +1362,7 @@ fn request_graceful_stop(session: &TerminalSession, processes: &[OwnedProcess]) 
 fn force_stop_after(processes: &[OwnedProcess], deadline: Instant) {
     loop {
         let system = refresh_owned(processes);
-        let pending = processes
-            .iter()
-            .any(|owned| !owned.noise && live_owned(&system, owned).is_some());
-        if !pending || Instant::now() >= deadline {
+        if !any_owned_pending(&system, processes) || Instant::now() >= deadline {
             for owned in processes {
                 if let Some(process) = live_owned(&system, owned) {
                     process.kill();
@@ -1315,22 +1372,6 @@ fn force_stop_after(processes: &[OwnedProcess], deadline: Instant) {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-}
-
-/// Console host helpers that sit under the shell even when the prompt is idle.
-fn is_console_noise_process(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "conhost.exe"
-            | "conhost"
-            | "openconsole.exe"
-            | "openconsole"
-            | "winpty-agent.exe"
-            | "winpty-agent"
-            | "wslhost.exe"
-            | "wslhost"
-    )
 }
 
 /// Meaningful descendants of `root`. Console hosts are not counted, but they
@@ -1485,6 +1526,25 @@ mod tests {
         assert!(owned
             .iter()
             .all(|process| live_owned(&system, process).is_none()));
+        let _ = shell.kill();
+        let _ = shell.wait();
+    }
+
+    #[test]
+    fn second_interrupt_skips_program_that_already_exited() {
+        let (writer, receiver) = std::sync::mpsc::sync_channel(1);
+        send_second_interrupt(&writer, &[], Instant::now() + Duration::from_secs(5));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn second_interrupt_reaches_program_still_running() {
+        let mut shell = spawn_shell_with_worker();
+        let owned = wait_for_descendants(shell.id());
+        let (writer, receiver) = std::sync::mpsc::sync_channel(1);
+        send_second_interrupt(&writer, &owned, Instant::now() + Duration::from_millis(100));
+        assert_eq!(receiver.try_recv().unwrap(), b"\x03".to_vec());
+        force_stop_after(&owned, Instant::now());
         let _ = shell.kill();
         let _ = shell.wait();
     }

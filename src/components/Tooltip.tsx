@@ -181,6 +181,26 @@ export function getTooltipPosition(
 }
 
 /**
+ * 上/下放不下而对侧放得下时翻到对侧；否则 getTooltipPosition 的视口夹紧会把提示推回触发元素上。
+ * 两侧都放不下时保留原方向。
+ */
+export function resolveTooltipSide(
+  rect: RectLike,
+  side: TooltipSide,
+  tip: Size,
+  viewportHeight: number,
+  zoom = 1,
+  gap = OFFSET,
+): TooltipSide {
+  if (side !== 'top' && side !== 'bottom') return side
+  const needed = tip.height * (Number.isFinite(zoom) && zoom > 0 ? zoom : 1) + gap + VIEWPORT_MARGIN
+  const above = rect.top
+  const below = viewportHeight - rect.bottom
+  if (side === 'top') return above < needed && below >= needed ? 'bottom' : 'top'
+  return below < needed && above >= needed ? 'top' : 'bottom'
+}
+
+/**
  * Viewport width available beside a left/right anchor.
  * When the natural tip is wider than that gap, cap it so the label wraps there
  * instead of sliding back over the trigger (where a modal would cover the start).
@@ -349,9 +369,11 @@ export default function Tooltip({
         tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
       }
     }
+    // 带箭头的提示箭头方向跟随 side，且只用于底部状态栏，不参与翻转。
+    const placedSide = tip && !arrow ? resolveTooltipSide(rect, side, tip, viewport.height, zoom, gapPx) : side
     let next = getTooltipPosition(
       placementRect,
-      side,
+      placedSide,
       tip,
       viewport,
       zoom,

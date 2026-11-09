@@ -7,6 +7,7 @@ import RemoteConnectionsManager from './RemoteConnectionsManager'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { isProjectRestricted, isProjectTrusted, pushTrustedRootsToNative, trustProject } from '../lib/workspaceTrust'
+import { forgetSshSessionSecrets, sshSecretsFor } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
 
 const {
@@ -204,6 +205,18 @@ describe('remote connection compatibility settings', () => {
     expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '确认 SSH 主机指纹' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'server' })))
+  })
+
+  it('remembers the tested password for this session when saving a new connection', async () => {
+    render(<RemoteConnectionsManager />)
+    fireEvent.change(screen.getByLabelText('认证方式'), { target: { value: 'password' } })
+    fireEvent.change(screen.getByLabelText('密码（测试连接用，不会保存）'), { target: { value: 'secret' } })
+    await testNewConnection()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledTimes(1))
+    const savedId = saveConnection.mock.calls[0][0].id as string
+    await waitFor(() => expect(sshSecretsFor(savedId).password).toBe('secret'))
+    forgetSshSessionSecrets(savedId)
   })
 
   it('requires an explicit advanced choice to create a compatibility connection', async () => {

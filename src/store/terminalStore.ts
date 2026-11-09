@@ -934,7 +934,11 @@ export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
 
 /** Pane that owns a session; legacy tabs without `pane` belong to primary. */
 export function terminalPaneOf(tab: Pick<TerminalTab, 'pane'>): TerminalFocusPane {
-  return tab.pane ?? 'primary'
+  // 只显示一个窗格时（经典、单终端、工作台），标签栏或列表里的终端全部按主窗格处理；
+  // 不改写 tab.pane，切回双/四终端后各终端回到原窗格。
+  const { panelLayout, sideDualTerminal, sideQuadTerminal } = useUIStore.getState()
+  const multiPane = panelLayout === 'sideTerminal' && (sideDualTerminal || sideQuadTerminal)
+  return multiPane ? (tab.pane ?? 'primary') : 'primary'
 }
 
 /** Infer missing `pane` ownership from dual/田 active bindings (legacy shared pool). */
@@ -1964,8 +1968,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activateProject: (projectId: string) =>
     set(s => {
       const projectTerminals = s.terminals.filter(terminal => terminal.projectId === projectId)
+      // 副窗格按真实归属选择：单窗格布局下也保留它们的绑定，切回分屏时右侧仍是原来的终端。
       const owned = (pane: TerminalFocusPane) =>
-        projectTerminals.filter(t => terminalPaneOf(t) === pane)
+        projectTerminals.filter(t =>
+          pane === 'primary' ? terminalPaneOf(t) === 'primary' : t.pane === pane,
+        )
 
       const pickOwned = (
         pane: TerminalFocusPane,

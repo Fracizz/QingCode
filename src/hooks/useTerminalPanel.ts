@@ -5,7 +5,11 @@ import {
   getTerminalMaxHeight,
   TERMINAL_MIN_HEIGHT,
 } from '../lib/panelLayout'
-import { PANEL_LAYOUT_CHANGED_EVENT } from '../lib/panelLayoutTemplate'
+import {
+  loadPanelLayoutTemplate,
+  PANEL_LAYOUT_CHANGED_EVENT,
+  terminalWidthDragSign,
+} from '../lib/panelLayoutTemplate'
 import { SIDE_WORKSPACE_CHANGED_EVENT } from '../lib/sideWorkspaceLayout'
 import { loadSidebarWidth } from '../lib/sidebarLayout'
 import {
@@ -117,9 +121,11 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   useEffect(() => {
     const onLayoutChange = (event: Event) => {
       const template = (event as CustomEvent<{ template?: string }>).detail?.template
-      if (template === 'sideTerminal') setSideSplit('equal')
+      if (template === 'sideTerminal' || template === 'terminalWorkbench') setSideSplit('equal')
     }
     const onWorkspaceChange = (event: Event) => {
+      // 工作台的编辑器随打开文件频繁开合，保留用户拖好的宽度。
+      if (loadPanelLayoutTemplate() === 'terminalWorkbench') return
       const columns = (
         event as CustomEvent<{
           columns?: { editorVisible?: boolean; dualTerminal?: boolean; quadTerminal?: boolean }
@@ -257,6 +263,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       }
 
       widthDragStateRef.current = { startX: e.clientX, startW }
+      const dragSign = terminalWidthDragSign(loadPanelLayoutTemplate())
       targetSizeRef.current = startW
       lastAppliedPxRef.current = startW
       setIsTerminalResizing(true)
@@ -267,7 +274,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         if (ev.pointerId !== pointerId) return
         const st = widthDragStateRef.current
         if (!st) return
-        targetSizeRef.current = clampTerminalWidth(st.startW - (ev.clientX - st.startX))
+        targetSizeRef.current = clampTerminalWidth(st.startW + dragSign * (ev.clientX - st.startX))
         scheduleSizeFrame('vertical')
       }
       const cleanup = () => {

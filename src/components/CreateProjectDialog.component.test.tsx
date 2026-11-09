@@ -8,9 +8,11 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import {
   browseSshDirectory,
+  forgetSshSessionSecrets,
   isSshConnectionAlive,
   openSshSession,
   probeSshHost,
+  rememberSshSessionSecrets,
   SSH_CONNECTIONS_CHANGED_EVENT,
 } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
@@ -172,6 +174,24 @@ describe('CreateProjectDialog', () => {
       id: 'c-pwd',
       password: 'secret',
     })
+  })
+
+  it('reuses the password remembered this session instead of asking again', async () => {
+    rememberSshSessionSecrets('c-pwd', { password: 'remembered' })
+    try {
+      render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+      openSourceMenu()
+      fireEvent.click(screen.getByRole('menuitemradio', { name: /pwd-box/ }))
+
+      await screen.findByRole('option', { name: 'app' })
+      expect(screen.queryByLabelText('密码（本次会话，不会保存）')).toBeNull()
+      expect(vi.mocked(openSshSession).mock.calls[0]?.[0]).toMatchObject({
+        id: 'c-pwd',
+        password: 'remembered',
+      })
+    } finally {
+      forgetSshSessionSecrets('c-pwd')
+    }
   })
 
   it('opens a standalone Server host without requesting an SSH password or probing an SSH host key', async () => {

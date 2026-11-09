@@ -6,6 +6,7 @@ import {
   isOverflowing,
   OVERFLOW_TOOLTIP_DELAY,
   resolveOverflowElement,
+  resolveTooltipSide,
   TOOLTIP_ARROW_GAP,
   tooltipSideMaxWidth,
 } from './Tooltip'
@@ -100,6 +101,35 @@ describe('getTooltipPosition', () => {
     const style = getTooltipPosition(trigger, 'bottom')
     expect(style.left).toBe(100 + 14)
     expect(style.transform).toBe('translateX(-50%)')
+  })
+})
+
+describe('resolveTooltipSide', () => {
+  const tallTip = { width: 72, height: 72 }
+
+  it('flips a top tooltip below when it would otherwise cover its trigger', () => {
+    expect(resolveTooltipSide(trigger, 'top', tallTip, 300)).toBe('bottom')
+  })
+
+  it('keeps the requested side when the tooltip fits', () => {
+    expect(resolveTooltipSide(trigger, 'top', tip, 300)).toBe('top')
+  })
+
+  it('flips a bottom tooltip above when the viewport bottom is too close', () => {
+    const low = { ...trigger, top: 200, bottom: 228 }
+    expect(resolveTooltipSide(low, 'bottom', tallTip, 260)).toBe('top')
+  })
+
+  it('keeps the requested side when neither side has room', () => {
+    expect(resolveTooltipSide(trigger, 'top', tallTip, 100)).toBe('top')
+  })
+
+  it('measures the tip in visual pixels under zoom', () => {
+    expect(resolveTooltipSide(trigger, 'top', tip, 300, 1.5)).toBe('bottom')
+  })
+
+  it('leaves horizontal sides alone', () => {
+    expect(resolveTooltipSide(trigger, 'right', tallTip, 100)).toBe('right')
   })
 })
 

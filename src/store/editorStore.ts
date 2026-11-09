@@ -661,6 +661,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       return { projectSessions }
     })
+    if (get().tabs.length === 0) useUIStore.getState().collapseEmptyWorkbenchEditor()
   },
 
   closeOtherTabs: (id: string) => {
@@ -1146,6 +1147,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pendingReveal: null,
       navigationHistory: EMPTY_NAVIGATION_HISTORY,
     })
+    useUIStore.getState().collapseEmptyWorkbenchEditor()
   },
 
 
