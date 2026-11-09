@@ -239,6 +239,10 @@ export function getTooltipArrowOffsetX(
 
 interface Props {
   label: string
+  /** 结构化内容（如 InfoTipCard）；提供后替代 label 显示，label 仍是这段提示的纯文本形式。 */
+  content?: ReactNode
+  /** 以触发元素最近的匹配祖先定位，让窄触发区的卡片贴着整行而不是盖住行内按钮。 */
+  anchorClosest?: string
   side?: TooltipSide
   delay?: number
   /** When true, show only if the trigger content is truncated (ellipsis). */
@@ -271,6 +275,8 @@ interface Props {
 
 export default function Tooltip({
   label,
+  content,
+  anchorClosest,
   side = 'right',
   delay,
   onlyWhenOverflow = false,
@@ -320,12 +326,14 @@ export default function Tooltip({
   const overflowElement = useCallback(() => {
     const trigger = triggerRef.current
     if (!trigger) return null
+    const anchored = anchorClosest ? trigger.closest<HTMLElement>(anchorClosest) : null
+    if (anchored) return anchored
     if (onlyWhenOverflow) {
       return resolveOverflowElement(trigger) ?? (trigger.firstElementChild as HTMLElement | null) ?? trigger
     }
     if (anchor === 'wrapper') return trigger
     return (trigger.firstElementChild as HTMLElement | null) ?? trigger
-  }, [anchor, onlyWhenOverflow])
+  }, [anchor, anchorClosest, onlyWhenOverflow])
 
   const triggerRect = useCallback(() => {
     const el = overflowElement()
@@ -495,7 +503,9 @@ export default function Tooltip({
             ref={tipRef}
             role="tooltip"
             data-tooltip-arrow={showArrow ? '' : undefined}
-            className={`tooltip-enter ui-font-scaled fixed z-[160] pointer-events-none w-max rounded px-2.5 py-1.5 text-ui-xs leading-[var(--ui-line-height)] text-fg break-words whitespace-pre-line ${
+            className={`tooltip-enter ui-font-scaled fixed z-[160] pointer-events-none w-max text-ui-xs leading-[var(--ui-line-height)] text-fg break-words ${
+              content ? 'rounded-lg' : 'rounded px-2.5 py-1.5 whitespace-pre-line'
+            } ${
               showArrow
                 ? 'max-w-[min(320px,calc(100vw-16px))] bg-bg-elevated'
                 : 'max-w-[min(480px,calc(100vw-16px))] border border-border-strong bg-bg-elevated shadow-lg shadow-black/40'
@@ -505,7 +515,7 @@ export default function Tooltip({
               filter: showArrow ? 'var(--tooltip-arrow-shadow)' : undefined,
             }}
           >
-            {liveTip ? <span data-panel-resize-live-tip>{label}</span> : label}
+            {content ?? (liveTip ? <span data-panel-resize-live-tip>{label}</span> : label)}
             {showArrow && (
               <TipArrow
                 direction={side === 'top' ? 'down' : 'up'}

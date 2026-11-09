@@ -64,9 +64,9 @@ import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
 import type { ProjectLabel } from '../lib/projectLabels'
-import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
-import { isWslProject } from '../lib/wslWorkspace'
-import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
+import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
+import InfoTipCard from './InfoTipCard'
 import { isTauri, isSshResource } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
@@ -671,6 +671,7 @@ export default function ProjectPicker() {
                     </span>
                     <Tooltip
                       label={projectChipTooltipLabel(project, sshConnections, t)}
+                      content={<InfoTipCard {...projectHoverDetails(project, sshConnections, t)} />}
                       side="right"
                       wrapperClassName="min-w-0 flex-1"
                     >
@@ -920,8 +921,8 @@ function Chip({
       )}
       <Tooltip
         label={projectChipTooltipLabel(project, sshConnections, t)}
+        content={<InfoTipCard {...projectHoverDetails(project, sshConnections, t)} />}
         side="bottom"
-        onlyWhenOverflow={!label?.source && !isSshProject(project) && !isWslProject(project)}
         wrapperClassName="min-w-0 flex items-center"
       >
         <ProjectName name={project.name} label={label} compact />

@@ -129,7 +129,7 @@ describe('TerminalSessionList', () => {
     expect(group('p1')).toHaveAttribute('aria-current', 'true')
     expect(row('t1')).toHaveAttribute('aria-selected', 'true')
     expect(row('other')).toHaveAttribute('aria-selected', 'false')
-    expect(within(row('t2')).getByText('pnpm dev')).toBeInTheDocument()
+    expect(row('t2').querySelector('[data-tooltip*="pnpm dev"]')).not.toBeNull()
     expect(document.querySelector('[title]')).toBeNull()
   })
 
@@ -303,7 +303,7 @@ describe('TerminalSessionList', () => {
     expect(mocks.state.reorderTerminal).not.toHaveBeenCalled()
   })
 
-  it('appends the creation time after the subtitle: time today, date on earlier days', () => {
+  it('ends each row with the creation time: time today, age on earlier days', () => {
     const today = new Date()
     today.setHours(9, 5, 0, 0)
     mocks.state.terminals = [
@@ -313,8 +313,8 @@ describe('TerminalSessionList', () => {
       terminal({ id: 'none' }),
     ]
     render(<TerminalSessionList />)
-    expect(row('today')).toHaveTextContent('pnpm dev · 09:05')
-    expect(row('old').querySelector('[data-terminal-created]')).toHaveTextContent(/^2020-01-03$/)
+    expect(row('today').querySelector('[data-terminal-created]')).toHaveTextContent(/^09:05$/)
+    expect(row('old').querySelector('[data-terminal-created]')).toHaveTextContent(/^\d+年$/)
     expect(row('legacy').querySelector('[data-terminal-created]')).toHaveTextContent(/^09:05$/)
     expect(row('none').querySelector('[data-terminal-created]')).toBeNull()
   })
@@ -322,7 +322,8 @@ describe('TerminalSessionList', () => {
   it('shows a waiting state instead of restart for terminals not restored yet', () => {
     mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2', status: 'exited', awaitingRestoreSpawn: true })]
     render(<TerminalSessionList />)
-    expect(within(row('other')).getByText('切换到项目后恢复')).toBeInTheDocument()
+    expect(row('other').querySelector('[data-terminal-activity="restore"]')).not.toBeNull()
+    expect(within(row('other')).queryByText('已退出')).toBeNull()
     expect(within(row('other')).queryByRole('button', { name: /重启/ })).toBeNull()
   })
 
@@ -391,7 +392,7 @@ describe('TerminalSessionList', () => {
   it('offers restart for an exited terminal', () => {
     mocks.state.terminals = [terminal({ status: 'exited', exitCode: 2 })]
     render(<TerminalSessionList />)
-    expect(within(row('t1')).getByText('已退出（退出码 2）')).toBeInTheDocument()
+    expect(within(row('t1')).getByText('已退出')).toBeInTheDocument()
     expect(within(row('t1')).getByRole('button', { name: /重启/ })).toBeInTheDocument()
   })
 
@@ -433,6 +434,32 @@ describe('TerminalSessionList', () => {
     expect(mocks.state.closeTerminal).not.toHaveBeenCalledWith('t1')
   })
 
+  it('closes a whole project from its own actions menu, not from the list header', async () => {
+    mocks.state.terminals = [
+      terminal({ status: 'exited', exitCode: 0 }),
+      terminal({ id: 'other', name: 'elsewhere', projectId: 'p2', status: 'exited', exitCode: 0 }),
+    ]
+    render(<TerminalSessionList />)
+    expect(screen.queryByRole('button', { name: '关闭当前项目的全部终端' })).toBeNull()
+    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
+    fireEvent.click(screen.getByText('关闭此项目的全部终端'))
+    await vi.waitFor(() => expect(mocks.state.closeAllProjectTerminals).toHaveBeenCalledWith('p2'))
+    expect(mocks.state.closeAllProjectTerminals).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates a terminal with the chosen profile in the project of the header', async () => {
+    render(<TerminalSessionList />)
+    mocks.projectState.switchProject.mockImplementation(async (project: { id: string; path: string; name: string }) => {
+      mocks.projectState.currentProject = project
+      return true
+    })
+    fireEvent.click(within(group('p3')).getByRole('button', { name: '为「docs」选择终端配置' }))
+    fireEvent.click(screen.getByText(/普通终端/))
+    await vi.waitFor(() =>
+      expect(mocks.state.addTerminal).toHaveBeenCalledWith('/home/docs', 'p3', 'default'),
+    )
+  })
+
   it('leaves manage mode with 完成 or Escape and drops the selection', () => {
     render(<TerminalSessionList />)
     fireEvent.click(screen.getByRole('button', { name: '管理' }))
@@ -466,6 +493,5 @@ describe('TerminalSessionList', () => {
     mocks.state.terminals = []
     render(<TerminalSessionList />)
     expect(screen.getByText('当前项目「app」暂无终端，点击上方 + 新建')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '关闭当前项目的全部终端' })).toBeDisabled()
   })
 })

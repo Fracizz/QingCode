@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, SshConnection } from '../types'
-import { projectChipTooltipLabel } from './projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from './projectChipTooltip'
 
 const sshProject: Project = {
   id: 'ssh-project',
@@ -27,6 +27,31 @@ const sshConnection: SshConnection = {
 
 const t = (source: string, values?: Record<string, string | number>) =>
   source.replace(/\{(\w+)\}/g, (_, key: string) => String(values?.[key] ?? `{${key}}`))
+
+describe('projectHoverDetails', () => {
+  it('shows the SSH address and the remote folder without repeating the name', () => {
+    expect(projectHoverDetails(sshProject, [sshConnection], t)).toEqual({
+      title: 'qingcode',
+      rows: [
+        { label: '连接方式', value: 'SSH' },
+        { label: '地址', value: 'WSL 开发机（dev@127.0.0.1:2222）' },
+        { label: '项目目录', value: '/home/dev/qingcode', mono: true },
+      ],
+    })
+  })
+
+  it('keeps the connection id when the SSH connection is gone', () => {
+    expect(projectHoverDetails(sshProject, [], t).rows[1].value).toBe('wsl-connection')
+  })
+
+  it('shows local projects as this PC with their path', () => {
+    const local = { ...sshProject, kind: 'local' as const, path: 'D:/code/app', connection_id: undefined }
+    expect(projectHoverDetails(local, [], t).rows).toEqual([
+      { label: '连接方式', value: '本机' },
+      { label: '项目目录', value: 'D:/code/app', mono: true },
+    ])
+  })
+})
 
 describe('projectChipTooltipLabel', () => {
   it('shows the SSH connection identity and remote path', () => {

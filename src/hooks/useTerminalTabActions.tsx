@@ -101,7 +101,8 @@ export function useTerminalTabActions({
     y: number
     terminal: TerminalTab
   } | null>(null)
-  const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
+  // projectId 为空时在当前项目新建；工作台分组头的菜单会指定目标项目。
+  const [profileMenu, setProfileMenu] = useState<{ x: number; y: number; projectId?: string } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -388,9 +389,12 @@ export function useTerminalTabActions({
     })()
   }
 
-  const profileMenuItems = (): ContextMenuItem[] => {
+  const profileMenuItems = (targetProjectId?: string, onCreate?: () => void): ContextMenuItem[] => {
     const settings = loadTerminalProfileSettings()
     const effectiveDefaultId = getEffectiveDefaultProfileId(settings)
+    const limited = targetProjectId && targetProjectId !== currentProject?.id
+      ? terminals.filter(terminal => terminal.projectId === targetProjectId).length >= MAX_TERMINALS_PER_PROJECT
+      : atLimit
     return [
       ...settings.profiles.map(profile => {
         const name = profile.id === 'default'
@@ -399,8 +403,11 @@ export function useTerminalTabActions({
         return {
           label: profile.id === effectiveDefaultId ? `${name}${translate('（默认）')}` : name,
           icon: <TerminalIcon size={14} />,
-          disabled: atLimit || creatingTerminal,
-          action: () => handleNewTerminal(profile.id),
+          disabled: limited || creatingTerminal,
+          action: () => {
+            onCreate?.()
+            handleNewTerminal(profile.id, targetProjectId)
+          },
         }
       }),
       {
@@ -546,6 +553,7 @@ export function useTerminalTabActions({
     renameCommittingRef,
     handleCloseClick,
     handleCloseAllProject,
+    handleCloseAllInStrip,
     handleCloseSelected,
     startRename,
     commitRename,

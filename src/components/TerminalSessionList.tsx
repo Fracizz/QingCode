@@ -11,13 +11,14 @@ import {
 import {
   ChevronDown,
   ChevronLeft,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Check,
   Circle,
-  Folder,
-  FolderOpen,
   ListChecks,
   LoaderCircle,
   Minus,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Terminal as TerminalIcon,
@@ -34,8 +35,12 @@ import {
   subscribeTerminalActivityIndicator,
 } from '@/lib/terminal/terminalActivitySettings'
 import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
-import { terminalSessionMeta, terminalTabTooltip } from '@/lib/terminal/terminalTabPresentation'
-import { formatCompactCreatedTime, formatFullCreatedTime } from '@/lib/terminal/terminalOverview'
+import {
+  terminalHoverDetails,
+  terminalRowStatus,
+  terminalTabTooltip,
+} from '@/lib/terminal/terminalTabPresentation'
+import { formatCompactCreatedAge, formatFullCreatedTime } from '@/lib/terminal/terminalOverview'
 import {
   getTerminalAttentionSnapshot,
   subscribeTerminalAttention,
@@ -48,7 +53,7 @@ import {
   terminalProjectSources,
   type TerminalSessionGroup,
 } from '@/lib/terminal/terminalSessionGroups'
-import { projectChipTooltipLabel } from '@/lib/projectChipTooltip'
+import { projectChipTooltipLabel, projectHoverDetails } from '@/lib/projectChipTooltip'
 import {
   allTerminalsSelected,
   isEndedTerminal,
@@ -58,6 +63,8 @@ import {
 import { formatTerminalName } from '../utils/terminalName'
 import ContextMenu from './ContextMenu'
 import EmptyState from './EmptyState'
+import InfoTipCard from './InfoTipCard'
+import { ProjectKindIcon } from './ProjectKindMark'
 import TerminalActivityDot from './TerminalActivityDot'
 import TerminalRenameInput from './TerminalRenameInput'
 import Tooltip from './Tooltip'
@@ -67,7 +74,8 @@ const HEADER_BUTTON =
   'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
 const BAR_BUTTON =
   'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
-const ROW_BUTTON = 'flex ui-chip h-6 w-5 flex-shrink-0 items-center justify-center rounded'
+const ROW_BUTTON = 'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded'
+const GROUP_ACTION = 'text-fg-muted hover:bg-bg-active hover:text-fg'
 
 type PickState = 'on' | 'off' | 'mixed'
 
@@ -122,7 +130,6 @@ export default function TerminalSessionList() {
     translate,
     paneActiveId,
     currentProject,
-    projectTerminals,
     atLimit,
     creatingTerminal,
     contextMenu,
@@ -139,7 +146,7 @@ export default function TerminalSessionList() {
     renameInputRef,
     renameCommittingRef,
     handleCloseClick,
-    handleCloseAllProject,
+    handleCloseAllInStrip,
     handleCloseSelected,
     startRename,
     commitRename,
@@ -169,6 +176,7 @@ export default function TerminalSessionList() {
   const [seenProjectId, setSeenProjectId] = useState<string | null>(null)
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
   const [projectDrop, setProjectDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
+  const [projectMenu, setProjectMenu] = useState<{ x: number; y: number; projectId: string } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [manageMode, setManageMode] = useState(false)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
@@ -329,15 +337,19 @@ export default function TerminalSessionList() {
     const isPending = term.id === pendingTerminalId
     // 等待恢复的终端状态也是 exited，但进程并没有结束，不给重启入口。
     const exited = term.status === 'exited' && !term.awaitingRestoreSpawn
+    const awaitingRestore = term.status === 'exited' && term.awaitingRestoreSpawn === true
     const keepShell = shouldKeepShellAfterExit(term)
     const exitCodeSuffix =
       term.exitCode === null ? '' : translate('（退出码 {code}）', { code: term.exitCode })
     const restartLabel = keepShell ? '重启终端{exitCode}' : '按原运行配置重启{exitCode}'
-    const meta = terminalSessionMeta(term, translate)
     const createdAt = term.createdAt ?? term.startedAt
-    const created = formatCompactCreatedTime(createdAt, now)
+    const created = formatCompactCreatedAge(createdAt, now, translate)
     const fullCreated = formatFullCreatedTime(createdAt)
     const tooltip = terminalTabTooltip(term, translate)
+    // 关闭活动指示后没有空心点，待恢复要改用文字表达。
+    const trailing =
+      terminalRowStatus(term, translate) ??
+      (awaitingRestore && !activityIndicator ? translate('待恢复') : created)
     return (
       <div
         key={term.id}
@@ -347,10 +359,10 @@ export default function TerminalSessionList() {
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
         draggable={!isRenaming && !managing}
-        className={`group relative flex min-h-9 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-1 pl-6 pr-1 transition-colors ${
+        className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded py-0.5 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-fg'
-            : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+            : 'text-tree-fg hover:bg-bg-hover hover:text-fg'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
         onDragStart={event => handleTabDragStart(event, term.id)}
         onDragOver={event => handleTabDragOver(event, term.id)}
@@ -411,29 +423,32 @@ export default function TerminalSessionList() {
           ) : (
             <Tooltip
               label={fullCreated ? `${tooltip}\n${translate('创建于 {time}', { time: fullCreated })}` : tooltip}
+              content={
+                <InfoTipCard
+                  {...terminalHoverDetails(
+                    { ...term, name: formatTerminalName(term.name) },
+                    fullCreated,
+                    translate,
+                  )}
+                />
+              }
+              anchorClosest="[data-terminal-session-row]"
               side="right"
-              wrapperClassName="flex min-w-0 flex-col"
+              wrapperClassName="flex min-w-0"
             >
-              <span className={`truncate text-ui ${exited ? 'opacity-60' : ''}`}>
+              <span
+                className={`truncate text-ui ${
+                  exited ? 'opacity-60' : awaitingRestore && !isActive ? 'text-fg-muted' : ''
+                }`}
+              >
                 {formatTerminalName(term.name)}
               </span>
-              {(meta || created) && (
-                <span className="flex min-w-0 text-ui-xs text-fg-dim">
-                  {meta && <span className="truncate">{meta}</span>}
-                  {created && (
-                    // 命令太长时只截断命令，时间始终完整显示。
-                    <span data-terminal-created={term.id} className="flex-shrink-0 whitespace-pre">
-                      {meta ? ` · ${created}` : created}
-                    </span>
-                  )}
-                </span>
-              )}
             </Tooltip>
           )}
         </div>
         {(term.status === 'reconnecting' || isPending) && !isRenaming && (
           <LoaderCircle
-            size={12}
+            size={14}
             aria-label={isPending ? translate('正在切换项目…') : translate('正在重新连接…')}
             className={`flex-shrink-0 animate-spin ${isPending ? 'text-fg-muted' : 'text-warn'}`}
           />
@@ -449,7 +464,7 @@ export default function TerminalSessionList() {
                 void reloadTerminal(term)
               }}
             >
-              <RotateCcw size={12} />
+              <RotateCcw size={14} />
             </button>
           </Tooltip>
         )}
@@ -458,29 +473,49 @@ export default function TerminalSessionList() {
             terminalId={term.id}
             exited={term.status === 'exited'}
             attention={attentionIds.has(term.id) && !isActive}
+            awaitingRestore={awaitingRestore}
+            size="md"
           />
         )}
-        {!managing && <Tooltip
-          label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
-          side="top"
-          forceOpen={isCloseArmed}
-        >
-          <button
-            type="button"
-            aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
-            data-terminal-close={term.id}
-            className={`${ROW_BUTTON} ${
-              isCloseArmed
-                ? 'bg-danger/15 text-danger'
-                : `hover:bg-bg-active ${
-                    isActive ? '' : 'opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
-                  }`
-            }`}
-            onClick={event => handleCloseClick(event, term.id)}
-          >
-            {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={13} />}
-          </button>
-        </Tooltip>}
+        {/* 时间和关闭按钮共用一格：平时显示时间，悬停或键盘聚焦时换成关闭按钮。 */}
+        <span className="relative flex h-6 min-w-6 flex-shrink-0 items-center justify-end">
+          {trailing && (
+            <span
+              data-terminal-created={trailing === created ? term.id : undefined}
+              className={`whitespace-nowrap pr-1 text-ui-xs text-fg-dim ${
+                managing
+                  ? ''
+                  : isCloseArmed
+                    ? 'invisible'
+                    : 'group-hover:invisible group-has-[:focus-visible]:invisible'
+              }`}
+            >
+              {trailing}
+            </span>
+          )}
+          {!managing && (
+            <Tooltip
+              label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
+              side="top"
+              forceOpen={isCloseArmed}
+              wrapperClassName="absolute inset-y-0 right-0 inline-flex items-center"
+            >
+              <button
+                type="button"
+                aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
+                data-terminal-close={term.id}
+                className={`${ROW_BUTTON} ${
+                  isCloseArmed
+                    ? 'bg-danger/15 text-danger'
+                    : 'opacity-0 hover:bg-bg-active focus-visible:opacity-100 group-hover:opacity-100'
+                }`}
+                onClick={event => handleCloseClick(event, term.id)}
+              >
+                {isCloseArmed ? <Circle size={10} fill="currentColor" /> : <X size={15} />}
+              </button>
+            </Tooltip>
+          )}
+        </span>
       </div>
     )
   }
@@ -491,7 +526,8 @@ export default function TerminalSessionList() {
     const isEmpty = terminals.length === 0
     const expanded = isExpanded(group)
     const source = projectSources.get(project.id)
-    const FolderIcon = expanded ? FolderOpen : Folder
+    // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
+    const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
     const sortable = !managing && !project.hidden && projects.some(item => item.id === project.id)
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
@@ -529,8 +565,10 @@ export default function TerminalSessionList() {
             setProjectDrop(null)
           }}
           onDragEnd={clearProjectDrag}
-          className={`group/project flex h-7 items-center gap-1 rounded pr-1 transition-colors hover:bg-bg-hover ${
-            isEmpty && !isCurrent ? 'text-fg-dim' : 'text-fg'
+          className={`group/project flex h-7 items-center gap-1 rounded pr-1 transition-colors ${
+            isCurrent
+              ? 'bg-brand/10 text-fg hover:bg-brand/15'
+              : `text-fg-muted hover:bg-bg-hover ${isEmpty ? 'opacity-70 hover:opacity-100' : ''}`
           }`}
         >
           {managing && expanded && (
@@ -559,49 +597,84 @@ export default function TerminalSessionList() {
             // 不用 disabled：禁用按钮吃掉鼠标事件，空项目的组头就拖不动了。
             aria-disabled={isEmpty || undefined}
             tabIndex={isEmpty ? -1 : undefined}
-            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui aria-disabled:cursor-default"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded pl-1 text-left text-ui-sm aria-disabled:cursor-default"
             onClick={() => {
               if (!isEmpty) setProjectCollapsed(project.id, expanded)
             }}
           >
-            <FolderIcon
-              size={14}
+            <span
               aria-hidden="true"
               data-terminal-group-current={isCurrent ? 'true' : undefined}
-              className={`flex-shrink-0 ${isCurrent ? 'text-brand' : isEmpty ? '' : 'text-fg-muted'}`}
-            />
-            {/* 项目名优先完整显示，来源只用剩余宽度。 */}
+              className={`flex flex-shrink-0 ${isCurrent ? 'text-brand' : ''}`}
+            >
+              <ProjectKindIcon project={project} open={expanded} size={14} />
+            </span>
             <Tooltip
               label={projectChipTooltipLabel(project, sshConnections, translate)}
+              content={<InfoTipCard {...projectHoverDetails(project, sshConnections, translate)} />}
+              anchorClosest="[data-terminal-project-header]"
               side="right"
-              wrapperClassName="min-w-0 max-w-[70%] flex-none"
+              wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
             >
-              <span className="block truncate font-medium">{project.name}</span>
+              {/* 项目名优先完整显示，来源只用剩余宽度。 */}
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-medium">{project.name}</span>
+              {source && (
+                <span className="min-w-0 truncate rounded border border-border-strong px-1 py-px text-ui-badge leading-tight text-fg-dim">
+                  {source}
+                </span>
+              )}
             </Tooltip>
-            {source && (
-              <span className="min-w-0 flex-1 truncate text-ui-xs text-fg-dim">{source}</span>
-            )}
           </button>
           {hasAttention && (
             <span
               role="img"
               aria-label={translate('「{name}」有新结果待查看', { name: project.name })}
               data-terminal-group-attention={project.id}
-              className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand"
+              className="h-2 w-2 flex-shrink-0 rounded-full bg-brand"
             />
           )}
-          {/* 数量和新建共用一格：平时显示数量，悬停或键盘聚焦时换成 +。 */}
-          <span className="relative flex flex-shrink-0 [&:has(button:focus-visible)>[data-terminal-group-count]]:invisible">
-            {!isEmpty && (
-              <span
-                role="img"
-                aria-label={translate('{count} 个终端', { count: terminals.length })}
-                data-terminal-group-count={project.id}
-                className="pointer-events-none absolute inset-0 flex items-center justify-center text-ui-xs text-fg-dim group-hover/project:invisible"
+          {!isEmpty && (
+            <span
+              role="img"
+              aria-label={translate('{count} 个终端', { count: terminals.length })}
+              data-terminal-group-count={project.id}
+              className={`flex w-6 flex-shrink-0 items-center justify-center text-ui-xs text-fg-dim ${
+                actionsHeld ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden'
+              }`}
+            >
+              {terminals.length}
+            </span>
+          )}
+          {/* 平时显示数量，悬停或键盘聚焦时换成操作按钮；空项目的切换按钮不可聚焦，靠 opacity 保持按钮可达。 */}
+          <span
+            data-terminal-group-actions={project.id}
+            className={`flex-shrink-0 items-center ${
+              isEmpty
+                ? `flex ${actionsHeld ? '' : 'opacity-0 focus-within:opacity-100 group-hover/project:opacity-100'}`
+                : actionsHeld
+                  ? 'flex'
+                  : 'hidden group-hover/project:flex group-has-[:focus-visible]/project:flex'
+            }`}
+          >
+            <Tooltip label={translate('项目操作')} side="top">
+              <button
+                type="button"
+                aria-label={translate('「{name}」的项目操作', { name: project.name })}
+                aria-haspopup="menu"
+                aria-expanded={projectMenu?.projectId === project.id}
+                className={`${ROW_BUTTON} ${GROUP_ACTION}`}
+                onClick={event => {
+                  if (projectMenu?.projectId === project.id) {
+                    setProjectMenu(null)
+                    return
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setProjectMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id })
+                }}
               >
-                {terminals.length}
-              </span>
-            )}
+                <MoreHorizontal size={15} />
+              </button>
+            </Tooltip>
             <Tooltip
               label={
                 groupAtLimit
@@ -614,13 +687,36 @@ export default function TerminalSessionList() {
                 type="button"
                 aria-label={translate('在「{name}」新建终端', { name: project.name })}
                 disabled={groupAtLimit || creatingTerminal}
-                className={`${ROW_BUTTON} text-fg-muted opacity-0 hover:bg-bg-active hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 disabled:cursor-not-allowed`}
+                className={`${ROW_BUTTON} ${GROUP_ACTION} disabled:cursor-not-allowed`}
                 onClick={() => {
                   setProjectCollapsed(project.id, false)
                   handleNewTerminal(undefined, project.id)
                 }}
+                onContextMenu={event => {
+                  if (creatingTerminal || !shouldShowAppContextMenu(event)) return
+                  setProfileMenu({ x: event.clientX, y: event.clientY, projectId: project.id })
+                }}
               >
-                <Plus size={13} />
+                <Plus size={15} />
+              </button>
+            </Tooltip>
+            <Tooltip label={translate('选择终端配置')} side="top">
+              <button
+                type="button"
+                aria-label={translate('为「{name}」选择终端配置', { name: project.name })}
+                aria-haspopup="menu"
+                aria-expanded={profileMenu?.projectId === project.id}
+                className={`flex ui-chip h-6 w-4 flex-shrink-0 items-center justify-center rounded ${GROUP_ACTION}`}
+                onClick={event => {
+                  if (profileMenu?.projectId === project.id) {
+                    setProfileMenu(null)
+                    return
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setProfileMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id })
+                }}
+              >
+                <ChevronDown size={13} />
               </button>
             </Tooltip>
           </span>
@@ -683,7 +779,7 @@ export default function TerminalSessionList() {
             type="button"
             aria-label={translate('选择终端配置')}
             aria-haspopup="menu"
-            aria-expanded={profileMenu !== null}
+            aria-expanded={profileMenu !== null && !profileMenu.projectId}
             className="flex ui-chip h-6 w-4 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
             onClick={event => {
               if (profileMenu) {
@@ -718,17 +814,6 @@ export default function TerminalSessionList() {
             onClick={() => requestToggleTerminal()}
           >
             <ChevronLeft size={15} />
-          </button>
-        </Tooltip>
-        <Tooltip label={translate('关闭当前项目的全部终端')} side="bottom">
-          <button
-            type="button"
-            aria-label={translate('关闭当前项目的全部终端')}
-            className={HEADER_BUTTON}
-            disabled={projectTerminals.length === 0}
-            onClick={() => void handleCloseAllProject()}
-          >
-            <X size={15} />
           </button>
         </Tooltip>
       </div>
@@ -779,7 +864,7 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-1.5"
+          className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1.5 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           {groups.map(renderGroup)}
@@ -817,11 +902,42 @@ export default function TerminalSessionList() {
           onClose={() => setContextMenu(null)}
         />
       )}
+      {projectMenu && (() => {
+        const group = groups.find(item => item.project.id === projectMenu.projectId)
+        if (!group) return null
+        const expanded = isExpanded(group)
+        return (
+          <ContextMenu
+            x={projectMenu.x}
+            y={projectMenu.y}
+            items={[
+              {
+                label: expanded ? translate('收起分组') : translate('展开分组'),
+                icon: expanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />,
+                disabled: group.terminals.length === 0,
+                action: () => setProjectCollapsed(group.project.id, expanded),
+              },
+              {
+                label: translate('关闭此项目的全部终端'),
+                icon: <X size={14} />,
+                danger: true,
+                separatorBefore: true,
+                disabled: group.terminals.length === 0,
+                action: () => handleCloseAllInStrip(group.project.id),
+              },
+            ]}
+            onClose={() => setProjectMenu(null)}
+          />
+        )
+      })()}
       {profileMenu && (
         <ContextMenu
           x={profileMenu.x}
           y={profileMenu.y}
-          items={profileMenuItems()}
+          items={profileMenuItems(profileMenu.projectId, () => {
+            const targetId = profileMenu.projectId ?? currentProjectId
+            if (targetId) setProjectCollapsed(targetId, false)
+          })}
           onClose={() => setProfileMenu(null)}
         />
       )}

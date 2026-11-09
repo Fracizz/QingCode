@@ -4,7 +4,7 @@ import type { MobileSessionSummary } from '../ipc/mobileSessions'
 import { parseMobileSessionSummary } from '../ipc/mobileSessions'
 import {
   countTerminalOverview,
-  formatCompactCreatedTime,
+  formatCompactCreatedAge,
   formatCreatedTime,
   formatFullCreatedTime,
   groupTerminalOverview,
@@ -220,12 +220,15 @@ describe('terminal overview running state and created time', () => {
     expect(formatCreatedTime(0, now)).toBeNull()
   })
 
-  it('shortens created time for list rows: time today, date on earlier days', () => {
+  it('shortens created time for list rows: time today, age on earlier days', () => {
     const now = new Date(2026, 10, 7, 23, 40).getTime()
-    expect(formatCompactCreatedTime(new Date(2026, 10, 7, 9, 5).getTime(), now)).toBe('09:05')
-    expect(formatCompactCreatedTime(new Date(2026, 10, 6, 23, 59).getTime(), now)).toBe('11-06')
-    expect(formatCompactCreatedTime(new Date(2025, 11, 31, 8, 0).getTime(), now)).toBe('2025-12-31')
-    expect(formatCompactCreatedTime(undefined, now)).toBeNull()
+    const translate = (source: string, values?: Record<string, string | number>) =>
+      source.replace('{count}', String(values?.count))
+    expect(formatCompactCreatedAge(new Date(2026, 10, 7, 9, 5).getTime(), now, translate)).toBe('09:05')
+    expect(formatCompactCreatedAge(new Date(2026, 10, 6, 23, 59).getTime(), now, translate)).toBe('1天')
+    expect(formatCompactCreatedAge(new Date(2025, 11, 31, 8, 0).getTime(), now, translate)).toBe('311天')
+    expect(formatCompactCreatedAge(new Date(2024, 10, 7, 8, 0).getTime(), now, translate)).toBe('2年')
+    expect(formatCompactCreatedAge(undefined, now, translate)).toBeNull()
   })
 
   it('formats the full created time for tooltips', () => {
