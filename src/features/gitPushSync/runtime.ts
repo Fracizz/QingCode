@@ -5,6 +5,7 @@ import {
   fetchForPushSync,
   setPushSyncWatches,
 } from '@/lib/ipc/gitPushSync'
+import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
 import { translate } from '@/lib/i18n'
 import { countDirtyTabsByProject } from '@/lib/projectIndicators'
 import { projectSourceLabel } from '@/lib/projectLabels'
@@ -65,6 +66,12 @@ function reloadAfterFastForward(project: Project) {
   if (store.currentProject?.id === project.id) void store.refreshProjectTree(project)
 }
 
+/** git 原始 stderr 是英文，转成已本地化的简明说明再展示。 */
+function localizeBlockedDetail(raw: string): string {
+  const i18n = gitPullErrorI18n(raw)
+  return translate(i18n.key, i18n.params)
+}
+
 function notify(project: Project, result: SyncResult) {
   const { pushToast, sshConnections } = useProjectStore.getState()
   // 带上来源（如「WinDev · django」），同名项目分布在多台机器时能分清是哪一个。
@@ -84,7 +91,11 @@ function notify(project: Project, result: SyncResult) {
       pushToast('error', translate('{project} 有未保存的文件，未自动同步', values))
       break
     case 'blocked':
-      pushToast('error', translate('{project} 无法快进，未自动同步', values), result.detail)
+      pushToast(
+        'error',
+        translate('{project} 无法快进，未自动同步', values),
+        result.detail ? localizeBlockedDetail(result.detail) : undefined,
+      )
       break
   }
 }
