@@ -6,14 +6,37 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-11-10
+
+The stable release after v0.1.16, rolling up 0.1.17-beta.1–beta.43: the terminal workbench and cross-device reattach, multi-device Git sync, SSH direct-connect and tunnel improvements, the Android companion, and interface polish.
+
 ### Added
 
-- New "Terminal workbench (list on left)" panel layout: terminals of all projects grouped on the left (clicking one switches the workspace to its project, and finished background tasks get a review marker), the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes)
-- The terminal workbench list shows when each terminal was created: the time for today, the date for earlier days, and the full date and time on hover; it stays the same after restarting the terminal or the app
+- New "Terminal workbench (list on left)" panel layout: terminals of all projects grouped on the left (clicking one switches the workspace to its project, and finished background tasks get a review marker), the terminal in the center, and the editor opening to its right only when a file is opened (it collapses again after the last file closes).
+- The terminal workbench list shows when each terminal was created: the time for today, the date for earlier days, and the full date and time on hover; it stays the same after restarting the terminal or the app.
+- Local terminals are hosted by a background host and stay on by default, so they can be reattached after quitting the app; remote terminal reattach is decided by compatibility level and reuses the old server when compatible.
+- Phones, tablets, and computers can attach to each other's terminals: one device has exclusive use at a time while the computer can watch read-only in real time; Android sessions reattach after the PC restarts or upgrades, and keep the pairing when the PC changes ports.
+- Multi-device Git sync: event-driven, parallel per machine with the current project first, shown in one grouped table with a loading state; Git and Settings in the terminal workbench became sidebar views.
+- SSH direct connect: Server mode now reaches the direct-connect gateway through an SSH tunnel, sharing one channel with port direct connect; background prewarming of remote projects runs per connection; SSH credentials can be saved encrypted on the machine.
+- Terminal management: running-first sorting, running state detected from program titles, batch management (group tri-state selection and context-menu actions), source filtering, drag to reorder project groups, and search.
+- The terminal context menu gains "Add to conversation" to quote output from Claude Code, opencode, and other AI CLIs back into the composer; Android shortcut bars can be reordered by long-press, and the Android session drawer gains an "All" overview and a persistent tablet sidebar.
+- Android: general settings consolidated on the settings page, a keep-screen-awake switch, project path copy, circular pull-to-refresh, and a wider virtual pointer; the history panel aligns tabs and CJK text to the character grid.
+- QingCode CLI improvements and a periodic Rust target cleanup policy that keeps build caches from growing without bound.
+
+### Changed
+
+- The dark and olive themes align neutral layering and unify the terminal background; workbench sections gain hairline separators; project hover tips become info cards with path copy.
+- The terminal list becomes single-line with unified project hover cards; restored-pending terminals use a muted dot; WSL projects no longer show a duplicate badge and use `distro:path`.
+- The Android UI is slimmer; landscape hides the status bar while keeping the top bar, and native dropdowns are replaced by a project-style picker.
+- Local packaging always rebuilds the Android APK.
 
 ### Fixed
 
-- After leaving dual or quad terminals for a single-pane layout, clicking a tab that belonged to another pane did nothing; "Close Others" and the fallback after closing a terminal also skipped those terminals
+- After leaving dual or quad terminals for a single-pane layout, clicking a tab that belonged to another pane did nothing; "Close Others" and the fallback after closing a terminal also skipped those terminals.
+- Fixed the terminal being pushed up while the IME composes text; fixed overlapping rows in the Android submit list, the scrollbar thumb leaving its track, and the flicker when closing a single session.
+- Fixed Git and Settings not displaying fully on the left side of the terminal workbench; the multi-device Git sync non-fast-forward hint is now localized.
+- Installing the Server as a regular user no longer fails on boot autostart, and firewall commands adapt to the remote system; the direct channel gains liveness probing and lower memory sampling overhead.
+- Uninstalling now only confirms and closes the app in the current install directory.
 
 ## [0.1.17-beta.3] - 2026-11-07
 
