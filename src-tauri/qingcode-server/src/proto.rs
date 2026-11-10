@@ -758,7 +758,7 @@ mod tests {
         let advertised = caps(crate::daemon::CAPABILITIES);
         let levels = pty_compat_levels(&advertised).unwrap();
         assert_eq!(levels.last(), Some(&PTY_COMPAT_LEVEL));
-        assert!(PTY_COMPAT_MIN <= PTY_COMPAT_LEVEL);
+        const { assert!(PTY_COMPAT_MIN <= PTY_COMPAT_LEVEL) };
         assert!(pty_compatible(PROTOCOL_VERSION, &advertised).is_ok());
     }
 
