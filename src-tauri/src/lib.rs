@@ -1073,6 +1073,7 @@ pub fn run() {
             remote_ssh::local_terminal::local_host_attach_terminal,
             remote_ssh::local_terminal::local_host_kill_detached_terminal,
             remote_ssh::local_terminal::local_host_finish_terminal_on_exit,
+            remote_ssh::local_terminal::local_host_survives_app_exit,
             remote_ssh::ssh_forget_workspace_root,
         ])
         .run(tauri::generate_context!())

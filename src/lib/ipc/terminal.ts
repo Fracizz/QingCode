@@ -204,6 +204,11 @@ export function finishRemoteTerminalOnExit(args: {
   return safeInvoke('处理退出时的远程终端', 'ssh_finish_terminal_on_exit', args)
 }
 
+/** 本地托管终端能否活过 QingCode（宿主不在会连带结束它的作业对象里）。 */
+export function localHostSurvivesAppExit(): Promise<boolean> {
+  return safeInvoke<boolean>('查询本地终端宿主', 'local_host_survives_app_exit')
+}
+
 export async function closeTerminalOnExit(tab: { id: string; cwd: string }): Promise<void> {
   await safeInvoke('关闭终端', isSshResource(tab.cwd) ? 'ssh_kill_terminal' : 'kill_terminal', {
     id: tab.id, source: 'app_exit', operationId: crypto.randomUUID(),

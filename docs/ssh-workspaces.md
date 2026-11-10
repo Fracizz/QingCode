@@ -233,7 +233,7 @@ Linux、Windows、macOS 使用同一套恢复决策，参考 [VS Code 的 Persis
 | 已确认原会话结束 | 保留输出，等待用户显式操作，不自动重跑原命令 |
 | 本地历史恢复或显式重启 | 实际创建新进程时显示重启提示，不宣称接回原进程 |
 
-这里统一的是恢复语义，SSH 直连（兼容模式）和默认的本地终端不是持久终端；持久接回要求 daemon 保留原 PTY。开启「终端 › 集成: 本地终端可接回」后，本地 PowerShell / CMD 终端由本机宿主托管，同样按原 PTY ID 接回，详见 [terminal-tools.md](terminal-tools.md#本地终端接回)。平台路径矩阵与 Web 内存 fixture 只验证共用逻辑和显示，不代表三个操作系统的原生 PTY、SSH、WSS 都已实机验收。
+这里统一的是恢复语义，SSH 直连（兼容模式）和关闭「终端 › 集成: 本地终端可接回」后的本地终端不是持久终端；持久接回要求 daemon 保留原 PTY。该设置默认开启，本地 PowerShell / CMD 终端由本机宿主托管，同样按原 PTY ID 接回，详见 [terminal-tools.md](terminal-tools.md#本地终端接回)。平台路径矩阵与 Web 内存 fixture 只验证共用逻辑和显示，不代表三个操作系统的原生 PTY、SSH、WSS 都已实机验收。
 
 终端已有文字选区时，右键由 QingCode 的复制菜单接管，不向 Claude 等启用鼠标跟踪的 TUI 发送该次右键按下与释放；菜单保存打开时的选中文字，后续输出刷新后仍可复制。TUI 启用鼠标跟踪且没有终端选区时，右键完全交给程序，不再弹 QingCode 菜单覆盖 OpenCode 的 Message Actions。Windows/Linux 按住 Shift 拖动可强制建立终端选区，Shift + 右键也可打开 QingCode 菜单；普通 Shell 仍显示 QingCode 菜单。有选区时 Ctrl+C / Ctrl+Shift+C 复制到客户端剪贴板，Ctrl+C 无选区仍发送中断。
 

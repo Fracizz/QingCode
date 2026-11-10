@@ -169,6 +169,13 @@ pub async fn local_host_kill_detached_terminal(
     local_terminal::kill_owned(&pty_id, "detached_cleanup", true, &manager).await
 }
 
+/// 退出确认用：本地托管终端能否活过 QingCode。宿主被连带结束时（如 `pnpm tauri:dev`
+/// 下 cargo 的作业对象），弹窗不能再承诺保留它们。
+#[tauri::command]
+pub fn local_host_survives_app_exit() -> bool {
+    crate::local_pty_host::host_survives_app_exit()
+}
+
 /// 退出应用时保留或结束一个本地托管终端。
 #[tauri::command]
 pub async fn local_host_finish_terminal_on_exit(

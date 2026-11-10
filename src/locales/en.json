@@ -780,6 +780,7 @@
     "放弃更改": "Discard Changes",
     "有 {count} 个远程终端可以保留。保留后远端进程继续运行，重新连接时可接回。默认在连续断开 24 小时后自动结束。": "{count} remote terminal(s) can be kept running and reattached when you reconnect. By default, they end after 24 hours continuously disconnected.",
     "{count} 个本地终端将关闭。": "{count} local terminal(s) will close.",
+    "本地终端宿主与 QingCode 处在同一个作业对象中（例如通过 pnpm tauri:dev 启动），退出时会被一起结束，{count} 个本地终端无法保留。": "The local terminal host shares a job object with QingCode (for example when started via pnpm tauri:dev) and will end with it, so {count} local terminal(s) cannot be kept.",
     "{count} 个远程终端不支持持久化，退出后将断开。": "{count} remote terminal(s) do not support persistence and will disconnect when you quit.",
     "有 {count} 个本地终端可以保留。保留后进程继续运行，下次打开 QingCode 时可接回，电脑重启后失效。默认在连续断开 24 小时后自动结束。": "{count} local terminal(s) can be kept running and reattached the next time you open QingCode. They do not survive a computer restart. By default, they end after 24 hours continuously disconnected.",
     "结束终端并退出": "End Terminals and Quit",
