@@ -287,6 +287,110 @@ async fn stream_records(
     Ok(result)
 }
 
+const POSIX_FILES_MARKER: &str = "__QINGCODE_REMOTE_FILES__";
+
+/// 文件名搜索的远端枚举命令。POSIX 用 find；Windows OpenSSH 的默认 shell
+/// 可能是 cmd.exe / PowerShell / Git Bash，POSIX 命令在 cmd 下会把 `;` 粘到
+/// `-print0` 上（`find: unknown predicate '-print0;'`），因此改走编码的 PowerShell 脚本。
+#[derive(Debug)]
+enum FileListing {
+    /// 先全部目录、再标记、再全部文件；记录是远端绝对路径。
+    Posix(String),
+    /// 每条记录以 `d` / `f` 开头，后接相对项目根、`/` 分隔的路径。
+    Windows(String),
+}
+
+impl FileListing {
+    fn command(&self) -> &str {
+        match self {
+            Self::Posix(command) | Self::Windows(command) => command,
+        }
+    }
+
+    /// 解析一条 NUL 记录为 (是否目录, 相对路径)；None 表示跳过。
+    fn parse_record(
+        &self,
+        raw: &[u8],
+        canonical_root: &str,
+        posix_is_dir: &mut bool,
+    ) -> Option<(bool, String)> {
+        let text = String::from_utf8_lossy(raw);
+        match self {
+            Self::Posix(_) => {
+                if text == POSIX_FILES_MARKER {
+                    *posix_is_dir = false;
+                    return None;
+                }
+                Some((*posix_is_dir, remote_relative_path(canonical_root, &text)))
+            }
+            Self::Windows(_) => {
+                let (kind, relative) = text.split_at_checked(1)?;
+                let is_dir = match kind {
+                    "d" => true,
+                    "f" => false,
+                    _ => return None,
+                };
+                Some((is_dir, relative.trim_start_matches('/').to_string()))
+            }
+        }
+    }
+}
+
+fn file_listing_command(canonical_root: &str) -> Result<FileListing, String> {
+    if let Some(native) = windows_native_path(canonical_root) {
+        let script = windows_file_listing_script(&native);
+        return windows_powershell_inline_command(&script)
+            .map(FileListing::Windows)
+            .ok_or_else(|| "Windows 项目路径过长，无法执行远程文件搜索".to_string());
+    }
+    // NUL records preserve newlines in POSIX names. Limit matches, never the raw
+    // directory list; a large first directory must not hide later matches.
+    Ok(FileListing::Posix(format!(
+        "find {path} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type d -print0; printf '{POSIX_FILES_MARKER}\\0'; find {path} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type f -print0",
+        path = shell_quote(canonical_root)
+    )))
+}
+
+/// Windows 远端文件枚举脚本：显式栈遍历，跳过 .git / node_modules / target，
+/// 不进入也不列出重解析点（符号链接、junction），与 POSIX `find`（不跟随链接、
+/// 不列出链接）的边界一致，避免枚举到项目根之外。输出原始 UTF-8 字节，
+/// 不经 PowerShell 管道按行重编码。
+fn windows_file_listing_script(native_root: &str) -> String {
+    format!(
+        r#"$ProgressPreference = 'SilentlyContinue'
+$root = [IO.DirectoryInfo]::new('{root}')
+$rootLength = $root.FullName.TrimEnd('\').Length
+$out = [IO.BufferedStream]::new([Console]::OpenStandardOutput(), 65536)
+$utf8 = [Text.UTF8Encoding]::new($false)
+$skip = @('.git', 'node_modules', 'target')
+$reparse = [IO.FileAttributes]::ReparsePoint
+$stack = [Collections.Generic.Stack[IO.DirectoryInfo]]::new()
+$stack.Push($root)
+while ($stack.Count -gt 0) {{
+  $dir = $stack.Pop()
+  try {{ $entries = $dir.GetFileSystemInfos() }} catch {{ continue }}
+  foreach ($entry in $entries) {{
+    if (($entry.Attributes -band $reparse) -ne 0) {{ continue }}
+    if ($entry -is [IO.DirectoryInfo]) {{
+      if ($skip -contains $entry.Name) {{ continue }}
+      $kind = 'd'
+      $stack.Push($entry)
+    }} else {{
+      $kind = 'f'
+    }}
+    $relative = $entry.FullName.Substring($rootLength).TrimStart('\').Replace('\', '/')
+    $bytes = $utf8.GetBytes($kind + $relative)
+    $out.Write($bytes, 0, $bytes.Length)
+    $out.WriteByte(0)
+  }}
+}}
+$out.Flush()
+exit 0
+"#,
+        root = powershell_literal(native_root)
+    )
+}
+
 #[derive(Debug, Serialize)]
 pub struct RemoteFileSearchResponse {
     pub hits: Vec<RemoteSearchHit>,
@@ -366,13 +470,7 @@ pub async fn ssh_search_files_detailed(
         });
     };
     let max = limit.unwrap_or(500).clamp(1, MAX_SEARCH_HITS);
-    let marker = "__QINGCODE_REMOTE_FILES__";
-    // NUL records preserve newlines in POSIX names. Limit matches, never the raw
-    // directory list; a large first directory must not hide later matches.
-    let command = format!(
-        "find {path} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type d -print0; printf '{marker}\\0'; find {path} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type f -print0",
-        path = shell_quote(&canonical_root)
-    );
+    let listing = file_listing_command(&canonical_root)?;
     let extensions = extensions
         .or_else(|| extension.map(|value| vec![value]))
         .unwrap_or_default()
@@ -386,14 +484,14 @@ pub async fn ssh_search_files_detailed(
     };
     let excludes = exclude_patterns.unwrap_or_default();
     let mut hits = Vec::new();
-    let mut is_dir = true;
-    let result = stream_records(&manager, &root, &command, 0, &control, started, |raw| {
-        let path = String::from_utf8_lossy(raw);
-        if path == marker {
-            is_dir = false;
+    let mut posix_is_dir = true;
+    let command = listing.command();
+    let result = stream_records(&manager, &root, command, 0, &control, started, |raw| {
+        let Some((is_dir, relative)) =
+            listing.parse_record(raw, &canonical_root, &mut posix_is_dir)
+        else {
             return true;
-        }
-        let relative = remote_relative_path(&canonical_root, &path);
+        };
         let name = relative.rsplit('/').next().unwrap_or(&relative).to_string();
         if name.is_empty()
             || excludes
@@ -1007,6 +1105,63 @@ mod tests {
         let requests = file_searches().lock().unwrap();
         assert!(!requests.contains_key(&id));
         assert!(!requests.contains_key(&other_id));
+    }
+
+    #[test]
+    fn windows_root_lists_files_with_powershell_instead_of_find() {
+        let listing = file_listing_command("/D:/code/it's").unwrap();
+        let FileListing::Windows(command) = &listing else {
+            panic!("Windows 根应使用 PowerShell 枚举：{listing:?}");
+        };
+        assert!(command.starts_with(&format!("{WINDOWS_POWERSHELL_EXEC} -EncodedCommand ")));
+        assert!(!command.contains("find "));
+        let script = windows_file_listing_script(r"D:\code\it's");
+        assert!(script.contains(r"[IO.DirectoryInfo]::new('D:\code\it''s')"));
+        assert!(script.contains("ReparsePoint"));
+        assert!(script.contains("'.git', 'node_modules', 'target'"));
+    }
+
+    #[test]
+    fn posix_root_keeps_find_listing() {
+        let listing = file_listing_command("/home/owner/app").unwrap();
+        assert!(matches!(&listing, FileListing::Posix(command)
+            if command.starts_with("find '/home/owner/app' ")));
+    }
+
+    #[test]
+    fn listing_records_parse_to_relative_paths() {
+        let windows = FileListing::Windows(String::new());
+        let mut posix_is_dir = true;
+        assert_eq!(
+            windows.parse_record("dsrc/中文".as_bytes(), "/D:/code/app", &mut posix_is_dir),
+            Some((true, "src/中文".to_string()))
+        );
+        assert_eq!(
+            windows.parse_record(b"fsrc/a.ts", "/D:/code/app", &mut posix_is_dir),
+            Some((false, "src/a.ts".to_string()))
+        );
+        assert_eq!(
+            windows.parse_record(b"", "/D:/code/app", &mut posix_is_dir),
+            None
+        );
+        assert_eq!(
+            windows.parse_record(b"x/a", "/D:/code/app", &mut posix_is_dir),
+            None
+        );
+
+        let posix = FileListing::Posix(String::new());
+        assert_eq!(
+            posix.parse_record(b"/srv/app/src", "/srv/app", &mut posix_is_dir),
+            Some((true, "src".to_string()))
+        );
+        assert_eq!(
+            posix.parse_record(POSIX_FILES_MARKER.as_bytes(), "/srv/app", &mut posix_is_dir),
+            None
+        );
+        assert_eq!(
+            posix.parse_record(b"/srv/app/src/a.ts", "/srv/app", &mut posix_is_dir),
+            Some((false, "src/a.ts".to_string()))
+        );
     }
 
     #[test]

@@ -24,6 +24,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
 /// TCP 拨号失败文案的固定开头，前端 serverModeError.ts 靠它提供“重试”。
 const DIAL_FAILED_PREFIX: &str = "[direct:unreachable] 无法连接";
+/// 连接超时的分类标签；前端 serverModeError.ts 靠它提供“重试”而非重启服务。
+const TIMEOUT_TAG: &str = "[direct:timeout]";
 /// 建立终端通道时的拨号重试间隔，用来跨过客户端更新重启、链路抖动这类短暂中断。
 /// 总耗时受 CONNECT_TIMEOUT 约束；设置页的连接测试不重试，保持快速失败。
 const DIAL_RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1_000)];
@@ -507,6 +509,28 @@ where
     }
 }
 
+/// 建立终端通道超时后再完整重试一次。远端瞬时繁忙（CPU/IO 尖峰）或链路抖动时，
+/// TCP 已连上但 TLS / WebSocket 握手迟迟不完成，拨号重试覆盖不到这种情况。
+/// WebSocket 升级完成前网关不会创建任何会话或 PTY，重试没有副作用。
+async fn retry_timeout_once<T, F, Fut>(mut attempt: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    match attempt().await {
+        Err(error) if error.starts_with(TIMEOUT_TAG) => {
+            qingcode_server::diagnostics::record(
+                "direct.stream_timeout_retry",
+                serde_json::json!({}),
+                false,
+                false,
+            );
+            attempt().await
+        }
+        result => result,
+    }
+}
+
 /// 认证、证书身份、协议版本错误重试也不会变好，应立即反馈给用户。
 fn health_failure_is_transient(error: &str) -> bool {
     !["[direct:auth]", "[direct:identity]", "[direct:version]"]
@@ -603,7 +627,7 @@ async fn tls(
 }
 
 fn timeout_error() -> String {
-    "[direct:timeout] Server 连接超时，请检查地址、端口、防火墙和网络连通性".into()
+    format!("{TIMEOUT_TAG} Server 连接超时，请检查地址、端口、防火墙和网络连通性")
 }
 
 fn validate_token(token: &str) -> Result<(), String> {
@@ -725,34 +749,40 @@ pub(super) async fn open_stream_for(
     let endpoint = endpoint(&config.endpoint)?;
     let expected = normalized_fingerprint(&config.certificate_fingerprint)?;
     let cancelled = register_stream(&config.endpoint, connection_id);
-    let connect = tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (stream, _) =
-            retry_dial(|| tls(&endpoint, config.tunnel.as_deref(), Some(expected.clone()))).await?;
-        let mut request = format!("wss://{}/connect", endpoint.authority)
-            .into_client_request()
-            .map_err(|_| "[direct:protocol] Server WebSocket 地址无效".to_string())?;
-        request.headers_mut().insert(
-            http::header::AUTHORIZATION,
-            http::HeaderValue::from_str(&format!("Bearer {}", config.token))
-                .map_err(|_| "[direct:auth] Server 连接凭据无效".to_string())?,
-        );
-        let websocket_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-            .max_message_size(Some(qingcode_server::proto::MAX_FRAME_BYTES + 4))
-            .max_frame_size(Some(qingcode_server::proto::MAX_FRAME_BYTES + 4));
-        tokio_tungstenite::client_async_with_config(request, stream, Some(websocket_config))
-            .await
-            .map(|(socket, _)| socket)
-            .map_err(|error| match error {
-                tokio_tungstenite::tungstenite::Error::Http(response)
-                    if matches!(response.status().as_u16(), 401 | 403) =>
-                {
-                    "[direct:auth] Server 连接凭据错误或已失效".to_string()
-                }
-                _ => "[direct:protocol] Server WebSocket 握手失败".to_string(),
-            })
-    });
+    let connect_once = || {
+        tokio::time::timeout(CONNECT_TIMEOUT, async {
+            let (stream, _) =
+                retry_dial(|| tls(&endpoint, config.tunnel.as_deref(), Some(expected.clone())))
+                    .await?;
+            let mut request = format!("wss://{}/connect", endpoint.authority)
+                .into_client_request()
+                .map_err(|_| "[direct:protocol] Server WebSocket 地址无效".to_string())?;
+            request.headers_mut().insert(
+                http::header::AUTHORIZATION,
+                http::HeaderValue::from_str(&format!("Bearer {}", config.token))
+                    .map_err(|_| "[direct:auth] Server 连接凭据无效".to_string())?,
+            );
+            let websocket_config =
+                tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+                    .max_message_size(Some(qingcode_server::proto::MAX_FRAME_BYTES + 4))
+                    .max_frame_size(Some(qingcode_server::proto::MAX_FRAME_BYTES + 4));
+            tokio_tungstenite::client_async_with_config(request, stream, Some(websocket_config))
+                .await
+                .map(|(socket, _)| socket)
+                .map_err(|error| match error {
+                    tokio_tungstenite::tungstenite::Error::Http(response)
+                        if matches!(response.status().as_u16(), 401 | 403) =>
+                    {
+                        "[direct:auth] Server 连接凭据错误或已失效".to_string()
+                    }
+                    _ => "[direct:protocol] Server WebSocket 握手失败".to_string(),
+                })
+        })
+    };
+    let connect =
+        retry_timeout_once(|| async { connect_once().await.map_err(|_| timeout_error())? });
     let socket = tokio::select! {
-        result = connect => result.map_err(|_| timeout_error())??,
+        result = connect => result?,
         _ = cancelled.notified() => return Err("[direct:unreachable] Server 连接已由当前连接配置关闭".into()),
     };
     let (client, network) = tokio::io::duplex(256 * 1024);
@@ -1302,6 +1332,48 @@ pub(super) mod tests {
         assert!(message.starts_with(DIAL_FAILED_PREFIX));
         assert!(message.contains("192.0.2.1:48763（系统错误 10061）"));
         assert!(!dial_failure_message(&target, None).contains("系统错误"));
+    }
+
+    #[tokio::test]
+    async fn stream_open_retries_one_timeout_then_succeeds() {
+        let mut attempts = 0;
+        let result = retry_timeout_once(|| {
+            attempts += 1;
+            let current = attempts;
+            async move {
+                if current == 1 {
+                    Err(timeout_error())
+                } else {
+                    Ok(current)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok(2));
+    }
+
+    #[tokio::test]
+    async fn stream_open_does_not_retry_non_timeout_failures() {
+        let mut attempts = 0;
+        let result: Result<(), String> = retry_timeout_once(|| {
+            attempts += 1;
+            async { Err("[direct:auth] Server 连接凭据错误或已失效".to_string()) }
+        })
+        .await;
+        assert!(result.unwrap_err().starts_with("[direct:auth]"));
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn stream_open_reports_the_second_timeout() {
+        let mut attempts = 0;
+        let result: Result<(), String> = retry_timeout_once(|| {
+            attempts += 1;
+            async { Err(timeout_error()) }
+        })
+        .await;
+        assert!(result.unwrap_err().starts_with(TIMEOUT_TAG));
+        assert_eq!(attempts, 2);
     }
 
     #[tokio::test]

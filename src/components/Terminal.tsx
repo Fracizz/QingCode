@@ -36,7 +36,8 @@ import {
   getResolvedTerminalFont,
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
-import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
+import { terminalTheme } from '@/lib/terminal/terminalThemes'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
@@ -72,7 +73,6 @@ import {
 } from '@/lib/terminal/terminalLinkActions'
 import { getTerminalShiftEnterNewline } from '@/lib/terminal/terminalShiftEnterSettings'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
-import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import {
   restoredExitRecovery,
   shouldKeepShellAfterExit,
@@ -91,6 +91,7 @@ import {
   isValidTerminalGridSize,
   shouldRevealTerminalAfterRedraw,
   shouldSendPtyResizeNow,
+  TERMINAL_RESIZE_FOLLOW_BOTTOM_MS,
   terminalGridSizeChanged,
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
@@ -160,101 +161,6 @@ function writeFinishedTaskHint(term: XTerm) {
   )
 }
 
-// Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
-const DARK_THEME = {
-  background: '#181818',
-  foreground: '#d4d4d4',
-  cursor: '#aeafad',
-  cursorAccent: '#181818',
-  selectionBackground: '#264f78',
-  scrollbarSliderBackground: 'rgba(212, 212, 212, 0.28)',
-  scrollbarSliderHoverBackground: 'rgba(212, 212, 212, 0.45)',
-  scrollbarSliderActiveBackground: 'rgba(212, 212, 212, 0.6)',
-  black: '#000000',
-  red: '#f48771',
-  green: '#89d185',
-  yellow: '#e2c08d',
-  blue: '#75aaf0',
-  magenta: '#c678dd',
-  cyan: '#56b6c2',
-  white: '#d4d4d4',
-  brightBlack: '#6b6b6b',
-  brightRed: '#f48771',
-  brightGreen: '#89d185',
-  brightYellow: '#e2c08d',
-  brightBlue: '#75aaf0',
-  brightMagenta: '#c678dd',
-  brightCyan: '#56b6c2',
-  brightWhite: '#ffffff',
-}
-
-const LIGHT_THEME = {
-  background: '#ffffff',
-  foreground: '#1f1f1f',
-  cursor: '#1a1a1a',
-  cursorAccent: '#ffffff',
-  selectionBackground: '#b9d6f5',
-  scrollbarSliderBackground: 'rgba(31, 31, 31, 0.25)',
-  scrollbarSliderHoverBackground: 'rgba(31, 31, 31, 0.42)',
-  scrollbarSliderActiveBackground: 'rgba(31, 31, 31, 0.55)',
-  black: '#000000',
-  red: '#c43b32',
-  green: '#107c10',
-  yellow: '#9a6a00',
-  blue: '#005fb8',
-  magenta: '#9b1b9b',
-  cyan: '#0b7a85',
-  white: '#1a1a1a',
-  brightBlack: '#5a5a5a',
-  brightRed: '#a3261e',
-  brightGreen: '#0b6a0b',
-  brightYellow: '#7a5400',
-  brightBlue: '#004488',
-  brightMagenta: '#7a1488',
-  brightCyan: '#055a63',
-  brightWhite: '#000000',
-}
-
-const FOREST_SCROLLBAR = {
-  idle: `${M.foreground}47`,
-  hover: `${M.foreground}73`,
-  active: `${M.foreground}99`,
-}
-
-const FOREST_THEME = {
-  background: M.contrast,
-  foreground: M.foreground,
-  cursor: M.accent,
-  cursorAccent: M.contrast,
-  selectionBackground: M.selectionBg,
-  scrollbarSliderBackground: FOREST_SCROLLBAR.idle,
-  scrollbarSliderHoverBackground: FOREST_SCROLLBAR.hover,
-  scrollbarSliderActiveBackground: FOREST_SCROLLBAR.active,
-  black: M.contrast,
-  red: M.syntax.red,
-  green: M.syntax.green,
-  yellow: M.syntax.yellow,
-  blue: M.syntax.blue,
-  magenta: M.syntax.purple,
-  cyan: M.syntax.cyan,
-  white: M.syntax.white,
-  brightBlack: M.syntax.comments,
-  brightRed: M.syntax.red,
-  brightGreen: M.syntax.green,
-  brightYellow: M.syntax.yellow,
-  brightBlue: M.syntax.blue,
-  brightMagenta: M.syntax.purple,
-  brightCyan: M.syntax.cyan,
-  brightWhite: M.syntax.white,
-}
-
-function terminalTheme() {
-  const resolved = getResolvedTheme()
-  if (resolved === 'olive' || (resolved as string) === 'forest') return FOREST_THEME
-  if (resolved === 'dark') return DARK_THEME
-  return LIGHT_THEME
-}
-
 /** ConPTY heuristics for Windows hosts (portable-pty / OpenCode TUI). */
 function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undefined {
   if (typeof navigator === 'undefined') return undefined
@@ -293,6 +199,8 @@ export default function TerminalView({
   /** 上一次真正写入 PTY 的尺寸时间，用于合并连续的 SIGWINCH。 */
   const ptyResizeSentAtRef = useRef(0)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
+  /** 布局改网格前视口停在底部时，到这个时间点前持续把视口留在底部（见 commitGridSize）。 */
+  const followBottomUntilRef = useRef(0)
   /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
   const redrawPendingRef = useRef(false)
   /**
@@ -598,8 +506,17 @@ export default function TerminalView({
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
     if (screenWriteLockRef.current > 0) return false
+    const { viewportY, baseY } = term.buffer.active
     // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
+    // 列数变化会让历史回流、缓冲区行数骤变，xterm 的滚动同步可能把它当成「用户上滚」
+    // 而停止跟随输出：程序按新宽度重绘的内容落到视口下方，画面像是停在旧宽度
+    // （关闭编辑器后 SSH 终端最明显，切换标签才恢复）。原本在底部就留在底部，
+    // 并在随后的 PTY 重绘窗口内继续跟随；用户主动滚动时取消。
+    if (viewportY >= baseY) {
+      term.scrollToBottom()
+      followBottomUntilRef.current = Date.now() + TERMINAL_RESIZE_FOLLOW_BOTTOM_MS
+    }
     return true
   }, [terminalId])
 
@@ -1046,6 +963,31 @@ export default function TerminalView({
     }
     container.addEventListener('wheel', onZoomWheel, { capture: true, passive: false })
 
+    // 布局改网格后的跟随窗口（见 commitGridSize）：渲染或输出时视口离开底部就拉回。
+    const followBottomAfterResize = () => {
+      if (followBottomUntilRef.current === 0) return
+      if (Date.now() >= followBottomUntilRef.current) {
+        followBottomUntilRef.current = 0
+        return
+      }
+      const { viewportY, baseY } = term.buffer.active
+      if (viewportY < baseY) term.scrollToBottom()
+    }
+    const followBottomRender = term.onRender(followBottomAfterResize)
+    // 滚轮、拖动滚动条、键盘翻页都是用户主动查看历史，不能再被拉回底部；
+    // 普通点击（聚焦、选字）和打字不算。
+    const stopFollowBottom = (event: Event) => {
+      if (event instanceof PointerEvent) {
+        if (!(event.target instanceof Element) || !event.target.closest('.scrollbar')) return
+      } else if (event instanceof KeyboardEvent) {
+        if (!['PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) return
+      }
+      followBottomUntilRef.current = 0
+    }
+    container.addEventListener('wheel', stopFollowBottom, { capture: true, passive: true })
+    container.addEventListener('pointerdown', stopFollowBottom, true)
+    container.addEventListener('keydown', stopFollowBottom, true)
+
     const updateFont = () => {
       // 正在翻看历史时改字号不能跳回底部。
       const { viewportY, baseY } = term.buffer.active
@@ -1161,6 +1103,7 @@ export default function TerminalView({
         term.write(data, () => {
           writeFlow.parsed(size)
           lastOutputParsedAtRef.current = Date.now()
+          followBottomAfterResize()
           if (!isReplay || xtermRef.current !== term) return
           // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
           if (term.buffer.active.type !== 'alternate') return
@@ -1332,6 +1275,11 @@ export default function TerminalView({
       writeFlow.dispose()
       disposeOscHandlers()
       container.removeEventListener('wheel', onZoomWheel, { capture: true })
+      followBottomRender.dispose()
+      followBottomUntilRef.current = 0
+      container.removeEventListener('wheel', stopFollowBottom, { capture: true })
+      container.removeEventListener('pointerdown', stopFollowBottom, true)
+      container.removeEventListener('keydown', stopFollowBottom, true)
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)

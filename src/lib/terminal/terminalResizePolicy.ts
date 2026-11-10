@@ -7,6 +7,11 @@ export const TERMINAL_ALTERNATE_PTY_DELAY_MS = 100
 export const TERMINAL_NORMAL_PTY_DELAY_MS = 500
 /** 两次 SIGWINCH 的最小间隔；窗口内连续变化合并成一次，避免 TUI 逐帧整屏重排。 */
 export const TERMINAL_PTY_RESIZE_LEAD_GAP_MS = 300
+/**
+ * 布局改网格后保持视口跟随底部的时长：覆盖合并后的 PTY 尺寸下发（≤500ms）、
+ * 下发节流（300ms）与远端程序按新尺寸重绘回包（SSH 兜底 1500ms）。
+ */
+export const TERMINAL_RESIZE_FOLLOW_BOTTOM_MS = 2500
 
 export function isValidTerminalGridSize(size: TerminalGridSize | undefined): size is TerminalGridSize {
   return Boolean(

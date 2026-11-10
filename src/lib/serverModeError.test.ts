@@ -81,6 +81,12 @@ describe('serverModeErrorAction', () => {
       expect(invoke).not.toHaveBeenCalled()
     })
 
+    it('offers retry rather than a terminal-ending restart for connection timeouts', () => {
+      const timeout = `新建终端失败: ${SERVER_MODE_ERROR_PREFIX}[direct:timeout] Server 连接超时，请检查地址、端口、防火墙和网络连通性`
+      expect(serverModeErrorAction(timeout, ready.rootUri, t, vi.fn())?.label).toBe('重试')
+      expect(serverModeErrorAction(timeout, ready.rootUri, t)?.label).toBe('重启远端服务')
+    })
+
     it('keeps restart for tunnel failures, which need the gateway started', () => {
       const tunnelFailure = `${SERVER_MODE_ERROR_PREFIX}[direct:unreachable] 远端 127.0.0.1:48763 没有运行中的 Server 网关，请重新连接以启动服务`
       expect(serverModeErrorAction(tunnelFailure, ready.rootUri, t, vi.fn())?.label).toBe('重启远端服务')

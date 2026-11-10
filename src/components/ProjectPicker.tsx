@@ -61,6 +61,7 @@ import {
 } from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import { isWslProject } from '../lib/wslWorkspace'
 import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
 import type { ProjectLabel } from '../lib/projectLabels'
@@ -676,93 +677,108 @@ export default function ProjectPicker() {
                       wrapperClassName="min-w-0 flex-1"
                     >
                       <span className="flex min-w-0 flex-col gap-0.5">
-                        <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                        {/* self-start：按内容收缩宽度，来源标签紧跟名字而不是被推到行中间 */}
+                        <span className="flex min-w-0 max-w-full items-center gap-1.5 self-start">
+                          <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                          {/* SSH 已由云朵图标区分，只保留 WSL 徽标 */}
+                          {isWslProject(project) && <ProjectKindBadge project={project} />}
+                        </span>
                         <span className="block truncate text-ui-sm text-fg-dim">
                           {sshProjectDisplayPath(project, null, sshConnections)}
                         </span>
                       </span>
                     </Tooltip>
-                    <ProjectKindBadge project={project} />
-                    <ProjectIndicatorMarks
-                      project={project}
-                      indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
-                      isCurrent={isCurrent}
-                    />
-                    <Tooltip label={t('重命名项目')} side="right" wrapperClassName="flex-shrink-0">
-                      <button
-                        type="button"
-                        aria-label={t('重命名项目')}
-                        className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
-                        onClick={event => {
-                          event.stopPropagation()
-                          handleRename(project)
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    </Tooltip>
-                    {unavailable ? (
-                      <Tooltip
-                        label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
-                        side="right"
-                        wrapperClassName="flex-shrink-0"
-                      >
-                        <button
-                          type="button"
-                          aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
-                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
-                          onClick={event => {
-                            event.stopPropagation()
-                            if (project.kind === 'ssh') {
-                              requestSshReconnect(project)
-                            } else {
-                              handleRelocate(project.id)
-                            }
-                          }}
-                        >
-                          <LocateFixed size={13} />
-                        </button>
-                      </Tooltip>
-                    ) : project.kind === 'ssh' ? null : (
-                      <Tooltip
-                        label={t('在文件管理器中打开')}
-                        side="right"
-                        wrapperClassName="flex-shrink-0"
-                      >
-                        <button
-                          type="button"
-                          aria-label={t('在文件管理器中打开')}
-                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
-                          onClick={event => {
-                            event.stopPropagation()
-                            void handleOpenInExplorer(project.path)
-                          }}
-                        >
-                          <ExternalLink size={13} />
-                        </button>
-                      </Tooltip>
-                    )}
-                    <Tooltip
-                      label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                      side="right"
-                      wrapperClassName="flex-shrink-0"
+                    {/* 平时只显示状态标记；悬停 / 聚焦时换成操作按钮，按钮不常驻占位，路径可用满行宽 */}
+                    <span className="flex flex-shrink-0 items-center empty:hidden group-hover:hidden group-focus-within:hidden">
+                      <ProjectIndicatorMarks
+                        project={project}
+                        indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+                        isCurrent={isCurrent}
+                      />
+                    </span>
+                    <span
+                      className={`flex-shrink-0 items-center gap-0.5 ${
+                        unavailable ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'
+                      }`}
                     >
-                      <button
-                        type="button"
-                        aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                        className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded hover:bg-bg-active ${
-                          unavailable
-                            ? 'text-fg-dim hover:text-danger'
-                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg'
-                        }`}
-                        onClick={event => {
-                          event.stopPropagation()
-                          handleRemove(project)
-                        }}
+                      <Tooltip label={t('重命名项目')} side="right" wrapperClassName="flex-shrink-0">
+                        <button
+                          type="button"
+                          aria-label={t('重命名项目')}
+                          className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-active ${
+                            unavailable
+                              ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                              : ''
+                          }`}
+                          onClick={event => {
+                            event.stopPropagation()
+                            handleRename(project)
+                          }}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </Tooltip>
+                      {unavailable ? (
+                        <Tooltip
+                          label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                          side="right"
+                          wrapperClassName="flex-shrink-0"
+                        >
+                          <button
+                            type="button"
+                            aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                            className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
+                            onClick={event => {
+                              event.stopPropagation()
+                              if (project.kind === 'ssh') {
+                                requestSshReconnect(project)
+                              } else {
+                                handleRelocate(project.id)
+                              }
+                            }}
+                          >
+                            <LocateFixed size={13} />
+                          </button>
+                        </Tooltip>
+                      ) : project.kind === 'ssh' ? null : (
+                        <Tooltip
+                          label={t('在文件管理器中打开')}
+                          side="right"
+                          wrapperClassName="flex-shrink-0"
+                        >
+                          <button
+                            type="button"
+                            aria-label={t('在文件管理器中打开')}
+                            className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-active"
+                            onClick={event => {
+                              event.stopPropagation()
+                              void handleOpenInExplorer(project.path)
+                            }}
+                          >
+                            <ExternalLink size={13} />
+                          </button>
+                        </Tooltip>
+                      )}
+                      <Tooltip
+                        label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
+                        side="right"
+                        wrapperClassName="flex-shrink-0"
                       >
-                        {unavailable ? <X size={13} /> : <EyeOff size={13} />}
-                      </button>
-                    </Tooltip>
+                        <button
+                          type="button"
+                          aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
+                          className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded hover:bg-bg-active text-fg-dim ${
+                            unavailable ? 'hover:text-danger' : 'hover:text-fg'
+                          }`}
+                          onClick={event => {
+                            event.stopPropagation()
+                            handleRemove(project)
+                          }}
+                        >
+                          {unavailable ? <X size={13} /> : <EyeOff size={13} />}
+                        </button>
+                      </Tooltip>
+                    </span>
                   </div>
                 )
               })}
@@ -772,7 +788,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageProjects}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <ListChecks size={14} />
@@ -783,7 +799,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageWorkspaces}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Layers size={14} />
