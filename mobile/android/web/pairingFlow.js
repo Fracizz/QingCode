@@ -1,5 +1,5 @@
 // 配对与连接管理弹窗：扫码 / 粘贴配对链接、首次配对与指纹核对、连接详情（改名、改端口、重新配对、移除）。
-import { DEFAULT_PORT, parsePairingLink, validIpv4, validPort } from './protocol.js';
+import { DEFAULT_PORT, findPortMovedProfile, parsePairingLink, validIpv4, validPort } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { get, message, confirmAction } from './dom.js';
 import { t } from './i18n.js';
@@ -8,9 +8,9 @@ import { t } from './i18n.js';
  * profiles()：已保存的连接；onPaired(paired) 保存并切换到新连接；
  * moveProfile(from, to) 迁移端口变化后的本地记录；putProfile(item) 写回连接；
  * afterHostSaved(updated, portChanged) 刷新界面；forgetProfile(item) 清理被移除的连接；
- * renderLatency() 在详情打开时刷新延迟说明。
+ * renderLatency() 在详情打开时刷新延迟说明；onMoved(moved) 在同一台电脑换端口后沿用原配对切到新地址。
  */
-export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putProfile, afterHostSaved, forgetProfile, renderLatency }) {
+export function createPairingFlow({ rpc, profiles, onPaired, onMoved, moveProfile, putProfile, afterHostSaved, forgetProfile, renderLatency }) {
   // Fingerprint from a scanned or pasted pairing link; skips manual comparison when it matches.
   let expectedFingerprint = null;
   let editing = null;
@@ -36,9 +36,40 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
     if (target) get('pair-code').focus();
   }
 
-  function openPairTarget(target) {
+  /**
+   * 同一台电脑（同 IP、同证书）换了端口且旧端口已不通：把旧连接迁到新端口，沿用原配对令牌，
+   * 不再新建一条连接。旧端口仍由同一证书监听时，说明同机还开着另一个实例，各自保留。
+   */
+  async function relocate(host, port, fingerprint) {
+    const old = findPortMovedProfile(profiles(), host, port, fingerprint);
+    if (!old) return null;
+    const alive = await rpc('probe', { host, port: old.port }).then(value => value === fingerprint, () => false);
+    if (alive) return null;
+    const moved = await rpc('readdress', { profile: old.id, port });
+    moveProfile(old, moved);
+    putProfile(moved);
+    return moved;
+  }
+
+  async function openPairTarget(target) {
     const saved = profiles().find(item => item.id === target.host + ':' + target.port);
+    let failure = '';
+    if (!saved) {
+      try {
+        const moved = await relocate(target.host, target.port, target.fingerprint);
+        if (moved) {
+          // 粘贴入口位于配对弹窗内，迁移完成后无需再输入密码。
+          if (get('pair-dialog').open) get('pair-dialog').close();
+          await onMoved(moved);
+          return;
+        }
+      } catch (error) {
+        // 迁移失败时退回普通配对，原连接保持不变。
+        failure = error.message;
+      }
+    }
     openPair(saved && saved.fingerprint === target.fingerprint ? saved : null, target);
+    if (failure) message('pair-error', failure);
   }
 
   function openHost(item) {
@@ -66,7 +97,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
   get('pair-paste').addEventListener('click', async () => {
     message('pair-error', '');
     try {
-      openPairTarget(parsePairingLink(await rpc('clipboard')));
+      await openPairTarget(parsePairingLink(await rpc('clipboard')));
     } catch (error) {
       message('pair-error', error.message === t('这不是 QingCode 配对链接。') ? t('剪贴板中没有 QingCode 配对链接。') : error.message);
     }
@@ -117,7 +148,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
             const target = parsePairingLink(text);
             dialog.close();
             stopScan();
-            openPairTarget(target);
+            void openPairTarget(target);
             return;
           }
         }
@@ -162,6 +193,9 @@ export function createPairingFlow({ rpc, profiles, onPaired, moveProfile, putPro
       } else if (saved && saved.fingerprint !== fingerprint) {
         throw new Error(t('电脑证书已变化，已停止配对。请重新扫描电脑端二维码或粘贴配对链接。'));
       }
+      // 手动填写新端口时同样先迁移旧连接，配对成功后保留它的会话与项目记录。
+      const moved = saved ? null : await relocate(host, port, fingerprint);
+      if (moved) afterHostSaved(moved, false);
       const paired = await rpc('pair', { name, host, port, code, fingerprint });
       field.value = '';
       get('pair-dialog').close();
