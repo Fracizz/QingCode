@@ -647,14 +647,7 @@ function seedSourceControlStatus(projectPath: string): GitStatus | null {
   return useGitStatusStore.getState().peekPanelStatus(projectPath)
 }
 
-interface SourceControlPanelProps {
-  /**
-   * 侧栏紧凑模式（终端工作台）：只渲染列表，选中的工作区 / 提交差异以标签页在右侧编辑器列打开。
-   */
-  compact?: boolean
-}
-
-export default function SourceControlPanel({ compact = false }: SourceControlPanelProps = {}) {
+export default function SourceControlPanel() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const projectPath = currentProject?.path ?? null
@@ -1313,19 +1306,6 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
         const pair = await getGitCommitFileContents(project.path, rev, filePath)
         if (!isCurrentRequest()) return
         const name = filePath.split(/[/\\]/).pop() ?? filePath
-        if (compact) {
-          // 紧凑模式：提交差异作为只读标签在右侧编辑器列打开。
-          useEditorStore.getState().openStaticDiff({
-            path: absoluteFilePath(project.path, filePath),
-            name: `${name} (${rev.slice(0, 7)})`,
-            original: pair.original,
-            modified: pair.modified,
-            source: `commit:${rev}`,
-            leftTitle: t('父提交'),
-            rightTitle: t('该提交'),
-          })
-          return
-        }
         setCommitFileDiff({
           path: absoluteFilePath(project.path, filePath),
           name,
@@ -1345,7 +1325,7 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
         }
       }
     },
-    [compact, t]
+    [t]
   )
 
   useEffect(() => {
@@ -1958,11 +1938,10 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
         revealInSidebar(abs)
         return
       }
-      // 紧凑模式下 Git 留在侧栏，差异在右侧编辑器列打开；整页模式回到资源管理器。
-      if (!compact) setView('explorer')
+      setView('explorer')
       void useEditorStore.getState().openDiff(currentProject.path, rel, abs)
     },
-    [compact, currentProject, revealInSidebar, setView]
+    [currentProject, revealInSidebar, setView]
   )
 
   const selectChange = useCallback(
@@ -2000,10 +1979,9 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
       setSelectedKeys(new Set([key]))
       selectionAnchorRef.current = { group, index }
       setScmTab('changes')
-      if (compact) void openChangeInEditor(group, change)
-      else void loadInlineDiff(change)
+      void loadInlineDiff(change)
     },
-    [compact, groups.staged, groups.unstaged, loadInlineDiff, openChangeInEditor]
+    [groups.staged, groups.unstaged, loadInlineDiff]
   )
 
   const selectAllInGroup = useCallback(
@@ -2240,8 +2218,21 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
   } else if (status) {
     const branch = status.branch ?? t('游离 HEAD')
     const writeDisabled = Boolean(operation) || loading
-    const changesList = (
-      <>
+    const changesPane = (
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <ScmResizableColumn
+          width={scmLeftWidth}
+          minWidth={SCM_LEFT_MIN}
+          maxWidth={SCM_LEFT_MAX}
+          remainingMin={SCM_LEFT_REMAINING_MIN}
+          onWidthChange={onScmLeftWidthChange}
+          tooltip={t('拖动调整列表宽度 · {min}–{max}px · 当前 {current}px', {
+            min: SCM_LEFT_MIN,
+            max: SCM_LEFT_MAX,
+            current: scmLeftWidth,
+          })}
+          className="bg-bg-sidebar"
+        >
           <ChangeGroupSection
             group="unstaged"
             label={t('变更（{count}）', { count: groups.unstaged.length })}
@@ -2328,26 +2319,6 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
             </button>
             {commitError && <p className="text-ui-sm mt-1.5 text-danger">{commitError}</p>}
           </div>
-      </>
-    )
-    const changesPane = compact ? (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg-sidebar">{changesList}</div>
-    ) : (
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <ScmResizableColumn
-          width={scmLeftWidth}
-          minWidth={SCM_LEFT_MIN}
-          maxWidth={SCM_LEFT_MAX}
-          remainingMin={SCM_LEFT_REMAINING_MIN}
-          onWidthChange={onScmLeftWidthChange}
-          tooltip={t('拖动调整列表宽度 · {min}–{max}px · 当前 {current}px', {
-            min: SCM_LEFT_MIN,
-            max: SCM_LEFT_MAX,
-            current: scmLeftWidth,
-          })}
-          className="bg-bg-sidebar"
-        >
-          {changesList}
         </ScmResizableColumn>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
           {inlineDiffLoading ? (
@@ -2389,7 +2360,7 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
     )
 
     const selectedCommit = commits.find(c => c.hash === selectedCommitHash) ?? commits[0] ?? null
-    const showingCommitDiff = !compact && Boolean(commitFileDiff || commitFileDiffLoading)
+    const showingCommitDiff = Boolean(commitFileDiff || commitFileDiffLoading)
 
     const closeCommitDiff = () => {
       selectedCommitFileRef.current = null
@@ -2399,8 +2370,21 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
       commitFileDiffSequenceRef.current += 1
     }
 
-    const historyDetailContent = selectedCommit ? (
-      <>
+    const historyDetailPane = selectedCommit ? (
+      <ScmResizableColumn
+        width={scmFilesWidth}
+        minWidth={SCM_FILES_MIN}
+        maxWidth={SCM_FILES_MAX}
+        remainingMin={SCM_FILES_REMAINING_MIN}
+        edge="start"
+        onWidthChange={onScmFilesWidthChange}
+        tooltip={t('拖动调整详情宽度 · {min}–{max}px · 当前 {current}px', {
+          min: SCM_FILES_MIN,
+          max: SCM_FILES_MAX,
+          current: scmFilesWidth,
+        })}
+        className="bg-bg-sidebar"
+      >
         <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
           <h2 className="text-ui-lg font-semibold leading-snug text-fg">
             {selectedCommit.subject || t('（无提交说明）')}
@@ -2486,37 +2470,11 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
             />
           )}
         </div>
-      </>
-    ) : null
-
-    const historyDetailPane = historyDetailContent ? (
-      compact ? (
-        // 紧凑模式：提交详情在提交列表下方，点击文件在右侧编辑器列打开差异。
-        <div className="flex h-[55%] min-h-0 flex-shrink-0 flex-col overflow-hidden border-t border-border bg-bg-sidebar">
-          {historyDetailContent}
-        </div>
-      ) : (
-        <ScmResizableColumn
-          width={scmFilesWidth}
-          minWidth={SCM_FILES_MIN}
-          maxWidth={SCM_FILES_MAX}
-          remainingMin={SCM_FILES_REMAINING_MIN}
-          edge="start"
-          onWidthChange={onScmFilesWidthChange}
-          tooltip={t('拖动调整详情宽度 · {min}–{max}px · 当前 {current}px', {
-            min: SCM_FILES_MIN,
-            max: SCM_FILES_MAX,
-            current: scmFilesWidth,
-          })}
-          className="bg-bg-sidebar"
-        >
-          {historyDetailContent}
-        </ScmResizableColumn>
-      )
+      </ScmResizableColumn>
     ) : null
 
     const historyPane = (
-      <div className={`flex min-h-0 flex-1 overflow-hidden ${compact ? 'flex-col' : ''}`}>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* ~3/5: commit list by default; clicking a file covers this with the diff. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg">
           {showingCommitDiff ? (
@@ -2620,14 +2578,14 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
             </div>
           )}
         </div>
-        {historyDetailPane ?? (compact ? null : (
+        {historyDetailPane ?? (
           <div className="flex min-h-0 w-[min(40%,520px)] flex-shrink-0 flex-col border-l border-border bg-bg-sidebar">
             <EmptyState
               icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
               title={t('暂无提交记录')}
             />
           </div>
-        ))}
+        )}
       </div>
     )
 
@@ -2702,7 +2660,6 @@ export default function SourceControlPanel({ compact = false }: SourceControlPan
   return (
     <div className="ui-font-scaled flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
       <ScmToolbar
-        compact={compact}
         status={status}
         projectPath={currentProject?.path ?? null}
         remotes={remotes}

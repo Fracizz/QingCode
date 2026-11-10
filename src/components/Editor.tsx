@@ -938,11 +938,7 @@ export default function Editor() {
   if (activeTab.kind === 'diff') {
     return (
       <Suspense fallback={<div className="min-h-0 flex-1 bg-bg" aria-hidden="true" />}>
-        <DiffEditor
-          tab={activeTab}
-          leftTitle={activeTab.diffLeftTitle}
-          rightTitle={activeTab.diffRightTitle}
-        />
+        <DiffEditor tab={activeTab} />
       </Suspense>
     )
   }

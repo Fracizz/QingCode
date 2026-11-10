@@ -20,8 +20,6 @@ import { useI18n } from '../lib/i18n'
 type ScmOperationKind = 'fetch' | 'pull' | 'push' | 'switch'
 
 export type ScmToolbarProps = {
-  /** 侧栏紧凑模式：按钮组换行显示，避免窄侧栏里被横向裁掉。 */
-  compact?: boolean
   status: GitStatus | null
   projectPath: string | null
   remotes: GitRemote[] | null
@@ -79,7 +77,6 @@ function SegmentGroup({
 }
 
 export default function ScmToolbar({
-  compact = false,
   status,
   projectPath,
   remotes,
@@ -138,13 +135,7 @@ export default function ScmToolbar({
     'flex h-full w-5 shrink-0 items-center justify-center border-l border-border/45 text-fg-dim transition-colors hover:bg-bg-hover/80 disabled:opacity-40'
 
   return (
-    <div
-      className={
-        compact
-          ? 'flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1'
-          : 'flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
-      }
-    >
+    <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <Tooltip
         label={status?.branch ?? t('游离 HEAD')}
         side="bottom"

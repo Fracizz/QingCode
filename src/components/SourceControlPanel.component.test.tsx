@@ -247,28 +247,6 @@ describe('SourceControlPanel', () => {
     )
   })
 
-  it('opens the selected change as an editor diff tab in compact sidebar mode', async () => {
-    useUIStore.setState({ panelLayout: 'terminalWorkbench', view: 'sourceControl', sidebarOpen: true })
-    mockGit({
-      is_repository: true,
-      branch: 'test',
-      changes: [{ path: 'src/app.ts', status: ' M' }],
-    })
-    render(<SourceControlPanel compact />)
-
-    fireEvent.click(await screen.findByText('src/app.ts'))
-
-    await waitFor(() => {
-      const diff = useEditorStore.getState().tabs.find(tab => tab.kind === 'diff')
-      expect(diff?.path.replace(/\\/g, '/')).toBe('D:/repo/src/app.ts')
-      expect(diff?.content).toBe('stale-working-tree')
-    })
-    // 紧凑模式不渲染内联差异列，也不切走侧栏里的 Git 视图。
-    expect(screen.queryByTestId('scm-inline-diff')).toBeNull()
-    expect(screen.queryByText('选择一个更改查看差异')).toBeNull()
-    expect(useUIStore.getState().view).toBe('sourceControl')
-  })
-
   it('keeps the commit message and offers a retry when push fails', async () => {
     mockGit(
       {

@@ -238,19 +238,6 @@ function snapshotEditorLocation(): EditorLocation | null {
   return { path: tab.path, line: 1, column: 1 }
 }
 
-export interface StaticDiffInput {
-  /** 绝对路径，用于标签图标、语言识别与去重。 */
-  path: string
-  /** 标签显示名。 */
-  name: string
-  original: string
-  modified: string
-  /** 来源标识（如 `commit:<hash>`），与路径一起决定是否复用标签。 */
-  source: string
-  leftTitle?: string
-  rightTitle?: string
-}
-
 interface EditorState {
   tabs: EditorTab[]
   activeTabId: string | null
@@ -274,8 +261,6 @@ interface EditorState {
   previewAnywayFromError: (id: string) => Promise<void>
   /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
   openDiff: (projectPath: string, relativePath: string, absolutePath: string) => Promise<void>
-  /** 以只读快照打开差异标签（如某次提交的文件差异）；同来源同路径复用已有标签。 */
-  openStaticDiff: (input: StaticDiffInput) => void
   clearPendingReveal: () => void
   setCursor: (cursor: { line: number; col: number } | null) => void
   /** Record current caret before an intentional jump (Go to Line / symbol / etc.). */
@@ -740,9 +725,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   openDiff: async (projectPath: string, relativePath: string, absolutePath: string) => {
     useUIStore.getState().expandSideEditor()
-    const existing = get().tabs.find(
-      t => t.kind === 'diff' && !t.diffSource && t.path === absolutePath
-    )
+    const existing = get().tabs.find(t => t.kind === 'diff' && t.path === absolutePath)
     if (existing) {
       const prev = get().activeTabId
       if (prev && prev !== existing.id) flushLiveEditorContent(prev)
@@ -805,42 +788,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  openStaticDiff: ({ path, name, original, modified, source, leftTitle, rightTitle }) => {
-    useUIStore.getState().expandSideEditor()
-    const existing = get().tabs.find(
-      t => t.kind === 'diff' && t.diffSource === source && t.path === path
-    )
-    const prev = get().activeTabId
-    if (existing) {
-      if (prev && prev !== existing.id) flushLiveEditorContent(prev)
-      set({ activeTabId: existing.id, cursor: null, pendingReveal: null })
-      return
-    }
-    if (!ensureOpenTabCapacity()) return
-    if (prev) flushLiveEditorContent(prev)
-    const id = crypto.randomUUID()
-    const tab: EditorTab = {
-      id,
-      path,
-      name,
-      dirty: false,
-      kind: 'diff',
-      content: modified,
-      originalContent: original,
-      language: guessLanguage(path),
-      encoding: 'utf8',
-      diffSource: source,
-      diffLeftTitle: leftTitle,
-      diffRightTitle: rightTitle,
-    }
-    set(s => ({
-      tabs: [...s.tabs, tab],
-      activeTabId: id,
-      cursor: null,
-      pendingReveal: null,
-      tabMru: buildTabMru([...s.tabs, tab], id),
-    }))
-  },
 
   setTabContent: (id: string, content: string) => {
     // Session persistence flushes cached/live buffers. An unchanged flush must
