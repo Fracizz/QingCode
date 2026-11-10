@@ -1,5 +1,6 @@
 import { isSshResource } from '@/lib/tauri'
 import { terminalShellLabelKey } from '@/lib/terminal/terminalShell'
+import { formatFullCreatedTime } from '@/lib/terminal/terminalOverview'
 import type { InfoTipDetails } from '@/lib/infoTip'
 import type { TerminalTab } from '../../types'
 
@@ -68,6 +69,8 @@ export function terminalHoverDetails(
 ): InfoTipDetails {
   const command = t.launchCommand.trim()
   const reason = t.persistentFallbackReason || t.disconnectReason
+  // 只显示真实记录过的活动；旧快照没有记录时不拿创建时间冒充。
+  const lastActive = formatFullCreatedTime(t.lastActiveAt)
   return {
     title: t.name,
     status: terminalHoverStatus(t, translate),
@@ -79,6 +82,7 @@ export function terminalHoverDetails(
         ? [{ label: translate('Shell'), value: translate(terminalShellLabelKey(t.resolvedShell)) }]
         : []),
       ...(fullCreatedTime ? [{ label: translate('创建时间'), value: fullCreatedTime }] : []),
+      ...(lastActive ? [{ label: translate('最后活动'), value: lastActive }] : []),
       ...(isSshResource(t.cwd) && t.status !== 'starting'
         ? [
             {

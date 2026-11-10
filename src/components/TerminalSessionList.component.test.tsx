@@ -53,6 +53,7 @@ const busyTerminals = vi.hoisted(() => new Set<string>())
 vi.mock('@/lib/terminal/terminalProgramActivity', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/terminal/terminalProgramActivity')>()),
   isTerminalProgramBusy: (id: string) => busyTerminals.has(id),
+  getTerminalProgramBusySnapshot: (id: string) => busyTerminals.has(id),
 }))
 
 vi.mock('../lib/copyFileActions', async importOriginal => ({
@@ -199,10 +200,17 @@ describe('TerminalSessionList', () => {
     expect(header).toHaveClass('bg-brand/10')
   })
 
-  it('keeps project names at full contrast and only dims the source', () => {
+  it('keeps the folder icon color the same for the current project', () => {
     render(<TerminalSessionList />)
-    expect(within(group('p2')).getByText('api')).toHaveClass('text-fg', 'font-normal')
-    expect(within(group('p1')).getByText('本机')).toHaveClass('text-fg-dim')
+    const currentIcon = group('p1').querySelector('[data-terminal-group-current="true"]')
+    expect(currentIcon).toHaveClass('text-term-list-project')
+    expect(currentIcon).not.toHaveClass('text-brand')
+  })
+
+  it('keeps project names one step below terminal names and brightens them on hover', () => {
+    render(<TerminalSessionList />)
+    expect(within(group('p2')).getByText('api')).toHaveClass('text-term-list-project', 'group-hover/project:text-term-list-fg', 'font-normal')
+    expect(within(group('p1')).getByText('本机')).toHaveClass('text-term-list-meta')
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {
@@ -401,6 +409,45 @@ describe('TerminalSessionList', () => {
     expect(row('today').querySelector('[data-tooltip*="09:05"]')).not.toBeNull()
   })
 
+  it('shows the last active age at the row end and swaps it for close on hover', () => {
+    // 时钟快照最多慢 15 秒，时间点避开整天边界。
+    const DAY = 24 * 60 * 60 * 1000
+    const HOUR = 60 * 60 * 1000
+    mocks.state.terminals = [
+      terminal({ id: 'old', name: 'waiting', projectId: 'p2', status: 'exited', awaitingRestoreSpawn: true, lastActiveAt: Date.now() - 4 * DAY - HOUR }),
+      terminal({ id: 'legacy', projectId: 'p2', createdAt: Date.now() - 13 * DAY - HOUR }),
+    ]
+    render(<TerminalSessionList />)
+    const time = row('old').querySelector('[data-terminal-row-time="old"]')
+    expect(time).toHaveTextContent('4天')
+    expect(time).toHaveClass('group-hover:invisible', 'group-has-[[data-terminal-close]:focus-visible]:invisible')
+    expect(time).toHaveAttribute('aria-hidden', 'true')
+    // 旧快照没有活动记录时退回创建时间，悬停卡片则不冒充「最后活动」。
+    expect(row('legacy').querySelector('[data-terminal-row-time="legacy"]')).toHaveTextContent('13天')
+    expect(row('legacy').querySelector('[data-tooltip*="最后活动"]')).toBeNull()
+    expect(within(row('old')).getByRole('button', { name: '关闭终端' })).toBeInTheDocument()
+  })
+
+  it('hides the row time while the program works or the row shows a status word', () => {
+    busyTerminals.add('busy')
+    mocks.state.terminals = [
+      terminal({ id: 'busy', projectId: 'p2', lastActiveAt: Date.now() - 60_000 }),
+      terminal({ id: 'ended', projectId: 'p2', status: 'exited', exitCode: 1, lastActiveAt: Date.now() - 60_000 }),
+    ]
+    render(<TerminalSessionList />)
+    expect(row('busy').querySelector('[data-terminal-row-time]')).toBeNull()
+    expect(row('ended').querySelector('[data-terminal-row-time]')).toBeNull()
+    expect(row('ended').querySelector('[data-terminal-row-status="ended"]')).toHaveTextContent('已退出')
+    expect(within(row('ended')).getByText('claude')).toHaveClass('text-term-list-meta')
+  })
+
+  it('brightens the current and hovered rows above the softer session tier', () => {
+    mocks.state.terminals = [terminal({ id: 't1' }), terminal({ id: 't2', name: 'other' })]
+    render(<TerminalSessionList />)
+    expect(row('t1')).toHaveClass('bg-bg-active', 'text-term-list-active')
+    expect(row('t2')).toHaveClass('text-term-list-fg', 'hover:text-term-list-active')
+  })
+
   it('keeps abnormal status text next to the close slot', () => {
     mocks.state.terminals = [terminal({ id: 'other', projectId: 'p2', status: 'exited', exitCode: 1 })]
     render(<TerminalSessionList />)
@@ -414,9 +461,8 @@ describe('TerminalSessionList', () => {
     render(<TerminalSessionList />)
     expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
     expect(row('other').querySelector('[data-terminal-awaiting-restore="other"]')).not.toBeNull()
-    expect(row('other')).toHaveClass('text-fg')
-    expect(within(row('other')).getByText('waiting')).not.toHaveClass('text-fg-dim')
-    expect(within(row('other')).getByText('waiting')).not.toHaveClass('opacity-60')
+    expect(row('other')).toHaveClass('text-term-list-fg')
+    expect(within(row('other')).getByText('waiting')).not.toHaveClass('text-term-list-meta')
     expect(within(row('other')).queryByText('待恢复')).toBeNull()
     expect(within(row('other')).queryByText('已退出')).toBeNull()
     expect(within(row('other')).queryByRole('button', { name: /重启/ })).toBeNull()

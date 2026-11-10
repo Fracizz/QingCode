@@ -143,6 +143,29 @@ describe('parseWorkspaceSession', () => {
     expect(parsed!.projects.p1.terminals[1].createdAt).toBeUndefined()
   })
 
+  it('round-trips the last active time and drops invalid values', () => {
+    const base = { id: 't', name: 'shell', projectId: 'p1', cwd: 'D:/app', launchCommand: '' }
+    expect(serializeTerminalMeta({ ...base, lastActiveAt: 4567 }).lastActiveAt).toBe(4567)
+    expect(serializeTerminalMeta(base).lastActiveAt).toBeUndefined()
+    const parsed = parseWorkspaceSession({
+      version: 1,
+      updatedAt: 1,
+      projects: {
+        p1: {
+          tabs: [],
+          activeTabId: null,
+          terminals: [
+            { ...base, id: 'active', lastActiveAt: 4567 },
+            { ...base, id: 'bad', lastActiveAt: -3 },
+          ],
+          activeTerminalId: null,
+        },
+      },
+    })
+    expect(parsed!.projects.p1.terminals[0].lastActiveAt).toBe(4567)
+    expect(parsed!.projects.p1.terminals[1].lastActiveAt).toBeUndefined()
+  })
+
   it('persists the creation time instead of the latest process start', () => {
     const base = { id: 't', name: 'shell', projectId: 'p1', cwd: 'D:/app', launchCommand: '' }
     expect(serializeTerminalMeta({ ...base, createdAt: 100, startedAt: 900 }).createdAt).toBe(100)

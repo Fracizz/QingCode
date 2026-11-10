@@ -60,6 +60,7 @@ export function terminalFromPersisted(
     ptyId: meta.ptyId,
     connectionId: meta.connectionId,
     createdAt: meta.createdAt,
+    lastActiveAt: meta.lastActiveAt,
     status: 'exited',
     exitCode: meta.endedAt ? meta.exitCode ?? null : null,
     endedAt: meta.endedAt,

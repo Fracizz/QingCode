@@ -61,6 +61,27 @@ describe('theme contrast', () => {
       }
     })
 
+    it(`${name} keeps the terminal list text tiers readable and ordered`, () => {
+      const block = themeBlock(selector)
+      const tiers = ['term-list-active', 'term-list-fg', 'term-list-project', 'term-list-meta']
+      // 行可能处于悬停或选中状态，每一级都要在这三种底色上可读。
+      for (const foreground of tiers) {
+        for (const background of ['bg-sidebar', 'bg-hover', 'bg-active']) {
+          expect(
+            contrast(themeColor(block, foreground), themeColor(block, background)),
+            `${foreground} on ${background}`,
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+      // 层级从强到弱：与侧栏底色的对比度依次不升。
+      const sidebar = themeColor(block, 'bg-sidebar')
+      const ratios = tiers.map(token => contrast(themeColor(block, token), sidebar))
+      for (let index = 1; index < ratios.length; index += 1) {
+        expect(ratios[index], `${tiers[index]} should not outrank ${tiers[index - 1]}`)
+          .toBeLessThanOrEqual(ratios[index - 1])
+      }
+    })
+
     it(`${name} keeps dialog labels and helper text readable across dialog surfaces`, () => {
       const block = themeBlock(selector)
       for (const foreground of ['fg', 'dialog-label', 'fg-muted', 'fg-dim']) {

@@ -28,6 +28,11 @@
   --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
   --color-tree-fg: #d4d4d8;
+  /* 终端列表文字四级：当前/悬停 > 会话名 > 项目名 > 来源·时间·已退出；辅助级在选中底上也 ≥ 4.5:1。 */
+  --color-term-list-active: #e4e4e7;
+  --color-term-list-fg: #bcbcc1;
+  --color-term-list-project: #a7a7af;
+  --color-term-list-meta: #98989f;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
   --color-brand: #4ecdb5;
@@ -116,6 +121,10 @@ html[data-theme="light"] {
   --color-fg-muted: #4b5563;
   --color-fg-dim: #626872;
   --color-tree-fg: #1f2937;
+  --color-term-list-active: #111827;
+  --color-term-list-fg: #374151;
+  --color-term-list-project: #4b5563;
+  --color-term-list-meta: #626872;
 
   --color-brand: #0d9488;
   --color-accent: #2563eb;
@@ -193,6 +202,10 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-fg-muted: #a6bba8;
   --color-fg-dim: #9eb2a4;
   --color-tree-fg: #cdd9d1;
+  --color-term-list-active: #dce5df;
+  --color-term-list-fg: #bccbc0;
+  --color-term-list-project: #adbfb2;
+  --color-term-list-meta: #9eb2a4;
 
   /* Shell accent is elegant warm amber gold */
   --color-brand: #4ecdb5;

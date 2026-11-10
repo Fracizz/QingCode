@@ -51,6 +51,8 @@ export type PersistedTerminalMeta = {
   connectionId?: string
   /** 终端标签首次创建的时间（毫秒）；旧快照没有该字段。 */
   createdAt?: number
+  /** 最后活动时间（毫秒）；旧快照没有该字段。 */
+  lastActiveAt?: number
   endedAt?: number
   exitCode?: number | null
 }
@@ -105,6 +107,7 @@ export type TerminalSnapshotInput = {
   connectionId?: string
   createdAt?: number
   startedAt?: number
+  lastActiveAt?: number
   endedAt?: number
   exitCode?: number | null
 }
@@ -199,6 +202,9 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
   if (typeof value.persistent === 'boolean') terminal.persistent = value.persistent
   if (typeof value.createdAt === 'number' && Number.isFinite(value.createdAt) && value.createdAt > 0) {
     terminal.createdAt = value.createdAt
+  }
+  if (typeof value.lastActiveAt === 'number' && Number.isFinite(value.lastActiveAt) && value.lastActiveAt > 0) {
+    terminal.lastActiveAt = value.lastActiveAt
   }
   if (typeof value.endedAt === 'number' && Number.isFinite(value.endedAt) && value.endedAt > 0) {
     terminal.endedAt = value.endedAt
@@ -354,6 +360,7 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   // 升级前已打开的终端没有 createdAt，用本次启动时间补上，之后就固定不变。
   const createdAt = terminal.createdAt ?? terminal.startedAt
   if (createdAt) out.createdAt = createdAt
+  if (terminal.lastActiveAt) out.lastActiveAt = terminal.lastActiveAt
   if (terminal.endedAt) { out.endedAt = terminal.endedAt; out.exitCode = terminal.exitCode ?? null }
   return out
 }

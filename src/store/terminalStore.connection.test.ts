@@ -817,6 +817,25 @@ describe('terminal persistent connection events', () => {
     expect(mocks.writeTerminal).toHaveBeenCalledWith('t1', 'echo ok\r')
   })
 
+  it('records the last active time on submit with a throttle and always on exit', async () => {
+    const lastActive = () => useTerminalStore.getState().terminals[0]?.lastActiveAt
+    vi.setSystemTime(1_000_000)
+    useTerminalStore.setState({ terminals: [terminal()] })
+    await useTerminalStore.getState().writeToTerminal('t1', 'ls')
+    expect(lastActive()).toBeUndefined()
+    await useTerminalStore.getState().writeToTerminal('t1', 'ls\r')
+    expect(lastActive()).toBe(1_000_000)
+    vi.setSystemTime(1_010_000)
+    await useTerminalStore.getState().writeToTerminal('t1', '\r')
+    expect(lastActive()).toBe(1_000_000)
+    vi.setSystemTime(1_040_000)
+    await useTerminalStore.getState().writeToTerminal('t1', '\r')
+    expect(lastActive()).toBe(1_040_000)
+    vi.setSystemTime(1_045_000)
+    emit('terminal-exit', { id: 't1', exitCode: 0, disconnected: false })
+    expect(lastActive()).toBe(1_045_000)
+  })
+
   function exitedTask(overrides: Partial<TerminalTab> = {}) {
     const tab = terminal({
       name: '前后端 · 后端',

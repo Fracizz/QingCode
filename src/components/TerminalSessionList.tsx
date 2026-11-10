@@ -78,6 +78,8 @@ import EmptyState from './EmptyState'
 import InfoTipCard from './InfoTipCard'
 import { ProjectKindIcon } from './ProjectKindMark'
 import TerminalActivityDot from './TerminalActivityDot'
+import TerminalRowTime from './TerminalRowTime'
+import { terminalLastActiveAt } from '@/lib/terminal/terminalLastActive'
 import TerminalRenameInput from './TerminalRenameInput'
 import Tooltip from './Tooltip'
 import { TooltipSuppressionContext } from './tooltipContext'
@@ -356,6 +358,10 @@ export default function TerminalSessionList() {
     const fullCreated = formatFullCreatedTime(term.createdAt ?? term.startedAt)
     const tooltip = terminalTabTooltip(term, translate)
     const rowStatus = terminalRowStatus(term, translate)
+    const lastActiveAt = terminalLastActiveAt(term)
+    // 异常短词、转圈和重命名已经占着行尾，这时不再挤一个时间。
+    const showTime =
+      !isRenaming && !rowStatus && !exited && !isPending && term.status !== 'reconnecting'
     return (
       <div
         key={term.id}
@@ -366,8 +372,8 @@ export default function TerminalSessionList() {
         aria-busy={isPending || undefined}
         className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
-            ? 'bg-bg-active text-fg'
-            : 'text-fg hover:bg-bg-hover'
+            ? 'bg-bg-active text-term-list-active'
+            : 'text-term-list-fg hover:bg-bg-hover hover:text-term-list-active'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
         onPointerDown={
           isRenaming || managing || terminalOrderLocked
@@ -424,7 +430,7 @@ export default function TerminalSessionList() {
                 data-terminal-awaiting-restore={term.id}
                 className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
               >
-                <span className="block h-1.5 w-1.5 rounded-full bg-fg-dim" />
+                <span className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50" />
               </span>
             ) : (
               <TerminalActivityDot
@@ -464,7 +470,8 @@ export default function TerminalSessionList() {
               side="right"
               wrapperClassName="flex min-w-0"
             >
-              <span className={`truncate text-ui ${exited ? 'opacity-60' : ''}`}>
+              {/* 已退出用辅助级灰而不是叠透明度：会话名本身已是灰色，再叠透明会低于 4.5:1。 */}
+              <span className={`truncate text-ui ${exited ? 'text-term-list-meta' : ''}`}>
                 {formatTerminalName(term.name)}
               </span>
             </Tooltip>
@@ -495,19 +502,31 @@ export default function TerminalSessionList() {
         {rowStatus && (
           <span
             data-terminal-row-status={term.id}
-            className="flex-shrink-0 whitespace-nowrap text-ui-xs text-fg-dim"
+            className="flex-shrink-0 whitespace-nowrap text-ui-xs text-term-list-meta"
           >
             {rowStatus}
           </span>
         )}
-        {/* 关闭按钮固定占最右一格，悬停时出现也不挤动名称。 */}
+        {/* 行尾平时显示最后活动时间，悬停或聚焦时换成关闭按钮；关闭按钮固定占最右一格，出现时不挤动名称。 */}
         {!managing && (
-          <span className="relative flex h-6 w-5 flex-shrink-0 items-center justify-center">
+          <span className="relative flex h-6 min-w-5 flex-shrink-0 items-center justify-end">
+            {showTime && lastActiveAt !== null && (
+              <TerminalRowTime
+                terminalId={term.id}
+                at={lastActiveAt}
+                // 键盘焦点停在行上时关闭按钮不出现，时间要留着；只有焦点进入关闭按钮才让位。
+                className={
+                  isCloseArmed
+                    ? 'invisible'
+                    : 'group-hover:invisible group-has-[[data-terminal-close]:focus-visible]:invisible'
+                }
+              />
+            )}
             <Tooltip
               label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
               side="top"
               forceOpen={isCloseArmed}
-              wrapperClassName="absolute inset-0 inline-flex items-center justify-center"
+              wrapperClassName="absolute inset-y-0 right-0 inline-flex w-5 items-center justify-center"
             >
               <button
                 type="button"
@@ -610,7 +629,8 @@ export default function TerminalSessionList() {
             <span
               aria-hidden="true"
               data-terminal-group-current={isCurrent ? 'true' : undefined}
-              className={`flex flex-shrink-0 ${isCurrent ? 'text-brand' : ''}`}
+              // 图标不随当前项目变色：当前项目靠当前终端行的高亮（收起或无终端时组头淡青底）辨认。
+              className="flex flex-shrink-0 text-term-list-project"
             >
               <ProjectKindIcon project={project} open={expanded} size={14} />
             </span>
@@ -622,9 +642,12 @@ export default function TerminalSessionList() {
               wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
             >
               {/* 项目名优先完整显示，来源只用剩余宽度。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-fg">{project.name}</span>
+              {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
+                {project.name}
+              </span>
               {source && (
-                <span className="project-source-badge min-w-0 shrink! truncate font-normal text-fg-dim">
+                <span className="project-source-badge min-w-0 shrink! truncate font-normal text-term-list-meta">
                   {source}
                 </span>
               )}
@@ -643,7 +666,7 @@ export default function TerminalSessionList() {
               role="img"
               aria-label={translate('{count} 个终端', { count: terminals.length })}
               data-terminal-group-count={project.id}
-              className={`flex w-6 flex-shrink-0 items-center justify-center text-ui-xs text-fg-dim ${
+              className={`flex w-6 flex-shrink-0 items-center justify-center text-ui-xs text-term-list-meta ${
                 actionsHeld ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden'
               }`}
             >

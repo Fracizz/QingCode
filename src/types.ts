@@ -139,6 +139,11 @@ export interface TerminalTab {
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
   /**
+   * 最后活动时间（毫秒）：用户回车提交、程序从工作转为空闲、进程退出时更新，
+   * 随会话快照持久化，列表行尾据此显示「4天」等相对时间。
+   */
+  lastActiveAt?: number
+  /**
    * True until xterm has fitted and the PTY is created with that size.
    * Avoids OpenCode/TUI laying out against the default 80×24 grid.
    */

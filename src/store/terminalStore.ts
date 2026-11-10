@@ -2178,7 +2178,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return
     }
     recordTypedInput(id, data)
-    if (data.includes('\r')) noteTerminalSubmit(id)
+    if (data.includes('\r')) {
+      noteTerminalSubmit(id)
+      noteTerminalLastActive(id)
+    }
     noteTerminalInput(id)
     try {
       await writeTerminal(id, data)
@@ -2496,6 +2499,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
                   status: 'exited',
                   exitCode: exit_code,
                   endedAt: Date.now(),
+                  lastActiveAt: Date.now(),
                 }
               : terminal
           ),
@@ -2663,13 +2667,32 @@ function isTerminalInView(id: string): boolean {
   )
 }
 
+/** 回车提交太密时不必每次写状态和快照：列表按分钟显示，30 秒误差看不出来。 */
+const LAST_ACTIVE_SUBMIT_THROTTLE_MS = 30_000
+
+/** 更新终端的最后活动时间；force 用于任务结束，此时必须记下准确时间。 */
+export function noteTerminalLastActive(id: string, at = Date.now(), force = false) {
+  const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!tab) return
+  const previous = tab.lastActiveAt ?? 0
+  if (at <= previous) return
+  if (!force && at - previous < LAST_ACTIVE_SUBMIT_THROTTLE_MS) return
+  useTerminalStore.setState(state => ({
+    terminals: state.terminals.map(terminal =>
+      terminal.id === id ? { ...terminal, lastActiveAt: at } : terminal
+    ),
+  }))
+}
+
+/** 程序正在工作的终端；从工作转为空闲时记为一次活动（任务完成）。 */
+const busyForLastActive = new Set<string>()
+
 subscribeTerminalProgramActivity(id => {
-  noteTerminalBusyChange(
-    id,
-    getTerminalProgramBusySnapshot(id),
-    isTerminalInView(id),
-    getTerminalLastWorkAt(id),
-  )
+  const busy = getTerminalProgramBusySnapshot(id)
+  const lastWorkAt = getTerminalLastWorkAt(id)
+  noteTerminalBusyChange(id, busy, isTerminalInView(id), lastWorkAt)
+  if (busy) busyForLastActive.add(id)
+  else if (busyForLastActive.delete(id)) noteTerminalLastActive(id, lastWorkAt || Date.now(), true)
 })
 
 useTerminalStore.subscribe((state, previous) => {
@@ -2678,6 +2701,8 @@ useTerminalStore.subscribe((state, previous) => {
     if (state.activeTerminalId) clearTerminalAttention(state.activeTerminalId)
   }
   if (state.terminals !== previous.terminals) {
-    pruneTerminalAttention(new Set(state.terminals.map(tab => tab.id)))
+    const existingIds = new Set(state.terminals.map(tab => tab.id))
+    pruneTerminalAttention(existingIds)
+    for (const id of busyForLastActive) if (!existingIds.has(id)) busyForLastActive.delete(id)
   }
 })
