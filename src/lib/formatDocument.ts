@@ -9,12 +9,10 @@ import { translate } from './i18n'
 import { isNonEditableViewMode } from './openFileError'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { EDIT_DEGRADED_BYTES, formatFileSize } from './fileSizePolicy'
+import { formatInvokeErrorMessage } from './invokeError'
 
-/** Normalize Tauri / Error payloads into a plain message string. */
-export function formatInvokeErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  return raw.replace(/^Error:\s*/i, '').trim() || raw
-}
+// 保持旧导入路径可用（实现已移至零依赖的 invokeError.ts）。
+export { formatInvokeErrorMessage }
 
 /**
  * Prefer clear backend messages (暂不支持 / 未找到 …) over a vague

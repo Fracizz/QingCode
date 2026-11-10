@@ -7,7 +7,6 @@ import {
   killDetachedTerminal,
   killTerminal,
   listDetachedTerminals,
-  resizeTerminal,
   spawnTerminalScript,
   terminalSessionOpen,
   writeTerminal,
@@ -15,7 +14,6 @@ import {
 } from '../lib/ipc/terminal'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
-import { useTerminalDraftStore } from './terminalDraftStore'
 import type { TerminalTab } from '../types'
 import {
   DEFAULT_TERMINAL_PROFILE,
@@ -32,25 +30,6 @@ import {
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import { serverModeErrorAction } from '../lib/serverModeError'
-import {
-  getTerminalScrollback,
-  scrollbackMaxChars,
-} from '@/lib/terminal/terminalScrollbackSettings'
-import {
-  absorbInputForHistory,
-  appendTerminalByteRing,
-  buildTerminalOutputSnapshot,
-  createTerminalByteRing,
-  decodeScrollbackBytes,
-  encodeScrollbackText,
-  loadTerminalOutputSnapshot,
-  nextOutputPersistDelay,
-  pushCommandHistory,
-  saveTerminalOutputSnapshot,
-  terminalByteRingToBytes,
-  type TerminalByteRing,
-  truncateScrollbackBytes,
-} from '@/lib/terminal/terminalSessionPersist'
 import {
   DEFAULT_PTY_COLS,
   DEFAULT_PTY_ROWS,
@@ -89,18 +68,9 @@ import {
   pruneTerminalAttention,
 } from '@/lib/terminal/terminalAttention'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
-import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
-import {
-  finishTerminalMirror,
-  forwardTerminalMirrorOutput,
-  forwardTerminalMirrorScreen,
-  terminalCapture,
-  type TerminalCapture,
-} from '../lib/terminal/terminalMirror'
+import { finishTerminalMirror } from '../lib/terminal/terminalMirror'
 import { closeMobileView, isMobileTerminalId, openMobileView } from '../lib/ipc/mobileSessions'
 import { useTerminalControlStore } from './terminalControlStore'
-import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
-import { decodeTerminalEventData } from '../utils/terminalIpc'
 import { isSshProject, sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { choiceDialog } from './choiceStore'
 import {
@@ -108,16 +78,72 @@ import {
   planTerminalRestore,
   type SshDetachedTerminal,
 } from '@/lib/terminal/terminalRestorePlan'
+import {
+  applyTerminalScreen,
+  clearTerminalOutput,
+  hydrateTerminalOutputForTabs,
+  parseTerminalScreenPayload,
+  persistTerminalOutputNow,
+  publishTerminalOutput,
+  recordTypedInput,
+  registerTerminalOutputPersistSource,
+  terminalInputPending,
+  terminalResumeSeqs,
+} from './terminal/outputBuffer'
+import {
+  clearPtySpawnFallback,
+  deferPtySync,
+  deferredPtySync,
+  lastPtySize,
+  markPtySizeChanged,
+  planDeferredPtySync,
+  preferredSpawnSize,
+  rememberPtySize,
+  schedulePtySpawnFallback,
+  sendPtySizePaced,
+  terminalViewGrids,
+} from './terminal/ptySizing'
+import {
+  bindTerminalToPane,
+  clearClosedFromPanes,
+  clearProjectPaneMaps,
+  inferTerminalPaneOwnership,
+  readPaneTerminalId,
+  reorderTerminalTabs,
+  TERMINAL_FOCUS_PANES,
+  terminalPaneOf,
+  type TerminalDropPosition,
+  type TerminalFocusPane,
+} from './terminal/panes'
+
+// 以下子模块的对外 API 保持从 terminalStore 导出，调用方 import 路径不变。
+export {
+  captureTerminalForMirror,
+  getTerminalRawScrollback,
+  hasTerminalScrollback,
+  hydrateTerminalOutputForTabs,
+  persistTerminalOutputNow,
+  scheduleTerminalOutputPersist,
+  seedTerminalOutputFromPersist,
+  subscribeTerminalOutput,
+  type TerminalViewSnapshot,
+} from './terminal/outputBuffer'
+export { planDeferredPtySync, setTerminalViewGrid } from './terminal/ptySizing'
+export {
+  inferTerminalPaneOwnership,
+  reorderTerminalTabs,
+  TERMINAL_FOCUS_PANES,
+  terminalPaneOf,
+  type TerminalDropPosition,
+  type TerminalFocusPane,
+} from './terminal/panes'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
 const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
-const OUTPUT_PERSIST_IDLE_TIMEOUT_MS = 4_000
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
 const QUICK_FAIL_THRESHOLD_MS = 2000
-/** If xterm never reports a size (panel closed), spawn with defaults. */
-const PTY_SPAWN_FALLBACK_MS = 2500
 
 const ptySpawnInFlight = new Set<string>()
 let terminalExitInProgress = false
@@ -146,15 +172,6 @@ export function resumeTerminalSpawnsAfterExit(): void {
 
 /** Prevents concurrent App effects from double-respawning restored tabs. */
 const restoreSpawnInFlight = new Set<string>()
-const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
-/** Last fitted size per tab — used when restarting before the next fit. */
-const lastPtySize = new Map<string, { cols: number; rows: number }>()
-/**
- * 新建/接回请求在途时后端还没登记该终端，期间的 resize 与重绘都下发不到
- * （SSH 报「终端不存在」），而之后同尺寸的 resize 又会被去重，PTY 停在请求时的尺寸、
- * 全屏 TUI 的残留画面也没人重画。先记下，请求完成后补发（见 flushDeferredPtySync）。
- */
-const deferredPtySync = new Map<string, { size?: { cols: number; rows: number }; redraw?: boolean }>()
 /** Kills from close/restart — do not auto-respawn a shell for these. */
 const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
@@ -279,125 +296,6 @@ function applyTerminalSpawnResult(
   useProjectStore.getState().pushToast('info', message)
 }
 
-function clearPtySpawnFallback(id: string) {
-  const timer = ptySpawnFallbackTimers.get(id)
-  if (timer !== undefined) {
-    clearTimeout(timer)
-    ptySpawnFallbackTimers.delete(id)
-  }
-}
-
-function rememberPtySize(id: string, cols: number, rows: number) {
-  lastPtySize.set(id, normalizePtySize(cols, rows))
-}
-
-/**
- * 同一 PTY 两次改尺寸的最小间隔。ConPTY 下的全屏 TUI（OpenCode 实测约 100ms）要过一会
- * 才响应尺寸变化：中间尺寸停留太短时 TUI 来不及按它重画，conhost 却已按它裁掉缓冲区，
- * 回到原尺寸后 TUI 的差量渲染认为画面没变、不再重画，于是整屏错位且再抖动也修不回来。
- * 实测 80ms 不够、150ms 可以，留余量取 300ms（与视图侧 resize 合并窗口一致）。
- */
-const PTY_RESIZE_MIN_GAP_MS = 300
-/** 每个终端最近一次真正改动 PTY 尺寸的时间（新建/接回按请求尺寸算一次）。 */
-const ptySizeChangedAt = new Map<string, number>()
-/** 等待间隔期间排队的尺寸：只保留最新的一次。 */
-const pacedPtyResizes = new Map<string, { size: { cols: number; rows: number }; done: Promise<void> }>()
-
-function markPtySizeChanged(id: string) {
-  ptySizeChangedAt.set(id, Date.now())
-  // 改尺寸后 ConPTY/TUI 会整屏重绘，这段输出不算程序在工作。
-  noteTerminalInput(id)
-}
-
-function ptyResizeWaitMs(id: string): number {
-  const last = ptySizeChangedAt.get(id)
-  if (last === undefined) return 0
-  // 封顶：系统时钟回拨时不至于等出远超间隔的时长。
-  return Math.min(PTY_RESIZE_MIN_GAP_MS, Math.max(0, last + PTY_RESIZE_MIN_GAP_MS - Date.now()))
-}
-
-/** 按最小间隔把尺寸交给 PTY；间隔内再来的尺寸合并成最新一次。 */
-function sendPtySizePaced(id: string, size: { cols: number; rows: number }): Promise<void> {
-  const queued = pacedPtyResizes.get(id)
-  if (queued) {
-    queued.size = size
-    return queued.done
-  }
-  const wait = ptyResizeWaitMs(id)
-  if (wait === 0) {
-    markPtySizeChanged(id)
-    return resizeTerminal(id, size.cols, size.rows)
-  }
-  const entry = { size, done: Promise.resolve() }
-  entry.done = new Promise<void>(resolve => setTimeout(resolve, wait)).then(() => {
-    pacedPtyResizes.delete(id)
-    markPtySizeChanged(id)
-    return resizeTerminal(id, entry.size.cols, entry.size.rows)
-  })
-  pacedPtyResizes.set(id, entry)
-  return entry.done
-}
-
-/**
- * 已挂载且有真实尺寸的终端视图当前的字符网格（视图 fit 后登记，卸载时清除）。
- * 应用重启后 lastPtySize 是空的，恢复/兜底启动若直接用 80x24，接回前对齐网格会把 PTY
- * 真的改成 80x24：快照按 80x24 下发，视图要先缩到 80x24 写快照再 fit 回去，期间 TUI 按
- * 实际尺寸的重绘若先到，就被裁在左上角 80x24 里（应用启动时界面繁忙、fit 推迟，
- * 启动即接回的当前项目最容易碰上）。
- */
-const terminalViewGrids = new Map<string, { cols: number; rows: number }>()
-
-export function setTerminalViewGrid(id: string, size: { cols: number; rows: number } | null) {
-  if (size) terminalViewGrids.set(id, normalizePtySize(size.cols, size.rows))
-  else terminalViewGrids.delete(id)
-}
-
-/** 启动/接回在拿不到视图 fit 回调时用的尺寸：视图网格 → 上次下发的尺寸 → 默认。 */
-function preferredSpawnSize(id: string): { cols: number; rows: number } {
-  return (
-    terminalViewGrids.get(id) ??
-    lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
-  )
-}
-
-function deferPtySync(id: string, update: { size?: { cols: number; rows: number }; redraw?: boolean }) {
-  const current = deferredPtySync.get(id) ?? {}
-  deferredPtySync.set(id, {
-    size: update.size ?? current.size,
-    redraw: current.redraw || update.redraw,
-  })
-}
-
-/**
- * 请求在途期间被推迟的同步：尺寸变了就补一次真实 resize（ConPTY/TUI 会随之整屏重绘），
- * 否则只在接回时补一次重绘。
- */
-export function planDeferredPtySync(
-  spawned: { cols: number; rows: number } | null,
-  deferred: { size?: { cols: number; rows: number }; redraw?: boolean } | undefined,
-  attached: boolean
-): { action: 'resize' | 'redraw'; cols: number; rows: number } | null {
-  if (!deferred) return null
-  const size = deferred.size ?? spawned
-  // 沿用 PTY 尺寸接回（spawned 为空）且期间没有视图网格：等视图 fit 后自然下发。
-  if (!size) return null
-  if (!spawned || size.cols !== spawned.cols || size.rows !== spawned.rows) {
-    return { action: 'resize', ...size }
-  }
-  return deferred.redraw && attached ? { action: 'redraw', ...size } : null
-}
-
-function schedulePtySpawnFallback(id: string, spawn: () => void) {
-  clearPtySpawnFallback(id)
-  ptySpawnFallbackTimers.set(
-    id,
-    setTimeout(() => {
-      ptySpawnFallbackTimers.delete(id)
-      spawn()
-    }, PTY_SPAWN_FALLBACK_MS)
-  )
-}
-
 function markIntentionalPtyKill(id: string) {
   intentionalPtyKills.add(id)
 }
@@ -412,8 +310,6 @@ function consumeIntentionalPtyKill(id: string): boolean {
 function releaseIntentionalPtyKill(id: string) {
   intentionalPtyKills.delete(id)
 }
-
-type TerminalOutputListener = (data: Uint8Array) => void
 
 /** Convert a finished one-shot task into a plain terminal without replaying its command. */
 async function enterShellAfterTask(id: string): Promise<void> {
@@ -563,454 +459,7 @@ async function cancelTerminalReconnect(id: string): Promise<void> {
   }
 }
 
-/** Always-on ring used for persistence + restore replay. */
-const terminalScrollbackRings = new Map<string, TerminalByteRing>()
-const terminalCommandHistory = new Map<string, string[]>()
-const terminalInputPending = new Map<string, string>()
-const terminalOutputListeners = new Map<string, Set<TerminalOutputListener>>()
-const terminalRingUpdatedAt = new Map<string, number>()
-const terminalPendingOutput = new Map<string, Uint8Array[]>()
-const terminalOutputFlushTimers = new Map<string, number>()
-const terminalOutputFlushRafIds = new Set<string>()
-
-/**
- * 带网格的屏幕快照，对应 VS Code pty host 接回时下发的 ReplayEntry（cols/rows/data）：
- * 快照按产生时的网格排版，接收方必须先按该网格写入，再 resize 到自身尺寸。
- */
-export interface TerminalViewSnapshot {
-  data: string
-  cols: number
-  rows: number
-}
-type TerminalScreenListener = (snapshot: TerminalViewSnapshot) => void
-/** 已挂载视图接收屏幕快照的回调（daemon 接回时下发，见 applyTerminalScreen）。 */
-const terminalScreenListeners = new Map<string, Set<TerminalScreenListener>>()
-
-function addTerminalScreenListener(id: string, listener: TerminalScreenListener) {
-  const listeners = terminalScreenListeners.get(id) ?? new Set<TerminalScreenListener>()
-  listeners.add(listener)
-  terminalScreenListeners.set(id, listeners)
-  return () => {
-    listeners.delete(listener)
-    if (listeners.size === 0 && terminalScreenListeners.get(id) === listeners) {
-      terminalScreenListeners.delete(id)
-    }
-  }
-}
-
-/**
- * daemon 终端的续传序号：ring 里最后一个字节之后的输出序号，随输出一起持久化。
- * 应用重启后接回时带给 daemon，只补发断线期间的输出（见 attachTerminal 的 fromSeq）。
- */
-const terminalResumeSeqs = new Map<string, number>()
-
-function parseResumeSeq(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
-}
-
-/**
- * ring 里最近一次屏幕快照的位置：快照字节数与其后又追加的字节数。
- * 快照到达时视图可能还没挂载（本次启动后没打开过的项目），挂载回放时据此把快照
- * 交给视图按快照网格写入，而不是当普通字节写进当前网格。
- */
-const terminalRingScreens = new Map<
-  string,
-  { snapshot: TerminalViewSnapshot; size: number; after: number }
->()
-
-/**
- * daemon 接回时下发的屏幕快照。直接当普通输出写进尺寸不同的 xterm 会逐行错位，
- * 所以交给视图按快照网格写入后再 fit 重绘（同 VS Code 处理 replay 事件）。ring 也追加
- * 快照字节，供持久化与尚未挂载的视图回放（见 subscribeTerminalOutput）。
- */
-function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot, resumeSeq?: number) {
-  // 先把批处理中的输出交给视图，保证快照排在它们之后。
-  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-  forwardTerminalMirrorScreen(id, snapshot)
-  const bytes = new TextEncoder().encode(snapshot.data)
-  if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
-  touchRing(id, bytes)
-  terminalRingScreens.set(id, { snapshot, size: bytes.length, after: 0 })
-  terminalScreenListeners.get(id)?.forEach(listener => listener(snapshot))
-}
-
-function parseTerminalScreenPayload(
-  payload: unknown
-): ({ id: string; nextSeq?: number } & TerminalViewSnapshot) | null {
-  if (!payload || typeof payload !== 'object') return null
-  const record = payload as Record<string, unknown>
-  const isSize = (value: unknown): value is number =>
-    typeof value === 'number' && Number.isInteger(value) && value > 0
-  if (typeof record.id !== 'string' || typeof record.data !== 'string') return null
-  if (!isSize(record.cols) || !isSize(record.rows)) return null
-  return {
-    id: record.id,
-    data: record.data,
-    cols: record.cols,
-    rows: record.rows,
-    nextSeq: parseResumeSeq(record.nextSeq),
-  }
-}
-
-/** ring 每次变化递增；持久化时只重新解码版本变化的终端。 */
-const terminalRingVersions = new Map<string, number>()
-const terminalScrollbackTextCache = new Map<string, { version: number; text: string }>()
-
-let outputPersistTimer: ReturnType<typeof setTimeout> | null = null
-let outputPersistIdle: number | null = null
-let lastOutputPersistAt = 0
-
-function bumpRingVersion(id: string) {
-  terminalRingVersions.set(id, (terminalRingVersions.get(id) ?? 0) + 1)
-}
-
-function cachedScrollbackText(id: string): string {
-  const version = terminalRingVersions.get(id) ?? 0
-  const cached = terminalScrollbackTextCache.get(id)
-  if (cached && cached.version === version) return cached.text
-  const text = decodeScrollbackBytes(terminalByteRingToBytes(terminalScrollbackRings.get(id)))
-  terminalScrollbackTextCache.set(id, { version, text })
-  return text
-}
-
-/** 未打开过的项目没有 xterm 实例，CLI 用这份原始输出（含控制序列）兜底。 */
-export function getTerminalRawScrollback(id: string): string {
-  return cachedScrollbackText(id)
-}
-
-function maxBufferedBytes(): number {
-  return scrollbackMaxChars(getTerminalScrollback())
-}
-
-function touchRing(id: string, bytes: Uint8Array) {
-  const maxBytes = maxBufferedBytes()
-  const ring =
-    terminalScrollbackRings.get(id) ?? createTerminalByteRing(maxBytes)
-  appendTerminalByteRing(ring, bytes, maxBytes)
-  terminalScrollbackRings.set(id, ring)
-  terminalRingUpdatedAt.set(id, Date.now())
-  bumpRingVersion(id)
-  scheduleTerminalOutputPersist()
-}
-
-function combineOutputChunks(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) return chunks[0]
-  const size = chunks.reduce((total, chunk) => total + chunk.length, 0)
-  const combined = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    combined.set(chunk, offset)
-    offset += chunk.length
-  }
-  return combined
-}
-
-function cancelScheduledOutputFlush(id: string) {
-  const handle = terminalOutputFlushTimers.get(id)
-  if (handle === undefined) return
-  if (terminalOutputFlushRafIds.delete(id)) {
-    cancelAnimationFrame(handle)
-  } else {
-    clearTimeout(handle)
-  }
-  terminalOutputFlushTimers.delete(id)
-}
-
-function flushTerminalOutput(id: string) {
-  cancelScheduledOutputFlush(id)
-  const chunks = terminalPendingOutput.get(id)
-  terminalPendingOutput.delete(id)
-  if (!chunks?.length) return
-  const listeners = terminalOutputListeners.get(id)
-  if (!listeners?.size) return
-  const combined = combineOutputChunks(chunks)
-  listeners.forEach(listener => listener(combined))
-}
-
-function scheduleTerminalOutputFlush(id: string) {
-  if (terminalOutputFlushTimers.has(id)) return
-  const run = () => {
-    terminalOutputFlushTimers.delete(id)
-    terminalOutputFlushRafIds.delete(id)
-    flushTerminalOutput(id)
-  }
-  if (typeof requestAnimationFrame === 'function') {
-    terminalOutputFlushRafIds.add(id)
-    terminalOutputFlushTimers.set(id, requestAnimationFrame(run))
-  } else {
-    terminalOutputFlushTimers.set(id, window.setTimeout(run, 0))
-  }
-}
-
-function queueTerminalOutput(id: string, bytes: Uint8Array) {
-  const chunks = terminalPendingOutput.get(id) ?? []
-  chunks.push(bytes)
-  terminalPendingOutput.set(id, chunks)
-  scheduleTerminalOutputFlush(id)
-}
-
-function publishTerminalOutput(id: string, data: unknown, nextSeq?: unknown) {
-  const bytes = decodeTerminalEventData(data)
-  if (!bytes) return
-  recordPerformanceThroughput('terminalBytes', bytes.length)
-  forwardTerminalMirrorOutput(id, bytes)
-  // 与 ring 同步更新，持久化时两者对应同一时刻。
-  const resumeSeq = parseResumeSeq(nextSeq)
-  if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
-  touchRing(id, bytes)
-  const screen = terminalRingScreens.get(id)
-  if (screen) screen.after += bytes.length
-
-  const listeners = terminalOutputListeners.get(id)
-  if (listeners?.size) {
-    queueTerminalOutput(id, bytes)
-  }
-}
-
-function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
-  finishTerminalMirror(id, 0, false)
-  useTerminalControlStore.getState().clearControl(id)
-  useTerminalDraftStore.getState().clearDraft(id)
-  terminalScrollbackRings.delete(id)
-  terminalRingScreens.delete(id)
-  terminalResumeSeqs.delete(id)
-  terminalPendingOutput.delete(id)
-  cancelScheduledOutputFlush(id)
-  terminalCommandHistory.delete(id)
-  terminalInputPending.delete(id)
-  terminalRingUpdatedAt.delete(id)
-  terminalRingVersions.delete(id)
-  terminalScrollbackTextCache.delete(id)
-  clearTerminalCommandActivity(id)
-  clearTerminalProgramActivity(id)
-  if (options?.persist !== false) scheduleTerminalOutputPersist()
-}
-
-/** Seed live rings from durable storage (called during workspace hydrate). */
-export function seedTerminalOutputFromPersist(
-  id: string,
-  scrollback: string,
-  history: string[] = [],
-  resumeSeq?: number
-) {
-  if (scrollback) {
-    // 续传序号只对这份 scrollback 有意义，两者一起恢复。
-    if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
-    const bytes = truncateScrollbackBytes(
-      encodeScrollbackText(scrollback),
-      getTerminalScrollback(),
-      maxBufferedBytes()
-    )
-    terminalScrollbackRings.set(id, createTerminalByteRing(maxBufferedBytes(), bytes))
-    terminalRingUpdatedAt.set(id, Date.now())
-    bumpRingVersion(id)
-  }
-  if (history.length > 0) {
-    terminalCommandHistory.set(id, [...history])
-  }
-}
-
-/** Hydrate all persisted scrollback/history entries that match known tab ids. */
-export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
-  if (!isSessionPersistEnabled()) return
-  const snapshot = loadTerminalOutputSnapshot()
-  if (!snapshot) return
-  const wanted = new Set(terminalIds)
-  for (const [id, entry] of Object.entries(snapshot.terminals)) {
-    if (!wanted.has(id)) continue
-    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history, entry.seq)
-  }
-}
-
-
-/**
- * 订阅终端输出。新视图先拿到一次完整的 ring 回放；传入 `onScreen` 时还会收到 daemon
- * 下发的带网格屏幕快照（见 applyTerminalScreen）。
- */
-export function subscribeTerminalOutput(
-  id: string,
-  listener: TerminalOutputListener,
-  onScreen?: TerminalScreenListener
-) {
-  // Deliver already-batched live bytes to existing views before a new view replays the ring.
-  // This avoids both missing history and duplicating the pending tail in the new xterm.
-  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-  const listeners = terminalOutputListeners.get(id) ?? new Set<TerminalOutputListener>()
-  listeners.add(listener)
-  terminalOutputListeners.set(id, listeners)
-  const removeScreenListener = onScreen ? addTerminalScreenListener(id, onScreen) : undefined
-
-  // A newly mounted xterm needs one complete replay. Live output is batched below.
-  const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
-  const screen = onScreen ? terminalRingScreens.get(id) : undefined
-  const before = screen ? ring.length - screen.size - screen.after : -1
-  if (onScreen && screen && before >= 0) {
-    // 快照仍完整留在 ring 里：前段历史照常回放，快照按自身网格交给视图，再接上之后的输出。
-    if (before > 0) listener(ring.subarray(0, before))
-    onScreen(screen.snapshot)
-    if (screen.after > 0) listener(ring.subarray(ring.length - screen.after))
-  } else if (ring.length) {
-    listener(ring)
-  }
-
-  return () => {
-    removeScreenListener?.()
-    listeners.delete(listener)
-    if (listeners.size === 0) {
-      terminalOutputListeners.delete(id)
-      terminalPendingOutput.delete(id)
-      cancelScheduledOutputFlush(id)
-    }
-  }
-}
-
-function collectOutputPersistPayload(): Record<
-  string,
-  { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
-> {
-  const terminals: Record<
-    string,
-    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
-  > = {}
-  for (const tab of useTerminalStore.getState().terminals) {
-    const scrollback = cachedScrollbackText(tab.id)
-    const history = terminalCommandHistory.get(tab.id) ?? []
-    if (!scrollback && history.length === 0) continue
-    terminals[tab.id] = {
-      scrollback,
-      history,
-      updatedAt: terminalRingUpdatedAt.get(tab.id),
-      seq: terminalResumeSeqs.get(tab.id),
-    }
-  }
-  return terminals
-}
-
-export function persistTerminalOutputNow() {
-  if (outputPersistTimer) {
-    clearTimeout(outputPersistTimer)
-    outputPersistTimer = null
-  }
-  if (outputPersistIdle !== null) {
-    if (typeof window.cancelIdleCallback === 'function') {
-      window.cancelIdleCallback(outputPersistIdle)
-    }
-    outputPersistIdle = null
-  }
-  if (!isSessionPersistEnabled()) return
-  lastOutputPersistAt = Date.now()
-  const terminals = collectOutputPersistPayload()
-  const snapshot = buildTerminalOutputSnapshot({
-    terminals,
-    scrollbackLines: getTerminalScrollback(),
-  })
-  saveTerminalOutputSnapshot(snapshot)
-}
-
-export function scheduleTerminalOutputPersist() {
-  if (outputPersistTimer || outputPersistIdle !== null) return
-  outputPersistTimer = setTimeout(() => {
-    outputPersistTimer = null
-    if (typeof window.requestIdleCallback === 'function') {
-      outputPersistIdle = window.requestIdleCallback(
-        () => {
-          outputPersistIdle = null
-          persistTerminalOutputNow()
-        },
-        { timeout: OUTPUT_PERSIST_IDLE_TIMEOUT_MS },
-      )
-    } else {
-      persistTerminalOutputNow()
-    }
-  }, nextOutputPersistDelay(Date.now(), lastOutputPersistAt))
-}
-
-function recordTypedInput(id: string, data: string) {
-  const { pending, commands } = absorbInputForHistory(terminalInputPending.get(id) ?? '', data)
-  terminalInputPending.set(id, pending)
-  if (commands.length === 0) return
-  let history = terminalCommandHistory.get(id) ?? []
-  for (const command of commands) {
-    history = pushCommandHistory(history, command)
-  }
-  terminalCommandHistory.set(id, history)
-  scheduleTerminalOutputPersist()
-}
-
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
-
-/** Dual: primary|secondary. 田: primary=TL, secondary=TR, bl=BL, br=BR. */
-export type TerminalFocusPane = 'primary' | 'secondary' | 'bl' | 'br'
-
-export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
-  'primary',
-  'secondary',
-  'bl',
-  'br',
-] as const
-
-
-/** Pane that owns a session; legacy tabs without `pane` belong to primary. */
-export function terminalPaneOf(tab: Pick<TerminalTab, 'pane'>): TerminalFocusPane {
-  // 只显示一个窗格时（经典、单终端、工作台），标签栏或列表里的终端全部按主窗格处理；
-  // 不改写 tab.pane，切回双/四终端后各终端回到原窗格。
-  const { panelLayout, sideDualTerminal, sideQuadTerminal } = useUIStore.getState()
-  const multiPane = panelLayout === 'sideTerminal' && (sideDualTerminal || sideQuadTerminal)
-  return multiPane ? (tab.pane ?? 'primary') : 'primary'
-}
-
-/** Infer missing `pane` ownership from dual/田 active bindings (legacy shared pool). */
-export function inferTerminalPaneOwnership(
-  terminals: TerminalTab[],
-  bindings: {
-    activeTerminalByProject: Record<string, string>
-    secondaryTerminalByProject?: Record<string, string>
-    blTerminalByProject?: Record<string, string>
-    brTerminalByProject?: Record<string, string>
-  },
-): TerminalTab[] {
-  const owner = new Map<string, TerminalFocusPane>()
-  for (const id of Object.values(bindings.activeTerminalByProject)) {
-    owner.set(id, 'primary')
-  }
-  for (const id of Object.values(bindings.secondaryTerminalByProject ?? {})) {
-    owner.set(id, 'secondary')
-  }
-  for (const id of Object.values(bindings.blTerminalByProject ?? {})) {
-    owner.set(id, 'bl')
-  }
-  for (const id of Object.values(bindings.brTerminalByProject ?? {})) {
-    owner.set(id, 'br')
-  }
-  let changed = false
-  const next = terminals.map(tab => {
-    if (tab.pane) return tab
-    changed = true
-    return { ...tab, pane: owner.get(tab.id) ?? 'primary' }
-  })
-  return changed ? next : terminals
-}
-
-export type TerminalDropPosition = 'before' | 'after'
-
-/** Move one terminal beside another while preserving every unrelated tab's order. */
-export function reorderTerminalTabs(
-  terminals: TerminalTab[],
-  sourceId: string,
-  targetId: string,
-  position: TerminalDropPosition,
-): TerminalTab[] {
-  if (sourceId === targetId) return terminals
-  const source = terminals.find(tab => tab.id === sourceId)
-  const target = terminals.find(tab => tab.id === targetId)
-  if (!source || !target || source.projectId !== target.projectId) return terminals
-
-  const next = terminals.filter(tab => tab.id !== sourceId)
-  const targetIndex = next.findIndex(tab => tab.id === targetId)
-  if (targetIndex < 0) return terminals
-  next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, source)
-  return next.every((tab, index) => tab === terminals[index]) ? terminals : next
-}
 
 interface TerminalState {
   terminals: TerminalTab[]
@@ -1131,170 +580,6 @@ try {
   sessionStorage.removeItem(LEGACY_SESSION_STORAGE_KEY)
 } catch {
   /* ignore */
-}
-
-type PaneBindingSlice = {
-  activeTerminalId: string | null
-  secondaryTerminalId: string | null
-  blTerminalId: string | null
-  brTerminalId: string | null
-  activeTerminalByProject: Record<string, string>
-  secondaryTerminalByProject: Record<string, string>
-  blTerminalByProject: Record<string, string>
-  brTerminalByProject: Record<string, string>
-}
-
-function readPaneTerminalId(s: PaneBindingSlice, pane: TerminalFocusPane): string | null {
-  switch (pane) {
-    case 'primary':
-      return s.activeTerminalId
-    case 'secondary':
-      return s.secondaryTerminalId
-    case 'bl':
-      return s.blTerminalId
-    case 'br':
-      return s.brTerminalId
-  }
-}
-
-/** Assign `id` as the active session for `pane` (no cross-pane steal/swap). */
-function bindTerminalToPane(
-  s: PaneBindingSlice,
-  projectId: string,
-  pane: TerminalFocusPane,
-  id: string
-): Partial<PaneBindingSlice> {
-  const next: PaneBindingSlice = {
-    activeTerminalId: s.activeTerminalId,
-    secondaryTerminalId: s.secondaryTerminalId,
-    blTerminalId: s.blTerminalId,
-    brTerminalId: s.brTerminalId,
-    activeTerminalByProject: { ...s.activeTerminalByProject },
-    secondaryTerminalByProject: { ...s.secondaryTerminalByProject },
-    blTerminalByProject: { ...s.blTerminalByProject },
-    brTerminalByProject: { ...s.brTerminalByProject },
-  }
-
-  const writePane = (target: TerminalFocusPane, terminalId: string | null) => {
-    switch (target) {
-      case 'primary':
-        next.activeTerminalId = terminalId
-        if (terminalId) next.activeTerminalByProject[projectId] = terminalId
-        else delete next.activeTerminalByProject[projectId]
-        break
-      case 'secondary':
-        next.secondaryTerminalId = terminalId
-        if (terminalId) next.secondaryTerminalByProject[projectId] = terminalId
-        else delete next.secondaryTerminalByProject[projectId]
-        break
-      case 'bl':
-        next.blTerminalId = terminalId
-        if (terminalId) next.blTerminalByProject[projectId] = terminalId
-        else delete next.blTerminalByProject[projectId]
-        break
-      case 'br':
-        next.brTerminalId = terminalId
-        if (terminalId) next.brTerminalByProject[projectId] = terminalId
-        else delete next.brTerminalByProject[projectId]
-        break
-    }
-  }
-
-  // Clear stale bindings if this id was incorrectly pointed at from another pane.
-  for (const p of TERMINAL_FOCUS_PANES) {
-    if (p === pane) continue
-    if (readPaneTerminalId(s, p) === id) writePane(p, null)
-  }
-  writePane(pane, id)
-  return next
-}
-
-function clearClosedFromPanes(
-  s: PaneBindingSlice,
-  projectId: string,
-  closedId: string,
-  remaining: TerminalTab[],
-): Partial<PaneBindingSlice> {
-  const pickForPane = (pane: TerminalFocusPane) => {
-    for (const tab of remaining) {
-      if (tab.projectId !== projectId) continue
-      if (terminalPaneOf(tab) !== pane) continue
-      if (tab.id === closedId) continue
-      return tab.id
-    }
-    return null
-  }
-
-  let activeTerminalId = s.activeTerminalId
-  let secondaryTerminalId = s.secondaryTerminalId
-  let blTerminalId = s.blTerminalId
-  let brTerminalId = s.brTerminalId
-  const activeTerminalByProject = { ...s.activeTerminalByProject }
-  const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-  const blTerminalByProject = { ...s.blTerminalByProject }
-  const brTerminalByProject = { ...s.brTerminalByProject }
-
-  if (activeTerminalId === closedId) {
-    activeTerminalId = pickForPane('primary')
-    if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
-    else delete activeTerminalByProject[projectId]
-  }
-
-  if (secondaryTerminalId === closedId) {
-    secondaryTerminalId = pickForPane('secondary')
-    if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
-    else delete secondaryTerminalByProject[projectId]
-  }
-
-  if (blTerminalId === closedId) {
-    blTerminalId = pickForPane('bl')
-    if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
-    else delete blTerminalByProject[projectId]
-  }
-
-  if (brTerminalId === closedId) {
-    brTerminalId = pickForPane('br')
-    if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
-    else delete brTerminalByProject[projectId]
-  }
-
-  return {
-    activeTerminalId,
-    secondaryTerminalId,
-    blTerminalId,
-    brTerminalId,
-    activeTerminalByProject,
-    secondaryTerminalByProject,
-    blTerminalByProject,
-    brTerminalByProject,
-  }
-}
-
-function clearProjectPaneMaps(
-  s: PaneBindingSlice,
-  projectId: string,
-  closedIds: string[]
-): Partial<PaneBindingSlice> {
-  const activeTerminalByProject = { ...s.activeTerminalByProject }
-  const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-  const blTerminalByProject = { ...s.blTerminalByProject }
-  const brTerminalByProject = { ...s.brTerminalByProject }
-  delete activeTerminalByProject[projectId]
-  delete secondaryTerminalByProject[projectId]
-  delete blTerminalByProject[projectId]
-  delete brTerminalByProject[projectId]
-  return {
-    activeTerminalId: closedIds.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
-    secondaryTerminalId: closedIds.includes(s.secondaryTerminalId ?? '')
-      ? null
-      : s.secondaryTerminalId,
-    blTerminalId: closedIds.includes(s.blTerminalId ?? '') ? null : s.blTerminalId,
-    brTerminalId: closedIds.includes(s.brTerminalId ?? '') ? null : s.brTerminalId,
-    activeTerminalByProject,
-    secondaryTerminalByProject,
-    blTerminalByProject,
-    brTerminalByProject,
-  }
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -2581,32 +1866,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 }))
 
+// 输出缓冲持久化时按当前标签顺序收集终端。
+registerTerminalOutputPersistSource(() =>
+  useTerminalStore.getState().terminals.map(terminal => terminal.id)
+)
+
 // Durable terminal metadata is persisted via workspaceSessionSync (localStorage).
 // Scrollback / command history is persisted separately (terminalSessionPersist).
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     persistTerminalOutputNow()
   })
-}
-
-/** True when the ring still has bytes (used by Terminal UI for restore banners). */
-export function hasTerminalScrollback(id: string): boolean {
-  const ring = terminalScrollbackRings.get(id)
-  return !!ring && ring.byteLength > 0
-}
-
-/**
- * 抓取手机接入时的初始画面，必须和 `beginTerminalMirror` 在同一轮同步代码里调用：
- * 此前的输出都进入快照，此后的输出都进入转发队列，两边不重不漏。
- */
-export function captureTerminalForMirror(id: string): Promise<TerminalCapture> {
-  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-  const capture = terminalCapture(id)
-  if (capture) return capture()
-  // 视图尚未挂载（恢复后没打开过的标签）时用输出缓存代替。
-  const size = lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
-  const data = new TextDecoder().decode(terminalByteRingToBytes(terminalScrollbackRings.get(id)))
-  return Promise.resolve({ data, cols: size.cols, rows: size.rows })
 }
 
 /** 在电脑标签中打开手机终端，默认只读；已打开时直接返回原标签。 */

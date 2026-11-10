@@ -18,7 +18,10 @@ import {
   type EditorScrollPos,
 } from './editorSession'
 import { shouldRestoreWorkspace } from './windowSession'
-import { isSessionPersistEnabled } from './sessionPersistSettings'
+import {
+  isSessionPersistEnabled,
+  registerSessionPersistResumeHandler,
+} from './sessionPersistSettings'
 import { isNonEditableViewMode } from './openFileError'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
@@ -327,6 +330,8 @@ export function scheduleWorkspaceSessionPersist() {
 export function installWorkspaceSessionPersistence() {
   if (installed) return
   installed = true
+  // 设置里重新开启会话保存时立即落盘（原先由 sessionPersistSettings 直接调用，现改为注册以断开依赖环）。
+  registerSessionPersistResumeHandler(scheduleWorkspaceSessionPersist)
   if (!shouldRestoreWorkspace()) return
 
   useEditorStore.subscribe(() => scheduleWorkspaceSessionPersist())

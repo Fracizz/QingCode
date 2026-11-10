@@ -165,7 +165,7 @@ pwsh -NoProfile -File scripts/build-android.ps1 -SdkPlatform 'C:\Android\Sdk\pla
 ## 测试
 
 - `src/lib/mobileAndroidProtocol.test.ts`：配对链接、输出块、输入拆分、修饰键与按键序列（`mobile/android/web/protocol.js`）。
-- `src-tauri/src/mobile.rs`：配对持久化、多设备与撤销、按来源限流、轮询分页与快照、局域网来源。
+- `src-tauri/src/mobile/tests.rs`（实现位于 `mobile.rs` 及 `mobile/` 子模块）：配对持久化、多设备与撤销、按来源限流、轮询分页与快照、局域网来源。
 - Web 验收：`/mobile-android/` 页面加载真实 Android 网页资产，见 [Web 测试页与浏览器验收](../docs/web-ui-testing.md)。该页面不替代真机上的 WebView、相机、深链和网络验收。
 
 ## 手机图片与快捷会话

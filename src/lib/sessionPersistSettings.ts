@@ -12,9 +12,19 @@ import {
 } from './projectSettings'
 import { clearWorkspaceSession } from './workspaceSessionPersist'
 import { clearTerminalOutputSnapshot } from '@/lib/terminal/terminalSessionPersist'
-import { scheduleWorkspaceSessionPersist } from './workspaceSessionSync'
 
 export { SESSION_PERSIST_KEY }
+
+/**
+ * 重新开启会话保存时立即落盘当前会话的回调。由 workspaceSessionSync 的
+ * installWorkspaceSessionPersistence（main.tsx 启动时调用）注册，
+ * 避免本模块静态依赖它（否则形成 terminalStore → 本模块 → workspaceSessionSync → terminalStore 环）。
+ */
+let resumeWorkspaceSessionPersist: (() => void) | null = null
+
+export function registerSessionPersistResumeHandler(handler: () => void) {
+  resumeWorkspaceSessionPersist = handler
+}
 
 export const SESSION_PERSIST_CACHE_KEY = 'qingcode:session-persist'
 export const SESSION_PERSIST_EVENT = 'qingcode:session-persist-changed'
@@ -70,7 +80,7 @@ export async function saveSessionPersistEnabled(enabled: boolean): Promise<boole
     clearTerminalOutputSnapshot()
   } else {
     // Persist current in-memory session now that saving is allowed again.
-    scheduleWorkspaceSessionPersist()
+    resumeWorkspaceSessionPersist?.()
   }
   notifySessionPersistChanged(enabled)
   return enabled

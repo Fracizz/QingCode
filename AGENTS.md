@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; SSH/SFTP/remote PTY handling belongs in `src-tauri/src/remote_ssh.rs`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
+QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; SSH/SFTP/remote PTY handling belongs in `src-tauri/src/remote_ssh.rs` and its `remote_ssh/` submodules (commands split by domain: `connection`, `files`, `scan`, `git_cmds`, `terminal_cmds`, `server_cmds`; `SshManager` methods in `manager_*`; Rust unit tests live in sibling `tests.rs` files); Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
 
 Global `default-settings.json` and workspace `.qingcode/project-settings.json` are **JSON5** (comments, trailing commas). Default templates in `src/lib/projectSettings.ts` must keep **per-key comments** and state in the file header that comments must not be deleted (`不得删除注释`).
 

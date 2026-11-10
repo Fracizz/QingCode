@@ -1,4 +1,4 @@
-import { formatInvokeErrorMessage } from './formatDocument'
+import { formatInvokeErrorMessage } from './invokeError'
 import { translate } from './i18n'
 
 const DIRECTORY_UNAVAILABLE_RE =
