@@ -367,7 +367,7 @@ export default function TerminalSessionList() {
         className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-fg'
-            : 'text-tree-fg hover:bg-bg-hover hover:text-fg'
+            : 'text-fg hover:bg-bg-hover'
         } ${draggedTerminalId === term.id ? 'opacity-45' : ''}`}
         onPointerDown={
           isRenaming || managing || terminalOrderLocked
@@ -409,7 +409,8 @@ export default function TerminalSessionList() {
           </span>
         )}
         {/* 状态点在名称前，与组头图标同列；管理模式下左侧是勾选框，改为排在勾选框之后。 */}
-        {activityIndicator && (
+        {/* 待恢复不属于活动指示，关闭该设置后仍要显示，否则无法和已恢复的终端区分。 */}
+        {(activityIndicator || awaitingRestore) && (
           <span
             className={
               managing
@@ -417,12 +418,22 @@ export default function TerminalSessionList() {
                 : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
             }
           >
-            <TerminalActivityDot
-              terminalId={term.id}
-              exited={term.status === 'exited'}
-              attention={attentionIds.has(term.id) && !isActive}
-              size="md"
-            />
+            {awaitingRestore ? (
+              <span
+                aria-hidden="true"
+                data-terminal-awaiting-restore={term.id}
+                className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
+              >
+                <span className="block h-1.5 w-1.5 rounded-full bg-fg-dim" />
+              </span>
+            ) : (
+              <TerminalActivityDot
+                terminalId={term.id}
+                exited={term.status === 'exited'}
+                attention={attentionIds.has(term.id) && !isActive}
+                size="md"
+              />
+            )}
           </span>
         )}
         <div className="flex min-w-0 flex-1 flex-col justify-center">
@@ -453,11 +464,7 @@ export default function TerminalSessionList() {
               side="right"
               wrapperClassName="flex min-w-0"
             >
-              <span
-                className={`truncate text-ui ${
-                  exited ? 'opacity-60' : awaitingRestore && !isActive ? 'text-fg-dim' : ''
-                }`}
-              >
+              <span className={`truncate text-ui ${exited ? 'opacity-60' : ''}`}>
                 {formatTerminalName(term.name)}
               </span>
             </Tooltip>

@@ -407,13 +407,16 @@ describe('TerminalSessionList', () => {
     expect(row('other').querySelector('[data-terminal-row-status="other"]')).toHaveTextContent('已退出')
   })
 
-  it('dims terminals not restored yet without a dot, status text or restart', () => {
+  it('marks terminals not restored yet with a muted dot and keeps the name readable', () => {
     mocks.state.terminals = [
       terminal({ id: 'other', name: 'waiting', projectId: 'p2', status: 'exited', awaitingRestoreSpawn: true }),
     ]
     render(<TerminalSessionList />)
     expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
-    expect(within(row('other')).getByText('waiting')).toHaveClass('text-fg-dim')
+    expect(row('other').querySelector('[data-terminal-awaiting-restore="other"]')).not.toBeNull()
+    expect(row('other')).toHaveClass('text-fg')
+    expect(within(row('other')).getByText('waiting')).not.toHaveClass('text-fg-dim')
+    expect(within(row('other')).getByText('waiting')).not.toHaveClass('opacity-60')
     expect(within(row('other')).queryByText('待恢复')).toBeNull()
     expect(within(row('other')).queryByText('已退出')).toBeNull()
     expect(within(row('other')).queryByRole('button', { name: /重启/ })).toBeNull()

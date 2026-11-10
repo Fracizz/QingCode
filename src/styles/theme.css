@@ -2,10 +2,10 @@
   /* Modern Obsidian dark palette */
   --color-bg: #18191d;
   --color-bg-deep: #131417;
-  --color-bg-sidebar: #1b1c21;
+  --color-bg-sidebar: #202022;
   --color-bg-elevated: #22242a;
-  --color-bg-hover: #262830;
-  --color-bg-active: #2c2f38;
+  --color-bg-hover: #28282b;
+  --color-bg-active: #2f2f33;
   --color-bg-chrome: var(--color-bg);
   --color-bg-status: color-mix(in srgb, var(--color-bg-elevated) 65%, var(--color-bg-sidebar));
   --color-bg-input: var(--color-bg-deep);
