@@ -1373,7 +1373,7 @@ export default function SourceControlPanel() {
     positionActionMenu(
       remotesMenuAnchorRef.current,
       remotesMenuRef.current,
-      280,
+      420,
       setRemotesMenuStyle,
     )
   }, [remotesMenuOpen, remotes, positionActionMenu])

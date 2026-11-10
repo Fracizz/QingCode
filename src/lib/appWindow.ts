@@ -24,7 +24,7 @@ export async function openNewAppWindow() {
       decorations: false,
       center: true,
       visible: false,
-      backgroundColor: '#1e1e1e',
+      backgroundColor: '#181818',
     })
     void win.once('tauri://created', () => resolve())
     void win.once('tauri://error', event => {

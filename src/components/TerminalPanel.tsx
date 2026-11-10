@@ -634,7 +634,12 @@ export default function TerminalPanel({
         }}
       >
         {widthResizerEdge === 'start' && widthResizer}
-        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
+        {/* 工作台（atEnd）左邻侧栏/活动栏：分隔线随主题（深色靠明暗不画线）；侧边终端左邻同色编辑器，必须画线。 */}
+        <div
+          className={`flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l ${
+            atEnd ? 'border-sidebar-edge' : 'border-border'
+          }`}
+        >
           {body}
         </div>
         {widthResizerEdge === 'end' && widthResizer}

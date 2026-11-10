@@ -2,8 +2,8 @@
 import { MATERIAL_FOREST as M } from '../materialForestTheme'
 import { getResolvedTheme } from '../themeSettings'
 
-// Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
-const DARK_THEME = {
+// 背景须与 theme.css 深色的 --color-bg-terminal 一致，否则终端四周内边距会露出一圈色差。
+export const DARK_THEME = {
   background: '#181818',
   foreground: '#d4d4d4',
   cursor: '#aeafad',
@@ -30,7 +30,7 @@ const DARK_THEME = {
   brightWhite: '#ffffff',
 }
 
-const LIGHT_THEME = {
+export const LIGHT_THEME = {
   background: '#ffffff',
   foreground: '#1f1f1f',
   cursor: '#1a1a1a',
@@ -63,11 +63,15 @@ const FOREST_SCROLLBAR = {
   active: `${M.foreground}99`,
 }
 
-const FOREST_THEME = {
-  background: M.contrast,
+// 橄榄绿终端底色跟随 theme.css 的内容区 --color-bg（不用 Material Forest 的青色 contrast），
+// 避免青色画布套墨绿内边距的色差；语法/ANSI 颜色仍取 Material Forest。
+const OLIVE_CONTENT_BG = '#151d18'
+
+export const FOREST_THEME = {
+  background: OLIVE_CONTENT_BG,
   foreground: M.foreground,
   cursor: M.accent,
-  cursorAccent: M.contrast,
+  cursorAccent: OLIVE_CONTENT_BG,
   selectionBackground: M.selectionBg,
   scrollbarSliderBackground: FOREST_SCROLLBAR.idle,
   scrollbarSliderHoverBackground: FOREST_SCROLLBAR.hover,

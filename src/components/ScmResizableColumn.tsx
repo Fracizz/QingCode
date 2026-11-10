@@ -23,6 +23,8 @@ type Props = {
    * 经 settle 提交最终字符网格，避免 WebGL 终端闪烁。SCM 内部分栏保持 false。
    */
   freezeTerminals?: boolean
+  /** 分隔线颜色类；主侧栏传 `border-sidebar-edge`，由主题决定画线还是靠明暗分区。 */
+  borderColorClass?: string
   children: ReactNode
   className?: string
 }
@@ -39,6 +41,7 @@ export default function ScmResizableColumn({
   defaultWidth,
   tooltip,
   freezeTerminals = false,
+  borderColorClass = 'border-border',
   children,
   className,
 }: Props) {
@@ -158,7 +161,7 @@ export default function ScmResizableColumn({
     [clampWidth, edge, freezeTerminals, onWidthChange, width]
   )
 
-  const borderClass = edge === 'start' ? 'border-l border-border' : 'border-r border-border'
+  const borderClass = `${edge === 'start' ? 'border-l' : 'border-r'} ${borderColorClass}`
   const panel = (
     <div
       className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${borderClass} ${className ?? ''}`}

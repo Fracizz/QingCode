@@ -44,6 +44,26 @@
   background-color: color-mix(in srgb, var(--color-bg-hover) 70%, transparent);
   color: var(--color-fg);
 }
+/* 深色沿用 oneDark、橄榄绿沿用 Material Forest 的语法色与选区色；但其当前行 / 提示框 / 补全选中底色
+   分别带蓝偏、青偏，与界面色相不符，统一改用当前主题的 token。 */
+html:is([data-theme="dark"], [data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLine {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 45%, transparent);
+}
+html:is([data-theme="dark"], [data-theme="olive"], [data-theme="forest"]) .cm-tooltip {
+  border: 1px solid var(--color-border-strong);
+  background-color: var(--color-bg-elevated);
+}
+html:is([data-theme="dark"], [data-theme="olive"], [data-theme="forest"]) .cm-tooltip .cm-tooltip-arrow:after {
+  border-top-color: var(--color-bg-elevated);
+  border-bottom-color: var(--color-bg-elevated);
+}
+html:is([data-theme="dark"], [data-theme="olive"], [data-theme="forest"]) .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background-color: var(--color-bg-active);
+}
+/* Material Forest 的行号高亮也是青色 highlight，回到通用的 bg-hover 规则。 */
+html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGutter {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 70%, transparent);
+}
 .cm-editor.cm-hide-linenumbers .cm-gutters {
   display: none;
 }

@@ -405,7 +405,7 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] max-w-[32rem] min-w-[14rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
     >
@@ -417,23 +417,33 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
           key={row.key}
           type="button"
           role="menuitem"
-          className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+          className="group flex w-full items-start gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
           onClick={() => onCopy(row.url)}
         >
-          <Copy size={12} className="shrink-0 text-fg-dim" />
-          <span className="shrink-0 font-medium">{row.name}</span>
-          {row.isCurrent && (
-            <span className="shrink-0 rounded px-1 py-px text-ui-2xs text-accent bg-accent/10">
-              {t('当前')}
+          <Copy size={12} className="mt-1 shrink-0 text-fg-dim group-hover:text-fg-muted" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex items-center gap-1.5">
+              <span className="font-medium">{row.name}</span>
+              {row.isCurrent && (
+                <span className="shrink-0 rounded px-1 py-px text-ui-2xs text-accent bg-accent/10">
+                  {t('当前')}
+                </span>
+              )}
+              {row.kind === 'fetch' && (
+                <span className="shrink-0 rounded px-1 py-px text-ui-2xs text-fg-dim bg-bg-hover">
+                  {t('拉取')}
+                </span>
+              )}
+              {row.kind === 'push' && (
+                <span className="shrink-0 rounded px-1 py-px text-ui-2xs text-fg-dim bg-bg-hover">
+                  {t('推送')}
+                </span>
+              )}
             </span>
-          )}
-          {row.kind === 'fetch' && (
-            <span className="shrink-0 text-ui-2xs text-fg-dim">{t('拉取')}</span>
-          )}
-          {row.kind === 'push' && (
-            <span className="shrink-0 text-ui-2xs text-fg-dim">{t('推送')}</span>
-          )}
-          <span className="min-w-0 truncate font-mono text-ui-xs text-fg-muted">{row.url}</span>
+            <span className="break-all font-mono text-ui-xs leading-snug text-fg-muted">
+              {row.url}
+            </span>
+          </span>
         </button>
       ))}
     </div>

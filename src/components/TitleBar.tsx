@@ -281,7 +281,7 @@ export default function TitleBar({
                 aria-pressed={sideEditorVisible}
                 className={`flex ui-chip h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideEditorVisible
-                    ? 'bg-bg-active text-brand'
+                    ? 'bg-bg-active text-fg'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
                 onPointerDown={event => event.stopPropagation()}

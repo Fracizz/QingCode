@@ -454,7 +454,7 @@ export default function EditorTabs() {
               >
                 {active && (
                   <span
-                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded-full bg-brand shadow-[0_0_6px_var(--color-brand)]"
+                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded-full bg-brand"
                     aria-hidden="true"
                   />
                 )}

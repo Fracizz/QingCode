@@ -50,7 +50,7 @@ export default function ActivityBar({
           type="button"
           aria-label={t('展开活动栏')}
           onClick={() => setActivityBarHidden(false)}
-          className="ui-font-scaled flex h-full w-4 flex-shrink-0 flex-col items-center justify-center border-r border-border bg-bg-deep text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
+          className="ui-font-scaled flex h-full w-4 flex-shrink-0 flex-col items-center justify-center bg-bg-activity border-r border-sidebar-edge text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
         >
           <ChevronRight size={14} />
         </button>
@@ -59,7 +59,7 @@ export default function ActivityBar({
   }
 
   return (
-    <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
+    <div className="ui-font-scaled h-full w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-activity border-r border-sidebar-edge flex flex-col items-center py-2">
       {terminalWorkbench && (
         <Item
           icon={<SquareTerminal size={22} />}
@@ -114,7 +114,7 @@ export default function ActivityBar({
         >
           <span className="relative flex w-6 items-center justify-center">
             <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
-            <ChevronLeft size={12} className="relative bg-bg-deep text-fg-muted" />
+            <ChevronLeft size={12} className="relative bg-bg-activity text-fg-muted" />
           </span>
         </button>
       </Tooltip>
@@ -153,9 +153,16 @@ function Item({
         aria-pressed={active === true}
         onClick={onClick}
         className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 btn-interactive transition-colors ${
-          active ? 'bg-brand/15 text-brand' : 'text-fg-muted hover:text-fg'
+          active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
         }`}
       >
+        {/* 激活态只用灰底 + 左缘 2px 品牌色指示条，不再整块染青。 */}
+        {active && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -left-0.5 top-2 bottom-2 w-0.5 rounded-full bg-brand"
+          />
+        )}
         {icon}
         {badge !== undefined && (
           <span

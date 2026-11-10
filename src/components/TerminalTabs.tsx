@@ -207,7 +207,7 @@ export default function TerminalTabs({
     >
         <div
           className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-ui-xs font-semibold tracking-wide ${
-            focused ? 'text-brand' : 'text-fg-muted'
+            focused ? 'text-fg' : 'text-fg-muted'
           }`}
           onPointerDown={() => {
             if (pane) setTerminalFocusPane(pane)
