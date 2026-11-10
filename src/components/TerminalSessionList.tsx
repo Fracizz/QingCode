@@ -650,14 +650,6 @@ export default function TerminalSessionList() {
               if (!isEmpty && !searching) setProjectCollapsed(project.id, expanded)
             }}
           >
-            <span
-              aria-hidden="true"
-              data-terminal-group-current={isCurrent ? 'true' : undefined}
-              // 图标不随当前项目变色：当前项目靠当前终端行的高亮（收起或无终端时组头淡青底）辨认。
-              className="flex flex-shrink-0 text-term-list-project"
-            >
-              <ProjectKindIcon project={project} open={expanded} size={14} />
-            </span>
             <Tooltip
               label={projectChipTooltipLabel(project, sshConnections, translate)}
               content={<InfoTipCard {...projectHoverDetails(project, sshConnections, translate)} />}
@@ -665,6 +657,14 @@ export default function TerminalSessionList() {
               side="right"
               wrapperClassName="flex min-w-0 flex-1 items-baseline gap-1.5"
             >
+              <span
+                aria-hidden="true"
+                data-terminal-group-current={isCurrent ? 'true' : undefined}
+                // 共用文字基线；补偿 14px 图标底部留白，避免云图标视觉上悬空。
+                className="flex translate-y-[2px] flex-shrink-0 text-term-list-project"
+              >
+                <ProjectKindIcon project={project} open={expanded} size={14} />
+              </span>
               {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
               {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
               <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">

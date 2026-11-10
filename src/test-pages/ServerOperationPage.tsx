@@ -72,5 +72,10 @@ export default function Page() {
 
 if (import.meta.env.MODE === 'web-test') {
   useLocaleStore.setState({ language: 'zh-CN' })
+  useProjectStore.setState(state => ({ sshConnections: [
+    ...state.sshConnections,
+    { ...state.sshConnections[0], id: 'operation', name: 'windev' },
+    { ...state.sshConnections[0], id: 'parallel', name: 'Linux 开发机' },
+  ] }))
   createRoot(document.getElementById('root')!).render(<Page />)
 }

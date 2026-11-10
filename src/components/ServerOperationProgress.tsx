@@ -1,10 +1,13 @@
 import { AlertCircle, CheckCircle2, LoaderCircle } from 'lucide-react'
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useI18n } from '../lib/i18n'
+import { sshConnectionIdFromUri, sshConnectionTarget } from '../lib/sshWorkspace'
+import { useProjectStore } from '../store/projectStore'
 import Tooltip from './Tooltip'
 
-export default function ServerOperationProgress({ name, status, label, step, startedAt, finishedAt, error, actions, compact = false }: {
+export default function ServerOperationProgress({ name, rootUri, status, label, step, startedAt, finishedAt, error, actions, compact = false }: {
   name: string
+  rootUri?: string
   status: string
   label: string
   step: number
@@ -15,6 +18,9 @@ export default function ServerOperationProgress({ name, status, label, step, sta
   compact?: boolean
 }) {
   const { t } = useI18n()
+  const connectionId = rootUri ? sshConnectionIdFromUri(rootUri) : undefined
+  const connection = useProjectStore(s => s.sshConnections.find(item => item.id === connectionId))
+  const source = connectionId ? connection?.name.trim() || (connection ? sshConnectionTarget(connection) : connectionId) : undefined
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (finishedAt) return
@@ -27,9 +33,14 @@ export default function ServerOperationProgress({ name, status, label, step, sta
   return (
     <section className={`server-operation-card w-full min-w-0 ${compact ? 'rounded-lg border border-dialog-border bg-dialog-sidebar p-3 text-ui-sm' : 'overflow-hidden rounded-lg border border-dialog-border bg-dialog text-ui shadow-elevation-3'}`} aria-label={name} style={{ '--server-operation-accent': 'color-mix(in srgb, var(--color-accent) 65%, var(--color-fg))' } as CSSProperties}>
       <div className={compact ? 'sr-only' : 'flex items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-3'}>
-        <Tooltip label={name} onlyWhenOverflow wrapperClassName="min-w-0 flex-1">
-          <span className="block truncate font-medium text-fg">{name}</span>
-        </Tooltip>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Tooltip label={name} onlyWhenOverflow wrapperClassName="min-w-0">
+            <span className="block truncate font-medium text-fg">{name}</span>
+          </Tooltip>
+          {source && <Tooltip label={source} onlyWhenOverflow wrapperClassName="project-source-badge min-w-0">
+            <span data-project-source className="block truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted">{source}</span>
+          </Tooltip>}
+        </div>
         <span className={`shrink-0 text-ui-sm ${error ? 'text-danger' : complete ? 'text-ok' : 'text-[var(--server-operation-accent)]'}`}>{t(error ? '需要处理' : complete ? '已完成' : status)}</span>
       </div>
       <div className={compact ? '' : `m-4 rounded-lg p-3 ${error ? 'bg-danger/10' : 'bg-accent/10'}`}>

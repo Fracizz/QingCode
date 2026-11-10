@@ -41,7 +41,7 @@ export default function SshOpeningDialog() {
         : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
           : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
     return (
-      <ServerOperationProgress name={project.name} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
+      <ServerOperationProgress name={project.name} rootUri={project.path} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
         label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
         actions={<>
           <button type="button" onClick={() => setSshOpeningBackground(true)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
