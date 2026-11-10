@@ -35,9 +35,9 @@ Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (st
 
 **Web UI acceptance:** Prefer a Web test page over direct desktop control. Use `agent-browser` on Linux (including WSL), and `ego-browser` on Windows/macOS; an available Windows Ego bridge does not change the Linux default. Honor explicit engine selection and keep the same engine for the session. Run `pnpm test:web` (http://127.0.0.1:38439/); Linux uses `agent-browser` against the fixture page, while Ego uses `ego-browser skill` and `scripts/web-tests/project-manager.ego.mjs` (see [docs/web-ui-testing.md](docs/web-ui-testing.md)). Reuse real components/styles with fixed in-memory fixtures; assert interactions and save screenshots/reports under `.dev/`. Extend this approach for other UI paths. Web acceptance does not replace real file, SQLite, SSH, PTY, or native-dialog integration tests.
 
-## Dual Remotes (Gitee + GitHub)
+## Dual Remotes (GitHub + Gitee)
 
-QingCode is mirrored on both hosts. Configure a clone with:
+GitHub is the primary repository; Gitee is its mirror. Configure a clone with:
 
 ```bash
 pnpm remotes:setup
@@ -45,10 +45,10 @@ pnpm remotes:setup
 
 | Remote | Fetch | Push |
 |--------|-------|------|
-| `origin` | Gitee (`FrancizTest_admin/qing-code`) | Gitee **and** GitHub |
-| `github` | GitHub (`Fracizz/QingCode`) | GitHub |
+| `origin` | GitHub (`Fracizz/QingCode`) | GitHub |
+| `gitee` | Gitee (`FrancizTest_admin/qing-code`) | Gitee |
 
-Use `git push origin <branch>` to publish to both. Fetch either side with `git fetch origin` / `git fetch github`. Do not force-push unless explicitly requested.
+Use `git push origin <branch>` to publish to GitHub. Mirror a branch with `git push gitee <branch>` and fetch the mirror with `git fetch gitee`. Do not force-push unless explicitly requested.
 
 ## Commit & Pull Request Guidelines
 
