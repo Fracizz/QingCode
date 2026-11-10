@@ -14,10 +14,11 @@ It is not another VS Code or Zed — it focuses on keeping local and remote proj
 | **Switch projects without losing your place** | Pin projects to the title bar and switch with a click; unsaved edits and running terminals stay put, and sessions can be restored after a restart |
 | **Start a whole stack in one click** | Put API, web, and workers in one run configuration, with one terminal per task and group start/stop; candidates can be discovered from `package.json` |
 | **One workflow for local and remote** | Local, WSL, SSH, and Server direct-connection projects share one workspace, with the same file tree, terminals, and global search; see [below](#ssh-remote-workspaces) for Windows remote limits |
-| **Reattach after a remote disconnect** | The remote service hosts terminals, so you return to the same session after a network drop instead of restarting long tasks |
+| **Reattach after a disconnect or exit** | The remote service hosts terminals, so you return to the same session after a network drop; local Windows PowerShell / CMD terminals are hosted by a background process by default, survive quitting QingCode, and reattach by PTY ID next time |
 | **The real terminal on your phone** | Your phone shows the same CLI running on your computer, so you can type, read output, and send images without waiting for a third-party client to catch up |
 | **Bring your own AI tools** | No built-in model, and no rewriting or proxying of AI services; Claude Code, Codex, and OpenCode stay official CLIs, with accounts and requests inside the CLI |
 | **Agents can drive QingCode** | Through the CLI and Skill, agents can manage projects, edit run configurations, start and stop services, and read JSON results |
+| **Keep machines aligned after a push** | Optional Git multi-machine sync: after one project pushes, other local / SSH projects of the same repository fast-forward to the latest commit |
 | **Trust comes before unfamiliar code** | Untrusted projects cannot run scripts or terminals; a changed SSH host fingerprint needs reconfirmation, and remote operations stay inside the project root |
 | **A native shell that stays focused** | Built on Tauri 2 and Rust with the system WebView and no bundled Chromium; no background semantic index and no extension marketplace |
 
@@ -155,7 +156,7 @@ Why terminal-first instead of a "mobile AI client":
 - **The session stays on the desktop**: Windows hosts the terminal sessions. A brief phone disconnect, a switch between computers, or reopening the app does not interrupt a running task; reconnect and continue in the same session.
 - **A control layer built for phones**: QR pairing, multiple computers, a shortcut bar, IME input and paste, image upload, history and output search, font sizing, and landscape immersive mode. The desktop keeps SSH / Server credentials and workspace trust; the phone only acts within what you have authorized.
 
-Connect from **Settings → Mobile connection** on Windows: set a port and password, enable it, then scan the QR code or paste the pairing link in the phone's **Connections** screen. Phone and computer must be able to reach each other, and Android 8.0+ is required. See [Android mobile notes](./mobile/README.md) for pairing, sessions, and security boundaries.
+Connect from **Settings → Mobile connection** on Windows: set a port and password, enable it, then scan the QR code or paste the pairing link in the phone's **Connections** screen. If the computer's port changes, the phone keeps the existing pairing and migrates to the new port. Phone and computer must be able to reach each other, and Android 8.0+ is required. See [Android mobile notes](./mobile/README.md) for pairing, sessions, and security boundaries.
 
 ### Run configurations: start project services
 
@@ -168,6 +169,10 @@ This is a core QingCode workflow. Define run configurations per project (stored 
 - Unknown projects start restricted; trust is required before editing, running scripts, or using the terminal  
 
 Typical loop: open a project → start a run configuration → services land in separate terminals → edit code or hand a terminal to an AI CLI.
+
+### Local terminal reattach
+
+**Settings → Terminal → Integration: reattachable local terminals** is on by default: interactive Windows PowerShell / PowerShell 7 / CMD terminals are hosted by a background process. Choose "keep local terminals and exit" when quitting, and processes keep running after QingCode closes or upgrades, then reattach by their original PTY ID on next launch. The host ends terminals after 24 hours of continuous disconnection; after a reboot, tabs restart from their saved configuration. WSL, one-off run tasks, and terminals created from the phone remain owned by the QingCode process. See [terminal tools](./docs/terminal-tools.md) (Chinese) for limits and migration.
 
 ### Terminal profiles: default shells and AI / tool entry points
 
@@ -191,6 +196,8 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 | Terminal workbench (list on left) | Built for AI coding: terminal list \| current terminal \| editor, which opens to the right of the terminal only when you open a file |
 
 Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, the title-bar layout menu toggles dual terminals or a draggable 2×2 quad-terminal grid, and the icon left of the layout picker shows or hides the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
+
+In the terminal workbench, the left list supports search, running-first ordering, source filtering, and drag-to-reorder groups; each row shows its source and last activity time, pending-restore terminals get a muted dot, and manage mode handles sessions in bulk. Git and Settings open as full-page sidebar views in this layout.
 
 A pulsing dot on a terminal tab means its program is working (the title shows a spinner, or output keeps flowing). It is on by default and can be turned off in **Settings → Terminal → Tab Activity Status**. See [DESIGN.md](./DESIGN.md) (Chinese) for details.
 
@@ -226,7 +233,11 @@ Branch surgery, rebase, and a full merge UI stay with your usual Git or AI tools
 
 ### Search and preferences
 
-Search file names or contents in a chosen scope; replace stays collapsed until you expand it. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
+Search file names or contents in a chosen scope; replace stays collapsed until you expand it. Dark / light / olive green / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
+
+### Git multi-machine sync
+
+Turn it on in **Settings → Git multi-machine sync** (off by default). After a project pushes successfully, QingCode matches other local or SSH projects of the same repository (by normalized remote URL and branch) that have auto-receive enabled, then runs fetch, safety checks, and `merge --ff-only`, and refreshes status and open files. Projects are processed in parallel per machine with the current project first; when a fast-forward is impossible you get a localized message instead of a forced merge. See [Git multi-machine sync](./docs/git-push-sync.md) (Chinese).
 
 ### Configuration transfer and default reset
 
@@ -283,6 +294,7 @@ pnpm install
 pnpm package                  # NSIS installer (x64 only)
 # pnpm package:exe            # portable single-file exe
 # pnpm package:fast           # skip frontend/icons; Rust only
+# pnpm package:local          # local parallel packaging CLI (desktop + APK; --plan / --only; never pushes tags)
 ```
 
 Artifacts land in `release/`: `QingCode.exe` (portable), `QingCode-setup.exe` (installer). ARM64 / macOS multi-arch builds use `.github/workflows/release.yml`.
