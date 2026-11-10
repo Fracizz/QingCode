@@ -48,7 +48,8 @@ export async function loadScopedTerminalPersistLocalSessions(
   project?: Project | null,
 ): Promise<boolean> {
   if (scope === 'project' && project) {
-    return readTerminalPersistLocalSessions(await loadProjectSettings(project))
+    const global = await loadGlobalSettings()
+    return readTerminalPersistLocalSessions(mergeSettings(global, await loadProjectSettings(project)))
   }
   return readTerminalPersistLocalSessions(await loadGlobalSettings())
 }

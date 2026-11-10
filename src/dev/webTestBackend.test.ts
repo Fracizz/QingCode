@@ -41,6 +41,16 @@ describe('Web native boundary contract', () => {
     vi.useRealTimers()
   })
 
+  it.each(['local_host_create_terminal', 'local_host_spawn_profile'])('keeps %s on the simulated local PTY boundary', async command => {
+    const result = await backend.invoke(command, { id: 'local', cwd: TEST_ROOT, target: 'agent-cli' })
+    expect(result).toMatchObject({ persistent: false, resolvedShell: 'bash' })
+    expect(backend.terminals.get('local')).toMatchObject({
+      cwd: TEST_ROOT, connected: true, script: command === 'local_host_spawn_profile',
+    })
+    await backend.invoke('write_terminal', { id: 'local', data: 'hello' })
+    expect(backend.terminals.get('local')?.input).toBe('hello')
+  })
+
   it('stores binary terminal attachments in memory and rejects destination paths', async () => {
     const path = (await backend.invoke('clipboard_store_file', {
       name: '截图.png',

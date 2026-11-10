@@ -92,7 +92,8 @@ vi.mock('../lib/gitRefreshSettings', () => ({
   saveGitRefreshIntervalStartMinutes: mocks.saveGitRefreshIntervalStartMinutes,
 }))
 
-vi.mock('../lib/autoSaveSettings', () => ({
+vi.mock('../lib/autoSaveSettings', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/autoSaveSettings')>(),
   AUTO_SAVE_MODES: [{ value: 'off', label: '关闭' }],
   AUTO_SAVE_DELAY_OPTIONS: [],
   loadScopedAutoSaveSettings: async () => ({ mode: 'off', delay: 1000 }),

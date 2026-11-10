@@ -634,10 +634,11 @@ export default function TerminalPanel({
         }}
       >
         {widthResizerEdge === 'start' && widthResizer}
-        {/* 工作台（atEnd）左邻侧栏/活动栏：分隔线随主题（深色靠明暗不画线）；侧边终端左邻同色编辑器，必须画线。 */}
+        {/* 相邻两块之间只画一条线：工作台（atEnd）左邻侧栏/活动栏，由它们的右缘负责（否则隔着拖动条成双线），
+            右邻同色编辑器时补右缘线；侧边终端左邻同色编辑器，画左缘线。 */}
         <div
-          className={`flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l ${
-            atEnd ? 'border-sidebar-edge' : 'border-border'
+          className={`flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden ${
+            atEnd ? (editorVisible ? 'border-r border-divider' : '') : 'border-l border-divider'
           }`}
         >
           {body}

@@ -30,7 +30,59 @@ export function groupTerminalSessions(
 }
 
 /**
- * 列表的搜索与「运行中优先」，只影响显示。关键词按空白分隔、全部命中才保留，
+ * 来源筛选：`all` 全部、`local` 仅本机、`remote` 全部远程（SSH + WSL，与组头云朵图标一致），
+ * 其余为具体来源键（`ssh:<连接 id>` / `wsl:<发行版>`）。
+ */
+export type TerminalScopeFilter = string
+
+export interface TerminalScopeOption {
+  key: string
+  label: string
+  count: number
+}
+
+/** 项目所属来源键：本机固定为 `local`，远程按连接 / 发行版区分。 */
+export function terminalProjectScopeKey(project: Project): string {
+  if (isSshProject(project)) {
+    return `ssh:${project.connection_id || sshConnectionIdFromUri(project.path)}`
+  }
+  if (isWslProject(project)) return `wsl:${(wslDistroNameFromPath(project.path) ?? '').toLowerCase()}`
+  return 'local'
+}
+
+export function terminalScopeMatches(project: Project, filter: TerminalScopeFilter): boolean {
+  if (filter === 'all') return true
+  const key = terminalProjectScopeKey(project)
+  if (filter === 'local') return key === 'local'
+  if (filter === 'remote') return key !== 'local'
+  return key === filter
+}
+
+/** 筛选菜单里的具体远程来源（按出现顺序），带各来源的终端数。 */
+export function terminalRemoteScopeOptions(
+  groups: readonly TerminalSessionGroup[],
+  connections: ReadonlyArray<SshConnection>,
+  translate: Translate,
+): TerminalScopeOption[] {
+  const options = new Map<string, TerminalScopeOption>()
+  for (const { project, terminals } of groups) {
+    const key = terminalProjectScopeKey(project)
+    if (key === 'local') continue
+    const existing = options.get(key)
+    if (existing) existing.count += terminals.length
+    else {
+      options.set(key, {
+        key,
+        label: projectSource(project, connections, translate),
+        count: terminals.length,
+      })
+    }
+  }
+  return [...options.values()]
+}
+
+/**
+ * 列表的搜索、来源筛选与「运行中优先」，只影响显示。关键词按空白分隔、全部命中才保留，
  * 匹配终端名、项目名和来源；搜索时没有结果的项目组不列出。运行中的排在组内最前，彼此保持原顺序。
  */
 export function filterTerminalSessionGroups(
@@ -39,14 +91,17 @@ export function filterTerminalSessionGroups(
     query,
     sources,
     running,
+    scope = 'all',
   }: {
     query: string
     sources: ReadonlyMap<string, string>
     running?: (terminal: TerminalTab) => boolean
+    scope?: TerminalScopeFilter
   },
 ): TerminalSessionGroup[] {
   const needles = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   return groups.flatMap(group => {
+    if (!terminalScopeMatches(group.project, scope)) return []
     let terminals = group.terminals
     if (needles.length > 0) {
       const context = [group.project.name, sources.get(group.project.id) ?? '']

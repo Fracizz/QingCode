@@ -17,6 +17,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  MonitorCloud,
   FolderOpen,
   ListChecks,
   LoaderCircle,
@@ -57,7 +58,9 @@ import {
   parseCollapsedProjects,
   TERMINAL_LIST_COLLAPSED_KEY,
   terminalProjectMove,
+  terminalProjectScopeKey,
   terminalProjectSources,
+  terminalRemoteScopeOptions,
   type TerminalSessionGroup,
   filterTerminalSessionGroups,
 } from '@/lib/terminal/terminalSessionGroups'
@@ -185,6 +188,9 @@ export default function TerminalSessionList() {
   const [query, setQuery] = useState('')
   // 与手机和终端管理一致的临时排序：再点恢复默认顺序，不保存。
   const [runningFirst, setRunningFirst] = useState(false)
+  // 来源筛选（全部 / 本地 / 全部远程 / 某个连接），与搜索一样只影响显示、不保存。
+  const [scopeFilter, setScopeFilter] = useState('all')
+  const [scopeMenu, setScopeMenu] = useState<{ x: number; y: number } | null>(null)
   const [busyCheckedAt, setBusyCheckedAt] = useState(() => Date.now())
   useEffect(() => {
     if (!runningFirst) return
@@ -215,9 +221,23 @@ export default function TerminalSessionList() {
     translate,
   )
   const totalTerminals = allGroups.reduce((sum, group) => sum + group.terminals.length, 0)
+  const remoteScopes = terminalRemoteScopeOptions(allGroups, sshConnections, translate)
+  const localCount = allGroups.reduce(
+    (sum, group) => sum + (terminalProjectScopeKey(group.project) === 'local' ? group.terminals.length : 0),
+    0,
+  )
+  // 选中的连接已不存在（项目被移除）时退回全部，避免列表莫名其妙是空的。
+  const activeScope =
+    scopeFilter === 'all' ||
+    scopeFilter === 'local' ||
+    remoteScopes.some(option => option.key === scopeFilter)
+      ? scopeFilter
+      : 'all'
+  const scopeFiltering = activeScope !== 'all'
   const searching = totalTerminals > 0 && query.trim() !== ''
   const groups = filterTerminalSessionGroups(allGroups, {
     query,
+    scope: activeScope,
     sources: projectSources,
     running: runningFirst
       ? term => term.status !== 'exited' && isTerminalProgramBusy(term.id, busyCheckedAt)
@@ -370,7 +390,7 @@ export default function TerminalSessionList() {
         tabIndex={term.id === rovingTerminalId ? 0 : -1}
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
-        className={`group relative flex min-h-7 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pl-6 pr-1 transition-colors ${
+        className={`group relative flex min-h-8 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg pl-6 pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-term-list-active'
             : 'text-term-list-fg hover:bg-bg-hover hover:text-term-list-active'
@@ -558,7 +578,7 @@ export default function TerminalSessionList() {
     const source = projectSources.get(project.id)
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
-    const sortable = !managing && !searching && !project.hidden && projects.some(item => item.id === project.id)
+    const sortable = !managing && !searching && !scopeFiltering && !project.hidden && projects.some(item => item.id === project.id)
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
     const groupAtLimit = terminals.length >= MAX_TERMINALS_PER_PROJECT
@@ -587,12 +607,12 @@ export default function TerminalSessionList() {
           data-terminal-project-header={project.id}
           data-terminal-project-sortable={sortable ? 'true' : undefined}
           onPointerDown={sortable ? event => startProjectDrag(event, project.id) : undefined}
-          className={`group/project flex h-7 select-none items-center gap-1 rounded-md pr-1 transition-colors ${
+          className={`group/project flex h-8 select-none items-center gap-1 rounded-lg pr-1 transition-colors ${
             isCurrent
               ? rowHighlighted
                 ? 'text-fg hover:bg-bg-hover'
                 : 'bg-brand/10 text-fg hover:bg-brand/15'
-              : `text-fg-muted hover:bg-bg-hover ${isEmpty ? 'opacity-70 hover:opacity-100' : ''}`
+              : 'text-fg-muted hover:bg-bg-hover'
           }`}
         >
           {managing && expanded && (
@@ -754,7 +774,7 @@ export default function TerminalSessionList() {
             role="tablist"
             aria-orientation="vertical"
             aria-label={project.name}
-            className="mt-0.5 flex flex-col gap-0.5"
+            className="flex flex-col"
           >
             {terminals.map(renderRow)}
           </div>
@@ -768,7 +788,7 @@ export default function TerminalSessionList() {
       className="flex h-full min-h-0 flex-col bg-bg-sidebar"
       data-terminal-session-list
     >
-      <div className="flex h-9 flex-shrink-0 items-center gap-0.5 pl-3 pr-1.5 text-ui-xs font-semibold tracking-wide text-fg-muted">
+      <div className="flex h-9 flex-shrink-0 items-center gap-0.5 pl-3 pr-1.5 text-ui-xs font-medium text-fg-muted">
         <span className="min-w-0 flex-1 truncate">
           {translate('终端')}
           {totalTerminals > 0 && (
@@ -848,7 +868,7 @@ export default function TerminalSessionList() {
 
       {totalTerminals > 0 && (
         <div data-terminal-list-search className="flex flex-shrink-0 items-center gap-1 pb-1.5 pl-3 pr-1.5">
-          <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded border border-border-strong bg-bg px-1.5">
+          <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded-md border border-transparent bg-bg-hover px-1.5 transition-colors focus-within:border-accent/60">
             <Search size={13} className="flex-shrink-0 text-fg-dim" />
             <input
               ref={searchRef}
@@ -881,6 +901,27 @@ export default function TerminalSessionList() {
               </Tooltip>
             )}
           </label>
+          <Tooltip label={translate('按来源筛选（本地 / 远程）')} side="bottom">
+            <button
+              type="button"
+              aria-label={translate('按来源筛选')}
+              aria-haspopup="menu"
+              aria-expanded={scopeMenu !== null}
+              aria-pressed={scopeFiltering}
+              data-terminal-scope-filter={activeScope}
+              className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
+              onClick={event => {
+                if (scopeMenu) {
+                  setScopeMenu(null)
+                  return
+                }
+                const rect = event.currentTarget.getBoundingClientRect()
+                setScopeMenu({ x: rect.left, y: rect.bottom + 4 })
+              }}
+            >
+              <MonitorCloud size={15} />
+            </button>
+          </Tooltip>
           <Tooltip
             label={runningFirst ? translate('运行中优先 · 再点恢复默认顺序') : translate('运行中优先')}
             side="bottom"
@@ -947,13 +988,13 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1.5 pb-1.5"
+          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
             {groups.map(renderGroup)}
           </TooltipSuppressionContext>
-          {searching && groups.length === 0 && (
+          {(searching || scopeFiltering) && groups.length === 0 && (
             <EmptyState
               className="min-h-0 flex-1"
               icon={<Search size={28} strokeWidth={1.2} />}
@@ -1046,6 +1087,31 @@ export default function TerminalSessionList() {
           />
         )
       })()}
+      {scopeMenu && (
+        <ContextMenu
+          x={scopeMenu.x}
+          y={scopeMenu.y}
+          items={[
+            {
+              label: translate('全部 {n}', { n: totalTerminals }),
+              checked: activeScope === 'all',
+              action: () => setScopeFilter('all'),
+            },
+            {
+              label: translate('本地 {n}', { n: localCount }),
+              checked: activeScope === 'local',
+              action: () => setScopeFilter('local'),
+            },
+            // 远程连接直接展开成并列项，不再套一层「全部远程」。
+            ...remoteScopes.map(option => ({
+              label: `${option.label} ${option.count}`,
+              checked: activeScope === option.key,
+              action: () => setScopeFilter(option.key),
+            })),
+          ]}
+          onClose={() => setScopeMenu(null)}
+        />
+      )}
       {profileMenu && (
         <ContextMenu
           x={profileMenu.x}

@@ -13,11 +13,11 @@
   /* 输入框保持下沉，避免与同色侧栏融为一体。 */
   --color-bg-input: #141414;
   --color-bg-terminal: #181818;
-  --color-border: #262626;
+  --color-border: #2e2e2e;
   --color-border-strong: #3a3a3a;
-  /* 图标栏底色与「图标栏/侧栏」右缘分隔线：深色与侧栏连成一块、不画线，靠明暗分区。 */
+  /* 图标栏、侧栏、内容区相邻处各画一条细线；仅靠 +4 的明暗差分区不够清楚（参考 Codex：小明暗差 + 清晰细线）。 */
   --color-bg-activity: var(--color-bg-sidebar);
-  --color-sidebar-edge: transparent;
+  --color-divider: #333333;
 
   /* Layered dialog surfaces: neutral graphite, independent of editor colors. */
   --color-dialog: #202020;
@@ -34,11 +34,12 @@
   --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
   --color-tree-fg: #d4d4d8;
-  /* 终端列表文字四级：当前/悬停 > 会话名 > 项目名 > 来源·时间·已退出；辅助级在选中底上也 ≥ 4.5:1。 */
-  --color-term-list-active: #e4e4e7;
-  --color-term-list-fg: #bcbcc1;
-  --color-term-list-project: #a7a7af;
-  --color-term-list-meta: #98989f;
+  /* 终端列表文字：会话名一档亮、项目名/来源/时间一档暗，两档拉开（参考 Z：#d4d4d4 / #909090），纯中性灰；
+     辅助级在选中底上也 ≥ 4.5:1。 */
+  --color-term-list-active: #ececec;
+  --color-term-list-fg: #d4d4d4;
+  --color-term-list-project: #9a9a9a;
+  --color-term-list-meta: #989898;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
   --color-brand: #4ecdb5;
@@ -114,7 +115,7 @@ html[data-theme="light"] {
   --color-border: #dedfe2;
   --color-border-strong: #b5bac1;
   --color-bg-activity: var(--color-bg-deep);
-  --color-sidebar-edge: var(--color-border);
+  --color-divider: var(--color-border);
 
   --color-dialog: var(--color-bg);
   --color-dialog-chrome: var(--color-bg-chrome);
@@ -198,12 +199,12 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-border: #23332a;
   --color-border-strong: #334a3d;
   /* 终端与编辑器同为内容区底色，须与 terminalThemes.ts 的 FOREST_THEME.background 一致；
-     图标栏、侧栏、状态栏同为一层，分区靠明暗不画线。 */
+     图标栏、侧栏、状态栏同为一层；导航块与内容区之间画细线（同深色）。 */
   --color-bg-status: var(--color-bg-sidebar);
   --color-bg-input: #0f1511;
   --color-bg-terminal: var(--color-bg);
   --color-bg-activity: var(--color-bg-sidebar);
-  --color-sidebar-edge: transparent;
+  --color-divider: #2c3f34;
 
   --color-dialog: var(--color-bg);
   --color-dialog-chrome: var(--color-bg-elevated);
