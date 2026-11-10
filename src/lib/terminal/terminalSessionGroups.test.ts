@@ -6,6 +6,7 @@ import {
   parseCollapsedProjects,
   terminalProjectMove,
   terminalProjectSources,
+  terminalRemoteScopeOptions,
 } from './terminalSessionGroups'
 
 const project = (id: string, overrides: Partial<Project> = {}) =>
@@ -161,5 +162,36 @@ describe('parseCollapsedProjects', () => {
     expect(parseCollapsedProjects('{oops').size).toBe(0)
     expect(parseCollapsedProjects('{"a":1}').size).toBe(0)
     expect(parseCollapsedProjects(null).size).toBe(0)
+  })
+})
+
+describe('terminal scope filter', () => {
+  const ssh = (id: string, connectionId: string) =>
+    project(id, { kind: 'ssh', connection_id: connectionId, path: `ssh://${connectionId}/srv/${id}` } as Partial<Project>)
+  const connections = [
+    { id: 'c1', name: 'WinDev', host: 'h1' },
+    { id: 'c2', name: 'Box', host: 'h2' },
+  ] as SshConnection[]
+  const groups = [
+    { project: project('local'), terminals: [terminal('1', 'local'), terminal('2', 'local')] },
+    { project: ssh('a', 'c1'), terminals: [terminal('3', 'a')] },
+    { project: ssh('b', 'c2'), terminals: [terminal('4', 'b')] },
+  ]
+  const sources = new Map<string, string>()
+  const ids = (scope: string) =>
+    filterTerminalSessionGroups(groups, { query: '', sources, scope }).map(group => group.project.id)
+
+  it('filters local, all remote and a single connection', () => {
+    expect(ids('all')).toEqual(['local', 'a', 'b'])
+    expect(ids('local')).toEqual(['local'])
+    expect(ids('remote')).toEqual(['a', 'b'])
+    expect(ids('ssh:c2')).toEqual(['b'])
+  })
+
+  it('lists remote sources with terminal counts', () => {
+    expect(terminalRemoteScopeOptions(groups, connections, text => text)).toEqual([
+      { key: 'ssh:c1', label: 'WinDev', count: 1 },
+      { key: 'ssh:c2', label: 'Box', count: 1 },
+    ])
   })
 })

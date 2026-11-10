@@ -23,7 +23,7 @@ type Props = {
    * 经 settle 提交最终字符网格，避免 WebGL 终端闪烁。SCM 内部分栏保持 false。
    */
   freezeTerminals?: boolean
-  /** 分隔线颜色类；主侧栏传 `border-sidebar-edge`，由主题决定画线还是靠明暗分区。 */
+  /** 分隔线颜色类；主侧栏传 `border-divider`，由主题决定画线还是靠明暗分区。 */
   borderColorClass?: string
   children: ReactNode
   className?: string

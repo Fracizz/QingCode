@@ -50,7 +50,7 @@ export default function ActivityBar({
           type="button"
           aria-label={t('展开活动栏')}
           onClick={() => setActivityBarHidden(false)}
-          className="ui-font-scaled flex h-full w-4 flex-shrink-0 flex-col items-center justify-center bg-bg-activity border-r border-sidebar-edge text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
+          className={`ui-font-scaled flex h-full w-4 flex-shrink-0 flex-col items-center justify-center bg-bg-activity border-r border-divider text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg`}
         >
           <ChevronRight size={14} />
         </button>
@@ -59,7 +59,9 @@ export default function ActivityBar({
   }
 
   return (
-    <div className="ui-font-scaled h-full w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-activity border-r border-sidebar-edge flex flex-col items-center py-2">
+    <div
+      className={`ui-font-scaled h-full w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-activity border-r border-divider flex flex-col items-center py-2`}
+    >
       {terminalWorkbench && (
         <Item
           icon={<SquareTerminal size={22} />}
