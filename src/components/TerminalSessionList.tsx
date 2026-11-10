@@ -663,9 +663,9 @@ export default function TerminalSessionList() {
               content={<InfoTipCard {...projectHoverDetails(project, sshConnections, translate)} />}
               anchorClosest="[data-terminal-project-header]"
               side="right"
-              wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
+              wrapperClassName="flex min-w-0 flex-1 items-baseline gap-1.5"
             >
-              {/* 项目名优先完整显示，来源只用剩余宽度。 */}
+              {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
               {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
               <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
                 {project.name}
