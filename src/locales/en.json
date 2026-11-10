@@ -663,6 +663,8 @@
     " · 已截断": " · truncated",
     "展开全部": "Expand All",
     "折叠全部": "Collapse All",
+    "全部收起": "Collapse All",
+    "全部展开": "Expand All",
     "…可能还有更多匹配": "…more matches may be available",
     "（已由后缀筛选锁定）": " (locked by suffix filter)",
     "编辑运行配置": "Edit Run Configuration",

@@ -19,6 +19,8 @@ import {
   EyeOff,
   MonitorCloud,
   ListChecks,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
   LoaderCircle,
   MessageCircleMore,
   Minus,
@@ -319,6 +321,18 @@ export default function TerminalSessionList() {
     const next = new Set(collapsedProjects)
     if (collapsed) next.add(projectId)
     else next.delete(projectId)
+    setCollapsedProjects(next)
+    saveCollapsedProjects(next)
+  }
+  // 标题栏一键收起/展开：只要还有展开的分组就全部收起，否则全部展开。
+  const collapsibleProjectIds = groups.filter(group => group.terminals.length > 0).map(group => group.project.id)
+  const anyGroupExpanded = collapsibleProjectIds.some(id => !collapsedProjects.has(id))
+  const toggleAllCollapsed = () => {
+    const next = new Set(collapsedProjects)
+    for (const id of collapsibleProjectIds) {
+      if (anyGroupExpanded) next.add(id)
+      else next.delete(id)
+    }
     setCollapsedProjects(next)
     saveCollapsedProjects(next)
   }
@@ -846,6 +860,18 @@ export default function TerminalSessionList() {
           </button>
         </Tooltip>
         <span className="mx-0.5 h-4 w-px flex-shrink-0 bg-border" aria-hidden="true" />
+        <Tooltip label={anyGroupExpanded ? translate('全部收起') : translate('全部展开')} side="bottom">
+          <button
+            type="button"
+            aria-label={anyGroupExpanded ? translate('全部收起') : translate('全部展开')}
+            data-terminal-toggle-all-groups={anyGroupExpanded ? 'collapse' : 'expand'}
+            className={HEADER_BUTTON}
+            disabled={searching || collapsibleProjectIds.length === 0}
+            onClick={toggleAllCollapsed}
+          >
+            {anyGroupExpanded ? <ListChevronsDownUp size={15} /> : <ListChevronsUpDown size={15} />}
+          </button>
+        </Tooltip>
         <Tooltip label={managing ? translate('完成') : translate('管理')} side="bottom">
           <button
             type="button"

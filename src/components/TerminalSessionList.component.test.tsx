@@ -281,6 +281,15 @@ describe('TerminalSessionList', () => {
     expect(row('other')).toBeNull()
   })
 
+  it('collapses every project with one button and expands them all again', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '全部收起' }))
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem('qingcode:terminal-list-collapsed') ?? '[]')).toEqual(['p1', 'p2'])
+    fireEvent.click(screen.getByRole('button', { name: '全部展开' }))
+    expect(screen.getAllByRole('tab')).toHaveLength(3)
+  })
+
   it('always expands the current project even if it was collapsed before', () => {
     localStorage.setItem('qingcode:terminal-list-collapsed', '["p1"]')
     render(<TerminalSessionList />)
