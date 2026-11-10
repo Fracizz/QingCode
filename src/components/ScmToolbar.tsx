@@ -335,7 +335,7 @@ export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmP
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
@@ -374,7 +374,7 @@ export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) 
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
@@ -405,7 +405,7 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] max-w-[32rem] min-w-[14rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] max-w-[32rem] min-w-[14rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
     >

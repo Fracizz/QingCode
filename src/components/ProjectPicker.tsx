@@ -70,6 +70,7 @@ import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChip
 import InfoTipCard from './InfoTipCard'
 import { isTauri, isSshResource } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
+import { focusHoveredMenuItem, MENU_ITEM_GAP_CLASS } from './menuHoverFocus'
 
 const CHIP_GAP = 4
 /** Pointer DnD threshold — HTML5 DnD is flaky in WebView2 title bar (see Sidebar). */
@@ -626,6 +627,7 @@ export default function ProjectPicker() {
             role="menu"
             className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
+            onMouseOver={focusHoveredMenuItem}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
@@ -634,7 +636,7 @@ export default function ProjectPicker() {
             <div className="px-2.5 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
               {t('更多项目')}
             </div>
-            <div className="flex-1 overflow-auto">
+            <div className={`flex-1 overflow-auto ${MENU_ITEM_GAP_CLASS}`}>
               {overflowProjects.map(project => {
                 const unavailable = unavailableProjectIds.includes(project.id)
                 const isCurrent = currentProject?.id === project.id
@@ -783,7 +785,7 @@ export default function ProjectPicker() {
                 )
               })}
             </div>
-            <div className="border-t border-border-strong mt-1 pt-1">
+            <div className={`border-t border-border-strong mt-1 pt-1 ${MENU_ITEM_GAP_CLASS}`}>
               <button
                 type="button"
                 role="menuitem"

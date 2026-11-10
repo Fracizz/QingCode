@@ -440,7 +440,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
           ref={sourceMenuRef}
           role="menu"
           aria-label={t('源文件夹位置')}
-          className="menu-enter ui-font-scaled fixed z-[130] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+          className="menu-enter ui-font-scaled fixed z-[130] flex flex-col gap-[3px] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
           style={sourceMenuStyle}
         >
           <MenuItem

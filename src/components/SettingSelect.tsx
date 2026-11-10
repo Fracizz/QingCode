@@ -185,7 +185,7 @@ export default function SettingSelect({
             role="listbox"
             tabIndex={-1}
             aria-activedescendant={`${listId}-opt-${activeIndex}`}
-            className="menu-enter ui-font-scaled fixed z-[80] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 outline-none"
+            className="menu-enter ui-font-scaled fixed z-[80] flex flex-col gap-[3px] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 outline-none"
             style={menuStyle}
             onKeyDown={onMenuKeyDown}
             onPointerDown={event => event.stopPropagation()}

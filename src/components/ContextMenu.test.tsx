@@ -52,6 +52,27 @@ describe('ContextMenu shortcuts', () => {
     fireEvent.keyDown(window, { key: 'c', ctrlKey: true, shiftKey: true })
     expect(action).not.toHaveBeenCalled()
   })
+  it('moves focus to the hovered item so only one row is highlighted', async () => {
+    render(
+      <ContextMenu
+        x={20}
+        y={20}
+        onClose={vi.fn()}
+        items={[
+          { label: '复制', action: vi.fn() },
+          { label: '添加到对话', action: vi.fn() },
+          { label: '不可用', disabled: true, action: vi.fn() },
+        ]}
+      />,
+    )
+    const first = screen.getByRole('menuitem', { name: '复制' })
+    const second = screen.getByRole('menuitem', { name: '添加到对话' })
+    await waitFor(() => expect(first).toHaveFocus())
+    fireEvent.mouseEnter(second)
+    expect(second).toHaveFocus()
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: '不可用' }))
+    expect(second).toHaveFocus()
+  })
   it('moves from the initially focused first item and restores the opener on Escape', async () => {
     const opener = document.createElement('button')
     document.body.append(opener)

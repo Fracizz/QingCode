@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isTauri } from '../lib/tauri'
-import { Paperclip, X } from 'lucide-react'
+import { Check, Paperclip, X } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import { copyToClipboard } from '../utils/fileReferences'
@@ -71,6 +71,10 @@ export default function TerminalComposer({
   const [busy, setBusy] = useState(false)
   const preparing = useRef(false)
   const [error, setError] = useState('')
+  // 复制成功后按钮短暂显示「已复制」，给出可见反馈。
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
   const dropHandler = useRef<(paths: string[]) => void>(() => {})
   const [rect, setRect] = useState<ComposerRect>(() => loadComposerRect(viewport()))
   const rectRef = useRef(rect)
@@ -361,12 +365,20 @@ export default function TerminalComposer({
           <button
             type="button"
             disabled={busy || !text}
-            className="rounded border border-border-strong px-3 py-1.5 text-ui hover:bg-bg-hover disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded border border-border-strong px-3 py-1.5 text-ui hover:bg-bg-hover disabled:opacity-50"
             onClick={() => {
-              void copyToClipboard(text).catch(reason => setError(String(reason)))
+              void copyToClipboard(text)
+                .then(() => {
+                  setError('')
+                  setCopied(true)
+                  window.clearTimeout(copiedTimer.current)
+                  copiedTimer.current = window.setTimeout(() => setCopied(false), 1500)
+                })
+                .catch(reason => setError(String(reason)))
             }}
           >
-            {translate('复制')}
+            {copied && <Check size={14} className="text-ok" aria-hidden="true" />}
+            {copied ? translate('已复制') : translate('复制')}
           </button>
           <button
             type="button"

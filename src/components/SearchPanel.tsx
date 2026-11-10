@@ -1198,7 +1198,7 @@ export default function SearchPanel() {
               ref={scopeMenuRef}
               role="listbox"
               aria-label={t('搜索范围')}
-              className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+              className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
               style={scopeMenuStyle}
               onPointerDown={event => event.stopPropagation()}
             >

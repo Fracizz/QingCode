@@ -216,7 +216,7 @@ export default function ContextMenu({
           arrow ? '' : 'border border-border-strong [box-shadow:var(--shadow-elevation-2)]'
         }`}
       >
-        <div ref={menuRef} role="menu" className="overflow-y-auto p-1">
+        <div ref={menuRef} role="menu" className="flex flex-col gap-[3px] overflow-y-auto p-1">
           {items.map((item, index) => (
             <div key={`${item.label}-${index}`}>
               {item.separatorBefore && <div className="my-1 border-t border-border-strong/80" />}
@@ -238,7 +238,12 @@ export default function ContextMenu({
                     : 'text-fg hover:bg-bg-active focus:bg-bg-active'
               }
               disabled:cursor-not-allowed disabled:opacity-40`}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseEnter={event => {
+                  if (item.disabled) return
+                  setActiveIndex(index)
+                  // 焦点跟随悬停，避免原焦点项的 focus 背景与悬停项同时高亮
+                  event.currentTarget.focus()
+                }}
                 onClick={() => {
                   onClose()
                   void item.action()

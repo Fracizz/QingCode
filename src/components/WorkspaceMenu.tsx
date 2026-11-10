@@ -23,6 +23,7 @@ import {
   NAMED_WORKSPACE_CHANGE_EVENT,
   type NamedWorkspace,
 } from '../lib/namedWorkspacePersist'
+import { focusHoveredMenuItem, MENU_ITEM_GAP_CLASS } from './menuHoverFocus'
 
 const MENU_WIDTH = 260
 
@@ -209,6 +210,7 @@ export default function WorkspaceMenu() {
             role="menu"
             className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
+            onMouseOver={focusHoveredMenuItem}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
@@ -218,7 +220,7 @@ export default function WorkspaceMenu() {
               {t('多项目工作区')}
             </div>
 
-            <div className="flex-1 overflow-auto">
+            <div className={`flex-1 overflow-auto ${MENU_ITEM_GAP_CLASS}`}>
               {workspaces.length === 0 ? (
                 <div className="px-2.5 py-2 text-ui-sm text-fg-muted">
                   {t('暂无工作区，可将顶栏项目保存为工作区')}
@@ -255,7 +257,7 @@ export default function WorkspaceMenu() {
               )}
             </div>
 
-            <div className="border-t border-border-strong/80 my-1 pt-1">
+            <div className={`border-t border-border-strong/80 my-1 pt-1 ${MENU_ITEM_GAP_CLASS}`}>
               <button
                 type="button"
                 role="menuitem"

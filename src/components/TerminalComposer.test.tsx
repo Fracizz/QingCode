@@ -49,6 +49,13 @@ describe('long terminal input', () => {
     expect(screen.getByRole('textbox')).toHaveValue('first\nsecond')
   })
 
+  it('shows copied feedback on the copy button after copying', async () => {
+    render(<TerminalComposer {...props()} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+    fireEvent.click(screen.getByRole('button', { name: '复制' }))
+    expect(await screen.findByRole('button', { name: '已复制' })).toBeInTheDocument()
+  })
+
   it('inserts screenshot references at the selection and does not submit the terminal', async () => {
     const callbacks = props()
     render(<TerminalComposer {...callbacks} />)
