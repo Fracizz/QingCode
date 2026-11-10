@@ -80,6 +80,7 @@ import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/work
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import { planTerminalRestore } from '@/lib/terminal/terminalRestorePlan'
+import { hasLocalHostedSession } from '@/lib/appCloseFlow'
 
 function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -191,6 +192,32 @@ describe('terminal persistent connection events', () => {
       exitCode: null,
     })
     expect(mocks.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('hosts Windows shells by default and restores the same PTY after persistence', async () => {
+    const hosted = { persistent: true, ptyId: 'local-pty', connectionId: '__local__' }
+    mocks.createTerminal.mockResolvedValueOnce(hosted)
+    useTerminalStore.setState({ terminals: [terminal({
+      cwd: 'C:\\work', status: 'starting', persistent: undefined, ptySpawnPending: true,
+    })] })
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    expect(mocks.createTerminal).toHaveBeenCalledWith(expect.objectContaining({ persistLocal: true }))
+    const live = useTerminalStore.getState().terminals[0]
+    expect(hasLocalHostedSession(live)).toBe(true)
+
+    const snapshot = buildWorkspaceSessionSnapshot({
+      editorSessions: {}, terminals: [live], activeTerminalByProject: { p1: live.id },
+    })
+    const parsed = parseWorkspaceSession(JSON.parse(JSON.stringify(snapshot)))!
+    const restored = terminalFromPersisted('p1', parsed.projects.p1.terminals[0])
+    mocks.attachTerminal.mockResolvedValueOnce(hosted)
+    useTerminalStore.setState({ terminals: [restored] })
+    await useTerminalStore.getState().spawnRestoredTerminals('p1')
+    expect(mocks.attachTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      id: live.id, cwd: 'C:\\work', ptyId: 'local-pty',
+    }))
+    expect(mocks.createTerminal).toHaveBeenCalledTimes(1)
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ ...hosted, status: 'running' })
   })
 
   it('stores the persistent capability returned by a new terminal spawn', async () => {

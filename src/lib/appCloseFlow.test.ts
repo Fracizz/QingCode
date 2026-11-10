@@ -159,11 +159,17 @@ describe('app close decisions', () => {
   })
 
   it('names both kinds when remote and local terminals can be kept', async () => {
-    const { deps } = fixture([tab('remote'), hosted('local')])
+    const tabs = [tab('remote'), hosted('local')]
+    const { deps } = fixture(tabs)
     await runAppClose(deps)
     expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({
       options: expect.arrayContaining([expect.objectContaining({ id: 'preserve', label: '保留终端并退出' })]),
     }))
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+    for (const terminal of tabs) {
+      expect(deps.finishRemote).toHaveBeenCalledWith(terminal, 'preserve')
+      expect(deps.markDetached).toHaveBeenCalledWith(terminal)
+    }
   })
 
   it('ignores ended and not-yet-created tabs, but includes temporarily unavailable persistent PTYs', () => {

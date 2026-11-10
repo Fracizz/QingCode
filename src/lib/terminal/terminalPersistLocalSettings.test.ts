@@ -7,13 +7,18 @@ import {
 } from './terminalPersistLocalSettings'
 
 describe('terminal.integrated.persistLocalSessions', () => {
-  it('is opt-in: only an explicit true enables hosting', () => {
+  it('hosts local terminals by default, including settings from before the option existed', () => {
     expect(parseTerminalPersistLocalSessions(true)).toBe(true)
-    for (const value of [false, undefined, null, 'true', 1]) {
-      expect(parseTerminalPersistLocalSessions(value)).toBe(false)
+    for (const value of [undefined, null, 'true', 'false', 1]) {
+      expect(parseTerminalPersistLocalSessions(value)).toBe(true)
     }
-    expect(readTerminalPersistLocalSessions({})).toBe(false)
+    expect(readTerminalPersistLocalSessions({})).toBe(true)
     expect(readTerminalPersistLocalSessions({ [PERSIST_LOCAL_SESSIONS_KEY]: true })).toBe(true)
+  })
+
+  it('honors an explicit opt-out', () => {
+    expect(parseTerminalPersistLocalSessions(false)).toBe(false)
+    expect(readTerminalPersistLocalSessions({ [PERSIST_LOCAL_SESSIONS_KEY]: false })).toBe(false)
   })
 })
 

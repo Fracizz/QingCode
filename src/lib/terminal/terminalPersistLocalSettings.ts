@@ -12,7 +12,9 @@ import { mergeSettings } from '@/lib/autoSaveSettings'
 export const PERSIST_LOCAL_SESSIONS_KEY = 'terminal.integrated.persistLocalSessions'
 
 export function parseTerminalPersistLocalSessions(value: unknown): boolean {
-  return value === true
+  return typeof value === 'boolean'
+    ? value
+    : DEFAULT_GLOBAL_SETTINGS[PERSIST_LOCAL_SESSIONS_KEY] === true
 }
 
 export function readTerminalPersistLocalSessions(settings: Record<string, unknown>): boolean {
