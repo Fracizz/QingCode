@@ -14,7 +14,12 @@ fn main() {
     let workspace = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
+        .or_else(|| {
+            // 便携包双击启动时 cwd 就是 exe 所在目录，此时不自动打开，等用户 Ctrl+O
+            let cwd = std::env::current_dir().ok()?;
+            let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+            (cwd != exe_dir).then_some(cwd)
+        })
         .filter(|p| p.is_dir());
 
     gpui_kit::application()
