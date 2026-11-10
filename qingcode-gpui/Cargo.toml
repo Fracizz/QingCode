@@ -1,0 +1,45 @@
+# QingCode GPUI 原生 UI 试验（MVP）
+# 独立 Cargo workspace：不并入 src-tauri，避免拖慢 Tauri 构建与 `pnpm check`。
+[workspace]
+
+[package]
+name = "qingcode-gpui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "QingCode native editor spike built on GPUI Kit"
+
+[dependencies]
+# 精确锁定：gpui-kit 仍处 0.x，API 变动频繁
+gpui-kit = { version = "=0.9.1", features = [
+  "tree-sitter-rust",
+  "tree-sitter-javascript",
+  "tree-sitter-typescript",
+  "tree-sitter-tsx",
+  "tree-sitter-markdown",
+  "tree-sitter-markdown-inline",
+  "tree-sitter-python",
+  "tree-sitter-go",
+  "tree-sitter-toml",
+  "tree-sitter-yaml",
+  "tree-sitter-css",
+  "tree-sitter-html",
+  "tree-sitter-bash",
+  "tree-sitter-make",
+  "tree-sitter-cmake",
+] }
+anyhow = "1"
+# 生成统一 diff 补丁（已是 gpui-kit 的传递依赖，不额外引入下载）
+similar = "2.7"
+
+[dev-dependencies]
+# 无头窗口 UI 集成测试（#[gpui_kit::test]）
+gpui-kit = { version = "=0.9.1", features = ["test-support"] }
+
+[profile.dev]
+# 依赖用优化编译，保证 GPUI 渲染流畅；本 crate 保持快速增量
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2

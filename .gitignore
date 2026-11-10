@@ -16,6 +16,7 @@ coverage
 # 构建产物（单文件 exe 归档目录）
 release
 src-tauri/target
+qingcode-gpui/target
 src-tauri/gen
 
 # 包管理器 lock（使用 pnpm）
