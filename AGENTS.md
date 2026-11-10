@@ -12,6 +12,7 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 - `pnpm package:local` is the local-only parallel packaging CLI (see `docs/local-packaging.md`). Use `--plan`, `--only`, `--jobs`, `start`, `status <run-id>`, and `cancel <run-id> [--task apk]`. Independent preparation/APK stages run in parallel; desktop Cargo stages run sequentially. It never pushes tags or publishes releases.
 - `pnpm tauri:dev` starts the complete Windows desktop application; use this for features involving files, terminals, or native dialogs.
 - `pnpm dev` runs only Vite's browser UI for layout-focused work.
+- `pnpm clean:rust-target` prunes `src-tauri/target` by policy (incremental caches unused for 7 days or above 10 GB, then whole profiles oldest-first while the target exceeds 50 GB); `pnpm tauri:dev` runs it on every start. Add `-DryRun` to preview, `-RegisterDailyTask` / `-UnregisterDailyTask` to manage the daily 04:00 scheduled task.
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.
 - `pnpm test` runs Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}` plus packaging tests; `pnpm test:watch` runs Vitest in watch mode.
 - `pnpm check` runs frontend typecheck, Vitest coverage, packaging tests, and ESLint, then Rust `fmt` / `clippy -D warnings` / `test`.

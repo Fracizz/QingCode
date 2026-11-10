@@ -109,6 +109,14 @@ Get-Process -Name 'qingcode', 'QingCode' -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 400
 
+# 按策略清理 Rust 构建缓存，避免 target 无限增长（详见 prune-rust-target.ps1）。
+try {
+  & (Join-Path $PSScriptRoot 'prune-rust-target.ps1')
+}
+catch {
+  Write-Warning "Rust target 清理失败，继续启动：$($_.Exception.Message)"
+}
+
 $devPort = Get-AvailableDevPort
 $env:VITE_DEV_PORT = "$devPort"
 

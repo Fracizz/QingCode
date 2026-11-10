@@ -537,7 +537,9 @@ fn spawn_with_shell_parent(exe: &Path, command_line: &str) -> Result<WindowsChil
         CloseHandle(parent);
     }
     if !spawned {
-        return Err(format!("以 Shell 为父进程拉起失败，GetLastError={last_error}"));
+        return Err(format!(
+            "以 Shell 为父进程拉起失败，GetLastError={last_error}"
+        ));
     }
     // SAFETY: 线程句柄即刻关闭；进程句柄的所有权移交 WindowsChild。
     unsafe { CloseHandle(pi.hThread) };
