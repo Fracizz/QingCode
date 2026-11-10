@@ -461,6 +461,7 @@ describe('TerminalSessionList', () => {
     render(<TerminalSessionList />)
     expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
     expect(row('other').querySelector('[data-terminal-awaiting-restore="other"]')).not.toBeNull()
+    expect(row('other').querySelector('[data-tooltip="切换到项目后恢复"] [data-terminal-awaiting-restore="other"]')).not.toBeNull()
     expect(row('other')).toHaveClass('text-term-list-fg')
     expect(within(row('other')).getByText('waiting')).not.toHaveClass('text-term-list-meta')
     expect(within(row('other')).queryByText('待恢复')).toBeNull()

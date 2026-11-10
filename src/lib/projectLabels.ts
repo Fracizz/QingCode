@@ -43,6 +43,15 @@ function sourceInfo(
   return { identity: 'local', label: localLabel, detail: localLabel, path: project.path }
 }
 
+/** 项目来源的短标签：SSH 用连接名，WSL 用发行版名，本机用 `localLabel`。 */
+export function projectSourceLabel(
+  project: Project,
+  connections: ReadonlyArray<SshConnection>,
+  localLabel: string
+): string {
+  return sourceInfo(project, new Map(connections.map(item => [item.id, item])), localLabel).label
+}
+
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
 }

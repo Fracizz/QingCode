@@ -1247,6 +1247,9 @@ export default function TerminalView({
     }
     const onPanelResizeEnd = () => {
       term.options.cursorBlink = getTerminalCursorBlinking()
+      // 调整期间 ResizeObserver 与 scheduleFit 都会跳过；settle 之后才到位的尺寸
+      // （如关闭设置页后侧栏随后展开、非激活标签）在这里补一次。尺寸未变时 fitNow 直接返回。
+      scheduleFit()
       // 不要在这里 flush PTY resize：它会与刚揭开的 WebGL 画面同时触发 TUI
       // 整屏刷新。等待 schedulePtyResize 的合并计时器自然提交最终尺寸。
     }

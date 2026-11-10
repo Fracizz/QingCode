@@ -443,13 +443,19 @@ export default function TerminalSessionList() {
             }
           >
             {awaitingRestore ? (
-              <span
-                aria-hidden="true"
-                data-terminal-awaiting-restore={term.id}
-                className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
+              // 与「运行中」呼吸点一致：悬停说明这个灰点的含义。
+              <Tooltip
+                label={translate('切换到项目后恢复')}
+                side="top"
+                wrapperClassName="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
               >
-                <span className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50" />
-              </span>
+                <span
+                  role="img"
+                  aria-label={translate('切换到项目后恢复')}
+                  data-terminal-awaiting-restore={term.id}
+                  className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50"
+                />
+              </Tooltip>
             ) : (
               <TerminalActivityDot
                 terminalId={term.id}

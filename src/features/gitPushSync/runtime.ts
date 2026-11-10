@@ -7,6 +7,7 @@ import {
 } from '@/lib/ipc/gitPushSync'
 import { translate } from '@/lib/i18n'
 import { countDirtyTabsByProject } from '@/lib/projectIndicators'
+import { projectSourceLabel } from '@/lib/projectLabels'
 import { withDb } from '@/lib/projectRepository'
 import { syncOpenFilesOnFocus } from '@/lib/syncOpenFileFromDisk'
 import { createDefaultSyncOpenFileDeps } from '@/lib/syncOpenFileFromDiskDeps'
@@ -65,8 +66,10 @@ function reloadAfterFastForward(project: Project) {
 }
 
 function notify(project: Project, result: SyncResult) {
-  const { pushToast } = useProjectStore.getState()
-  const values = { project: project.name, count: result.commits ?? 0 }
+  const { pushToast, sshConnections } = useProjectStore.getState()
+  // 带上来源（如「WinDev · django」），同名项目分布在多台机器时能分清是哪一个。
+  const source = projectSourceLabel(project, sshConnections, translate('本机'))
+  const values = { project: `${source} · ${project.name}`, count: result.commits ?? 0 }
   switch (result.kind) {
     case 'synced':
       pushToast('success', translate('{project} 已同步 {count} 个提交', values))
@@ -113,4 +116,5 @@ export const gitPushSyncEngine = createGitPushSyncEngine({
   rememberIdentity,
   isLiveDetection: path => useGitPushSyncStore.getState().detection[path]?.state === 'live',
   now: () => Date.now(),
+  currentProjectPath: () => useProjectStore.getState().currentProject?.path ?? null,
 })

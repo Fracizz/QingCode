@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitRemote, GitStatus } from '@/lib/git/git'
 import type { Project } from '@/types'
 import { DEFAULT_CONFIG, type GitPushSyncConfig } from './core'
-import { createGitPushSyncEngine, type EngineDeps, type SyncResult } from './engine'
+import { createGitPushSyncEngine, syncMachineKey, type EngineDeps, type SyncResult } from './engine'
 
 const A = { id: 'a', name: 'A', path: 'C:/a' } as Project
 const B = { id: 'b', name: 'B', path: 'ssh://c/b' } as Project
@@ -207,5 +207,53 @@ describe('git push sync engine', () => {
     await engine.refreshWatches()
     expect(deps.setWatches).toHaveBeenCalledWith([])
     expect(deps.getRemotes).not.toHaveBeenCalled()
+  })
+
+  it('runs receivers on different machines in parallel but one machine serially', async () => {
+    const C = { id: 'c', name: 'C', path: 'ssh://other/c' } as Project
+    const D = { id: 'd', name: 'D', path: 'ssh://c/d' } as Project
+    const started: string[] = []
+    const gates = new Map<string, () => void>()
+    const fetch = vi.fn((path: string) => {
+      started.push(path)
+      return new Promise<void>(resolve => gates.set(path, resolve))
+    })
+    const { engine } = setup(
+      { projects: () => [A, B, C, D], fetch },
+      { receivers: ['b', 'c', 'd'] },
+    )
+    const done = engine.handlePush(PUSH)
+    await vi.waitFor(() => expect(started).toEqual([B.path, C.path]))
+    gates.get(B.path)?.()
+    await vi.waitFor(() => expect(started).toEqual([B.path, C.path, D.path]))
+    gates.get(C.path)?.()
+    gates.get(D.path)?.()
+    await done
+  })
+
+  it('syncs the current project first within its machine', async () => {
+    const D = { id: 'd', name: 'D', path: 'ssh://c/d' } as Project
+    const E = { id: 'e', name: 'E', path: 'ssh://c/e' } as Project
+    const order: string[] = []
+    const { engine } = setup(
+      {
+        projects: () => [A, B, D, E],
+        currentProjectPath: () => E.path,
+        fetch: vi.fn(async (path: string) => {
+          order.push(path)
+        }),
+      },
+      { receivers: ['b', 'd', 'e'] },
+    )
+    await engine.handlePush(PUSH)
+    expect(order[0]).toBe(B.path)
+    // B 已在执行；排队中的 E 是当前项目，跳到 D 前面。
+    expect(order.slice(1)).toEqual([E.path, D.path])
+  })
+
+  it('keys machines by connection, WSL distro or local', () => {
+    expect(syncMachineKey({ path: 'ssh://c/x' } as Project)).toBe('ssh:c')
+    expect(syncMachineKey({ path: 'wsl://Ubuntu/x' } as Project)).toBe('wsl:Ubuntu')
+    expect(syncMachineKey({ path: 'C:/x' } as Project)).toBe('local')
   })
 })

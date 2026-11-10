@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, SshConnection } from '../types'
-import { buildProjectLabels } from './projectLabels'
+import { buildProjectLabels, projectSourceLabel } from './projectLabels'
 
 const connection = (id: string, name: string, host = id): SshConnection => ({
   id,
@@ -142,5 +142,12 @@ describe('buildProjectLabels', () => {
     const result = buildProjectLabels(projects, [], 'This PC')
     expect(result.get('a')?.source).toBe('This PC · a')
     expect(result.get('b')?.name).toBe(' NEM-panel ')
+  })
+})
+
+describe('projectSourceLabel', () => {
+  it('names the machine a project lives on', () => {
+    expect(projectSourceLabel(ssh('a', 'c1'), [connection('c1', 'WinDev')], '本机')).toBe('WinDev')
+    expect(projectSourceLabel(local('b'), [], '本机')).toBe('本机')
   })
 })
