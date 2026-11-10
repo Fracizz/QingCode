@@ -18,7 +18,6 @@ import {
   Eye,
   EyeOff,
   MonitorCloud,
-  FolderOpen,
   ListChecks,
   LoaderCircle,
   MessageCircleMore,
@@ -32,7 +31,7 @@ import {
 } from 'lucide-react'
 import { useTerminalTabActions } from '../hooks/useTerminalTabActions'
 import { copyPathAction } from '../lib/copyFileActions'
-import { switchToTerminalProject, useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
+import { useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
 import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -163,7 +162,6 @@ export default function TerminalSessionList() {
   } = actions
   const projects = useProjectStore(s => s.projects)
   const sshConnections = useProjectStore(s => s.sshConnections)
-  const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
   const hideProject = useProjectStore(s => s.hideProject)
   const unhideProject = useProjectStore(s => s.unhideProject)
@@ -1039,18 +1037,11 @@ export default function TerminalSessionList() {
         const group = groups.find(item => item.project.id === projectMenu.projectId)
         if (!group) return null
         const expanded = isExpanded(group)
-        const isCurrentGroup = group.project.id === currentProjectId
         return (
           <ContextMenu
             x={projectMenu.x}
             y={projectMenu.y}
             items={[
-              {
-                label: isCurrentGroup ? translate('当前项目') : translate('切换到此项目'),
-                icon: <FolderOpen size={14} />,
-                disabled: isCurrentGroup || unavailableProjectIds.includes(group.project.id),
-                action: () => switchToTerminalProject(group.project.id),
-              },
               {
                 label: translate('复制项目路径'),
                 icon: <Copy size={14} />,

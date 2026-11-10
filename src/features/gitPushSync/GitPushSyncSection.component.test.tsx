@@ -5,6 +5,7 @@ import { useProjectStore } from '@/store/projectStore'
 import type { Project } from '@/types'
 import { DEFAULT_CONFIG } from './core'
 import GitPushSyncSection from './GitPushSyncSection'
+import { resetScanCache } from './scanCache'
 import { useGitPushSyncStore } from './store'
 
 const mocks = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ const offline = { id: 'x', name: 'app-offline', path: 'ssh://d/x', kind: 'ssh' }
 describe('GitPushSyncSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetScanCache()
     mocks.saveConfig.mockImplementation(async config =>
       useGitPushSyncStore.getState().setConfig(config),
     )
@@ -87,5 +89,36 @@ describe('GitPushSyncSection', () => {
     useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
     render(<GitPushSyncSection />)
     expect((screen.getByLabelText('自动接收 app-server') as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('keeps rows in place until every project has been inspected', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(resolve => (release = resolve))
+    mocks.getGitRemotes.mockImplementation(async (path: string) => {
+      if (path === offline.path) {
+        await gate
+        throw new Error('未连接')
+      }
+      return [{ name: 'origin', fetch_url: 'git@gitee.com:team/app.git', push_urls: [] }]
+    })
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    render(<GitPushSyncSection />)
+    await waitFor(() => expect(mocks.getGitRemotes).toHaveBeenCalledTimes(3))
+    // 前两个已识别，但最后一个未完成前不归组，避免行跳动。
+    expect(screen.getByText('正在识别仓库…')).toBeTruthy()
+    expect(screen.queryByText('gitee.com/team/app')).toBeNull()
+    release()
+    await screen.findByText('gitee.com/team/app')
+    expect(screen.queryByText('正在识别仓库…')).toBeNull()
+  })
+
+  it('reuses the last grouping when the section is reopened', async () => {
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    const first = render(<GitPushSyncSection />)
+    await screen.findByText('gitee.com/team/app')
+    first.unmount()
+    render(<GitPushSyncSection />)
+    expect(screen.getByText('gitee.com/team/app')).toBeTruthy()
+    expect(screen.queryByText('正在识别仓库…')).toBeNull()
   })
 })

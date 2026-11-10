@@ -9,10 +9,13 @@ import type { Project } from '@/types'
 import { allRemoteKeys, DEFAULT_CONFIG, type GitPushSyncConfig, type SyncAction } from './core'
 import type { SyncResult } from './engine'
 import { saveConfig } from './runtime'
+import { type Inspection, readScanCache, scanCacheKey, writeScanCache } from './scanCache'
 import { useGitPushSyncStore } from './store'
 
-type Inspection = { repo: string | null; branch: string | null }
 type Translate = ReturnType<typeof useI18n>['t']
+
+/** 尚未识别完成的项目所在分组的内部键（不会与真实远程地址冲突）。 */
+const PENDING = '<pending>'
 
 /** 仓库分组的显示名：优先用 origin，其次第一个远程。 */
 function inspect(remotes: Awaited<ReturnType<typeof getGitRemotes>>, branch: string | null): Inspection {
@@ -55,49 +58,64 @@ export default function GitPushSyncSection() {
   const config = useGitPushSyncStore(state => state.config)
   const detection = useGitPushSyncStore(state => state.detection)
   const results = useGitPushSyncStore(state => state.results)
-  const [inspections, setInspections] = useState<Record<string, Inspection>>({})
-  const [connectionNames, setConnectionNames] = useState<Record<string, string>>({})
 
   const candidates = useMemo(() => projects.filter(project => !project.ephemeral), [projects])
+  // 只在项目增删或路径变化时重扫；最近打开时间等字段变化不触发。
+  const signature = candidates.map(scanCacheKey).join('\n')
+  const [inspections, setInspections] = useState<Record<string, Inspection>>(() =>
+    readScanCache(candidates),
+  )
+  const [scanning, setScanning] = useState<{ done: number; total: number } | null>(null)
+  const [connectionNames, setConnectionNames] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!config.enabled) return
     let cancelled = false
+    const targets = useProjectStore.getState().projects.filter(project => !project.ephemeral)
     void listSshConnections()
       .then(rows => {
         if (!cancelled) setConnectionNames(Object.fromEntries(rows.map(row => [row.id, row.name])))
       })
       .catch(() => undefined)
     void (async () => {
+      // 结果先攒在本地，全部完成后一次性提交，避免行在分组之间逐个跳动。
+      const next: Record<string, Inspection> = {}
+      setScanning({ done: 0, total: targets.length })
       // 逐个读取：远程项目每次都是一次 SSH 往返，不并发压到同一条连接。
-      for (const project of candidates) {
+      for (const [index, project] of targets.entries()) {
         if (cancelled) return
         try {
-          const [remotes, status] = [
-            await getGitRemotes(project.path),
-            await getGitStatus(project.path),
-          ]
-          if (cancelled) return
-          const inspection = inspect(remotes, status.branch ?? null)
-          setInspections(previous => ({ ...previous, [project.id]: inspection }))
+          const remotes = await getGitRemotes(project.path)
+          const status = await getGitStatus(project.path)
+          next[project.id] = inspect(remotes, status.branch ?? null)
         } catch {
-          // 未连接或不是仓库：保留在“未连接”分组。
+          // 未连接或不是仓库：归入“未连接”分组。
+          next[project.id] = { repo: null, branch: null }
         }
+        if (cancelled) return
+        setScanning({ done: index + 1, total: targets.length })
       }
+      writeScanCache(targets, next)
+      setInspections(next)
+      setScanning(null)
     })()
     return () => {
       cancelled = true
+      setScanning(null)
     }
-  }, [candidates, config.enabled])
+  }, [signature, config.enabled])
 
   const groups = useMemo(() => {
     const grouped = new Map<string, Project[]>()
     for (const project of candidates) {
-      const key = inspections[project.id]?.repo ?? ''
+      const entry = inspections[project.id]
+      // 首次扫描中尚未识别的项目单独成组，扫描结束后再统一归组。
+      const key = entry === undefined ? PENDING : (entry.repo ?? '')
       grouped.set(key, [...(grouped.get(key) ?? []), project])
     }
-    // 已识别仓库在前；同一仓库少于两个项目时也显示，方便确认识别结果。
-    return [...grouped.entries()].sort(([a], [b]) => (a && b ? a.localeCompare(b) : a ? -1 : 1))
+    const rank = (key: string) => (key === PENDING ? 2 : key === '' ? 1 : 0)
+    // 已识别仓库在前并按名称排序；同一仓库少于两个项目时也显示，方便确认识别结果。
+    return [...grouped.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
   }, [candidates, inspections])
 
   const update = (next: GitPushSyncConfig) => {
@@ -127,6 +145,9 @@ export default function GitPushSyncSection() {
       : project.kind === 'wsl'
         ? 'WSL'
         : t('本机')
+
+  const groupTitle = (repo: string) =>
+    repo === PENDING ? t('正在识别仓库…') : repo || t('未连接或没有远程仓库')
 
   return (
     <>
@@ -173,51 +194,76 @@ export default function GitPushSyncSection() {
           )}
           layout="stacked"
         >
-          <div className="flex flex-col gap-3 overflow-x-auto">
-            {groups.map(([repo, members]) => (
-              <div key={repo || 'unknown'}>
-                <div className="text-ui-sm font-medium text-fg mb-1 break-all">
-                  {repo || t('未连接或没有远程仓库')}
-                </div>
-                <table className="w-full text-ui-sm text-left">
-                  <thead className="text-fg-muted">
-                    <tr>
-                      <th className="font-normal py-1 pr-3">{t('项目')}</th>
-                      <th className="font-normal py-1 pr-3">{t('位置')}</th>
-                      <th className="font-normal py-1 pr-3">{t('分支')}</th>
-                      <th className="font-normal py-1 pr-3">{t('推送检测')}</th>
-                      <th className="font-normal py-1 pr-3">{t('自动接收')}</th>
-                      <th className="font-normal py-1">{t('最近结果')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {members.map(project => {
-                      const trusted = isProjectTrusted(project)
-                      return (
-                        <tr key={project.id} className="border-t border-border">
-                          <td className="py-1 pr-3 text-fg">{project.name}</td>
-                          <td className="py-1 pr-3">{locationText(project)}</td>
-                          <td className="py-1 pr-3">{inspections[project.id]?.branch ?? '—'}</td>
-                          <td className="py-1 pr-3">{detectionText(project)}</td>
-                          <td className="py-1 pr-3">
-                            <input
-                              type="checkbox"
-                              aria-label={t('自动接收 {project}', { project: project.name })}
-                              checked={config.receivers.includes(project.id)}
-                              disabled={!trusted}
-                              onChange={event => toggleReceiver(project, event.target.checked)}
-                              className="accent-accent"
-                            />
-                          </td>
-                          <td className="py-1">
-                            {trusted ? resultText(t, results[project.path]) : t('项目未信任')}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+          <div className="flex flex-col gap-3">
+            {scanning && (
+              <div className="text-ui-xs text-fg-muted" role="status">
+                {t('正在识别仓库 {done}/{total}', scanning)}
               </div>
+            )}
+            {groups.map(([repo, members]) => (
+              <section key={repo || 'unknown'} className="rounded-md border border-border overflow-hidden">
+                <header className="flex items-center gap-2 px-3 py-1.5 bg-bg-elevated border-b border-border">
+                  <span
+                    className={`min-w-0 flex-1 truncate text-ui-sm font-medium ${
+                      repo && repo !== PENDING ? 'text-fg' : 'text-fg-muted'
+                    }`}
+                  >
+                    {groupTitle(repo)}
+                  </span>
+                  <span className="shrink-0 text-ui-xs text-fg-muted">
+                    {t('{count} 个项目', { count: members.length })}
+                  </span>
+                </header>
+                <div className="overflow-x-auto">
+                  {/* 固定列宽：各分组的列对齐，内容长短变化也不会挤动列位置。 */}
+                  <table className="w-full min-w-[560px] table-fixed text-ui-sm text-left">
+                    <colgroup>
+                      <col />
+                      <col className="w-[16%]" />
+                      <col className="w-[13%]" />
+                      <col className="w-[14%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[24%]" />
+                    </colgroup>
+                    <thead className="text-fg-muted">
+                      <tr>
+                        <th className="font-normal px-3 py-1">{t('项目')}</th>
+                        <th className="font-normal px-3 py-1">{t('位置')}</th>
+                        <th className="font-normal px-3 py-1">{t('分支')}</th>
+                        <th className="font-normal px-3 py-1">{t('推送检测')}</th>
+                        <th className="font-normal px-3 py-1 text-center">{t('自动接收')}</th>
+                        <th className="font-normal px-3 py-1">{t('最近结果')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map(project => {
+                        const trusted = isProjectTrusted(project)
+                        return (
+                          <tr key={project.id} className="border-t border-border hover:bg-bg-hover">
+                            <td className="px-3 py-1.5 text-fg truncate">{project.name}</td>
+                            <td className="px-3 py-1.5 text-fg-muted truncate">{locationText(project)}</td>
+                            <td className="px-3 py-1.5 truncate">{inspections[project.id]?.branch ?? '—'}</td>
+                            <td className="px-3 py-1.5 text-fg-muted truncate">{detectionText(project)}</td>
+                            <td className="px-3 py-1.5 text-center">
+                              <input
+                                type="checkbox"
+                                aria-label={t('自动接收 {project}', { project: project.name })}
+                                checked={config.receivers.includes(project.id)}
+                                disabled={!trusted}
+                                onChange={event => toggleReceiver(project, event.target.checked)}
+                                className="accent-accent align-middle"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5 text-fg-muted truncate">
+                              {trusted ? resultText(t, results[project.path]) : t('项目未信任')}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             ))}
           </div>
         </SettingItem>
