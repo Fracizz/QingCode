@@ -302,8 +302,10 @@ export class WebTestBackend {
         this.ensurePath(path, true)
         return { os: 'linux', kind: command === 'ssh_run_environment' ? 'ssh' : 'local' }
       case 'create_terminal':
+      case 'local_host_create_terminal':
       case 'ssh_create_terminal':
       case 'spawn_script':
+      case 'local_host_spawn_profile':
       case 'ssh_spawn_script': {
         const cwd = String(args.cwd)
         this.ensurePath(cwd, true)
@@ -314,7 +316,7 @@ export class WebTestBackend {
           cwd,
           input: '',
           connected: true,
-          script: command.endsWith('spawn_script'),
+          script: command.endsWith('spawn_script') || command === 'local_host_spawn_profile',
         })
         return {
           resolvedShell: 'bash',

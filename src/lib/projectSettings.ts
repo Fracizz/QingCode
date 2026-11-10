@@ -101,7 +101,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': true,
     'terminal.integrated.largePasteAsFile': false,
-    'terminal.integrated.persistLocalSessions': false,
+    'terminal.integrated.persistLocalSessions': true,
     'terminal.integrated.tabActivityIndicator': true,
     'terminal.integrated.shiftEnterNewline': true,
     'ssh.server.enabled': true,
@@ -127,9 +127,10 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
 export const DEFAULT_PROJECT_SETTINGS: SettingsFile = (() => {
   const next = buildSharedDefaults()
-  // Inherit user auto-save unless the workspace file explicitly sets these keys.
+  // These settings inherit user preferences unless the workspace explicitly overrides them.
   delete next['files.autoSave']
   delete next['files.autoSaveDelay']
+  delete next['terminal.integrated.persistLocalSessions']
   return next
 })()
 
@@ -240,8 +241,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.sshUploadOnPaste": true,
   // terminal.integrated.largePasteAsFile：粘贴超过 32KB 或 500 行的文本时，不再询问，直接存为文件并粘贴路径（默认 false，即每次询问）
   "terminal.integrated.largePasteAsFile": false,
-  // terminal.integrated.persistLocalSessions：新建的本地 PowerShell / CMD 终端由后台宿主托管，关闭或升级 QingCode 后进程继续运行并可接回；仅 Windows，电脑重启后按原配置重新启动，连续断开 24 小时后自动结束（默认 false）
-  "terminal.integrated.persistLocalSessions": false,
+  // terminal.integrated.persistLocalSessions：新建的本地 PowerShell / CMD 终端由后台宿主托管，关闭或升级 QingCode 后进程继续运行并可接回；仅 Windows，电脑重启后按原配置重新启动，连续断开 24 小时后自动结束（默认 true，仅影响之后新建的终端）
+  "terminal.integrated.persistLocalSessions": true,
   // terminal.integrated.tabActivityIndicator：终端标签显示「运行中」呼吸点（标题转圈或持续输出时；事件驱动，不轮询进程，默认 true）
   "terminal.integrated.tabActivityIndicator": true,
   // terminal.integrated.shiftEnterNewline：在 Claude Code、Codex、OpenCode 等 Agent / TUI 中，Shift+Enter 换行而不提交；普通 Shell 不受影响（默认 true）
@@ -378,7 +379,10 @@ export const DEFAULT_PROJECT_SETTINGS_TEXT = `{
   // =============================================================================
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
-${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY)}
+${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY).replace(
+  '  "terminal.integrated.persistLocalSessions": true,',
+  '  // 默认继承用户设置；本工作区需要覆盖时再取消注释\n  // "terminal.integrated.persistLocalSessions": true,',
+)}
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
   custom: {
@@ -550,10 +554,16 @@ export function formatSettings(
     text = replaceTopLevelJson5Value(text, key, formatted, true)
   }
 
-  // Workspace templates inherit auto-save from the user by default (commented-out
-  // keys). When a project explicitly sets them, uncomment / write the values.
+  // Inherited settings are commented out in workspace templates, but explicit overrides must be written.
   if (scope === 'project') {
     text = writeOptionalProjectAutoSaveKeys(text, normalized)
+    const persistLocal = normalized['terminal.integrated.persistLocalSessions']
+    if (typeof persistLocal === 'boolean') {
+      text = text.replace(
+        '  // "terminal.integrated.persistLocalSessions": true,',
+        `  "terminal.integrated.persistLocalSessions": ${persistLocal},`,
+      )
+    }
   }
 
   if (!jsonValueEqual(merged.custom, defaults.custom ?? {})) {

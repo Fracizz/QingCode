@@ -24,7 +24,9 @@ OSC 8 超链接同样需要 `Ctrl`／`Cmd` 点击：`file:` 与 `vscode://file/.
 
 ## 本地终端接回
 
-默认情况下本地终端由 QingCode 进程直接持有，关闭应用即结束，重启后按原配置新建。开启「终端 › 集成: 本地终端可接回」（`terminal.integrated.persistLocalSessions`，默认关闭）后，新建的本地终端交给后台宿主托管，关闭或升级 QingCode 后进程继续运行，下次打开时按原 PTY ID 接回。
+「终端 › 集成: 本地终端可接回」（`terminal.integrated.persistLocalSessions`）默认开启：新建的受支持本地终端交给后台宿主托管，退出时选择「保留本地终端并退出」（同时有持久远程终端时为「保留终端并退出」），关闭或升级 QingCode 后进程继续运行，下次打开时按原 PTY ID 接回。旧设置文件中显式保存的 `false` 仍然有效，升级不会覆盖；需要在设置中开启后新建终端。设置不含此键时沿用默认开启。
+
+已启动的进程内终端不能无损转交给宿主；开启设置不会把现有终端变成可接回终端。未托管终端仍会在退出时结束、重启后按原配置新建；退出确认会单独列出将关闭的本地终端，不将恢复历史输出视为接回原进程。
 
 - **宿主**：`qingcode-server` 的 daemon，运行体是当前 QingCode.exe 的版本化副本 `qingcode-pty-host.exe`（`%LOCALAPPDATA%\com.qingcode.app\pty-host`，开发构建在 `.dev/pty-host`），因此不占用安装目录、不影响升级。连接走命名管道，DACL 只放行当前用户并校验 token，运行目录与 SSH 远端 daemon 分开。
 - **范围**：仅 Windows 的 PowerShell / PowerShell 7 / CMD 交互终端和终端配置。一次性运行任务、WSL 与手机端新建的终端仍由 QingCode 进程持有；不能托管或宿主启动失败时回退进程内 PTY，原因记在标签的 `persistentFallbackReason`。

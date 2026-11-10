@@ -80,6 +80,7 @@ import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/work
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import { planTerminalRestore } from '@/lib/terminal/terminalRestorePlan'
+import { parseTerminalPersistLocalSessions, setCachedTerminalPersistLocalSessions } from '@/lib/terminal/terminalPersistLocalSettings'
 
 function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -109,6 +110,7 @@ describe('terminal persistent connection events', () => {
   beforeEach(async () => {
     vi.useFakeTimers()
     mocks.listeners.clear()
+    setCachedTerminalPersistLocalSessions(parseTerminalPersistLocalSessions(undefined))
     mocks.attachTerminal.mockReset()
     mocks.createTerminal.mockReset()
     mocks.killDetachedTerminal.mockReset().mockResolvedValue(undefined)
@@ -136,6 +138,7 @@ describe('terminal persistent connection events', () => {
   afterEach(() => {
     unlisten?.()
     useTerminalStore.setState({ terminals: [] })
+    setCachedTerminalPersistLocalSessions(parseTerminalPersistLocalSessions(undefined))
     resumeTerminalSpawnsAfterExit()
     vi.useRealTimers()
   })
@@ -165,6 +168,54 @@ describe('terminal persistent connection events', () => {
     await vi.advanceTimersByTimeAsync(25)
     await pausing
     expect(useTerminalStore.getState().terminals[0].ptyId).toBe('created-during-exit')
+  })
+
+  it.each(['', 'agent-cli'])('requests local hosting by default for a new shell or profile (%s)', async launchCommand => {
+    const hosted = { persistent: true, ptyId: 'local-pty', connectionId: '__local__' }
+    mocks.createTerminal.mockResolvedValueOnce(hosted)
+    mocks.spawnTerminalScript.mockResolvedValueOnce(hosted)
+    useTerminalStore.setState({ terminals: [terminal({
+      cwd: 'D:/work/app', persistent: undefined, status: 'starting', ptySpawnPending: true,
+      launchCommand, shell: 'pwsh',
+    })] })
+
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+
+    const spawn = launchCommand ? mocks.spawnTerminalScript : mocks.createTerminal
+    expect(spawn).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      cwd: 'D:/work/app', persistLocal: true,
+    }))
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ ...hosted, status: 'running' })
+  })
+
+  it('respects a local hosting opt-out for new terminals', async () => {
+    setCachedTerminalPersistLocalSessions(false)
+    useTerminalStore.setState({ terminals: [terminal({
+      cwd: 'D:/work/app', persistent: undefined, status: 'starting', ptySpawnPending: true,
+    })] })
+
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+
+    expect(mocks.createTerminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ persistLocal: false }))
+  })
+
+  it('reattaches a hosted local profile without replaying its command even after hosting is disabled', async () => {
+    setCachedTerminalPersistLocalSessions(false)
+    const hosted = { persistent: true, ptyId: 'original-local-pty', connectionId: '__local__' }
+    mocks.attachTerminal.mockResolvedValueOnce(hosted)
+    useTerminalStore.setState({ terminals: [terminal({
+      ...hosted, cwd: 'D:/work/app', status: 'exited', awaitingRestoreSpawn: true,
+      ptySpawnPending: true, launchCommand: 'agent-cli',
+    })] })
+
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+
+    expect(mocks.attachTerminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      cwd: 'D:/work/app', ptyId: 'original-local-pty',
+    }))
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ ...hosted, status: 'running' })
   })
 
   it('flows persistent reconnect events without spawning a replacement shell', () => {

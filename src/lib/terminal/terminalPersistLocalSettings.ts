@@ -12,7 +12,9 @@ import { mergeSettings } from '@/lib/autoSaveSettings'
 export const PERSIST_LOCAL_SESSIONS_KEY = 'terminal.integrated.persistLocalSessions'
 
 export function parseTerminalPersistLocalSessions(value: unknown): boolean {
-  return value === true
+  return typeof value === 'boolean'
+    ? value
+    : DEFAULT_GLOBAL_SETTINGS[PERSIST_LOCAL_SESSIONS_KEY] === true
 }
 
 export function readTerminalPersistLocalSessions(settings: Record<string, unknown>): boolean {
@@ -46,7 +48,8 @@ export async function loadScopedTerminalPersistLocalSessions(
   project?: Project | null,
 ): Promise<boolean> {
   if (scope === 'project' && project) {
-    return readTerminalPersistLocalSessions(await loadProjectSettings(project))
+    const global = await loadGlobalSettings()
+    return readTerminalPersistLocalSessions(mergeSettings(global, await loadProjectSettings(project)))
   }
   return readTerminalPersistLocalSessions(await loadGlobalSettings())
 }
