@@ -65,6 +65,38 @@ describe('editorStore tab lifecycle', () => {
     })
   })
 
+  it('openStaticDiff opens one read-only tab per source and path', () => {
+    const input = {
+      path: 'D:\proj\src\a.ts',
+      name: 'a.ts (abc1234)',
+      original: 'old',
+      modified: 'new',
+      source: 'commit:abc1234',
+      leftTitle: '父提交',
+      rightTitle: '该提交',
+    }
+    useEditorStore.getState().openStaticDiff(input)
+    const state = useEditorStore.getState()
+    const diff = state.tabs.find(tab => tab.kind === 'diff')
+    expect(diff).toMatchObject({
+      path: input.path,
+      originalContent: 'old',
+      content: 'new',
+      diffSource: 'commit:abc1234',
+      diffLeftTitle: '父提交',
+      diffRightTitle: '该提交',
+    })
+    expect(state.activeTabId).toBe(diff?.id)
+
+    useEditorStore.setState({ activeTabId: 'a' })
+    useEditorStore.getState().openStaticDiff(input)
+    expect(useEditorStore.getState().tabs.filter(tab => tab.kind === 'diff')).toHaveLength(1)
+    expect(useEditorStore.getState().activeTabId).toBe(diff?.id)
+
+    useEditorStore.getState().openStaticDiff({ ...input, source: 'commit:def5678' })
+    expect(useEditorStore.getState().tabs.filter(tab => tab.kind === 'diff')).toHaveLength(2)
+  })
+
   it('markDirty / markClean toggle dirty on the target tab', () => {
     useEditorStore.getState().markDirty('a')
     expect(useEditorStore.getState().findTab('a')?.dirty).toBe(true)

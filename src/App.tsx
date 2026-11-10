@@ -210,10 +210,17 @@ function App() {
     terminalPosition !== 'side' || sideEditorVisible || !terminalOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
+  const terminalWorkbench = panelLayout === 'terminalWorkbench'
+  // 终端工作台的编辑器列只放文档：Git 与设置改到左侧侧栏。
+  const pageViewInSidebar =
+    terminalWorkbench && (view === 'sourceControl' || view === 'settings')
   const sidebarSlotVisible =
     sidebarOpen &&
-    (view === 'explorer' || view === 'search' || view === 'run' || view === 'terminals')
-  const terminalWorkbench = panelLayout === 'terminalWorkbench'
+    (view === 'explorer' ||
+      view === 'search' ||
+      view === 'run' ||
+      view === 'terminals' ||
+      pageViewInSidebar)
   const editorBody = editorSurface({
     activeTabId,
     hasProject: currentProject !== null,
@@ -449,6 +456,20 @@ function App() {
             </div>
           )}
 
+          {sidebarSlotVisible && pageViewInSidebar && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar
+                width={sidebarWidth}
+                onWidthChange={setSidebarWidth}
+                className="bg-bg-sidebar"
+              >
+                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                  {view === 'settings' ? <SettingsEditor /> : <SourceControlPanel compact />}
+                </Suspense>
+              </ResizableSidebar>
+            </div>
+          )}
+
           <Suspense fallback={null}>
             <TerminalPanel
               position={terminalPosition}
@@ -480,11 +501,11 @@ function App() {
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
             data-editor-column
           >
-            {view === 'settings' ? (
+            {view === 'settings' && !terminalWorkbench ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
               </Suspense>
-            ) : view === 'sourceControl' ? (
+            ) : view === 'sourceControl' && !terminalWorkbench ? (
               <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
                 <SourceControlPanel />
               </Suspense>

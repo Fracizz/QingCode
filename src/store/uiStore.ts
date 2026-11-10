@@ -126,8 +126,14 @@ interface FullPageRestore {
   editorVisible: boolean | null
 }
 
-function isFullPageView(view: View) {
+/** Git 与设置：经典/侧边终端布局下占满编辑器列，终端工作台中改为左侧侧栏视图。 */
+function isPageView(view: View) {
   return view === 'sourceControl' || view === 'settings'
+}
+
+/** 是否以整页形式显示在编辑器列；终端工作台的编辑器列只放文档。 */
+function isFullPageView(view: View, panelLayout: PanelLayoutTemplate) {
+  return panelLayout !== 'terminalWorkbench' && isPageView(view)
 }
 
 /** 离开整页视图或切换项目时回到的侧栏视图：工作台回终端列表，其余布局回资源管理器。 */
@@ -136,7 +142,11 @@ function homeView(panelLayout: PanelLayoutTemplate): View {
 }
 
 /** 进入工作台：显示终端列表并收起编辑器；离开工作台：终端列表视图不再可用，退回资源管理器。 */
-function workbenchTransition(state: UIState, next: PanelLayoutTemplate): Partial<UIState> {
+function workbenchTransition(
+  state: UIState,
+  next: PanelLayoutTemplate,
+  columns: SideWorkspaceColumns | null,
+): Partial<UIState> {
   if (next === 'terminalWorkbench') {
     const columns = normalizeSideWorkspaceColumns({
       ...columnsFromState(state),
@@ -145,7 +155,13 @@ function workbenchTransition(state: UIState, next: PanelLayoutTemplate): Partial
     persistColumns(columns)
     return { ...applyColumns(columns), view: 'terminals', sidebarOpen: true, fullPageRestore: null }
   }
-  return state.view === 'terminals' ? { view: 'explorer' } : {}
+  if (state.view === 'terminals') return { view: 'explorer' }
+  // 工作台侧栏里的 Git / 设置：离开工作台后按整页视图显示，并记录恢复点。
+  if (state.panelLayout === 'terminalWorkbench' && isPageView(state.view)) {
+    const effective = { ...state, ...(columns ? applyColumns(columns) : {}), fullPageRestore: null }
+    return enterFullPage(effective, state.view)
+  }
+  return {}
 }
 
 /** 进入整页视图：临时显示编辑器列（不持久化），并记录进入前的布局以便离开时恢复。 */
@@ -238,7 +254,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   fullPageRestore: null,
   setView: view =>
     set(state => {
-      if (isFullPageView(view)) return enterFullPage(state, view)
+      if (isFullPageView(view, state.panelLayout)) return enterFullPage(state, view)
       return { view, sidebarOpen: true, ...leaveFullPage(state) }
     }),
   showExplorerViewKeepingSidebar: () =>
@@ -253,7 +269,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     }),
   toggleActivityView: view =>
     set(state => {
-      if (isFullPageView(view)) {
+      if (isFullPageView(view, state.panelLayout)) {
         if (state.view !== view) return enterFullPage(state, view)
         // 再次点击整页视图图标：回到侧栏主视图，并恢复进入前的侧栏与编辑器列状态。
         const restore = state.fullPageRestore
@@ -304,8 +320,11 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearPendingNewFile: () => set({ pendingNewFile: false }),
   requestSettings: query =>
     set(state => {
+      const target = isFullPageView('settings', state.panelLayout)
+        ? enterFullPage(state, 'settings')
+        : { view: 'settings' as const, sidebarOpen: true, ...leaveFullPage(state) }
       return {
-        ...enterFullPage(state, 'settings'),
+        ...target,
         settingsFocusQuery: query ?? null,
         settingsFocusSignal: state.settingsFocusSignal + 1,
       }
@@ -326,7 +345,7 @@ export const useUIStore = create<UIState>((set, get) => ({
       return {
         panelLayout,
         ...(columns ? { ...applyColumns(columns), ...keepEditorAfterFullPage(state) } : {}),
-        ...workbenchTransition(state, panelLayout),
+        ...workbenchTransition(state, panelLayout, columns),
         panelLayoutSwitching: dockChanged,
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }

@@ -89,6 +89,11 @@ export interface EditorTab {
   kind?: 'edit' | 'diff'
   /** HEAD (or empty) side of a diff tab. */
   originalContent?: string
+  /** 差异标签来源：缺省为 HEAD ↔ 工作区；提交差异为 `commit:<hash>`（只读快照）。 */
+  diffSource?: string
+  /** 差异标签左右两侧标题；缺省为 HEAD / 工作区。 */
+  diffLeftTitle?: string
+  diffRightTitle?: string
 }
 
 export interface TerminalTab {

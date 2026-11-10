@@ -85,7 +85,7 @@ export default function ActivityBar({
       <Item
         icon={<GitBranch size={22} />}
         label={t('源代码管理')}
-        active={active === 'sourceControl'}
+        active={active === 'sourceControl' && (sidebarOpen || !terminalWorkbench)}
         badge={gitChanges > 0 ? gitChanges : undefined}
         onClick={() => onActiveChange('sourceControl')}
       />
@@ -98,7 +98,7 @@ export default function ActivityBar({
       <Item
         icon={<Settings size={22} />}
         label={t('设置')}
-        active={active === 'settings'}
+        active={active === 'settings' && (sidebarOpen || !terminalWorkbench)}
         onClick={() => onActiveChange('settings')}
       />
 
