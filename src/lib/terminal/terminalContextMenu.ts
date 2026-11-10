@@ -1,4 +1,7 @@
-/** 终端右键菜单的项编排：纯函数，按选区/可写/AI CLI 状态隐藏不可用项而非灰显。 */
+/**
+ * 终端右键菜单的项编排：纯函数，按选区/可写状态隐藏不可用项。
+ * 例外：「添加到对话」在程序未开启 bracketed paste 时灰显并附说明，避免菜单项时有时无。
+ */
 
 export type TerminalContextMenuItemId =
   | 'copy'
@@ -22,13 +25,14 @@ export interface TerminalContextMenuState {
 export interface TerminalContextMenuEntry {
   id: TerminalContextMenuItemId
   separatorBefore?: boolean
+  disabled?: boolean
 }
 
 export function terminalContextMenuEntries(state: TerminalContextMenuState): TerminalContextMenuEntry[] {
   const { hasSelection, canQuote, writable } = state
   const groups: TerminalContextMenuItemId[][] = [
     hasSelection
-      ? ['copy', ...(canQuote && writable ? ['quote' as const] : []), ...(writable ? ['paste' as const] : [])]
+      ? ['copy', ...(writable ? (['quote', 'paste'] as const) : [])]
       : [...(writable ? ['paste' as const] : []), 'selectAll', ...(writable ? ['composer' as const] : [])],
     ['find'],
     ['export', 'clear'],
@@ -36,7 +40,10 @@ export function terminalContextMenuEntries(state: TerminalContextMenuState): Ter
   const entries: TerminalContextMenuEntry[] = []
   for (const group of groups) {
     group.forEach((id, index) => {
-      entries.push(index === 0 && entries.length > 0 ? { id, separatorBefore: true } : { id })
+      const entry: TerminalContextMenuEntry = { id }
+      if (index === 0 && entries.length > 0) entry.separatorBefore = true
+      if (id === 'quote' && !canQuote) entry.disabled = true
+      entries.push(entry)
     })
   }
   return entries

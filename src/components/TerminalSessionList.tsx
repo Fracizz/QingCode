@@ -778,7 +778,7 @@ export default function TerminalSessionList() {
             role="tablist"
             aria-orientation="vertical"
             aria-label={project.name}
-            className="flex flex-col gap-0.5"
+            className="mt-[3px] flex flex-col gap-[3px]"
           >
             {terminals.map(renderRow)}
           </div>

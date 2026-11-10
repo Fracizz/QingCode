@@ -20,6 +20,8 @@ export interface ContextMenuItem {
   disabled?: boolean
   separatorBefore?: boolean
   shortcut?: string
+  /** 右侧弱化说明（如禁用原因）；与 shortcut 同列，二者择一。 */
+  hint?: string
   action: () => void | Promise<void>
 }
 
@@ -252,9 +254,11 @@ export default function ContextMenu({
                   )}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.shortcut && (
+                {item.shortcut ? (
                   <span className="ml-5 text-ui-xs text-fg-dim">{item.shortcut}</span>
-                )}
+                ) : item.hint ? (
+                  <span className="ml-5 whitespace-nowrap text-ui-xs text-fg-dim">{item.hint}</span>
+                ) : null}
               </button>
             </div>
           ))}

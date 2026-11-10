@@ -436,10 +436,11 @@ export default function TerminalView({
           void copySelection(selection)
         },
       },
-      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时出现，
-      // 否则多行会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向）。
+      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时可用，
+      // 否则多行会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向），此时灰显并说明原因。
       quote: {
         label: translate('添加到对话'),
+        hint: translate('程序未处于输入状态'),
         action: () => {
           const term = xtermRef.current
           if (!term || !quote || !isTerminalWritable() || !term.modes.bracketedPasteMode) return
@@ -479,7 +480,12 @@ export default function TerminalView({
       hasSelection: !!selection,
       canQuote: !!quote && !!xtermRef.current?.modes.bracketedPasteMode,
       writable,
-    }).map(entry => ({ ...items[entry.id], separatorBefore: entry.separatorBefore }))
+    }).map(entry => {
+      const item: ContextMenuItem = { ...items[entry.id], separatorBefore: entry.separatorBefore }
+      if (entry.disabled) item.disabled = true
+      else delete item.hint
+      return item
+    })
   }, [
     clearBuffer,
     copySelection,

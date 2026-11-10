@@ -1065,6 +1065,7 @@
     "在终端中查找": "Find in Terminal",
     "清空终端": "Clear Terminal",
     "添加到对话": "Add to Conversation",
+    "程序未处于输入状态": "Program not accepting input",
     "终端: 清空": "Terminal: Clear",
     "清空当前终端缓冲区（需焦点在终端内）。": "Clear the active terminal buffer (when the terminal is focused).",
     "显示或隐藏终端面板。": "Show or hide the terminal panel.",

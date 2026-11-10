@@ -16,14 +16,15 @@ describe('terminalContextMenuEntries', () => {
     ])
   })
 
-  it('普通 Shell 中隐藏添加到对话', () => {
-    expect(ids({ hasSelection: true, canQuote: false, writable: true })).toEqual([
-      'copy',
-      'paste',
-      '|find',
-      '|export',
-      'clear',
-    ])
+  it('程序未开启 bracketed paste 时添加到对话灰显而不是消失', () => {
+    const entries = terminalContextMenuEntries({ hasSelection: true, canQuote: false, writable: true })
+    expect(entries.map(entry => entry.id)).toEqual(['copy', 'quote', 'paste', 'find', 'export', 'clear'])
+    expect(entries.find(entry => entry.id === 'quote')?.disabled).toBe(true)
+    expect(
+      terminalContextMenuEntries({ hasSelection: true, canQuote: true, writable: true }).find(
+        entry => entry.id === 'quote'
+      )?.disabled
+    ).toBeUndefined()
   })
 
   it('无选区时显示粘贴/全选/编辑长文本，不显示复制', () => {
