@@ -158,13 +158,6 @@ function Item({
           active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
         }`}
       >
-        {/* 激活态只用灰底 + 左缘 2px 品牌色指示条，不再整块染青。 */}
-        {active && (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute -left-0.5 top-2 bottom-2 w-0.5 rounded-full bg-brand"
-          />
-        )}
         {icon}
         {badge !== undefined && (
           <span
