@@ -44,3 +44,6 @@ package-lock.json
 
 # Python 运行缓存
 __pycache__/
+
+# 沙箱中被转义的 Windows 盘符临时目录（如 C_\Users\...，测试残留，不提交）
+src-tauri/qingcode-server/[A-Z]_/
