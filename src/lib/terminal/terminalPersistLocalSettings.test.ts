@@ -6,6 +6,8 @@ import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_GLOBAL_SETTINGS_TEXT, DEFAULT_PROJECT_
 import { mergeSettings } from '../autoSaveSettings'
 import {
   PERSIST_LOCAL_SESSIONS_KEY,
+  dropLegacyProjectPersistLocalOverride,
+  flipLegacyPersistLocalDefault,
   parseTerminalPersistLocalSessions,
   readTerminalPersistLocalSessions,
   loadScopedTerminalPersistLocalSessions,
@@ -64,6 +66,30 @@ describe('local hosting settings inheritance', () => {
     const project: Project = { id: 'p1', name: 'app', path: 'D:/work/app' }
 
     expect(await loadScopedTerminalPersistLocalSessions('project', project)).toBe(enabled)
+  })
+})
+
+describe('legacy default migration', () => {
+  it('flips the false the old template wrote, and nothing else', () => {
+    const legacy = { version: 1, custom: {}, [PERSIST_LOCAL_SESSIONS_KEY]: false }
+    expect(flipLegacyPersistLocalDefault(legacy)).toBe(true)
+    expect(legacy[PERSIST_LOCAL_SESSIONS_KEY]).toBe(true)
+    for (const value of [true, undefined]) {
+      const settings = { version: 1, custom: {}, [PERSIST_LOCAL_SESSIONS_KEY]: value }
+      expect(flipLegacyPersistLocalDefault(settings)).toBe(false)
+      expect(settings[PERSIST_LOCAL_SESSIONS_KEY]).toBe(value)
+    }
+  })
+
+  it('drops the legacy workspace false so the workspace inherits the user setting', () => {
+    const legacy = { version: 1, custom: {}, [PERSIST_LOCAL_SESSIONS_KEY]: false }
+    expect(dropLegacyProjectPersistLocalOverride(legacy)).toBe(true)
+    expect(PERSIST_LOCAL_SESSIONS_KEY in legacy).toBe(false)
+    const saved = parseSettingsText(formatSettings(legacy, 'project'), 'project')
+    expect(saved[PERSIST_LOCAL_SESSIONS_KEY]).toBeUndefined()
+    const explicit = { version: 1, custom: {}, [PERSIST_LOCAL_SESSIONS_KEY]: true }
+    expect(dropLegacyProjectPersistLocalOverride(explicit)).toBe(false)
+    expect(explicit[PERSIST_LOCAL_SESSIONS_KEY]).toBe(true)
   })
 })
 

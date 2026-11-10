@@ -13,6 +13,7 @@ import {
   attachNeedsRedraw,
   avatarFor,
   consumeModifier,
+  findPortMovedProfile,
   countSessionOverview,
   groupSessionOverview,
   limitSessionGroups,
@@ -57,6 +58,22 @@ import {
 } from '../../mobile/android/web/protocol.js'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
+
+describe('Android port-moved profile', () => {
+  const old = { id: '192.168.1.5:8765', host: '192.168.1.5', port: 8765, fingerprint }
+
+  it('finds the same computer saved under its previous port', () => {
+    expect(findPortMovedProfile([old], '192.168.1.5', 9000, fingerprint)).toBe(old)
+  })
+
+  it('ignores other hosts, other certificates and an existing target address', () => {
+    expect(findPortMovedProfile([old], '192.168.1.6', 9000, fingerprint)).toBeNull()
+    expect(findPortMovedProfile([old], '192.168.1.5', 9000, 'f'.repeat(64))).toBeNull()
+    expect(findPortMovedProfile([old], '192.168.1.5', 8765, fingerprint)).toBeNull()
+    const current = { ...old, id: '192.168.1.5:9000', port: 9000 }
+    expect(findPortMovedProfile([old, current], '192.168.1.5', 9000, fingerprint)).toBeNull()
+  })
+})
 
 describe('Android terminal content-box sizing', () => {
   it('keeps complete rows within the space left after viewport padding', () => {

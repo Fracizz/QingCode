@@ -1,5 +1,6 @@
 /** 把推送事件转成对接收项目的同步任务。全部副作用经 deps 注入，便于测试。 */
 import type { GitRemote, GitStatus } from '@/lib/git/git'
+import { wslDistroNameFromPath } from '@/lib/wslWorkspace'
 import type { Project } from '@/types'
 import {
   allRemoteKeys,
@@ -44,6 +45,8 @@ export type EngineDeps = {
   rememberIdentity: (projectId: string, keys: string[]) => void
   isLiveDetection: (path: string) => boolean
   now: () => number
+  /** 当前打开的项目路径：它的同步任务排到所在机器队列的最前面。 */
+  currentProjectPath?: () => string | null
 }
 
 type Origin = { keys: Set<string>; branch: string }
@@ -54,12 +57,24 @@ const CATCH_UP_COOLDOWN_MS = 2 * 60 * 1000
 /** 只提示一次的结果：重复事件不应反复打扰。 */
 const NOTIFY_KINDS = new Set<SyncResultKind>(['synced', 'behind', 'diverged', 'dirty-editors', 'blocked'])
 
+/**
+ * 项目所在的机器。同一台机器上的 Git 任务串行，避免一条 SSH 连接上同时跑多个 Git；
+ * 不同机器之间并行，接收项目分布在多台机器时不必互相等待。
+ */
+export function syncMachineKey(project: Project): string {
+  const ssh = /^ssh:\/\/([^/]+)/.exec(project.path)
+  if (ssh) return `ssh:${project.connection_id || ssh[1]}`
+  const distro = wslDistroNameFromPath(project.path)
+  if (distro !== undefined || project.kind === 'wsl') return `wsl:${distro ?? ''}`
+  return 'local'
+}
+
 export function createGitPushSyncEngine(deps: EngineDeps) {
   const remotesCache = new Map<string, { remotes: GitRemote[]; at: number }>()
-  const queue: Job[] = []
+  const queues = new Map<string, Job[]>()
+  const draining = new Map<string, Promise<void>>()
   const lastCatchUp = new Map<string, number>()
   const lastNoticeKey = new Map<string, string>()
-  let draining: Promise<void> | null = null
 
   const receivers = () => {
     const { enabled, receivers: ids } = deps.config()
@@ -148,9 +163,11 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     deps.afterFastForward(project)
   }
 
-  function drain(): Promise<void> {
-    draining ??= (async () => {
-      // 全局串行：同步是后台任务，不应让多台远端同时跑 Git。
+  function drain(machine: string): Promise<void> {
+    const running = draining.get(machine)
+    if (running) return running
+    const task = (async () => {
+      const queue = queues.get(machine) ?? []
       while (queue.length > 0) {
         const job = queue.shift() as Job
         try {
@@ -159,17 +176,26 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
           console.warn('git push sync job failed:', reason)
         }
       }
-      draining = null
+      queues.delete(machine)
+      draining.delete(machine)
     })()
-    return draining
+    draining.set(machine, task)
+    return task
   }
 
   function enqueue(job: Job) {
+    const machine = syncMachineKey(job.project)
+    const queue = queues.get(machine) ?? []
+    queues.set(machine, queue)
     const duplicate = queue.some(
       item => item.project.path === job.project.path && item.origin?.branch === job.origin?.branch,
     )
-    if (!duplicate) queue.push(job)
-    return drain()
+    if (!duplicate) {
+      // 用户正在看的项目先同步；正在执行的任务已出队，不受影响。
+      if (job.project.path === deps.currentProjectPath?.()) queue.unshift(job)
+      else queue.push(job)
+    }
+    return drain(machine)
   }
 
   async function handlePush(notice: PushNotice) {
@@ -254,7 +280,7 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     await deps.setWatches(targets)
   }
 
-  return { handlePush, handlePanelPush, catchUp, catchUpAll, refreshWatches, idle: () => draining ?? Promise.resolve() }
+  return { handlePush, handlePanelPush, catchUp, catchUpAll, refreshWatches, idle: () => Promise.all([...draining.values()]).then(() => undefined) }
 }
 
 export type GitPushSyncEngine = ReturnType<typeof createGitPushSyncEngine>

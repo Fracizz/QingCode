@@ -39,7 +39,17 @@ import { isPinnedSettingsTab } from './utils/editorHelpers'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
-import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
+import {
+  clampSidebarWidth,
+  clampWorkbenchPageWidth,
+  getDefaultWorkbenchPageWidth,
+  getWorkbenchPageMaxWidth,
+  loadSidebarWidth,
+  loadWorkbenchPageWidth,
+  saveSidebarWidth,
+  saveWorkbenchPageWidth,
+  WORKBENCH_PAGE_MIN_WIDTH,
+} from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { applyEffectiveSettings } from './lib/effectiveSettings'
@@ -203,6 +213,7 @@ function App() {
   } = useTerminalPanel()
 
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
+  const [workbenchPageWidth, setWorkbenchPageWidth] = useState(loadWorkbenchPageWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
   // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
@@ -210,10 +221,17 @@ function App() {
     terminalPosition !== 'side' || sideEditorVisible || !terminalOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
+  const terminalWorkbench = panelLayout === 'terminalWorkbench'
+  // 终端工作台的编辑器列只放文档：Git 与设置以完整整页显示在左侧（独立宽度）。
+  const pageViewInSidebar =
+    terminalWorkbench && (view === 'sourceControl' || view === 'settings')
   const sidebarSlotVisible =
     sidebarOpen &&
-    (view === 'explorer' || view === 'search' || view === 'run' || view === 'terminals')
-  const terminalWorkbench = panelLayout === 'terminalWorkbench'
+    (view === 'explorer' ||
+      view === 'search' ||
+      view === 'run' ||
+      view === 'terminals' ||
+      pageViewInSidebar)
   const editorBody = editorSurface({
     activeTabId,
     hasProject: currentProject !== null,
@@ -280,6 +298,10 @@ function App() {
     saveSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
 
+  useEffect(() => {
+    saveWorkbenchPageWidth(workbenchPageWidth)
+  }, [workbenchPageWidth])
+
   // Open the terminal panel when something (e.g. a run config) signals it.
   useEffect(() => {
     if (terminalOpenSignal > 0) setTerminalOpen(true)
@@ -290,7 +312,10 @@ function App() {
   }, [terminalToggleSignal, setTerminalOpen])
 
   useEffect(() => {
-    const onResize = () => setSidebarWidth(w => clampSidebarWidth(w))
+    const onResize = () => {
+      setSidebarWidth(w => clampSidebarWidth(w))
+      setWorkbenchPageWidth(w => clampWorkbenchPageWidth(w))
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -449,6 +474,26 @@ function App() {
             </div>
           )}
 
+          {sidebarSlotVisible && pageViewInSidebar && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar
+                width={workbenchPageWidth}
+                onWidthChange={setWorkbenchPageWidth}
+                bounds={{
+                  min: WORKBENCH_PAGE_MIN_WIDTH,
+                  max: getWorkbenchPageMaxWidth(),
+                  defaultWidth: getDefaultWorkbenchPageWidth(),
+                  clamp: clampWorkbenchPageWidth,
+                }}
+                className="bg-bg-sidebar"
+              >
+                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                  {view === 'settings' ? <SettingsEditor /> : <SourceControlPanel />}
+                </Suspense>
+              </ResizableSidebar>
+            </div>
+          )}
+
           <Suspense fallback={null}>
             <TerminalPanel
               position={terminalPosition}
@@ -480,11 +525,11 @@ function App() {
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
             data-editor-column
           >
-            {view === 'settings' ? (
+            {view === 'settings' && !terminalWorkbench ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
               </Suspense>
-            ) : view === 'sourceControl' ? (
+            ) : view === 'sourceControl' && !terminalWorkbench ? (
               <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
                 <SourceControlPanel />
               </Suspense>

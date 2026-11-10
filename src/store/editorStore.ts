@@ -730,6 +730,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const prev = get().activeTabId
       if (prev && prev !== existing.id) flushLiveEditorContent(prev)
       set({ activeTabId: existing.id, cursor: null, pendingReveal: null })
+      // 复用标签时重新读取两侧内容，避免展示打开后又被修改过的旧差异。
+      try {
+        const pair: GitFileContents = await getGitFileContents(projectPath, absolutePath)
+        set(s => ({
+          tabs: s.tabs.map(t =>
+            t.id === existing.id &&
+            (t.content !== pair.modified || t.originalContent !== pair.original)
+              ? { ...t, content: pair.modified, originalContent: pair.original }
+              : t
+          ),
+        }))
+      } catch (e) {
+        console.warn('refresh diff failed:', e)
+      }
       return
     }
     if (!ensureOpenTabCapacity()) return
@@ -773,6 +787,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         .pushToast('error', translate('打开差异对比失败：{error}', { error: String(e) }))
     }
   },
+
 
   setTabContent: (id: string, content: string) => {
     // Session persistence flushes cached/live buffers. An unchanged flush must

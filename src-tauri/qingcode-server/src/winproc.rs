@@ -387,6 +387,169 @@ pub fn spawn_detached(spawn: DetachedSpawn) -> Result<WindowsChild, String> {
     })
 }
 
+/// 当前进程所在的作业对象是否会在关闭时连带结束子进程，且不允许子进程脱离。
+///
+/// 典型场景是 `cargo run`（`pnpm tauri:dev`）：cargo 把自己和子进程放进带
+/// KILL_ON_JOB_CLOSE 的作业对象，CREATE_BREAKAWAY_FROM_JOB 会以错误 5 失败，
+/// 此时直接拉起的子进程会在 cargo 退出时被一起结束。不在作业里返回 false。
+pub fn caller_job_kills_children() -> bool {
+    use windows_sys::Win32::System::JobObjects::{
+        JobObjectExtendedLimitInformation, QueryInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    };
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: 句柄为 NULL 时查询调用进程所属（最内层）的作业；不在作业里时调用失败。
+    let ok = unsafe {
+        QueryInformationJobObject(
+            std::ptr::null_mut(),
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    ok && job_flags_kill_children(info.BasicLimitInformation.LimitFlags)
+}
+
+/// 由作业限制标志判断：关闭即结束子进程，且子进程既不能主动也不会自动脱离。
+fn job_flags_kill_children(flags: u32) -> bool {
+    use windows_sys::Win32::System::JobObjects::{
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+    flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
+        && flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) == 0
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::job_flags_kill_children;
+    use windows_sys::Win32::System::JobObjects::{
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+
+    #[test]
+    fn kill_on_close_job_without_breakaway_kills_children() {
+        assert!(job_flags_kill_children(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE));
+    }
+
+    #[test]
+    fn job_allowing_breakaway_does_not_tie_children() {
+        assert!(!job_flags_kill_children(0));
+        assert!(!job_flags_kill_children(
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+        ));
+        assert!(!job_flags_kill_children(
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
+        ));
+    }
+}
+
+/// 以当前桌面的 Shell（explorer）为父进程拉起，让子进程归属 Shell 的作业而不是调用方的。
+///
+/// PROC_THREAD_ATTRIBUTE_PARENT_PROCESS 指定的父进程决定子进程的作业对象、令牌与
+/// 可继承句柄，所以这里不继承任何句柄（调用方的句柄在 Shell 进程里无效）。
+/// 没有交互桌面（Session 0、SSH 会话）时 GetShellWindow 为空，直接返回错误。
+fn spawn_with_shell_parent(exe: &Path, command_line: &str) -> Result<WindowsChild, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
+        OpenProcess, UpdateProcThreadAttribute, CREATE_NO_WINDOW, EXTENDED_STARTUPINFO_PRESENT,
+        PROCESS_CREATE_PROCESS, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+        STARTUPINFOEXW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId};
+
+    // SAFETY: 两个调用只读取当前桌面的 Shell 窗口及其进程 id。
+    let shell = unsafe { GetShellWindow() };
+    if shell.is_null() {
+        return Err("当前会话没有 Shell 窗口".to_string());
+    }
+    let mut shell_pid = 0u32;
+    unsafe { GetWindowThreadProcessId(shell, &mut shell_pid) };
+    if shell_pid == 0 {
+        return Err("无法定位 Shell 进程".to_string());
+    }
+    // SAFETY: 只申请创建子进程所需的权限；句柄在本函数结束前关闭。
+    let mut parent: HANDLE = unsafe { OpenProcess(PROCESS_CREATE_PROCESS, 0, shell_pid) };
+    if parent.is_null() {
+        return Err(format!("打开 Shell 进程失败，GetLastError={}", unsafe {
+            GetLastError()
+        }));
+    }
+
+    let mut attr_size = 0usize;
+    // SAFETY: 长度探测调用，输出写回 attr_size。
+    unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size) };
+    let mut attr_buf = vec![0usize; attr_size.div_ceil(std::mem::size_of::<usize>()).max(1)];
+    let attr = attr_buf.as_mut_ptr() as *mut core::ffi::c_void;
+    // SAFETY: attr 指向对齐缓冲；`parent` 在 CreateProcessW 返回前保持存活。
+    let ready = unsafe { InitializeProcThreadAttributeList(attr, 1, 0, &mut attr_size) } != 0
+        && unsafe {
+            UpdateProcThreadAttribute(
+                attr,
+                0,
+                PROC_THREAD_ATTRIBUTE_PARENT_PROCESS as usize,
+                &mut parent as *mut HANDLE as *mut core::ffi::c_void,
+                std::mem::size_of::<HANDLE>(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        } != 0;
+    if !ready {
+        unsafe {
+            DeleteProcThreadAttributeList(attr);
+            CloseHandle(parent);
+        }
+        return Err("配置父进程属性失败".to_string());
+    }
+
+    let mut cmdline: Vec<u16> = command_line.encode_utf16().chain(Some(0)).collect();
+    let exe_wide: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
+    let dir: Option<Vec<u16>> = exe
+        .parent()
+        .map(|dir| dir.as_os_str().encode_wide().chain(Some(0)).collect());
+    let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
+    si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+    si.lpAttributeList = attr;
+    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: 参数按 Win32 契约传递；不继承句柄，attr/parent 在调用期间存活。
+    let spawned = unsafe {
+        CreateProcessW(
+            exe_wide.as_ptr(),
+            cmdline.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+            std::ptr::null(),
+            dir.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
+            &si as *const STARTUPINFOEXW as *const _,
+            &mut pi,
+        )
+    } != 0;
+    let last_error = unsafe { GetLastError() };
+    // SAFETY: attr 已初始化；parent 是上面打开的句柄。
+    unsafe {
+        DeleteProcThreadAttributeList(attr);
+        CloseHandle(parent);
+    }
+    if !spawned {
+        return Err(format!(
+            "以 Shell 为父进程拉起失败，GetLastError={last_error}"
+        ));
+    }
+    // SAFETY: 线程句柄即刻关闭；进程句柄的所有权移交 WindowsChild。
+    unsafe { CloseHandle(pi.hThread) };
+    Ok(WindowsChild {
+        process: pi.hProcess,
+        pid: pi.dwProcessId,
+        used_breakaway: false,
+    })
+}
+
 /// 命令行片段按 Windows 规则整体加引号（调用方保证值内不含引号字符）。
 pub fn quote_windows_arg(value: &OsStr) -> String {
     format!("\"{}\"", value.to_string_lossy())
@@ -395,13 +558,27 @@ pub fn quote_windows_arg(value: &OsStr) -> String {
 /// 由 connect 代理拉起 daemon：不继承任何句柄（日志由 daemon 自己写到 run
 /// 目录），CREATE_NO_WINDOW + BREAKAWAY 脱离 SSH 会话。
 pub fn spawn_detached_daemon(state_dir: Option<&Path>) -> Result<WindowsChild, String> {
-    spawn_detached_daemon_with(None, state_dir)
+    spawn_detached_daemon_with(None, state_dir, false)
+}
+
+/// 本进程最近一次带 `escape_caller_job` 拉起的 daemon 是否仍会随调用方的作业被结束。
+static DAEMON_TIED_TO_CALLER_JOB: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 见 [`spawn_detached_daemon_with`] 的 `escape_caller_job`：没拉起过时为 false。
+pub fn last_daemon_tied_to_caller_job() -> bool {
+    DAEMON_TIED_TO_CALLER_JOB.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// 同 [`spawn_detached_daemon`]，但可指定 daemon 可执行文件（桌面端本机 PTY 宿主用）。
+///
+/// `escape_caller_job`：调用方所在的作业对象会连带结束子进程且禁止脱离时（如
+/// `cargo run`），改以 Shell 为父进程拉起，让 daemon 活过调用方；做不到时照常拉起，
+/// 并通过 [`last_daemon_tied_to_caller_job`] 告知调用方 daemon 会随它结束。
 pub fn spawn_detached_daemon_with(
     program: Option<&Path>,
     state_dir: Option<&Path>,
+    escape_caller_job: bool,
 ) -> Result<WindowsChild, String> {
     let exe = match program {
         Some(program) => program.to_path_buf(),
@@ -439,24 +616,58 @@ pub fn spawn_detached_daemon_with(
             std::io::Error::last_os_error()
         ));
     }
-    let child = spawn_detached(DetachedSpawn {
-        command_line: line,
-        inherit: vec![handle],
-        stdio_handle: Some(handle),
-        program: Some(exe),
-    });
+    let job_kills_children = escape_caller_job && caller_job_kills_children();
+    let escaped = if job_kills_children {
+        spawn_with_shell_parent(&exe, &line)
+            .inspect_err(|error| {
+                crate::diagnostics::record(
+                    "process.job_escape_failed",
+                    serde_json::json!({ "error": error }),
+                    true,
+                    false,
+                );
+            })
+            .ok()
+    } else {
+        None
+    };
+    let shell_parent = escaped.is_some();
+    let child = match escaped {
+        Some(child) => Ok(child),
+        None => spawn_inheriting_log(line, handle, exe),
+    };
+    if escape_caller_job {
+        DAEMON_TIED_TO_CALLER_JOB.store(
+            job_kills_children && !shell_parent && child.is_ok(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
     if let Ok(child) = &child {
         use std::io::Write;
         let _ = writeln!(
             file,
             "{}",
             serde_json::json!({"event":"daemon.detached_spawn", "timestampMs":crate::diagnostics::now_ms(),
-            "daemonPid":child.pid,"breakawayUsed":child.used_breakaway})
+            "daemonPid":child.pid,"breakawayUsed":child.used_breakaway,"shellParent":shell_parent})
         );
         let _ = file.sync_data();
     }
     drop(file);
     child
+}
+
+/// daemon 的常规拉起：stdio 接到 stderr 日志句柄。
+fn spawn_inheriting_log(
+    line: String,
+    handle: *mut core::ffi::c_void,
+    exe: std::path::PathBuf,
+) -> Result<WindowsChild, String> {
+    spawn_detached(DetachedSpawn {
+        command_line: line,
+        inherit: vec![handle],
+        stdio_handle: Some(handle),
+        program: Some(exe),
+    })
 }
 
 /// Start the direct gateway without inheriting SSH stdio or console handles.

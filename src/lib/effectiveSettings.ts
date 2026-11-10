@@ -15,16 +15,19 @@ import { loadEditorStateCacheSize } from './editorStateCacheSettings'
  * Callers own any feature-specific follow-up work (for example tree refresh).
  */
 export async function applyEffectiveSettings(project?: Project | null): Promise<void> {
-  const [formatOnSave, minimap, terminalCursor] = await Promise.all([
+  const [formatOnSave, minimap, terminalCursor, persistLocal] = await Promise.all([
     import('./formatOnSaveSettings'),
     import('./minimapSettings'),
     import('./terminal/terminalCursorSettings'),
+    import('./terminal/terminalPersistLocalSettings'),
   ])
 
   await Promise.all([
     minimap.migrateLegacyMinimapProjectSetting(project),
     migrateLegacyProjectAutoSaveDefaults(project),
   ])
+  // 与上面的工作区迁移分开跑：它们会改写同一个 project-settings.json。
+  await persistLocal.migrateLegacyPersistLocalSessions(project)
   const [, , autoSave] = await Promise.all([
     loadEffectiveEditorPreferences(project),
     loadEffectiveFileSizePreferences(project),
@@ -46,9 +49,7 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     import('./terminal/terminalShiftEnterSettings').then(mod =>
       mod.loadEffectiveTerminalShiftEnterNewline(project),
     ),
-    import('./terminal/terminalPersistLocalSettings').then(mod =>
-      mod.loadEffectiveTerminalPersistLocalSessions(project),
-    ),
+    persistLocal.loadEffectiveTerminalPersistLocalSessions(project),
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)

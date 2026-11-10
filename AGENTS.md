@@ -12,6 +12,7 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 - `pnpm package:local` is the local-only parallel packaging CLI (see `docs/local-packaging.md`). Use `--plan`, `--only`, `--jobs`, `start`, `status <run-id>`, and `cancel <run-id> [--task apk]`. Independent preparation/APK stages run in parallel; desktop Cargo stages run sequentially. It never pushes tags or publishes releases.
 - `pnpm tauri:dev` starts the complete Windows desktop application; use this for features involving files, terminals, or native dialogs.
 - `pnpm dev` runs only Vite's browser UI for layout-focused work.
+- `pnpm clean:rust-target` prunes `src-tauri/target` by policy (incremental caches unused for 7 days or above 10 GB, then whole profiles oldest-first while the target exceeds 50 GB); `pnpm tauri:dev` runs it on every start. Add `-DryRun` to preview, `-RegisterDailyTask` / `-UnregisterDailyTask` to manage the daily 04:00 scheduled task.
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.
 - `pnpm test` runs Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}` plus packaging tests; `pnpm test:watch` runs Vitest in watch mode.
 - `pnpm check` runs frontend typecheck, Vitest coverage, packaging tests, and ESLint, then Rust `fmt` / `clippy -D warnings` / `test`.
@@ -34,9 +35,9 @@ Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (st
 
 **Web UI acceptance:** Prefer a Web test page over direct desktop control. Use `agent-browser` on Linux (including WSL), and `ego-browser` on Windows/macOS; an available Windows Ego bridge does not change the Linux default. Honor explicit engine selection and keep the same engine for the session. Run `pnpm test:web` (http://127.0.0.1:38439/); Linux uses `agent-browser` against the fixture page, while Ego uses `ego-browser skill` and `scripts/web-tests/project-manager.ego.mjs` (see [docs/web-ui-testing.md](docs/web-ui-testing.md)). Reuse real components/styles with fixed in-memory fixtures; assert interactions and save screenshots/reports under `.dev/`. Extend this approach for other UI paths. Web acceptance does not replace real file, SQLite, SSH, PTY, or native-dialog integration tests.
 
-## Dual Remotes (Gitee + GitHub)
+## Dual Remotes (GitHub + Gitee)
 
-QingCode is mirrored on both hosts. Configure a clone with:
+GitHub is the primary repository; Gitee is its mirror. Configure a clone with:
 
 ```bash
 pnpm remotes:setup
@@ -44,10 +45,10 @@ pnpm remotes:setup
 
 | Remote | Fetch | Push |
 |--------|-------|------|
-| `origin` | Gitee (`FrancizTest_admin/qing-code`) | Gitee **and** GitHub |
-| `github` | GitHub (`Fracizz/QingCode`) | GitHub |
+| `origin` | GitHub (`Fracizz/QingCode`) | GitHub |
+| `gitee` | Gitee (`FrancizTest_admin/qing-code`) | Gitee |
 
-Use `git push origin <branch>` to publish to both. Fetch either side with `git fetch origin` / `git fetch github`. Do not force-push unless explicitly requested.
+Use `git push origin <branch>` to publish to GitHub. Mirror a branch with `git push gitee <branch>` and fetch the mirror with `git fetch gitee`. Do not force-push unless explicitly requested.
 
 ## Commit & Pull Request Guidelines
 

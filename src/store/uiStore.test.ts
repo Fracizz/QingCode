@@ -121,13 +121,41 @@ describe('terminal workbench', () => {
     expect(state.sideEditorVisible).toBe(false)
   })
 
-  it('returns to the list and re-collapses the editor after a full-page view', () => {
+  it('shows source control in the sidebar without opening the editor column', () => {
     useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
     useUIStore.getState().toggleActivityView('sourceControl')
-    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+    let state = useUIStore.getState()
+    expect(state.view).toBe('sourceControl')
+    expect(state.sidebarOpen).toBe(true)
+    expect(state.sideEditorVisible).toBe(false)
+    expect(state.fullPageRestore).toBeNull()
+
+    // 再次点击与其他侧栏视图一致：收起侧栏。
     useUIStore.getState().toggleActivityView('sourceControl')
-    expect(useUIStore.getState().view).toBe('terminals')
-    expect(useUIStore.getState().sideEditorVisible).toBe(false)
+    state = useUIStore.getState()
+    expect(state.view).toBe('sourceControl')
+    expect(state.sidebarOpen).toBe(false)
+  })
+
+  it('opens settings in the sidebar from requestSettings', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().requestSettings('font')
+    const state = useUIStore.getState()
+    expect(state.view).toBe('settings')
+    expect(state.sidebarOpen).toBe(true)
+    expect(state.sideEditorVisible).toBe(false)
+    expect(state.fullPageRestore).toBeNull()
+    expect(state.settingsFocusQuery).toBe('font')
+  })
+
+  it('turns a sidebar page view into a full page when leaving the workbench', () => {
+    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
+    useUIStore.getState().setView('sourceControl')
+    useUIStore.getState().setPanelLayoutMode('classic')
+    const state = useUIStore.getState()
+    expect(state.view).toBe('sourceControl')
+    expect(state.sideEditorVisible).toBe(true)
+    expect(state.fullPageRestore).not.toBeNull()
   })
 
   it('collapses the editor only when empty inside the workbench', () => {
@@ -140,12 +168,6 @@ describe('terminal workbench', () => {
     expect(useUIStore.getState().sideEditorVisible).toBe(false)
   })
 
-  it('keeps the shared column during a full-page view', () => {
-    useUIStore.getState().setPanelLayoutMode('terminalWorkbench')
-    useUIStore.getState().setView('settings')
-    useUIStore.getState().collapseEmptyWorkbenchEditor()
-    expect(useUIStore.getState().sideEditorVisible).toBe(true)
-  })
 
   it('keeps the list when switching projects, except from the file tree', () => {
     useUIStore.getState().setPanelLayoutMode('terminalWorkbench')

@@ -1,6 +1,6 @@
 [package]
 name = "qingcode-server"
-version = "0.1.17-beta.36"
+version = "0.1.17-beta.42"
 description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
 authors = ["Franciz"]
 license = "MIT"
@@ -69,6 +69,10 @@ windows-sys = { version = "0.60", features = [
   "Win32_System_Console",
   # 关闭 ConPTY 前枚举 shell 的后代进程。
   "Win32_System_Diagnostics_ToolHelp",
+  # 本机宿主：判断调用方作业对象是否会连带结束子进程。
+  "Win32_System_JobObjects",
   "Win32_System_Pipes",
   "Win32_System_Threading",
+  # 本机宿主：以 Shell 为父进程拉起以脱离 cargo 等作业对象。
+  "Win32_UI_WindowsAndMessaging",
 ] }

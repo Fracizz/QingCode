@@ -40,6 +40,8 @@ pub struct ConnectOptions {
     pub start_timeout: Duration,
     /// 拉起 daemon 用的可执行文件；`None` 时用当前进程自身。
     pub daemon_program: Option<PathBuf>,
+    /// 调用方的作业对象会连带结束子进程时，设法让 daemon 脱离它（桌面端本机宿主用）。
+    pub escape_caller_job: bool,
 }
 
 impl Default for ConnectOptions {
@@ -49,6 +51,7 @@ impl Default for ConnectOptions {
             ensure_daemon: false,
             start_timeout: Duration::from_secs(10),
             daemon_program: None,
+            escape_caller_job: false,
         }
     }
 }
@@ -95,6 +98,7 @@ pub fn ensure_daemon_token(options: &ConnectOptions) -> Result<String, String> {
         let mut child = spawn_daemon(
             options.state_dir.as_deref(),
             options.daemon_program.as_deref(),
+            options.escape_caller_job,
         )?;
         wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
         let remaining = options.start_timeout.saturating_sub(started.elapsed());
@@ -144,6 +148,7 @@ fn connect_blocking_or_spawn(
             let mut child = spawn_daemon(
                 options.state_dir.as_deref(),
                 options.daemon_program.as_deref(),
+                options.escape_caller_job,
             )?;
             wait_ready(endpoint, run_dir, options.start_timeout, &mut child)?;
             endpoint
@@ -236,6 +241,7 @@ fn pump_windows(
             let mut child = spawn_daemon(
                 options.state_dir.as_deref(),
                 options.daemon_program.as_deref(),
+                options.escape_caller_job,
             )?;
             wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
             runtime
@@ -424,9 +430,15 @@ impl SpawnedDaemon {
 ///
 /// Unix：`setsid` + stdio 全 null。Windows：CreateProcessW + 空句柄继承表
 /// （std spawn 会把 SSH 会话的 stdout 管道一并继承，详见 `winproc` 模块注释）。
-fn spawn_daemon(state_dir: Option<&Path>, program: Option<&Path>) -> Result<SpawnedDaemon, String> {
+fn spawn_daemon(
+    state_dir: Option<&Path>,
+    program: Option<&Path>,
+    escape_caller_job: bool,
+) -> Result<SpawnedDaemon, String> {
     #[cfg(unix)]
     {
+        // setsid 已让 daemon 脱离调用方的会话，Unix 没有作业对象需要跳出。
+        let _ = escape_caller_job;
         use std::process::{Command, Stdio};
         let exe = match program {
             Some(program) => program.to_path_buf(),
@@ -463,7 +475,8 @@ fn spawn_daemon(state_dir: Option<&Path>, program: Option<&Path>) -> Result<Spaw
     }
     #[cfg(windows)]
     {
-        crate::winproc::spawn_detached_daemon_with(program, state_dir).map(SpawnedDaemon::Windows)
+        crate::winproc::spawn_detached_daemon_with(program, state_dir, escape_caller_job)
+            .map(SpawnedDaemon::Windows)
     }
 }
 

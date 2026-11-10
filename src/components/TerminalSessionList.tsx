@@ -18,7 +18,6 @@ import {
   Eye,
   EyeOff,
   MonitorCloud,
-  FolderOpen,
   ListChecks,
   LoaderCircle,
   MessageCircleMore,
@@ -32,7 +31,7 @@ import {
 } from 'lucide-react'
 import { useTerminalTabActions } from '../hooks/useTerminalTabActions'
 import { copyPathAction } from '../lib/copyFileActions'
-import { switchToTerminalProject, useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
+import { useTerminalProjectSelection } from '../hooks/useTerminalProjectSelection'
 import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -163,7 +162,6 @@ export default function TerminalSessionList() {
   } = actions
   const projects = useProjectStore(s => s.projects)
   const sshConnections = useProjectStore(s => s.sshConnections)
-  const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
   const hideProject = useProjectStore(s => s.hideProject)
   const unhideProject = useProjectStore(s => s.unhideProject)
@@ -445,13 +443,19 @@ export default function TerminalSessionList() {
             }
           >
             {awaitingRestore ? (
-              <span
-                aria-hidden="true"
-                data-terminal-awaiting-restore={term.id}
-                className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
+              // 与「运行中」呼吸点一致：悬停说明这个灰点的含义。
+              <Tooltip
+                label={translate('切换到项目后恢复')}
+                side="top"
+                wrapperClassName="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
               >
-                <span className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50" />
-              </span>
+                <span
+                  role="img"
+                  aria-label={translate('切换到项目后恢复')}
+                  data-terminal-awaiting-restore={term.id}
+                  className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50"
+                />
+              </Tooltip>
             ) : (
               <TerminalActivityDot
                 terminalId={term.id}
@@ -659,9 +663,9 @@ export default function TerminalSessionList() {
               content={<InfoTipCard {...projectHoverDetails(project, sshConnections, translate)} />}
               anchorClosest="[data-terminal-project-header]"
               side="right"
-              wrapperClassName="flex min-w-0 flex-1 items-center gap-1.5"
+              wrapperClassName="flex min-w-0 flex-1 items-baseline gap-1.5"
             >
-              {/* 项目名优先完整显示，来源只用剩余宽度。 */}
+              {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
               {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
               <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
                 {project.name}
@@ -1039,18 +1043,11 @@ export default function TerminalSessionList() {
         const group = groups.find(item => item.project.id === projectMenu.projectId)
         if (!group) return null
         const expanded = isExpanded(group)
-        const isCurrentGroup = group.project.id === currentProjectId
         return (
           <ContextMenu
             x={projectMenu.x}
             y={projectMenu.y}
             items={[
-              {
-                label: isCurrentGroup ? translate('当前项目') : translate('切换到此项目'),
-                icon: <FolderOpen size={14} />,
-                disabled: isCurrentGroup || unavailableProjectIds.includes(group.project.id),
-                action: () => switchToTerminalProject(group.project.id),
-              },
               {
                 label: translate('复制项目路径'),
                 icon: <Copy size={14} />,

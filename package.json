@@ -1,7 +1,7 @@
 {
   "name": "qingcode",
   "private": true,
-  "version": "0.1.17-beta.36",
+  "version": "0.1.17-beta.42",
   "type": "module",
   "packageManager": "pnpm@11.0.8",
   "engines": {
@@ -30,6 +30,7 @@
     "tauri": "tauri",
     "tauri:dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:dev:direct": "tauri dev",
+    "clean:rust-target": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/prune-rust-target.ps1",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
     "build:server": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-server.ps1",
     "package": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-installer.ps1",

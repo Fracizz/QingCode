@@ -42,16 +42,27 @@ export interface AppCloseDependencies {
   markDetached: (tab: TerminalTab) => void
   flush: () => void
   destroy: () => Promise<void>
+  /**
+   * 本地托管终端能否活过 QingCode。宿主被连带结束时（如 `pnpm tauri:dev` 下 cargo 的
+   * 作业对象）不再提供保留，按普通本地终端结束。省略或查询失败时按能保留处理。
+   */
+  localHostSurvivesExit?: () => Promise<boolean>
 }
 
 export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
   try {
     await deps.pauseSpawns()
     const tabs = appExitTerminals(deps.terminals())
+    const hostSurvives = tabs.some(hasLocalHostedSession)
+      ? await (deps.localHostSurvivesExit?.() ?? Promise.resolve(true)).catch(() => true)
+      : true
+    const canPreserve = (tab: TerminalTab) =>
+      hasRemoteSession(tab) || (hostSurvives && hasLocalHostedSession(tab))
     const persistent = tabs.filter(hasRemoteSession)
-    const hosted = tabs.filter(hasLocalHostedSession)
+    const hosted = hostSurvives ? tabs.filter(hasLocalHostedSession) : []
+    const tiedHosted = hostSurvives ? 0 : tabs.filter(hasLocalHostedSession).length
     const preservable = persistent.length + hosted.length
-    const local = tabs.filter(tab => !tab.cwd.startsWith('ssh://') && !hasLocalHostedSession(tab))
+    const local = tabs.filter(tab => !tab.cwd.startsWith('ssh://') && !canPreserve(tab))
     const compatible = tabs.filter(tab => tab.cwd.startsWith('ssh://') && !hasRemoteSession(tab))
     const transfers = deps.transferCount()
     const labels = preserveActionLabels(persistent.length > 0, hosted.length > 0)
@@ -59,6 +70,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
       persistent.length > 0 ? t('有 {count} 个远程终端可以保留。保留后远端进程继续运行，重新连接时可接回。默认在连续断开 24 小时后自动结束。', { count: persistent.length }) : '',
       hosted.length > 0 ? t('有 {count} 个本地终端可以保留。保留后进程继续运行，下次打开 QingCode 时可接回，电脑重启后失效。默认在连续断开 24 小时后自动结束。', { count: hosted.length }) : '',
       local.length > 0 ? t('{count} 个本地终端将关闭。', { count: local.length }) : '',
+      tiedHosted > 0 ? t('本地终端宿主与 QingCode 处在同一个作业对象中（例如通过 pnpm tauri:dev 启动），退出时会被一起结束，{count} 个本地终端无法保留。', { count: tiedHosted }) : '',
       compatible.length > 0 ? t('{count} 个远程终端不支持持久化，退出后将断开。', { count: compatible.length }) : '',
       transfers > 0 ? t('{count} 项文件传输尚未完成，退出后将中断。', { count: transfers }) : '',
     ].filter(Boolean).join('\n\n')
@@ -77,7 +89,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     if (!(await deps.confirmFiles())) return
 
     // No terminal side effects before all cancellable save confirmations finish.
-    let pending = tabs.filter(tab => !hasPreservableSession(tab) || action === 'terminate')
+    let pending = tabs.filter(tab => !canPreserve(tab) || action === 'terminate')
     let endedCount = 0
     while (pending.length > 0) {
       const results = await Promise.allSettled(pending.map(async tab => {
@@ -111,7 +123,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     }
 
     // Stop only this window's proxies, including failed kills. Keep their recoverable PTY ids.
-    for (const tab of appExitTerminals(deps.terminals()).filter(hasPreservableSession)) {
+    for (const tab of appExitTerminals(deps.terminals()).filter(canPreserve)) {
       await deps.finishRemote(tab, 'preserve')
       deps.markDetached(tab)
     }

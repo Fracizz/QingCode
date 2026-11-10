@@ -11,6 +11,7 @@
 //! 两者互不影响；开发构建落在 `.dev` 下，不会连上已安装版本的宿主。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -29,6 +30,16 @@ pub(crate) const HOST_SUPPORTED: bool = cfg!(windows);
 
 /// 同时恢复多个标签时只拉起一次宿主，避免 token 轮换期间读到旧值。
 static ENSURE_LOCK: Mutex<()> = Mutex::new(());
+
+/// 本进程拉起的宿主仍在调用方作业对象里、会随 QingCode 一起结束（如 `pnpm tauri:dev`
+/// 下 cargo 的作业且无法以 Shell 为父进程脱离）。宿主是之前的实例拉起、本进程直接
+/// 连上的，说明它已经活过了上一个实例，保持 false。
+static HOST_TIED_TO_APP: AtomicBool = AtomicBool::new(false);
+
+/// 退出时托管终端能否活过 QingCode：宿主会被连带结束时为 false。
+pub(crate) fn host_survives_app_exit() -> bool {
+    !HOST_TIED_TO_APP.load(Ordering::SeqCst)
+}
 
 pub(crate) struct LocalHostAccess {
     pub(crate) endpoint: IpcEndpoint,
@@ -141,18 +152,33 @@ pub(crate) fn ensure_running() -> Result<LocalHostAccess, String> {
     let token = match ensure_daemon_token(&probe) {
         Ok(token) => token,
         // 宿主未运行才需要副本，已在运行时不做任何文件操作。
-        Err(_) => ensure_daemon_token(&ConnectOptions {
-            state_dir: Some(state_dir.clone()),
-            ensure_daemon: true,
-            start_timeout: HOST_START_TIMEOUT,
-            daemon_program: Some(prepare_host_executable()?),
-        })?,
+        Err(_) => {
+            let token = ensure_daemon_token(&ConnectOptions {
+                state_dir: Some(state_dir.clone()),
+                ensure_daemon: true,
+                start_timeout: HOST_START_TIMEOUT,
+                daemon_program: Some(prepare_host_executable()?),
+                escape_caller_job: true,
+            })?;
+            HOST_TIED_TO_APP.store(host_spawn_tied_to_app(), Ordering::SeqCst);
+            token
+        }
     };
     let run_dir = RunDir::resolve(Some(&state_dir))?;
     Ok(LocalHostAccess {
         endpoint: IpcEndpoint::new(run_dir.dir()),
         token,
     })
+}
+
+#[cfg(windows)]
+fn host_spawn_tied_to_app() -> bool {
+    qingcode_server::winproc::last_daemon_tied_to_caller_job()
+}
+
+#[cfg(not(windows))]
+fn host_spawn_tied_to_app() -> bool {
+    false
 }
 
 #[cfg(test)]

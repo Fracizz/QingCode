@@ -635,6 +635,8 @@ export const EN = Object.freeze({
   '项目位置已变化，请重新打开终端后发送图片。': 'The project location changed. Reopen the terminal before sending images.',
   // —— 界面精简后的短文案 ——
   '已复制路径': 'Path copied',
+  '已沿用原配对，切换到新端口 {port}': 'Kept the existing pairing and switched to port {port}',
+  '这台电脑还保存了端口 {port} 的连接「{name}」；若电脑已改用该端口，请改用它并移除这条旧连接。': 'This computer is also saved as "{name}" on port {port}. If the computer now uses that port, switch to it and remove this old connection.',
   '复制 {name} 的路径': 'Copy the path of {name}',
   '左滑可复制路径': 'Swipe left to copy path',
   '搜索会话': 'Search sessions',

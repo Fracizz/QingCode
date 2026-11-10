@@ -158,6 +158,30 @@ describe('app close decisions', () => {
     expect(events).toContain('ended:gone')
   })
 
+  it('does not promise to keep local terminals whose host ends with the app', async () => {
+    const tabs = [tab('remote'), hosted('tied')]
+    const { deps, events } = fixture(tabs)
+    deps.localHostSurvivesExit = vi.fn(async () => false)
+    await runAppClose(deps)
+    expect(deps.choose).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining('1 个本地终端无法保留'),
+      options: expect.arrayContaining([expect.objectContaining({ id: 'preserve', label: '保留远程终端并退出' })]),
+    }))
+    // 宿主里的进程仍经宿主确认结束，下次启动按原配置新建而不是去接回。
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[1], 'terminate')
+    expect(events).toContain('ended:tied')
+    expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'preserve')
+    expect(deps.markDetached).toHaveBeenCalledExactlyOnceWith(tabs[0])
+  })
+
+  it('keeps local terminals when the host lookup fails', async () => {
+    const tabs = [hosted('kept')]
+    const { deps } = fixture(tabs)
+    deps.localHostSurvivesExit = vi.fn(async () => { throw new Error('ipc down') })
+    await runAppClose(deps)
+    expect(deps.finishRemote).toHaveBeenCalledExactlyOnceWith(tabs[0], 'preserve')
+  })
+
   it('names both kinds when remote and local terminals can be kept', async () => {
     const tabs = [tab('remote'), hosted('local')]
     const { deps } = fixture(tabs)

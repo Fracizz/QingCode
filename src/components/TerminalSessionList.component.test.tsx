@@ -461,6 +461,7 @@ describe('TerminalSessionList', () => {
     render(<TerminalSessionList />)
     expect(row('other').querySelector('[data-terminal-activity]')).toBeNull()
     expect(row('other').querySelector('[data-terminal-awaiting-restore="other"]')).not.toBeNull()
+    expect(row('other').querySelector('[data-tooltip="切换到项目后恢复"] [data-terminal-awaiting-restore="other"]')).not.toBeNull()
     expect(row('other')).toHaveClass('text-term-list-fg')
     expect(within(row('other')).getByText('waiting')).not.toHaveClass('text-term-list-meta')
     expect(within(row('other')).queryByText('待恢复')).toBeNull()
@@ -605,15 +606,6 @@ describe('TerminalSessionList', () => {
     expect(mocks.state.closeAllProjectTerminals).toHaveBeenCalledTimes(1)
   })
 
-  it('switches to another project from its actions menu', async () => {
-    render(<TerminalSessionList />)
-    fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
-    fireEvent.click(screen.getByText('切换到此项目'))
-    await vi.waitFor(() =>
-      expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1]),
-    )
-  })
-
   const search = (value: string) =>
     fireEvent.change(screen.getByLabelText('搜索终端、项目或来源'), { target: { value } })
   const rowOrder = () =>
@@ -686,14 +678,11 @@ describe('TerminalSessionList', () => {
     mocks.projectState.projects[1] = visible
   })
 
-  it('does not offer switching to the current or an unavailable project', () => {
-    mocks.projectState.unavailableProjectIds = ['p2']
+  it('does not duplicate project switching in the project actions menu', () => {
     render(<TerminalSessionList />)
-    fireEvent.click(within(group('p1')).getByRole('button', { name: '「app」的项目操作' }))
-    expect(screen.getByText('当前项目').closest('button')).toBeDisabled()
-    fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
-    expect(screen.getByText('切换到此项目').closest('button')).toBeDisabled()
+    expect(screen.queryByText('切换到此项目')).toBeNull()
+    expect(screen.queryByText('当前项目')).toBeNull()
   })
 
   it('creates a terminal with the chosen profile in the project of the header', async () => {

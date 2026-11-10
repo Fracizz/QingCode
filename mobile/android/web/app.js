@@ -275,6 +275,12 @@ pairing = createPairingFlow({
     putProfile(paired);
     await activate(paired);
   },
+  onMoved: async moved => {
+    desktopProtocol.invalidate(moved);
+    connectionLatency.invalidate(moved.id);
+    showToast(document.body, t('已沿用原配对，切换到新端口 {port}', { port: moved.port }));
+    await activate(moved);
+  },
   moveProfile,
   putProfile,
   afterHostSaved: (updated, portChanged) => {
@@ -656,8 +662,12 @@ async function refreshProjects() {
   } catch (error) {
     if (epoch !== profileEpoch) return false;
     updateHost(error.revoked ? 'expired' : 'offline');
-    message('project-error', error.message);
-    message('connection-error', error.message);
+    const moved = error.revoked ? null : profiles.find(item => item.id !== profile.id && item.host === profile.host
+      && item.fingerprint === profile.fingerprint);
+    // 同一台电脑（同 IP、同证书）另存了其他端口的连接时，多半是电脑换了端口，提示改用那条。
+    const text = moved ? t('这台电脑还保存了端口 {port} 的连接「{name}」；若电脑已改用该端口，请改用它并移除这条旧连接。', { port: moved.port, name: moved.name }) : error.message;
+    message('project-error', text);
+    message('connection-error', text);
     return false;
   }
 }
@@ -689,7 +699,7 @@ window.qingLink = text => {
     const target = parsePairingLink(text);
     if (!terminalScreen.hidden) returnToDashboard('connection');
     else showPage('connection');
-    pairing.openPairTarget(target);
+    void pairing.openPairTarget(target);
   } catch (error) {
     if (!terminalScreen.hidden) returnToDashboard('connection');
     else showPage('connection');

@@ -1,6 +1,6 @@
-# Configure Gitee + GitHub dual remotes for QingCode.
-# - origin: fetch from Gitee; push to Gitee and GitHub
-# - github: fetch/push GitHub only (for pull/compare from GitHub)
+# Configure GitHub + Gitee remotes for QingCode.
+# - origin: fetch/push GitHub (primary repository)
+# - gitee: fetch/push Gitee only (mirror)
 #
 # Usage:
 #   pnpm remotes:setup
@@ -8,8 +8,8 @@
 
 [CmdletBinding()]
 param(
-  [string]$GiteeUrl = 'https://gitee.com/FrancizTest_admin/qing-code.git',
-  [string]$GitHubUrl = 'https://github.com/Fracizz/QingCode.git'
+  [string]$GitHubUrl = 'https://github.com/Fracizz/QingCode.git',
+  [string]$GiteeUrl = 'https://gitee.com/FrancizTest_admin/qing-code.git'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,35 +25,37 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'git remote failed' }
 
   if ($remotes -contains 'origin') {
-    git remote set-url origin $GiteeUrl
+    git remote set-url origin $GitHubUrl
     if ($LASTEXITCODE -ne 0) { throw 'failed to set origin url' }
   } else {
-    git remote add origin $GiteeUrl
+    git remote add origin $GitHubUrl
     if ($LASTEXITCODE -ne 0) { throw 'failed to add origin' }
   }
 
-  if ($remotes -contains 'github') {
-    git remote set-url github $GitHubUrl
-    if ($LASTEXITCODE -ne 0) { throw 'failed to set github url' }
+  if ($remotes -contains 'gitee') {
+    git remote set-url gitee $GiteeUrl
+    if ($LASTEXITCODE -ne 0) { throw 'failed to set gitee url' }
   } else {
-    git remote add github $GitHubUrl
-    if ($LASTEXITCODE -ne 0) { throw 'failed to add github' }
+    git remote add gitee $GiteeUrl
+    if ($LASTEXITCODE -ne 0) { throw 'failed to add gitee' }
   }
 
-  # Replace push URLs so `git push origin` goes to both hosts.
+  # The old layout used a separate `github` remote alongside a Gitee origin;
+  # `origin` now points at GitHub, so drop the duplicate remote if present.
+  if ($remotes -contains 'github') {
+    git remote remove github
+    if ($LASTEXITCODE -ne 0) { throw 'failed to remove legacy github remote' }
+  }
+
+  # Drop any extra push URLs so `git push origin` targets GitHub only.
   $existingPush = @(git config --get-all remote.origin.pushurl 2>$null)
   foreach ($url in $existingPush) {
     git remote set-url --delete --push origin $url 2>$null
   }
-  git remote set-url --add --push origin $GiteeUrl
-  if ($LASTEXITCODE -ne 0) { throw 'failed to add Gitee pushurl' }
-  git remote set-url --add --push origin $GitHubUrl
-  if ($LASTEXITCODE -ne 0) { throw 'failed to add GitHub pushurl' }
 
-  Write-Host 'Dual remotes configured:'
-  Write-Host '  fetch  origin  -> Gitee'
-  Write-Host '  push   origin  -> Gitee + GitHub'
-  Write-Host '  fetch  github  -> GitHub'
+  Write-Host 'Remotes configured:'
+  Write-Host '  fetch/push  origin -> GitHub (primary)'
+  Write-Host '  fetch/push  gitee  -> Gitee (mirror)'
   Write-Host ''
   git remote -v
   if ($LASTEXITCODE -ne 0) { throw 'git remote -v failed' }
@@ -61,8 +63,8 @@ try {
   Write-Host ''
   Write-Host 'Typical workflow:'
   Write-Host '  git fetch origin'
-  Write-Host '  git fetch github'
-  Write-Host '  git push origin <branch>   # pushes to both'
+  Write-Host '  git push origin <branch>   # publishes to GitHub'
+  Write-Host '  git push gitee <branch>    # mirrors to Gitee'
 } finally {
   Pop-Location
 }

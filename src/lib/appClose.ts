@@ -4,7 +4,7 @@ import { useEditorStore } from '../store/editorStore'
 import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { isTransferActive, useTransferStore } from '../store/transferStore'
-import { closeTerminalOnExit, finishRemoteTerminalOnExit } from './ipc/terminal'
+import { closeTerminalOnExit, finishRemoteTerminalOnExit, localHostSurvivesAppExit } from './ipc/terminal'
 import { runAppClose } from './appCloseFlow'
 import { flushWorkspaceSessionPersist } from './workspaceSessionSync'
 import { safeInvoke } from './tauri'
@@ -25,6 +25,7 @@ export function requestAppClose(): Promise<void> {
       id: tab.id, ptyId: tab.ptyId!, cwd: tab.cwd, action,
     }),
     closeTerminal: closeTerminalOnExit,
+    localHostSurvivesExit: localHostSurvivesAppExit,
     markEnded: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
       current.id === tab.id && current.ptyId === tab.ptyId
         ? { ...current, status: 'exited', endedAt: tab.cwd.startsWith('ssh://') ? Date.now() : undefined,

@@ -5,12 +5,13 @@ import { useProjectStore } from '@/store/projectStore'
 import type { Project } from '@/types'
 import { DEFAULT_CONFIG } from './core'
 import GitPushSyncSection from './GitPushSyncSection'
+import { resetScanCache } from './scanCache'
 import { useGitPushSyncStore } from './store'
 
 const mocks = vi.hoisted(() => ({
   saveConfig: vi.fn(),
   getGitRemotes: vi.fn(),
-  getGitStatus: vi.fn(),
+  getGitHead: vi.fn(),
   listSshConnections: vi.fn(),
   isProjectTrusted: vi.fn(),
 }))
@@ -18,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./runtime', () => ({ saveConfig: mocks.saveConfig }))
 vi.mock('@/lib/ipc/git', () => ({
   getGitRemotes: mocks.getGitRemotes,
-  getGitStatus: mocks.getGitStatus,
+  getGitHead: mocks.getGitHead,
 }))
 vi.mock('@/lib/projectRepository', () => ({ listSshConnections: mocks.listSshConnections }))
 vi.mock('@/lib/workspaceTrust', () => ({ isProjectTrusted: mocks.isProjectTrusted }))
@@ -36,6 +37,7 @@ const offline = { id: 'x', name: 'app-offline', path: 'ssh://d/x', kind: 'ssh' }
 describe('GitPushSyncSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetScanCache()
     mocks.saveConfig.mockImplementation(async config =>
       useGitPushSyncStore.getState().setConfig(config),
     )
@@ -45,7 +47,7 @@ describe('GitPushSyncSection', () => {
       if (path === offline.path) throw new Error('未连接')
       return [{ name: 'origin', fetch_url: 'git@gitee.com:team/app.git', push_urls: [] }]
     })
-    mocks.getGitStatus.mockResolvedValue({ is_repository: true, branch: 'test', changes: [] })
+    mocks.getGitHead.mockResolvedValue({ name: 'test', detached: false })
     useProjectStore.setState({ projects: [local, remote, offline] })
     useGitPushSyncStore.setState({ config: DEFAULT_CONFIG, detection: {}, results: {} })
   })
@@ -77,15 +79,61 @@ describe('GitPushSyncSection', () => {
   it('toggles a project as receiver', async () => {
     useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
     render(<GitPushSyncSection />)
-    await waitFor(() => expect(mocks.getGitStatus).toHaveBeenCalledTimes(2))
+    await screen.findByText('gitee.com/team/app')
     fireEvent.click(screen.getByLabelText('自动接收 app-server'))
     expect(mocks.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ receivers: ['b'] }))
   })
 
-  it('does not allow untrusted projects to receive updates', () => {
+  it('does not allow untrusted projects to receive updates', async () => {
     mocks.isProjectTrusted.mockReturnValue(false)
     useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
     render(<GitPushSyncSection />)
-    expect((screen.getByLabelText('自动接收 app-server') as HTMLInputElement).disabled).toBe(true)
+    const checkbox = (await screen.findByLabelText('自动接收 app-server')) as HTMLInputElement
+    expect(checkbox.disabled).toBe(true)
+  })
+
+  it('shows a loading state instead of the table until every project has been inspected', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(resolve => (release = resolve))
+    mocks.getGitRemotes.mockImplementation(async (path: string) => {
+      if (path === offline.path) {
+        await gate
+        throw new Error('未连接')
+      }
+      return [{ name: 'origin', fetch_url: 'git@gitee.com:team/app.git', push_urls: [] }]
+    })
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    render(<GitPushSyncSection />)
+    await waitFor(() => expect(mocks.getGitRemotes).toHaveBeenCalledTimes(3))
+    // 不同机器并行读取；最后一个完成前不渲染表格，也就无从点击、不会跳动。
+    await screen.findByText('正在识别仓库 2/3')
+    expect(screen.queryByLabelText('自动接收 app-local')).toBeNull()
+    expect(screen.queryByText('gitee.com/team/app')).toBeNull()
+    release()
+    await screen.findByText('gitee.com/team/app')
+    expect(screen.queryByText('读取完成后即可设置自动接收')).toBeNull()
+  })
+
+  it('keeps the cached group when a refresh cannot reach the project', async () => {
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    useProjectStore.setState({ projects: [local, remote] })
+    const first = render(<GitPushSyncSection />)
+    await screen.findByText('gitee.com/team/app')
+    first.unmount()
+    mocks.getGitRemotes.mockRejectedValue(new Error('未连接'))
+    render(<GitPushSyncSection />)
+    await waitFor(() => expect(screen.queryByText(/正在刷新/)).toBeNull())
+    expect(screen.getByText('gitee.com/team/app')).toBeTruthy()
+    expect(screen.queryByText('未连接或没有远程仓库')).toBeNull()
+  })
+
+  it('reuses the last grouping when the section is reopened', async () => {
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    const first = render(<GitPushSyncSection />)
+    await screen.findByText('gitee.com/team/app')
+    first.unmount()
+    render(<GitPushSyncSection />)
+    expect(screen.getByText('gitee.com/team/app')).toBeTruthy()
+    expect(screen.queryByText('读取完成后即可设置自动接收')).toBeNull()
   })
 })

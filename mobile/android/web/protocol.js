@@ -405,6 +405,16 @@ export function validPort(port) {
   return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
+/**
+ * 同一台电脑改用了新端口：同 IP、同证书指纹、端口不同的已保存连接。
+ * 电脑端换端口时保留证书和已配对设备，旧令牌在新端口上仍然有效；
+ * 新地址已有连接时返回 null，避免两条记录合并冲突。
+ */
+export function findPortMovedProfile(profiles, host, port, fingerprint) {
+  if (profiles.some(item => item.id === host + ':' + port)) return null;
+  return profiles.find(item => item.host === host && item.port !== port && item.fingerprint === fingerprint) ?? null;
+}
+
 /** 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。 */
 export function parsePairingLink(text) {
   const value = String(text ?? '').trim();
