@@ -268,8 +268,11 @@ function App() {
     })
     return () => { void listener.then(unlisten => unlisten?.()) }
   }, [projectsReady])
-  useSshWarmup(projectsReady)
-  useStartupServerUpdates(projectsReady)
+  // 不用 projectsReady：它要等启动恢复的项目打开完成，远程恢复可能耗时数十秒，
+  // 期间其他连接的服务预热/更新都会被白白推迟。
+  const projectCatalogReady = useProjectStore(s => s.projectCatalogReady)
+  useSshWarmup(projectCatalogReady)
+  useStartupServerUpdates(projectCatalogReady)
   useGitPushSync(projectsReady)
 
   useEffect(() => {

@@ -13,6 +13,13 @@ export const useSshWarmupStore = create<{ statuses: ReadonlyMap<string, WarmupSt
 }))
 let queue: SshWarmupQueue<FileNode[] | null> | undefined
 
+interface ForegroundLease {
+  connectionId?: string
+  release?: () => void
+}
+/** 进行中的前台打开，跨队列重建保留，避免队列晚于打开流程创建时漏掉让路。 */
+const foregroundLeases = new Set<ForegroundLease>()
+
 export function startSshWarmupQueue(): SshWarmupQueue<FileNode[] | null> {
   queue?.dispose()
   const next = new SshWarmupQueue<FileNode[] | null>({
@@ -37,6 +44,8 @@ export function startSshWarmupQueue(): SshWarmupQueue<FileNode[] | null> {
     changed: statuses => useSshWarmupStore.setState({ statuses }),
   })
   queue = next
+  // 队列创建前已开始的前台打开（如启动恢复的项目）仍要让同连接的后台任务让路。
+  for (const lease of foregroundLeases) lease.release = next.beginForeground(lease.connectionId)
   return next
 }
 
@@ -48,7 +57,12 @@ export function stopSshWarmupQueue(expected: SshWarmupQueue<FileNode[] | null>) 
 
 /** 只暂停该连接的后台预热；不传（本机项目）则暂停全部。 */
 export function beginSshForeground(connectionId?: string): () => void {
-  return queue?.beginForeground(connectionId) ?? (() => {})
+  const lease: ForegroundLease = { connectionId, release: queue?.beginForeground(connectionId) }
+  foregroundLeases.add(lease)
+  return () => {
+    if (!foregroundLeases.delete(lease)) return
+    lease.release?.()
+  }
 }
 
 export function takeSshWarmup(path: string): Promise<FileNode[] | null | undefined> | undefined {

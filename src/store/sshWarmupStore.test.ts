@@ -18,6 +18,7 @@ vi.mock('../lib/sshWorkspace', () => ({
   isSshBackgroundSuspended: mocks.suspended,
 }))
 import {
+  beginSshForeground,
   startSshWarmupQueue,
   stopSshWarmupQueue,
   takeSshWarmup,
@@ -80,5 +81,36 @@ describe('passive SSH preparation', () => {
     await vi.runAllTimersAsync()
     expect(mocks.connected).not.toHaveBeenCalled()
     expect(mocks.prepare).not.toHaveBeenCalled()
+  })
+
+  it('keeps a foreground opening started before the queue existed in front of same-connection warmup', async () => {
+    stopSshWarmupQueue(queue)
+    // 启动恢复的远程项目先于队列开始打开；队列随后创建时必须继承这次让路。
+    const endForeground = beginSshForeground('c')
+    queue = startSshWarmupQueue()
+    const other: Project = { ...project, id: 'b', path: 'ssh://d/b' }
+    queue.update([
+      { project, connectionId: 'c', version: 'v1' },
+      { project: other, connectionId: 'd', version: 'v1' },
+    ])
+    await vi.runAllTimersAsync()
+    // 其他连接照常预热，同连接等待前台打开结束。
+    expect(mocks.prepare).toHaveBeenCalledTimes(1)
+    expect(mocks.prepare.mock.calls[0][0]).toBe(other.path)
+    endForeground()
+    await vi.runAllTimersAsync()
+    expect(mocks.prepare).toHaveBeenCalledTimes(2)
+    expect(mocks.prepare.mock.calls[1][0]).toBe(project.path)
+  })
+
+  it('releases a foreground lease only once even across queue restarts', async () => {
+    const endForeground = beginSshForeground('c')
+    endForeground()
+    stopSshWarmupQueue(queue)
+    queue = startSshWarmupQueue()
+    endForeground()
+    queue.update([{ project, connectionId: 'c', version: 'v1' }])
+    await vi.runAllTimersAsync()
+    expect(mocks.prepare).toHaveBeenCalledTimes(1)
   })
 })

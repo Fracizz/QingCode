@@ -105,6 +105,7 @@ beforeEach(() => {
     projectTrees: {},
     projectTreeErrors: {},
     toasts: [],
+    projectCatalogReady: false,
     refreshProjectTree: vi.fn().mockResolvedValue(undefined),
   })
 })
@@ -200,6 +201,21 @@ describe('SSH project availability', () => {
     expect(mocks.ensureWorkspaceTrust).not.toHaveBeenCalled()
     expect(mocks.touchAndLoadRecentFiles).not.toHaveBeenCalled()
   })
+  it('releases background warmup before the restored remote project finishes opening', async () => {
+    mocks.restoreWorkspace = true
+    mocks.loadProjectsFromDb.mockResolvedValue({ migrated: false, projects: [remote], importedFromSettings: 0 })
+    let finishPrepare!: () => void
+    mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finishPrepare = resolve }))
+    const loading = useProjectStore.getState().loadProjects()
+    // 恢复的远程项目正在安装/更新服务时，其他连接的预热与服务更新已可开始。
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalled())
+    expect(useProjectStore.getState().projectCatalogReady).toBe(true)
+    expect(useProjectStore.getState().currentProject).toBeNull()
+    finishPrepare()
+    await loading
+    expect(useProjectStore.getState().currentProject?.id).toBe(remote.id)
+  })
+
   it('does not call an unattended SSH validation that disables the project', async () => {
     mocks.loadProjectsFromDb.mockResolvedValue({
       migrated: false,

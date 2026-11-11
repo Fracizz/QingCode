@@ -124,6 +124,11 @@ interface ProjectState {
   unavailableProjectIds: string[]
   sshConnections: SshConnection[]
   loading: boolean
+  /**
+   * 项目列表、信任根与 SSH 连接已加载，但启动恢复的项目可能仍在打开。
+   * 后台预热与远端服务启动更新以此为准，不等恢复项目（远程可能要数十秒）。
+   */
+  projectCatalogReady: boolean
   toasts: Toast[]
 
   loadProjects: (options?: { restoreCurrent?: boolean; syncFromSettings?: boolean }) => Promise<void>
@@ -367,6 +372,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   unavailableProjectIds: [],
   sshConnections: [],
   loading: false,
+  projectCatalogReady: false,
   toasts: [],
 
   pushToast: (kind, text, detail, action, subject) => {
@@ -416,6 +422,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       // Await so draft recovery / tree load do not race an empty allowlist.
       await syncAllowlistRoots(merged)
       await get().loadSshConnections()
+      // 先放行后台预热/服务更新，再等待恢复项目：恢复的远程项目可能正在安装或
+      // 更新服务，其他连接不应排在它后面。同连接的后台任务由前台租约让路。
+      if (!get().projectCatalogReady) set({ projectCatalogReady: true })
 
       // Main window: open the most recent project immediately so the UI is not
       // gated on validating every path. Fresh windows (File → New Window) stay
