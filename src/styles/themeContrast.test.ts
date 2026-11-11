@@ -39,6 +39,7 @@ describe('theme contrast', () => {
   for (const [name, selector] of [
     ['dark', '@theme'],
     ['light', 'html[data-theme="light"]'],
+    ['ink', 'html[data-theme="ink"]'],
     ['forest', 'html[data-theme="forest"]'],
     ['olive', 'html[data-theme="olive"]'],
   ] as const) {

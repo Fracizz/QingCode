@@ -103,7 +103,7 @@ export function parseSettingsTransfer(text: string, scope: SettingsScope): Setti
     if (scope !== 'global' || !record(preferences)) throw new Error('用户偏好配置无效')
     if (
       preferences.theme !== undefined &&
-      !['dark', 'light', 'olive', 'forest', 'auto'].includes(String(preferences.theme))
+      !['dark', 'light', 'ink', 'olive', 'forest', 'auto'].includes(String(preferences.theme))
     )
       throw new Error('颜色主题无效')
     if (preferences.language !== undefined && typeof preferences.language !== 'string')

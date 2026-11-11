@@ -12,7 +12,7 @@
         try {
           var stored = localStorage.getItem('qingcode:theme')
           if (stored === 'forest') stored = 'olive'
-          if (stored === 'light' || stored === 'dark' || stored === 'olive' || stored === 'auto') theme = stored
+          if (stored === 'light' || stored === 'dark' || stored === 'ink' || stored === 'olive' || stored === 'auto') theme = stored
         } catch (e) {}
         var resolved =
           theme === 'auto' && window.matchMedia
@@ -42,14 +42,20 @@
         background: #ffffff;
         color: #111827;
       }
+      html[data-theme='ink'],
+      html[data-theme='ink'] body,
+      html[data-theme='ink'] #root {
+        background: #161616;
+        color: #e2e2e2;
+      }
       html[data-theme='olive'],
       html[data-theme='olive'] body,
       html[data-theme='olive'] #root,
       html[data-theme='forest'],
       html[data-theme='forest'] body,
       html[data-theme='forest'] #root {
-        background: #151d18;
-        color: #dce5df;
+        background: #1c241f;
+        color: #cbd5cd;
       }
 
       #startup-splash {
@@ -65,9 +71,12 @@
       html[data-theme='light'] #startup-splash {
         background: #ffffff;
       }
+      html[data-theme='ink'] #startup-splash {
+        background: #161616;
+      }
       html[data-theme='olive'] #startup-splash,
       html[data-theme='forest'] #startup-splash {
-        background: #151d18;
+        background: #1c241f;
       }
       #startup-splash.startup-splash--hide {
         opacity: 0;

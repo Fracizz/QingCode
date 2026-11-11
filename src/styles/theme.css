@@ -187,6 +187,63 @@ html[data-theme="light"] [data-modal-overlay] > .modal-overlay-enter {
   backdrop-filter: none;
 }
 
+/* 烟墨主题（id 'ink'）：双层中性灰——图标栏/侧栏/状态栏为淡墨中灰，内容区/编辑器/终端为浓墨深灰，
+   靠明暗而非边框分区（与“深色”各层接近的平铺结构区分开）。纯中性灰（R=G=B）。
+   终端底色须与 terminalThemes.ts 的 INK_THEME.background 一致。 */
+html[data-theme="ink"] {
+  --color-bg: #161616;
+  --color-bg-deep: #292929;
+  --color-bg-sidebar: #292929;
+  /* 菜单/浮层底色：比侧栏略亮，菜单项悬停（hover）再亮一档。 */
+  --color-bg-elevated: #2e2e2e;
+  --color-bg-hover: #333333;
+  --color-bg-active: #393939;
+  --color-bg-chrome: var(--color-bg);
+  --color-bg-status: var(--color-bg-sidebar);
+  /* 输入框介于两层之间：在内容区上略浮起，在侧栏上略下沉，两处都看得出边界。 */
+  --color-bg-input: #202020;
+  --color-bg-terminal: var(--color-bg);
+  --color-border: #333333;
+  --color-border-strong: #454545;
+  --color-bg-activity: var(--color-bg-sidebar);
+  /* 两层明暗差已足够分区，分隔线只做弱提示。 */
+  --color-divider: #2f2f2f;
+
+  --color-dialog: #1f1f1f;
+  --color-dialog-chrome: #2a2a2a;
+  --color-dialog-sidebar: #262626;
+  --color-dialog-input: #191919;
+  --color-dialog-active: #383838;
+  --color-dialog-border: #444444;
+  --color-dialog-separator: #333333;
+  --color-dialog-label: #cfcfcf;
+
+  --color-fg: #e2e2e2;
+  --color-fg-muted: #b0b0b0;
+  --color-fg-dim: #aaaaaa;
+  --color-tree-fg: #d0d0d0;
+  --color-term-list-active: #ececec;
+  --color-term-list-fg: #d0d0d0;
+  --color-term-list-project: #b0b0b0;
+  --color-term-list-meta: #aaaaaa;
+
+  /* 功能强调色为蓝（同深色），提亮一档以便在中灰侧栏与选中底上仍 ≥ 3:1。 */
+  --color-brand: #4ecdb5;
+  --color-accent: #5b9cf8;
+  --color-danger: #f48771;
+  --color-warn: #e2c08d;
+  --color-ok: #89d185;
+  --color-action: #176ec2;
+  --color-on-action: #ffffff;
+  --color-destructive: #b72d43;
+  --color-on-destructive: #ffffff;
+
+  --color-tab-active: #161616;
+  --color-tab-inactive: #1c1c1c;
+
+  --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 30%, var(--color-bg));
+}
+
 /* 护眼绿主题（id 仍为 'olive'，兼容旧 'forest'）：色相保持柔和中绿（约 140°），饱和度约 12%，
    底色比深色略亮、正文对比度控制在约 10:1，避免深底亮字的光晕与长时间阅读的疲劳；功能色为柔和琥珀。 */
 html[data-theme="olive"], html[data-theme="forest"] {

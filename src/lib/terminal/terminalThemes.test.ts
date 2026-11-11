@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { DARK_THEME, FOREST_THEME, LIGHT_THEME } from './terminalThemes'
+import { DARK_THEME, FOREST_THEME, INK_THEME, LIGHT_THEME } from './terminalThemes'
 
 const css = readFileSync(new URL('../../styles/theme.css', import.meta.url), 'utf8')
 
@@ -23,6 +23,7 @@ describe('terminal themes', () => {
   for (const [name, selector, theme] of [
     ['dark', '@theme', DARK_THEME],
     ['light', 'html[data-theme="light"]', LIGHT_THEME],
+    ['ink', 'html[data-theme="ink"]', INK_THEME],
     ['olive', 'html[data-theme="olive"]', FOREST_THEME],
   ] as const) {
     it(`${name} xterm background matches --color-bg-terminal`, () => {
