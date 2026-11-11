@@ -8,6 +8,7 @@
  *    或最近 SPINNER_HOLD 内出现过转圈帧。适合 Claude Code / Codex 等 AI CLI。
  * 2. 输出活跃（弱信号）：持续输出至少 OUTPUT_STREAK_MS，且最近 SPINNER_HOLD 内仍有输出。
  *    覆盖 build / test / 日志等不改标题的命令。紧跟输入或改尺寸的输出（回显、重绘）不计；
+ *    空闲时改尺寸引发的整段重绘（Claude Code 会重印全部对话，经 SSH 可持续数秒）也不计；
  *    shell 集成（OSC 133/633）明确报告停在提示符时也不计。
  * 上述规则须与 src-tauri/src/mobile.rs 的手机会话 `programBusy` 一致。
  *
@@ -23,6 +24,10 @@ export const SPINNER_HOLD_MS = 3000
 export const OUTPUT_QUIET_AFTER_INPUT_MS = 500
 /** 输出需连续这么久才算运行中，过滤提示符重绘、一次性的短输出。须与后端 OUTPUT_STREAK 一致。 */
 export const OUTPUT_STREAK_MS = 1000
+/** 改尺寸后的重绘段：块间隔不超过这么久视为同一段重绘。须与后端 REDRAW_GAP 一致。 */
+export const REDRAW_GAP_MS = 1000
+/** 重绘段最长持续时间，之后的输出照常计入，免得一直被吞掉。须与后端 REDRAW_MAX 一致。 */
+export const REDRAW_MAX_MS = 10_000
 
 type Listener = (terminalId: string) => void
 
@@ -34,6 +39,8 @@ interface Activity {
   /** 当前这段连续输出的开始时间（间隔达到 SPINNER_HOLD 即断开）。 */
   streakStart: number | null
   lastOutput: number | null
+  /** 空闲时改尺寸开始的重绘段：开始时间与最近一块输出；null 表示不在重绘段内。 */
+  redraw: { start: number; last: number } | null
   /** 程序主动上报的状态；有值时不看标题和输出。 */
   reported: Exclude<TerminalProgramReport, 'clear'> | null
   /** 上次通知时的状态，只在翻转时通知。 */
@@ -83,6 +90,7 @@ function activityFor(terminalId: string): Activity {
       lastInput: null,
       streakStart: null,
       lastOutput: null,
+      redraw: null,
       reported: null,
       busy: false,
       timer: null,
@@ -182,9 +190,22 @@ export function noteTerminalScreenSnapshot(terminalId: string, now = Date.now())
   refresh(terminalId, activity, now)
 }
 
+/** 输出是否属于改尺寸引发的重绘段；是则顺延该段。 */
+function continuesRedraw(activity: Activity, now: number): boolean {
+  const { redraw } = activity
+  if (!redraw) return false
+  if (now - redraw.last > REDRAW_GAP_MS || now - redraw.start > REDRAW_MAX_MS) {
+    activity.redraw = null
+    return false
+  }
+  redraw.last = now
+  return true
+}
+
 /** 记录一块程序输出（不含回放/快照）。 */
 export function noteTerminalOutput(terminalId: string, now = Date.now()) {
   const activity = activityFor(terminalId)
+  if (continuesRedraw(activity, now)) return
   if (activity.lastInput !== null && now - activity.lastInput < OUTPUT_QUIET_AFTER_INPUT_MS) return
   if (activity.lastOutput === null || now - activity.lastOutput >= SPINNER_HOLD_MS) {
     activity.streakStart = now
@@ -195,9 +216,24 @@ export function noteTerminalOutput(terminalId: string, now = Date.now()) {
   refresh(terminalId, activity, now)
 }
 
-/** 记录一次输入或改尺寸：随后短时间内的输出视为回显/重绘。 */
+/** 记录一次键盘输入：随后短时间内的输出视为回显；之后的输出是用户触发的工作，结束重绘段。 */
 export function noteTerminalInput(terminalId: string, now = Date.now()) {
-  activityFor(terminalId).lastInput = now
+  const activity = activityFor(terminalId)
+  activity.lastInput = now
+  activity.redraw = null
+}
+
+/**
+ * 记录一次改尺寸：TUI 随后整屏重绘。空闲时把这段连续重绘整段排除，
+ * 否则重印长对话的输出会被当成工作，结束时给看不到的终端打上「待查看」并刷新活动时间。
+ * 正在持续输出（如构建中）时不开启，免得吞掉真实工作的输出。
+ */
+export function noteTerminalResize(terminalId: string, now = Date.now()) {
+  const activity = activityFor(terminalId)
+  activity.lastInput = now
+  if (outputBusy(terminalId, activity, now)) return
+  if (activity.redraw) activity.redraw.last = now
+  else activity.redraw = { start: now, last: now }
 }
 
 /** 终端程序是否正在工作（标题在转圈，或持续有输出）。 */

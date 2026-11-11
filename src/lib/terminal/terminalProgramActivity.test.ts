@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OUTPUT_QUIET_AFTER_INPUT_MS,
   OUTPUT_STREAK_MS,
+  REDRAW_GAP_MS,
+  REDRAW_MAX_MS,
   SPINNER_HOLD_MS,
   clearTerminalProgramActivity,
   isSpinnerFrame,
@@ -15,6 +17,7 @@ import {
   noteTerminalSubmit,
   noteTerminalInput,
   noteTerminalOutput,
+  noteTerminalResize,
   noteTerminalTitle,
   subscribeTerminalProgramActivity,
 } from './terminalProgramActivity'
@@ -206,6 +209,43 @@ describe('terminal program activity', () => {
     noteTerminalInput('t1', start + 3000)
     streamOutput(start + 3000 + OUTPUT_QUIET_AFTER_INPUT_MS, OUTPUT_STREAK_MS)
     expect(isTerminalProgramBusy('t1', start + 3000 + OUTPUT_QUIET_AFTER_INPUT_MS + OUTPUT_STREAK_MS)).toBe(true)
+  })
+
+  it('ignores a long redraw after resizing an idle terminal', () => {
+    const start = Date.now()
+    noteTerminalResize('t1', start)
+    // 重印长对话：持续数秒、块间隔很短，都算这一段重绘。
+    streamOutput(start + 100, 4000)
+    expect(isTerminalProgramBusy('t1', start + 4100)).toBe(false)
+    // 重绘段因间隔断开后，新的持续输出照常算运行中。
+    const later = start + 4100 + REDRAW_GAP_MS + 1
+    streamOutput(later, OUTPUT_STREAK_MS)
+    expect(isTerminalProgramBusy('t1', later + OUTPUT_STREAK_MS)).toBe(true)
+  })
+
+  it('ends the redraw on keyboard input or after the cap', () => {
+    const start = Date.now()
+    noteTerminalResize('t1', start)
+    streamOutput(start + 100, 400)
+    noteTerminalInput('t1', start + 600)
+    const typed = start + 600 + OUTPUT_QUIET_AFTER_INPUT_MS
+    streamOutput(typed, OUTPUT_STREAK_MS)
+    expect(isTerminalProgramBusy('t1', typed + OUTPUT_STREAK_MS)).toBe(true)
+
+    clearTerminalProgramActivity('t1')
+    noteTerminalResize('t1', start)
+    streamOutput(start + 100, REDRAW_MAX_MS + OUTPUT_STREAK_MS + 400)
+    expect(isTerminalProgramBusy('t1', start + REDRAW_MAX_MS + OUTPUT_STREAK_MS + 500)).toBe(true)
+  })
+
+  it('keeps counting output when resized mid-build', () => {
+    const start = Date.now()
+    streamOutput(start, OUTPUT_STREAK_MS)
+    expect(isTerminalProgramBusy('t1', start + OUTPUT_STREAK_MS)).toBe(true)
+    noteTerminalResize('t1', start + OUTPUT_STREAK_MS + 100)
+    streamOutput(start + OUTPUT_STREAK_MS + 100 + OUTPUT_QUIET_AFTER_INPUT_MS, 2000)
+    const end = start + OUTPUT_STREAK_MS + 2100 + OUTPUT_QUIET_AFTER_INPUT_MS
+    expect(isTerminalProgramBusy('t1', end)).toBe(true)
   })
 
   it('ignores output while shell integration reports the prompt', () => {

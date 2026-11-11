@@ -65,6 +65,8 @@ pub(super) struct Session {
     /// 当前这段连续输出的开始与最近一次（间隔达到 `SPINNER_HOLD` 即断开）。
     pub(super) output_streak_start: Option<Instant>,
     pub(super) last_output: Option<Instant>,
+    /// 空闲时改尺寸开始的重绘段（开始、最近一块输出），其中的输出不算工作。
+    pub(super) redraw: Option<(Instant, Instant)>,
     /// 已安排一次预览通知且尚未发出。
     pub(super) preview_notify_pending: bool,
     /// 当前使用这个终端的一方，同一时刻只有一个。
@@ -107,6 +109,7 @@ impl Session {
             last_input: None,
             output_streak_start: None,
             last_output: None,
+            redraw: None,
             preview_notify_pending: false,
         }
     }
@@ -155,10 +158,23 @@ impl Session {
         self.program_busy_at(now) || self.output_busy_at(now)
     }
 
-    /// 输入或改尺寸：既算会话活动，也让随后的回显/重绘不计入输出活跃。
+    /// 键盘输入：既算会话活动，也让随后的回显不计入输出活跃；结束重绘段。
     pub(super) fn note_input(&mut self) {
         self.touch();
         self.last_input = Some(self.last_active);
+        self.redraw = None;
+    }
+
+    /// 改尺寸：TUI 随后整屏重绘（Claude Code 会重印全部对话，可持续数秒）。
+    /// 空闲时整段重绘不算工作；正在持续输出时不开启，免得吞掉真实工作的输出。
+    pub(super) fn note_resize(&mut self) {
+        self.touch();
+        let now = self.last_active;
+        self.last_input = Some(now);
+        if self.output_busy_at(now) {
+            return;
+        }
+        self.redraw = Some(self.redraw.map_or((now, now), |(start, _)| (start, now)));
     }
 
     /// 用户输入：回车提交时作废之前的上报（可能来自已退出的程序），由程序重新上报。
@@ -170,6 +186,15 @@ impl Session {
     }
 
     pub(super) fn note_output_at(&mut self, now: Instant) {
+        if let Some((start, last)) = self.redraw {
+            if now.saturating_duration_since(last) <= REDRAW_GAP
+                && now.saturating_duration_since(start) <= REDRAW_MAX
+            {
+                self.redraw = Some((start, now));
+                return;
+            }
+            self.redraw = None;
+        }
         if self
             .last_input
             .is_some_and(|input| now.saturating_duration_since(input) < OUTPUT_QUIET_AFTER_INPUT)

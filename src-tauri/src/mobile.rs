@@ -95,6 +95,11 @@ const SPINNER_HOLD: Duration = Duration::from_millis(3000);
 const OUTPUT_QUIET_AFTER_INPUT: Duration = Duration::from_millis(500);
 /// 输出需连续这么久才算运行中，过滤提示符重绘等一次性短输出。须与前端 OUTPUT_STREAK_MS 一致。
 const OUTPUT_STREAK: Duration = Duration::from_millis(1000);
+/// 空闲时改尺寸引发的重绘段：块间隔不超过这么久视为同一段，整段不算工作。
+/// 须与前端 REDRAW_GAP_MS 一致。
+const REDRAW_GAP: Duration = Duration::from_millis(1000);
+/// 重绘段最长持续时间，之后的输出照常计入。须与前端 REDRAW_MAX_MS 一致。
+const REDRAW_MAX: Duration = Duration::from_millis(10_000);
 
 /// 标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与常见的圆形/方块转圈。
 fn is_spinner_glyph(character: char) -> bool {

@@ -288,7 +288,7 @@ pub(super) async fn operate(
             lease,
         } => {
             hub.authorize(&id, lease)?;
-            hub.with_session(&id, Session::note_input);
+            hub.with_session(&id, Session::note_resize);
             let kind = hub.session_kind(&id)?;
             apply_resize(app, kind, &id, cols, rows).await?;
             // 电脑只读画面跟随使用者的行列，内容不错位。

@@ -9,7 +9,7 @@ import {
   DEFAULT_PTY_ROWS,
   normalizePtySize,
 } from '@/lib/terminal/terminalPtySize'
-import { noteTerminalInput } from '@/lib/terminal/terminalProgramActivity'
+import { noteTerminalResize } from '@/lib/terminal/terminalProgramActivity'
 
 /** If xterm never reports a size (panel closed), spawn with defaults. */
 const PTY_SPAWN_FALLBACK_MS = 2500
@@ -50,7 +50,7 @@ const pacedPtyResizes = new Map<string, { size: { cols: number; rows: number }; 
 export function markPtySizeChanged(id: string) {
   ptySizeChangedAt.set(id, Date.now())
   // 改尺寸后 ConPTY/TUI 会整屏重绘，这段输出不算程序在工作。
-  noteTerminalInput(id)
+  noteTerminalResize(id)
 }
 
 function ptyResizeWaitMs(id: string): number {
@@ -141,4 +141,4 @@ export function schedulePtySpawnFallback(id: string, spawn: () => void) {
     }, PTY_SPAWN_FALLBACK_MS)
   )
 }
-
+

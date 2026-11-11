@@ -1065,6 +1065,34 @@ fn screen_snapshot_releases_a_spinner_title_that_will_never_finish() {
 }
 
 #[test]
+fn output_busy_ignores_long_redraw_after_idle_resize() {
+    let mut session = Session::new(project(), "phone".into(), 1);
+    session.note_resize();
+    let (start, _) = session.redraw.unwrap();
+    let step = Duration::from_millis(200);
+    // 重印长对话：持续数秒、块间隔很短，整段都是重绘。
+    let mut at = start + step;
+    while at <= start + Duration::from_millis(4000) {
+        session.note_output_at(at);
+        at += step;
+    }
+    assert!(!session.output_busy_at(at));
+    // 重绘段断开后，新的持续输出照常算运行中。
+    let later = at + REDRAW_GAP + step;
+    session.note_output_at(later);
+    session.note_output_at(later + OUTPUT_STREAK);
+    assert!(session.output_busy_at(later + OUTPUT_STREAK));
+    // 持续输出期间改尺寸不开启重绘段。
+    session.note_resize();
+    assert!(session.redraw.is_none());
+    // 键盘输入结束重绘段。
+    let mut typed = Session::new(project(), "phone".into(), 2);
+    typed.note_resize();
+    typed.note_input();
+    assert!(typed.redraw.is_none());
+}
+
+#[test]
 fn output_busy_needs_a_sustained_streak_and_ignores_echo() {
     let mut session = Session::new(project(), "phone".into(), 1);
     let start = Instant::now();
