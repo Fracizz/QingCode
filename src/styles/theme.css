@@ -241,6 +241,12 @@ html[data-theme="ink"] {
   --color-tab-inactive: #1c1b1b;
 }
 
+/* 石墨灰为纯中性灰，标题栏加粗的 QingCode 若用高饱和品牌色会整屏最抢眼；
+   仅标题文字改用低饱和青绿（与护眼绿品牌色一致），下划线 / 图标等当前项标识仍用 --color-brand。 */
+html[data-theme="ink"] .title-product-name {
+  color: #7fb3a5;
+}
+
 /* 护眼绿主题（id 仍为 'olive'，兼容旧 'forest'）：色相保持柔和中绿（约 140°），饱和度约 12%，
    底色比深色略亮、正文对比度控制在约 10:1，避免深底亮字的光晕与长时间阅读的疲劳；功能色为柔和琥珀。 */
 html[data-theme="olive"], html[data-theme="forest"] {
@@ -280,8 +286,9 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-term-list-project: #a6b5a9;
   --color-term-list-meta: #9aab9e;
 
-  /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。 */
-  --color-brand: #4ecdb5;
+  /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。
+     品牌色（标题栏 QingCode、工作区标签下划线等）同样降为低饱和青绿，不沿用深色主题的 #4ecdb5。 */
+  --color-brand: #7fb3a5;
   --color-accent: #d9b878;
   --color-danger: #e08585;
   --color-warn: #d9b46a;
