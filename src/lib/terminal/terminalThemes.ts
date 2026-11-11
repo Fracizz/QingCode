@@ -2,59 +2,61 @@
 import { MATERIAL_FOREST as M } from '../materialForestTheme'
 import { getResolvedTheme } from '../themeSettings'
 
-// 背景须与 theme.css 深色的 --color-bg-terminal 一致，否则终端四周内边距会露出一圈色差。
+// 深色与石墨灰共用的柔和终端配色：正文约 10:1、不用纯白，ANSI 色饱和度约 30–50%（雾面感），选区为中性灰；
+// bright 系列比普通色亮一档以便区分。背景须与 theme.css 的 --color-bg-terminal 一致（两主题均为 #181818）。
 export const DARK_THEME = {
   background: '#181818',
-  foreground: '#d4d4d4',
+  foreground: '#c4c4c4',
   cursor: '#aeafad',
   cursorAccent: '#181818',
-  selectionBackground: '#264f78',
-  scrollbarSliderBackground: 'rgba(212, 212, 212, 0.28)',
-  scrollbarSliderHoverBackground: 'rgba(212, 212, 212, 0.45)',
-  scrollbarSliderActiveBackground: 'rgba(212, 212, 212, 0.6)',
+  selectionBackground: '#3a3d42',
+  scrollbarSliderBackground: 'rgba(196, 196, 196, 0.24)',
+  scrollbarSliderHoverBackground: 'rgba(196, 196, 196, 0.4)',
+  scrollbarSliderActiveBackground: 'rgba(196, 196, 196, 0.55)',
   black: '#000000',
-  red: '#f48771',
-  green: '#89d185',
-  yellow: '#e2c08d',
-  blue: '#75aaf0',
-  magenta: '#c678dd',
-  cyan: '#56b6c2',
-  white: '#d4d4d4',
-  brightBlack: '#6b6b6b',
-  brightRed: '#f48771',
-  brightGreen: '#89d185',
-  brightYellow: '#e2c08d',
-  brightBlue: '#75aaf0',
-  brightMagenta: '#c678dd',
-  brightCyan: '#56b6c2',
-  brightWhite: '#ffffff',
+  red: '#d9958a',
+  green: '#9cc796',
+  yellow: '#d6bf92',
+  blue: '#8fb2dc',
+  magenta: '#bb9ccf',
+  cyan: '#8cbfc4',
+  white: '#c4c4c4',
+  brightBlack: '#838383',
+  brightRed: '#e0aaa1',
+  brightGreen: '#b0d6aa',
+  brightYellow: '#e0cea6',
+  brightBlue: '#a8c2e0',
+  brightMagenta: '#cbb3dc',
+  brightCyan: '#a3d0d4',
+  brightWhite: '#dcdcdc',
 }
 
+// 浅色：底色须与编辑器一致保持纯白，但正文与“最深色”不用纯黑；ANSI 色饱和度约 40–65%，白底上均 ≥ 5:1。
 export const LIGHT_THEME = {
   background: '#ffffff',
-  foreground: '#1f1f1f',
-  cursor: '#1a1a1a',
+  foreground: '#2b2b2b',
+  cursor: '#2b2b2b',
   cursorAccent: '#ffffff',
-  selectionBackground: '#b9d6f5',
-  scrollbarSliderBackground: 'rgba(31, 31, 31, 0.25)',
-  scrollbarSliderHoverBackground: 'rgba(31, 31, 31, 0.42)',
-  scrollbarSliderActiveBackground: 'rgba(31, 31, 31, 0.55)',
-  black: '#000000',
-  red: '#c43b32',
-  green: '#107c10',
-  yellow: '#9a6a00',
-  blue: '#005fb8',
-  magenta: '#9b1b9b',
-  cyan: '#0b7a85',
-  white: '#1a1a1a',
+  selectionBackground: '#c9d9ea',
+  scrollbarSliderBackground: 'rgba(43, 43, 43, 0.22)',
+  scrollbarSliderHoverBackground: 'rgba(43, 43, 43, 0.38)',
+  scrollbarSliderActiveBackground: 'rgba(43, 43, 43, 0.5)',
+  black: '#262626',
+  red: '#b5463e',
+  green: '#2f7a34',
+  yellow: '#87661c',
+  blue: '#2a62a3',
+  magenta: '#8c3b8c',
+  cyan: '#1f7480',
+  white: '#2b2b2b',
   brightBlack: '#5a5a5a',
-  brightRed: '#a3261e',
-  brightGreen: '#0b6a0b',
-  brightYellow: '#7a5400',
-  brightBlue: '#004488',
-  brightMagenta: '#7a1488',
-  brightCyan: '#055a63',
-  brightWhite: '#000000',
+  brightRed: '#9a3832',
+  brightGreen: '#26652b',
+  brightYellow: '#6d5216',
+  brightBlue: '#204f86',
+  brightMagenta: '#733177',
+  brightCyan: '#195e68',
+  brightWhite: '#262626',
 }
 
 const FOREST_SCROLLBAR = {
@@ -94,14 +96,8 @@ export const FOREST_THEME = {
   brightWhite: M.bright.white,
 }
 
-// 石墨灰终端沿用深色 ANSI 配色，仅底色跟随 theme.css 石墨灰的内容区 --color-bg。
-const INK_CONTENT_BG = '#181818'
-
-export const INK_THEME = {
-  ...DARK_THEME,
-  background: INK_CONTENT_BG,
-  cursorAccent: INK_CONTENT_BG,
-}
+// 石墨灰与深色终端底色同为 #181818，直接共用同一套柔和配色。
+export const INK_THEME = { ...DARK_THEME }
 
 export function terminalTheme() {
   const resolved = getResolvedTheme()
