@@ -1743,7 +1743,6 @@ export default function Sidebar() {
                   style={
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? {
-                          boxShadow: 'inset 3px 0 0 var(--color-accent)',
                           background: 'color-mix(in srgb, var(--color-accent) 28%, transparent)',
                         }
                       : undefined

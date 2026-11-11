@@ -107,7 +107,6 @@ export default function ExplorerTreeRow({
     paddingLeft: depth * 12 + 8,
     ...(isDropTarget
       ? {
-          boxShadow: 'inset 3px 0 0 var(--color-accent)',
           background: 'color-mix(in srgb, var(--color-accent) 28%, transparent)',
         }
       : {}),

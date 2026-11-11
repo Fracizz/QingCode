@@ -22,7 +22,7 @@ type SearchGroup = { category: SettingsCategoryId; terms: string[]; userOnly?: b
 
 // Section navigation and individual rows share aliases and configuration keys.
 const groups: SearchGroup[] = [
-  { category: 'appearance', terms: ['颜色主题', '外观', '深色', '浅色', '橄榄绿', 'theme', 'color theme'], userOnly: true },
+  { category: 'appearance', terms: ['颜色主题', '外观', '深色', '浅色', '护眼绿', '护眼', '橄榄绿', 'theme', 'color theme'], userOnly: true },
   { category: 'appearance', terms: ['界面字号', 'interfaceFontSize', 'UI font size'], userOnly: true },
   { category: 'editor', terms: ['参考线', '编辑器: 参考线', '缩进线', '括号线', 'editor.guides.enabled', 'guides'] },
   { category: 'editor', terms: ['小地图', '编辑器: 小地图', 'minimap', 'editor.minimap.enabled'] },

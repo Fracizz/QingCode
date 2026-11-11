@@ -3,7 +3,7 @@ import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 import { MATERIAL_FOREST as M } from './materialForestTheme'
 
-/** CodeMirror chrome + syntax for JetBrains Material Forest. */
+/** 护眼绿主题的 CodeMirror 外观与语法高亮（低饱和柔和色板）。 */
 export const FOREST_THEME = EditorView.theme(
   {
     '&': { backgroundColor: M.background, color: M.syntax.variables },
@@ -23,7 +23,7 @@ export const FOREST_THEME = EditorView.theme(
     '.cm-searchMatch': { backgroundColor: M.buttons },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: M.highlight },
     // Match highlights (other occurrences only): background only — keeps syntax tokens.
-    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
+    '.cm-selectionMatch': { backgroundColor: 'rgba(169, 199, 154, 0.2)' },
     '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: true },

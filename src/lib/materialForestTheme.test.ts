@@ -23,6 +23,12 @@ describe('Material Forest palette', () => {
     expect(contrast(forest.text, forest.contrast)).toBeGreaterThanOrEqual(4.5)
   })
 
+  it('keeps terminal bright colors readable and soft', () => {
+    for (const color of Object.values(forest.bright)) {
+      expect(contrast(color, forest.background)).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
   it('keeps the warm focus accent visible on editor surfaces', () => {
     for (const background of [forest.background, forest.contrast, forest.highlight]) {
       expect(contrast(forest.accent, background)).toBeGreaterThanOrEqual(3)

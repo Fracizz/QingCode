@@ -309,10 +309,10 @@ export default function SettingsEditor() {
               type="button"
               onClick={() => selectCategory(cat.id)}
               aria-current={!q && activeCategory === cat.id ? 'page' : undefined}
-              className={`block w-full border-l-2 px-4 py-1.5 text-left text-ui break-words whitespace-normal transition-colors ${
+              className={`block w-full px-4 py-1.5 text-left text-ui break-words whitespace-normal transition-colors ${
                 !q && activeCategory === cat.id
-                  ? 'border-brand bg-bg-active text-fg'
-                  : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  ? 'bg-bg-active text-fg'
+                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
               }`}
             >
               {t(cat.label)}

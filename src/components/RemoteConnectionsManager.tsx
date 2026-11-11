@@ -976,10 +976,10 @@ export default function RemoteConnectionsManager() {
                       type="button"
                       disabled={saving || directDraft.busy}
                   onClick={() => { if (connection.id !== selectedId) void requestNavigation(() => { setEditing(false); setSelectedId(connection.id) }) }}
-                      className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-2 text-left transition-colors ${
+                      className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors ${
                         active
-                          ? 'border-brand bg-dialog-active text-fg'
-                          : 'border-transparent text-dialog-label hover:bg-bg-hover hover:text-fg'
+                          ? 'bg-dialog-active text-fg'
+                          : 'text-dialog-label hover:bg-bg-hover hover:text-fg'
                       }`}
                     >
                       <span className="flex items-center gap-1.5 text-ui">

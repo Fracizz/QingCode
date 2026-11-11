@@ -1,4 +1,4 @@
-// xterm 终端配色：深色 / 浅色 / 森林主题，按当前解析后的应用主题选择。从 Terminal.tsx 拆出。
+// xterm 终端配色：深色 / 浅色 / 护眼绿主题，按当前解析后的应用主题选择。从 Terminal.tsx 拆出。
 import { MATERIAL_FOREST as M } from '../materialForestTheme'
 import { getResolvedTheme } from '../themeSettings'
 
@@ -63,9 +63,9 @@ const FOREST_SCROLLBAR = {
   active: `${M.foreground}99`,
 }
 
-// 橄榄绿终端底色跟随 theme.css 的内容区 --color-bg（不用 Material Forest 的青色 contrast），
-// 避免青色画布套墨绿内边距的色差；语法/ANSI 颜色仍取 Material Forest。
-const OLIVE_CONTENT_BG = '#151d18'
+// 护眼绿终端底色跟随 theme.css 的内容区 --color-bg，避免画布与内边距的色差；ANSI 颜色取同一套低饱和色板，
+// bright 系列单独提亮一档。
+const OLIVE_CONTENT_BG = '#1c241f'
 
 export const FOREST_THEME = {
   background: OLIVE_CONTENT_BG,
@@ -84,14 +84,14 @@ export const FOREST_THEME = {
   magenta: M.syntax.purple,
   cyan: M.syntax.cyan,
   white: M.syntax.white,
-  brightBlack: M.syntax.comments,
-  brightRed: M.syntax.red,
-  brightGreen: M.syntax.green,
-  brightYellow: M.syntax.yellow,
-  brightBlue: M.syntax.blue,
-  brightMagenta: M.syntax.purple,
-  brightCyan: M.syntax.cyan,
-  brightWhite: M.syntax.white,
+  brightBlack: M.bright.black,
+  brightRed: M.bright.red,
+  brightGreen: M.bright.green,
+  brightYellow: M.bright.yellow,
+  brightBlue: M.bright.blue,
+  brightMagenta: M.bright.magenta,
+  brightCyan: M.bright.cyan,
+  brightWhite: M.bright.white,
 }
 
 export function terminalTheme() {

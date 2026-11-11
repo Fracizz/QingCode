@@ -139,7 +139,7 @@ export default function TerminalSettingsSection({
         </SettingItem>
       )}
       {!workspaceLocked && match('终端配置', '默认启动配置') && (
-        <div ref={profilesRef} className="scroll-mt-4 pl-3 border-l-2 border-transparent">
+        <div ref={profilesRef} className="scroll-mt-4">
           <TerminalProfilesInline settings={terminal} onChange={onTerminalChange} />
         </div>
       )}

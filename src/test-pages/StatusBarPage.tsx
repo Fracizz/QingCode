@@ -36,7 +36,7 @@ export function StatusBarPage() {
           setTheme(event.target.value)
           document.documentElement.dataset.theme = event.target.value
         }}>
-          <option value="dark">深色</option><option value="light">浅色</option><option value="olive">橄榄绿</option>
+          <option value="dark">深色</option><option value="light">浅色</option><option value="olive">护眼绿</option>
         </select></label>
         <label>字号 <select aria-label="测试字号" className="setting-control" value={fontSize} onChange={event => {
           const metrics = interfaceMetrics(Number(event.target.value))

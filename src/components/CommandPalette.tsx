@@ -365,10 +365,10 @@ export default function CommandPalette() {
                     role="option"
                     aria-selected={active}
                     data-cmd-index={index}
-                    className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
+                    className={`flex w-full items-center gap-3 px-3 py-2 text-left text-ui transition-colors duration-100 ${
                       active
-                        ? 'border-brand bg-accent/15 text-fg'
-                        : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
+                        ? 'bg-accent/15 text-fg'
+                        : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                     }`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => void runItem(item)}
@@ -395,10 +395,10 @@ export default function CommandPalette() {
                   role="option"
                   aria-selected={active}
                   data-cmd-index={index}
-                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
+                  className={`flex w-full items-center gap-3 px-3 py-2 text-left text-ui transition-colors duration-100 ${
                     active
-                      ? 'border-brand bg-accent/15 text-fg'
-                      : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
+                      ? 'bg-accent/15 text-fg'
+                      : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   }`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => void runItem(item)}

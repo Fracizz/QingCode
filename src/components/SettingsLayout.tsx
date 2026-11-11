@@ -30,7 +30,6 @@ export function SettingsSection({
 export function SettingItem({
   title,
   description,
-  modified,
   locked,
   lockHint,
   layout = 'responsive',
@@ -46,7 +45,7 @@ export function SettingItem({
 }) {
   return (
     <div
-      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'}`}
+      className="relative"
     >
       <div className={`settings-item-row flex flex-col gap-2${layout === 'stacked' ? ' settings-item-stacked' : ''}`}>
         <div className="settings-item-copy min-w-0 flex-1">

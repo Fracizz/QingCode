@@ -135,7 +135,7 @@ vi.mock('../lib/projectSettings', () => ({
 
 vi.mock('../lib/themeSettings', () => ({
   DEFAULT_THEME: 'olive',
-  THEMES: [{ id: 'olive', label: '橄榄绿' }],
+  THEMES: [{ id: 'olive', label: '护眼绿' }],
   loadTheme: () => 'olive',
   saveTheme: mocks.saveTheme,
 }))

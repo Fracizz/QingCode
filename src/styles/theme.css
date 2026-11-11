@@ -187,24 +187,25 @@ html[data-theme="light"] [data-modal-overlay] > .modal-overlay-enter {
   backdrop-filter: none;
 }
 
-/* Olive Green Theme (雅致橄榄绿 · 自然舒适与暖琥珀金) — aliases both 'olive' and legacy 'forest' */
+/* 护眼绿主题（id 仍为 'olive'，兼容旧 'forest'）：色相保持柔和中绿（约 140°），饱和度约 12%，
+   底色比深色略亮、正文对比度控制在约 10:1，避免深底亮字的光晕与长时间阅读的疲劳；功能色为柔和琥珀。 */
 html[data-theme="olive"], html[data-theme="forest"] {
-  --color-bg: #151d18;
+  --color-bg: #1c241f;
   /* 与深色同一结构：bg-deep 与侧栏同层（图标栏/终端标签栏不再比侧栏更暗），输入框单独下沉。 */
-  --color-bg-deep: #18221c;
-  --color-bg-sidebar: #18221c;
-  --color-bg-elevated: #1f2c25;
-  --color-bg-hover: #25362d;
-  --color-bg-active: #2b3f34;
-  --color-border: #23332a;
-  --color-border-strong: #334a3d;
+  --color-bg-deep: #1f2822;
+  --color-bg-sidebar: #1f2822;
+  --color-bg-elevated: #253029;
+  --color-bg-hover: #2a362f;
+  --color-bg-active: #303d35;
+  --color-border: #29342d;
+  --color-border-strong: #3a4a40;
   /* 终端与编辑器同为内容区底色，须与 terminalThemes.ts 的 FOREST_THEME.background 一致；
      图标栏、侧栏、状态栏同为一层；导航块与内容区之间画细线（同深色）。 */
   --color-bg-status: var(--color-bg-sidebar);
-  --color-bg-input: #0f1511;
+  --color-bg-input: #171e1a;
   --color-bg-terminal: var(--color-bg);
   --color-bg-activity: var(--color-bg-sidebar);
-  --color-divider: #2c3f34;
+  --color-divider: #314038;
 
   --color-dialog: var(--color-bg);
   --color-dialog-chrome: var(--color-bg-elevated);
@@ -213,48 +214,49 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-dialog-active: var(--color-bg-active);
   --color-dialog-border: var(--color-border-strong);
   --color-dialog-separator: var(--color-border);
-  --color-dialog-label: #c2cfc6;
+  --color-dialog-label: #bccabf;
 
-  --color-fg: #dce5df;
-  --color-fg-muted: #a6bba8;
-  --color-fg-dim: #9eb2a4;
-  --color-tree-fg: #cdd9d1;
-  --color-term-list-active: #dce5df;
-  --color-term-list-fg: #bccbc0;
-  --color-term-list-project: #adbfb2;
-  --color-term-list-meta: #9eb2a4;
+  /* 正文不用近白，降到约 10:1，减轻光晕。 */
+  --color-fg: #cbd5cd;
+  --color-fg-muted: #a2b3a6;
+  --color-fg-dim: #9aab9e;
+  --color-tree-fg: #c0ccc3;
+  --color-term-list-active: #cbd5cd;
+  --color-term-list-fg: #b5c2b8;
+  --color-term-list-project: #a6b5a9;
+  --color-term-list-meta: #9aab9e;
 
-  /* Shell accent is elegant warm amber gold */
+  /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。 */
   --color-brand: #4ecdb5;
-  --color-accent: #e5b567;
-  --color-danger: #f87171;
-  --color-warn: #fbbf24;
-  --color-ok: #89d185;
-  --color-action: #875c1c;
+  --color-accent: #d9b878;
+  --color-danger: #e08585;
+  --color-warn: #d9b46a;
+  --color-ok: #93c48f;
+  --color-action: #7a5a22;
   --color-on-action: #ffffff;
   --color-destructive: #a82e38;
   --color-on-destructive: #ffffff;
 
-  --color-tab-active: #151d18;
-  --color-tab-inactive: #18221c;
+  --color-tab-active: #1c241f;
+  --color-tab-inactive: #1f2822;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
   --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
 
-  --editor-indent-guide: #b2c2b038;
-  --editor-indent-guide-active: #e0f0e078;
-  --editor-matching-bracket-bg: #d0e0d830;
-  --editor-matching-bracket-outline: #d0e0d870;
+  --editor-indent-guide: #b5c2b832;
+  --editor-indent-guide-active: #cbd5cd6e;
+  --editor-matching-bracket-bg: #cbd5cd26;
+  --editor-matching-bracket-outline: #cbd5cd66;
 
-  --shadow-elevation-1: 0 1px 4px 0 rgba(0, 10, 5, 0.45), 0 0 0 1px var(--color-border);
-  --shadow-elevation-2: 0 6px 18px -2px rgba(0, 10, 5, 0.6), 0 0 0 1px var(--color-border-strong);
-  --shadow-elevation-3: 0 16px 36px -4px rgba(0, 10, 5, 0.75), 0 0 0 1px var(--color-border-strong);
+  --shadow-elevation-1: 0 1px 4px 0 rgba(0, 10, 5, 0.4), 0 0 0 1px var(--color-border);
+  --shadow-elevation-2: 0 6px 18px -2px rgba(0, 10, 5, 0.5), 0 0 0 1px var(--color-border-strong);
+  --shadow-elevation-3: 0 16px 36px -4px rgba(0, 10, 5, 0.65), 0 0 0 1px var(--color-border-strong);
 }
 
 html[data-theme="olive"] .cm-editor .cm-content,
 html[data-theme="forest"] .cm-editor .cm-content {
-  color: #dce5df;
+  color: #cbd5cd;
 }
 
 /* Kill CM default pair marks (both ends get cm-matchingBracket). */
@@ -285,7 +287,7 @@ html[data-theme="light"] * {
 
 html[data-theme="olive"] *,
 html[data-theme="forest"] * {
-  scrollbar-color: #23332a transparent;
+  scrollbar-color: #34433a transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
@@ -294,7 +296,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
 
 html[data-theme="olive"] *::-webkit-scrollbar-thumb,
 html[data-theme="forest"] *::-webkit-scrollbar-thumb {
-  background: #23332a;
+  background: #34433a;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
@@ -303,7 +305,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
 
 html[data-theme="olive"] *::-webkit-scrollbar-thumb:hover,
 html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
-  background: #334a3d;
+  background: #45574b;
 }
 
 /* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */
