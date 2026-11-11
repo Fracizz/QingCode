@@ -79,6 +79,8 @@ impl SshManager {
         timeout: Duration,
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
+        #[cfg(test)]
+        super::direct_update::trace_exec(windows_script);
         if windows_native_path(&parsed.path).is_some() {
             if let Some(command) = windows_powershell_inline_command(windows_script) {
                 return self
@@ -153,6 +155,11 @@ impl SshManager {
         require_trust: bool,
         timeout: Duration,
     ) -> Result<RemoteExecResult, String> {
+        #[cfg(test)]
+        super::direct_update::trace_exec(&format!(
+            "ssh-exec {}",
+            command.chars().take(40).collect::<String>()
+        ));
         let parsed = parse_remote_uri(uri)?;
         let root = self.root_for_uri(uri, require_trust)?;
         if let Some(config) = self.direct_config(&parsed.connection_id) {

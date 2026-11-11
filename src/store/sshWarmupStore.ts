@@ -46,8 +46,9 @@ export function stopSshWarmupQueue(expected: SshWarmupQueue<FileNode[] | null>) 
   queue = undefined
 }
 
-export function beginSshForeground(): () => void {
-  return queue?.beginForeground() ?? (() => {})
+/** 只暂停该连接的后台预热；不传（本机项目）则暂停全部。 */
+export function beginSshForeground(connectionId?: string): () => void {
+  return queue?.beginForeground(connectionId) ?? (() => {})
 }
 
 export function takeSshWarmup(path: string): Promise<FileNode[] | null | undefined> | undefined {

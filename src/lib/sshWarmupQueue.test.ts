@@ -170,6 +170,18 @@ describe('bounded SSH background preparation', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps preparing other connections while one connection opens in the foreground', async () => {
+    const { queue, run } = harness(vi.fn(() => new Promise<number[]>(() => {})))
+    const end = queue.beginForeground('wsl')
+    queue.update([target(1, 'wsl'), target(2, 'windev')])
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    // 其他连接的准备/服务更新不等待前台打开结束。
+    expect(run.mock.calls.map(([item]) => item.connectionId)).toEqual(['windev'])
+    end()
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    expect(run.mock.calls.map(([item]) => item.connectionId)).toEqual(['windev', 'wsl'])
+  })
+
   it('does not launch a queued clicked project in the background', async () => {
     const { queue, run } = harness()
     queue.update([target(1)])

@@ -96,6 +96,15 @@ fn adopt(connection_id: &str, session: Arc<ConnectedSession>) -> Result<(), Stri
     Ok(())
 }
 
+/// 真机计时基准用：把已认证会话登记为隧道会话。
+#[cfg(test)]
+pub(super) fn adopt_for_test(
+    connection_id: &str,
+    session: Arc<ConnectedSession>,
+) -> Result<(), String> {
+    adopt(connection_id, session)
+}
+
 /// 网关监听地址对应的远端回环目标：通配地址经回环可达，具体地址原样使用。
 fn tunnel_host(hostname: &str) -> String {
     match hostname.trim().trim_matches(['[', ']']) {

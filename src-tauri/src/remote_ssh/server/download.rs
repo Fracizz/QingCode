@@ -55,11 +55,51 @@ pub(super) async fn locate_local_server_binary_with(
     )))
 }
 
+/// 远端平台/架构缓存，按「用户@主机:端口#主机指纹」记录。主机指纹变化即换键；
+/// 架构在主机生命周期内不变。Windows 每次探测要冷启动一次 PowerShell（约 2 秒），
+/// 更新流程的准备与执行各用一个临时会话，缓存后只探测一次。
+fn arch_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn arch_cache_key(manager: &SshManager, root: &RegisteredRoot, windows: bool) -> Option<String> {
+    let connection_id = parse_remote_uri(&root.uri).ok()?.connection_id;
+    let identity = super::deploy::persisted_install_identity(manager, &connection_id)?;
+    Some(format!(
+        "{identity}|{}",
+        if windows { "windows" } else { "unix" }
+    ))
+}
+
 pub(super) async fn remote_server_arch(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<String, ServerDeployError> {
     let windows = windows_native_path(&root.canonical_path).is_some();
+    let key = arch_cache_key(manager, root, windows);
+    if let Some(key) = &key {
+        if let Some(arch) = arch_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(key).cloned())
+        {
+            return Ok(arch);
+        }
+    }
+    let arch = probe_remote_server_arch(manager, root, windows).await?;
+    if let (Some(key), Ok(mut cache)) = (key, arch_cache().lock()) {
+        cache.insert(key, arch.clone());
+    }
+    Ok(arch)
+}
+
+async fn probe_remote_server_arch(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    windows: bool,
+) -> Result<String, ServerDeployError> {
     let arch = if windows {
         manager
             .exec_remote_shell(

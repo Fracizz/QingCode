@@ -21,6 +21,8 @@ fn default_download() -> bool {
 }
 
 pub(super) fn progress(channel: Option<&Channel<String>>, phase: &str) {
+    #[cfg(test)]
+    super::live_acceptance::trace(&format!("phase {phase}"));
     if let Some(channel) = channel {
         let _ = channel.send(phase.to_owned());
     }

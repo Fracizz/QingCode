@@ -942,7 +942,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       if (superseded() || activeProjectSwitches.has(project.id)) return false
     }
     const runSwitch = async (): Promise<boolean> => {
-      const endForeground = beginSshForeground()
+      const endForeground = beginSshForeground(isSshProject(project) ? openingKey : undefined)
       let sshConnectionAttempted = false
       let sshWorkspaceConnected = false
       try {

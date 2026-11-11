@@ -206,9 +206,9 @@ pub(crate) async fn stage_direct_gateway(
         }
         upload?;
     }
-    if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
-        return Err("Server 安装后 SHA-256 校验失败，已拒绝执行".into());
-    }
+    // 两条路径都已对最终内容做过一次独立 SHA-256 校验：已存在的程序直接校验，
+    // 新上传的在用户私有目录里校验临时文件后不覆盖地 rename。再算一遍在
+    // Windows 上要多冷启动一次 PowerShell（约 3 秒），随后的 self-check 也会核对摘要。
     let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
     let script = windows_host_path(&remote_bin)
         .map(|path| windows_self_check_then_deploy_script(&path, &sha256, ""))
@@ -348,7 +348,10 @@ async fn resolve_install_location(
 
 /// 持久缓存的身份键：用户名、主机、端口与本次连接已校验通过的主机指纹
 /// （握手时指纹不符会直接拒绝连接）。指纹变化即换键，旧条目自然失效。
-fn persisted_install_identity(manager: &SshManager, connection_id: &str) -> Option<String> {
+pub(super) fn persisted_install_identity(
+    manager: &SshManager,
+    connection_id: &str,
+) -> Option<String> {
     let session = manager.session(connection_id).ok()?;
     let config = session.config.lock().ok()?;
     install_cache::identity_key(

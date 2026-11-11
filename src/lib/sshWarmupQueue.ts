@@ -91,7 +91,8 @@ export class SshWarmupQueue<T> {
   private runningConnections = new Map<string, number>()
   private runningTasks = 0
   private provenConnections = new Set<string>()
-  private foreground = 0
+  /** 前台打开计数，按连接；`*` 表示本机等非 SSH 打开，暂停全部后台任务。 */
+  private foreground = new Map<string, number>()
   private paused = false
   private timer?: ReturnType<typeof setTimeout>
   private retryTimer?: ReturnType<typeof setTimeout>
@@ -152,14 +153,30 @@ export class SshWarmupQueue<T> {
     this.schedule()
   }
 
-  beginForeground(): () => void {
-    this.foreground++
-    clearTimeout(this.timer)
-    this.timer = undefined
+  /**
+   * 前台打开期间让路：只暂停同一连接上的后台任务（共享 SSH 会话与服务），
+   * 其他连接的准备/服务更新继续并发；不传连接时暂停全部。
+   */
+  beginForeground(connectionId?: string): () => void {
+    const key = connectionId || '*'
+    this.foreground.set(key, (this.foreground.get(key) ?? 0) + 1)
+    if (key === '*') {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+    let ended = false
     return () => {
-      this.foreground--
+      if (ended) return
+      ended = true
+      const remaining = (this.foreground.get(key) ?? 1) - 1
+      if (remaining > 0) this.foreground.set(key, remaining)
+      else this.foreground.delete(key)
       this.schedule()
     }
+  }
+
+  private yieldsToForeground(connectionId: string): boolean {
+    return this.foreground.has('*') || this.foreground.has(connectionId)
   }
 
   /**
@@ -249,6 +266,7 @@ export class SshWarmupQueue<T> {
     let sibling: Entry<T> | undefined
     for (const item of this.entries.values()) {
       if (item.status.phase !== 'queued' || item.retryAt !== undefined) continue
+      if (this.yieldsToForeground(item.target.connectionId)) continue
       const running = this.runningConnections.get(item.target.connectionId) ?? 0
       if (running === 0) {
         if (!idle || item.runs < idle.runs) idle = item
@@ -306,7 +324,7 @@ export class SshWarmupQueue<T> {
   }
 
   private schedule() {
-    if (this.disposed || this.paused || this.foreground || this.timer || !this.nextQueued()) return
+    if (this.disposed || this.paused || this.timer || !this.nextQueued()) return
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.drain()
@@ -315,7 +333,7 @@ export class SshWarmupQueue<T> {
 
   /** 延迟只用于启动和前台结束后的让路；任务结束后空出的名额立即接续。 */
   private drain() {
-    if (this.disposed || this.paused || this.foreground) return
+    if (this.disposed || this.paused) return
     for (let entry = this.nextQueued(); entry; entry = this.nextQueued()) void this.runEntry(entry)
   }
 

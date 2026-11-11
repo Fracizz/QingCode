@@ -10,6 +10,17 @@ use packages::{configure_package_source, management_root, progress};
 
 #[cfg(test)]
 mod live_acceptance;
+#[cfg(test)]
+pub(super) fn trace_exec(script: &str) {
+    let first = script
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    live_acceptance::trace(&format!(
+        "exec {}",
+        first.chars().take(70).collect::<String>()
+    ));
+}
 
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
