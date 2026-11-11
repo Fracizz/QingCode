@@ -187,49 +187,48 @@ html[data-theme="light"] [data-modal-overlay] > .modal-overlay-enter {
   backdrop-filter: none;
 }
 
-/* 烟墨主题（id 'ink'）：双层中性灰——图标栏/侧栏/状态栏为淡墨中灰，内容区/编辑器/终端为浓墨深灰，
-   靠明暗而非边框分区（与“深色”各层接近的平铺结构区分开）。纯中性灰（R=G=B）。
+/* 石墨灰主题（内部 id 沿用 'ink'，兼容已保存的设置）：参照 Codex 桌面端的分层——
+   标题栏 > 图标栏 > 侧栏 > 内容区逐级变暗，相邻层只差一点明暗，靠清晰的细线分割（图标栏|侧栏|内容区、标题栏下沿）。
    终端底色须与 terminalThemes.ts 的 INK_THEME.background 一致。 */
 html[data-theme="ink"] {
-  --color-bg: #161616;
-  --color-bg-deep: #292929;
-  --color-bg-sidebar: #292929;
-  /* 菜单/浮层底色：比侧栏略亮，菜单项悬停（hover）再亮一档。 */
-  --color-bg-elevated: #2e2e2e;
-  --color-bg-hover: #333333;
-  --color-bg-active: #393939;
-  --color-bg-chrome: var(--color-bg);
+  --color-bg: #181818;
+  --color-bg-deep: #1c1b1b;
+  --color-bg-sidebar: #1c1b1b;
+  /* 菜单/浮层底色：比 hover 暗一档，菜单项悬停才看得出来。 */
+  --color-bg-elevated: #242424;
+  --color-bg-hover: #282828;
+  --color-bg-active: #2e2d2e;
+  --color-bg-chrome: #1f2022;
   --color-bg-status: var(--color-bg-sidebar);
-  /* 输入框介于两层之间：在内容区上略浮起，在侧栏上略下沉，两处都看得出边界。 */
-  --color-bg-input: #202020;
+  --color-bg-input: #222222;
   --color-bg-terminal: var(--color-bg);
-  --color-border: #333333;
-  --color-border-strong: #454545;
-  --color-bg-activity: var(--color-bg-sidebar);
-  /* 两层明暗差已足够分区，分隔线只做弱提示。 */
-  --color-divider: #2f2f2f;
+  --color-border: #2c2c2c;
+  --color-border-strong: #3a3a3a;
+  /* 图标栏比侧栏亮一档；两者之间与侧栏右侧各画一条看得清的细线。 */
+  --color-bg-activity: #21201f;
+  --color-divider: #2e2d2d;
 
   --color-dialog: #1f1f1f;
-  --color-dialog-chrome: #2a2a2a;
-  --color-dialog-sidebar: #262626;
-  --color-dialog-input: #191919;
-  --color-dialog-active: #383838;
-  --color-dialog-border: #444444;
-  --color-dialog-separator: #333333;
-  --color-dialog-label: #cfcfcf;
+  --color-dialog-chrome: #262626;
+  --color-dialog-sidebar: #1b1b1b;
+  --color-dialog-input: #161616;
+  --color-dialog-active: #2e2d2e;
+  --color-dialog-border: #3a3a3a;
+  --color-dialog-separator: #2c2c2c;
+  --color-dialog-label: #c2c2c2;
 
-  --color-fg: #e2e2e2;
-  --color-fg-muted: #b0b0b0;
-  --color-fg-dim: #aaaaaa;
-  --color-tree-fg: #d0d0d0;
-  --color-term-list-active: #ececec;
-  --color-term-list-fg: #d0d0d0;
-  --color-term-list-project: #b0b0b0;
-  --color-term-list-meta: #aaaaaa;
+  /* 正文 #dfdfdf、侧栏条目 #c2c2c2；次要文字取参考的 #8d8c8c 会在选中底上低于 4.5:1，提亮到 #999999。 */
+  --color-fg: #dfdfdf;
+  --color-fg-muted: #999999;
+  --color-fg-dim: #999999;
+  --color-tree-fg: #c2c2c2;
+  --color-term-list-active: #dfdfdf;
+  --color-term-list-fg: #c2c2c2;
+  --color-term-list-project: #a0a0a0;
+  --color-term-list-meta: #999999;
 
-  /* 功能强调色为蓝（同深色），提亮一档以便在中灰侧栏与选中底上仍 ≥ 3:1。 */
   --color-brand: #4ecdb5;
-  --color-accent: #5b9cf8;
+  --color-accent: #3b82f6;
   --color-danger: #f48771;
   --color-warn: #e2c08d;
   --color-ok: #89d185;
@@ -238,10 +237,8 @@ html[data-theme="ink"] {
   --color-destructive: #b72d43;
   --color-on-destructive: #ffffff;
 
-  --color-tab-active: #161616;
-  --color-tab-inactive: #1c1c1c;
-
-  --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 30%, var(--color-bg));
+  --color-tab-active: #181818;
+  --color-tab-inactive: #1c1b1b;
 }
 
 /* 护眼绿主题（id 仍为 'olive'，兼容旧 'forest'）：色相保持柔和中绿（约 140°），饱和度约 12%，

@@ -59,7 +59,7 @@ const darkSelectionMatchTheme = EditorView.theme(
 export function editorThemeExtension() {
   const resolved = getResolvedTheme()
   if (resolved === 'olive' || (resolved as string) === 'forest') return [FOREST_THEME, forestSyntax]
-  // 烟墨与深色共用 oneDark 语法色，底色由 codemirror.css 跟随 --color-bg。
+  // 石墨灰与深色共用 oneDark 语法色，底色由 codemirror.css 跟随 --color-bg。
   if (resolved === 'dark' || resolved === 'ink') return [oneDark, darkDefaultFgTheme, darkSelectionMatchTheme]
   return lightTheme
 }

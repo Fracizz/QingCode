@@ -53,7 +53,7 @@ export default function ProjectManagerPage() {
             >
               <option value="dark">深色</option>
               <option value="light">浅色</option>
-              <option value="ink">烟墨</option><option value="olive">护眼绿</option>
+              <option value="ink">石墨灰</option><option value="olive">护眼绿</option>
             </select>
           </label>
           <label className="text-ui-sm">

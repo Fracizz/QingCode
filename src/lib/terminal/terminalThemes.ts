@@ -1,4 +1,4 @@
-// xterm 终端配色：深色 / 浅色 / 烟墨 / 护眼绿主题，按当前解析后的应用主题选择。从 Terminal.tsx 拆出。
+// xterm 终端配色：深色 / 浅色 / 石墨灰 / 护眼绿主题，按当前解析后的应用主题选择。从 Terminal.tsx 拆出。
 import { MATERIAL_FOREST as M } from '../materialForestTheme'
 import { getResolvedTheme } from '../themeSettings'
 
@@ -94,8 +94,8 @@ export const FOREST_THEME = {
   brightWhite: M.bright.white,
 }
 
-// 烟墨终端沿用深色 ANSI 配色，仅底色跟随 theme.css 烟墨的内容区 --color-bg。
-const INK_CONTENT_BG = '#161616'
+// 石墨灰终端沿用深色 ANSI 配色，仅底色跟随 theme.css 石墨灰的内容区 --color-bg。
+const INK_CONTENT_BG = '#181818'
 
 export const INK_THEME = {
   ...DARK_THEME,

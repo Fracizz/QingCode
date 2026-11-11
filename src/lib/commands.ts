@@ -135,7 +135,7 @@ function cycleTheme() {
   const idx = order.indexOf(resolved === 'forest' || resolved === 'olive' ? 'olive' : resolved)
   const next = order[(Math.max(0, idx) + 1) % order.length]
   saveTheme(next)
-  const label = next === 'dark' ? '深色' : next === 'light' ? '浅色' : next === 'ink' ? '烟墨' : '护眼绿'
+  const label = next === 'dark' ? '深色' : next === 'light' ? '浅色' : next === 'ink' ? '石墨灰' : '护眼绿'
   useProjectStore
     .getState()
     .pushToast('info', translate('已切换主题：{theme}', { theme: translate(label) }))
@@ -575,7 +575,7 @@ export function buildCommands(): AppCommand[] {
     {
       id: 'view.theme',
       title: '切换颜色主题',
-      keywords: 'theme dark light ink gray smoky olive forest eye care green toggle',
+      keywords: 'theme dark light ink gray graphite olive forest eye care green toggle',
       run: () => cycleTheme(),
     },
     {
