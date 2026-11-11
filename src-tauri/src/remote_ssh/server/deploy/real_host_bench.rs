@@ -219,3 +219,71 @@ fn real_host_deploy_bench() {
     }
     tauri::async_runtime::block_on(run_bench()).expect("真机基准失败");
 }
+
+/// 只测 SFTP 上传吞吐与块大小的关系，不部署服务：上传 32 MiB 随机内容到
+/// `QC_BENCH_ROOT` 下的临时文件，分别用 8 KiB（`tokio::io::copy` 的缓冲）、
+/// 64 KiB 与 `SFTP_UPLOAD_CHUNK` 写入，结束即删除。
+async fn run_upload_chunk_bench() -> Result<(), String> {
+    let host = env("QC_BENCH_HOST").ok_or("缺少 QC_BENCH_HOST")?;
+    let root_path = env("QC_BENCH_ROOT").ok_or("缺少 QC_BENCH_ROOT")?;
+    let connection_id = "bench-upload".to_string();
+    let mut config = SshConnectionConfig {
+        id: connection_id.clone(),
+        host: host.clone(),
+        port: env("QC_BENCH_PORT")
+            .and_then(|port| port.parse().ok())
+            .unwrap_or(22),
+        username: env("QC_BENCH_USER").unwrap_or_else(|| "root".to_string()),
+        auth_kind: "password".to_string(),
+        password: env("QC_BENCH_PASSWORD"),
+        private_key_path: None,
+        passphrase: None,
+        host_key_fingerprint: None,
+        mode: Some(RemoteMode::Ssh),
+    };
+    let manager = SshManager::new();
+    config.host_key_fingerprint = Some(ssh_probe_host(config.clone()).await?.fingerprint);
+    store_authenticated_session(&manager, config).await?;
+    let sftp = manager.open_sftp(&connection_id).await?;
+    let root = sftp
+        .canonicalize(parse_remote_uri(&format!("ssh://{connection_id}{root_path}"))?.path)
+        .await
+        .map_err(|error| format!("项目根不可用：{error}"))?;
+    let size = 32 * 1024 * 1024;
+    let bytes: Vec<u8> = (0..size)
+        .map(|index: usize| (index.wrapping_mul(2654435761usize) >> 13) as u8)
+        .collect();
+    for chunk in [8 * 1024, 64 * 1024, SFTP_UPLOAD_CHUNK] {
+        let temp = format!(
+            "{root}/qc-upload-bench-{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        );
+        let started = Instant::now();
+        let mut file = sftp
+            .open_with_flags(temp.clone(), remote_write_flags(true))
+            .await
+            .map_err(|error| error.to_string())?;
+        upload_bytes_in_chunks(&mut file, &bytes, chunk)
+            .await
+            .map_err(|error| error.to_string())?;
+        file.shutdown().await.map_err(|error| error.to_string())?;
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "[bench] {host} 块 {} KiB 上传 32 MiB 用时 {elapsed:.2}s（{:.1} MiB/s）",
+            chunk / 1024,
+            32.0 / elapsed.max(0.001)
+        );
+        let _ = sftp.remove_file(temp).await;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "需要真实远端，设置 QC_BENCH_* 环境变量后用 --ignored 运行"]
+fn real_host_upload_chunk_bench() {
+    if env("QC_BENCH_HOST").is_none() {
+        println!("[bench] 未设置 QC_BENCH_HOST，跳过");
+        return;
+    }
+    tauri::async_runtime::block_on(run_upload_chunk_bench()).expect("上传基准失败");
+}

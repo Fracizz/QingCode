@@ -1,7 +1,7 @@
 import { AlertTriangle, Cloud, LoaderCircle } from 'lucide-react'
 import type { SyntheticEvent } from 'react'
 import { useSshWarmupStore } from '../store/sshWarmupStore'
-import { useSshOpeningStore } from '../store/sshOpeningStore'
+import { sshOpeningForPath, useSshOpeningStore } from '../store/sshOpeningStore'
 import { setServerOperationBackground, useServerOperationStore } from '../store/serverOperationStore'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
@@ -18,7 +18,10 @@ export default function SshPreparationIcon({
   const status = useSshWarmupStore(state => state.statuses.get(path))
   const { t } = useI18n()
   const openingInBackground = useSshOpeningStore(
-    state => state.attempt?.background === true && !state.attempt.error && state.attempt.project.path === path
+    state => {
+      const attempt = sshOpeningForPath(state.attempts, path)
+      return attempt?.background === true && !attempt.error
+    }
   )
   const backgroundOperation = useServerOperationStore(state => {
     const task = state.tasks[path]

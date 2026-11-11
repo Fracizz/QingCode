@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
-import { cancelSshOpening, runSshOpening, SshPreparationError, useSshOpeningStore } from './sshOpeningStore'
+import { cancelSshOpening, runSshOpening, SshPreparationError, latestSshOpening } from './sshOpeningStore'
 
 const project: Project = { id: 'remote', name: 'app', path: 'ssh://c/home/app', kind: 'ssh', created_at: 1, last_opened_at: 1 }
 
@@ -20,9 +20,9 @@ describe('SSH opening deadline', () => {
     const rejected = expect(opening).rejects.toBeInstanceOf(SshPreparationError)
     await vi.advanceTimersByTimeAsync(100)
     await rejected
-    expect(useSshOpeningStore.getState().attempt?.error).toContain('超时')
+    expect(latestSshOpening()?.error).toContain('超时')
     reportLate()
-    expect(useSshOpeningStore.getState().attempt?.stage).toBe('connecting')
+    expect(latestSshOpening()?.stage).toBe('connecting')
     expect(vi.getTimerCount()).toBe(0)
   })
 })

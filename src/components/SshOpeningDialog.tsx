@@ -4,33 +4,44 @@ import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey, sshServerVersionMismatch } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
-import { cancelSshOpening, setSshOpeningBackground, useSshOpeningStore } from '../store/sshOpeningStore'
+import { cancelSshOpening, setSshOpeningBackground, useSshOpeningStore, type SshOpeningAttempt } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
 import SshServerRecovery from './SshServerRecovery'
 import ServerOperationProgress from './ServerOperationProgress'
-import { useServerOperationStore } from '../store/serverOperationStore'
+import { serverOperationForProject, useServerOperationStore } from '../store/serverOperationStore'
 
+/** 每个 SSH 连接一张打开进度卡，可同时进行；失败弹框一次只显示一个。 */
 export default function SshOpeningDialog() {
+  const attempts = useSshOpeningStore(s => s.attempts)
+  const list = Object.values(attempts).sort((a, b) => a.id - b.id)
+  const failed = list.find(attempt => attempt.error)
+  return <>
+    {list.filter(attempt => !attempt.error).map(attempt => <SshOpeningCard key={attempt.key} attempt={attempt} />)}
+    {failed && <SshOpeningCard key={failed.key} attempt={failed} />}
+  </>
+}
+
+function SshOpeningCard({ attempt }: { attempt: SshOpeningAttempt }) {
   const { t } = useI18n()
-  const attempt = useSshOpeningStore(s => s.attempt)
   const connections = useProjectStore(s => s.sshConnections)
-  const operation = useServerOperationStore(s => attempt ? s.tasks[attempt.project.path] : undefined)
+  const operation = useServerOperationStore(s => serverOperationForProject(s.tasks, attempt.project))
   const [visibleController, setVisibleController] = useState<AbortController | null>(null)
   const [retryingController, setRetryingController] = useState<AbortController | null>(null)
   const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
-  const controller = attempt?.controller
+  const controller = attempt.controller
   const retryBusy = retryingController === controller
   const [recoveryBusy, setRecoveryBusy] = useState(false)
   useEffect(() => () => retryRef.current?.controller.abort(), [])
   useEffect(() => {
-    if (!controller) return
     // Cached connections usually open immediately; avoid flashing a modal.
     const timer = setTimeout(() => setVisibleController(controller), 300)
     return () => clearTimeout(timer)
   }, [controller])
-  if (!attempt || (!attempt.error && (attempt.background || visibleController !== controller))) return null
+  if (!attempt.error && (attempt.background || visibleController !== controller)) return null
+  const key = attempt.key
+  const cancel = () => cancelSshOpening(key)
 
   const { project, stage, server, error } = attempt
   if (!error) {
@@ -44,8 +55,8 @@ export default function SshOpeningDialog() {
       <ServerOperationProgress name={project.name} rootUri={project.path} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
         label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
         actions={<>
-          <button type="button" onClick={() => setSshOpeningBackground(true)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
-          <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
+          <button type="button" onClick={() => setSshOpeningBackground(key, true)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
+          <button type="button" onClick={cancel} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
         </>} />
     )
   }
@@ -56,7 +67,7 @@ export default function SshOpeningDialog() {
     : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
 
   return (
-    <ModalOverlay onDismiss={cancelSshOpening} zIndex="z-[130]">
+    <ModalOverlay onDismiss={cancel} zIndex="z-[130]">
       <div
         role="dialog"
         aria-modal="true"
@@ -107,16 +118,16 @@ export default function SshOpeningDialog() {
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <button type="button" onClick={cancelSshOpening} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
+          <button type="button" onClick={cancel} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
             {error ? t('关闭') : t('取消打开')}
           </button>
           {error && <>
             {server?.transport === 'agent' && sshServerVersionMismatch(error) && <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
-              cancelSshOpening()
+              cancel()
               useUIStore.setState({ serverUpdateRootUri: project.path })
             }}>{t('通过 SSH 更新远端服务')}</button>}
             <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
-              cancelSshOpening()
+              cancel()
               useUIStore.getState().openRemoteConnections()
             }}>{t('远程连接')}</button>
             <button type="button" disabled={retryBusy || recoveryBusy} className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50" onClick={async () => {
@@ -127,9 +138,9 @@ export default function SshOpeningDialog() {
               retryRef.current = retry
               setRetryingController(opening)
               const isCurrent = () => !retry.controller.signal.aborted &&
-                useSshOpeningStore.getState().attempt?.controller === opening
+                useSshOpeningStore.getState().attempts[key]?.controller === opening
               const unsubscribe = useSshOpeningStore.subscribe(state => {
-                if (state.attempt?.controller !== opening) retry.controller.abort()
+                if (state.attempts[key]?.controller !== opening) retry.controller.abort()
               })
               try {
                 if (isWindowsSshRoot(project.path) && /握手|handshake|SSH 连接超时/i.test(error)) {

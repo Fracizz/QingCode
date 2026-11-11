@@ -1,7 +1,8 @@
 import { toastDuration } from '../lib/toastTimers'
 import { useI18n } from '../lib/i18n'
 import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
-import { useProjectStore } from '../store/projectStore'
+import { useProjectStore, type Toast } from '../store/projectStore'
+import { ProjectSourceBadge } from './ProjectName'
 import TransferTasks from './TransferTasks'
 import ServerOperationTasks from './ServerOperationTasks'
 import SshOpeningDialog from './SshOpeningDialog'
@@ -50,7 +51,7 @@ export default function Toaster() {
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
               <div role={t.kind === 'error' ? 'alert' : 'status'} aria-atomic="true">
-                <p className="font-medium text-fg leading-snug">{t.text}</p>
+                <p className="font-medium text-fg leading-snug">{renderToastText(t)}</p>
                 {t.detail ? (
                   <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
                 ) : null}
@@ -88,5 +89,22 @@ export default function Toaster() {
       <SshOpeningDialog />
       <TransferTasks />
     </div>
+  )
+}
+
+/** 文案中的 `{project}` 换成「项目名 + 来源徽标」，与项目卡片标题保持一致。 */
+function renderToastText(toast: Toast) {
+  const subject = toast.subject
+  if (!subject || !toast.text.includes('{project}')) return toast.text
+  const [before, ...rest] = toast.text.split('{project}')
+  return (
+    <>
+      {before}
+      <span className="inline-flex max-w-full items-baseline gap-1.5 align-baseline">
+        <span className="min-w-0">{subject.name}</span>
+        {subject.source ? <ProjectSourceBadge source={subject.source} className="shrink text-ui-sm" /> : null}
+      </span>
+      {rest.join(subject.name)}
+    </>
   )
 }

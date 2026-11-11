@@ -175,14 +175,14 @@ pub(crate) async fn stage_direct_gateway(
             uuid::Uuid::new_v4().simple()
         );
         let upload: Result<(), String> = async {
-            let mut input = tokio::fs::File::open(&local_binary)
+            let bytes = tokio::fs::read(&local_binary)
                 .await
                 .map_err(|error| format!("打开本地 Server 程序失败：{error}"))?;
             let mut output = sftp
                 .open_with_flags(temp.clone(), remote_write_flags(true))
                 .await
                 .map_err(|error| format!("创建远端 Server 临时文件失败：{error}"))?;
-            tokio::io::copy(&mut input, &mut output)
+            upload_bytes_in_chunks(&mut output, &bytes, SFTP_UPLOAD_CHUNK)
                 .await
                 .map_err(|error| format!("上传 Server 程序失败：{error}"))?;
             output
@@ -224,6 +224,24 @@ pub(crate) async fn stage_direct_gateway(
 }
 
 /// 等待 server 启动就绪（状态文件出现且 ping 通过）的总时限。
+/// 服务包 SFTP 上传块大小。russh-sftp 每次 `poll_write` 只发一个写请求、
+/// 最多 8 个在途：用 `tokio::io::copy`（8 KiB 缓冲）时在途数据只有 64 KiB，
+/// Windows OpenSSH 上传几十 MB 的服务包要十几秒。块放大到 256 KiB 后在途约
+/// 2 MiB（单请求仍受服务端 limits 截断），与 SSH 通道窗口相当。
+pub(super) const SFTP_UPLOAD_CHUNK: usize = 256 * 1024;
+
+/// 按固定块写入远端文件；块越大单次写请求承载越多，往返次数越少。
+pub(super) async fn upload_bytes_in_chunks<W: tokio::io::AsyncWrite + Unpin>(
+    output: &mut W,
+    bytes: &[u8],
+    chunk: usize,
+) -> std::io::Result<()> {
+    for part in bytes.chunks(chunk.max(1)) {
+        output.write_all(part).await?;
+    }
+    Ok(())
+}
+
 const AGENT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// server 启动就绪轮询间隔。
 const AGENT_READY_POLL: Duration = Duration::from_millis(300);
@@ -636,11 +654,9 @@ async fn upload_server_binary(
             .open_with_flags(temp.clone(), remote_write_flags(true))
             .await
             .map_err(|error| format!("创建远端临时文件失败：{error}"))?;
-        for chunk in bytes.chunks(64 * 1024) {
-            file.write_all(chunk)
-                .await
-                .map_err(|error| format!("上传 server 二进制失败：{error}"))?;
-        }
+        upload_bytes_in_chunks(&mut file, &bytes, SFTP_UPLOAD_CHUNK)
+            .await
+            .map_err(|error| format!("上传 server 二进制失败：{error}"))?;
         file.shutdown()
             .await
             .map_err(|error| format!("完成 server 上传失败：{error}"))?;

@@ -75,26 +75,29 @@ function localizeBlockedDetail(raw: string): string {
 
 function notify(project: Project, result: SyncResult) {
   const { pushToast, sshConnections } = useProjectStore.getState()
-  // 带上来源（如「WinDev · django」），同名项目分布在多台机器时能分清是哪一个。
-  const source = projectSourceLabel(project, sshConnections, translate('本机'))
-  const values = { project: `${source} · ${project.name}`, count: result.commits ?? 0 }
+  // 项目名后带来源徽标（如「django [WSL]」），同名项目分布在多台机器时能分清是哪一个。
+  // `{project}` 原样保留，由 Toaster 渲染为与项目卡片标题一致的名称 + 徽标。
+  const subject = { name: project.name, source: projectSourceLabel(project, sshConnections, translate('本机')) }
+  const values = { count: result.commits ?? 0 }
+  const toast = (kind: 'success' | 'info' | 'error', key: string, detail?: string) =>
+    pushToast(kind, translate(key, values), detail, undefined, subject)
   switch (result.kind) {
     case 'synced':
-      pushToast('success', translate('{project} 已同步 {count} 个提交', values))
+      toast('success', '{project} 已同步 {count} 个提交')
       break
     case 'behind':
-      pushToast('info', translate('{project} 有 {count} 个新提交可拉取', values))
+      toast('info', '{project} 有 {count} 个新提交可拉取')
       break
     case 'diverged':
-      pushToast('error', translate('{project} 与远端已分叉，未自动同步', values))
+      toast('error', '{project} 与远端已分叉，未自动同步')
       break
     case 'dirty-editors':
-      pushToast('error', translate('{project} 有未保存的文件，未自动同步', values))
+      toast('error', '{project} 有未保存的文件，未自动同步')
       break
     case 'blocked':
-      pushToast(
+      toast(
         'error',
-        translate('{project} 无法快进，未自动同步', values),
+        '{project} 无法快进，未自动同步',
         result.detail ? localizeBlockedDetail(result.detail) : undefined,
       )
       break

@@ -81,7 +81,7 @@ import {
   waitForSshWorkspaceConnection,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
-import { cancelSshOpening, runSshOpening, SshPreparationError } from './sshOpeningStore'
+import { cancelSshOpening, runSshOpening, SshPreparationError, sshOpeningKey } from './sshOpeningStore'
 import { beginSshForeground, cancelSshWarmup, peekSshWarmup, takeSshWarmup } from './sshWarmupStore'
 import { recordSshOpenDiagnostic, type SshOpenDiagnostic } from '../lib/sshOpenDiagnostics'
 
@@ -97,6 +97,13 @@ export interface Toast {
     label: string
     onAction: () => void | Promise<void>
   }
+  /** 文案里的 `{project}` 渲染为项目名 + 来源徽标（与项目卡片标题一致）。 */
+  subject?: ToastSubject
+}
+
+export interface ToastSubject {
+  name: string
+  source?: string | null
 }
 
 interface ProjectState {
@@ -160,7 +167,7 @@ interface ProjectState {
     options?: { force?: boolean }
   ) => Promise<void>
   revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
-  pushToast: (kind: ToastKind, text: string, detail?: string, action?: Toast['action']) => void
+  pushToast: (kind: ToastKind, text: string, detail?: string, action?: Toast['action'], subject?: ToastSubject) => void
   pauseToast: (id: string, reason: string) => void
   resumeToast: (id: string, reason: string) => void
   dismissToast: (id: string) => void
@@ -184,8 +191,18 @@ const SSH_DIRECTORY_UNAVAILABLE_RE =
   /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
 /** 远端没响应不是凭据问题，弹重新认证对话框没用，直接报错。 */
 const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
-/** 进行中的项目切换；新的不同项目点击会取代它（见 switchProject）。 */
-let activeProjectSwitch: { projectId: string; generation: number; done: Promise<void> } | null = null
+/**
+ * 进行中的项目切换，按项目记录。最新一次点击的 generation 决定谁最终生效；
+ * 不同 SSH 连接上的打开流程并发进行，被取代的流程继续在后台准备（见 switchProject）。
+ */
+interface ProjectSwitch {
+  projectId: string
+  /** 打开任务分组键：远程项目为连接，本机项目为路径。 */
+  openingKey: string
+  generation: number
+  done: Promise<boolean>
+}
+const activeProjectSwitches = new Map<string, ProjectSwitch>()
 let projectSwitchGeneration = 0
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
@@ -352,16 +369,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   loading: false,
   toasts: [],
 
-  pushToast: (kind, text, detail, action) => {
+  pushToast: (kind, text, detail, action, subject) => {
     const normalizedDetail = detail?.trim() || undefined
     const duplicate = get().toasts.some(
       t => t.kind === kind && t.text === text && (t.detail ?? '') === (normalizedDetail ?? '')
+        && t.subject?.name === subject?.name && (t.subject?.source ?? null) === (subject?.source ?? null)
     )
     if (duplicate) return
 
     const id = crypto.randomUUID()
     set(s => ({
-      toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail, action }],
+      toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail, action, ...(subject ? { subject } : {}) }],
     }))
     toastTimers.start(id, toastDuration({ kind, detail: normalizedDetail, action }), () => get().dismissToast(id))
   },
@@ -906,146 +924,163 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   switchProject: async (project: Project) => {
-    const pending = activeProjectSwitch
-    // A second click on the same project must not enqueue another connection.
-    if (pending?.projectId === project.id && pending.generation === projectSwitchGeneration) return false
-    const generation = ++projectSwitchGeneration
-    const superseded = () => generation !== projectSwitchGeneration
-    if (pending) {
-      // 点击其他项目优先：取消仍在连接/更新远端服务的打开流程（服务更新本身在
-      // 后台继续），否则启动时恢复的远程项目更新期间本机项目点击毫无响应。
-      cancelSshOpening()
-      await pending.done
-      if (superseded()) return false
+    const inflight = activeProjectSwitches.get(project.id)
+    if (inflight) {
+      // 同一项目再次点击：不重复连接，让进行中的流程重新成为目标。
+      inflight.generation = ++projectSwitchGeneration
+      return inflight.done
     }
-    let settle!: () => void
-    const current = { projectId: project.id, generation, done: new Promise<void>(resolve => { settle = resolve }) }
-    activeProjectSwitch = current
-    const endForeground = beginSshForeground()
-    let sshConnectionAttempted = false
-    let sshWorkspaceConnected = false
-    try {
-      const currentProject = get().currentProject
-      if (currentProject?.id === project.id) {
-        if (isSshProject(project)) {
-          sshConnectionAttempted = true
-          const prepared = await prepareRemoteProject(project, get().projectTrees[project.id])
-          set(s => ({
-            fileTree: prepared.tree,
-            unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
-            projectTrees: { ...s.projectTrees, [project.id]: preserveLoadedChildren(
-              prepared.tree, s.projectTrees[project.id] ?? []
-            ) },
-            projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
-          }))
+    const openingKey = sshOpeningKey(project)
+    const current: ProjectSwitch = { projectId: project.id, openingKey, generation: ++projectSwitchGeneration, done: Promise.resolve(false) }
+    const superseded = () => current.generation !== projectSwitchGeneration
+    // 只有同一连接上的打开会互相取代（共享 SSH 会话与服务）；其他连接和本机项目
+    // 不再等待或取消，被取代的流程在后台继续准备，完成后缓存目录树供下次秒开。
+    const sameConnection = [...activeProjectSwitches.values()].filter(item => item.openingKey === openingKey)
+    if (sameConnection.length) {
+      cancelSshOpening(openingKey)
+      await Promise.all(sameConnection.map(item => item.done.catch(() => false)))
+      if (superseded() || activeProjectSwitches.has(project.id)) return false
+    }
+    const runSwitch = async (): Promise<boolean> => {
+      const endForeground = beginSshForeground()
+      let sshConnectionAttempted = false
+      let sshWorkspaceConnected = false
+      try {
+        const currentProject = get().currentProject
+        if (currentProject?.id === project.id) {
+          if (isSshProject(project)) {
+            sshConnectionAttempted = true
+            const prepared = await prepareRemoteProject(project, get().projectTrees[project.id])
+            // 准备期间已切到其他项目：只更新缓存目录树，不覆盖当前项目的文件树。
+            const stillCurrent = get().currentProject?.id === project.id
+            set(s => ({
+              ...(stillCurrent ? { fileTree: prepared.tree } : {}),
+              unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+              projectTrees: { ...s.projectTrees, [project.id]: preserveLoadedChildren(
+                prepared.tree, s.projectTrees[project.id] ?? []
+              ) },
+              projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
+            }))
+            return true
+          }
+          // Fast re-click: still refresh so inactive-window tree drift is visible.
+          if (project.ephemeral) await get().ensureProjectTree(project)
+          else await get().refreshProjectTree(project)
           return true
         }
-        // Fast re-click: still refresh so inactive-window tree drift is visible.
-        if (project.ephemeral) await get().ensureProjectTree(project)
-        else await get().refreshProjectTree(project)
-        return true
-      }
 
-      // VS Code–style workspace trust: ask once before activating the project.
-      const trust = await ensureWorkspaceTrust(project)
-      if (trust === false || superseded()) return false
-      const known = get().projects
-      const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
-      await pushTrustedRootsToNative(forTrustSync)
-      if (superseded()) return false
-      // 本会话已成功打开过、连接仍在的远程项目：直接用缓存目录树切换，
-      // 不再弹打开对话框、不阻塞在远端设置读取与整棵树重扫上，校验与刷新转后台。
-      const cachedSshTree = isSshProject(project) ? get().projectTrees[project.id] : undefined
-      if (cachedSshTree && await isSshWorkspaceReady(project.path)) {
-        const recentFiles = await touchAndLoadRecentFiles(project.id)
+        // VS Code–style workspace trust: ask once before activating the project.
+        const trust = await ensureWorkspaceTrust(project)
+        if (trust === false || superseded()) return false
+        const known = get().projects
+        const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
+        await pushTrustedRootsToNative(forTrustSync)
         if (superseded()) return false
-        const previousId = currentProject?.id ?? null
+        // 本会话已成功打开过、连接仍在的远程项目：直接用缓存目录树切换，
+        // 不再弹打开对话框、不阻塞在远端设置读取与整棵树重扫上，校验与刷新转后台。
+        const cachedSshTree = isSshProject(project) ? get().projectTrees[project.id] : undefined
+        if (cachedSshTree && await isSshWorkspaceReady(project.path)) {
+          const recentFiles = await touchAndLoadRecentFiles(project.id)
+          if (superseded()) return false
+          const previousId = get().currentProject?.id ?? null
+          set(s => ({
+            currentProject: project,
+            recentFiles,
+            fileTree: cachedSshTree,
+            unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+            expandedProjects: { ...s.expandedProjects, [project.id]: true },
+          }))
+          activateProjectSession(previousId, project.id)
+          void syncSshServerSettingsForProject(project).then(() => get().refreshProjectTree(project))
+          return true
+        }
+
+        await syncSshServerSettingsForProject(project)
+        if (superseded()) return false
+
+        sshConnectionAttempted = true
+        const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
+        sshWorkspaceConnected = true
+
+        // Ephemeral/empty projects use a scratch temp directory; do not block
+        // activation on validate so terminals remain usable.
+        if (!project.ephemeral && !prepared) {
+          await safeInvoke('检查项目目录', 'validate_directory', {
+            path: project.path,
+          })
+        }
+        let recentFiles: RecentFile[] = []
+        if (prepared) recentFiles = prepared.recentFiles
+        else if (!project.ephemeral) {
+          recentFiles = await touchAndLoadRecentFiles(project.id)
+        }
+        if (superseded()) {
+          // 已切到其他项目：这次准备好的远程目录树留作缓存，下次点击直接秒开。
+          if (prepared) set(s => ({
+            unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+            projectTrees: { ...s.projectTrees, [project.id]: prepared.tree },
+            projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
+          }))
+          return false
+        }
+        const previousId = get().currentProject?.id ?? null
         set(s => ({
           currentProject: project,
           recentFiles,
-          fileTree: cachedSshTree,
           unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
           expandedProjects: { ...s.expandedProjects, [project.id]: true },
+          ...(prepared ? {
+            fileTree: prepared.tree,
+            projectTrees: { ...s.projectTrees, [project.id]: prepared.tree },
+            projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
+          } : {}),
         }))
+        // Keep the previous project's tabs/drafts/CM state; restore the target's.
         activateProjectSession(previousId, project.id)
-        void syncSshServerSettingsForProject(project).then(() => get().refreshProjectTree(project))
-        return true
-      }
-
-      await syncSshServerSettingsForProject(project)
-      if (superseded()) return false
-
-      sshConnectionAttempted = true
-      const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
-      sshWorkspaceConnected = true
-
-      // Ephemeral/empty projects use a scratch temp directory; do not block
-      // activation on validate so terminals remain usable.
-      if (!project.ephemeral && !prepared) {
-        await safeInvoke('检查项目目录', 'validate_directory', {
-          path: project.path,
-        })
-      }
-      let recentFiles: RecentFile[] = []
-      if (prepared) recentFiles = prepared.recentFiles
-      else if (!project.ephemeral) {
-        recentFiles = await touchAndLoadRecentFiles(project.id)
-      }
-      if (superseded()) return false
-      const previousId = currentProject?.id ?? null
-      set(s => ({
-        currentProject: project,
-        recentFiles,
-        unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
-        expandedProjects: { ...s.expandedProjects, [project.id]: true },
-        ...(prepared ? {
-          fileTree: prepared.tree,
-          projectTrees: { ...s.projectTrees, [project.id]: prepared.tree },
-          projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
-        } : {}),
-      }))
-      // Keep the previous project's tabs/drafts/CM state; restore the target's.
-      activateProjectSession(previousId, project.id)
-      if (prepared?.warmed) void get().refreshProjectTree(project)
-      // Refresh on switch — inactive durable projects have no root watcher.
-      if (!prepared) {
-        if (project.ephemeral) void get().ensureProjectTree(project)
-        else void get().refreshProjectTree(project)
-      }
-      return true
-    } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') return false
-      // The opening dialog retains diagnostics and offers retry/close.
-      if (e instanceof SshPreparationError) return false
-      console.error('switchProject failed:', e)
-      if (isSshProject(project)) {
-        const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
-        const remoteTimedOut = SSH_TIMEOUT_RE.test(String(e))
-        if (
-          sshWorkspaceConnected ||
-          !sshConnectionAttempted ||
-          remoteDirectoryFailed ||
-          remoteTimedOut
-        ) {
-          get().pushToast('error', `切换 SSH 项目失败: ${String(e)}`)
-        } else {
-          requestSshReconnect(project)
-          get().pushToast('info', 'SSH 连接已断开，请重新认证')
+        if (prepared?.warmed) void get().refreshProjectTree(project)
+        // Refresh on switch — inactive durable projects have no root watcher.
+        if (!prepared) {
+          if (project.ephemeral) void get().ensureProjectTree(project)
+          else void get().refreshProjectTree(project)
         }
+        return true
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return false
+        // The opening dialog retains diagnostics and offers retry/close.
+        if (e instanceof SshPreparationError) return false
+        console.error('switchProject failed:', e)
+        if (isSshProject(project)) {
+          const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
+          const remoteTimedOut = SSH_TIMEOUT_RE.test(String(e))
+          if (
+            sshWorkspaceConnected ||
+            !sshConnectionAttempted ||
+            remoteDirectoryFailed ||
+            remoteTimedOut
+          ) {
+            get().pushToast('error', `切换 SSH 项目失败: ${String(e)}`)
+          } else {
+            requestSshReconnect(project)
+            get().pushToast('info', 'SSH 连接已断开，请重新认证')
+          }
+          return false
+        }
+        if (isDirectoryUnavailableError(e)) {
+          set(s => ({
+            unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
+          }))
+        }
+        get().pushToast('error', `切换项目失败: ${String(e)}`)
         return false
+      } finally {
+        endForeground()
       }
-      if (isDirectoryUnavailableError(e)) {
-        set(s => ({
-          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
-        }))
-      }
-      get().pushToast('error', `切换项目失败: ${String(e)}`)
-      return false
-    } finally {
-      if (activeProjectSwitch === current) activeProjectSwitch = null
-      endForeground()
-      settle()
     }
+    activeProjectSwitches.set(project.id, current)
+    current.done = runSwitch().finally(() => {
+      if (activeProjectSwitches.get(project.id) === current) activeProjectSwitches.delete(project.id)
+    })
+    return current.done
   },
 
   addRecentFile: async (path: string) => {

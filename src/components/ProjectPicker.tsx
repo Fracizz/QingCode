@@ -32,7 +32,7 @@ import {
 import { openPath } from '@tauri-apps/plugin-opener'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
-import { setSshOpeningBackground, useSshOpeningStore } from '../store/sshOpeningStore'
+import { setSshOpeningBackground, sshOpeningForPath, useSshOpeningStore } from '../store/sshOpeningStore'
 import {
   relocateProjectWithDialog,
   removeProjectWithConfirm,
@@ -879,9 +879,9 @@ function Chip({
   const activate = () => {
     if (unavailable) return
     // 后台打开中点击标签：重新展开进度卡，而不是重启打开流程。
-    const opening = useSshOpeningStore.getState().attempt
-    if (opening?.background && !opening.error && opening.project.path === project.path) {
-      setSshOpeningBackground(false)
+    const opening = sshOpeningForPath(useSshOpeningStore.getState().attempts, project.path)
+    if (opening?.background && !opening.error) {
+      setSshOpeningBackground(opening.key, false)
       return
     }
     onSwitch()

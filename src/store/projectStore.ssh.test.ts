@@ -64,7 +64,7 @@ vi.mock('./editorSessionBridge', async importOriginal => ({
 }))
 
 import { useProjectStore } from './projectStore'
-import { cancelSshOpening, useSshOpeningStore } from './sshOpeningStore'
+import { cancelSshOpening, latestSshOpening, sshOpeningKey, useSshOpeningStore } from './sshOpeningStore'
 
 const remote: Project = {
   id: 'remote',
@@ -185,7 +185,7 @@ describe('SSH project availability', () => {
     mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
     const opening = useProjectStore.getState().switchProject(remote)
     await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalled())
-    expect(useSshOpeningStore.getState().attempt?.reusingServer).toBe(true)
+    expect(latestSshOpening()?.reusingServer).toBe(true)
     expect(useProjectStore.getState().currentProject).toBeNull()
     finish()
     expect(await opening).toBe(true)
@@ -255,7 +255,7 @@ describe('SSH project availability', () => {
     expect(await useProjectStore.getState().switchProject(remote)).toBe(false)
     expect(useProjectStore.getState().currentProject).toBeNull()
     expect(useProjectStore.getState().projectTrees[remote.id]).toBeUndefined()
-    expect(useSshOpeningStore.getState().attempt?.error).toContain('ConnectFailed')
+    expect(latestSshOpening()?.error).toContain('ConnectFailed')
     expect(mocks.requestSshReconnect).not.toHaveBeenCalled()
     expect(useProjectStore.getState().unavailableProjectIds).toEqual([])
 
@@ -263,10 +263,10 @@ describe('SSH project availability', () => {
     expect(useProjectStore.getState().projectTrees[remote.id]?.[0]?.name).toBe('README.md')
     expect(useProjectStore.getState().projectTreeErrors[remote.id]).toBe('')
     expect(mocks.ensureSshWorkspaceConnected).toHaveBeenCalledTimes(2)
-    expect(useSshOpeningStore.getState().attempt).toBeNull()
+    expect(latestSshOpening()).toBeNull()
   })
 
-  it('keeps the previous workspace active until service and first file read complete, and ignores duplicate clicks', async () => {
+  it('keeps the previous workspace active until service and first file read complete, and joins duplicate clicks', async () => {
     let finishService!: () => void
     mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finishService = resolve }))
     useProjectStore.setState({ currentProject: local })
@@ -274,31 +274,60 @@ describe('SSH project availability', () => {
     await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1))
 
     expect(useProjectStore.getState().currentProject).toEqual(local)
-    expect(useSshOpeningStore.getState().attempt?.stage).toBe('service')
+    expect(latestSshOpening()?.stage).toBe('service')
     expect(mocks.loadProjectRootTree).not.toHaveBeenCalled()
-    expect(await useProjectStore.getState().switchProject(remote)).toBe(false)
+    const duplicate = useProjectStore.getState().switchProject(remote)
     finishService()
     expect(await opening).toBe(true)
+    expect(await duplicate).toBe(true)
     expect(useProjectStore.getState().currentProject).toEqual(remote)
     expect(useProjectStore.getState().projectTrees[remote.id]).toEqual([])
     expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1)
   })
 
-  it('lets a local project click supersede a remote opening that is still updating its server', async () => {
+  it('lets a local project click win while the remote opening keeps preparing in the background', async () => {
     let finishService!: () => void
     mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finishService = resolve }))
     useProjectStore.setState({ projects: [remote, local] })
     const opening = useProjectStore.getState().switchProject(remote)
     await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1))
 
+    // 本机项目不等待、也不取消另一个连接上的打开流程。
     expect(await useProjectStore.getState().switchProject(local)).toBe(true)
-    expect(await opening).toBe(false)
-    expect(useSshOpeningStore.getState().attempt).toBeNull()
     expect(useProjectStore.getState().currentProject).toEqual(local)
+    expect(latestSshOpening()?.project).toEqual(remote)
     finishService()
-    await Promise.resolve()
+    expect(await opening).toBe(false)
+    expect(latestSshOpening()).toBeNull()
     expect(useProjectStore.getState().currentProject).toEqual(local)
-    expect(mocks.safeInvoke.mock.calls.some(call => call[1] === 'ssh_activate_workspace')).toBe(false)
+    // 准备好的目录树留作缓存，下次点击可直接切换。
+    expect(useProjectStore.getState().projectTrees[remote.id]).toEqual([])
+  })
+
+  it('runs openings on different SSH connections concurrently and supersedes only the same connection', async () => {
+    const other: Project = { ...remote, id: 'remote-2', name: 'other', path: 'ssh://conn-2/srv/other', connection_id: 'conn-2' }
+    const sibling: Project = { ...remote, id: 'remote-3', name: 'sibling', path: `${remote.path}-sibling` }
+    const finishers: Array<() => void> = []
+    mocks.prepareSshWorkspace.mockImplementation(() => new Promise<void>(resolve => { finishers.push(resolve) }))
+    useProjectStore.setState({ projects: [remote, other, sibling, local], currentProject: local })
+    const first = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1))
+    const second = useProjectStore.getState().switchProject(other)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(2))
+    expect(Object.keys(useSshOpeningStore.getState().attempts).sort()).toEqual(
+      [sshOpeningKey(remote), sshOpeningKey(other)].sort()
+    )
+
+    // 同一连接上的新打开取代旧的。
+    const third = useProjectStore.getState().switchProject(sibling)
+    expect(await first).toBe(false)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(3))
+    expect(useSshOpeningStore.getState().attempts[sshOpeningKey(remote)]?.project).toEqual(sibling)
+    finishers.forEach(finish => finish())
+    expect(await second).toBe(false)
+    expect(await third).toBe(true)
+    expect(useProjectStore.getState().currentProject).toEqual(sibling)
+    mocks.prepareSshWorkspace.mockReset()
   })
 
   it('cancels a slow connection without letting its late completion activate the project', async () => {
@@ -325,7 +354,7 @@ describe('SSH project availability', () => {
     expect(useProjectStore.getState().currentProject).toEqual(remote)
     expect(useProjectStore.getState().fileTree).toBe(cached)
     expect(useProjectStore.getState().projectTrees[remote.id]).toBe(cached)
-    expect(useSshOpeningStore.getState().attempt).toBeNull()
+    expect(latestSshOpening()).toBeNull()
     expect(mocks.ensureSshWorkspaceConnected).not.toHaveBeenCalled()
     expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
     await vi.waitFor(() =>
@@ -344,7 +373,7 @@ describe('SSH project availability', () => {
     mocks.prepareSshWorkspace.mockRejectedValueOnce(new Error('远端 daemon 不可用'))
     expect(await useProjectStore.getState().switchProject(remote)).toBe(false)
     expect(useProjectStore.getState().currentProject).toBeNull()
-    expect(useSshOpeningStore.getState().attempt?.error).toContain('daemon 不可用')
+    expect(latestSshOpening()?.error).toContain('daemon 不可用')
     expect(mocks.requestSshReconnect).not.toHaveBeenCalled()
     expect(mocks.loadProjectRootTree).not.toHaveBeenCalled()
   })

@@ -53,3 +53,22 @@ export function finishServerOperation(rootUri: string, error?: string) {
     if (useServerOperationStore.getState().tasks[rootUri] === finished) dismissServerOperation(rootUri)
   }, 2500)
 }
+
+function connectionOf(path: string): string | undefined {
+  return path.match(/^ssh:\/\/([^/]+)/)?.[1] || undefined
+}
+
+/**
+ * 项目对应的服务任务：优先本项目，其次同一 SSH 连接上的任务。服务按连接共享，
+ * 同连接其他项目打开时显示的是同一个安装/更新进度。
+ */
+export function serverOperationForProject(
+  tasks: Record<string, ServerOperation>,
+  project: { path: string; connection_id?: string | null },
+): ServerOperation | undefined {
+  const exact = tasks[project.path]
+  if (exact) return exact
+  const connection = project.connection_id || connectionOf(project.path)
+  if (!connection) return undefined
+  return Object.values(tasks).find(task => !task.finishedAt && connectionOf(task.rootUri) === connection)
+}
