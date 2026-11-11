@@ -55,7 +55,11 @@ import {
   terminalProfileChoices,
   terminalGridSize,
   toggleSessionPin,
+  APP_THEMES,
+  parseAppTheme,
+  TERMINAL_THEME,
 } from '../../mobile/android/web/protocol.js'
+import { DARK_THEME } from './terminal/terminalThemes'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
 
@@ -760,5 +764,20 @@ describe('session created time and running order', () => {
     expect(orderSessions(list, ['c'], { runningFirst: true }).map(item => item.session.id)).toEqual(['c', 'b', 'd', 'a'])
     expect(groupSessionOverview(list)[0].sessions.map(session => session.id)).toEqual(['d', 'c', 'b', 'a'])
     expect(groupSessionOverview(list, { runningFirst: true })[0].sessions.map(session => session.id)).toEqual(['b', 'd', 'c', 'a'])
+  })
+})
+
+describe('Android themes', () => {
+  it('parses saved themes and falls back to dark', () => {
+    expect(APP_THEMES).toEqual(['dark', 'graphite'])
+    expect(parseAppTheme('graphite')).toBe('graphite')
+    expect(parseAppTheme('dark')).toBe('dark')
+    for (const raw of [null, '', 'olive', 'light', 'ink']) expect(parseAppTheme(raw)).toBe('dark')
+  })
+
+  it('keeps the terminal palette in sync with the desktop dark / graphite terminal', () => {
+    for (const [key, value] of Object.entries(TERMINAL_THEME)) {
+      expect(value, key).toBe((DARK_THEME as Record<string, string>)[key])
+    }
   })
 })

@@ -9,6 +9,7 @@
   <link rel="preload" href="qingcode-symbols.woff2" as="font" type="font/woff2" crossorigin="anonymous">
   <link rel="stylesheet" href="xterm.css">
   <link rel="stylesheet" href="app.css">
+  <script src="themeBoot.js"></script>
   <script src="xterm.js" defer></script>
   <script src="fit.js" defer></script>
   <script src="unicode11.js" defer></script>
@@ -430,6 +431,12 @@
             <button type="button" role="radio" data-locale="en" aria-checked="false" lang="en">English</button>
           </div>
         </section>
+        <div class="setting-row" data-tappable>
+          <div class="setting-text"><label for="app-theme">主题</label><p id="app-theme-hint">与电脑端同名主题配色一致</p></div>
+          <select id="app-theme" data-control="value" aria-describedby="app-theme-hint">
+            <option value="dark" selected>深色</option><option value="graphite">石墨灰</option>
+          </select>
+        </div>
         <section id="update-section" class="update-setting" aria-labelledby="update-title">
           <div class="setting-row"><div class="setting-text"><strong id="update-title">应用更新</strong><p id="update-version"></p></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
           <p id="update-status" class="hint" role="status"></p>

@@ -22,6 +22,21 @@ it('packages and serves every module imported by the Android entry point', () =>
   }
 })
 
+it('packages and serves the pre-paint theme script loaded from index.html', () => {
+  const root = resolve(import.meta.dirname, '../..')
+  const html = readFileSync(resolve(root, 'mobile/android/web/index.html'), 'utf8')
+  const java = readFileSync(resolve(root, 'mobile/android/MainActivity.java'), 'utf8')
+  const packaging = readFileSync(resolve(root, 'scripts/build-android.ps1'), 'utf8')
+  const fixture = readFileSync(resolve(root, 'vite.web-test.config.ts'), 'utf8')
+  // 同步脚本须在 app.css 之后、app.js 之前，首帧前就写入 data-theme。
+  expect(html).toContain('<script src="themeBoot.js"></script>')
+  expect(html.indexOf('themeBoot.js')).toBeGreaterThan(html.indexOf('href="app.css"'))
+  expect(html.indexOf('themeBoot.js')).toBeLessThan(html.indexOf('src="app.js"'))
+  expect(java).toContain('case "themeBoot.js":')
+  expect(packaging).toContain("'themeBoot.js'")
+  expect(fixture).toContain("'themeBoot.js':")
+})
+
 it('loads the offline symbol font with a matching preload, CSP, MIME type, and bundled license', () => {
   const root = resolve(import.meta.dirname, '../..')
   const html = readFileSync(resolve(root, 'mobile/android/web/index.html'), 'utf8')

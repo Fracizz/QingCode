@@ -1,8 +1,8 @@
 <resources>
     <style name="QingCodeTheme" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#111419</item>
-        <item name="android:statusBarColor">#111419</item>
-        <item name="android:navigationBarColor">#111419</item>
+        <item name="android:windowBackground">#181818</item>
+        <item name="android:statusBarColor">#181818</item>
+        <item name="android:navigationBarColor">#181818</item>
         <item name="android:colorAccent">#68dfc6</item>
     </style>
 </resources>

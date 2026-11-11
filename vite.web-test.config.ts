@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 const mobileAssets: Record<string, [string, string]> = {
   'app.js': ['mobile/android/web/app.js', 'text/javascript'],
   'protocol.js': ['mobile/android/web/protocol.js', 'text/javascript'],
+  'themeBoot.js': ['mobile/android/web/themeBoot.js', 'text/javascript'],
   'scanner.js': ['mobile/android/web/scanner.js', 'text/javascript'],
   'terminalTouch.js': ['mobile/android/web/terminalTouch.js', 'text/javascript'],
   'gestures.js': ['mobile/android/web/gestures.js', 'text/javascript'],

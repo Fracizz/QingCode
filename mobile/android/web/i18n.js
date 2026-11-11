@@ -76,6 +76,10 @@ export const EN = Object.freeze({
   '本机': 'Local',
   '远端': 'Remote',
   '语言 / Language': 'Language',
+  '主题': 'Theme',
+  '与电脑端同名主题配色一致': 'Matches the desktop theme of the same name',
+  '深色': 'Dark',
+  '石墨灰': 'Graphite',
   '中文': '中文', // 语言名保持原文
   // data-i18n：同一中文在不同位置需要不同英文时使用的专用 key。
   'action:connect': 'Connect',

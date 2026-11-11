@@ -1,5 +1,5 @@
 /*
- * QingCode Android WebView 样式。石墨底色 + 青绿强调色，与桌面一致。
+ * QingCode Android WebView 样式。中性灰底色 + 青绿强调色；深色 / 石墨灰两套主题与电脑端同名主题一致。
  * 交互形态参考开源项目：Material 3（导航指示条、分组列表、底部弹层、状态层）、
  * Termux（双排快捷键、修饰键锁定）、T3 Code 移动终端（会话操作与独立字号）。
  */
@@ -16,14 +16,15 @@
 }
 :root {
   color-scheme: dark;
-  --paper: #111419;
-  --surface: #1a2027;
-  --surface-high: #1f262e;
-  --raised: #262e38;
-  --line: #303944;
-  --divider: #262e37;
-  --ink: #edf2f6;
-  --muted: #a2aeba;
+  /* 深色（默认）：与电脑端深色同为纯中性灰。石墨灰见下方 :root[data-theme="graphite"]。 */
+  --paper: #181818;
+  --surface: #1c1c1c;
+  --surface-high: #232323;
+  --raised: #292929;
+  --line: #3a3a3a;
+  --divider: #2e2e2e;
+  --ink: #f3f3f5;
+  --muted: #a1a1aa;
   --accent: #68dfc6;
   --accent-ink: #0c2923;
   --accent-surface: #193a35;
@@ -35,7 +36,7 @@
   --error: #ff9d8c;
   --error-surface: #3a1f1b;
   --warning: #edcb8d;
-  --console: #101317;
+  --console: #181818;
   --mono: 'QingCode Symbols', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', 'Roboto Mono', 'Noto Sans Mono', 'Droid Sans Mono', monospace;
   --ease: cubic-bezier(.2, 0, 0, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
@@ -48,6 +49,18 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   font: 16px/1.45 system-ui, 'Roboto', 'Noto Sans SC', sans-serif;
+}
+/* 石墨灰：取自电脑端石墨灰（带极轻暖调的灰阶，文字更柔和、分隔线更清楚）。终端底色与深色相同。 */
+:root[data-theme="graphite"] {
+  --paper: #181818;
+  --surface: #1c1b1b;
+  --surface-high: #21201f;
+  --raised: #262626;
+  --line: #2e2d2d;
+  --divider: #2c2c2c;
+  --ink: #dfdfdf;
+  --muted: #999999;
+  --console: #181818;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }
@@ -449,17 +462,17 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-scroll::-webkit-scrollbar { display: none; }
 .touch-scrollbar { position: absolute; z-index: 4; top: 6px; right: 0; bottom: 6px; width: 44px; overflow: hidden; touch-action: none; }
 .touch-scrollbar[hidden] { display: none; }
-.touch-scrollbar-thumb { position: absolute; top: 0; right: 4px; width: 16px; border-radius: 8px; background: #a2aeba8c; transition: width .12s, background-color .12s; will-change: transform; }
+.touch-scrollbar-thumb { position: absolute; top: 0; right: 4px; width: 16px; border-radius: 8px; background: #a0a0a08c; transition: width .12s, background-color .12s; will-change: transform; }
 .touch-scrollbar.dragging .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); }
-.touch-scrollbar.pinned .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); box-shadow: 0 0 0 2px #101317, 0 0 12px #5ee0c066; }
+.touch-scrollbar.pinned .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); box-shadow: 0 0 0 2px var(--console), 0 0 12px #5ee0c066; }
 /* 全屏程序开启鼠标时的回弹变速滑块：不表示位置，按住拖离中心越远滚得越快，松手回中。 */
 .terminal-jog { position: absolute; z-index: 5; top: 50%; right: 2px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 46px; height: min(56%, 300px); min-height: 180px; transform: translateY(-50%); touch-action: none; user-select: none; -webkit-user-select: none; }
 .terminal-jog[hidden] { display: none; }
-.terminal-jog-page { flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 22px; color: var(--muted); font-size: 12px; background: #1d232bcc; }
+.terminal-jog-page { flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 22px; color: var(--muted); font-size: 12px; background: #232323cc; }
 .terminal-jog-page:active { color: var(--ink); background: var(--raised); }
-.terminal-jog-track { position: relative; flex: 1; width: 44px; border-radius: 22px; background: #1d232b99; touch-action: none; }
-.terminal-jog-track::before { content: ''; position: absolute; left: 50%; top: 12px; bottom: 12px; border-left: 1px dashed #a2aeba40; }
-.terminal-jog-knob { position: absolute; top: 50%; left: 5px; width: 34px; height: 34px; margin-top: -17px; border-radius: 17px; background: #a2aeba99; transition: transform .18s ease-out, background-color .12s; will-change: transform; }
+.terminal-jog-track { position: relative; flex: 1; width: 44px; border-radius: 22px; background: #23232399; touch-action: none; }
+.terminal-jog-track::before { content: ''; position: absolute; left: 50%; top: 12px; bottom: 12px; border-left: 1px dashed #a0a0a040; }
+.terminal-jog-knob { position: absolute; top: 50%; left: 5px; width: 34px; height: 34px; margin-top: -17px; border-radius: 17px; background: #a0a0a099; transition: transform .18s ease-out, background-color .12s; will-change: transform; }
 .terminal-jog.dragging .terminal-jog-knob { background: var(--accent); transition: background-color .12s; }
 .terminal-jog.pinned .terminal-jog-track { box-shadow: inset 0 0 0 1px var(--accent-border); }
 .terminal-jog.pinned .terminal-jog-knob { background: var(--accent); }
@@ -620,7 +633,7 @@ dialog {
   box-shadow: 0 16px 64px #0007;
 }
 dialog[open] { animation: dialog-in 180ms var(--ease); }
-dialog::backdrop { background: #05080bb8; }
+dialog::backdrop { background: #000000b8; }
 dialog h2 { font-size: 19px; margin-bottom: 6px; }
 dialog p { font-size: 14px; color: var(--muted); }
 dialog code { display: block; margin: 10px 0; padding: 10px 12px; border-radius: var(--control-radius); background: var(--paper); overflow-wrap: anywhere; font: 12.5px/1.6 var(--mono); }
@@ -1035,10 +1048,10 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .virtual-mouse-pointer { z-index: 7; width: 26px; height: 26px; pointer-events: none; filter: drop-shadow(0 1px 2px #000a); }
 .virtual-mouse-pointer svg { display: block; width: 100%; height: 100%; stroke-linejoin: round; }
 /* 深色外描边单独一层，不吃掉白色填充，浅色背景上也能看清。 */
-.virtual-mouse-pointer-outline { fill: #0e1216; stroke: #0e1216; stroke-width: 3.4; }
-.virtual-mouse-pointer-fill { fill: #f4f7fa; stroke: #f4f7fa; stroke-width: 1.2; }
+.virtual-mouse-pointer-outline { fill: #121212; stroke: #121212; stroke-width: 3.4; }
+.virtual-mouse-pointer-fill { fill: #f4f4f4; stroke: #f4f4f4; stroke-width: 1.2; }
 .virtual-mouse-cell { z-index: 6; border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none; }
-.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 42px 1fr; width: 72px; height: 88px; border: 1px solid var(--accent-border); border-radius: 36px 36px 38px 38px; background: #1d232be6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
+.virtual-mouse { z-index: 7; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 42px 1fr; width: 72px; height: 88px; border: 1px solid var(--accent-border); border-radius: 36px 36px 38px 38px; background: #232323e6; box-shadow: 0 6px 18px #0009; opacity: .88; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; transition: opacity .12s; }
 .virtual-mouse.dragging, .virtual-mouse.holding, .virtual-mouse:active { opacity: 1; }
 .virtual-mouse[hidden], .virtual-mouse-pointer[hidden], .virtual-mouse-cell[hidden], .virtual-mouse-menu[hidden] { display: none; }
 .virtual-mouse-button { position: relative; min-width: 0; min-height: 0; padding: 0; border: 0; border-bottom: 1px solid var(--accent-border); background: transparent; touch-action: none; }

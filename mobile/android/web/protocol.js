@@ -680,3 +680,40 @@ export function sessionIdleInfo(item, now = Date.now()) {
   if (idleRemaining(item, now) <= IDLE_WARNING_MS) return { text: idleLabel(item, now), expiring: true };
   return { text: idleHead(Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null), expiring: false };
 }
+
+// —— 主题 ——
+// 手机端主题与电脑端同名主题对应：dark = 深色（默认），graphite = 石墨灰。只保存在手机上。
+export const APP_THEMES = ['dark', 'graphite'];
+
+/** 读取保存的主题值；未知或缺省时回落到深色。 */
+export function parseAppTheme(raw) {
+  return APP_THEMES.includes(raw) ? raw : 'dark';
+}
+
+/**
+ * 终端配色：与电脑端深色 / 石墨灰共用的柔和配色（src/lib/terminal/terminalThemes.ts 的 DARK_THEME）。
+ * 正文约 10:1、不用纯白，ANSI 色饱和度约 30–50%，选区为中性灰；两主题终端底色均为 #181818。
+ */
+export const TERMINAL_THEME = {
+  background: '#181818',
+  foreground: '#c4c4c4',
+  cursor: '#aeafad',
+  cursorAccent: '#181818',
+  selectionBackground: '#3a3d42',
+  black: '#000000',
+  red: '#d9958a',
+  green: '#9cc796',
+  yellow: '#d6bf92',
+  blue: '#8fb2dc',
+  magenta: '#bb9ccf',
+  cyan: '#8cbfc4',
+  white: '#c4c4c4',
+  brightBlack: '#838383',
+  brightRed: '#e0aaa1',
+  brightGreen: '#b0d6aa',
+  brightYellow: '#e0cea6',
+  brightBlue: '#a8c2e0',
+  brightMagenta: '#cbb3dc',
+  brightCyan: '#a3d0d4',
+  brightWhite: '#dcdcdc',
+};

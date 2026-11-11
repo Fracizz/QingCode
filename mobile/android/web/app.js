@@ -11,6 +11,7 @@ import {
   mergeSessionName,
   nextModifierState,
   outputBatches,
+  parseAppTheme,
   parsePairingLink,
   projectLocation,
   projectSourceLabel,
@@ -20,6 +21,7 @@ import {
   summarizeSessionBatch,
   terminalGridSize,
   terminalProfileChoices,
+  TERMINAL_THEME,
 } from './protocol.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
@@ -292,6 +294,20 @@ pairing = createPairingFlow({
 });
 
 const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () => !!terminalHistory?.isOpen() });
+
+// 主题：只保存在手机上；themeBoot.js 已在首帧前套用，这里负责设置项与切换。
+const themeKey = prefix + 'theme';
+function applyAppTheme(value) {
+  const theme = parseAppTheme(value);
+  if (theme === 'dark') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  return theme;
+}
+get('app-theme').value = applyAppTheme(localStorage.getItem(themeKey));
+get('app-theme').addEventListener('change', () => {
+  const theme = applyAppTheme(get('app-theme').value);
+  localStorage.setItem(themeKey, theme);
+});
 
 const settings = createTerminalSettings({
   prefix,
@@ -1184,30 +1200,8 @@ function makeTerminal() {
     fontFamily: "'QingCode Symbols', monospace",
     scrollback: 10000,
     cursorBlink: true,
-    // Keep ANSI colors and cursor aligned with the desktop dark terminal.
-    theme: {
-      background: '#101317',
-      foreground: '#d4d4d4',
-      cursor: '#aeafad',
-      cursorAccent: '#101317',
-      selectionBackground: '#264f78',
-      black: '#000000',
-      red: '#f48771',
-      green: '#89d185',
-      yellow: '#e2c08d',
-      blue: '#75aaf0',
-      magenta: '#c678dd',
-      cyan: '#56b6c2',
-      white: '#d4d4d4',
-      brightBlack: '#6b6b6b',
-      brightRed: '#f48771',
-      brightGreen: '#89d185',
-      brightYellow: '#e2c08d',
-      brightBlue: '#75aaf0',
-      brightMagenta: '#c678dd',
-      brightCyan: '#56b6c2',
-      brightWhite: '#ffffff',
-    },
+    // 与电脑端深色 / 石墨灰终端共用同一套柔和配色（见 protocol.js）。
+    theme: TERMINAL_THEME,
   });
   fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
