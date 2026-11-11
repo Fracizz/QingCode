@@ -103,9 +103,14 @@ export function parseUpstream(
 
 export type SyncDecision = 'fast-forward' | 'up-to-date' | 'ahead' | 'diverged' | 'no-upstream'
 
+/** 同步判定只需要的字段：完整的 GitStatus 或轻量的跟踪查询结果都满足。 */
+export type SyncTracking = Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind'> & {
+  is_repository?: boolean
+}
+
 /** 只有纯落后才能快进；detached HEAD（含 rebase 中）没有分支或上游。 */
-export function decideSync(status: GitStatus): SyncDecision {
-  if (!status.is_repository || !status.branch || !status.upstream) return 'no-upstream'
+export function decideSync(status: SyncTracking): SyncDecision {
+  if (status.is_repository === false || !status.branch || !status.upstream) return 'no-upstream'
   const ahead = status.ahead ?? 0
   const behind = status.behind ?? 0
   if (behind === 0) return ahead > 0 ? 'ahead' : 'up-to-date'

@@ -1,8 +1,9 @@
 /** 把引擎接到应用的 store、IPC 和持久化上。 */
-import { getGitRemotes, getGitStatus } from '@/lib/ipc/git'
+import { getGitRemotes } from '@/lib/ipc/git'
 import {
   fastForwardForPushSync,
   fetchForPushSync,
+  getPushSyncTracking,
   setPushSyncWatches,
 } from '@/lib/ipc/gitPushSync'
 import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
@@ -116,7 +117,7 @@ export const gitPushSyncEngine = createGitPushSyncEngine({
     const { tabs, projectSessions } = useEditorStore.getState()
     return countDirtyTabsByProject([project], tabs, projectSessions)[project.id] ?? 0
   },
-  getStatus: getGitStatus,
+  getTracking: getPushSyncTracking,
   getRemotes: getGitRemotes,
   fetch: fetchForPushSync,
   mergeFastForward: fastForwardForPushSync,

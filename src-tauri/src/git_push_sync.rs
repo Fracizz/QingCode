@@ -20,6 +20,8 @@ const STATE_EVENT: &str = "git-push-sync:state";
 const SSH_PREFIX: &str = "ssh://";
 const FETCH_LIMIT: Duration = Duration::from_secs(60);
 const MERGE_LIMIT: Duration = Duration::from_secs(120);
+/// 只读引用的查询，不扫描工作区。
+const QUERY_LIMIT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -241,13 +243,111 @@ async fn run_git(
     .map_err(|error| format!("后台 Git 任务失败：{error}"))?
 }
 
+/// 远程名和分支名会作为独立参数传给 Git，拒绝选项和修订表达式。
+fn validate_ref_part(value: &str) -> Result<(), String> {
+    validate_upstream(value).map_err(|_| "无效的远程或分支名".to_string())
+}
+
+/// 同步判定只需要的分支跟踪信息。
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSyncTracking {
+    /// 当前分支；detached HEAD 时为空。
+    branch: Option<String>,
+    /// 形如 `origin/main`；没有上游或上游已删除时为空。
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+}
+
+const TAB: char = '\u{9}';
+
+/// 解析 `%(upstream:short)%09%(upstream:track,nobracket)` 的输出（两列以制表符分隔）。
+fn parse_tracking(branch: String, line: &str) -> PushSyncTracking {
+    let (upstream, track) = line.split_once(TAB).unwrap_or((line, ""));
+    let upstream = upstream.trim();
+    let track = track.trim();
+    if upstream.is_empty() || track == "gone" {
+        return PushSyncTracking {
+            branch: Some(branch),
+            ..PushSyncTracking::default()
+        };
+    }
+    let count = |label: &str| {
+        track
+            .split(',')
+            .filter_map(|part| part.trim().strip_prefix(label))
+            .find_map(|value| value.trim().parse().ok())
+            .unwrap_or(0)
+    };
+    PushSyncTracking {
+        branch: Some(branch),
+        upstream: Some(upstream.to_string()),
+        ahead: count("ahead"),
+        behind: count("behind"),
+    }
+}
+
+/// 只读 HEAD 与上游引用，不像 `git status` 那样扫描工作区和未跟踪文件，
+/// 大仓库和 SSH 项目上也只需要毫秒级。
 #[tauri::command]
-pub async fn git_push_sync_fetch(
+pub async fn git_push_sync_tracking(
     path: String,
     ssh: State<'_, SshManager>,
     allowlist: State<'_, PathAllowlist>,
+) -> Result<PushSyncTracking, String> {
+    let head = run_git(
+        path.clone(),
+        ["symbolic-ref", "--quiet", "--short", "HEAD"]
+            .map(String::from)
+            .to_vec(),
+        QUERY_LIMIT,
+        &ssh,
+        &allowlist,
+    )
+    .await;
+    let branch = match head {
+        Ok(branch) if !branch.is_empty() => branch,
+        // `--quiet` 下 detached HEAD 只返回非零退出码，没有输出；其他错误（不是仓库、未连接）照常上报。
+        Ok(_) => return Ok(PushSyncTracking::default()),
+        Err(message) if message.is_empty() => return Ok(PushSyncTracking::default()),
+        Err(message) => return Err(message),
+    };
+    validate_ref_part(&branch)?;
+    let line = run_git(
+        path,
+        vec![
+            "for-each-ref".to_string(),
+            "--count=1".to_string(),
+            "--format=%(upstream:short)%09%(upstream:track,nobracket)".to_string(),
+            format!("refs/heads/{branch}"),
+        ],
+        QUERY_LIMIT,
+        &ssh,
+        &allowlist,
+    )
+    .await?;
+    Ok(parse_tracking(branch, line.lines().next().unwrap_or("")))
+}
+
+/// 给定远程和分支时只拉这一个分支（Git 会按 refspec 顺带更新对应的远程跟踪分支），
+/// 远程分支很多时比全量 `fetch --prune` 快得多；未给定时退回全量获取。
+#[tauri::command]
+pub async fn git_push_sync_fetch(
+    path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+    ssh: State<'_, SshManager>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<(), String> {
-    let args = vec!["fetch".to_string(), "--prune".to_string()];
+    let args = match (remote, branch) {
+        (Some(remote), Some(branch)) => {
+            validate_ref_part(&remote)?;
+            validate_ref_part(&branch)?;
+            vec!["fetch".to_string(), remote, branch]
+        }
+        _ => vec!["fetch".to_string(), "--prune".to_string()],
+    };
     run_git(path, args, FETCH_LIMIT, &ssh, &allowlist)
         .await
         .map(|_| ())
@@ -323,7 +423,26 @@ mod tests {
 
         commit(&a, "two");
         git(&a, &["push"]);
-        run_local_git(&b, &["fetch", "--prune"], limit).unwrap();
+        // 只拉单个分支也要更新远程跟踪分支，快进才能看到新提交。
+        run_local_git(&b, &["fetch", "origin", "main"], limit).unwrap();
+        assert_eq!(
+            git(&a, &["rev-parse", "HEAD"]),
+            git(&b, &["rev-parse", "origin/main"])
+        );
+        let line = run_local_git(
+            &b,
+            &[
+                "for-each-ref",
+                "--count=1",
+                "--format=%(upstream:short)%09%(upstream:track,nobracket)",
+                "refs/heads/main",
+            ],
+            limit,
+        )
+        .unwrap();
+        let tracking = parse_tracking("main".into(), &line);
+        assert_eq!(tracking.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((tracking.ahead, tracking.behind), (0, 1));
         run_local_git(&b, &["merge", "--ff-only", "origin/main"], limit).unwrap();
         assert_eq!(
             git(&a, &["rev-parse", "HEAD"]),
@@ -338,6 +457,32 @@ mod tests {
         assert!(run_local_git(&b, &["merge", "--ff-only", "origin/main"], limit).is_err());
         assert_eq!(git(&b, &["rev-parse", "HEAD"]), before);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_tracking_reads_ahead_and_behind() {
+        let line = |track: &str| format!("origin/main{TAB}{track}");
+        let parsed = parse_tracking("main".into(), &line("ahead 1, behind 2"));
+        assert_eq!(parsed.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((parsed.ahead, parsed.behind), (1, 2));
+        let parsed = parse_tracking("main".into(), &line("behind 3"));
+        assert_eq!((parsed.ahead, parsed.behind), (0, 3));
+        let parsed = parse_tracking("main".into(), &line(""));
+        assert_eq!((parsed.ahead, parsed.behind), (0, 0));
+    }
+
+    #[test]
+    fn parse_tracking_treats_missing_or_gone_upstream_as_none() {
+        let lines = [
+            String::new(),
+            TAB.to_string(),
+            format!("origin/main{TAB}gone"),
+        ];
+        for line in lines {
+            let parsed = parse_tracking("main".into(), &line);
+            assert_eq!(parsed.branch.as_deref(), Some("main"));
+            assert_eq!(parsed.upstream, None, "{line:?}");
+        }
     }
 
     #[test]

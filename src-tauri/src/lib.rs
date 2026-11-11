@@ -927,6 +927,7 @@ pub fn run() {
             git::git_pull,
             git_push_sync::git_push_sync_set_watches,
             git_push_sync::git_push_sync_fetch,
+            git_push_sync::git_push_sync_tracking,
             git_push_sync::git_push_sync_merge_ff,
             git::git_branch_list,
             git::git_remotes,

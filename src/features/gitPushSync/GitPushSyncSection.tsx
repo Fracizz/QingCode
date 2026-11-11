@@ -2,13 +2,14 @@ import { LoaderCircle } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { SettingItem } from '@/components/SettingsLayout'
 import { getGitHead, getGitRemotes } from '@/lib/ipc/git'
+import { getPushSyncTracking } from '@/lib/ipc/gitPushSync'
 import { useI18n } from '@/lib/i18n'
 import { listSshConnections } from '@/lib/projectRepository'
 import { isProjectTrusted } from '@/lib/workspaceTrust'
 import { useProjectStore } from '@/store/projectStore'
 import type { Project } from '@/types'
 import { allRemoteKeys, DEFAULT_CONFIG, type GitPushSyncConfig, type SyncAction } from './core'
-import { syncMachineKey, type SyncResult } from './engine'
+import { machineConcurrency, syncMachineKey, type SyncResult } from './engine'
 import { saveConfig } from './runtime'
 import { type Inspection, readScanCache, scanCacheKey, writeScanCache } from './scanCache'
 import { useGitPushSyncStore } from './store'
@@ -21,9 +22,15 @@ function inspect(remotes: Awaited<ReturnType<typeof getGitRemotes>>, branch: str
   return { repo: preferred ? (allRemoteKeys([preferred])[0] ?? null) : null, branch }
 }
 
+/** 当前分支。SSH 项目的 getGitHead 会跑一次全量 status，改用只读引用的轻量查询。 */
+async function readBranch(project: Project): Promise<string | null> {
+  if (project.path.startsWith('ssh://')) return (await getPushSyncTracking(project.path)).branch
+  return (await getGitHead(project.path))?.name ?? null
+}
+
 /**
- * 识别全部项目的仓库与分支。不同机器之间并行；同一台机器串行，
- * 避免在一条 SSH 连接上同时压多个 Git 命令。分支只读 HEAD，本地项目不跑全量 status。
+ * 识别全部项目的仓库与分支。不同机器之间并行；同一台机器按 machineConcurrency 限制并发，
+ * 避免在一条 SSH 连接上同时压太多 Git 命令。本地项目只读 HEAD 文件，不跑 Git status。
  */
 async function scanProjects(
   targets: Project[],
@@ -37,24 +44,25 @@ async function scanProjects(
     byMachine.set(machine, [...(byMachine.get(machine) ?? []), project])
   }
   const next: Record<string, Inspection> = {}
+  const inspectOne = async (project: Project) => {
+    try {
+      const [remotes, branch] = await Promise.all([getGitRemotes(project.path), readBranch(project)])
+      next[project.id] = inspect(remotes, branch)
+    } catch {
+      // 读取失败（多为远程未连接）时沿用上次结果，避免行在分组之间来回跳；
+      // 从未识别过的才归入“未连接”分组。
+      next[project.id] = cached[project.id] ?? { repo: null, branch: null }
+    }
+    onProgress()
+  }
   await Promise.all(
-    [...byMachine.values()].map(async queue => {
-      for (const project of queue) {
-        if (isCancelled()) return
-        try {
-          const [remotes, head] = await Promise.all([
-            getGitRemotes(project.path),
-            getGitHead(project.path),
-          ])
-          next[project.id] = inspect(remotes, head?.name ?? null)
-        } catch {
-          // 读取失败（多为远程未连接）时沿用上次结果，避免行在分组之间来回跳；
-          // 从未识别过的才归入“未连接”分组。
-          next[project.id] = cached[project.id] ?? { repo: null, branch: null }
+    [...byMachine.entries()].flatMap(([machine, queue]) =>
+      Array.from({ length: Math.min(machineConcurrency(machine), queue.length) }, async () => {
+        for (let project = queue.shift(); project && !isCancelled(); project = queue.shift()) {
+          await inspectOne(project)
         }
-        onProgress()
-      }
-    }),
+      }),
+    ),
   )
   return next
 }

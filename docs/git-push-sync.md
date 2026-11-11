@@ -9,13 +9,21 @@
 ```
 A push → A 的 reflog 追加 “update by push” → 桌面端收到事件
        → 按归一化 remote URL + 分支匹配开启“自动接收”的项目 B
-       → B: fetch → 安全检查 → merge --ff-only → 刷新状态和已打开的文件
+       → B: 读分支跟踪 → fetch <remote> <branch> → 安全检查 → merge --ff-only → 刷新状态和已打开的文件
 ```
 
 - 事件驱动，没有定时轮询。
 - `git fetch` 写入的 reflog 不是 `update by push`，不会形成同步回环。
 - 接收项目只响应当前分支上游的推送；其他分支不处理。
 - 启动、窗口聚焦、切换到接收项目时各补查一次（2 分钟冷却），用于补上离线期间的更新。
+
+## 延迟优化
+
+- 推送事件先按已知的仓库地址（缓存或已保存的身份）预筛接收项目，其他仓库的项目不会排进队列。
+- 判定只读 HEAD 与上游引用（`symbolic-ref` + `for-each-ref %(upstream:track)`），不跑会扫描工作区的 `git status`。
+- 只获取当前分支的上游（`git fetch <remote> <branch>`），不拉全部远程分支。
+- 同一台机器限制并发：本机 4 个、SSH / WSL 2 个；不同机器之间完全并行，当前项目优先。
+- 设置页的仓库识别结果保存在 localStorage，重启后打开设置直接显示上次结果，后台刷新完成后整体替换。
 
 ## 安全规则
 
@@ -59,7 +67,7 @@ A push → A 的 reflog 追加 “update by push” → 桌面端收到事件
 
 然后移除接入点（均可搜索 `git_push`、`gitPush`、`GitPush`、`GIT_PUSHED_EVENT`）：
 
-- `src-tauri/src/lib.rs`：`mod`、`.manage` 和 3 个命令注册
+- `src-tauri/src/lib.rs`：`mod`、`.manage` 和 4 个命令注册
 - `src-tauri/src/remote_ssh.rs`、`src-tauri/src/remote_ssh/server/mod.rs`：模块声明
 - `src-tauri/qingcode-server/src/lib.rs`：模块声明
 - `src-tauri/qingcode-server/src/proto.rs`：`Event::GitPush`

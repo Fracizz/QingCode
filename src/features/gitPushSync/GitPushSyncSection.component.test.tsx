@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   saveConfig: vi.fn(),
   getGitRemotes: vi.fn(),
   getGitHead: vi.fn(),
+  getPushSyncTracking: vi.fn(),
   listSshConnections: vi.fn(),
   isProjectTrusted: vi.fn(),
 }))
@@ -21,6 +22,7 @@ vi.mock('@/lib/ipc/git', () => ({
   getGitRemotes: mocks.getGitRemotes,
   getGitHead: mocks.getGitHead,
 }))
+vi.mock('@/lib/ipc/gitPushSync', () => ({ getPushSyncTracking: mocks.getPushSyncTracking }))
 vi.mock('@/lib/projectRepository', () => ({ listSshConnections: mocks.listSshConnections }))
 vi.mock('@/lib/workspaceTrust', () => ({ isProjectTrusted: mocks.isProjectTrusted }))
 
@@ -48,6 +50,7 @@ describe('GitPushSyncSection', () => {
       return [{ name: 'origin', fetch_url: 'git@gitee.com:team/app.git', push_urls: [] }]
     })
     mocks.getGitHead.mockResolvedValue({ name: 'test', detached: false })
+    mocks.getPushSyncTracking.mockResolvedValue({ branch: 'test', upstream: null, ahead: 0, behind: 0 })
     useProjectStore.setState({ projects: [local, remote, offline] })
     useGitPushSyncStore.setState({ config: DEFAULT_CONFIG, detection: {}, results: {} })
   })
@@ -74,6 +77,15 @@ describe('GitPushSyncSection', () => {
     await screen.findByText('服务器 B')
     expect(screen.getByText('未连接或没有远程仓库')).toBeTruthy()
     expect(screen.getByText('实时')).toBeTruthy()
+  })
+
+  it('reads SSH branches with the lightweight tracking query instead of a full status', async () => {
+    useGitPushSyncStore.setState({ config: { ...DEFAULT_CONFIG, enabled: true } })
+    render(<GitPushSyncSection />)
+    await screen.findByText('gitee.com/team/app')
+    expect(mocks.getPushSyncTracking).toHaveBeenCalledWith(remote.path)
+    expect(mocks.getGitHead).not.toHaveBeenCalledWith(remote.path)
+    expect(mocks.getGitHead).toHaveBeenCalledWith(local.path)
   })
 
   it('toggles a project as receiver', async () => {

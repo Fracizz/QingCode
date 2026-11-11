@@ -42,6 +42,7 @@
     "项目未信任": "Project not trusted",
     "后台获取远程更新": "Fetch remote updates in background",
     "后台快进分支": "Fast-forward branch in background",
+    "读取分支跟踪信息": "Read branch tracking",
     "同步推送监听": "Sync push watchers",
     "读取 Git 多端同步设置": "Read multi-device Git sync settings",
     "保存 Git 多端同步设置": "Save multi-device Git sync settings",

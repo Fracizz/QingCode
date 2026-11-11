@@ -1,5 +1,5 @@
 /** 把推送事件转成对接收项目的同步任务。全部副作用经 deps 注入，便于测试。 */
-import type { GitRemote, GitStatus } from '@/lib/git/git'
+import type { GitRemote } from '@/lib/git/git'
 import { wslDistroNameFromPath } from '@/lib/wslWorkspace'
 import type { Project } from '@/types'
 import {
@@ -11,6 +11,7 @@ import {
   shouldWatchProject,
   type GitPushSyncConfig,
   type RepositoryIdentity,
+  type SyncTracking,
 } from './core'
 
 export type PushNotice = { projectPath: string; remote: string; branch: string }
@@ -34,9 +35,11 @@ export type EngineDeps = {
   config: () => GitPushSyncConfig
   isTrusted: (project: Project) => boolean
   dirtyEditorCount: (project: Project) => number
-  getStatus: (path: string) => Promise<GitStatus>
+  /** 只读分支与上游引用的轻量查询；不能用全量 status，它会扫描整个工作区。 */
+  getTracking: (path: string) => Promise<SyncTracking>
   getRemotes: (path: string) => Promise<GitRemote[]>
-  fetch: (path: string) => Promise<void>
+  /** 给出 target 时只获取这一个远程分支。 */
+  fetch: (path: string, target?: { remote: string; branch: string }) => Promise<void>
   mergeFastForward: (path: string, upstream: string) => Promise<void>
   setWatches: (paths: string[]) => Promise<void>
   afterFastForward: (project: Project) => void
@@ -51,6 +54,7 @@ export type EngineDeps = {
 
 type Origin = { keys: Set<string>; branch: string }
 type Job = { project: Project; origin: Origin | null }
+type MachineState = { queue: Job[]; workers: number; idle: Promise<void>; resolve: () => void }
 
 const REMOTES_TTL_MS = 10 * 60 * 1000
 const CATCH_UP_COOLDOWN_MS = 2 * 60 * 1000
@@ -58,7 +62,7 @@ const CATCH_UP_COOLDOWN_MS = 2 * 60 * 1000
 const NOTIFY_KINDS = new Set<SyncResultKind>(['synced', 'behind', 'diverged', 'dirty-editors', 'blocked'])
 
 /**
- * 项目所在的机器。同一台机器上的 Git 任务串行，避免一条 SSH 连接上同时跑多个 Git；
+ * 项目所在的机器。同一台机器上的 Git 任务限制并发，避免一条 SSH 连接上同时压太多 Git；
  * 不同机器之间并行，接收项目分布在多台机器时不必互相等待。
  */
 export function syncMachineKey(project: Project): string {
@@ -69,10 +73,14 @@ export function syncMachineKey(project: Project): string {
   return 'local'
 }
 
+/** 每台机器同时执行的同步任务数：本机 fetch 各走各的网络连接，SSH 共用一条连接所以更保守。 */
+export function machineConcurrency(machine: string): number {
+  return machine === 'local' ? 4 : 2
+}
+
 export function createGitPushSyncEngine(deps: EngineDeps) {
   const remotesCache = new Map<string, { remotes: GitRemote[]; at: number }>()
-  const queues = new Map<string, Job[]>()
-  const draining = new Map<string, Promise<void>>()
+  const machines = new Map<string, MachineState>()
   const lastCatchUp = new Map<string, number>()
   const lastNoticeKey = new Map<string, string>()
 
@@ -81,6 +89,14 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     if (!enabled) return []
     const allowed = new Set(ids)
     return deps.projects().filter(project => allowed.has(project.id) && !project.ephemeral)
+  }
+
+  /** 已知的仓库地址（不发命令）：缓存过期也可用，只用于预筛，最终仍以上游判断为准。 */
+  function knownKeys(project: Project): string[] | null {
+    const cached = remotesCache.get(project.path)
+    if (cached) return allRemoteKeys(cached.remotes)
+    const remembered = deps.config().identities[project.id]
+    return remembered && remembered.length > 0 ? remembered : null
   }
 
   async function remotesOf(project: Project): Promise<GitRemote[]> {
@@ -110,17 +126,16 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     if (!deps.isTrusted(project)) return
     const at = deps.now()
     let remotes: GitRemote[]
-    let status: GitStatus
+    let status: SyncTracking
     try {
-      remotes = await remotesOf(project)
-      status = await deps.getStatus(project.path)
+      [remotes, status] = await Promise.all([remotesOf(project), deps.getTracking(project.path)])
     } catch (reason) {
       deps.record(project, { kind: 'offline', detail: String(reason), at })
       return
     }
+    const upstream = parseUpstream(status.upstream, remotes)
     if (origin) {
       // 只响应当前分支的上游，且必须是同一仓库；其他分支的推送不影响工作区。
-      const upstream = parseUpstream(status.upstream, remotes)
       if (
         !upstream ||
         upstream.branch !== origin.branch ||
@@ -129,9 +144,15 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
         return
       }
     }
+    if (!upstream) {
+      // 没有可解析的上游时 fetch 也无法判断，直接给出结论。
+      publish(project, { kind: 'no-upstream', at }, 'no-upstream')
+      return
+    }
     try {
-      await deps.fetch(project.path)
-      status = await deps.getStatus(project.path)
+      // 只拉当前分支的上游：远程分支很多时比全量 fetch 快得多。
+      await deps.fetch(project.path, { remote: upstream.remote.name, branch: upstream.branch })
+      status = await deps.getTracking(project.path)
     } catch (reason) {
       publish(project, { kind: 'failed', detail: String(reason), at }, `failed:${reason}`)
       return
@@ -163,30 +184,32 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     deps.afterFastForward(project)
   }
 
-  function drain(machine: string): Promise<void> {
-    const running = draining.get(machine)
-    if (running) return running
-    const task = (async () => {
-      const queue = queues.get(machine) ?? []
-      while (queue.length > 0) {
-        const job = queue.shift() as Job
-        try {
-          await run(job)
-        } catch (reason) {
-          console.warn('git push sync job failed:', reason)
-        }
+  /** 一个工作线程：不断从本机队列取任务，队列空了就退出。首个 shift 同步发生。 */
+  async function work(machine: string, state: MachineState) {
+    for (let job = state.queue.shift(); job; job = state.queue.shift()) {
+      try {
+        await run(job)
+      } catch (reason) {
+        console.warn('git push sync job failed:', reason)
       }
-      queues.delete(machine)
-      draining.delete(machine)
-    })()
-    draining.set(machine, task)
-    return task
+    }
+    state.workers -= 1
+    if (state.workers === 0) {
+      machines.delete(machine)
+      state.resolve()
+    }
   }
 
-  function enqueue(job: Job) {
+  function enqueue(job: Job): Promise<void> {
     const machine = syncMachineKey(job.project)
-    const queue = queues.get(machine) ?? []
-    queues.set(machine, queue)
+    let state = machines.get(machine)
+    if (!state) {
+      let resolve = () => {}
+      const idle = new Promise<void>(done => (resolve = done))
+      state = { queue: [], workers: 0, idle, resolve }
+      machines.set(machine, state)
+    }
+    const { queue } = state
     const duplicate = queue.some(
       item => item.project.path === job.project.path && item.origin?.branch === job.origin?.branch,
     )
@@ -195,7 +218,12 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
       if (job.project.path === deps.currentProjectPath?.()) queue.unshift(job)
       else queue.push(job)
     }
-    return drain(machine)
+    // 空闲名额直接开新线程；每个线程启动时同步取走一个任务。
+    while (state.workers < machineConcurrency(machine) && queue.length > 0) {
+      state.workers += 1
+      void work(machine, state)
+    }
+    return state.idle
   }
 
   async function handlePush(notice: PushNotice) {
@@ -211,11 +239,14 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     const remote = remotes.find(item => item.name === notice.remote)
     if (!remote) return
     const origin = { keys: new Set(remoteUrlKeys(remote)), branch: notice.branch }
-    await Promise.all(
-      receivers()
-        .filter(project => project.path !== source.path)
-        .map(project => enqueue({ project, origin })),
-    )
+    // 先用已知地址排除其他仓库的接收项目，免得它们排在同仓库项目前面跑 Git。
+    // 地址未知的项目仍然入队，由任务内的上游判断兜底。
+    const targets = receivers().filter(project => {
+      if (project.path === source.path) return false
+      const keys = knownKeys(project)
+      return !keys || keysOverlap(keys, origin.keys)
+    })
+    await Promise.all(targets.map(project => enqueue({ project, origin })))
   }
 
   /** SCM 面板推送成功。已有 reflog 监听的项目由监听事件负责，避免重复。 */
@@ -224,7 +255,7 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     const source = deps.projects().find(project => project.path === path)
     if (!source) return
     try {
-      const [remotes, status] = await Promise.all([remotesOf(source), deps.getStatus(path)])
+      const [remotes, status] = await Promise.all([remotesOf(source), deps.getTracking(path)])
       const upstream = parseUpstream(status.upstream, remotes)
       if (upstream) {
         await handlePush({ projectPath: path, remote: upstream.remote.name, branch: upstream.branch })
@@ -280,7 +311,7 @@ export function createGitPushSyncEngine(deps: EngineDeps) {
     await deps.setWatches(targets)
   }
 
-  return { handlePush, handlePanelPush, catchUp, catchUpAll, refreshWatches, idle: () => Promise.all([...draining.values()]).then(() => undefined) }
+  return { handlePush, handlePanelPush, catchUp, catchUpAll, refreshWatches, idle: () => Promise.all([...machines.values()].map(state => state.idle)).then(() => undefined) }
 }
 
 export type GitPushSyncEngine = ReturnType<typeof createGitPushSyncEngine>
