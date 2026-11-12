@@ -1,7 +1,7 @@
 [package]
 name = "qingcode"
 default-run = "qingcode"
-version = "0.1.18-beta.9"
+version = "0.1.18-beta.10"
 description = "QingCode — a lightweight multi-project code editor"
 authors = ["Franciz"]
 license = "MIT"
