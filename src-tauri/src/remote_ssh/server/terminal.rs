@@ -430,6 +430,8 @@ pub(crate) struct DetachedTerminal {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    original_tab_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     detached_remaining_ms: Option<u64>,
 }
 
@@ -511,6 +513,32 @@ fn owned_detached_ptys(ptys: Vec<PtyInfoWire>, client_id: &str) -> Vec<PtyInfoWi
         .collect()
 }
 
+// 旧客户端把缺名任务存为标签 UUID，手机终端则用 mobile-* 名称标记归属。
+// 历史标签名入库前已经 trim。仅给与这两种标记冲突的真实名称加一个前导空格，
+// 老客户端显示时也会 trim，daemon 无需升级。
+fn legacy_tab_uuid(name: &str) -> bool {
+    name.len() == 36 && uuid::Uuid::parse_str(name).is_ok_and(|id| id.get_version_num() == 4)
+}
+
+fn daemon_terminal_name(id: &str, label: Option<&str>) -> Option<String> {
+    if crate::mobile::is_mobile_terminal(id) {
+        return Some(id.to_owned());
+    }
+    let label = label?.trim();
+    if label.is_empty() {
+        return None;
+    }
+    if crate::mobile::is_mobile_terminal(label) || legacy_tab_uuid(label) {
+        return Some(format!(" {label}"));
+    }
+    Some(label.to_owned())
+}
+
+fn detached_desktop_label(name: &str) -> Option<String> {
+    let label = name.trim();
+    (!label.is_empty() && !legacy_tab_uuid(name)).then(|| label.to_owned())
+}
+
 fn detached_terminal_from_info(
     info: PtyInfoWire,
     connection_id: &str,
@@ -529,7 +557,8 @@ fn detached_terminal_from_info(
         cwd: daemon_path_to_uri(connection_id, cwd)?,
         cols: info.cols,
         rows: info.rows,
-        name: info.name.filter(|name| !name.trim().is_empty()),
+        name: info.name.as_deref().and_then(detached_desktop_label),
+        original_tab_id: info.name.filter(|name| legacy_tab_uuid(name)),
         detached_remaining_ms: info.detached_remaining_ms,
     })
 }
@@ -1383,10 +1412,11 @@ pub(crate) async fn spawn_persistent_terminal(
     working_directory: String,
     cols: u16,
     rows: u16,
-    launch: PersistentLaunch,
+    mut launch: PersistentLaunch,
     app: AppHandle,
     manager: &SshManager,
 ) -> Result<TerminalSpawnResult, String> {
+    launch.name = daemon_terminal_name(&id, launch.name.as_deref());
     let parsed = parse_remote_uri(&root.uri)?;
     // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
     let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;

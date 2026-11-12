@@ -13,6 +13,8 @@ export type SshDetachedTerminal = {
   rows: number
   /** Optional display name from the daemon. */
   name?: string
+  /** 旧桌面端写在 daemon 名称字段里的原标签 ID，用于查回本地显示名。 */
+  originalTabId?: string
   /** 无人接回时自动结束的时间（本机毫秒）；旧版 daemon 没有。 */
   expiresAt?: number
 }
@@ -96,6 +98,7 @@ export function parseSshDetachedTerminal(value: unknown, now = Date.now()): SshD
     cols: record.cols,
     rows: record.rows,
     ...(typeof record.name === 'string' && record.name.trim() ? { name: record.name.trim() } : {}),
+    ...(typeof record.originalTabId === 'string' && record.originalTabId ? { originalTabId: record.originalTabId } : {}),
     // 远端只报剩余时长，用本机时钟换算，两台机器时间不一致也不影响。
     ...(typeof record.detachedRemainingMs === 'number' && record.detachedRemainingMs >= 0
       ? { expiresAt: now + record.detachedRemainingMs }

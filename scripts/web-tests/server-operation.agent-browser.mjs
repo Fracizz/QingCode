@@ -45,6 +45,7 @@ try {
   captureStack('parallel-updates-dark')
   click('并行打开项目')
   check('latest opening leads the mixed stack', `${summaryHas('远程任务 3')} && document.querySelector('.server-operation-card [data-project-source]').textContent === 'opening'`)
+  captureStack('three-tasks-collapsed-dark')
   click('添加通知与传输')
   check('notifications and transfers remain independent', `document.querySelector('[data-floating-task-stack]').children.length === 3 && ${separateCards}`)
   run('click', summary)

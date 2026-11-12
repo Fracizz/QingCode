@@ -189,6 +189,7 @@ export default function TerminalSessionList() {
   const listRef = useRef<HTMLDivElement>(null)
   const [manageMode, setManageMode] = useState(false)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
+  const rangeAnchor = useRef<{ id: string; checked: boolean; base: ReadonlySet<string> } | null>(null)
   const [closingBatch, setClosingBatch] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
@@ -260,9 +261,13 @@ export default function TerminalSessionList() {
   const picked = prunedTerminalSelection(selection, visibleTerminals)
   const endedVisible = visibleTerminals.filter(isEndedTerminal)
   const allPicked = allTerminalsSelected(picked, visibleTerminals)
+  const replaceSelection = (next: ReadonlySet<string>) => {
+    rangeAnchor.current = null
+    setSelection(next)
+  }
   const setManaging = (next: boolean) => {
     setManageMode(next)
-    setSelection(new Set())
+    replaceSelection(new Set())
     setCloseArmId(null)
   }
   const closePicked = async () => {
@@ -343,9 +348,27 @@ export default function TerminalSessionList() {
     saveCollapsedProjects(next)
   }
 
-  const selectTerminal = (term: TerminalTab) => {
+  const selectTerminal = (term: TerminalTab, extend = false, focusedId?: string) => {
     if (managing) {
-      setSelection(toggleTerminalSelection(picked, term.id))
+      if (extend) {
+        const previous = rangeAnchor.current
+        const anchor = previous && visibleTerminals.some(item => item.id === previous.id)
+          ? previous
+          : { id: focusedId ?? term.id, checked: true, base: picked }
+        rangeAnchor.current = anchor
+        const start = visibleTerminals.findIndex(item => item.id === anchor.id)
+        const end = visibleTerminals.findIndex(item => item.id === term.id)
+        const next = prunedTerminalSelection(anchor.base, visibleTerminals)
+        for (const item of visibleTerminals.slice(Math.min(start, end), Math.max(start, end) + 1)) {
+          if (anchor.checked) next.add(item.id)
+          else next.delete(item.id)
+        }
+        setSelection(next)
+      } else {
+        const next = toggleTerminalSelection(picked, term.id)
+        rangeAnchor.current = { id: term.id, checked: next.has(term.id), base: picked }
+        setSelection(next)
+      }
       return
     }
     void selectAcrossProjects(term)
@@ -371,10 +394,15 @@ export default function TerminalSessionList() {
     else if (event.key === 'End') nextIndex = count - 1
     else return
     event.preventDefault()
+    if (managing && event.shiftKey && current >= 0) {
+      if (event.key === 'ArrowDown') nextIndex = Math.min(count - 1, current + 1)
+      if (event.key === 'ArrowUp') nextIndex = Math.max(0, current - 1)
+    }
     const next = visibleTerminals[nextIndex]
     if (!next) return
     // 其他项目只移动焦点、按 Enter 才切换：方向键扫过时不能触发信任弹窗或 SSH 连接。
-    if (next.projectId === currentProjectId) selectTerminal(next)
+    if (managing && event.shiftKey) selectTerminal(next, true, visibleTerminals[current]?.id)
+    else if (next.projectId === currentProjectId) selectTerminal(next)
     event.currentTarget
       .querySelector<HTMLElement>(`[data-terminal-session-row="${next.id}"]`)
       ?.focus()
@@ -418,12 +446,12 @@ export default function TerminalSessionList() {
             ? undefined
             : event => startTerminalDrag(event, term.id)
         }
-        onClick={() => selectTerminal(term)}
+        onClick={event => selectTerminal(term, event.shiftKey)}
         onKeyDown={event => {
           if (event.target !== event.currentTarget) return
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            selectTerminal(term)
+            selectTerminal(term, event.shiftKey)
           }
         }}
         onDoubleClick={event => {
@@ -653,7 +681,7 @@ export default function TerminalSessionList() {
                   if (groupPick === 'on') next.delete(term.id)
                   else next.add(term.id)
                 }
-                setSelection(next)
+                replaceSelection(next)
               }}
             >
               <PickBox state={groupPick} data-terminal-group-pick={project.id} />
@@ -999,7 +1027,7 @@ export default function TerminalSessionList() {
             className={BAR_BUTTON}
             disabled={closingBatch || visibleTerminals.length === 0}
             onClick={() =>
-              setSelection(allPicked ? new Set() : new Set(visibleTerminals.map(term => term.id)))
+              replaceSelection(allPicked ? new Set() : new Set(visibleTerminals.map(term => term.id)))
             }
           >
             {allPicked ? translate('取消全选') : translate('全选 {n}', { n: visibleTerminals.length })}
@@ -1008,7 +1036,7 @@ export default function TerminalSessionList() {
             type="button"
             className={BAR_BUTTON}
             disabled={closingBatch || endedVisible.length === 0}
-            onClick={() => setSelection(new Set(endedVisible.map(term => term.id)))}
+            onClick={() => replaceSelection(new Set(endedVisible.map(term => term.id)))}
           >
             {translate('选已结束')}
           </button>
@@ -1070,6 +1098,7 @@ export default function TerminalSessionList() {
                     separatorBefore: true,
                     action: () => {
                       setManageMode(true)
+                      rangeAnchor.current = { id: contextMenu.terminal.id, checked: true, base: new Set() }
                       setSelection(new Set([contextMenu.terminal.id]))
                       setCloseArmId(null)
                     },

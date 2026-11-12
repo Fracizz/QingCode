@@ -78,7 +78,8 @@ vi.mock('./uiStore', () => ({
 
 import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, setTerminalViewGrid, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
-import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
+import { rememberPreservedTerminalName } from '@/lib/terminal/detachedTerminalNames'
+import { buildWorkspaceSessionSnapshot, clearWorkspaceSession, parseWorkspaceSession, saveWorkspaceSession } from '@/lib/workspaceSessionPersist'
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import { planTerminalRestore } from '@/lib/terminal/terminalRestorePlan'
@@ -738,6 +739,19 @@ describe('terminal persistent connection events', () => {
     expect(useTerminalStore.getState().terminals[0]).toMatchObject({ status: 'running', ptyId: 'original-pty', launchCommand: 'claude' })
   })
 
+  it.each([
+    ['shell', '', undefined],
+    ['profile', 'claude', undefined],
+    ['task', 'pnpm dev', 'command'],
+  ] as const)('passes the %s tab name to the persistent SSH spawn', async (_kind, launchCommand, shellKind) => {
+    const tab = terminal({ name: '开发服务', launchCommand, shellKind, status: 'starting', ptySpawnPending: true })
+    useTerminalStore.setState({ terminals: [tab] })
+    mocks.spawnTerminalScript.mockResolvedValue({ persistent: true })
+    await useTerminalStore.getState().spawnPendingTerminal(tab.id, 80, 24)
+    const spawn = launchCommand ? mocks.spawnTerminalScript : mocks.createTerminal
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ id: tab.id, name: tab.name }))
+  })
+
   it('summarizes unowned detached terminals and reattaches them into tabs', async () => {
     const project = {
       id: 'p-orphan-attach',
@@ -748,6 +762,17 @@ describe('terminal persistent connection events', () => {
     }
     mocks.projectState.currentProject = project
     mocks.projectState.projects = [project]
+    const originalTabId = 'f5c652c2-be54-499e-af22-4b480d42a190'
+    saveWorkspaceSession({
+      version: 1, updatedAt: 1, projects: { [project.id]: {
+        tabs: [], activeTabId: null, activeTerminalId: null,
+        terminals: [{ id: originalTabId, cwd: project.path, name: 'django · API', launchCommand: '' }],
+      } },
+    })
+    rememberPreservedTerminalName(terminal({
+      projectId: project.id, cwd: project.path, connectionId: project.connection_id,
+      ptyId: 'pty-orphan', name: '手动改名后的窗口',
+    }))
     mocks.listDetachedTerminals.mockResolvedValueOnce([
       {
         ptyId: 'pty-owned',
@@ -764,13 +789,17 @@ describe('terminal persistent connection events', () => {
         rows: 40,
         name: 'OpenCode',
       },
+      {
+        ptyId: 'pty-old-task', originalTabId, connectionId: project.connection_id, cwd: project.path, cols: 80, rows: 24,
+      },
+      ...['pty-legacy-a', 'pty-legacy-b'].map(ptyId => ({
+        ptyId, connectionId: project.connection_id, cwd: project.path, cols: 80, rows: 24,
+      })),
     ])
     mocks.choiceDialog.mockResolvedValueOnce('attach')
-    mocks.attachTerminal.mockResolvedValueOnce({
-      persistent: true,
-      ptyId: 'pty-orphan',
-      connectionId: 'conn-orphan',
-    })
+    mocks.attachTerminal.mockImplementation(async ({ ptyId }) => ({
+      persistent: true, ptyId, connectionId: project.connection_id,
+    }))
     useTerminalStore.setState({
       terminals: [
         terminal({
@@ -787,7 +816,7 @@ describe('terminal persistent connection events', () => {
 
     expect(mocks.pushToast).toHaveBeenCalledWith(
       'info',
-      '远端还有 1 个终端在运行',
+      '远端还有 4 个终端在运行',
       undefined,
       expect.objectContaining({ label: '查看' }),
     )
@@ -805,9 +834,15 @@ describe('terminal persistent connection events', () => {
         rows: null,
       }),
     )
-    expect(
-      useTerminalStore.getState().terminals.filter(tab => tab.projectId === project.id),
-    ).toHaveLength(2)
+    clearWorkspaceSession()
+    const tabs = useTerminalStore.getState().terminals.filter(tab => tab.projectId === project.id)
+    expect(tabs.map(tab => [tab.ptyId, tab.name])).toEqual([
+      ['pty-owned', 'SSH'],
+      ['pty-orphan', '手动改名后的窗口'],
+      ['pty-old-task', 'django · API'],
+      ['pty-legacy-a', '远端终端'],
+      ['pty-legacy-b', '远端终端 (2)'],
+    ])
   })
 
   it('ends an untouched default detached terminal even when replay would fail', async () => {

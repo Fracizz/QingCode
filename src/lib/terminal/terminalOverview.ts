@@ -1,4 +1,5 @@
 import type { Project, TerminalTab } from '../../types'
+import { translate } from '../i18n'
 import type { MobileSessionSummary } from '../ipc/mobileSessions'
 import type { SshDetachedTerminal } from './terminalRestorePlan'
 
@@ -82,7 +83,7 @@ export function terminalOverviewEntries(input: TerminalOverviewInput): TerminalO
         source: 'remote' as const,
         key: `remote:${group.connectionId}:${terminal.ptyId}`,
         projectId: group.projectId,
-        name: terminal.name || terminal.ptyId,
+        name: terminal.name || translate('远端终端'),
         connectionId: group.connectionId,
         terminal,
       })),

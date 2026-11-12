@@ -353,22 +353,15 @@ pub(super) fn persistent_shell_launch(
     })
 }
 
-/// 配置文件终端交给 daemon 的名称：优先用前端标签名，缺省才退回终端 id。
-pub(super) fn profile_terminal_name<'a>(name: Option<&'a str>, id: &'a str) -> &'a str {
-    name.map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or(id)
-}
-
 pub(super) fn persistent_profile_launch(
     path: &str,
     target: &str,
     env: &HashMap<String, String>,
     shell: Option<&str>,
-    name: &str,
+    name: Option<String>,
 ) -> Result<server::PersistentLaunch, String> {
     let mut launch = persistent_shell_launch(path, shell)?;
-    launch.name = Some(name.to_string());
+    launch.name = name;
     launch.env = env
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
@@ -398,12 +391,15 @@ pub(super) fn persistent_profile_launch(
 
 /// 一次性运行任务交给 daemon：由 /bin/sh 执行与直连相同的调用串（含环境变量前缀），
 /// 工作目录由 daemon 的 cwd 设置；进程结束即终端结束。
-pub(super) fn persistent_task_launch(invocation: &str, name: &str) -> server::PersistentLaunch {
+pub(super) fn persistent_task_launch(
+    invocation: &str,
+    name: Option<String>,
+) -> server::PersistentLaunch {
     server::PersistentLaunch {
         shell: Some("/bin/sh".to_string()),
         args: vec!["-c".to_string(), invocation.to_string()],
         env: std::collections::BTreeMap::new(),
-        name: Some(name.to_string()),
+        name,
         resolved_shell: "sh".to_string(),
         fallback_from: None,
     }
@@ -417,7 +413,7 @@ pub(super) fn direct_windows_profile_command(
 ) -> Result<String, String> {
     let native = windows_native_path(path)
         .ok_or_else(|| "直连 profile 终端需要 Windows 远程路径".to_string())?;
-    let launch = persistent_profile_launch(path, target, env, shell, "profile")?;
+    let launch = persistent_profile_launch(path, target, env, shell, None)?;
     let mut script = String::new();
     for (key, value) in env {
         script.push_str(&format!("$env:{key} = '{}'; ", powershell_literal(value)));
@@ -468,12 +464,14 @@ pub(super) fn direct_spawn_result_fallback(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn ssh_create_terminal_unchecked(
     id: String,
     cwd: String,
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    name: Option<String>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
@@ -485,10 +483,7 @@ pub(crate) async fn ssh_create_terminal_unchecked(
     // Server 模式只走 daemon，SSH 模式只走直连，两者不再互相回退。
     if manager.server_mode(&parsed.connection_id) {
         let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
-        if crate::mobile::is_mobile_terminal(&id) {
-            // The daemon name lets desktop restore recognize companion terminals.
-            launch.name = Some(id.clone());
-        }
+        launch.name = name;
         return server::spawn_persistent_terminal(
             id,
             root,
@@ -671,15 +666,9 @@ pub(crate) async fn ssh_spawn_script_unchecked(
         let working_directory =
             persistent_cwd.expect("server mode validates the task working directory");
         let launch = if shell_kind == "interactive" {
-            persistent_profile_launch(
-                &parsed.path,
-                &target,
-                &env,
-                shell.as_deref(),
-                profile_terminal_name(name.as_deref(), &id),
-            )?
+            persistent_profile_launch(&parsed.path, &target, &env, shell.as_deref(), name)?
         } else {
-            persistent_task_launch(&invocation, profile_terminal_name(name.as_deref(), &id))
+            persistent_task_launch(&invocation, name)
         };
         return server::spawn_persistent_terminal(
             id,
@@ -854,17 +843,19 @@ pub async fn ssh_list_detached_terminals(
 // 手机端走对应的 `*_unchecked` 内部实现。
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn ssh_create_terminal(
     id: String,
     cwd: String,
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    name: Option<String>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
     crate::mobile::reject_desktop_use(&id)?;
-    ssh_create_terminal_unchecked(id, cwd, cols, rows, shell, app, manager).await
+    ssh_create_terminal_unchecked(id, cwd, cols, rows, shell, name, app, manager).await
 }
 
 #[tauri::command]

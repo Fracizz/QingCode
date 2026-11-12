@@ -1,3 +1,4 @@
+import { recoverMisnamedTab } from './terminal/detachedTerminalNames'
 import { clearDraft, getDraft } from './draftRecovery'
 import type {
   PersistedEditorTab,
@@ -42,7 +43,7 @@ export function terminalFromPersisted(
   projectId: string,
   meta: PersistedProjectSession['terminals'][number],
 ): TerminalTab {
-  return {
+  const tab: TerminalTab = {
     id: meta.id,
     name: meta.name,
     projectId,
@@ -66,4 +67,6 @@ export function terminalFromPersisted(
     endedAt: meta.endedAt,
     awaitingRestoreSpawn: !meta.endedAt,
   }
+  tab.name = recoverMisnamedTab(tab) ?? tab.name
+  return tab
 }

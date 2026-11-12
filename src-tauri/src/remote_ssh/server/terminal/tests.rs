@@ -390,6 +390,23 @@ async fn exit_detach_stops_proxy_without_marking_process_closed_or_sending_kill(
 }
 
 #[test]
+fn detached_desktop_names_round_trip_without_confusing_mobile_sessions_or_legacy_tab_ids() {
+    let old_tab_id = "f5c652c2-be54-499e-af22-4b480d42a190";
+    assert_eq!(detached_desktop_label(old_tab_id), None);
+    assert_eq!(daemon_terminal_name(old_tab_id, Some(" ")), None);
+    assert_eq!(daemon_terminal_name(old_tab_id, None), None);
+    for label in ["后端 · 服务", "mobile-build", old_tab_id] {
+        let stored = daemon_terminal_name(old_tab_id, Some(label)).unwrap();
+        assert!(!crate::mobile::is_mobile_terminal(&stored));
+        assert_eq!(detached_desktop_label(&stored).as_deref(), Some(label));
+    }
+    assert_eq!(
+        daemon_terminal_name("mobile-123", Some("Bash")).as_deref(),
+        Some("mobile-123")
+    );
+}
+
+#[test]
 fn detached_terminal_maps_owned_pty_cwd_to_ssh_uri() {
     let roots = vec![RegisteredRoot {
         uri: "ssh://remote-a/home/dev/app".into(),
@@ -412,6 +429,13 @@ fn detached_terminal_maps_owned_pty_cwd_to_ssh_uri() {
     assert_eq!(json["connectionId"], "remote-a");
     assert_eq!(json["detachedRemainingMs"], 60_000);
     assert!(json.get("pty_id").is_none());
+
+    let original_tab_id = "f5c652c2-be54-499e-af22-4b480d42a190";
+    let mut old = pty_info("pty-2", Some("install:remote-a"), "/home/dev/app");
+    old.name = Some(original_tab_id.into());
+    let json = serde_json::to_value(detached_terminal_from_info(old, "remote-a", &roots)).unwrap();
+    assert_eq!(json["originalTabId"], original_tab_id);
+    assert!(json.get("name").is_none());
 
     let windows_roots = vec![RegisteredRoot {
         uri: "ssh://remote-a/D:/code/app".into(),

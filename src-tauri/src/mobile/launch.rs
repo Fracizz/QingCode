@@ -85,6 +85,7 @@ pub(super) async fn create(
                 Some(cols),
                 Some(rows),
                 shell,
+                None,
                 app.clone(),
                 app.state(),
             )

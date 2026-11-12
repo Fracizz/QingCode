@@ -454,7 +454,8 @@ fn server_mode_errors_carry_prefix_once() {
 
 #[test]
 fn server_mode_task_launch_runs_invocation_with_sh() {
-    let launch = super::persistent_task_launch("FOO='1' exec /bin/sh 'build.sh'", "构建");
+    let launch =
+        super::persistent_task_launch("FOO='1' exec /bin/sh 'build.sh'", Some("构建".into()));
     assert_eq!(launch.shell.as_deref(), Some("/bin/sh"));
     assert_eq!(
         launch.args,
@@ -534,16 +535,6 @@ fn terminal_pool_full_notice_names_count_and_source() {
 }
 
 use super::*;
-
-#[test]
-fn profile_terminal_name_prefers_tab_name_over_terminal_id() {
-    assert_eq!(
-        profile_terminal_name(Some(" OpenCode "), "uuid-1"),
-        "OpenCode"
-    );
-    assert_eq!(profile_terminal_name(Some("  "), "uuid-1"), "uuid-1");
-    assert_eq!(profile_terminal_name(None, "uuid-1"), "uuid-1");
-}
 
 #[test]
 fn image_read_limit_stays_at_64mb_like_the_local_viewer() {
@@ -1208,7 +1199,7 @@ fn persistent_windows_shell_forces_utf8_console_and_file_reading() {
         "opencode",
         &HashMap::new(),
         Some("powershell"),
-        "OpenCode",
+        Some("OpenCode".into()),
     )
     .unwrap();
     assert_eq!(profile.name.as_deref(), Some("OpenCode"));

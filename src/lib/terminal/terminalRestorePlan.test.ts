@@ -163,6 +163,13 @@ describe('detached terminal filtering', () => {
     ).toEqual(['win'])
   })
 
+  it('retains the original tab identity separately from the display name for old daemons', () => {
+    const originalTabId = 'f5c652c2-be54-499e-af22-4b480d42a190'
+    const found = parseSshDetachedTerminal({ ...detached(), originalTabId })
+    expect(found?.originalTabId).toBe(originalTabId)
+    expect(found?.name).toBeUndefined()
+  })
+
   it('rejects malformed list entries and preserves valid metadata', () => {
     expect(
       parseSshDetachedTerminal({

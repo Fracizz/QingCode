@@ -17,6 +17,7 @@ import {
   setEditorScroll,
   type EditorScrollPos,
 } from './editorSession'
+import { prunePreservedTerminalNames } from './terminal/detachedTerminalNames'
 import { shouldRestoreWorkspace } from './windowSession'
 import {
   isSessionPersistEnabled,
@@ -330,6 +331,7 @@ export function scheduleWorkspaceSessionPersist() {
 export function installWorkspaceSessionPersistence() {
   if (installed) return
   installed = true
+  prunePreservedTerminalNames()
   // 设置里重新开启会话保存时立即落盘（原先由 sessionPersistSettings 直接调用，现改为注册以断开依赖环）。
   registerSessionPersistResumeHandler(scheduleWorkspaceSessionPersist)
   if (!shouldRestoreWorkspace()) return

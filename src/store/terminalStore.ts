@@ -73,6 +73,7 @@ import { closeMobileView, isMobileTerminalId, openMobileView } from '../lib/ipc/
 import { useTerminalControlStore } from './terminalControlStore'
 import { isSshProject, sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { choiceDialog } from './choiceStore'
+import { forgetPreservedTerminalName, terminalNameForReattach } from '@/lib/terminal/detachedTerminalNames'
 import {
   filterUnownedDetachedTerminals,
   planTerminalRestore,
@@ -1088,7 +1089,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       project.path,
       connectionRoots,
     )
-    return { connectionId, terminals }
+    const resolveName = terminalNameForReattach(projectId, get().terminals)
+    return { connectionId, terminals: terminals.map(terminal => ({ ...terminal, name: resolveName(terminal) })) }
   },
 
   attachDetachedTerminals: async (
@@ -1116,12 +1118,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     const pane = get().terminalFocusPane
     const added: TerminalTab[] = []
+    const names = [
+      ...get().terminals.filter(tab => tab.projectId === projectId).map(tab => tab.name),
+      ...accepted.flatMap(terminal => terminal.name ? [terminal.name] : []),
+    ]
     for (const terminal of accepted) {
       const id = crypto.randomUUID()
-      const name = disambiguateTerminalName(
-        terminal.name || translate('远端终端'),
-        get().terminals.map(tab => tab.name),
-      )
+      const name = terminal.name || disambiguateTerminalName(translate('远端终端'), names)
+      if (!terminal.name) names.push(name)
       const tab: TerminalTab = {
         id,
         name,
@@ -1575,6 +1579,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             rows: attachSize?.rows ?? null,
             fromSeq: terminalResumeSeqs.get(id) ?? null,
           })
+          if (tab.cwd.startsWith('ssh://')) {
+            forgetPreservedTerminalName(restorePlan.connectionId, restorePlan.ptyId)
+          }
           attached = true
         } catch (error) {
           // Preserve the failed restore; never rerun the saved profile or task command.
@@ -1610,6 +1617,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           spawnResult = await spawnTerminalScript({
             id,
             cwd: tab.cwd,
+            name: tab.name,
             shellKind: plan.shellKind,
             target: plan.target,
             env: plan.env,
@@ -1634,6 +1642,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         } else {
           spawnResult = await createTerminal({
             id,
+            name: tab.name,
             cwd: tab.cwd,
             cols: size.cols,
             rows: size.rows,

@@ -5,6 +5,7 @@ import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, useTerminalS
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { isTransferActive, useTransferStore } from '../store/transferStore'
 import { closeTerminalOnExit, finishRemoteTerminalOnExit, localHostSurvivesAppExit } from './ipc/terminal'
+import { rememberPreservedTerminalName } from './terminal/detachedTerminalNames'
 import { runAppClose } from './appCloseFlow'
 import { flushWorkspaceSessionPersist } from './workspaceSessionSync'
 import { safeInvoke } from './tauri'
@@ -35,11 +36,15 @@ export function requestAppClose(): Promise<void> {
           ...(tab.cwd.startsWith('ssh://') ? {} : { persistent: undefined, ptyId: undefined, connectionId: undefined }) }
         : current,
     ) })),
-    markDetached: tab => useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
-      current.id === tab.id && current.ptyId === tab.ptyId && !current.endedAt
-        ? { ...current, status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true }
-        : current,
-    ) })),
+    markDetached: tab => {
+      const currentTab = useTerminalStore.getState().terminals.find(t => t.id === tab.id && t.ptyId === tab.ptyId)
+      if (currentTab) rememberPreservedTerminalName(currentTab)
+      useTerminalStore.setState(state => ({ terminals: state.terminals.map(current =>
+        current.id === tab.id && current.ptyId === tab.ptyId && !current.endedAt
+          ? { ...current, status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true }
+          : current,
+      ) }))
+    },
     flush: flushWorkspaceSessionPersist,
     destroy: async () => {
       const window = getCurrentWindow()

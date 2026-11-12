@@ -581,6 +581,40 @@ describe('TerminalSessionList', () => {
     expect(screen.getByRole('status')).toHaveTextContent('已选 1')
   })
 
+  it('extends and shrinks a Shift selection across visible project groups', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    fireEvent.click(row('t1'))
+    fireEvent.click(row('other'), { shiftKey: true })
+    expect(screen.getByRole('status')).toHaveTextContent('已选 3')
+    fireEvent.keyDown(row('other'), { key: 'ArrowUp', shiftKey: true })
+    expect(row('other')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 2')
+    fireEvent.click(row('t2'))
+    fireEvent.click(row('t1'), { shiftKey: true })
+    expect(screen.getByRole('status')).toHaveTextContent('已选 0')
+    expect(mocks.projectState.switchProject).not.toHaveBeenCalled()
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+  })
+
+  it('uses only search matches and starts over when the range anchor is hidden', () => {
+    mocks.state.terminals = [
+      terminal({ name: 'match one' }),
+      terminal({ id: 't2', name: 'hidden' }),
+      terminal({ id: 'other', name: 'match two', projectId: 'p2' }),
+    ]
+    render(<TerminalSessionList />)
+    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    fireEvent.click(row('t2'))
+    search('match')
+    fireEvent.click(row('other'), { shiftKey: true })
+    expect(screen.getByRole('status')).toHaveTextContent('已选 1')
+    fireEvent.click(row('t1'), { shiftKey: true })
+    search('')
+    expect(row('t2')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('status')).toHaveTextContent('已选 2')
+  })
+
   it('selects all visible or only ended terminals and closes the selection', async () => {
     mocks.state.terminals = [
       terminal(),

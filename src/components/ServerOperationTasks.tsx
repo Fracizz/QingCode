@@ -46,7 +46,7 @@ export default function ServerOperationTasks() {
     .map(a => a.startedAt + 300).filter(time => time > cutoff))
   useEffect(() => {
     if (!Number.isFinite(next)) return
-    const timer = setTimeout(() => setCutoff(Date.now()), Math.max(0, next - Date.now()))
+    const timer = setTimeout(() => setCutoff(Math.max(next, Date.now())), Math.max(0, next - Date.now()))
     return () => clearTimeout(timer)
   }, [next])
   const shownByOpening = new Set<ServerOperation>()
@@ -87,10 +87,10 @@ export default function ServerOperationTasks() {
     return <SshOpeningDialog key={failed.id} attempt={failed} />
   }
   if (items.length < 2) return items[0]?.detail ?? null
-  return <RemoteTaskStack items={items} />
+  return <RemoteTaskCard items={items} />
 }
 
-function RemoteTaskStack({ items }: { items: RemoteTask[] }) {
+function RemoteTaskCard({ items }: { items: RemoteTask[] }) {
   const { t } = useI18n()
   const connections = useProjectStore(s => s.sshConnections)
   const [expanded, setExpanded] = useState(false)
@@ -101,10 +101,6 @@ function RemoteTaskStack({ items }: { items: RemoteTask[] }) {
   const completed = items.length - running.length - errors.length
   const Chevron = expanded ? ChevronUp : ChevronDown
   return <section aria-label={t('远程任务')} className="min-w-0">
-    {!expanded && <div aria-hidden="true">
-      {items.length > 2 && <div className="mx-4 h-1 rounded-t-lg border border-b-0 border-dialog-border bg-dialog-sidebar" />}
-      <div className="mx-2 h-1 rounded-t-lg border border-b-0 border-dialog-border bg-dialog-chrome" />
-    </div>}
     <div className="flex max-h-[calc(100dvh-5rem)] flex-col overflow-y-auto rounded-lg border border-dialog-border bg-dialog shadow-elevation-3 [&>:not(ul)]:shrink-0">
       <div className="flex flex-wrap items-center gap-x-2 bg-dialog-chrome px-3 py-1.5 text-ui-sm">
         <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}
