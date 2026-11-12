@@ -85,6 +85,8 @@ struct PoolState {
     generation: u64,
     shells: Vec<WarmShell>,
     running: bool,
+    /// 上一轮不可用已记录过诊断，避免每 1.5 秒重复写。
+    unusable: bool,
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
@@ -92,6 +94,13 @@ pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notif
 /// auto 固定保留 1 个：领取后会立即补充，常驻更多只对极快的连续新建有帮助。
 fn resolve_count(value: &serde_json::Value) -> usize {
     value.as_u64().map_or(1, |count| count.min(8) as usize)
+}
+
+/// 预热链路的诊断事件：配置、就绪、失败、丢弃与领取结果，便于在用户机器上排查未命中。
+/// 不记录路径与命令，只记录阶段、原因与耗时。
+fn trace(stage: &str, mut fields: serde_json::Value) {
+    fields["stage"] = stage.into();
+    qingcode_server::diagnostics::record("terminal.prewarm", fields, false, false);
 }
 
 fn under_pressure(total: u64, available: u64) -> bool {
@@ -144,6 +153,10 @@ impl ShellPrewarmPool {
             .as_ref()
             .is_some_and(|target| target.window == window)
         {
+            trace(
+                "cleared",
+                serde_json::json!({"window": window, "dropped": state.shells.len()}),
+            );
             state.target = None;
             state.generation += 1;
             state.shells.clear();
@@ -191,9 +204,17 @@ impl ShellPrewarmPool {
         };
         let count = resolve_count(&count);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.target.as_ref().is_none_or(|target| {
+        let changed = state.target.as_ref().is_none_or(|target| {
             target.key != key || target.count != count || target.window != window
-        }) {
+        });
+        trace(
+            "configured",
+            serde_json::json!({
+                "window": window, "count": count, "remote": remote.is_some(),
+                "changed": changed, "dropped": if changed { state.shells.len() } else { 0 },
+            }),
+        );
+        if changed {
             state.shells.clear();
             state.generation += 1;
             self.1.notify_waiters();
@@ -214,23 +235,66 @@ impl ShellPrewarmPool {
     }
 
     pub(crate) fn reserve(&self, cwd: &str, shell: Option<&str>) -> Option<String> {
-        if !self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .shells
-            .iter()
-            .any(|entry| entry.reserved_at.is_none())
-        {
+        let remote = cwd.starts_with(SSH_URI_PREFIX);
+        let (idle, has_target) = {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let idle = state
+                .shells
+                .iter()
+                .filter(|entry| entry.reserved_at.is_none())
+                .count();
+            (idle, state.target.is_some())
+        };
+        if idle == 0 {
+            trace(
+                "reserve_miss",
+                serde_json::json!({"reason": if has_target { "empty" } else { "no_target" }, "remote": remote}),
+            );
             return None;
         }
-        let key = if cwd.starts_with(SSH_URI_PREFIX) {
-            remote_launch_key(cwd, shell).ok()?.1
+        let key = if remote {
+            remote_launch_key(cwd, shell).map(|(_, key)| key)
         } else {
-            let launch = resolve_launch(cwd, shell).ok()?;
-            LaunchKey::new(cwd, &launch).ok()?
+            resolve_launch(cwd, shell).and_then(|launch| LaunchKey::new(cwd, &launch))
         };
-        self.reserve_key(&key)
+        let key = match key {
+            Ok(key) => key,
+            Err(error) => {
+                trace(
+                    "reserve_miss",
+                    serde_json::json!({"reason": "launch", "error": error, "remote": remote}),
+                );
+                return None;
+            }
+        };
+        let hit = self.reserve_key(&key);
+        if hit.is_some() {
+            trace("reserved", serde_json::json!({"remote": remote}));
+        } else {
+            // 只记录哪一部分不同，不记录具体值。
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let diff = state.shells.first().map(|entry| {
+                let env_keys: Vec<&String> = entry
+                    .key
+                    .env
+                    .keys()
+                    .chain(key.env.keys())
+                    .filter(|name| entry.key.env.get(*name) != key.env.get(*name))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .take(10)
+                    .collect();
+                serde_json::json!({
+                    "cwd": entry.key.cwd != key.cwd, "shell": entry.key.shell != key.shell,
+                    "args": entry.key.args != key.args, "envKeys": env_keys,
+                })
+            });
+            trace(
+                "reserve_miss",
+                serde_json::json!({"reason": "key", "diff": diff, "remote": remote}),
+            );
+        }
+        hit
     }
 
     fn reserve_key(&self, key: &LaunchKey) -> Option<String> {
@@ -267,7 +331,10 @@ impl ShellPrewarmPool {
         }
         let launch = resolve_launch(cwd, shell).ok()?;
         let key = LaunchKey::new(cwd, &launch).ok()?;
-        let entry = self.take_key(id, &key)?;
+        let Some(entry) = self.take_key(id, &key) else {
+            trace("take_miss", serde_json::json!({"remote": false}));
+            return None;
+        };
         self.attach(id, entry, None, size, app, manager).await
     }
 
@@ -287,12 +354,19 @@ impl ShellPrewarmPool {
             return None;
         }
         let key = LaunchKey::from_parts(cwd.to_string(), launch);
-        let entry = self.take_key(id, &key)?;
+        let Some(entry) = self.take_key(id, &key) else {
+            trace("take_miss", serde_json::json!({"remote": true}));
+            return None;
+        };
         let remote = entry.remote.as_ref()?;
         if remote.root.uri != root.uri
             || remote.root.canonical_path != root.canonical_path
             || !remote_target_valid(manager, remote)
         {
+            trace(
+                "take_miss",
+                serde_json::json!({"remote": true, "reason": "root"}),
+            );
             return None;
         }
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
@@ -408,11 +482,18 @@ impl ShellPrewarmPool {
             let changed = self.1.notified();
             let (target, generation) = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                let before = state.shells.len();
                 state.shells.retain(|entry| {
                     entry
                         .reserved_at
                         .is_none_or(|at| at.elapsed() < RESERVATION_TTL)
                 });
+                if state.shells.len() < before {
+                    trace(
+                        "reservation_expired",
+                        serde_json::json!({"dropped": before - state.shells.len()}),
+                    );
+                }
                 let Some(target) = state.target.clone() else {
                     state.running = false;
                     return;
@@ -433,13 +514,17 @@ impl ShellPrewarmPool {
                 }
             };
             if !usable {
-                self.0
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .shells
-                    .clear();
+                let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                if !state.shells.is_empty() || !std::mem::replace(&mut state.unusable, true) {
+                    trace(
+                        "unusable",
+                        serde_json::json!({"remote": target.remote.is_some(), "dropped": state.shells.len()}),
+                    );
+                }
+                state.shells.clear();
                 continue;
             }
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).unusable = false;
             if self
                 .0
                 .lock()
@@ -450,17 +535,30 @@ impl ShellPrewarmPool {
             {
                 continue;
             }
+            let started = Instant::now();
+            let remote = target.remote.is_some();
             let entry = tokio::select! {
                 biased;
-                _ = changed => continue,
+                _ = changed => {
+                    trace("create_cancelled", serde_json::json!({"remote": remote, "ms": started.elapsed().as_millis() as u64}));
+                    continue;
+                }
                 entry = create_warm_shell(&app, &manager, &target) => entry,
             };
+            let ms = started.elapsed().as_millis() as u64;
             if let Ok(entry) = entry {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.generation == generation && state.shells.len() < target.count {
+                    trace("ready", serde_json::json!({"remote": remote, "ms": ms}));
                     state.shells.push(entry);
+                } else {
+                    trace("stale", serde_json::json!({"remote": remote, "ms": ms}));
                 }
-            } else {
+            } else if let Err(error) = entry {
+                trace(
+                    "create_failed",
+                    serde_json::json!({"remote": remote, "ms": ms, "error": error}),
+                );
                 // Profile 报错/交互阻塞、旧宿主不支持协议等情况下，避免持续拉起失败 Shell。
                 if self.0.lock().unwrap_or_else(|e| e.into_inner()).generation != generation {
                     continue;
