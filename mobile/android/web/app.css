@@ -437,12 +437,24 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
 #terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
 #terminal-empty[hidden], #terminal-taken[hidden] { display: none; }
-#terminal-empty-new, #terminal-take-back { min-height: 44px; padding: 0 24px; }
-#terminal-taken { flex: none; display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 4px 12px max(4px, var(--safe-bottom)); border-top: 1px solid var(--divider); background: var(--paper); }
+#terminal-empty-new { min-height: 44px; padding: 0 24px; }
+#terminal-taken {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px max(12px, var(--corner-inset)) max(2px, var(--safe-bottom), var(--corner-bottom-inset));
+  border-top: 1px solid var(--divider);
+  background: var(--surface);
+}
+#terminal-taken-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 13px; }
+#terminal-take-back { flex: none; display: grid; align-items: center; padding: 0; color: var(--accent); font-size: 13px; font-weight: 600; }
+#terminal-take-back .compact { min-height: 30px; padding: 0 10px; gap: 6px; border-radius: 8px; background: var(--accent-surface); }
+#terminal-take-back svg { width: 15px; height: 15px; }
+#terminal-take-back:is(:active, :focus-visible) { background: transparent; }
+#terminal-take-back:is(:active, :focus-visible) .compact { background: var(--accent-pressed); }
 #terminal-screen[data-viewing="false"] .terminal-body { visibility: hidden; }
 #terminal-screen[data-viewing="true"] #viewport { overflow: auto; touch-action: pan-x pan-y; }
-#terminal-taken p { margin: 0; }
-#terminal-taken-text { color: var(--ink, inherit); font-weight: 600; }
 #terminal-screen[data-taken="true"] #terminal-tools { display: none; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
 #history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }

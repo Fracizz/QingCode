@@ -181,7 +181,9 @@
       </div>
       <div id="terminal-taken" hidden>
         <p id="terminal-taken-text" role="status"></p>
-        <button id="terminal-take-back" class="secondary compact" type="button">接回</button>
+        <button id="terminal-take-back" type="button">
+          <span class="compact"><svg aria-hidden="true"><use href="#i-keyboard"/></svg><span id="terminal-take-label">接回</span></span>
+        </button>
       </div>
       <div id="terminal-tools">
         <!-- 浮在终端底部、不占布局高度，出现和消失都不触发终端重新计算行列。 -->

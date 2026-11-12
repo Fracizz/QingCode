@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Keyboard } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
 import { isMobileTerminalId, takeTerminalForDesktop } from '@/lib/ipc/mobileSessions'
 import { useProjectStore } from '@/store/projectStore'
@@ -25,17 +26,18 @@ export default function TerminalControlNotice({ terminalId }: { terminalId: stri
     <div
       role="status"
       data-testid="terminal-control-notice"
-      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border bg-bg-deep px-3 py-2 text-ui-sm text-fg"
+      className="flex shrink-0 items-center gap-3 border-t border-border bg-bg-deep px-3 py-1 text-ui-sm"
     >
-      <span className="min-w-0 flex-1 text-fg-muted">
+      <span className="min-w-0 flex-1 wrap-anywhere text-fg-muted">
         {t('正在 {name} 上使用，电脑只读', { name: control.name })}
       </span>
       <button
         type="button"
         disabled={busy}
         onClick={() => void take()}
-        className="rounded px-2 py-1 hover:bg-bg-hover disabled:opacity-50"
+        className="inline-flex min-h-[var(--ui-control-height)] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-brand/10 px-2.5 font-medium text-brand hover:bg-brand/20 focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50"
       >
+        <Keyboard size={14} aria-hidden="true" />
         {isMobileTerminalId(terminalId) ? t('接管') : t('接回')}
       </button>
     </div>

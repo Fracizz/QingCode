@@ -452,12 +452,13 @@ export default function MobileConnectionSettings() {
         </div>
         {status.configured && (
           <label className="mt-4 flex items-start gap-2 text-ui-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={status.desktopTerminals === true}
-              onChange={event => void saveDesktopTerminals(event.target.checked)}
-            />
+            <span className="flex h-lh shrink-0 items-center">
+              <input
+                type="checkbox"
+                checked={status.desktopTerminals === true}
+                onChange={event => void saveDesktopTerminals(event.target.checked)}
+              />
+            </span>
             <span>
               允许手机接入电脑上开的终端
               <span className="block text-fg-muted">

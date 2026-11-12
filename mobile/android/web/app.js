@@ -1832,7 +1832,7 @@ function showTakenOver(session, by, grid = null) {
     terminalScreen.dataset.taken = 'true';
     terminalScreen.dataset.viewing = String(!!grid);
     get('terminal-taken-text').textContent = text;
-    get('terminal-take-back').textContent = t(grid ? '接管' : '接回');
+    get('terminal-take-label').textContent = t(grid ? '接管' : '接回');
     get('terminal-taken').hidden = false;
     terminalState(text, grid ? 'online' : 'idle');
   }

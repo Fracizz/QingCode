@@ -11,6 +11,16 @@ const click = name => run('find', 'role', 'button', 'click', '--name', name, '--
 const check = (name, expression) => { run('wait', '--fn', expression); results.push({ name, passed: true }) }
 const capture = name => run('screenshot', '.mobile-connection-settings', resolve(directory, `${name}.png`))
 const field = `document.querySelector('#mobile-connection-password')`
+const checkboxAligned = `(() => {
+  const checkbox = document.querySelector('.mobile-connection-settings input[type="checkbox"]');
+  const label = checkbox.closest('label');
+  const description = label.querySelector('.text-fg-muted');
+  const title = description.parentElement;
+  const box = checkbox.getBoundingClientRect();
+  const firstLineCenter = title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).lineHeight) / 2;
+  return Math.abs(box.top + box.height / 2 - firstLineCenter) <= 1 &&
+    Math.abs(description.getBoundingClientRect().left - title.getBoundingClientRect().left) <= 1;
+})()`
 const pairingLayout = `(() => {
   const body = document.querySelector('.mobile-connection-body').getBoundingClientRect();
   const cards = [...document.querySelector('.mobile-connection-body').children].map(node => node.getBoundingClientRect());
@@ -44,6 +54,7 @@ try {
   click('保存并启用')
   check('simple numeric password is saved and still visible while active', `${field}.disabled && ${field}.value === '123456' && document.body.textContent.includes('已保存并启用')`)
   check('wide settings use the full content width and readable pairing steps', `document.querySelector('[aria-label="Android 配对二维码"]') && ${pairingLayout}`)
+  check('desktop terminal checkbox aligns with its first line', checkboxAligned)
   capture('pairing-wide-dark')
   run('select', '[aria-label="配对使用的电脑地址"]', '10.0.0.5')
   check('address selection still updates the pairing link', `document.querySelector('[aria-label="配对使用的电脑地址"]').value === '10.0.0.5'`)
@@ -86,6 +97,7 @@ try {
   capture('settings-large-font')
   click('保存并启用')
   check('large font narrow pairing keeps text and address within the card', `document.querySelector('[aria-label="Android 配对二维码"]') && ${pairingLayout}`)
+  check('wrapped checkbox text stays aligned at large font size', checkboxAligned)
   capture('pairing-narrow-large-font')
   run('set', 'viewport', '1100', '1000')
   check('large font wide settings avoid squeezing pairing steps', pairingLayout)
