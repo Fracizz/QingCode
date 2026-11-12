@@ -11,6 +11,11 @@ import { useProjectStore } from '../../store/projectStore'
 import type { Project } from '../../types'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
 import {
+  loadScopedTerminalPasteRetentionDays,
+  saveScopedTerminalPasteRetentionDays,
+  type TerminalPasteRetentionDays,
+} from '../../lib/terminal/terminalPasteCleanupSettings'
+import {
   loadScopedAutoSaveSettings,
   saveScopedAutoSaveSettings,
   type AutoSaveMode,
@@ -167,6 +172,7 @@ export function useTerminalIntegrationSettings(
   const [persistLocalSessions, setPersistLocalSessions] = useState(getTerminalPersistLocalSessions)
   const [shiftEnterNewline, setShiftEnterNewline] = useState(getTerminalShiftEnterNewline)
   const [activityIndicator, setActivityIndicator] = useState(getTerminalActivityIndicator)
+  const [pasteRetentionDays, setPasteRetentionDays] = useState<TerminalPasteRetentionDays>(0)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
 
   useEffect(() => {
@@ -183,6 +189,7 @@ export function useTerminalIntegrationSettings(
     void loadScopedTerminalShiftEnterNewline(settingsScope, currentProject).then(
       setShiftEnterNewline,
     )
+    void loadScopedTerminalPasteRetentionDays(settingsScope, currentProject).then(setPasteRetentionDays)
     void loadScopedTerminalActivityIndicator(settingsScope, currentProject).then(
       setActivityIndicator,
     )
@@ -232,6 +239,17 @@ export function useTerminalIntegrationSettings(
     }
   }
 
+  const updatePasteRetentionDays = async (days: TerminalPasteRetentionDays) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    try {
+      await saveScopedTerminalPasteRetentionDays(settingsScope, days, currentProject)
+      setPasteRetentionDays(days)
+    } catch (error) {
+      pushToast('error', t('保存粘贴清理设置失败: {error}', { error: String(error) }))
+    }
+  }
+
   const updateActivityIndicator = async (enabled: boolean) => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
     if (settingsScope === 'project' && !currentProject) return
@@ -249,6 +267,8 @@ export function useTerminalIntegrationSettings(
     persistLocalSessions,
     shiftEnterNewline,
     activityIndicator,
+    pasteRetentionDays,
+    updatePasteRetentionDays,
     pasteCleanupBusy,
     setPasteCleanupBusy,
     updateSshUploadOnPaste,

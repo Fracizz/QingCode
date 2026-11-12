@@ -305,19 +305,29 @@ impl MobileScreen {
         !self.parser.callbacks().lines.is_empty()
     }
 
-    /// 电脑端只读预览：最近 `lines` 行纯文本历史与当前画面纯文本。
-    /// 全屏程序（备用屏）只看当前画面，历史仍是进入程序前的普通输出。
+    /// 逐行导出可见网格，保留自动折行。备用屏只展示当前画面，普通历史留待退出后使用。
     pub(super) fn preview(&self, lines: usize) -> Value {
         let history = self.parser.callbacks();
         let skip = history.lines.len().saturating_sub(lines);
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
+        let alternate = screen.alternate_screen();
+        let visible_history = if alternate {
+            Vec::new()
+        } else {
+            history
+                .lines
+                .iter()
+                .skip(skip)
+                .map(|(_, text)| plain(text))
+                .collect()
+        };
         json!({
-            "history": history.lines.iter().skip(skip).map(|(_, text)| plain(text)).collect::<Vec<_>>(),
-            "screen": screen.contents(),
+            "history": visible_history,
+            "screen": screen.rows(0, cols.get()).collect::<Vec<_>>().join("\n"),
             "cols": cols.get(), "rows": rows.get(),
-            "alternate": screen.alternate_screen(),
-            "truncated": history.truncated || skip > 0,
+            "alternate": alternate,
+            "truncated": !alternate && (history.truncated || skip > 0),
         })
     }
 
@@ -484,6 +494,28 @@ mod tests {
         assert_eq!(expired["lines"], json!([]));
         assert_eq!(expired["more"], false);
         assert_eq!(expired["truncated"], true);
+    }
+
+    #[test]
+    fn preview_preserves_physical_rows_and_keeps_shell_history_out_of_the_alternate_screen() {
+        let mut screen = MobileScreen::new();
+        screen.resize(42, 30);
+        for _ in 0..35 {
+            screen.process(b"shell history\r\n");
+        }
+        screen.process(b"\x1b[?1049h\x1b[2J\x1b[H");
+        let full_row = "测".repeat(21);
+        screen.process(format!("{full_row}续行\r\n\r\n  | 项目 |").as_bytes());
+        let preview = screen.preview(2);
+        let rows: Vec<_> = preview["screen"].as_str().unwrap().split('\n').collect();
+        assert_eq!(rows.len(), 30);
+        assert_eq!(&rows[..4], &[full_row.as_str(), "续行", "", "  | 项目 |"]);
+        assert_eq!(preview["history"], json!([]));
+        assert_eq!(preview["truncated"], false);
+        screen.process(b"\x1b[?1049l");
+        let shell = screen.preview(2);
+        assert_eq!(shell["history"], json!(["shell history", "shell history"]));
+        assert_eq!(shell["truncated"], true);
     }
 
     #[test]

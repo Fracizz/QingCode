@@ -6,6 +6,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 # Web 测试页与浏览器验收
 
+终端工作台项目切换：启动 `pnpm dev:web-test`（38419），Linux 运行 `node scripts/web-tests/terminal-project-switch.agent-browser.mjs`。复用完整 App 与业务 Store，覆盖无终端项目的菜单切换、当前项目禁用、组头加载与重复点击限制、失败保留及重试、布局与侧栏保持，以及英文浅色窄窗。截图与 JSON 结果在 `.dev/web-tests/terminal-project-switch/`；文件、数据库、终端与连接采用隔离测试环境，不替代真实 SSH、PTY 和原生集成验收。
+
 手机会话运行状态：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-activity.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖两个会话同时转动、未选中会话完成、手动名称、退出、刷新失败恢复、迟到响应、320px 布局、减少动画和后台/关闭侧栏后暂停刷新。截图与 JSON 位于 `.dev/web-tests/mobile-session-activity/`；使用内存 RPC，不代替 Android 真机和实际 CLI 标题更新验收。
 
 `mobile-send-settings.ego.mjs` 同时覆盖「清除输入」在命令栏与实时输入模式下发送 Ctrl+E、Ctrl+U，以及识别 Windows PowerShell 提示行后改发 Ctrl+Home、Ctrl+End，保留手机草稿并释放修饰键；「清空草稿」仍只编辑本地，清除操作不提交命令或发送中断。
@@ -317,3 +319,10 @@ AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-brow
 安卓终端鼠标模式：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-mouse-mode.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；无桌面时用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖内置符号字体加载、加粗滑块、短按不误入、长按进入虚拟鼠标模式、点终端只定位指针、左右键选词/菜单/剪贴板、返回键先关选区再退出、全屏程序左右键 SGR 点击和长按左键拖动，以及离开终端清理。菜单动画结束后使用 CDP 指针事件，在模拟视口内按实际命中坐标操作；仍运行同一 Ego 空间、真实 xterm 与内存桥。测试服务忽略 `coverage/`，避免并行生成覆盖率报告触发页面重载。截图与 JSON 位于 `.dev/web-tests/mobile-mouse-mode/`；不能替代 Android 真机触摸手感验收。
 
 终端管理分页与批量关闭：同一服务的 `/web-tests/terminal-manager.html` 复用真实 `TerminalManager`、确认框与生产样式，65 个终端仅在内存中模拟，不结束真实进程。Windows/macOS 运行 `scripts/web-tests/terminal-manager.ego.mjs` 的 `run()`，覆盖 30 条分页、跨页全选、取消无副作用、部分失败保留选择及重试、筛选关闭不影响隐藏条目，以及英文浅色窄窗大字号布局；截图和 JSON 位于 `.dev/web-tests/terminal-manager/`。组件单测另行覆盖手机/远端部分失败、已接回远端终端防误杀和异步刷新乱序；这些模拟不能替代真实本机/WSL/SSH 进程验收。
+
+终端粘贴清理设置：启动 `pnpm test:web` 后运行
+`node scripts/web-tests/terminal-paste-cleanup.agent-browser.mjs`。
+页面 `/web-tests/terminal-paste-cleanup.html` 复用真实终端设置分区、设置读写 hook 和确认弹窗，
+覆盖默认关闭、7/15/30 天选项、保存后重新打开、工作区继承与关闭、取消清理、
+本机/WSL/SSH 命令路由及英文窄屏浅色布局。截图与结果位于
+`.dev/web-tests/terminal-paste-cleanup/`。文件操作使用内存 IPC，不能代替原生或真实 SSH 验收。

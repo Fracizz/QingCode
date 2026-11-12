@@ -17,6 +17,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FolderInput,
   MonitorCloud,
   ListChecks,
   ListChevronsDownUp,
@@ -169,7 +170,12 @@ export default function TerminalSessionList() {
   const unhideProject = useProjectStore(s => s.unhideProject)
   const allTerminals = useTerminalStore(s => s.terminals)
   const reorderTerminal = useTerminalStore(s => s.reorderTerminal)
-  const { pendingTerminalId, selectTerminal: selectAcrossProjects } = useTerminalProjectSelection()
+  const {
+    pendingTerminalId,
+    pendingProjectId,
+    selectTerminal: selectAcrossProjects,
+    selectProject,
+  } = useTerminalProjectSelection()
   const attentionIds = useSyncExternalStore(subscribeTerminalAttention, getTerminalAttentionSnapshot)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const activityIndicator = useSyncExternalStore(
@@ -623,6 +629,7 @@ export default function TerminalSessionList() {
         )}
         <div
           data-terminal-project-header={project.id}
+          aria-busy={pendingProjectId === project.id || undefined}
           data-terminal-project-sortable={sortable ? 'true' : undefined}
           onPointerDown={sortable ? event => startProjectDrag(event, project.id) : undefined}
           className={`group/project flex h-8 select-none items-center gap-1 rounded-lg pr-1 transition-colors ${
@@ -691,6 +698,13 @@ export default function TerminalSessionList() {
               )}
             </Tooltip>
           </button>
+          {pendingProjectId === project.id && (
+            <LoaderCircle
+              size={14}
+              aria-label={translate('正在切换项目…')}
+              className="flex-shrink-0 animate-spin text-fg-muted"
+            />
+          )}
           {hasAttention && (
             <span
               role="img"
@@ -1074,6 +1088,12 @@ export default function TerminalSessionList() {
             x={projectMenu.x}
             y={projectMenu.y}
             items={[
+              {
+                label: translate(group.project.id === currentProjectId ? '当前项目' : '切换到此项目'),
+                icon: group.project.id === currentProjectId ? <Check size={14} /> : <FolderInput size={14} />,
+                disabled: group.project.id === currentProjectId || group.project.id === pendingProjectId,
+                action: () => selectProject(group.project.id),
+              },
               {
                 label: translate('复制项目路径'),
                 icon: <Copy size={14} />,

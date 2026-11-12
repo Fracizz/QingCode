@@ -19,6 +19,7 @@ const SSH_COMMANDS: Partial<Record<string, string>> = {
   move_path: 'ssh_move_path',
   copy_path_into: 'ssh_copy_path_into',
   delete_path: 'ssh_delete_path',
+  cleanup_terminal_paste: 'ssh_cleanup_terminal_paste',
   directory_delete_stats: 'ssh_directory_delete_stats',
   check_symlink_write: 'ssh_check_symlink_write',
   list_file_extensions: 'ssh_list_file_extensions',

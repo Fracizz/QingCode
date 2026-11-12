@@ -1,3 +1,4 @@
+import { scheduleTerminalPasteCleanup } from '../lib/terminalPasteCleanup'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { createToastTimers, toastDuration } from '../lib/toastTimers'
 import { create } from 'zustand'
@@ -1000,6 +1001,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             expandedProjects: { ...s.expandedProjects, [project.id]: true },
           }))
           activateProjectSession(previousId, project.id)
+          scheduleTerminalPasteCleanup(project)
           void syncSshServerSettingsForProject(project).then(() => get().refreshProjectTree(project))
           return true
         }
@@ -1046,6 +1048,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }))
         // Keep the previous project's tabs/drafts/CM state; restore the target's.
         activateProjectSession(previousId, project.id)
+        scheduleTerminalPasteCleanup(project)
         if (prepared?.warmed) void get().refreshProjectTree(project)
         // Refresh on switch — inactive durable projects have no root watcher.
         if (!prepared) {

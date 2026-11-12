@@ -222,7 +222,7 @@ describe('TerminalManager', () => {
     expect(screen.getByText('claude')).toBeTruthy()
   })
 
-  it('keeps a failed mobile close and its read-only preview for retry', async () => {
+  it('keeps a failed mobile close selected and available to preview again', async () => {
     render(<TerminalManager />)
     await screen.findByText('claude')
     mocks.safeInvoke.mockImplementation(async (_label: string, command: string) => {
@@ -235,24 +235,37 @@ describe('TerminalManager', () => {
     })
     fireEvent.click(screen.getByLabelText('只读预览：claude'))
     await screen.findByText('preview output')
+    fireEvent.click(within(screen.getByRole('dialog', { name: '只读预览 · claude' })).getByRole('button', { name: '关闭' }))
     fireEvent.click(screen.getByLabelText('选择终端「claude」'))
     fireEvent.click(screen.getByRole('button', { name: '关闭所选 1' }))
     await waitFor(() => expect(mocks.projectState.pushToast).toHaveBeenCalledWith('warn', '已关闭 0 个终端，1 个失败', 'phone offline'))
-    expect(screen.getByText('preview output')).toBeTruthy()
     expect(screen.getByLabelText('选择终端「claude」')).toBeChecked()
+    fireEvent.click(screen.getByLabelText('只读预览：claude'))
+    expect(await screen.findByText('preview output')).toBeTruthy()
   })
 
-  it('refreshes the read-only preview on output and stops listening when collapsed', async () => {
+  it('refreshes the preview dialog on output and returns to the same filtered selection on Escape', async () => {
     let output = 'first output'
     const original = mocks.safeInvoke.getMockImplementation()!
     mocks.safeInvoke.mockImplementation(async (label: string, command: string, args: unknown) => {
-      if (command === 'mobile_session_preview') return { name: 'claude', history: [], screen: output }
+      if (command === 'mobile_session_preview') return {
+        history: ['old shell history'], screen: output, alternate: true, rows: 30, cols: 42, truncated: true,
+      }
       return original(label, command, args)
     })
     render(<TerminalManager />)
     await screen.findByText('claude')
-    fireEvent.click(screen.getByLabelText('只读预览：claude'))
+    fireEvent.click(screen.getByRole('tab', { name: '手机 1' }))
+    fireEvent.click(screen.getByLabelText('选择终端「claude」'))
+    const eye = screen.getByLabelText('只读预览：claude')
+    eye.focus()
+    fireEvent.click(eye)
     await screen.findByText('first output')
+    const dialog = screen.getByRole('dialog', { name: '只读预览 · claude' })
+    expect(within(dialog).getByText(/Pixel · 42×30/)).toBeTruthy()
+    expect(dialog).not.toHaveTextContent('old shell history')
+    expect(dialog).not.toHaveTextContent('仅显示最近 200 行历史')
+    expect(within(dialog).getByRole('button', { name: '关闭' })).toHaveFocus()
     await waitFor(() => expect(mocks.outputListeners).toHaveLength(1))
 
     output = 'other session'
@@ -262,12 +275,43 @@ describe('TerminalManager', () => {
     })
     expect(screen.queryByText('other session')).toBeNull()
 
-    output = 'second output'
+    output = '表格\n\n  | 第二行 |'
     act(() => mocks.outputListeners[0]({ payload: { id: 'mobile-1' } }))
-    await screen.findByText('second output')
+    await waitFor(() => expect(dialog.querySelector('pre')?.textContent).toBe(output))
 
-    fireEvent.click(screen.getByLabelText('收起预览：claude'))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     await waitFor(() => expect(mocks.outputListeners).toHaveLength(0))
+    await waitFor(() => expect(eye).toHaveFocus())
+    expect(dialog).not.toBeInTheDocument()
+    expect(screen.getByLabelText('选择终端「claude」')).toBeChecked()
+    expect(screen.queryByText('build')).toBeNull()
+    expect(mocks.uiState.closeTerminalManager).not.toHaveBeenCalled()
+    expect(new Set(mocks.safeInvoke.mock.calls.map(call => call[1])))
+      .toEqual(new Set(['mobile_sessions', 'mobile_session_preview']))
+  })
+
+  it('keeps ordinary history and the current screen selectable while output changes', async () => {
+    let output = '  第一行\n\n最后一行'
+    const original = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation(async (label: string, command: string, args: unknown) =>
+      command === 'mobile_session_preview'
+        ? { history: ['早先的输出'], screen: output, alternate: false }
+        : original(label, command, args))
+    render(<TerminalManager />)
+    fireEvent.click(await screen.findByLabelText('只读预览：claude'))
+    const history = await screen.findByText('早先的输出')
+    const pre = history.closest('pre')!
+    expect(pre.textContent).toBe('早先的输出\n' + output)
+    const selection = window.getSelection()!
+    selection.selectAllChildren(history)
+    output = '新输出'
+    const notify = () => act(async () => { mocks.outputListeners[0]({ payload: { id: 'mobile-1' } }) })
+    await notify()
+    expect(pre.textContent).toContain('最后一行')
+    expect(selection.toString()).toContain('早先的输出')
+    selection.removeAllRanges()
+    await notify()
+    expect(pre.textContent).toBe('早先的输出\n新输出')
   })
 
   it('retains failed detached terminals and ends them without attaching', async () => {

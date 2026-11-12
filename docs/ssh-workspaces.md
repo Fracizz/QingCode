@@ -473,3 +473,17 @@ Windows `--local` 仅覆盖本机命名管道/ConPTY。主机 SSH 握手不可�
 - Web fixture 验证交互，`qingcode-server/tests/terminal_lifecycle.rs` 验证本机真实 daemon/PTY 的断开接回、指定会话结束和另一会话保留。它们不替代 Windows 桌面退出、真实 SSH 与 Server WSS 链路验收。
 
 可选的跨项目推送同步及其在各连接模式下的限制见 [git-push-sync.md](git-push-sync.md)。
+
+### 粘贴附件打开时清理
+
+`terminal.integrated.pasteRetentionDays` 控制 `.qingcode/terminal-paste/` 的自动清理：
+`0`（默认）关闭，`7` / `15` / `30` 为保留天数。支持用户设置和工作区覆盖。
+仅项目打开成功后延迟约 3 秒在后台检查一次，不等待清理结果，不周期轮询。
+只处理已信任项目；SSH 使用当前已连接的会话，不触发认证、重连或服务部署。
+本机和 WSL 使用后台文件任务，SSH / Server 直连沿用远端文件边界与信任校验。
+
+按批次目录及其全部子项的最近修改时间判断过期。正在上传的批次、包含符号链接、
+Windows 重解析点或时间不可读的批次均跳过；清理不递归删除未经核对的新文件。
+单次最多检查 20,000 个条目，本机约 10 秒、SSH 约 30 秒后停止，剩余文件留待下次打开。
+设置中的「清理粘贴文件」可手动处理本机、WSL 和 SSH 附件。
+清理会使历史终端与会话中的附件路径失效；需要长期保留的文件应移出此目录。

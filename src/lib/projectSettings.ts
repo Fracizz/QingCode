@@ -100,6 +100,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': true,
+    'terminal.integrated.pasteRetentionDays': 0,
     'terminal.integrated.largePasteAsFile': false,
     'terminal.integrated.persistLocalSessions': true,
     'terminal.integrated.tabActivityIndicator': true,
@@ -131,6 +132,7 @@ export const DEFAULT_PROJECT_SETTINGS: SettingsFile = (() => {
   delete next['files.autoSave']
   delete next['files.autoSaveDelay']
   delete next['terminal.integrated.persistLocalSessions']
+  delete next['terminal.integrated.pasteRetentionDays']
   return next
 })()
 
@@ -239,6 +241,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.cursorBlinking": true,
   // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 true）
   "terminal.integrated.sshUploadOnPaste": true,
+  // terminal.integrated.pasteRetentionDays：仅打开项目后后台清理粘贴附件；0=关闭（默认），7/15/30=保留天数。历史附件路径会失效
+  "terminal.integrated.pasteRetentionDays": 0,
   // terminal.integrated.largePasteAsFile：粘贴超过 32KB 或 500 行的文本时，不再询问，直接存为文件并粘贴路径（默认 false，即每次询问）
   "terminal.integrated.largePasteAsFile": false,
   // terminal.integrated.persistLocalSessions：新建的本地 PowerShell / CMD 终端由后台宿主托管，关闭或升级 QingCode 后进程继续运行并可接回；仅 Windows，电脑重启后按原配置重新启动，连续断开 24 小时后自动结束（默认 true，仅影响之后新建的终端）
@@ -382,6 +386,9 @@ export const DEFAULT_PROJECT_SETTINGS_TEXT = `{
 ${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY).replace(
   '  "terminal.integrated.persistLocalSessions": true,',
   '  // 默认继承用户设置；本工作区需要覆盖时再取消注释\n  // "terminal.integrated.persistLocalSessions": true,',
+).replace(
+  '  "terminal.integrated.pasteRetentionDays": 0,',
+  '  // 默认继承用户设置；本工作区需要覆盖时再取消注释\n  // "terminal.integrated.pasteRetentionDays": 0,',
 )}
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象

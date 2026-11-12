@@ -14,8 +14,8 @@ import {
   terminalShellLabelKey,
   type TerminalShellId,
 } from '@/lib/terminal/terminalShell'
-import { confirmClearSshTerminalPasteUploads } from '../../lib/sshTerminalPaste'
-import { isSshProject } from '../../lib/sshWorkspace'
+import { confirmClearTerminalPaste } from '../../lib/terminalPasteCleanup'
+import { parseTerminalPasteRetentionDays } from '../../lib/terminal/terminalPasteCleanupSettings'
 import type { Project } from '../../types'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
@@ -56,6 +56,8 @@ export default function TerminalSettingsSection({
     persistLocalSessions,
     shiftEnterNewline,
     activityIndicator,
+    pasteRetentionDays,
+    updatePasteRetentionDays,
     pasteCleanupBusy,
     setPasteCleanupBusy,
     updateSshUploadOnPaste,
@@ -248,22 +250,45 @@ export default function TerminalSettingsSection({
           </select>
         </SettingItem>
       )}
-      {match('清理远程粘贴文件', 'terminal-paste') && (
+      {match('自动清理', '粘贴', '保留', 'pasteRetentionDays', 'terminal-paste') && (
         <SettingItem
-          title={t('清理远程粘贴文件')}
+          title={t('终端 › 集成: 粘贴附件保留天数')}
           description={t(
-            '删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。',
+            '仅打开项目后在后台清理过期粘贴附件，不影响打开速度。适用于本机、WSL 和已连接的 SSH 项目；历史附件路径会失效。默认关闭。',
+          )}
+          modified={pasteRetentionDays !== 0}
+        >
+          <select
+            value={pasteRetentionDays}
+            onChange={e =>
+              void updatePasteRetentionDays(parseTerminalPasteRetentionDays(Number(e.target.value)))
+            }
+            className="setting-control setting-select"
+            aria-label={t('终端 › 集成: 粘贴附件保留天数')}
+          >
+            <option value={0}>{t('关闭')}</option>
+            {[7, 15, 30].map(days => (
+              <option key={days} value={days}>{t('保留 {days} 天', { days })}</option>
+            ))}
+          </select>
+        </SettingItem>
+      )}
+      {match('清理粘贴文件', '清理远程粘贴文件', 'terminal-paste') && (
+        <SettingItem
+          title={t('清理粘贴文件')}
+          description={t(
+            '删除当前项目 .qingcode/terminal-paste 中的附件。历史终端和会话中的附件路径会失效。',
           )}
         >
           <button
             type="button"
-            disabled={pasteCleanupBusy || !currentProject || !isSshProject(currentProject)}
+            disabled={pasteCleanupBusy || !currentProject}
             className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
-            aria-label={t('清理远程粘贴文件')}
+            aria-label={t('清理粘贴文件')}
             onClick={() => {
-              if (!currentProject || !isSshProject(currentProject)) return
+              if (!currentProject) return
               setPasteCleanupBusy(true)
-              void confirmClearSshTerminalPasteUploads(currentProject.path).finally(() =>
+              void confirmClearTerminalPaste(currentProject).finally(() =>
                 setPasteCleanupBusy(false),
               )
             }}

@@ -23,6 +23,7 @@ mod run_environment;
 mod ssh_secrets;
 mod terminal;
 mod terminal_diagnostics;
+mod terminal_paste_cleanup;
 mod update;
 mod user_locales;
 
@@ -907,6 +908,8 @@ pub fn run() {
             commands::move_path,
             commands::copy_path_into,
             commands::delete_path,
+            terminal_paste_cleanup::cleanup_terminal_paste,
+            remote_ssh::ssh_cleanup_terminal_paste,
             commands::clipboard_write_files,
             commands::clipboard_read_files,
             commands::clipboard_store_file,

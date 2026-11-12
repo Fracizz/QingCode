@@ -106,6 +106,11 @@ export const useTerminalStore = create(() => ({
 }))
 export const useTerminalManagerFixture = create(() => ({ failedIds: [] as string[] }))
 
+export async function openMobileSessionTab(session: { id: string }) {
+  record('openMobileSessionTab', [session.id])
+  return useTerminalStore.getState().terminals.find(tab => tab.id === session.id)
+}
+
 export function resetTerminalManagerFixture(count = 65) {
   useWebTestOperations.setState({ operations: [] })
   useTerminalManagerFixture.setState({ failedIds: [] })

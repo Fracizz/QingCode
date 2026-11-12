@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { mockIPC } from '@tauri-apps/api/mocks'
 import TerminalManager from '../components/TerminalManager'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PromptDialog from '../components/PromptDialog'
@@ -36,6 +37,28 @@ export default function Page() {
 
 if (import.meta.env.MODE === 'web-test') {
   useLocaleStore.setState({ language: 'zh-CN' })
+  if (new URLSearchParams(location.search).has('mobile-preview')) {
+    const session = {
+      id: 'mobile-preview', number: 49, name: '重新发布 0.03', deviceName: 'OPPO PLJ110',
+      project: { id: 'wsl-nem', name: 'NEM', path: '/srv/nem', kind: 'wsl', host: 'Windows' },
+    }
+    const rows = Array<string>(30).fill('')
+    rows[0] = '发布检查'
+    rows[2] = '  | 检查项目 | 结果 |'
+    rows[3] = '  | 工具版本 | 通过 |'
+    rows[4] = '  | 依赖清单 | 通过 |'
+    rows[6] = '正在检查当前项目的发布配置以及依赖版本信息'
+    rows[7] = '，完成后将生成发布记录。'
+    rows[29] = '就绪'
+    Object.assign(window, { isTauri: true })
+    mockIPC(command => {
+      if (command === 'mobile_sessions') return [session]
+      if (command === 'mobile_session_preview') {
+        return { screen: rows.join('\n'), alternate: true, cols: 42, rows: 30, history: [] }
+      }
+      return null
+    }, { shouldMockEvents: true })
+  }
   resetTerminalManagerFixture()
   Object.assign(window, {
     __terminalManagerFixture: {

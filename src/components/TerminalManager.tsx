@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Cloud,
   Eye,
-  EyeOff,
   ListTree,
   LoaderCircle,
   MessageCircleMore,
@@ -216,6 +215,7 @@ export default function TerminalManager() {
       const list = await listMobileSessions()
       if (!alive.current || request !== mobileRequest.current) return
       setMobile(list)
+      setPreviewId(id => list.some(session => session.id === id) ? id : null)
       setMobileError(null)
       setNow(Date.now())
     } catch (error) {
@@ -533,6 +533,7 @@ export default function TerminalManager() {
       await Promise.all(tasks)
     })
 
+  const previewSession = mobile.find(session => session.id === previewId)
   const filterOptions: { value: TerminalOverviewFilter; label: string }[] = [
     { value: 'all', label: t('全部 {n}', { n: counts.all }) },
     { value: 'desktop', label: t('电脑 {n}', { n: counts.desktop }) },
@@ -685,20 +686,16 @@ export default function TerminalManager() {
                           onToggleSelect={() => toggleSelected([entry.key], !selected.has(entry.key))}
                           busy={busyKey === entry.key}
                           disabled={busyKey !== null}
-                          previewOpen={entry.source === 'mobile' && previewId === entry.session.id}
                           onJump={jumpToDesktop}
                           onRenameDesktop={tab => void renameDesktop(tab)}
                           onEndDesktop={endDesktop}
-                          onTogglePreview={id => setPreviewId(current => (current === id ? null : id))}
+                          onPreview={setPreviewId}
                           onOpenMobile={session => void openMobile(session)}
                           onRenameMobile={session => void renameMobile(session)}
                           onEndMobile={endMobile}
                           onAttachRemote={attachRemote}
                           onEndRemote={endRemote}
                         />
-                        {entry.source === 'mobile' && previewId === entry.session.id && (
-                          <MobilePreview id={entry.session.id} />
-                        )}
                       </li>
                     ))}
                   </ul>
@@ -802,6 +799,9 @@ export default function TerminalManager() {
           </div>
         </div>
       </div>
+      {previewSession && (
+        <MobilePreviewDialog key={previewSession.id} session={previewSession} onClose={() => setPreviewId(null)} />
+      )}
     </ModalOverlay>
   )
 }
@@ -813,11 +813,10 @@ interface RowProps {
   onToggleSelect: () => void
   busy: boolean
   disabled: boolean
-  previewOpen: boolean
   onJump: (tab: TerminalTab) => void
   onRenameDesktop: (tab: TerminalTab) => void
   onEndDesktop: (tab: TerminalTab) => void
-  onTogglePreview: (id: string) => void
+  onPreview: (id: string) => void
   onOpenMobile: (session: MobileSessionSummary) => void
   onRenameMobile: (session: MobileSessionSummary) => void
   onEndMobile: (session: MobileSessionSummary) => void
@@ -851,9 +850,9 @@ function Row(props: RowProps) {
             onClick: () => props.onOpenMobile(session),
           }]),
       {
-        label: props.previewOpen ? t('收起预览') : t('只读预览'),
-        icon: props.previewOpen ? <EyeOff size={14} /> : <Eye size={14} />,
-        onClick: () => props.onTogglePreview(session.id),
+        label: t('只读预览'),
+        icon: <Eye size={14} />,
+        onClick: () => props.onPreview(session.id),
       },
       { label: t('重命名'), icon: <Pencil size={14} />, onClick: () => props.onRenameMobile(session) },
       {
@@ -927,7 +926,8 @@ function Row(props: RowProps) {
 }
 
 /** 手机终端只读预览：纯文本，随终端输出实时刷新；不向终端发送任何输入或尺寸。 */
-function MobilePreview({ id }: { id: string }) {
+function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSummary; onClose: () => void }) {
+  const { id } = session
   const { t } = useI18n()
   const [preview, setPreview] = useState<MobileSessionPreview | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -978,39 +978,65 @@ function MobilePreview({ id }: { id: string }) {
     }
   }, [id])
 
+  const alternate = preview?.alternate ?? false
+  useEffect(() => {
+    stickToBottom.current = true
+    if (alternate && scroller.current) scroller.current.scrollTop = 0
+  }, [alternate])
+
   useEffect(() => {
     const element = scroller.current
-    if (element && stickToBottom.current) element.scrollTop = element.scrollHeight
-  }, [preview])
+    if (element && !alternate && stickToBottom.current) element.scrollTop = element.scrollHeight
+  }, [preview, alternate])
 
-  const text = preview
-    ? [...preview.history, ...(preview.history.length ? [''] : []), preview.screen.replace(/\s+$/, '')].join('\n')
-    : ''
+  const history = preview && !alternate ? preview.history : []
+  let screen = preview?.screen ?? ''
+  if (!alternate) screen = screen.replace(/\n+$/, '')
+  if (preview && !history.length && !screen.trim()) screen = t('（暂无输出）')
+  if (!preview && !error) screen = t('正在读取…')
 
   return (
-    <div className="border-t border-border bg-bg-deep px-3 py-2">
-      <div className="mb-1 flex items-center justify-between gap-2 text-ui-sm text-fg-muted">
-        <span>
-          {t('只读预览，不会向手机终端发送输入')}
-          {preview?.alternate ? ` · ${t('全屏程序只显示当前画面')}` : ''}
-          {preview?.truncated ? ` · ${t('仅显示最近 200 行历史')}` : ''}
-        </span>
-        {preview && <span className="font-mono">{preview.cols}×{preview.rows}</span>}
-      </div>
-      {error ? (
-        <p className="text-ui-sm text-danger">{t('预览失败：{error}', { error })}</p>
-      ) : (
+    <ModalOverlay onDismiss={onClose} zIndex="z-[130]">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobile-preview-title"
+        className="ui-font-scaled modal-content-enter flex h-[min(80dvh,760px)] w-full max-w-[960px] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+      >
+        <header className="flex shrink-0 items-center gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
+          <Eye size={16} className="shrink-0 text-fg-muted" />
+          <div className="min-w-0 flex-1">
+            <h2 id="mobile-preview-title" className="truncate text-ui-lg font-semibold">
+              {t('只读预览')} · {mobileSessionDisplayName(session)}
+            </h2>
+            <div className="truncate text-ui-sm text-fg-muted">
+              {session.deviceName ?? t('设备已移除')}
+              {preview && preview.cols > 0 && preview.rows > 0 && ` · ${preview.cols}×${preview.rows}`}
+              {preview?.alternate && ` · ${t('全屏程序只显示当前画面')}`}
+              {!preview?.alternate && preview?.truncated && ` · ${t('仅显示最近 200 行历史')}`}
+            </div>
+          </div>
+          <Tooltip label={t('关闭')} side="left">
+            <button type="button" data-modal-autofocus aria-label={t('关闭')} onClick={onClose}
+              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg">
+              <X size={16} />
+            </button>
+          </Tooltip>
+        </header>
+        {error && <p role="alert" className="px-4 py-2 text-ui-sm text-danger">{t('预览失败：{error}', { error })}</p>}
         <pre
           ref={scroller}
+          tabIndex={0}
           onScroll={event => {
             const element = event.currentTarget
             stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
           }}
-          className="max-h-72 overflow-auto whitespace-pre font-mono text-[12px] leading-[1.35] text-fg"
+          className="m-0 min-h-0 flex-1 select-text overflow-auto whitespace-pre bg-bg-deep px-4 py-3 font-mono text-[13px] leading-[1.45]"
         >
-          {preview ? text || t('（暂无输出）') : t('正在读取…')}
+          {history.length > 0 && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{history.join('\n')}{'\n'}</span>}
+          {screen}
         </pre>
-      )}
-    </div>
+      </section>
+    </ModalOverlay>
   )
 }

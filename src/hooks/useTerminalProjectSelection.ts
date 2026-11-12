@@ -13,10 +13,12 @@ export async function switchToTerminalProject(projectId: string): Promise<Projec
   return (await state.switchProject(project)) ? useProjectStore.getState().currentProject : null
 }
 
-/** 工作台列表的选中：其他项目的终端先切项目（可能弹信任或走 SSH 连接），完成后再激活。 */
+type Selection = { projectId: string; terminalId: string | null }
+
+/** 项目菜单与终端行共用切换目标；完成信任和 SSH 流程后，只激活最后选择的终端。 */
 export function useTerminalProjectSelection() {
-  const [pendingTerminalId, setPendingTerminalId] = useState<string | null>(null)
-  const pendingRef = useRef<Pick<TerminalTab, 'id' | 'projectId'> | null>(null)
+  const [pending, setPending] = useState<Selection | null>(null)
+  const pendingRef = useRef<Selection | null>(null)
 
   const activate = useCallback((id: string) => {
     useTerminalStore.getState().setTerminalFocusPane('primary')
@@ -24,29 +26,46 @@ export function useTerminalProjectSelection() {
     useUIStore.getState().openTerminalPanel()
   }, [])
 
-  const selectTerminal = useCallback(
-    async (terminal: Pick<TerminalTab, 'id' | 'projectId'>) => {
-      if (useProjectStore.getState().currentProject?.id === terminal.projectId) {
-        pendingRef.current = null
-        setPendingTerminalId(null)
-        activate(terminal.id)
+  const select = useCallback(
+    async (selection: Selection) => {
+      const state = useProjectStore.getState()
+      const inFlight = pendingRef.current
+      if (state.currentProject?.id === selection.projectId && !inFlight) {
+        if (selection.terminalId) activate(selection.terminalId)
         return
       }
-      const inFlight = pendingRef.current
-      pendingRef.current = terminal
-      setPendingTerminalId(terminal.id)
-      // 同项目的切换已在进行：只更新目标，完成后激活最后点击的终端。
-      if (inFlight?.projectId === terminal.projectId) return
-      const switched = await switchToTerminalProject(terminal.projectId)
+      pendingRef.current = selection
+      setPending(selection)
+      // 同项目的切换已在进行：只更新目标，避免重复连接。
+      if (inFlight?.projectId === selection.projectId) return
+      // 点回当前项目也要让 store 取代在途切换，避免迟到的 SSH 结果切走工作区。
+      const switched = state.currentProject?.id === selection.projectId
+        ? await state.switchProject(state.currentProject)
+        : await switchToTerminalProject(selection.projectId)
       const latest = pendingRef.current
       // 期间点了别的项目：选中状态交给那次点击。
-      if (latest?.projectId !== terminal.projectId) return
+      if (latest?.projectId !== selection.projectId) return
       pendingRef.current = null
-      setPendingTerminalId(null)
-      if (switched) activate(latest.id)
+      setPending(null)
+      if (switched && latest.terminalId) activate(latest.terminalId)
     },
     [activate],
   )
 
-  return { pendingTerminalId, selectTerminal }
+  const selectTerminal = useCallback(
+    (terminal: Pick<TerminalTab, 'id' | 'projectId'>) =>
+      select({ projectId: terminal.projectId, terminalId: terminal.id }),
+    [select],
+  )
+  const selectProject = useCallback(
+    (projectId: string) => select({ projectId, terminalId: null }),
+    [select],
+  )
+
+  return {
+    pendingTerminalId: pending?.terminalId ?? null,
+    pendingProjectId: pending?.projectId ?? null,
+    selectTerminal,
+    selectProject,
+  }
 }

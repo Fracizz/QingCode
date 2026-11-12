@@ -687,11 +687,93 @@ describe('TerminalSessionList', () => {
     mocks.projectState.projects[1] = visible
   })
 
-  it('does not duplicate project switching in the project actions menu', () => {
+  it('switches to a project without terminals without creating a terminal or opening the panel', async () => {
+    mocks.projectState.switchProject.mockImplementation(async project => {
+      mocks.projectState.currentProject = project
+      return true
+    })
+    render(<TerminalSessionList />)
+    fireEvent.click(within(group('p3')).getByRole('button', { name: '「docs」的项目操作' }))
+    expect(screen.getAllByRole('menuitem')[0]).toHaveTextContent('切换到此项目')
+    fireEvent.click(screen.getByRole('menuitem', { name: '切换到此项目' }))
+    await vi.waitFor(() => expect(group('p3')).toHaveAttribute('aria-current', 'true'))
+    expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[2])
+    expect(mocks.state.addTerminal).not.toHaveBeenCalled()
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+    expect(mocks.ui.openTerminalPanel).not.toHaveBeenCalled()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('marks the current project as disabled in the project menu', () => {
+    render(<TerminalSessionList />)
+    fireEvent.click(within(group('p1')).getByRole('button', { name: '「app」的项目操作' }))
+    expect(screen.getByRole('menuitem', { name: '当前项目' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '当前项目' }))
+    expect(mocks.projectState.switchProject).not.toHaveBeenCalled()
+    expect(screen.queryByText('切换到此项目')).toBeNull()
+  })
+
+  it('shows project progress, prevents duplicate menu switches and keeps the current project on failure', async () => {
+    let finish!: (value: boolean) => void
+    mocks.projectState.switchProject.mockReturnValue(new Promise<boolean>(resolve => { finish = resolve }))
+    render(<TerminalSessionList />)
+    const openMenu = () => fireEvent.click(within(group('p3')).getByRole('button', { name: '「docs」的项目操作' }))
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '切换到此项目' }))
+    const header = group('p3').querySelector('[data-terminal-project-header]')!
+    expect(header).toHaveAttribute('aria-busy', 'true')
+    expect(within(group('p3')).getByLabelText('正在切换项目…')).toBeInTheDocument()
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: '切换到此项目' })).toBeDisabled()
+    finish(false)
+    await vi.waitFor(() => expect(header).not.toHaveAttribute('aria-busy'))
+    expect(group('p1')).toHaveAttribute('aria-current', 'true')
+    expect(mocks.projectState.switchProject).toHaveBeenCalledTimes(1)
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+  })
+
+  it('does not activate a stale terminal when a later menu click chooses a different project', async () => {
+    let finish!: (value: boolean) => void
+    mocks.projectState.switchProject.mockImplementation(project => {
+      if (project.id === 'p2') return new Promise<boolean>(resolve => { finish = resolve })
+      mocks.projectState.currentProject = project
+      return Promise.resolve(true)
+    })
+    render(<TerminalSessionList />)
+    fireEvent.click(row('other'))
+    fireEvent.click(within(group('p3')).getByRole('button', { name: '「docs」的项目操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '切换到此项目' }))
+    await vi.waitFor(() => expect(group('p3')).toHaveAttribute('aria-current', 'true'))
+    await act(async () => finish(false))
+    expect(mocks.state.setActiveTerminal).not.toHaveBeenCalled()
+    expect(mocks.ui.openTerminalPanel).not.toHaveBeenCalled()
+  })
+
+  it('uses the latest terminal or project choice while sharing a pending switch to the same project', async () => {
+    let finish!: (value: boolean) => void
+    mocks.projectState.switchProject.mockReturnValue(new Promise<boolean>(resolve => { finish = resolve }))
     render(<TerminalSessionList />)
     fireEvent.click(within(group('p2')).getByRole('button', { name: '「api」的项目操作' }))
-    expect(screen.queryByText('切换到此项目')).toBeNull()
-    expect(screen.queryByText('当前项目')).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: '切换到此项目' }))
+    fireEvent.click(row('other'))
+    expect(mocks.projectState.switchProject).toHaveBeenCalledTimes(1)
+    finish(true)
+    await vi.waitFor(() => expect(mocks.state.setActiveTerminal).toHaveBeenCalledWith('other'))
+    expect(mocks.state.setActiveTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('supersedes a pending project switch when clicking a terminal in the current project', async () => {
+    let finish!: (value: boolean) => void
+    mocks.projectState.switchProject.mockImplementation(project => project.id === 'p2'
+      ? new Promise<boolean>(resolve => { finish = resolve })
+      : Promise.resolve(true))
+    render(<TerminalSessionList />)
+    fireEvent.click(row('other'))
+    fireEvent.click(row('t2'))
+    expect(mocks.projectState.switchProject).toHaveBeenLastCalledWith(mocks.projectState.projects[0])
+    await vi.waitFor(() => expect(mocks.state.setActiveTerminal).toHaveBeenCalledWith('t2'))
+    await act(async () => finish(false))
+    expect(mocks.state.setActiveTerminal).toHaveBeenCalledTimes(1)
   })
 
   it('creates a terminal with the chosen profile in the project of the header', async () => {
