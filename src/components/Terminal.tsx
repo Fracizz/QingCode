@@ -38,6 +38,8 @@ import {
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { terminalTheme } from '@/lib/terminal/terminalThemes'
+import { terminalClearInputSequence } from '@/lib/terminal/terminalClearInput'
+import { detectTerminalHostPlatform } from '@/lib/terminal/terminalShell'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
@@ -356,6 +358,24 @@ export default function TerminalView({
     term.scrollToBottom()
   }, [])
 
+  const clearInput = useCallback(() => {
+    const term = xtermRef.current
+    if (!term || !isTerminalWritable()) return
+    const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+    if (!tab) return
+    const sequence = terminalClearInputSequence({
+      shell: tab.resolvedShell ?? tab.shell,
+      windowsHost: tab.runEnvironment
+        ? tab.runEnvironment.os === 'windows'
+        : !isSshResource(tab.cwd) && detectTerminalHostPlatform() === 'win',
+      bracketedPaste: term.modes.bracketedPasteMode,
+    })
+    // Editing keys must reach the PTY directly, without bracketed-paste wrappers or Enter.
+    void writeToTerminal(terminalId, sequence)
+    term.clearSelection()
+    term.focus()
+  }, [isTerminalWritable, terminalId, writeToTerminal])
+
   const resetSearchMatch = useCallback(() => {
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
@@ -473,6 +493,7 @@ export default function TerminalView({
         },
       },
       find: { label: translate('在终端中查找'), shortcut: 'Ctrl+F', action: openSearch },
+      clearInput: { label: translate('清除终端输入'), action: clearInput },
       export: { label: translate('导出终端内容…'), action: exportBuffer },
       clear: { label: translate('清空终端'), shortcut: 'Ctrl+Shift+K', action: clearBuffer },
     }
@@ -488,6 +509,7 @@ export default function TerminalView({
     })
   }, [
     clearBuffer,
+    clearInput,
     copySelection,
     exportBuffer,
     isTerminalWritable,

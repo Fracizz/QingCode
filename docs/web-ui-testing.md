@@ -238,6 +238,8 @@ OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html
 
 终端「编辑长文本」浮动面板复用同一页面与 `pnpm dev:web-test`（端口 **38419**），运行 `scripts/web-tests/terminal-composer.ego.mjs` 的 `run()`。覆盖无遮罩／无模糊的非模态打开、默认高度约 70% 视口、焦点在终端时 Escape 发给终端不关闭面板、拖动标题栏移动并持久化、面板内 Escape 关闭后重开保留位置与草稿、双击标题栏复位居中。产物位于 `.dev/web-tests/terminal-composer-*/`；不替代 Tauri 原生拖放附件与真实 Claude／OpenCode 验收。
 
+终端「清除终端输入」：Linux 启动 `pnpm dev:web-test`（端口 **38419**）后运行 `node scripts/web-tests/terminal-clear-input.agent-browser.mjs`。复用真实终端组件和 Store，检查 POSIX／Windows Shell 与 AI 输入模式的按键序列、实际 Shell 优先、保留输出和长文本草稿、恢复终端焦点，以及菜单打开后退出／重连／等待 PTY／其他设备接管时拒绝写入。截图和 JSON 在 `.dev/web-tests/terminal-clear-input/`，含英文浅色窄窗；内存传输验证不能替代真实 PTY、SSH 和前台程序的按键行为验收。
+
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、
 项目操作和工作区保存替换为 `src/test-pages/projectManagerAdapters.ts` 中的内存适配器。
 外部操作只记录调用，隐藏/恢复只更新测试数据。测试页显示操作记录，供断言调用参数。

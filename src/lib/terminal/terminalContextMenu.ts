@@ -9,6 +9,7 @@ export type TerminalContextMenuItemId =
   | 'paste'
   | 'selectAll'
   | 'composer'
+  | 'clearInput'
   | 'find'
   | 'export'
   | 'clear'
@@ -35,7 +36,7 @@ export function terminalContextMenuEntries(state: TerminalContextMenuState): Ter
       ? ['copy', ...(writable ? (['quote', 'paste'] as const) : [])]
       : [...(writable ? ['paste' as const] : []), 'selectAll', ...(writable ? ['composer' as const] : [])],
     ['find'],
-    ['export', 'clear'],
+    ['export', ...(writable ? ['clearInput' as const] : []), 'clear'],
   ]
   const entries: TerminalContextMenuEntry[] = []
   for (const group of groups) {

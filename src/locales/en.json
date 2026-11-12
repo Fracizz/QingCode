@@ -1778,6 +1778,7 @@
     "附件不能超过 100MB": "Attachments must not exceed 100 MB",
     "保存终端附件": "Save terminal attachment",
     "编辑长文本": "Compose text",
+    "清除终端输入": "Clear terminal input",
     "填入终端：{name}": "Target terminal: {name}",
     "长文本内容": "Text to insert",
     "输入多段需求，也可粘贴图片、文件或拖入附件。填入后请在终端中检查并提交。": "Write your prompt, or paste images, files, or drop attachments. Review and submit in the terminal after inserting.",
