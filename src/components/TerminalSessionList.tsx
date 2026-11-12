@@ -628,6 +628,9 @@ export default function TerminalSessionList() {
     // 当前终端行已经高亮时组头不再铺底色，避免同一项目出现两块高亮。
     const rowHighlighted = !managing && expanded && terminals.some(term => term.id === paneActiveId)
     const source = projectSources.get(project.id)
+    const sourceColor = terminalProjectScopeKey(project) === 'local'
+      ? 'text-term-list-meta'
+      : 'text-[color-mix(in_srgb,var(--color-accent)_75%,var(--color-fg))]'
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
     const sortable = !managing && !searching && !scopeFiltering && !project.hidden && projects.some(item => item.id === project.id)
@@ -660,7 +663,7 @@ export default function TerminalSessionList() {
           aria-busy={pendingProjectId === project.id || undefined}
           data-terminal-project-sortable={sortable ? 'true' : undefined}
           onPointerDown={sortable ? event => startProjectDrag(event, project.id) : undefined}
-          className={`group/project relative flex h-8 select-none items-center gap-1 rounded-lg pr-1 transition-colors ${
+          className={`group/project flex h-8 select-none items-center gap-1 rounded-lg pr-1 transition-colors ${
             isCurrent
               ? rowHighlighted
                 ? 'text-fg hover:bg-bg-hover'
@@ -714,39 +717,55 @@ export default function TerminalSessionList() {
               >
                 <ProjectKindIcon project={project} open={expanded} size={14} />
               </span>
-              <span className="block min-w-0 flex-1 truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
+              {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
+              {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
                 {project.name}
               </span>
-              {pendingProjectId === project.id && (
-                <LoaderCircle
-                  size={14}
-                  aria-label={translate('正在切换项目…')}
-                  className="flex-shrink-0 animate-spin text-fg-muted"
-                />
+              {source && (
+                <span className={`project-source-badge min-w-0 shrink! truncate font-normal ${sourceColor}`}>
+                  {source}
+                </span>
               )}
-              {hasAttention && (
-                <span
-                  role="img"
-                  aria-label={translate('「{name}」有新结果待查看', { name: project.name })}
-                  data-terminal-group-attention={project.id}
-                  className="h-2 w-2 flex-shrink-0 rounded-full bg-brand"
-                />
-              )}
-              <span className={`flex min-w-18 max-w-[45%] items-baseline justify-end gap-1.5 pr-1 ${actionsHeld ? 'invisible' : 'group-[:hover]/project:invisible group-has-[:focus-visible]/project:invisible'}`}>
-                {!isEmpty && !expanded && (
-                  <span role="img" aria-label={translate('{count} 个终端', { count: terminals.length })}
-                    data-terminal-group-count={project.id} className="shrink-0 text-ui-xs text-term-list-meta">
-                    {terminals.length}
-                  </span>
-                )}
-                {source && <span className="project-source-badge min-w-0 max-w-full! shrink! truncate font-normal text-term-list-meta">{source}</span>}
-              </span>
             </Tooltip>
           </button>
-          {/* 三个操作按钮覆盖行尾预留的位置；来源隐去时仍参与布局。 */}
+          {pendingProjectId === project.id && (
+            <LoaderCircle
+              size={14}
+              aria-label={translate('正在切换项目…')}
+              className="flex-shrink-0 animate-spin text-fg-muted"
+            />
+          )}
+          {hasAttention && (
+            <span
+              role="img"
+              aria-label={translate('「{name}」有新结果待查看', { name: project.name })}
+              data-terminal-group-attention={project.id}
+              className="h-2 w-2 flex-shrink-0 rounded-full bg-brand"
+            />
+          )}
+          {!isEmpty && !expanded && (
+            <span
+              role="img"
+              aria-label={translate('{count} 个终端', { count: terminals.length })}
+              data-terminal-group-count={project.id}
+              className={`flex w-6 flex-shrink-0 items-center justify-center text-ui-xs text-term-list-meta ${
+                actionsHeld ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden'
+              }`}
+            >
+              {terminals.length}
+            </span>
+          )}
+          {/* 收起时显示数量，悬停或键盘聚焦时换成操作按钮；空项目的切换按钮不可聚焦，靠 opacity 保持按钮可达。 */}
           <span
             data-terminal-group-actions={project.id}
-            className={`absolute right-1 flex items-center ${actionsHeld ? '' : 'pointer-events-none opacity-0 group-[:hover]/project:pointer-events-auto group-[:hover]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100'}`}
+            className={`flex-shrink-0 items-center ${
+              isEmpty
+                ? `flex ${actionsHeld ? '' : 'opacity-0 focus-within:opacity-100 group-hover/project:opacity-100'}`
+                : actionsHeld
+                  ? 'flex'
+                  : 'hidden group-hover/project:flex group-has-[:focus-visible]/project:flex'
+            }`}
           >
             <Tooltip label={translate('项目操作')} side="top">
               <button
