@@ -630,7 +630,7 @@ export default function TerminalSessionList() {
     const source = projectSources.get(project.id)
     const sourceColor = terminalProjectScopeKey(project) === 'local'
       ? 'text-term-list-meta'
-      : 'text-[color-mix(in_srgb,var(--color-accent)_75%,var(--color-fg))]'
+      : 'text-term-list-remote'
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
     const sortable = !managing && !searching && !scopeFiltering && !project.hidden && projects.some(item => item.id === project.id)
