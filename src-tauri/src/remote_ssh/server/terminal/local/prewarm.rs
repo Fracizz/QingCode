@@ -6,8 +6,10 @@
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest};
+use qingcode_server::ipc::{IpcEndpoint, IpcStream};
 use std::time::Instant;
 use tauri::Manager;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -64,6 +66,7 @@ struct WarmShell {
     key: LaunchKey,
     launch: PersistentLaunch,
     remote: Option<RemoteTarget>,
+    startup_pipe: Option<IpcStream>,
     session: Option<DaemonSession>,
     transport: Option<SessionTransport>,
     reserved_at: Option<Instant>,
@@ -234,7 +237,12 @@ impl ShellPrewarmPool {
         Ok(count)
     }
 
-    pub(crate) fn reserve(&self, cwd: &str, shell: Option<&str>) -> Option<String> {
+    pub(crate) fn reserve(
+        &self,
+        cwd: &str,
+        shell: Option<&str>,
+        has_startup: bool,
+    ) -> Option<String> {
         let remote = cwd.starts_with(SSH_URI_PREFIX);
         let (idle, has_target) = {
             let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -267,7 +275,7 @@ impl ShellPrewarmPool {
                 return None;
             }
         };
-        let hit = self.reserve_key(&key);
+        let hit = self.reserve_key(&key, has_startup);
         if hit.is_some() {
             trace("reserved", serde_json::json!({"remote": remote}));
         } else {
@@ -297,12 +305,13 @@ impl ShellPrewarmPool {
         hit
     }
 
-    fn reserve_key(&self, key: &LaunchKey) -> Option<String> {
+    fn reserve_key(&self, key: &LaunchKey, has_startup: bool) -> Option<String> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = state
-            .shells
-            .iter_mut()
-            .find(|entry| &entry.key == key && entry.reserved_at.is_none())?;
+        let entry = state.shells.iter_mut().find(|entry| {
+            &entry.key == key
+                && entry.reserved_at.is_none()
+                && (!has_startup || entry.startup_pipe.is_some())
+        })?;
         entry.reserved_at = Some(Instant::now());
         Some(entry.id.clone())
     }
@@ -317,25 +326,61 @@ impl ShellPrewarmPool {
     }
 
     /// 本机项目领取。
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take(
         &self,
         id: &str,
         cwd: &str,
         shell: Option<&str>,
+        startup: Option<&str>,
         size: (u16, u16),
         app: AppHandle,
         manager: &SshManager,
-    ) -> Option<TerminalSpawnResult> {
+    ) -> Result<Option<TerminalSpawnResult>, String> {
         if !self.has_entry(id) {
-            return None;
+            return Ok(None);
         }
-        let launch = resolve_launch(cwd, shell).ok()?;
-        let key = LaunchKey::new(cwd, &launch).ok()?;
-        let Some(entry) = self.take_key(id, &key) else {
+        let launch = resolve_launch(cwd, shell)?;
+        let key = LaunchKey::new(cwd, &launch)?;
+        let Some(mut entry) = self.take_key(id, &key) else {
             trace("take_miss", serde_json::json!({"remote": false}));
-            return None;
+            return Ok(None);
         };
-        self.attach(id, entry, None, size, app, manager).await
+        let mut pipe = entry.startup_pipe.take();
+        if let Some(pipe) = &mut pipe {
+            // 接回之前只交付命令文本。此时即使管道断开，普通冷启动仍可安全重试。
+            if !matches!(
+                tokio::time::timeout(
+                    LOCAL_CLAIM_TIMEOUT,
+                    stage_startup(pipe, startup.unwrap_or_default())
+                )
+                .await,
+                Ok(Ok(()))
+            ) {
+                return Ok(None);
+            }
+        } else if startup.is_some() {
+            return Ok(None);
+        }
+        let pty_id = entry.pty_id.clone();
+        let Some(result) = self.attach(id, entry, None, size, app, manager).await else {
+            return Ok(None);
+        };
+        if let Some(mut pipe) = pipe {
+            // 宿主已接回，才允许 PowerShell 执行。提交后的应答可能丢失，绝不能重跑命令。
+            let committed = tokio::time::timeout(LOCAL_CLAIM_TIMEOUT, async {
+                pipe.write_u8(1).await?;
+                read_startup_ack(&mut pipe).await
+            })
+            .await;
+            if !matches!(committed, Ok(Ok(()))) {
+                drop(pipe);
+                let _ = kill_owned(&pty_id, "prewarm_attach_failed", false, manager).await;
+                return Err("预热 PowerShell 启动确认失败".into());
+            }
+        }
+        record_hit(id, false);
+        Ok(Some(result))
     }
 
     /// 远端 SSH 项目领取：启动参数与项目根都必须与预热时一致。
@@ -371,7 +416,9 @@ impl ShellPrewarmPool {
         }
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
         let name = daemon_terminal_name(id, launch.name.as_deref());
-        self.attach(id, entry, name, size, app, manager).await
+        let result = self.attach(id, entry, name, size, app, manager).await?;
+        record_hit(id, true);
+        Some(result)
     }
 
     async fn attach(
@@ -430,12 +477,6 @@ impl ShellPrewarmPool {
             Ok(Ok(mut result)) => {
                 result.resolved_shell = Some(entry.launch.resolved_shell.clone());
                 result.fallback_from = entry.launch.fallback_from.clone();
-                qingcode_server::diagnostics::record(
-                    "terminal.prewarm_hit",
-                    serde_json::json!({"terminalId": id, "remote": remote.is_some()}),
-                    false,
-                    false,
-                );
                 Some(result)
             }
             _ => {
@@ -572,9 +613,33 @@ impl ShellPrewarmPool {
     }
 }
 
-/// 在用户 profile 执行后创建私有就绪标记，不注入输入历史，也不依赖 ConPTY
-/// 是否转发未知 OSC。标记路径经环境传递，不拼接进 Shell 命令。
+fn record_hit(id: &str, remote: bool) {
+    qingcode_server::diagnostics::record(
+        "terminal.prewarm_hit",
+        serde_json::json!({"terminalId": id, "remote": remote}),
+        false,
+        false,
+    );
+}
+
+async fn read_startup_ack(pipe: &mut IpcStream) -> std::io::Result<()> {
+    if pipe.read_u8().await? == 1 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("PowerShell 启动应答无效"))
+    }
+}
+
+async fn stage_startup(pipe: &mut IpcStream, command: &str) -> std::io::Result<()> {
+    let length = i32::try_from(command.len()).map_err(std::io::Error::other)?;
+    pipe.write_i32_le(length).await?;
+    pipe.write_all(command.as_bytes()).await?;
+    read_startup_ack(pipe).await
+}
+
 const READY_FILE_ENV: &str = "QINGCODE_PREWARM_READY_FILE";
+const STARTUP_PIPE_ENV: &str = "QINGCODE_PREWARM_PIPE";
+
 fn ready_args(shell: &str, mut args: Vec<String>) -> Vec<String> {
     if shell == "cmd" {
         args.extend([
@@ -582,8 +647,11 @@ fn ready_args(shell: &str, mut args: Vec<String>) -> Vec<String> {
             format!("@type nul > \"%{READY_FILE_ENV}%\" & set {READY_FILE_ENV}="),
         ]);
     } else {
-        args.extend(["-NoExit".into(), "-Command".into(),
-            format!("[System.IO.File]::WriteAllText($env:{READY_FILE_ENV}, ''); [Environment]::SetEnvironmentVariable('{READY_FILE_ENV}', $null, 'Process')")]);
+        args.extend([
+            "-NoExit".into(),
+            "-Command".into(),
+            include_str!("prewarm/start-profile.ps1").into(),
+        ]);
     }
     args
 }
@@ -618,6 +686,7 @@ async fn create_local_warm_shell(
         key: target.key.clone(),
         launch: target.launch.clone(),
         remote: None,
+        startup_pipe: None,
         session: Some(session),
         transport: None,
         reserved_at: None,
@@ -628,10 +697,23 @@ async fn create_local_warm_shell(
     std::fs::create_dir(&ready_dir.0).map_err(|error| error.to_string())?;
     let ready_file = ready_dir.0.join("ready");
     let mut env = target.launch.env.clone();
-    env.insert(
-        READY_FILE_ENV.into(),
-        ready_file.to_string_lossy().into_owned(),
-    );
+    let endpoint = IpcEndpoint::new(&ready_dir.0);
+    let listener = if target.launch.resolved_shell == "cmd" {
+        env.insert(
+            READY_FILE_ENV.into(),
+            ready_file.to_string_lossy().into_owned(),
+        );
+        None
+    } else {
+        let listener = endpoint
+            .listen()
+            .map_err(|e| e.to_string())?
+            .ok_or("预热管道已被占用")?;
+        let address = endpoint.describe();
+        let name = address.strip_prefix(r"\\.\pipe\").ok_or("预热管道名无效")?;
+        env.insert(STARTUP_PIPE_ENV.into(), name.into());
+        Some(listener)
+    };
     env.extend(
         crate::terminal::terminal_identity_env(&entry.id)
             .map(|(key, value)| (key.to_string(), value)),
@@ -653,12 +735,20 @@ async fn create_local_warm_shell(
         .ok_or("预热应答缺少 id")?
         .to_string();
     tokio::time::timeout(READY_TIMEOUT, async {
-        while !ready_file.is_file() {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(mut listener) = listener {
+            let pipe = listener.accept().await?;
+            pipe.verify_peer()?;
+            entry.startup_pipe = Some(pipe);
+        } else {
+            while !ready_file.is_file() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
+        Ok::<_, std::io::Error>(())
     })
     .await
-    .map_err(|_| "预热 Shell 就绪超时".to_string())?;
+    .map_err(|_| "预热 Shell 就绪超时".to_string())?
+    .map_err(|e| e.to_string())?;
     Ok(entry)
 }
 
@@ -691,6 +781,7 @@ async fn create_remote_warm_shell(
         key: target.key.clone(),
         launch: target.launch.clone(),
         remote: Some(remote.clone()),
+        startup_pipe: None,
         session: Some(session),
         transport: Some(transport),
         reserved_at: None,

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { reservePrewarmedShellId } from '../lib/terminal/shellPrewarmSettings'
+import { ensureTerminalProfileTrust } from '../lib/terminal/terminalProfileTrust'
+import { getTerminalProfile } from '../lib/terminal/terminalProfiles'
 import type { TerminalTab } from '../types'
 import {
   inferTerminalPaneOwnership,
@@ -6,6 +9,11 @@ import {
   terminalPaneOf,
   useTerminalStore,
 } from './terminalStore'
+
+vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/terminal/shellPrewarmSettings')>(),
+  reservePrewarmedShellId: vi.fn(async () => null),
+}))
 
 vi.mock('../lib/tauri', () => ({
   safeInvoke: vi.fn(async () => undefined),
@@ -42,12 +50,12 @@ vi.mock('@/lib/terminal/terminalProfiles', () => ({
     shell: 'powershell',
     command: '',
   },
-  getTerminalProfile: () => ({
+  getTerminalProfile: vi.fn(() => ({
     id: 'default',
     name: 'PowerShell',
     shell: 'powershell',
     command: '',
-  }),
+  })),
   loadTerminalProfileSettings: () => ({
     defaultProfileId: 'default',
     defaultShell: 'powershell',
@@ -95,6 +103,22 @@ describe('terminal pane isolation', () => {
       brTerminalByProject: {},
       terminalFocusPane: 'primary',
     })
+  })
+
+  it('reserves a local PowerShell for a trusted Claude startup command', async () => {
+    const profile = { id: 'assistant', name: 'Claude', command: 'claude', shell: 'pwsh' } as const
+    vi.mocked(getTerminalProfile).mockReturnValueOnce(profile).mockReturnValueOnce(profile)
+    vi.mocked(reservePrewarmedShellId).mockClear().mockResolvedValueOnce('warm-claude')
+    vi.mocked(ensureTerminalProfileTrust).mockResolvedValueOnce(false)
+    const store = useTerminalStore.getState()
+    expect(await store.addTerminal('D:/proj', 'p1')).toBeNull()
+    expect(reservePrewarmedShellId).not.toHaveBeenCalled()
+    expect(await store.addTerminal('D:/proj', 'p1')).toBe('warm-claude')
+    expect(reservePrewarmedShellId).toHaveBeenCalledWith('D:/proj', expect.any(String), true)
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({
+      id: 'warm-claude', profileId: 'assistant', launchCommand: 'claude',
+    })
+    await store.closeTerminal('warm-claude')
   })
 
   it('inferTerminalPaneOwnership assigns legacy bindings to panes', () => {

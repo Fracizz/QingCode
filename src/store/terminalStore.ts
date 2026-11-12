@@ -622,9 +622,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const profile = getTerminalProfile(profileId)
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const shell = normalizeTerminalShell(profile.shell)
-    const warmId = profile.id === DEFAULT_TERMINAL_PROFILE.id && !profile.command.trim() &&
-      (projectPath.startsWith('ssh://') || getTerminalPersistLocalSessions())
-      ? await reservePrewarmedShellId(projectPath, shell) : null
+    const startup = profile.command.trim().replace(/\s*\n+\s*/g, '; ')
+    const remote = projectPath.startsWith('ssh://')
+    const canReserve = remote
+      ? profile.id === DEFAULT_TERMINAL_PROFILE.id && !startup
+      : getTerminalPersistLocalSessions()
+    const warmId = canReserve ? await reservePrewarmedShellId(projectPath, shell, !!startup) : null
     if (terminalExitInProgress) return null
     const id = warmId ?? crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
@@ -651,7 +654,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       connectionId:
         project?.connection_id ?? sshConnectionIdFromUri(projectPath),
       // `;` joins multi-line profile commands for PowerShell-family shells.
-      launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, '; '),
+      launchCommand: startup,
       pane: focusPane,
       // OSC titles rename the tab (cwd / apps); generic shell noise is filtered in UI.
       allowTitleRename: true,

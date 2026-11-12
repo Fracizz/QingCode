@@ -23,7 +23,7 @@ fn readiness_runs_after_profiles_without_disabling_them_or_typing_commands() {
     let powershell = ready_args("pwsh", vec!["-NoLogo".into()]);
     assert_eq!(&powershell[..3], &["-NoLogo", "-NoExit", "-Command"]);
     assert!(!powershell.iter().any(|arg| arg == "-NoProfile"));
-    assert!(powershell[3].contains("$env:QINGCODE_PREWARM_READY_FILE"));
+    assert!(powershell[3].contains("$env:QINGCODE_PREWARM_PIPE"));
     assert!(powershell[3].contains("SetEnvironmentVariable"));
     assert_eq!(
         ready_args("cmd", vec![]),
@@ -74,6 +74,7 @@ fn fake_shell() -> WarmShell {
         key: LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap(),
         launch,
         remote: None,
+        startup_pipe: None,
         session: None,
         transport: None,
         reserved_at: None,
@@ -90,7 +91,7 @@ fn simultaneous_reservations_cannot_claim_the_same_shell_twice() {
         .map(|_| {
             let pool = pool.clone();
             let key = key.clone();
-            std::thread::spawn(move || pool.reserve_key(&key))
+            std::thread::spawn(move || pool.reserve_key(&key, false))
         })
         .collect();
     assert_eq!(
@@ -114,7 +115,7 @@ fn stale_reservations_and_mismatched_launches_never_supply_a_shell() {
     assert!(pool.take_key("reserved-id", &key).is_none());
     let mut different = key;
     different.args.push("-NoProfile".into());
-    assert!(pool.reserve_key(&different).is_none());
+    assert!(pool.reserve_key(&different, false).is_none());
 }
 
 #[test]
@@ -144,7 +145,7 @@ async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
     let shell = fake_shell();
     let key = shell.key.clone();
     pool.0.lock().unwrap().shells.push(shell);
-    assert!(pool.reserve_key(&key).is_some());
+    assert!(pool.reserve_key(&key, false).is_some());
     assert!(pool.take_key("reserved-id", &key).is_some());
     // 许可在领取时即保留，补充循环稍后才开始等待也能立刻醒来。
     tokio::time::timeout(Duration::from_millis(100), pool.2.notified())
@@ -170,4 +171,57 @@ fn remote_keys_follow_the_ssh_terminal_launch_and_never_match_local_paths() {
     assert!(key != remote_launch_key(cwd, Some("cmd")).unwrap().1);
     let local = LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap();
     assert!(key != local);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_runs_the_staged_profile_only_after_commit() {
+    use std::process::Stdio;
+
+    for commit in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = IpcEndpoint::new(dir.path());
+        let mut listener = endpoint.listen().unwrap().unwrap();
+        let address = endpoint.describe();
+        let output = dir.path().join("started.txt");
+        let mut child = tokio::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                include_str!("start-profile.ps1"),
+            ])
+            .env(
+                STARTUP_PIPE_ENV,
+                address.strip_prefix(r"\\.\pipe\").unwrap(),
+            )
+            .env("QC_TEST_OUTPUT", &output)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        tokio::time::timeout(READY_TIMEOUT, async {
+            let mut pipe = listener.accept().await.unwrap();
+            stage_startup(
+                &mut pipe,
+                "[IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '已启动')",
+            )
+            .await
+            .unwrap();
+            assert!(!output.exists());
+            if commit {
+                pipe.write_u8(1).await.unwrap();
+                read_startup_ack(&mut pipe).await.unwrap();
+            }
+            drop(pipe);
+            child.wait().await.unwrap();
+        })
+        .await
+        .unwrap();
+        if commit {
+            assert_eq!(std::fs::read_to_string(output).unwrap(), "已启动");
+        } else {
+            assert!(!output.exists());
+        }
+    }
 }

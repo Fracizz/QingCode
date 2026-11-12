@@ -75,11 +75,12 @@ pub async fn local_host_create_terminal(
             &id,
             &cwd,
             shell.as_deref(),
+            None,
             (cols, rows),
             app.clone(),
             &manager,
         )
-        .await
+        .await?
     {
         return Ok(result);
     }
@@ -125,6 +126,23 @@ pub async fn local_host_spawn_profile(
     crate::mobile::reject_desktop_use(&id)?;
     allowlist.ensure_executable(&cwd)?;
     let (cols, rows) = (cols.unwrap_or(80), rows.unwrap_or(24));
+    if env.is_empty() {
+        if let Some(result) = app
+            .state::<ShellPrewarmPool>()
+            .take(
+                &id,
+                &cwd,
+                shell.as_deref(),
+                Some(&target),
+                (cols, rows),
+                app.clone(),
+                &manager,
+            )
+            .await?
+        {
+            return Ok(result);
+        }
+    }
     let request = HostedLaunchRequest {
         shell: shell.as_deref(),
         startup: Some(&target),
@@ -253,6 +271,7 @@ pub async fn configure_shell_prewarm(
 pub async fn reserve_prewarmed_shell(
     cwd: String,
     shell: Option<String>,
+    has_startup: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
     manager: State<'_, SshManager>,
     pool: State<'_, ShellPrewarmPool>,
@@ -262,5 +281,5 @@ pub async fn reserve_prewarmed_shell(
     } else {
         allowlist.ensure_executable(&cwd)?;
     }
-    Ok(pool.reserve(&cwd, shell.as_deref()))
+    Ok(pool.reserve(&cwd, shell.as_deref(), has_startup.unwrap_or(false)))
 }
