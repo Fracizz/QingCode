@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { parseCliRunConfig, parseOpenTarget, selectCliRunTask } from './cliBridge'
+import { parseCliRunConfig, parseOpenTarget, resolveCliProfileId, selectCliRunTask } from './cliBridge'
+
+describe('resolveCliProfileId', () => {
+  const profiles = [
+    { id: 'default', name: '普通终端', shell: 'auto', command: '' },
+    { id: 'a', name: 'codex', shell: 'auto', command: 'codex' },
+    { id: 'b', name: 'codex', shell: 'pwsh', command: 'codex' },
+    { id: 'c', name: 'default', shell: 'pwsh', command: 'opencode' },
+  ] as const
+
+  it('takes an exact id before a name, and resolves a unique display name', () => {
+    expect(resolveCliProfileId(profiles, 'default')).toBe('default')
+    expect(resolveCliProfileId(profiles, ' 普通终端 ')).toBe('default')
+    expect(resolveCliProfileId(profiles, 'b')).toBe('b')
+  })
+
+  it('rejects ambiguous, missing and empty selectors', () => {
+    expect(() => resolveCliProfileId(profiles, 'codex')).toThrow('ambiguous')
+    expect(() => resolveCliProfileId(profiles, 'missing')).toThrow('not found')
+    expect(() => resolveCliProfileId(profiles, '  ')).toThrow('required')
+  })
+})
 
 describe('selectCliRunTask', () => {
   const task = (id: string, name?: string) => ({ id, name, type: 'command' as const, target: 'x' })

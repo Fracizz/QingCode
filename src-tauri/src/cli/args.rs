@@ -69,6 +69,7 @@ pub enum Command {
     RunStatus {
         project: Option<String>,
     },
+    TerminalProfiles,
     TerminalList {
         project: Option<String>,
     },
@@ -86,6 +87,7 @@ pub enum Command {
     },
     TerminalCreate {
         project: Option<String>,
+        profile: Option<String>,
     },
     TerminalClose {
         query: String,
@@ -126,7 +128,7 @@ const ROOT_COMMANDS: &[&str] = &[
     "project", "run", "terminal", "settings", "trust", "open", "help", "version", "status",
 ];
 
-const TERMINAL_USAGE: &str = "usage: terminal list|create [--project ...] | terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>] | terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter] | terminal restart <id|name> [--project ...] | terminal close <id|name> --yes [--project ...]";
+const TERMINAL_USAGE: &str = "usage: terminal profiles | terminal list [--project ...] | terminal create [--profile <id|name>] [--project ...] | terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>] | terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter] | terminal restart <id|name> [--project ...] | terminal close <id|name> --yes [--project ...]";
 const RUN_START_USAGE: &str = "usage: run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]";
 const TRUST_USAGE: &str = "usage: trust grant <path> | trust revoke <path> | trust list";
 
@@ -557,11 +559,26 @@ fn parse_terminal(args: &[&str]) -> Result<Command, String> {
                 project: flags.string("--project"),
             })
         }
+        "profiles" => {
+            parse_flags(rest, &NO_FLAGS)?.expect_positional(0, TERMINAL_USAGE)?;
+            Ok(Command::TerminalProfiles)
+        }
         "create" => {
-            let flags = parse_flags(rest, &PROJECT_FLAG).map_err(usage)?;
+            let flags = parse_flags(
+                rest,
+                &FlagSpec {
+                    values: &["--project", "--profile"],
+                    ..NO_FLAGS
+                },
+            )?;
             flags.expect_positional(0, TERMINAL_USAGE)?;
+            let profile = flags.string("--profile");
+            if profile.as_deref().is_some_and(|q| q.trim().is_empty()) {
+                return Err("missing value for --profile".into());
+            }
             Ok(Command::TerminalCreate {
                 project: flags.string("--project"),
+                profile,
             })
         }
         "read" => {
@@ -997,9 +1014,37 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             Command::TerminalCreate {
-                project: Some("p".into())
+                project: Some("p".into()),
+                profile: None,
             }
         );
+        assert_eq!(
+            parse(&args(&["terminal", "profiles"])).unwrap().unwrap(),
+            Command::TerminalProfiles
+        );
+        assert_eq!(
+            parse(&args(&[
+                "terminal",
+                "create",
+                "--profile",
+                "Open Code",
+                "--project",
+                "p"
+            ]))
+            .unwrap()
+            .unwrap(),
+            Command::TerminalCreate {
+                project: Some("p".into()),
+                profile: Some("Open Code".into())
+            }
+        );
+        for invalid in [
+            vec!["terminal", "create", "--profile"],
+            vec!["terminal", "create", "--profile", " "],
+            vec!["terminal", "profiles", "--project", "p"],
+        ] {
+            assert!(parse(&args(&invalid)).unwrap().is_err());
+        }
         assert_eq!(
             parse(&args(&["terminal", "close", "t", "--yes"]))
                 .unwrap()

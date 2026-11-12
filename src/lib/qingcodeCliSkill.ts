@@ -231,17 +231,18 @@ ${quoted} open <file>[:line[:col]] ...
 ## Terminals (QingCode GUI must be running)
 
 \`\`\`text
+${quoted} terminal profiles
 ${quoted} terminal list [--project ...]
 ${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-${quoted} terminal create [--project ...]
+${quoted} terminal create [--profile <id|name>] [--project ...]
 ${quoted} terminal restart <id|name> [--project ...]
 ${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
   terminal through the GUI's authenticated session.
-- \`terminal create\` opens a default-profile terminal and returns its \`id\`. It starts asynchronously:
+- \`terminal create\` uses the default profile. Pass \`--profile\` with an ID or unique exact name from \`terminal profiles\` to select another. The command returns the terminal \`id\`. It starts asynchronously:
   poll \`terminal list\` until \`writable\` is true before sending input.
 - \`terminal close\` ends the process in that terminal and requires \`--yes\`; use it only when asked.
 - \`--project\` omitted means the GUI current project. Terminals are looked up only inside that
@@ -489,16 +490,17 @@ ${quoted} open <file>[:line[:col]] ...
 ## 终端（必须启动 QingCode GUI）
 
 \`\`\`text
+${quoted} terminal profiles
 ${quoted} terminal list [--project ...]
 ${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-${quoted} terminal create [--project ...]
+${quoted} terminal create [--profile <id|name>] [--project ...]
 ${quoted} terminal restart <id|name> [--project ...]
 ${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
 - 适用于 QingCode 中的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的终端。
-- \`terminal create\` 用默认配置新建终端并返回 \`id\`。终端异步启动，发送输入前先轮询
+- \`terminal create\` 使用默认配置。可从 \`terminal profiles\` 获取 ID 或唯一的完整名称，通过 \`--profile\` 指定配置。新建后返回终端 \`id\`。终端异步启动，发送输入前先轮询
   \`terminal list\`，直到 \`writable\` 为 true。
 - \`terminal close\` 会结束该终端里的进程，必须提供 \`--yes\`，只在用户要求时使用。
 - 未提供 \`--project\` 时使用 GUI 当前项目，且只在该项目内查找终端；优先使用

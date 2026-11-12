@@ -222,17 +222,18 @@ matching ID is supplied. It is not a partial patch.
 ## Terminals (QingCode GUI must be running)
 
 ```text
+.\src-tauri\target\debug\qingcode.exe terminal profiles
 .\src-tauri\target\debug\qingcode.exe terminal list [--project ...]
 .\src-tauri\target\debug\qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 .\src-tauri\target\debug\qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-.\src-tauri\target\debug\qingcode.exe terminal create [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal create [--profile <id|name>] [--project ...]
 .\src-tauri\target\debug\qingcode.exe terminal restart <id|name> [--project ...]
 .\src-tauri\target\debug\qingcode.exe terminal close <id|name> --yes [--project ...]
 ```
 
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
   terminal through the GUI's authenticated session.
-- `terminal create` opens a default-profile terminal and returns its `id`. It starts asynchronously:
+- `terminal create` uses the default profile. Pass `--profile` with an ID or unique exact name from `terminal profiles` to select another. The command returns the terminal `id`. It starts asynchronously:
   poll `terminal list` until `writable` is true before sending input.
 - `terminal close` ends the process in that terminal and requires `--yes`; use it only when asked.
 - `--project` omitted means the GUI current project. Terminals are looked up only inside that

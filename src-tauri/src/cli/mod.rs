@@ -151,6 +151,7 @@ fn execute(cmd: Command) -> i32 {
             tail,
         } => online::run_logs(&query, project.as_deref(), task.as_deref(), tail),
         Command::RunStatus { project } => online::run_status(project.as_deref()),
+        Command::TerminalProfiles => online::terminal_profiles(),
         Command::TerminalList { project } => online::terminal_list(project.as_deref()),
         Command::TerminalRead {
             query,
@@ -158,7 +159,9 @@ fn execute(cmd: Command) -> i32 {
             scope,
             tail,
         } => online::terminal_read(&query, project.as_deref(), scope.as_deref(), tail),
-        Command::TerminalCreate { project } => online::terminal_create(project.as_deref()),
+        Command::TerminalCreate { project, profile } => {
+            online::terminal_create(project.as_deref(), profile.as_deref())
+        }
         Command::TerminalClose { query, project } => {
             online::terminal_close(&query, project.as_deref())
         }

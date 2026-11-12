@@ -26,6 +26,8 @@ import {
   runningTaskKeysForConfig,
   stopConfig,
 } from './runConfigRuntime'
+import { getEffectiveDefaultProfileId, loadTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
+import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
@@ -48,6 +50,17 @@ interface CliRequest {
   paths?: string[] | null
   content?: string | null
   options?: Record<string, unknown> | null
+}
+
+export function resolveCliProfileId(profiles: readonly TerminalProfile[], query: string): string {
+  const key = query.trim()
+  if (!key) throw new Error('terminal profile is required')
+  const byId = profiles.find(profile => profile.id === key)
+  if (byId) return byId.id
+  const matches = profiles.filter(profile => profile.name.trim() === key)
+  if (matches.length === 1) return matches[0].id
+  if (matches.length > 1) throw new Error(`ambiguous terminal profile name '${key}'; use the profile id`)
+  throw new Error(`terminal profile not found: ${key}`)
 }
 
 function optionString(req: CliRequest, key: string): string | undefined {
@@ -391,6 +404,15 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         configs: running,
       }
     }
+    case 'terminal.profiles': {
+      const settings = loadTerminalProfileSettings()
+      return {
+        defaultProfileId: getEffectiveDefaultProfileId(settings),
+        profiles: settings.profiles.map(profile => ({
+          id: profile.id, name: profile.name, shell: profile.shell, trusted: isTerminalProfileTrusted(profile),
+        })),
+      }
+    }
     case 'terminal.list': {
       const project = resolveProject(req.project)
       return {
@@ -444,13 +466,17 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         ...output,
       }
     }
-    case 'terminal.create': {
+    case 'terminal.create':
+    case 'terminal.createProfile': {
       const project = resolveProject(req.project)
       requireTrusted(project)
       await ensureSshWorkspaceConnected(project)
-      const id = await useTerminalStore.getState().addTerminal(project.path, project.id)
+      const profileId = req.op === 'terminal.createProfile'
+        ? resolveCliProfileId(loadTerminalProfileSettings().profiles, req.config ?? '')
+        : undefined
+      const id = await useTerminalStore.getState().addTerminal(project.path, project.id, profileId)
       const terminal = useTerminalStore.getState().terminals.find(item => item.id === id)
-      if (!terminal) throw new Error('could not create a terminal (limit reached or app closing)')
+      if (!terminal) throw new Error('could not create a terminal (cancelled, limit reached or app closing)')
       return { project: projectSummary(project), terminal: cliTerminalSummary(terminal) }
     }
     case 'terminal.restart': {

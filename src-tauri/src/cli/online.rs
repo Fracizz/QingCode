@@ -394,6 +394,10 @@ pub fn run_remove(query: &str, project: Option<&str>) -> i32 {
     dispatch(scoped("run.remove", project, Some(query)))
 }
 
+pub fn terminal_profiles() -> i32 {
+    dispatch(request("terminal.profiles"))
+}
+
 pub fn terminal_list(project: Option<&str>) -> i32 {
     dispatch(scoped("terminal.list", project, None))
 }
@@ -425,8 +429,14 @@ pub fn terminal_send(query: &str, project: Option<&str>, data: String) -> i32 {
     })
 }
 
-pub fn terminal_create(project: Option<&str>) -> i32 {
-    dispatch(scoped("terminal.create", project, None))
+pub fn terminal_create(project: Option<&str>, profile: Option<&str>) -> i32 {
+    // An older GUI must reject an explicit profile instead of launching its default.
+    let op = if profile.is_some() {
+        "terminal.createProfile"
+    } else {
+        "terminal.create"
+    };
+    dispatch(scoped(op, project, profile))
 }
 
 pub fn terminal_close(query: &str, project: Option<&str>) -> i32 {

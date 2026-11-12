@@ -61,6 +61,7 @@ export function latestRunTerminals<T extends Pick<TerminalTab, 'runTaskId' | 'st
 export function cliTerminalSummary(terminal: TerminalTab) {
   return {
     id: terminal.id,
+    profileId: terminal.profileId,
     name: terminal.name,
     status: terminal.status,
     exitCode: terminal.exitCode,

@@ -184,10 +184,11 @@ Usage:
   run start submits tasks asynchronously and fails at once for an untrusted project.
   --wait waits until tasks started; --wait-text also waits for that text in task output.
 
+  qingcode.exe terminal profiles
   qingcode.exe terminal list [--project ...]
   qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
   qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-  qingcode.exe terminal create [--project ...]
+  qingcode.exe terminal create [--profile <id|name>] [--project ...]
   qingcode.exe terminal restart <id|name> [--project ...]
   qingcode.exe terminal close <id|name> --yes [--project ...]
   Terminal commands require the GUI. read/send/create/restart need a trusted project (local or
