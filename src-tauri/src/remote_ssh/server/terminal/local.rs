@@ -1,6 +1,8 @@
 //! 本机 PTY 宿主上的持久化终端：与远端 daemon 共用代理循环，只是传输换成命名管道。
 
 use super::*;
+
+pub(crate) mod prewarm;
 use crate::local_pty_host::{self, LOCAL_CONNECTION_ID};
 
 fn local_client_id(manager: &SshManager) -> String {

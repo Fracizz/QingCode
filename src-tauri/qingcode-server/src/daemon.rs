@@ -714,6 +714,8 @@ struct PtyRoute {
     pending_bytes: usize,
     /// attach 应答已经带有退出码时，不再重复发送同一终端的 `pty.exit`。
     exit_delivered: bool,
+    /// 未领取的预热 PTY 随创建连接断开而结束，不能成为持久化孤儿。
+    transient: bool,
 }
 
 impl PtyRoute {
@@ -725,6 +727,7 @@ impl PtyRoute {
             pending: VecDeque::new(),
             pending_bytes: 0,
             exit_delivered,
+            transient: false,
         }
     }
 
@@ -818,6 +821,15 @@ impl Daemon {
         conn_id: u32,
         options: PtyCreateOptions,
     ) -> Result<crate::pty::PtyInfo, String> {
+        self.create_pty_with_lifetime(conn_id, options, false)
+    }
+
+    fn create_pty_with_lifetime(
+        &self,
+        conn_id: u32,
+        options: PtyCreateOptions,
+        transient: bool,
+    ) -> Result<crate::pty::PtyInfo, String> {
         let mut routes = self.routes.lock().unwrap();
         // spawn_blocking 的 create 可能晚于原连接退出才开始。与 detach 共用
         // routes 锁，确保关服/断线以后不会新建一个无人接管的 attached PTY。
@@ -831,10 +843,9 @@ impl Daemon {
             return Err("连接已关闭，终端未创建".to_string());
         }
         let info = self.pty.create(options)?;
-        routes.insert(
-            info.id.clone(),
-            PtyRoute::new(conn_id, info.seq, RoutePhase::Live, false),
-        );
+        let mut route = PtyRoute::new(conn_id, info.seq, RoutePhase::Live, false);
+        route.transient = transient;
+        routes.insert(info.id.clone(), route);
         Ok(info)
     }
 
@@ -985,21 +996,27 @@ impl Daemon {
         }
     }
 
-    /// 连接断开时把它名下的终端标记为 detached，但绝不结束进程。
+    /// 连接断开时保留正式终端；未领取的 transient 预热终端立即回收。
     fn detach_owned_ptys(&self, conn_id: u32, client_id: &str) {
-        let owned: Vec<String> = {
-            let routes = self.routes.lock().unwrap();
-            routes
+        let owned: Vec<(String, bool)> = {
+            let mut routes = self.routes.lock().unwrap();
+            let owned: Vec<_> = routes
                 .iter()
                 .filter(|(_, route)| route.conn_id == conn_id)
-                .map(|(id, _)| id.clone())
-                .collect()
+                .map(|(id, route)| (id.clone(), route.transient))
+                .collect();
+            for (id, _) in &owned {
+                let _ = self.pty.detach(id, client_id);
+                routes.remove(id);
+            }
+            owned
         };
-        for id in owned {
-            let _ = self.pty.detach(&id, client_id);
-            self.clear_route_for_conn(&id, conn_id);
+        for (id, transient) in owned {
+            if transient {
+                let _ = self.pty.kill(&id);
+            }
             self.log.info(&format!(
-                "终端 {id} 已 detached（连接 {conn_id} 断开，进程保留）"
+                "终端 {id} 连接 {conn_id} 断开（预热回收={transient}）"
             ));
         }
     }
@@ -2105,7 +2122,8 @@ fn filter_pty_list(
 async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
     let id = request.id;
     match request.method.as_str() {
-        "pty.create" => {
+        "pty.create" | "pty.createTransient" => {
+            let transient = request.method == "pty.createTransient";
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
             struct CreateParams {
@@ -2166,7 +2184,11 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             let daemon_for_create = Arc::clone(&daemon);
             let conn_id = conn.conn_id;
             let created = tokio::task::spawn_blocking(move || {
-                daemon_for_create.create_pty_with_route(conn_id, options)
+                if transient {
+                    daemon_for_create.create_pty_with_lifetime(conn_id, options, true)
+                } else {
+                    daemon_for_create.create_pty_with_route(conn_id, options)
+                }
             })
             .await;
             match created {
@@ -2319,6 +2341,37 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     daemon.clear_route_for_conn(&params.id, conn.conn_id);
                     conn.respond(id, json!({ "ok": true }));
                 }
+                Err(message) => conn.fail(id, "pty", message),
+            }
+        }
+        // 领取只允许创建连接操作；先变成普通 detached PTY，再走已有接回流程。
+        "pty.claim" => {
+            #[derive(Deserialize)]
+            struct ClaimParams {
+                id: String,
+            }
+            let Ok(params) = params::<ClaimParams>(&request) else {
+                conn.fail(id, "badRequest", "pty.claim 参数错误");
+                return;
+            };
+            let claimed = {
+                let mut routes = daemon.routes.lock().unwrap();
+                if routes
+                    .get(&params.id)
+                    .is_some_and(|route| route.conn_id == conn.conn_id && route.transient)
+                {
+                    // 与连接清理共用 routes 锁，避免刚领取就被当成预热进程结束。
+                    let result = daemon.pty.detach(&params.id, &conn.client_id);
+                    if result.is_ok() {
+                        routes.remove(&params.id);
+                    }
+                    result
+                } else {
+                    Err("预热终端不属于当前连接或已领取".to_string())
+                }
+            };
+            match claimed {
+                Ok(()) => conn.respond(id, json!({ "ok": true })),
                 Err(message) => conn.fail(id, "pty", message),
             }
         }
@@ -4427,5 +4480,63 @@ mod tests {
         // 非盘符形态保持原样，canonical_root 仍会拒绝（无盘符不是绝对路径）。
         assert_eq!(normalize_root_path("/home/dev"), PathBuf::from("/home/dev"));
         assert!(canonical_root("/home/dev").is_err());
+    }
+
+    #[tokio::test]
+    async fn prewarm_disconnect_reaps_unclaimed_but_preserves_claimed_shells() {
+        let (run_dir, handle) = start_daemon("prewarm-lifetime").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("prewarm-lifetime-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let request = client
+                .request(
+                    "pty.createTransient",
+                    &json!({
+                        "cwd": root, "shell": test_shell(), "cols": 80, "rows": 24,
+                    }),
+                )
+                .await;
+            ids.push(
+                client.wait_response(request).await["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+        // 即使 clientId 相同，另一个连接也不能领取该预热项。
+        let mut observer = TestClient::connect(&run_dir, &token).await;
+        let request = observer.request("pty.claim", &json!({"id": ids[0]})).await;
+        assert_eq!(observer.wait_error(request).await.code, "pty");
+        let request = client.request("pty.claim", &json!({"id": ids[0]})).await;
+        client.wait_response(request).await;
+        let request = client.request("pty.claim", &json!({"id": ids[0]})).await;
+        assert_eq!(client.wait_error(request).await.code, "pty");
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let request = observer.request("pty.list", &json!({})).await;
+                let response = observer.wait_response(request).await;
+                let items = response["ptys"].as_array().unwrap();
+                let claimed = items.iter().find(|info| info["id"] == ids[0]);
+                assert!(claimed
+                    .is_some_and(|info| info["exited"].is_null() && info["detached"] == true));
+                if items
+                    .iter()
+                    .all(|info| info["id"] != ids[1] || !info["exited"].is_null())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+        .await
+        .expect("未领取预热进程在连接断开后仍存活");
+        let request = observer.request("server.shutdown", &json!({})).await;
+        observer.wait_response(request).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 }

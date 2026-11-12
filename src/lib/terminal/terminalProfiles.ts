@@ -1,3 +1,4 @@
+import { notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import {
   defaultTerminalShell,
   normalizeTerminalShell,
@@ -110,6 +111,7 @@ export function saveTerminalProfileSettings(settings: TerminalProfileSettings) {
       profiles,
     }),
   )
+  notifyShellPrewarmChanged()
 }
 
 export function getDefaultTerminalProfile(): TerminalProfile {

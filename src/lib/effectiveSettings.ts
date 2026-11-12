@@ -1,3 +1,4 @@
+import { notifyShellPrewarmChanged } from './terminal/shellPrewarmSettings'
 import type { Project } from '../types'
 import {
   loadEffectiveAutoSaveSettings,
@@ -53,4 +54,5 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)
+  notifyShellPrewarmChanged()
 }

@@ -1,3 +1,4 @@
+import { reservePrewarmedShellId } from '../lib/terminal/shellPrewarmSettings'
 import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -620,7 +621,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const profile = getTerminalProfile(profileId)
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const shell = normalizeTerminalShell(profile.shell)
-    const id = crypto.randomUUID()
+    const warmId = profile.id === DEFAULT_TERMINAL_PROFILE.id && !profile.command.trim() && getTerminalPersistLocalSessions()
+      ? await reservePrewarmedShellId(projectPath, shell) : null
+    if (terminalExitInProgress) return null
+    const id = warmId ?? crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
     const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
     const shellLabel =

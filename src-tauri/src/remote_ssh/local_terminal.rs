@@ -6,6 +6,8 @@ use super::terminal_exit::TerminalExitAction;
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest, TerminalManager};
+pub(crate) use local_terminal::prewarm::ShellPrewarmPool;
+use tauri::Manager;
 
 fn fallback_result(mut result: TerminalSpawnResult, reason: Option<String>) -> TerminalSpawnResult {
     result.persistent_fallback_reason = reason;
@@ -67,6 +69,20 @@ pub async fn local_host_create_terminal(
     crate::mobile::reject_desktop_use(&id)?;
     allowlist.ensure_executable(&cwd)?;
     let (cols, rows) = (cols.unwrap_or(80), rows.unwrap_or(24));
+    if let Some(result) = app
+        .state::<ShellPrewarmPool>()
+        .take(
+            &id,
+            &cwd,
+            shell.as_deref(),
+            (cols, rows),
+            app.clone(),
+            &manager,
+        )
+        .await
+    {
+        return Ok(result);
+    }
     let request = HostedLaunchRequest {
         shell: shell.as_deref(),
         startup: None,
@@ -211,4 +227,33 @@ pub async fn local_host_finish_terminal_on_exit(
         terminal.detach_for_exit().await?;
     }
     Ok(())
+}
+
+/// 全应用共用一个预算；只有当前持有池的窗口能清空它。
+#[tauri::command]
+pub async fn configure_shell_prewarm(
+    cwd: Option<String>,
+    shell: Option<String>,
+    count: serde_json::Value,
+    window: tauri::Window,
+    app: AppHandle,
+    pool: State<'_, ShellPrewarmPool>,
+) -> Result<usize, String> {
+    let result = pool.configure(app, window.label().to_string(), cwd, shell, count);
+    if result.is_err() {
+        pool.clear_window(window.label());
+    }
+    result
+}
+
+/// 只保留已就绪项；无命中立即返回，由正常新建链路兜底。
+#[tauri::command]
+pub async fn reserve_prewarmed_shell(
+    cwd: String,
+    shell: Option<String>,
+    allowlist: State<'_, PathAllowlist>,
+    pool: State<'_, ShellPrewarmPool>,
+) -> Result<Option<String>, String> {
+    allowlist.ensure_executable(&cwd)?;
+    Ok(pool.reserve(&cwd, shell.as_deref()))
 }

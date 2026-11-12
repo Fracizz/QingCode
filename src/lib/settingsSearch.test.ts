@@ -42,6 +42,15 @@ describe('settings search aliases and scope', () => {
     }
   })
 
+  it('finds shell prewarming only in Windows user settings', () => {
+    for (const query of ['预热', 'prewarm', 'terminal.integrated.shellprewarmcount']) {
+      expect(matchesSettingsCategory('terminal', query, false, t, true)).toBe(true)
+      expect(matchesSettingsTerms(query, ['预热', 'Shell', 'shellPrewarmCount'], false, t, true)).toBe(true)
+      expect(matchesSettingsCategory('terminal', query, false, t, false)).toBe(false)
+      expect(matchesSettingsCategory('terminal', query, true, t, true)).toBe(false)
+    }
+  })
+
   it('hides platform-only results outside Windows', () => {
     expect(matchesSettingsCategory('mobile', '', false, t, false)).toBe(false)
     expect(matchesSettingsCategory('tools', 'windows', false, t, false)).toBe(false)

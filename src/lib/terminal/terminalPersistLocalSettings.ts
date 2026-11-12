@@ -1,3 +1,4 @@
+import { notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import type { Project } from '@/types'
 import {
   DEFAULT_GLOBAL_SETTINGS,
@@ -79,6 +80,7 @@ export async function saveScopedTerminalPersistLocalSessions(
     await saveGlobalSettings(current)
   }
   await loadEffectiveTerminalPersistLocalSessions(project)
+  notifyShellPrewarmChanged()
 }
 
 /**

@@ -116,6 +116,7 @@ function buildSharedDefaults(): SettingsFile {
 /** Global default-settings defaults (includes machine-wide project list). */
 export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   ...buildSharedDefaults(),
+  'terminal.integrated.shellPrewarmCount': 'auto',
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
@@ -307,6 +308,9 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
+  // terminal.integrated.shellPrewarmCount：仅 Windows 普通 Shell；auto=每 8 GiB 物理内存预热 1 个（至少 1、最多 8），0=关闭，1–8=手动数量；需开启本地终端可接回，仅用户作用域
+  "terminal.integrated.shellPrewarmCount": "auto",
+
   // ============================== 全局项目列表 ==============================
   // 仅 default-settings.json 有效；不要写进工作区 project-settings.json
   //
@@ -443,6 +447,7 @@ export function defaultSettingsTextFor(scope: SettingsScope): string {
 /** Strip global-only keys that must not live in workspace settings. */
 export function stripGlobalOnlyKeys(settings: SettingsFile): SettingsFile {
   const next = { ...settings }
+  delete next['terminal.integrated.shellPrewarmCount']
   delete next[PROJECTS_KEY]
   delete next[PROJECTS_SYNC_ON_STARTUP_KEY]
   delete next[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]
@@ -663,7 +668,7 @@ export function parseSettings(input: unknown, scope: SettingsScope = 'global'): 
   const next: SettingsFile = { version: 1, custom }
   for (const [key, value] of Object.entries(input)) {
     if (key === 'version' || key === 'custom') continue
-    if (scope === 'project' && (key === PROJECTS_KEY || key === PROJECTS_SYNC_ON_STARTUP_KEY)) {
+    if (scope === 'project' && (key === PROJECTS_KEY || key === PROJECTS_SYNC_ON_STARTUP_KEY || key === 'terminal.integrated.shellPrewarmCount')) {
       continue
     }
     next[key] = value

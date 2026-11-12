@@ -8,6 +8,7 @@ import { isSshResource, safeInvoke } from './tauri'
 /** New storage; migrates once from legacy `qingcode:run-trust`. */
 export const WORKSPACE_TRUST_STORAGE_KEY = 'qingcode:workspace-trust'
 export const WORKSPACE_TRUST_CHANGED_EVENT = 'qingcode:workspace-trust-changed'
+export const WORKSPACE_TRUST_SYNCED_EVENT = 'qingcode:workspace-trust-synced'
 
 /** @deprecated Kept so older builds' keys can be migrated. */
 export const RUN_TRUST_STORAGE_KEY = 'qingcode:run-trust'
@@ -199,6 +200,7 @@ export async function pushTrustedRootsToNative(
     .filter(project => project.ephemeral || isProjectTrusted(project))
     .map(project => project.path)
   await syncTrustedRoots(roots)
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORKSPACE_TRUST_SYNCED_EVENT))
   if (!hasBackend()) return
   await Promise.all(
     projects

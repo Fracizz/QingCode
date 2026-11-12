@@ -96,6 +96,9 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 png = "0.18"
 
+[dev-dependencies]
+tempfile = "3"
+
 [patch.crates-io]
 # Windows event-loop callback double-free (HEAP_FAILURE_BLOCK_NOT_BUSY).
 # See vendor/tao/QINGCODE.md.

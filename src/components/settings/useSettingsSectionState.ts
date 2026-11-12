@@ -1,3 +1,4 @@
+import { loadShellPrewarmCount, saveShellPrewarmCount, type ShellPrewarmCount } from '../../lib/terminal/shellPrewarmSettings'
 /**
  * 设置页各分区的状态与持久化逻辑。
  *
@@ -170,6 +171,7 @@ export function useTerminalIntegrationSettings(
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [largePasteAsFile, setLargePasteAsFile] = useState(getTerminalLargePasteAsFile)
   const [persistLocalSessions, setPersistLocalSessions] = useState(getTerminalPersistLocalSessions)
+  const [shellPrewarmCount, setShellPrewarmCount] = useState<ShellPrewarmCount>('auto')
   const [shiftEnterNewline, setShiftEnterNewline] = useState(getTerminalShiftEnterNewline)
   const [activityIndicator, setActivityIndicator] = useState(getTerminalActivityIndicator)
   const [pasteRetentionDays, setPasteRetentionDays] = useState<TerminalPasteRetentionDays>(0)
@@ -177,6 +179,7 @@ export function useTerminalIntegrationSettings(
 
   useEffect(() => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    void loadShellPrewarmCount().then(setShellPrewarmCount)
     void loadScopedTerminalSshUploadOnPaste(settingsScope, currentProject).then(
       setSshUploadOnPaste,
     )
@@ -194,6 +197,16 @@ export function useTerminalIntegrationSettings(
       setActivityIndicator,
     )
   }, [scope, currentProject, settingsRevision])
+
+  const updateShellPrewarmCount = async (count: ShellPrewarmCount) => {
+    if (scope === 'workspace') return
+    try {
+      await saveShellPrewarmCount(count)
+      setShellPrewarmCount(count)
+    } catch (error) {
+      pushToast('error', t('保存 Shell 预热设置失败: {error}', { error: String(error) }))
+    }
+  }
 
   const updateSshUploadOnPaste = async (enabled: boolean) => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
@@ -265,6 +278,8 @@ export function useTerminalIntegrationSettings(
     sshUploadOnPaste,
     largePasteAsFile,
     persistLocalSessions,
+    shellPrewarmCount,
+    updateShellPrewarmCount,
     shiftEnterNewline,
     activityIndicator,
     pasteRetentionDays,

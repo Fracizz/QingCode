@@ -55,6 +55,7 @@ import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { applyEffectiveSettings } from './lib/effectiveSettings'
 import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
+import { useShellPrewarm } from './hooks/useShellPrewarm'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
@@ -191,6 +192,7 @@ function App() {
   const openPalette = useCommandPaletteStore(s => s.openPalette)
   const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
 
+  useShellPrewarm(currentProject)
   useAutoSave()
   useDraftRecovery()
   useFileWatcher()

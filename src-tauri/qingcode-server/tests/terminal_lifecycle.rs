@@ -271,9 +271,13 @@ fn real_pty_disconnect_kill_exit_and_restart_preserve_diagnostic_evidence() {
         json!({"id":pty_b,"seq":0,"data":input.as_bytes()}),
     );
     wait_until(|| {
-        journal(&dir)
-            .iter()
-            .any(|e| e["event"] == "pty.exited" && e["fields"]["ptyId"] == pty_b)
+        let entries = journal(&dir);
+        // kill 的退出回报异步到达；不能用另一个 PTY 已退出推断被杀的 PTY 也已回报。
+        [&pty_a, &pty_b].iter().all(|pty| {
+            entries
+                .iter()
+                .any(|e| e["event"] == "pty.exited" && e["fields"]["ptyId"] == **pty)
+        })
     });
     let entries = journal(&dir);
     let kill = entries

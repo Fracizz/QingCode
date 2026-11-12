@@ -4258,6 +4258,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-sql",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

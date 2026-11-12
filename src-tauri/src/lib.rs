@@ -812,6 +812,7 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
+        .manage(remote_ssh::local_terminal::ShellPrewarmPool::default())
         .manage(mobile::MobileState::default())
         .manage(FileWatcherManager::new())
         .manage(git_push_sync::GitPushSyncManager::default())
@@ -1076,6 +1077,8 @@ pub fn run() {
             remote_ssh::ssh_kill_detached_terminal,
             remote_ssh::ssh_list_detached_terminals,
             remote_ssh::ssh_attach_terminal,
+            remote_ssh::local_terminal::configure_shell_prewarm,
+            remote_ssh::local_terminal::reserve_prewarmed_shell,
             remote_ssh::local_terminal::local_host_create_terminal,
             remote_ssh::local_terminal::local_host_spawn_profile,
             remote_ssh::local_terminal::local_host_attach_terminal,
@@ -1084,6 +1087,13 @@ pub fn run() {
             remote_ssh::local_terminal::local_host_survives_app_exit,
             remote_ssh::ssh_forget_workspace_root,
         ])
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .state::<remote_ssh::local_terminal::ShellPrewarmPool>()
+                    .clear_window(window.label());
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

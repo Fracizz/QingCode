@@ -328,3 +328,5 @@ AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-brow
 覆盖默认关闭、7/15/30 天选项、保存后重新打开、工作区继承与关闭、取消清理、
 本机/WSL/SSH 命令路由及英文窄屏浅色布局。截图与结果位于
 `.dev/web-tests/terminal-paste-cleanup/`。文件操作使用内存 IPC，不能代替原生或真实 SSH 验收。
+
+Windows Shell 预热设置：启动 `pnpm test:web` 后运行 `node scripts/web-tests/shell-prewarm.agent-browser.mjs`，页面为 `/web-tests/shell-prewarm.html`。复用真实终端设置组件，覆盖默认自动、1–8 选项、关闭、JSON5 保存与重新打开、工作区只读、Linux 隐藏和英文浅色窄窗；截图和 JSON 在 `.dev/web-tests/shell-prewarm/`。该页面模拟 Windows UI 平台和设置文件，不执行 Shell，原生池和 Windows ConPTY 仍需 Rust/桌面验收。
