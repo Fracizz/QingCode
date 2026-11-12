@@ -69,13 +69,27 @@ pub async fn ssh_server_restart(
     server_status::ssh_server_restart(root_uri, app, manager).await
 }
 
+#[tauri::command]
+pub async fn ssh_deferred_upgrade_impact(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<server_status::DeferredUpgrade, String> {
+    let root = server_status::require_trusted_root(&manager, &root_uri)?;
+    server::deferred_upgrade_impact(&manager, &root).await
+}
+
 /// 安装匹配客户端的服务，并等待常驻 daemon 的版本握手完成。
 #[tauri::command]
 pub async fn ssh_server_update(
     root_uri: String,
+    confirmed_upgrade: Option<server_status::DeferredUpgrade>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
+    if let Some(confirmed) = confirmed_upgrade {
+        let root = server_status::require_trusted_root(&manager, &root_uri)?;
+        confirmed.verify(&server::deferred_upgrade_impact(&manager, &root).await?)?;
+    }
     server_status::ssh_server_update(root_uri, app, manager).await
 }
 

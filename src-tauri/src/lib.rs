@@ -1021,6 +1021,7 @@ pub fn run() {
             remote_ssh::ssh_server_latency,
             remote_ssh::ssh_server_restart,
             remote_ssh::ssh_server_update,
+            remote_ssh::ssh_deferred_upgrade_impact,
             remote_ssh::ssh_windows_repair_plan,
             remote_ssh::ssh_windows_repair,
             remote_ssh::ssh_server_stop,

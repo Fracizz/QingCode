@@ -27,6 +27,7 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import ContextMenu from './ContextMenu'
 import SshImportDialog from './SshImportDialog'
+import DirectServerUpdateDialog from './DirectServerUpdateDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import DirectSshFallback from './DirectSshFallback'
@@ -67,6 +68,8 @@ import { connectionStatus, matchesConnection, groupConnectionProjects } from '..
 import { normalizeProjectPath, restrictProject } from '../lib/workspaceTrust'
 import {
   isAgentCommandUnavailable,
+  isDeferredUpgrade,
+  type DeferredUpgrade,
   parseSshServerState,
   sshServerIsDirect,
   sshServerModeKey,
@@ -147,6 +150,9 @@ export default function RemoteConnectionsManager() {
   const navigationPending = useRef(false)
   const [importOpen, setImportOpen] = useState(false)
   const [error, setError] = useState('')
+  const [forceDirect, setForceDirect] = useState<{ rootUri: string; confirmed: DeferredUpgrade } | null>(null)
+  const forceRequest = useRef<AbortController | null>(null)
+  useEffect(() => () => { forceRequest.current?.abort() }, [selectedId, editing])
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
   const [logView, setLogView] = useState<LogView | null>(null)
   const detailRequestRef = useRef(0)
@@ -180,7 +186,10 @@ export default function RemoteConnectionsManager() {
   const serverStates = selected ? statesByConnection[selected.id] ?? [] : []
   const groupedProjects = useMemo(() => groupConnectionProjects(projects), [projects])
   const status = connectionStatus(selected ? aliveMap[selected.id] : null, serverStates, selected ? statusErrors[selected.id] : undefined)
-  const statusReason = (selected ? statusErrors[selected.id] : '') || serverStates.find(state => state.reason)?.reason
+  const statusError = selected && statusErrors[selected.id]
+  const deferredState = statusError ? undefined : serverStates.find(state =>
+    state.phase === 'readyServer' && state.connectionId === selected?.id && state.deferredUpgrade)
+  const statusReason = statusError || deferredState?.reason || serverStates.find(state => state.reason)?.reason
   const filteredConnections = connections.filter(connection => {
     const summary = connectionStatus(aliveMap[connection.id], statesByConnection[connection.id] ?? [], statusErrors[connection.id])
     const info = directInfos[connection.id]
@@ -293,6 +302,7 @@ export default function RemoteConnectionsManager() {
       setStatesByConnection(prev => ({ ...prev, [id]: [] }))
       setStatusErrors(prev => ({ ...prev, [id]: '' }))
       if (id === selectedId) {
+        forceRequest.current?.abort()
         detailRequestRef.current += 1
         setRoots([])
         setDetailLoading(false)
@@ -629,6 +639,46 @@ export default function RemoteConnectionsManager() {
       if (selectedId) await refreshDetail(selectedId)
     } catch (reason) {
       pushToast('error', t('撤销信任失败: {error}', { error: String(reason) }))
+    }
+  }
+
+  const forceUpdate = async (state: SshServerState) => {
+    if (!selected || busyRoot || forceRequest.current) return
+    const controller = new AbortController()
+    forceRequest.current = controller
+    const { rootUri } = state
+    setBusyRoot(rootUri)
+    try {
+      const impact = await safeInvoke<unknown>('核对远端终端数', 'ssh_deferred_upgrade_impact', { rootUri })
+      if (controller.signal.aborted) return
+      if (!isDeferredUpgrade(impact)) throw new Error(t('无法核对远端升级状态，请刷新后重试。'))
+      const accepted = await confirmDialog({
+        kind: 'danger', signal: controller.signal,
+        title: t('强制更新 {name}？', { name: selected.name }),
+        detail: directEndpoint ? `${directEndpoint.host}:${directEndpoint.port}` : sshConnectionTarget(selected),
+        message: t('远端服务将从 v{from} 更新到 v{to}。此服务托管的 {count} 个运行中的终端将结束，其中的命令会被中断。', {
+          from: impact.runningVersion, to: impact.targetVersion, count: impact.liveTerminals,
+        }),
+        confirmLabel: t('结束 {count} 个终端并更新', { count: impact.liveTerminals }),
+        cancelLabel: t('继续等待'),
+      })
+      if (!accepted || controller.signal.aborted) return
+      if (state.transport === 'agent') {
+        setForceDirect({ rootUri, confirmed: impact })
+      } else {
+        const result = parseSshServerState(await safeInvoke('更新远端服务', 'ssh_server_update', { rootUri, confirmedUpgrade: impact }))
+        if (result?.phase !== 'readyServer' || result.version !== impact.targetVersion)
+          throw new Error(result?.reason || t('远端服务尚未更新到目标版本，请刷新状态。'))
+        pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
+      }
+    } catch (reason) {
+      if (!controller.signal.aborted) pushToast('error', t('更新远端服务'), String(reason))
+    } finally {
+      forceRequest.current = null
+      if (mountedRef.current) {
+        setBusyRoot(null)
+        void refreshStatus(state.connectionId)
+      }
     }
   }
 
@@ -1050,6 +1100,8 @@ export default function RemoteConnectionsManager() {
                         <p className={helpClass}>{t(connectionModeLabel)}</p>
                         <p className={helpClass}>{t('选择下方项目以打开或重新连接；需要认证时会提示输入凭据。')}</p>
                         {statusReason && <p role="status" className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-ui-sm text-warn">{statusReason}</p>}
+                        {deferredState && <button type="button" className={secondaryButtonClass} disabled={!!busyRoot}
+                          onClick={() => void forceUpdate(deferredState)}>{t('强制更新…')}</button>}
                       </div>
                     )}
 
@@ -1369,6 +1421,9 @@ export default function RemoteConnectionsManager() {
       {importOpen && (
         <SshImportDialog onClose={() => setImportOpen(false)} onImported={id => { setEditing(false); setSelectedId(id) }} />
       )}
+
+      {forceDirect && <DirectServerUpdateDialog rootUri={forceDirect.rootUri} confirmedUpgrade={forceDirect.confirmed}
+        onClose={() => { setForceDirect(null); if (selectedId) void refreshStatus(selectedId) }} />}
 
       {logView && (
         <ModalOverlay onDismiss={() => setLogView(null)} zIndex="z-[135]">

@@ -71,6 +71,16 @@ beforeEach(() => {
 })
 
 describe('direct Server package selection', () => {
+  it('passes explicit deferred upgrade consent through the authorized direct update', async () => {
+    vi.mocked(api.prepare).mockResolvedValue(info)
+    const confirmedUpgrade = { runningVersion: 'beta.10', targetVersion: ready.version, liveTerminals: 7 }
+    const onClose = vi.fn()
+    render(<DirectServerUpdateDialog rootUri={rootUri} api={api} confirmedUpgrade={confirmedUpgrade} onClose={onClose} />)
+    expect(screen.getByText('强制更新将替换旧服务并结束其托管的终端。')).toBeVisible()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(api.update).toHaveBeenCalledWith(expect.objectContaining({ rootUri, confirmedUpgrade }), expect.any(Function))
+  })
+
   it('automatically updates a verified local package once in StrictMode and shows completion only after readiness', async () => {
     let finish!: (value: typeof ready) => void
     vi.mocked(api.prepare).mockResolvedValue(info)

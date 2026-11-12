@@ -131,9 +131,20 @@ async fn live_windows_gateway_version_update() {
             qingcode_server::SERVER_VERSION
         );
     }
-    update_over_ssh(&source, &root, config.clone(), &direct, false, None, None)
-        .await
-        .unwrap();
+    update_over_ssh(
+        &source,
+        &root,
+        config.clone(),
+        &direct,
+        UpdatePolicy {
+            auto_start: false,
+            confirmed_upgrade: None,
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     direct::close_connection(&direct.endpoint, &config.id);
     source.clear_server_endpoint(&server::server_slot_key(&config.id, &canonical));
     server::ensure_server_endpoint_with_app(&source, &root, None)
@@ -363,7 +374,10 @@ async fn live_windows_gateway_update_timing() {
         &root,
         config.clone(),
         &direct,
-        false,
+        UpdatePolicy {
+            auto_start: false,
+            confirmed_upgrade: None,
+        },
         Some(&package),
         None,
     )
@@ -383,4 +397,103 @@ async fn live_windows_gateway_update_timing() {
         "BENCH_OK v{} -> v{}",
         health.server_version, after.server_version
     );
+}
+
+/// A current gateway may forward to an older, still-busy daemon. Exercise its
+/// actual HELLO and pty.list without using a saved connection or a user's PTYs.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires QC_OLD_SERVER_BIN pointing to a compatible older server executable"]
+async fn deferred_impact_counts_live_ptys_behind_a_paired_gateway() {
+    let (config, gateway, directory) = direct::tests::gateway().await;
+    let mut daemon = tokio::process::Command::new(required("QC_OLD_SERVER_BIN"))
+        .arg("daemon")
+        .arg("--state-dir")
+        .arg(&directory)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    for _ in 0..200 {
+        if directory.join("token").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let manager = SshManager::new();
+    let id = "deferred-loopback";
+    manager
+        .direct_connections
+        .write()
+        .unwrap()
+        .insert(id.into(), config.clone());
+    manager.direct_active.write().unwrap().insert(id.into());
+    let canonical = directory.to_str().unwrap();
+    let root = RegisteredRoot {
+        uri: format!("ssh://{id}{canonical}"),
+        canonical_path: canonical.into(),
+        trusted: true,
+    };
+    manager
+        .roots
+        .write()
+        .unwrap()
+        .insert(root.uri.clone(), root.clone());
+
+    let mut stream = direct::open_stream_for(&config, id).await.unwrap();
+    let hello = HelloRequest {
+        client_id: "other-project-client".into(),
+        protocol_min: proto::PROTOCOL_VERSION,
+        protocol_max: proto::PROTOCOL_VERSION,
+        token: config.token.clone(),
+        resume_token: None,
+    };
+    proto::write_frame(
+        &mut stream,
+        &Frame::new(Kind::Hello, 0, proto::encode(&hello).unwrap()),
+    )
+    .await
+    .unwrap();
+    let response = proto::read_frame(&mut stream).await.unwrap();
+    assert_eq!(response.kind, Kind::Hello);
+    let hello: HelloResponse = proto::decode_value(&response.payload).unwrap();
+    let params = json!({"cwd": canonical, "shell": "/bin/sh", "cols": 80, "rows": 24});
+    rpc(&mut stream, 1, "pty.create", &params).await;
+    server::ensure_server_endpoint_with_app(&manager, &root, None)
+        .await
+        .unwrap();
+    let cached = server_status::state_for_root(&manager, &root)
+        .unwrap()
+        .deferred_upgrade
+        .unwrap();
+    assert_eq!(cached.running_version, hello.server_version);
+    assert_eq!(cached.live_terminals, 1);
+    let second = rpc(&mut stream, 2, "pty.create", &params).await;
+    let live = server::deferred_upgrade_impact(&manager, &root)
+        .await
+        .unwrap();
+    assert_eq!(live.live_terminals, 2);
+    assert!(cached.verify(&live).is_err());
+    rpc(&mut stream, 3, "pty.kill", &json!({"id":second["id"]})).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let live = server::deferred_upgrade_impact(&manager, &root)
+                .await
+                .unwrap();
+            if cached.verify(&live).is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    rpc(&mut stream, 4, "server.shutdown", &json!({})).await;
+    tokio::time::timeout(Duration::from_secs(10), daemon.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(stream);
+    gateway.abort();
+    let _ = gateway.await;
+    std::fs::remove_dir_all(directory).unwrap();
 }

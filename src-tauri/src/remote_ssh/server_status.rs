@@ -246,8 +246,28 @@ pub struct SshServerState {
     pub version: Option<String>,
     pub transport: Option<ServerTransport>,
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_upgrade: Option<DeferredUpgrade>,
     /// 最近一次发现/部署的分阶段耗时摘要；只在就绪时给出。
     pub timings: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredUpgrade {
+    pub running_version: String,
+    pub target_version: String,
+    pub live_terminals: usize,
+}
+
+impl DeferredUpgrade {
+    pub(super) fn verify(&self, actual: &Self) -> Result<(), String> {
+        if self == actual {
+            Ok(())
+        } else {
+            Err("远端版本或运行中的终端数已变化，请重新确认强制更新".into())
+        }
+    }
 }
 
 /// `ssh_server_logs` 的返回值。
@@ -338,6 +358,7 @@ fn plain_state(input: &ServerSteadyInputs<'_>, phase: ServerPhase) -> SshServerS
         version: None,
         transport: None,
         reason: None,
+        deferred_upgrade: None,
         timings: None,
     }
 }
@@ -352,6 +373,7 @@ fn ready_direct(input: &ServerSteadyInputs<'_>, reason: &str) -> SshServerState 
         version: None,
         transport: Some(ServerTransport::Direct),
         reason: Some(reason.to_string()),
+        deferred_upgrade: None,
         timings: None,
     }
 }
@@ -370,6 +392,7 @@ fn ready_server(input: &ServerSteadyInputs<'_>, has_daemon: bool) -> SshServerSt
             ServerTransport::Serve
         }),
         reason: None,
+        deferred_upgrade: None,
         timings: None,
     }
 }
@@ -532,6 +555,11 @@ fn apply_kept_daemon(state: &mut SshServerState, kept: &server::KeptDaemon) {
     let running = &kept.running_version;
     let client = qingcode_server::SERVER_VERSION;
     state.version = Some(running.clone());
+    state.deferred_upgrade = (!kept.newer && kept.live_ptys > 0).then(|| DeferredUpgrade {
+        running_version: running.clone(),
+        target_version: client.into(),
+        live_terminals: kept.live_ptys,
+    });
     state.reason = Some(if kept.newer {
         format!("远端服务 v{running} 比本客户端 v{client} 新，终端协议兼容，继续沿用，不会降级")
     } else {
@@ -572,6 +600,7 @@ pub(crate) fn publish_authenticating(
             version: None,
             transport: gateway_transport(manager, connection_id),
             reason: None,
+            deferred_upgrade: None,
             timings: None,
         },
     );
@@ -595,6 +624,7 @@ pub(crate) fn publish_disconnected(
             version: None,
             transport: gateway_transport(manager, connection_id),
             reason: None,
+            deferred_upgrade: None,
             timings: None,
         },
     );
@@ -687,6 +717,7 @@ pub(super) fn state_for_uri(
         version: None,
         transport: gateway_transport(manager, &parsed.connection_id),
         reason: manager.connection_closed_reason(&parsed.connection_id),
+        deferred_upgrade: None,
         timings: None,
     })
 }
@@ -870,6 +901,14 @@ mod tests {
                 },
             );
             assert_eq!(state.version.as_deref(), Some("0.1.0-beta.1"));
+            assert_eq!(state.deferred_upgrade.is_some(), !newer);
+            if let Some(impact) = state.deferred_upgrade {
+                assert_eq!(impact.live_terminals, 2);
+                assert!(impact.verify(&impact).is_ok());
+                let mut changed = impact.clone();
+                changed.live_terminals += 1;
+                assert!(impact.verify(&changed).is_err());
+            }
             let reason = state.reason.unwrap();
             // 前端按「版本不匹配」提供「更新远端服务」，沿用状态不能命中。
             assert!(!reason.contains("版本不匹配"), "{reason}");

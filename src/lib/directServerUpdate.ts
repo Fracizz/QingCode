@@ -4,6 +4,7 @@ import { safeInvoke } from './tauri'
 import { translate } from './i18n'
 import type { SshRuntimeConfig } from './sshWorkspace'
 import type { ServerPackageInfo } from './sshServerRecovery'
+import type { DeferredUpgrade } from './sshServerStatus'
 
 export type UpdatePackageSource =
   { mode: 'automatic'; allowDownload?: boolean } | { mode: 'offline'; directory: string }
@@ -33,7 +34,7 @@ export interface DirectServerUpdateApi {
     onProgress: (phase: UpdatePhase) => void
   ) => Promise<ServerPackageInfo>
   update: (
-    target: UpdateTarget & { packageDirectory: string },
+    target: UpdateTarget & { packageDirectory: string; confirmedUpgrade?: DeferredUpgrade },
     onProgress: (phase: UpdatePhase) => void
   ) => Promise<unknown>
 }
@@ -62,9 +63,9 @@ export const directServerUpdateApi: DirectServerUpdateApi = {
       ...target,
       onProgress: progressChannel(onProgress),
     }),
-  update: ({ packageDirectory, ...target }, onProgress) =>
+  update: ({ packageDirectory, confirmedUpgrade, ...target }, onProgress) =>
     safeInvoke('更新远端服务', 'direct_agent_update', {
       ...target,
-      options: { packageDirectory, onProgress: progressChannel(onProgress) },
+      options: { packageDirectory, ...(confirmedUpgrade && { confirmedUpgrade }), onProgress: progressChannel(onProgress) },
     }),
 }

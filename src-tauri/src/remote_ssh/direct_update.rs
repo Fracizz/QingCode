@@ -149,12 +149,17 @@ async fn execute(
     Ok(result)
 }
 
+struct UpdatePolicy<'a> {
+    auto_start: bool,
+    confirmed_upgrade: Option<&'a server_status::DeferredUpgrade>,
+}
+
 async fn update_over_ssh(
     source: &SshManager,
     root: &RegisteredRoot,
     config: SshConnectionConfig,
     direct: &DirectConnectionConfig,
-    auto_start: bool,
+    policy: UpdatePolicy<'_>,
     package_directory: Option<&str>,
     on_progress: Option<&Channel<String>>,
 ) -> Result<(), String> {
@@ -204,10 +209,15 @@ async fn update_over_ssh(
         if !current.trusted || current.canonical_path != root.canonical_path {
             return Err("项目授权已变化；更新未执行".into());
         }
+        let stale = if let Some(confirmed) = policy.confirmed_upgrade {
+            confirmed.verify(&server::deferred_upgrade_impact(source, root).await?)?;
+            server::StaleDaemon::Replace
+        } else {
+            server::StaleDaemon::DeferWhileBusy
+        };
         // Stop only the descriptor's gateway. PTYs live in the daemon, not the
-        // gateway: an outdated daemon that still hosts running terminals is kept
-        // (the new gateway reaches it over local IPC) and retired by the client
-        // once idle; an idle one is authenticated and shut down right away.
+        // gateway. Ordinary updates keep a compatible busy daemon; only a
+        // freshly verified explicit confirmation opts into replacing it.
         progress(on_progress, "restarting");
         let stopped = execute_commands(
             &maintenance,
@@ -222,14 +232,8 @@ async fn update_over_ssh(
             .ok_or("未取得原服务路径")?
             .trim();
         let replaced = async {
-            server::ensure_remote_daemon(
-                &maintenance,
-                &id,
-                &management_root,
-                &staged,
-                server::StaleDaemon::DeferWhileBusy,
-            )
-            .await?;
+            server::ensure_remote_daemon(&maintenance, &id, &management_root, &staged, stale)
+                .await?;
             execute_commands(
                 &maintenance,
                 &management_root,
@@ -242,7 +246,7 @@ async fn update_over_ssh(
             let read =
                 execute_commands(&maintenance, &management_root, read_commands(&staged)).await?;
             check_identity(&descriptor(&read)?, direct)?;
-            if auto_start {
+            if policy.auto_start {
                 execute_commands(
                     &maintenance,
                     &management_root,
@@ -298,6 +302,7 @@ async fn update_over_ssh(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedUpdateOptions {
+    confirmed_upgrade: Option<server_status::DeferredUpgrade>,
     package_directory: String,
     on_progress: tauri::ipc::JavaScriptChannelId,
 }
@@ -341,7 +346,10 @@ pub async fn direct_agent_update(
         &root,
         config,
         &direct,
-        auto_start,
+        UpdatePolicy {
+            auto_start,
+            confirmed_upgrade: options.as_ref().and_then(|o| o.confirmed_upgrade.as_ref()),
+        },
         package_directory,
         on_progress.as_ref(),
     )

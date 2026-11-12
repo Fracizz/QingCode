@@ -1480,6 +1480,54 @@ fn count_live_ptys(listed: &serde_json::Value) -> Option<usize> {
     )
 }
 
+/// Read-only preflight for an explicit deferred upgrade. Count live PTYs across
+/// the daemon, including those belonging to other projects and clients.
+pub(crate) async fn deferred_upgrade_impact(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<super::super::server_status::DeferredUpgrade, String> {
+    let id = parse_remote_uri(&root.uri)?.connection_id;
+    let access = manager
+        .server_slot(&server_slot_key(&id, &root.canonical_path))
+        .and_then(|slot| slot.endpoint?.daemon)
+        .ok_or("远端服务状态已变化，请刷新状态")?;
+    let deadline = Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT;
+    let mut channel = open_daemon_channel_with(
+        manager,
+        &id,
+        &access,
+        HelloPolicy::TERMINAL,
+        false,
+        deadline,
+    )
+    .await?;
+    let result = async {
+        if compare_server_versions(&channel.server_version, SERVER_VERSION)
+            != Some(std::cmp::Ordering::Less)
+        {
+            return Err("远端服务无需强制更新，请刷新状态".into());
+        }
+        let listed = daemon_rpc(
+            &mut channel,
+            "pty.list",
+            &serde_json::json!({}),
+            Instant::now() + AGENT_PING_TIMEOUT,
+        )
+        .await?;
+        let count = count_live_ptys(&listed)
+            .filter(|n| *n > 0)
+            .ok_or("无法确认仍有运行中的终端，请刷新状态")?;
+        Ok(super::super::server_status::DeferredUpgrade {
+            running_version: channel.server_version.clone(),
+            target_version: SERVER_VERSION.into(),
+            live_terminals: count,
+        })
+    }
+    .await;
+    channel.shutdown().await;
+    result
+}
+
 async fn probe_daemon_versioned(
     manager: &SshManager,
     connection_id: &str,

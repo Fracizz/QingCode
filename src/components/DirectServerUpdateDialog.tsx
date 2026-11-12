@@ -10,7 +10,7 @@ import {
 import type { ServerPackageInfo } from '../lib/sshServerRecovery'
 import { directAgentSshCandidates } from '../lib/directAgent'
 import { hydrateSshSecrets, sshConnectionIdFromUri, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
-import { parseSshServerState } from '../lib/sshServerStatus'
+import { parseSshServerState, type DeferredUpgrade } from '../lib/sshServerStatus'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
@@ -18,13 +18,13 @@ import ServerOperationProgress from './ServerOperationProgress'
 
 const field = 'mt-1 w-full min-w-0 rounded border border-dialog-border bg-dialog-input px-3 py-1.5 text-fg'
 
-type Props = { rootUri: string; api?: DirectServerUpdateApi }
+type Props = { rootUri: string; api?: DirectServerUpdateApi; confirmedUpgrade?: DeferredUpgrade; onClose?: () => void }
 
 export default function DirectServerUpdateDialog(props: Props) {
   return <UpdateDialog key={props.rootUri} {...props} />
 }
 
-function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
+function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, onClose }: Props) {
   const { t } = useI18n()
   const id = useId()
   const connections = useProjectStore(s => s.sshConnections)
@@ -63,8 +63,9 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
     candidates.find(connection => connection.id === sshId) ??
     candidates.find(connection => connection.id === connectionId) ??
     candidates[0]
+  const dismiss = onClose ?? (() => useUIStore.setState({ serverUpdateRootUri: null }))
   const close = () => {
-    if (!pending.current) useUIStore.setState({ serverUpdateRootUri: null })
+    if (!pending.current) dismiss()
   }
   const target = () => ({
     rootUri,
@@ -100,15 +101,17 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
   const performUpdate = async (prepared: ServerPackageInfo & { directory: string }, request: number) => {
     setWorking('update')
     setPhase('checkingPackage')
-    const value = await api.update({ ...target(), packageDirectory: prepared.directory }, value => {
+    const value = await api.update({ ...target(), packageDirectory: prepared.directory, ...(confirmedUpgrade && { confirmedUpgrade }) }, value => {
       if (request === generation.current) setPhase(value)
     })
     if (request !== generation.current) return
     const state = parseSshServerState(value)
     if (state?.phase !== 'readyServer' || state.transport !== 'agent')
       throw new Error(state?.reason ?? t('远端服务尚未就绪'))
+    if (confirmedUpgrade && state.version !== confirmedUpgrade.targetVersion)
+      throw new Error(t('远端服务尚未更新到目标版本，请刷新状态。'))
     pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
-    useUIStore.setState({ serverUpdateRootUri: null })
+    dismiss()
   }
   const prepare = async (automatic = false) => {
     if (pending.current || !ssh || (mode === 'offline' && !directory)) return
@@ -207,7 +210,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
             {direct?.name} · {direct?.agentEndpoint?.host ?? direct?.host}
           </p>
           <p id={`${id}-impact`} className="text-ui-sm text-warn">
-            {t(
+            {confirmedUpgrade ? t('强制更新将替换旧服务并结束其托管的终端。') : t(
               '将安装与当前客户端匹配的远端服务并替换直连入口。旧版服务若与当前客户端兼容且仍有运行中的终端，会继续托管并可接回，全部结束后的下次连接再切换到新版本；不兼容时会被替换，其托管的终端随之结束。更新期间连接会短暂中断，可能影响同一远端用户下的其他项目。'
             )}
           </p>

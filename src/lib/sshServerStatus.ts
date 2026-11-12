@@ -15,7 +15,14 @@ export type SshServerMode = 'server' | 'direct' | 'unknown'
 /** `agent`：Server 端口直连；`tunnel`：Server 经 SSH 隧道访问同一网关。 */
 export type SshServerTransport = 'daemon' | 'serve' | 'direct' | 'agent' | 'tunnel'
 
+export interface DeferredUpgrade {
+  runningVersion: string
+  targetVersion: string
+  liveTerminals: number
+}
+
 export type SshServerState = {
+  deferredUpgrade?: DeferredUpgrade
   connectionId: string
   rootUri: string
   phase: SshServerPhase
@@ -106,7 +113,16 @@ export function parseSshServerState(value: unknown): SshServerState | null {
     transport,
     reason,
     timings,
+    ...(isDeferredUpgrade(record.deferredUpgrade) ? { deferredUpgrade: record.deferredUpgrade } : {}),
   }
+}
+
+export function isDeferredUpgrade(value: unknown): value is DeferredUpgrade {
+  if (!value || typeof value !== 'object') return false
+  const data = value as Partial<DeferredUpgrade>
+  return typeof data.runningVersion === 'string' && !!data.runningVersion &&
+    typeof data.targetVersion === 'string' && !!data.targetVersion &&
+    typeof data.liveTerminals === 'number' && Number.isSafeInteger(data.liveTerminals) && data.liveTerminals > 0
 }
 
 export function sshServerChip(state: SshServerState | null): SshServerChip | null {

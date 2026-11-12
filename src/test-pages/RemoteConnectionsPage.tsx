@@ -9,7 +9,9 @@ import { projectManagerFixtures } from './projectManagerFixtures'
 import type { SshServerState } from '../lib/sshServerStatus'
 import '../App.css'
 
-let useDirect = false
+let deferred = new URLSearchParams(location.search).has('deferred')
+const impact = { runningVersion: '0.1.18-beta.10', targetVersion: '0.1.18-beta.13', liveTerminals: 3 }
+let useDirect = deferred
 let connected = true
 let portClosed = false
 let latencyFailed = false
@@ -52,7 +54,21 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
   mockIPC((command, args) => {
     const params = args as Record<string, unknown> | undefined
     const id = String(params?.connectionId ?? '')
-    const state = (connectionId: string): SshServerState => ({ connectionId, rootUri: `ssh://${connectionId}/home/code/nem-panel`, phase: connectionId === 'fixture-wsl' && (!connected || portClosed) ? 'disconnected' : 'readyServer', mode: 'server', connectionMode: 'server', version: 'fixture', transport: connectionId === 'fixture-tls' || (connectionId === 'fixture-wsl' && useDirect) ? 'agent' : 'daemon', reason: connectionId === 'fixture-wsl' && portClosed ? '[direct:unreachable] Fixture port closed' : null })
+    const state = (connectionId: string): SshServerState => ({ connectionId, rootUri: `ssh://${connectionId}/home/code/nem-panel`, phase: connectionId === 'fixture-wsl' && (!connected || portClosed) ? 'disconnected' : 'readyServer', mode: 'server', connectionMode: 'server', version: deferred && connectionId === 'fixture-wsl' ? impact.runningVersion : impact.targetVersion,
+      ...(deferred && connectionId === 'fixture-wsl' ? { deferredUpgrade: { ...impact, liveTerminals: 7 } } : {}),
+      transport: connectionId === 'fixture-tls' || (connectionId === 'fixture-wsl' && useDirect) ? 'agent' : 'daemon', reason: deferred && connectionId === 'fixture-wsl' ? '已推迟升级：远端服务仍托管 7 个运行中的终端' : connectionId === 'fixture-wsl' && portClosed ? '[direct:unreachable] Fixture port closed' : null })
+    if (command === 'ssh_deferred_upgrade_impact' && deferred && params?.rootUri === wslRoot) return impact
+    if (command === 'direct_agent_prepare_update' && deferred) return {
+      expectedVersion: impact.targetVersion, packageVersion: impact.targetVersion, directory: '/fixture/package',
+      sourcePath: '/fixture/package/server', problem: null,
+    }
+    if (command === 'direct_agent_update' && deferred && params?.rootUri === wslRoot) {
+      const confirmed = (params?.options as { confirmedUpgrade?: typeof impact })?.confirmedUpgrade
+      if (confirmed?.liveTerminals !== impact.liveTerminals || confirmed.runningVersion !== impact.runningVersion ||
+          confirmed.targetVersion !== impact.targetVersion) throw new Error('Missing fixture consent')
+      deferred = false
+      return state('fixture-wsl')
+    }
     if (command === 'ssh_server_info') return state(String(params?.rootUri).split('/')[2])
     if (command === 'ssh_server_latency') {
       useWebTestOperations.setState(s => ({ operations: [...s.operations, { action: 'latency', ids: [String(params?.rootUri)] }] }))

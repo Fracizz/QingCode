@@ -119,6 +119,37 @@ describe('remote connection compatibility settings', () => {
     expect(screen.getByRole('button', { name: /Remote dev@example.test/ })).toBeVisible()
   })
 
+  it('confirms the live daemon count and only updates the selected root after acceptance', async () => {
+    const rootUri = 'ssh://c1/home/app'
+    const cached = { runningVersion: '1.0.0', targetVersion: '1.0.1', liveTerminals: 7 }
+    const live = { ...cached, liveTerminals: 3 }
+    const state = { connectionId: 'c1', rootUri, phase: 'readyServer', mode: 'server', connectionMode: 'server',
+      transport: 'tunnel', version: cached.runningVersion, reason: '已推迟升级', deferredUpgrade: cached }
+    listServerStates.mockResolvedValue([state])
+    invoke.mockImplementation(async (_label, command) => {
+      if (command === 'ssh_deferred_upgrade_impact') return live
+      if (command === 'ssh_server_update') {
+        const updated = { ...state, version: live.targetVersion, reason: null, deferredUpgrade: undefined }
+        listServerStates.mockResolvedValue([updated])
+        return updated
+      }
+    })
+    alive.mockResolvedValue(true)
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    await act(async () => { render(<RemoteConnectionsManager />) })
+    confirmDialog.mockResolvedValueOnce(false)
+    fireEvent.click(await screen.findByRole('button', { name: '强制更新…' }))
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: '强制更新 Remote？', confirmLabel: '结束 3 个终端并更新', cancelLabel: '继续等待',
+      message: expect.stringContaining('v1.0.0 更新到 v1.0.1'),
+    })))
+    expect(invoke.mock.calls.some(call => call[1] === 'ssh_server_update')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '强制更新…' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('更新远端服务', 'ssh_server_update', { rootUri, confirmedUpgrade: live }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '强制更新…' })).toBeNull())
+  })
+
   it('keeps failed status checks actionable and allows refreshing without treating them as offline', async () => {
     useProjectStore.setState({ sshConnections: [connection('server')] })
     useUIStore.setState({ remoteConnectionsCreating: false })

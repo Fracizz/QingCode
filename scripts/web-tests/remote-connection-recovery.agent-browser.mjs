@@ -48,6 +48,16 @@ try {
   click('断开')
   check('explicit disconnect updates the overview and status bar together', `document.querySelector('.status-connection').dataset.tone === 'offline' && !document.querySelector('aside [aria-current="true"]')?.textContent.includes('服务已就绪') && !!document.querySelector('[aria-label="切换连接方式"]')`)
   capture('disconnected-dark')
+
+  run('open', 'http://127.0.0.1:38439/web-tests/remote-connections.html?deferred')
+  click('强制更新…')
+  check('confirmation uses the live count and both versions', `['0.1.18-beta.10','0.1.18-beta.13','3 个运行中的终端'].every(text => document.querySelector('[role="alertdialog"]')?.textContent.includes(text))`)
+  capture('force-update-confirmation')
+  click('继续等待')
+  check('cancel leaves the deferred service available', `!document.querySelector('[role="alertdialog"]') && document.body.textContent.includes('强制更新…')`)
+  click('强制更新…')
+  click('结束 3 个终端并更新')
+  check('confirmed direct update refreshes the overview', `!document.body.textContent.includes('强制更新…') && document.querySelector('aside [aria-current="true"]')?.textContent.includes('服务已就绪')`)
 } catch (error) {
   results.push({ name: String(error), passed: false })
   try { capture('failure') } catch { /* Navigation may have failed before a page existed. */ }
