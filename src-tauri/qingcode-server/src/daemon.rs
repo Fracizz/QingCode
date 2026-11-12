@@ -2349,6 +2349,9 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             #[derive(Deserialize)]
             struct ClaimParams {
                 id: String,
+                /// 领取时补上正式终端的标签名；旧客户端不传则保持原名。
+                #[serde(default)]
+                name: Option<String>,
             }
             let Ok(params) = params::<ClaimParams>(&request) else {
                 conn.fail(id, "badRequest", "pty.claim 参数错误");
@@ -2361,7 +2364,11 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     .is_some_and(|route| route.conn_id == conn.conn_id && route.transient)
                 {
                     // 与连接清理共用 routes 锁，避免刚领取就被当成预热进程结束。
-                    let result = daemon.pty.detach(&params.id, &conn.client_id);
+                    let result = match params.name {
+                        Some(name) => daemon.pty.set_name(&params.id, Some(name)),
+                        None => Ok(()),
+                    }
+                    .and_then(|()| daemon.pty.detach(&params.id, &conn.client_id));
                     if result.is_ok() {
                         routes.remove(&params.id);
                     }
@@ -4509,8 +4516,17 @@ mod tests {
         let mut observer = TestClient::connect(&run_dir, &token).await;
         let request = observer.request("pty.claim", &json!({"id": ids[0]})).await;
         assert_eq!(observer.wait_error(request).await.code, "pty");
-        let request = client.request("pty.claim", &json!({"id": ids[0]})).await;
+        let request = client
+            .request("pty.claim", &json!({"id": ids[0], "name": "构建"}))
+            .await;
         client.wait_response(request).await;
+        let request = client.request("pty.list", &json!({})).await;
+        let listed = client.wait_response(request).await;
+        assert!(listed["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|info| info["id"] == ids[0] && info["name"] == "构建"));
         let request = client.request("pty.claim", &json!({"id": ids[0]})).await;
         assert_eq!(client.wait_error(request).await.code, "pty");
         drop(client);

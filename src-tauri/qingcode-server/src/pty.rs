@@ -437,7 +437,8 @@ struct ProcHandles {
 
 struct PtyTerm {
     id: String,
-    name: Option<String>,
+    /// 预热终端创建时还没有标签名，领取时由 `pty.claim` 补上，因此可变。
+    name: Mutex<Option<String>>,
     cwd: String,
     created: u64,
     /// Windows 上子进程退出后由等待线程取走并释放（关闭 ConPTY），读线程才能拿到 EOF；
@@ -584,7 +585,7 @@ impl PtyHost {
         let ring_capacity = opts.scrollback_bytes;
         let term = Arc::new(PtyTerm {
             id: id.clone(),
-            name: opts.name.clone(),
+            name: Mutex::new(opts.name.clone()),
             cwd: cwd.to_string_lossy().into_owned(),
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
             master: Mutex::new(Some(pair.master)),
@@ -860,6 +861,15 @@ impl PtyHost {
     /// 客户端断开：只标记 detached 并记时间，进程与缓冲都不动。
     /// `client_id` 必须与当前归属者一致；不一致说明终端已被别的连接接走，
     /// 此时忽略（否则旧连接迟到的一次 detach 会把终端误标成无人看管）。
+    /// 设置终端名称（接回时恢复标签名用）。
+    pub fn set_name(&self, id: &str, name: Option<String>) -> Result<(), String> {
+        if name.as_deref().is_some_and(|name| name.contains(' ')) {
+            return Err("终端名称不能包含 NUL".to_string());
+        }
+        *lock(&self.term(id)?.name) = name;
+        Ok(())
+    }
+
     pub fn detach(&self, id: &str, client_id: &str) -> Result<(), String> {
         let term = self.term(id)?;
         let mut state = lock(&term.state);
@@ -962,7 +972,7 @@ impl PtyHost {
                         term.created,
                         PtyInfo {
                             id: term.id.clone(),
-                            name: term.name.clone(),
+                            name: lock(&term.name).clone(),
                             next_input_seq: state.next_input_seq,
                             owner: state.owner.clone(),
                             cwd: Some(term.cwd.clone()),

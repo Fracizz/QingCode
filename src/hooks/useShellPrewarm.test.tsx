@@ -79,16 +79,26 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
-  it('does not prewarm SSH or other platforms', async () => {
-    const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: { ...project, path: 'ssh://c1/root' } } })
+  it('hands trusted SSH projects to the backend without the local hosting opt-in, from any client', async () => {
+    const remote = { ...project, path: 'ssh://c1/C:/work/app' }
+    mocks.persist.mockResolvedValue(false)
+    mocks.platform.mockReturnValue('mac')
+    const hook = renderHook(() => useShellPrewarm(remote))
+    await waitFor(() => expect(configuredPaths()).toContain(remote.path))
+    expect(mocks.persist).not.toHaveBeenCalled()
+    mocks.trusted.mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('trust-changed')))
+    await waitFor(() => expect(configuredPaths().at(-1)).toBeNull())
+    hook.unmount()
+    await act(async () => {})
+  })
+
+  it('does not prewarm local projects on non-Windows clients', async () => {
+    mocks.platform.mockReturnValue('unix')
+    const hook = renderHook(() => useShellPrewarm(project))
     await act(async () => {})
     expect(configuredPaths().every(path => path === null)).toBe(true)
     hook.unmount()
     await act(async () => {})
-    mocks.invoke.mockClear()
-    mocks.platform.mockReturnValue('unix')
-    renderHook(() => useShellPrewarm(project))
-    await act(async () => {})
-    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

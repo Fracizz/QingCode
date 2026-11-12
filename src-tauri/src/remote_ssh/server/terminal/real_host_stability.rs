@@ -6,12 +6,14 @@
 //!
 //! ```text
 //! QC_STAB_HOST / QC_STAB_USER / QC_STAB_PASSWORD / QC_STAB_PORT(默认 22)
+//! QC_STAB_KEY         私钥路径（设置后改用私钥认证，忽略 QC_STAB_PASSWORD）
 //! QC_STAB_ROOT        远端项目根（Linux 如 /root/qc-stab；Windows 如 /C:/Users/Administrator/qc-stab）
 //! QC_STAB_SERVER_DIR  本地 server 二进制目录（src-tauri/target/server）
 //! QC_STAB_LONG_SECS   长连接阶段时长（默认 300）
 //! QC_STAB_CONNS       并发连接数（默认 3）
 //! QC_STAB_TERMS       每个连接的并发终端数（默认 8）
 //! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,tui,long,multi）
+//!                     另有 prewarm（仅 Windows 远端：冷启动 vs 预热领取耗时、未领取回收），需显式指定
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
 
@@ -119,7 +121,7 @@ struct Ctx {
 
 /// 一个直接挂在 daemon 会话上的终端，统计输出序号连续性与到达间隔。
 struct Term {
-    transport: TerminalTransportLease,
+    transport: SessionTransport,
     session: DaemonSession,
     events: super::super::daemon::SessionEventReceiver,
     pty_id: String,
@@ -136,6 +138,20 @@ struct Term {
 
 impl Term {
     async fn open(ctx: &Ctx, cols: u16, rows: u16) -> Result<Self, String> {
+        Self::open_with(
+            ctx,
+            "pty.create",
+            serde_json::json!({
+                "cwd": ctx.root.canonical_path,
+                "cols": cols,
+                "rows": rows,
+                "name": "qc-stab",
+            }),
+        )
+        .await
+    }
+
+    async fn open_with(ctx: &Ctx, method: &str, params: serde_json::Value) -> Result<Self, String> {
         let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
         let (transport, mut session) = open_terminal_daemon_session(
             &ctx.manager,
@@ -145,18 +161,7 @@ impl Term {
             &ctx.daemon,
         )
         .await?;
-        let response = match session
-            .request(
-                "pty.create",
-                &serde_json::json!({
-                    "cwd": ctx.root.canonical_path,
-                    "cols": cols,
-                    "rows": rows,
-                    "name": "qc-stab",
-                }),
-            )
-            .await
-        {
+        let response = match session.request(method, &params).await {
             Ok(response) => response,
             Err(error) => {
                 session.shutdown();
@@ -175,7 +180,7 @@ impl Term {
             .unwrap_or(0);
         let events = session.take_events().ok_or("事件流已被取走")?;
         Ok(Self {
-            transport: transport.into_ssh()?,
+            transport,
             session,
             events,
             pty_id,
@@ -326,6 +331,14 @@ impl Term {
         self.transport.release();
     }
 
+    /// fallback 阶段要检查 SSH 连接池行为；直连网关下没有租约。
+    fn lease(&self) -> Result<&TerminalTransportLease, String> {
+        match &self.transport {
+            SessionTransport::Ssh(lease) => Ok(lease),
+            _ => Err("该阶段需要 SSH 终端通道（当前为直连）".into()),
+        }
+    }
+
     fn detach(self) -> (String, u64) {
         self.session.shutdown();
         self.transport.release();
@@ -375,9 +388,13 @@ async fn connect(
         host: host.to_string(),
         port: env_num("QC_STAB_PORT", 22) as u16,
         username: env("QC_STAB_USER").unwrap_or_else(|| "root".to_string()),
-        auth_kind: "password".to_string(),
+        auth_kind: if env("QC_STAB_KEY").is_some() {
+            "privateKey".to_string()
+        } else {
+            "password".to_string()
+        },
         password: env("QC_STAB_PASSWORD"),
-        private_key_path: None,
+        private_key_path: env("QC_STAB_KEY"),
         passphrase: None,
         host_key_fingerprint: None,
         mode: Some(RemoteMode::Server),
@@ -564,10 +581,10 @@ async fn phase_fallback(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
             .await
             .map_err(|error| format!("回退终端#{index} 打开失败：{error}"))?;
         let opened = at.elapsed();
-        if !term.transport.main_fallback {
+        if !term.lease()?.main_fallback {
             failures.push(format!("fallback：终端#{index} 没有走主连接"));
         }
-        if term.transport.notice().is_some() {
+        if term.lease()?.notice().is_some() {
             failures.push("fallback：冷却期内的回退不应重复提示".to_string());
         }
         term.pump_until(Instant::now() + Duration::from_secs(1))
@@ -773,6 +790,132 @@ async fn phase_flood(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String
 }
 
 /// 断开重连：终端持续输出时断开 daemon 会话与共享连接，重连后按 seq 续接。
+/// 与产品新建 SSH 终端相同的 Shell 启动参数（Server 模式）。
+fn product_shell_params(ctx: &Ctx) -> Result<serde_json::Value, String> {
+    let launch =
+        crate::remote_ssh::terminal_cmds::persistent_shell_launch(&ctx.root.canonical_path, None)?;
+    Ok(serde_json::json!({
+        "cwd": ctx.root.canonical_path,
+        "shell": launch.shell,
+        "args": launch.args,
+        "env": launch.env,
+        "cols": 120,
+        "rows": 30,
+    }))
+}
+
+/// Windows 远端预热：对比「点击 → 首条命令有输出」的冷启动与预热领取耗时，
+/// 并验证未领取的 transient PTY 随会话断开被回收、他人会话不能领取。
+async fn phase_prewarm(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    if !ctx.windows {
+        println!("[stab][prewarm] 非 Windows 远端，不预热，跳过");
+        return Ok(());
+    }
+    let rounds = env_num("QC_STAB_PREWARM_ROUNDS", 5);
+    let settle = Duration::from_secs(env_num("QC_STAB_PREWARM_SETTLE_SECS", 8));
+    let params = product_shell_params(ctx)?;
+    let mut cold = Stats::default();
+    let mut warm = Stats::default();
+    let mut claim = Stats::default();
+    for round in 0..rounds {
+        // 冷启动：开会话 + pty.create + 首条命令回显（输入在 Shell 就绪前由 PTY 缓冲）。
+        let started = Instant::now();
+        let mut term = Term::open_with(ctx, "pty.create", params.clone()).await?;
+        term.echo_probe(true, "C").await?;
+        cold.push(started.elapsed());
+        term.kill().await;
+
+        // 预热：后台建好 transient PTY 并等 profile 加载，然后计时领取 + 接回 + 首条命令。
+        let mut term = Term::open_with(ctx, "pty.createTransient", params.clone()).await?;
+        term.pump_until(Instant::now() + settle).await?;
+        let started = Instant::now();
+        term.session
+            .request("pty.claim", &serde_json::json!({ "id": term.pty_id }))
+            .await
+            .map_err(|error| format!("pty.claim 失败：{error}"))?;
+        let attach = term
+            .session
+            .attach(&term.pty_id, 0, false)
+            .await
+            .map_err(|error| format!("领取后 pty.attach 失败：{error}"))?;
+        claim.push(started.elapsed());
+        if round == 0 {
+            let replay = strip_ansi(
+                &attach
+                    .chunks
+                    .iter()
+                    .flat_map(|chunk| chunk.data.iter().copied())
+                    .collect::<Vec<_>>(),
+            );
+            if !replay.contains('>') {
+                failures.push(format!("prewarm：领取补发中没有提示符：{replay:?}"));
+            }
+        }
+        term.echo_probe(true, "W").await?;
+        warm.push(started.elapsed());
+        term.kill().await;
+    }
+    println!(
+        "[stab][prewarm] 冷启动（会话+创建+首条命令）{}",
+        cold.summary()
+    );
+    println!(
+        "[stab][prewarm] 预热领取（claim+attach）{}",
+        claim.summary()
+    );
+    println!(
+        "[stab][prewarm] 预热领取（claim+attach+首条命令）{}",
+        warm.summary()
+    );
+
+    // 他人会话不能领取；创建会话断开后未领取项被回收。
+    let term = Term::open_with(ctx, "pty.createTransient", params.clone()).await?;
+    let pty_id = term.pty_id.clone();
+    let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
+    let (transport, observer) = open_terminal_daemon_session(
+        &ctx.manager,
+        &ctx.connection_id,
+        &ctx.root.uri,
+        &client_id,
+        &ctx.daemon,
+    )
+    .await?;
+    if observer
+        .request("pty.claim", &serde_json::json!({ "id": pty_id }))
+        .await
+        .is_ok()
+    {
+        failures.push("prewarm：其他会话领取了别人的预热终端".to_string());
+    }
+    let _ = term.detach();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let reaped = loop {
+        let listed = observer.request("pty.list", &serde_json::json!({})).await?;
+        let alive = listed["ptys"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|info| info["id"] == pty_id.as_str() && info["exited"].is_null())
+        });
+        if !alive {
+            break true;
+        }
+        if Instant::now() > deadline {
+            break false;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    observer.shutdown();
+    transport.release();
+    if !reaped {
+        failures.push(format!(
+            "prewarm：未领取的预热终端 {pty_id} 在会话断开 15s 后仍存活"
+        ));
+    } else {
+        println!("[stab][prewarm] 未领取预热终端随会话断开回收：通过");
+    }
+    Ok(())
+}
+
 async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
     let mut term = Term::open(ctx, 100, 30).await?;
     term.pump_until(Instant::now() + Duration::from_secs(2))
@@ -844,7 +987,7 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
         .unwrap_or(next_seq);
     let events = session.take_events().ok_or("事件流已被取走")?;
     let mut term = Term {
-        transport,
+        transport: SessionTransport::Ssh(transport),
         session,
         events,
         pty_id,
@@ -1573,7 +1716,10 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 8] = [
+    let phases_list: [(&str, Phase); 9] = [
+        ("prewarm", |ctx, failures| {
+            Box::pin(phase_prewarm(ctx, failures))
+        }),
         ("hs", |ctx, failures| {
             Box::pin(phase_handshake(ctx, failures))
         }),

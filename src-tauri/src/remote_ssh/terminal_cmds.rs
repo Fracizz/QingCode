@@ -484,6 +484,15 @@ pub(crate) async fn ssh_create_terminal_unchecked(
     if manager.server_mode(&parsed.connection_id) {
         let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
         launch.name = name;
+        let size = (cols.unwrap_or(80), rows.unwrap_or(24));
+        // 远端 Windows 预热命中时直接领取；未命中、过期或失败都走正常新建。
+        if let Some(result) = app
+            .state::<super::local_terminal::ShellPrewarmPool>()
+            .take_remote(&id, &cwd, &launch, &root, size, app.clone(), &manager)
+            .await
+        {
+            return Ok(result);
+        }
         return server::spawn_persistent_terminal(
             id,
             root,

@@ -11,7 +11,6 @@ import type { TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   defaultTerminalShell,
-  detectTerminalHostPlatform,
   terminalShellLabelKey,
   type TerminalShellId,
 } from '@/lib/terminal/terminalShell'
@@ -211,10 +210,10 @@ export default function TerminalSettingsSection({
           </select>
         </SettingItem>
       )}
-      {detectTerminalHostPlatform() === 'win' && match('预热', 'Shell', 'shellPrewarmCount') && (
+      {match('预热', 'Shell', 'shellPrewarmCount') && (
         <SettingItem
           title={t('终端 › 集成: Shell 预热数量')}
-          description={t('在当前已信任的本地项目中提前准备普通 PowerShell / CMD。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个，用于连续快速新建。需开启「本地终端可接回」，内存不足时暂停预热。')}
+          description={t('为已信任项目提前准备普通 PowerShell / CMD：本机 Windows 项目需开启「本地终端可接回」；SSH 项目仅限远端为 Windows 且使用 Server 模式，Linux 远端不预热。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个。本机内存不足时暂停本机预热。')}
           modified={shellPrewarmCount !== 'auto'}
           locked={workspaceLocked}
           lockHint={t('此设置仅在用户作用域中可用')}

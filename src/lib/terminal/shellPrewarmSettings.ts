@@ -25,6 +25,7 @@ export function notifyShellPrewarmChanged() {
 
 /** 用预先分配的身份创建标签；未命中/功能不可用时立即走正常新建。 */
 export async function reservePrewarmedShellId(cwd: string, shell: string): Promise<string | null> {
-  if (!isTauri() || detectTerminalHostPlatform() !== 'win' || cwd.startsWith('ssh://')) return null
+  // SSH 项目由后端判断远端是否为 Windows；本机项目只在 Windows 客户端预热。
+  if (!isTauri() || (!cwd.startsWith('ssh://') && detectTerminalHostPlatform() !== 'win')) return null
   return safeInvoke<string | null>('领取预热 Shell', 'reserve_prewarmed_shell', { cwd, shell }).catch(() => null)
 }

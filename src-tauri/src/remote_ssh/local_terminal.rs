@@ -239,7 +239,9 @@ pub async fn configure_shell_prewarm(
     app: AppHandle,
     pool: State<'_, ShellPrewarmPool>,
 ) -> Result<usize, String> {
-    let result = pool.configure(app, window.label().to_string(), cwd, shell, count);
+    let result = pool
+        .configure(app, window.label().to_string(), cwd, shell, count)
+        .await;
     if result.is_err() {
         pool.clear_window(window.label());
     }
@@ -252,8 +254,13 @@ pub async fn reserve_prewarmed_shell(
     cwd: String,
     shell: Option<String>,
     allowlist: State<'_, PathAllowlist>,
+    manager: State<'_, SshManager>,
     pool: State<'_, ShellPrewarmPool>,
 ) -> Result<Option<String>, String> {
-    allowlist.ensure_executable(&cwd)?;
+    if cwd.starts_with(SSH_URI_PREFIX) {
+        manager.root_for_uri(&cwd, true)?;
+    } else {
+        allowlist.ensure_executable(&cwd)?;
+    }
     Ok(pool.reserve(&cwd, shell.as_deref()))
 }

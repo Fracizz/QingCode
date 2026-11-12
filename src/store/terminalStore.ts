@@ -622,7 +622,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const profile = getTerminalProfile(profileId)
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const shell = normalizeTerminalShell(profile.shell)
-    const warmId = profile.id === DEFAULT_TERMINAL_PROFILE.id && !profile.command.trim() && getTerminalPersistLocalSessions()
+    const warmId = profile.id === DEFAULT_TERMINAL_PROFILE.id && !profile.command.trim() &&
+      (projectPath.startsWith('ssh://') || getTerminalPersistLocalSessions())
       ? await reservePrewarmedShellId(projectPath, shell) : null
     if (terminalExitInProgress) return null
     const id = warmId ?? crypto.randomUUID()

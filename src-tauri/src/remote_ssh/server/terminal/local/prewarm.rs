@@ -1,5 +1,8 @@
 //! Windows 普通 Shell 的全应用空闲池。每个连接只持有一个 transient PTY，
 //! 未领取时关闭连接即可由 daemon 回收；正式终端仍走原有持久化链路。
+//!
+//! 目标二选一：本机 Windows 项目（本机 PTY 宿主），或远端为 Windows 的 SSH
+//! Server 模式项目（远端 daemon）。Linux 远端与 SSH 直连模式不预热。
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest};
@@ -9,23 +12,41 @@ use tauri::Manager;
 const GIB: u64 = 1024 * 1024 * 1024;
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const RESERVATION_TTL: Duration = Duration::from_secs(15);
+/// 本机领取只经命名管道；远端领取要经过 SSH 往返，给更宽的上限。
+const LOCAL_CLAIM_TIMEOUT: Duration = Duration::from_secs(2);
+const REMOTE_CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 复用条件。本机 `cwd` 是规范化后的本地路径；远端是前端传入的 `ssh://` 资源，
+/// 两个域的字符串形态不同，不会互相命中。
 #[derive(Clone, PartialEq, Eq)]
 struct LaunchKey {
-    cwd: std::path::PathBuf,
+    cwd: String,
     shell: Option<String>,
     args: Vec<String>,
     env: BTreeMap<String, String>,
 }
 impl LaunchKey {
     fn new(cwd: &str, launch: &PersistentLaunch) -> Result<Self, String> {
-        Ok(Self {
-            cwd: std::fs::canonicalize(cwd).map_err(|error| error.to_string())?,
+        let cwd = std::fs::canonicalize(cwd).map_err(|error| error.to_string())?;
+        Ok(Self::from_parts(cwd.to_string_lossy().into_owned(), launch))
+    }
+
+    fn from_parts(cwd: String, launch: &PersistentLaunch) -> Self {
+        Self {
+            cwd,
             shell: launch.shell.clone(),
             args: launch.args.clone(),
             env: launch.env.clone(),
-        })
+        }
     }
+}
+
+/// 远端目标：PTY 在配置时校验过的项目内目录中启动。
+#[derive(Clone)]
+struct RemoteTarget {
+    root: RegisteredRoot,
+    connection_id: String,
+    working_directory: String,
 }
 
 #[derive(Clone)]
@@ -34,6 +55,7 @@ struct Target {
     launch: PersistentLaunch,
     count: usize,
     window: String,
+    remote: Option<RemoteTarget>,
 }
 
 struct WarmShell {
@@ -41,13 +63,19 @@ struct WarmShell {
     pty_id: String,
     key: LaunchKey,
     launch: PersistentLaunch,
+    remote: Option<RemoteTarget>,
     session: Option<DaemonSession>,
+    transport: Option<SessionTransport>,
     reserved_at: Option<Instant>,
 }
 impl Drop for WarmShell {
     fn drop(&mut self) {
         if let Some(session) = &self.session {
             session.shutdown();
+        }
+        // 远端预热项占用共享终端连接的一个通道，回收时归还租约。
+        if let Some(transport) = &self.transport {
+            transport.release();
         }
     }
 }
@@ -82,6 +110,32 @@ fn resolve_launch(cwd: &str, shell: Option<&str>) -> Result<PersistentLaunch, St
     )?
 }
 
+/// 只有远端为 Windows（`/C:/...` 形态）且走 Server 模式的 SSH 项目才预热。
+fn remote_windows_connection(manager: &SshManager, cwd: &str) -> Option<String> {
+    let parsed = parse_remote_uri(cwd).ok()?;
+    (windows_native_path(&parsed.path).is_some() && manager.server_mode(&parsed.connection_id))
+        .then_some(parsed.connection_id)
+}
+
+/// 与 `ssh_create_terminal` 相同的启动参数；两侧一致才能命中。
+fn remote_launch_key(
+    cwd: &str,
+    shell: Option<&str>,
+) -> Result<(PersistentLaunch, LaunchKey), String> {
+    let parsed = parse_remote_uri(cwd)?;
+    let launch = crate::remote_ssh::terminal_cmds::persistent_shell_launch(&parsed.path, shell)?;
+    let key = LaunchKey::from_parts(cwd.to_string(), &launch);
+    Ok((launch, key))
+}
+
+/// 远端项目仍已注册、已信任、根未变化且仍是 Server 模式。
+fn remote_target_valid(manager: &SshManager, remote: &RemoteTarget) -> bool {
+    manager.server_mode(&remote.connection_id)
+        && manager
+            .registered_root(&remote.root.uri)
+            .is_ok_and(|root| root.trusted && root.canonical_path == remote.root.canonical_path)
+}
+
 impl ShellPrewarmPool {
     pub(crate) fn clear_window(&self, window: &str) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -97,7 +151,7 @@ impl ShellPrewarmPool {
         }
     }
 
-    pub(crate) fn configure(
+    pub(crate) async fn configure(
         &self,
         app: AppHandle,
         window: String,
@@ -105,13 +159,36 @@ impl ShellPrewarmPool {
         shell: Option<String>,
         count: serde_json::Value,
     ) -> Result<usize, String> {
-        let Some(cwd) = cwd.filter(|_| cfg!(windows)) else {
+        let Some(cwd) = cwd else {
             self.clear_window(&window);
             return Ok(0);
         };
-        app.state::<PathAllowlist>().ensure_executable(&cwd)?;
-        let launch = resolve_launch(&cwd, shell.as_deref())?;
-        let key = LaunchKey::new(&cwd, &launch)?;
+        let (key, launch, remote) = if cwd.starts_with(SSH_URI_PREFIX) {
+            let manager = app.state::<SshManager>();
+            let Some(connection_id) = remote_windows_connection(&manager, &cwd) else {
+                self.clear_window(&window);
+                return Ok(0);
+            };
+            let root = manager.root_for_uri(&cwd, true)?;
+            let parsed = parse_remote_uri(&cwd)?;
+            let sftp = manager.open_sftp(&connection_id).await?;
+            let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+            let (launch, key) = remote_launch_key(&cwd, shell.as_deref())?;
+            let remote = RemoteTarget {
+                root,
+                connection_id,
+                working_directory,
+            };
+            (key, launch, Some(remote))
+        } else {
+            if !cfg!(windows) {
+                self.clear_window(&window);
+                return Ok(0);
+            }
+            app.state::<PathAllowlist>().ensure_executable(&cwd)?;
+            let launch = resolve_launch(&cwd, shell.as_deref())?;
+            (LaunchKey::new(&cwd, &launch)?, launch, None)
+        };
         let count = resolve_count(&count);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.target.as_ref().is_none_or(|target| {
@@ -126,6 +203,7 @@ impl ShellPrewarmPool {
             launch,
             count,
             window,
+            remote,
         });
         if !state.running && count > 0 {
             state.running = true;
@@ -146,8 +224,12 @@ impl ShellPrewarmPool {
         {
             return None;
         }
-        let launch = resolve_launch(cwd, shell).ok()?;
-        let key = LaunchKey::new(cwd, &launch).ok()?;
+        let key = if cwd.starts_with(SSH_URI_PREFIX) {
+            remote_launch_key(cwd, shell).ok()?.1
+        } else {
+            let launch = resolve_launch(cwd, shell).ok()?;
+            LaunchKey::new(cwd, &launch).ok()?
+        };
         self.reserve_key(&key)
     }
 
@@ -161,7 +243,16 @@ impl ShellPrewarmPool {
         Some(entry.id.clone())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    fn has_entry(&self, id: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shells
+            .iter()
+            .any(|entry| entry.id == id)
+    }
+
+    /// 本机项目领取。
     pub(crate) async fn take(
         &self,
         id: &str,
@@ -171,36 +262,89 @@ impl ShellPrewarmPool {
         app: AppHandle,
         manager: &SshManager,
     ) -> Option<TerminalSpawnResult> {
-        if !self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .shells
-            .iter()
-            .any(|entry| entry.id == id)
-        {
+        if !self.has_entry(id) {
             return None;
         }
         let launch = resolve_launch(cwd, shell).ok()?;
         let key = LaunchKey::new(cwd, &launch).ok()?;
-        let mut entry = self.take_key(id, &key)?;
+        let entry = self.take_key(id, &key)?;
+        self.attach(id, entry, None, size, app, manager).await
+    }
+
+    /// 远端 SSH 项目领取：启动参数与项目根都必须与预热时一致。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn take_remote(
+        &self,
+        id: &str,
+        cwd: &str,
+        launch: &PersistentLaunch,
+        root: &RegisteredRoot,
+        size: (u16, u16),
+        app: AppHandle,
+        manager: &SshManager,
+    ) -> Option<TerminalSpawnResult> {
+        if !self.has_entry(id) {
+            return None;
+        }
+        let key = LaunchKey::from_parts(cwd.to_string(), launch);
+        let entry = self.take_key(id, &key)?;
+        let remote = entry.remote.as_ref()?;
+        if remote.root.uri != root.uri
+            || remote.root.canonical_path != root.canonical_path
+            || !remote_target_valid(manager, remote)
+        {
+            return None;
+        }
+        // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
+        let name = daemon_terminal_name(id, launch.name.as_deref());
+        self.attach(id, entry, name, size, app, manager).await
+    }
+
+    async fn attach(
+        &self,
+        id: &str,
+        mut entry: WarmShell,
+        name: Option<String>,
+        size: (u16, u16),
+        app: AppHandle,
+        manager: &SshManager,
+    ) -> Option<TerminalSpawnResult> {
         let cleanup_app = app.clone();
-        // 缓存失活不能让新建终端等待完整的 daemon 请求超时。
-        let result = tokio::time::timeout(Duration::from_secs(2), async {
-            let session = entry.session.as_ref().ok_or("预热会话不可用")?;
-            session
-                .request("pty.claim", &serde_json::json!({ "id": entry.pty_id }))
-                .await?;
-            let session = entry.session.take().ok_or("预热会话不可用")?;
-            attach_terminal_on_session(
-                id.to_string(),
-                entry.pty_id.clone(),
+        let remote = entry.remote.clone();
+        let (host, connection_id, client_id, limit) = match &remote {
+            Some(remote) => (
+                TerminalHost::Remote(remote.root.clone()),
+                remote.connection_id.clone(),
+                manager.daemon_client_id(&remote.connection_id),
+                REMOTE_CLAIM_TIMEOUT,
+            ),
+            None => (
                 TerminalHost::Local,
                 LOCAL_CONNECTION_ID.to_string(),
                 local_client_id(manager),
+                LOCAL_CLAIM_TIMEOUT,
+            ),
+        };
+        // 缓存失活不能让新建终端等待完整的 daemon 请求超时。
+        let result = tokio::time::timeout(limit, async {
+            let session = entry.session.as_ref().ok_or("预热会话不可用")?;
+            let mut claim = serde_json::json!({ "id": entry.pty_id });
+            if let Some(name) = name {
+                claim["name"] = name.into();
+            }
+            session.request("pty.claim", &claim).await?;
+            let session = entry.session.take().ok_or("预热会话不可用")?;
+            // 租约随会话一起交给正式终端，由其结束时归还。
+            let transport = entry.transport.take().unwrap_or(SessionTransport::Local);
+            attach_terminal_on_session(
+                id.to_string(),
+                entry.pty_id.clone(),
+                host,
+                connection_id,
+                client_id,
                 Some(size),
                 Some(0),
-                SessionTransport::Local,
+                transport,
                 session,
                 app,
                 manager,
@@ -214,7 +358,7 @@ impl ShellPrewarmPool {
                 result.fallback_from = entry.launch.fallback_from.clone();
                 qingcode_server::diagnostics::record(
                     "terminal.prewarm_hit",
-                    serde_json::json!({"terminalId": id}),
+                    serde_json::json!({"terminalId": id, "remote": remote.is_some()}),
                     false,
                     false,
                 );
@@ -223,9 +367,16 @@ impl ShellPrewarmPool {
             _ => {
                 // claim 的应答也可能丢失，此时仍须清理已转为 detached 的 PTY。
                 let pty_id = entry.pty_id.clone();
+                drop(entry);
                 tauri::async_runtime::spawn(async move {
                     let manager = cleanup_app.state::<SshManager>();
-                    let _ = kill_owned(&pty_id, "prewarm_attach_failed", false, &manager).await;
+                    let _ = match remote {
+                        Some(remote) => {
+                            kill_detached_terminal(&pty_id, &remote.root, &cleanup_app, &manager)
+                                .await
+                        }
+                        None => kill_owned(&pty_id, "prewarm_attach_failed", false, &manager).await,
+                    };
                 });
                 None
             }
@@ -268,13 +419,20 @@ impl ShellPrewarmPool {
                 };
                 (target, state.generation)
             };
-            let mut memory = sysinfo::System::new();
-            memory.refresh_memory();
-            let trusted = app
-                .state::<PathAllowlist>()
-                .ensure_executable(&target.key.cwd.to_string_lossy())
-                .is_ok();
-            if !trusted || under_pressure(memory.total_memory(), memory.available_memory()) {
+            let manager = app.state::<SshManager>();
+            // 远端预热占用的是远端内存，本机内存压力只约束本机项目。
+            let usable = match &target.remote {
+                Some(remote) => remote_target_valid(&manager, remote),
+                None => {
+                    let mut memory = sysinfo::System::new();
+                    memory.refresh_memory();
+                    app.state::<PathAllowlist>()
+                        .ensure_executable(&target.key.cwd)
+                        .is_ok()
+                        && !under_pressure(memory.total_memory(), memory.available_memory())
+                }
+            };
+            if !usable {
                 self.0
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -292,11 +450,10 @@ impl ShellPrewarmPool {
             {
                 continue;
             }
-            let manager = app.state::<SshManager>();
             let entry = tokio::select! {
                 biased;
                 _ = changed => continue,
-                entry = create_warm_shell(&manager, &target) => entry,
+                entry = create_warm_shell(&app, &manager, &target) => entry,
             };
             if let Ok(entry) = entry {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -340,7 +497,21 @@ impl Drop for ReadyDirectory {
     }
 }
 
-async fn create_warm_shell(manager: &SshManager, target: &Target) -> Result<WarmShell, String> {
+async fn create_warm_shell(
+    app: &AppHandle,
+    manager: &SshManager,
+    target: &Target,
+) -> Result<WarmShell, String> {
+    match &target.remote {
+        Some(remote) => create_remote_warm_shell(app, manager, target, remote).await,
+        None => create_local_warm_shell(manager, target).await,
+    }
+}
+
+async fn create_local_warm_shell(
+    manager: &SshManager,
+    target: &Target,
+) -> Result<WarmShell, String> {
     let (_, session) = open_local_session(manager).await?;
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
@@ -348,7 +519,9 @@ async fn create_warm_shell(manager: &SshManager, target: &Target) -> Result<Warm
         pty_id: String::new(),
         key: target.key.clone(),
         launch: target.launch.clone(),
+        remote: None,
         session: Some(session),
+        transport: None,
         reserved_at: None,
     };
     let ready_dir = ReadyDirectory(
@@ -388,6 +561,62 @@ async fn create_warm_shell(manager: &SshManager, target: &Target) -> Result<Warm
     })
     .await
     .map_err(|_| "预热 Shell 就绪超时".to_string())?;
+    Ok(entry)
+}
+
+/// 远端无法观察本机标记文件：PTY 创建成功即入池，profile 在后台继续加载，
+/// 提前领取时用户直接看到加载中的 Shell，仍比冷启动快。
+async fn create_remote_warm_shell(
+    app: &AppHandle,
+    manager: &SshManager,
+    target: &Target,
+    remote: &RemoteTarget,
+) -> Result<WarmShell, String> {
+    let endpoint = server::require_server_endpoint(app, manager, &remote.root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&remote.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        &remote.connection_id,
+        &remote.root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let mut entry = WarmShell {
+        id,
+        pty_id: String::new(),
+        key: target.key.clone(),
+        launch: target.launch.clone(),
+        remote: Some(remote.clone()),
+        session: Some(session),
+        transport: Some(transport),
+        reserved_at: None,
+    };
+    let mut env = target.launch.env.clone();
+    env.extend(
+        crate::terminal::terminal_identity_env(&entry.id)
+            .map(|(key, value)| (key.to_string(), value)),
+    );
+    let session = entry.session.as_mut().unwrap();
+    let response = session
+        .request(
+            "pty.createTransient",
+            &serde_json::json!({
+                "cwd": remote.working_directory, "shell": target.launch.shell, "env": env,
+                "args": target.launch.args, "cols": 120, "rows": 30,
+            }),
+        )
+        .await?;
+    entry.pty_id = response
+        .get("id")
+        .and_then(|value| value.as_str())
+        .ok_or("预热应答缺少 id")?
+        .to_string();
     Ok(entry)
 }
 

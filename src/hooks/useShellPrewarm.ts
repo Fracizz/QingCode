@@ -15,10 +15,14 @@ function configure(cwd: string | null, shell: string | null, count: 'auto' | num
   return backendSequence
 }
 
-/** 当前聚焦窗口协调全应用预算；配置串行，切换/撤销信任立即使旧项失效。 */
+/**
+ * 当前聚焦窗口协调全应用预算；配置串行，切换/撤销信任立即使旧项失效。
+ * 本机项目只在 Windows 客户端预热；SSH 项目交给后端判断远端是否为 Windows 且走 Server 模式。
+ */
 export function useShellPrewarm(project: Project | null) {
   useEffect(() => {
-    if (!isTauri() || detectTerminalHostPlatform() !== 'win') return
+    if (!isTauri()) return
+    const localHostWindows = detectTerminalHostPlatform() === 'win'
     let disposed = false
     let revision = 0
     let sequence = Promise.resolve()
@@ -31,16 +35,18 @@ export function useShellPrewarm(project: Project | null) {
       sequence = sequence.then(async () => {
         await cleared
         if (stale()) return
-        if (!project || project.ephemeral || project.path.startsWith('ssh://') || !isProjectTrusted(project)) {
+        const remote = project?.path.startsWith('ssh://') ?? false
+        if (!project || project.ephemeral || (!remote && !localHostWindows) || !isProjectTrusted(project)) {
           if (!invalidate) await configure(null, null, 0)
           return
         }
+        // 「本地终端可接回」只约束本机项目；SSH Server 模式终端本身就由远端 daemon 托管。
         const [count, persist] = await Promise.all([
-          loadShellPrewarmCount(), loadEffectiveTerminalPersistLocalSessions(project),
+          loadShellPrewarmCount(), remote ? true : loadEffectiveTerminalPersistLocalSessions(project),
         ])
         const shell = loadTerminalProfileSettings().defaultShell
         if (stale()) return
-        await configure(persist && shell !== 'wsl' ? project.path : null, shell, count)
+        await configure(persist && (remote || shell !== 'wsl') ? project.path : null, shell, count)
       }).catch(() => {})
     }
     const invalidate = () => refresh(true)

@@ -1,8 +1,12 @@
 # Windows Shell 预热
 
-设置 → 终端 → **Shell 预热数量** 控制当前已信任本地项目的空闲普通终端池。
-仅 Windows 生效，需开启“本地终端可接回”；不预热 WSL、SSH、自定义启动命令或运行任务。
-关闭本地终端可接回后，预热随之停止。
+设置 → 终端 → **Shell 预热数量** 控制当前已信任项目的空闲普通终端池，目标二选一：
+
+- **本机 Windows 项目**：仅 Windows 客户端，需开启“本地终端可接回”；关闭后预热随之停止。不预热 WSL。
+- **远端为 Windows 的 SSH 项目**：任意客户端，要求 Server 模式（远端 daemon 托管终端），不依赖“本地终端可接回”。
+  **Linux / POSIX 远端不预热**，SSH 直连模式也不预热。
+
+两种目标都不预热自定义启动命令的终端配置或运行任务。
 
 用户 `default-settings.json` 支持以下 JSON5 设置；工作区同名键会被忽略：
 
@@ -40,6 +44,20 @@ Shell 按原目录加载用户 profile，再通过内部启动参数写入独立
 性能验收应比较同项目/同 Shell/profile 下“点击新建 → 可输入”的 P50/P95，
 以及 1 / 4 / 8 个空闲 Shell 的宿主、ConPTY、Shell 和子进程总内存。
 本功能不承诺固定内存成本或固定启动时间，用户 profile 会显著影响两者。
+
+## SSH 远端（Windows）
+
+远端预热复用同一个池和协议：在远端 daemon 上用 `pty.createTransient` 创建，经 `pty.claim` 领取后按正常持久终端接入。
+预热项占用终端连接池的一个 daemon 通道（计入该连接的 `MaxSessions`），回收或领取后随正式终端归还。
+
+- 远端判断：资源路径为 `/C:/...` 形态，且该连接为 Server 模式；否则不预热。
+- 配置时校验项目根已注册、已信任，并经 SFTP 解析项目内的工作目录；后台每轮复查信任、根路径和模式，变化即回收。
+- 启动参数与 `ssh_create_terminal` 共用 `persistent_shell_launch`，复用键为 `ssh://` 资源原文加启动参数，不会与本机路径互相命中。
+- 远端无法观察本机标记文件，PTY 创建成功即入池；profile 在后台继续加载，提前领取时看到的是加载中的 Shell。
+- 本机内存压力判断只约束本机项目；远端预热不受本机内存影响。
+- 领取上限 5 秒（本机 2 秒），失败回退正常新建，并通过 `kill_detached_terminal` 后台清理已转为 detached 的 PTY。
+- 远端旧版 daemon 不认识 `pty.createTransient` 时预热失败并退避重试，终端照常新建。
+- 诊断事件 `terminal.prewarm_hit` 的 `remote` 字段区分本机与远端命中。
 
 ## 验证
 

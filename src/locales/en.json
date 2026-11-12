@@ -2038,7 +2038,7 @@
     "在电脑上打开": "Open on this computer",
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",
-    "在当前已信任的本地项目中提前准备普通 PowerShell / CMD。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个，用于连续快速新建。需开启「本地终端可接回」，内存不足时暂停预热。": "Prepare ordinary PowerShell / CMD terminals in the current trusted local project. Auto keeps one ready and refills it as soon as it is used. You can turn this off or choose 1–8 for rapid consecutive terminals. Requires reconnectable local terminals; prewarming pauses when memory is low.",
+    "为已信任项目提前准备普通 PowerShell / CMD：本机 Windows 项目需开启「本地终端可接回」；SSH 项目仅限远端为 Windows 且使用 Server 模式，Linux 远端不预热。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个。本机内存不足时暂停本机预热。": "Prepare ordinary PowerShell / CMD terminals for trusted projects: local Windows projects require reconnectable local terminals; SSH projects are prewarmed only when the remote host is Windows and uses Server mode (Linux hosts are not prewarmed). Auto keeps one ready and refills it as soon as it is used. You can turn this off or choose 1–8. Local prewarming pauses when local memory is low.",
     "自动（1 个）": "Auto (1)"
   }
 }

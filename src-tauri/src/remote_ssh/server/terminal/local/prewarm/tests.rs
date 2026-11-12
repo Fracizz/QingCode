@@ -73,7 +73,9 @@ fn fake_shell() -> WarmShell {
         pty_id: "pty-id".into(),
         key: LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap(),
         launch,
+        remote: None,
         session: None,
+        transport: None,
         reserved_at: None,
     }
 }
@@ -124,6 +126,7 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
         launch: shell.launch.clone(),
         count: 1,
         window: "main".into(),
+        remote: None,
     });
     pool.0.lock().unwrap().shells.push(shell);
     pool.clear_window("secondary");
@@ -147,4 +150,24 @@ async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
     tokio::time::timeout(Duration::from_millis(100), pool.2.notified())
         .await
         .expect("领取后未唤醒补充");
+}
+
+#[test]
+fn remote_keys_follow_the_ssh_terminal_launch_and_never_match_local_paths() {
+    let cwd = "ssh://conn-1/C:/Users/dev/app";
+    let (launch, key) = remote_launch_key(cwd, None).unwrap();
+    // 与 ssh_create_terminal 共用同一份启动参数解析。
+    let expected =
+        crate::remote_ssh::terminal_cmds::persistent_shell_launch("/C:/Users/dev/app", None)
+            .unwrap();
+    assert_eq!(launch.args, expected.args);
+    assert!(key == LaunchKey::from_parts(cwd.into(), &expected));
+    assert!(
+        key != remote_launch_key("ssh://conn-2/C:/Users/dev/app", None)
+            .unwrap()
+            .1
+    );
+    assert!(key != remote_launch_key(cwd, Some("cmd")).unwrap().1);
+    let local = LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap();
+    assert!(key != local);
 }
