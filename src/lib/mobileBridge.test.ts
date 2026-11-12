@@ -38,6 +38,7 @@ vi.mock('./sshWorkspace', async importOriginal => ({
 }))
 
 import { applyTerminalControl, isDesktopTerminalShareable, listenForMobileRequests, mobileRestoreTargets } from './mobileBridge'
+import { beginTerminalMirror, isTerminalMirrored } from './terminal/terminalMirror'
 import { terminalControl } from '../store/terminalControlStore'
 import { restrictProject, trustProject } from './workspaceTrust'
 import { TERMINAL_PROFILES_KEY } from './terminal/terminalProfiles'
@@ -210,9 +211,13 @@ describe('desktop terminal sharing', () => {
   })
 
   it('shows the device in control and clears it when the computer takes back', () => {
+    beginTerminalMirror('term-1')
     applyTerminalControl({ id: 'term-1', controller: 'Pixel', cols: 50, rows: 30 })
     expect(terminalControl('term-1')).toEqual({ name: 'Pixel', cols: 50, rows: 30 })
-    applyTerminalControl({ id: 'term-1', controller: null, cols: 50, rows: 30 })
+    applyTerminalControl({ id: 'term-1', controller: null, cols: 50, rows: 30, mirroring: true })
     expect(terminalControl('term-1')).toBeUndefined()
+    expect(isTerminalMirrored('term-1')).toBe(true)
+    applyTerminalControl({ id: 'term-1', controller: null, cols: 50, rows: 30, mirroring: false })
+    expect(isTerminalMirrored('term-1')).toBe(false)
   })
 })

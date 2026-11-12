@@ -101,6 +101,8 @@ export const EN = Object.freeze({
   '收起会话侧栏': 'Collapse session sidebar',
   '新建终端': 'New terminal',
   '程序继续运行': 'The program keeps running',
+  '只读 · {name} 正在操作': 'Read only · {name} is in control',
+  '接管': 'Take control',
   '接回': 'Take back',
   '已在 {name} 上接入': 'Now in use on {name}',
   '在 {name} 上使用中': 'In use on {name}',

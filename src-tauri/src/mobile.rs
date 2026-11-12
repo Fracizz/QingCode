@@ -177,8 +177,24 @@ pub struct MobileState {
     hub: Hub,
     running: Mutex<Option<RunningListener>>,
     lifecycle: tokio::sync::Mutex<()>,
+    mirror_start: tokio::sync::Mutex<()>,
     pending: Mutex<HashMap<Uuid, oneshot::Sender<Result<Value, String>>>>,
     last_error: Mutex<Option<String>>,
+}
+
+impl MobileState {
+    /// Finish an admitted PTY write or resize before transferring its control.
+    pub(crate) async fn lock_control(&self, id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let gate = self
+            .hub
+            .inner
+            .lock()
+            .unwrap()
+            .live(id)?
+            .control_gate
+            .clone();
+        Some(gate.lock_owned().await)
+    }
 }
 
 struct RunningListener {
@@ -255,6 +271,15 @@ impl HubState {
                 .iter()
                 .find(|entry| entry.saved.id == *id)
                 .map_or_else(|| "其他设备".into(), |entry| entry.saved.name.clone()),
+        }
+    }
+
+    fn view_control(&self, session: &Session, viewer: &str) -> Value {
+        let (cols, rows) = session.screen.size();
+        if matches!(&session.controller, Controller::Device(id) if id == viewer) {
+            json!({ "lease": session.lease, "cols": cols, "rows": rows })
+        } else {
+            json!({ "by": self.controller_name(&session.controller), "cols": cols, "rows": rows })
         }
     }
 

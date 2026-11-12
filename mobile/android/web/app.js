@@ -161,8 +161,10 @@ let frameStatusTimer;
 let frameReleaseTimer;
 // 当前终端的使用权编号；旧版电脑端不支持时保持 null。
 let currentLease = null;
-// 被其他设备接入时记下的会话，点「接回」后重新接入。
+// 其他端主控时保留会话，以便用户显式接管。
 let takenSession = null;
+let viewerGrid = null;
+let pollGeneration = 0;
 const SESSION_GONE_ERRORS = ['终端不存在。', '该电脑终端已关闭或不可接入。', '电脑端未开启手机接入电脑终端。'];
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
 const modifiers = { ctrl: 'off', alt: 'off' };
@@ -199,7 +201,7 @@ const desktopProtocol = createDesktopProtocol(remote);
 const terminalInput = createTerminalInput({
   write: (target, data) => remote('input', { id: target.id, data }, target.address),
   isCurrent: target => target.epoch === viewEpoch && target.id === selected
-    && target.address === profile?.id && terminalReady,
+    && target.address === profile?.id && target.lease === currentLease && terminalReady,
   onSuccess: () => {
     if (inputFailed) {
       inputFailed = false;
@@ -352,7 +354,7 @@ const drawer = createSessionDrawer({
     },
   },
   setSessions: list => { sessions = list; },
-  // 抽屉里的点选是用户的主动操作，可以接管其他设备正在用的会话。
+  // 旧电脑沿用点选接入，新电脑只在明确点击接管时切换控制权。
   selectSession: (session, options) => selectSession(session, { ...options, take: true }),
   endSession,
   openOverviewSession: session => openOverviewSession(session, drawer.overview),
@@ -1213,7 +1215,7 @@ function makeTerminal() {
   const historyEpoch = viewEpoch;
   const historySession = selected;
   terminalHistory = attachTerminalHistory({
-    term, get,
+    term, get, readOnly: () => !!viewerGrid,
     onClose: () => disposeTouchScroll?.cancel?.(),
     onUnsupportedScroll: gesture => {
       if (gesture !== undefined && gesture === unsupportedScrollGesture) return;
@@ -1458,11 +1460,11 @@ async function copyMouseSelection(text) {
 /** 程序是否请求了拖动上报：只报点击的程序（x10 / vt200）收不到拖动，拖选仍在手机本地完成。 */
 function programReceivesDrag() {
   const mode = term?.modes.mouseTrackingMode;
-  return mode === 'drag' || mode === 'any';
+  return !takenSession && (mode === 'drag' || mode === 'any');
 }
 
 function programMouse() {
-  return !!term && term.modes.mouseTrackingMode !== 'none';
+  return !takenSession && !!term && term.modes.mouseTrackingMode !== 'none';
 }
 
 function cellHeight() {
@@ -1500,6 +1502,25 @@ function updateTerminalSize() {
 
 function fitTerminal() {
   if (!term || !fit || terminalScreen.hidden) return;
+  const viewport = get('viewport');
+  if (viewerGrid) {
+    // Preserve the controller's character grid. Fit its whole screen on entry,
+    // then allow the viewer to zoom the font locally without resizing the PTY.
+    if (term.cols !== viewerGrid.cols || term.rows !== viewerGrid.rows) term.resize(viewerGrid.cols, viewerGrid.rows);
+    const screen = term.element.querySelector('.xterm-screen');
+    const padding = getComputedStyle(viewport);
+    const width = viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
+    const height = viewport.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
+    if (screen?.offsetWidth && screen.offsetHeight && width > 0 && height > 0) {
+      const magnification = settings.fontSize() / viewerGrid.initialFont;
+      term.element.style.width = screen.offsetWidth + 'px';
+      term.element.style.zoom = Math.min(1, magnification * width / screen.offsetWidth, magnification * height / screen.offsetHeight);
+    }
+    term.element.style.marginTop = '';
+    heldVisibleRows = 0;
+    return;
+  }
+  term.element.style.zoom = '';
   const terminalColumns = settings.columns();
   const screen = term.element.querySelector('.xterm-screen');
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;
@@ -1509,7 +1530,6 @@ function fitTerminal() {
   term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth + scrollbar) + 'px' : '100%';
   // FitAddon uses the parent's border-box size. Our padded viewport must use its
   // content box, otherwise a last row/column can be hidden behind the tools.
-  const viewport = get('viewport');
   const padding = getComputedStyle(viewport);
   const size = terminalGridSize(
     viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - scrollbar,
@@ -1591,7 +1611,7 @@ function sendSize() {
 function terminalState(text, state = 'idle', retry = false, { holdFrame = false } = {}) {
   if (!holdFrame) releaseTerminalFrame();
   inputFailed = false;
-  terminalReady = state === 'online';
+  terminalReady = state === 'online' && !takenSession;
   get('expanded-send').disabled = !terminalReady;
   get('terminal-status').textContent = t(text);
   get('terminal-dot').dataset.state = state;
@@ -1743,7 +1763,7 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
   get('session-dialog').close();
   if (!keepDrawer) drawer.close();
   if (selected === session.id) {
-    if (take && takenSession) retakeSession();
+    if (take && takenSession && !viewerGrid) retakeSession();
     return;
   }
   leaveTerminal({ preserveFullscreen: true, keepDrawer, holdFrame: true });
@@ -1794,76 +1814,120 @@ async function redrawAfterAttach(id, epoch, from) {
 
 function clearTakenOver() {
   takenSession = null;
+  viewerGrid = null;
+  delete terminalScreen.dataset.viewing;
   get('terminal-taken').hidden = true;
   delete terminalScreen.dataset.taken;
 }
 
-/** 终端已被其他设备接入：程序继续运行，这台设备停止轮询并保留草稿，等用户点「接回」。 */
-function showTakenOver(session, by) {
-  const text = t('已在 {name} 上接入', { name: t(by) });
+function showTakenOver(session, by, grid = null) {
+  const text = t(grid ? '只读 · {name} 正在操作' : '已在 {name} 上接入', { name: t(by) });
+  const changed = !takenSession || get('terminal-taken-text').textContent !== text;
   takenSession = session;
+  viewerGrid = grid ? { ...grid, initialFont: viewerGrid?.initialFont ?? settings.fontSize() } : null;
   currentLease = null;
-  terminalState(text);
-  get('terminal-taken-text').textContent = text;
-  get('terminal-taken').hidden = false;
-  terminalScreen.dataset.taken = 'true';
+  if (changed || terminalScreen.dataset.viewing !== String(!!grid)) {
+    terminalInput.flush();
+    clearTimeout(resizing);
+    terminalScreen.dataset.taken = 'true';
+    terminalScreen.dataset.viewing = String(!!grid);
+    get('terminal-taken-text').textContent = text;
+    get('terminal-take-back').textContent = t(grid ? '接管' : '接回');
+    get('terminal-taken').hidden = false;
+    terminalState(text, grid ? 'online' : 'idle');
+  }
 }
 
 function retakeSession() {
   const session = takenSession;
   if (!session) return;
+  terminalHistory?.close();
+  term?.scrollToBottom();
+  deferredLatest = false;
   clearTakenOver();
   terminalState(t('正在接入终端…'));
-  void poll(session, viewEpoch, true);
+  fitTerminal();
+  void poll(session, viewEpoch, true, true);
 }
 
 get('terminal-take-back').addEventListener('click', retakeSession);
 
-async function poll(session, epoch, take = false) {
+async function poll(session, epoch, take = false, explicitTake = false) {
+  const generation = ++pollGeneration;
+  const active = () => epoch === viewEpoch && generation === pollGeneration;
+  let shared = false;
   let next = 0;
   let latest = true;
   let backoff = 350;
   let claimed = false;
   let attaching = true;
-  while (epoch === viewEpoch) {
+  while (active()) {
     if (document.hidden) {
       await new Promise(resolve => setTimeout(resolve, 350));
       continue;
     }
+    const holdOutput = deferredLatest && readingBack();
     if (deferredLatest) {
-      // 阅读中暂停接收：回到底部后直接取最新画面，跳过的输出仍可在电脑端历史里上滑查看。
-      if (readingBack()) {
+      // 共享会话即使停在历史快照，也要继续收主控变化；回到底部再取最新画面。
+      if (holdOutput && !shared) {
         await new Promise(resolve => setTimeout(resolve, 300));
         continue;
       }
-      deferredLatest = false;
-      latest = true;
+      if (!holdOutput) {
+        deferredLatest = false;
+        latest = true;
+      }
     }
     try {
       if (!claimed) {
         const capabilities = await desktopProtocol.capabilities(profile);
-        if (epoch !== viewEpoch) return;
+        if (!active()) return;
         if (capabilities?.features.includes('handoff')) {
-          const claim = await remote('attach', { id: session.id, take });
-          if (epoch !== viewEpoch) return;
-          if (claim.takenOver) {
+          shared = capabilities.features.includes('shared_view');
+          const claimControl = shared ? explicitTake : take;
+          explicitTake = false;
+          take = false;
+          const claim = await remote('attach', { id: session.id, take: claimControl, shared });
+          if (!active()) return;
+          if (claim.takenOver && !shared) {
             showTakenOver(session, claim.by);
             return;
           }
-          currentLease = claim.lease;
+          currentLease = claim.lease ?? null;
         }
-        // 只在进入时接管一次，之后的断线重连沿用原编号，不会和其他设备来回抢。
+        // 网络故障后重新确认当前角色，永远不重发接管请求。
         claimed = true;
       }
-      const data = await remote('poll', { id: session.id, from: next, latest, tail: true, ...(currentLease !== null ? { lease: currentLease } : {}) });
-      if (epoch !== viewEpoch) return;
+      const data = await remote('poll', { id: session.id, from: next, latest, tail: true, shared, ...(currentLease !== null ? { lease: currentLease } : {}) });
+      if (!active()) return;
       if (data.takenOver) {
         showTakenOver(session, data.by);
         return;
       }
+      if (shared) {
+        const control = data.control;
+        if (!control) throw new Error(t('电脑端移动协议不兼容，请更新电脑端和 Android APK。'));
+        if (control.by) {
+          const changedGrid = term.cols !== control.cols || term.rows !== control.rows;
+          const entering = !viewerGrid;
+          showTakenOver(session, control.by, control);
+          if (entering || changedGrid) fitTerminal();
+          if (changedGrid && !data.snapshot) {
+            latest = true;
+            continue;
+          }
+        } else {
+          if (takenSession) {
+            clearTakenOver();
+            fitTerminal();
+            attaching = true;
+          }
+          currentLease = control.lease;
+        }
+      }
       if (attaching) {
         attaching = false;
-        if (data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
+        if (!takenSession && data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
           await redrawAfterAttach(session.id, epoch, data.next);
           continue;
         }
@@ -1876,13 +1940,13 @@ async function poll(session, epoch, take = false) {
       latest = false;
       terminalHistory?.update(data.historyBefore, data.historyAvailable);
       next = data.next;
-      if (data.reset) {
+      if (data.reset && !holdOutput) {
         term.reset();
         term.writeln(t('[较早的输出已超出电脑端缓存]'));
       }
       // 相邻字节块合并成一次写入：一批动画帧只渲染最后的画面。
-      for (const chunk of outputBatches(data.chunks)) {
-        if (epoch !== viewEpoch) return;
+      for (const chunk of holdOutput ? [] : outputBatches(data.chunks)) {
+        if (!active()) return;
         const view = term;
         if (chunk.screen && readingBack()) {
           deferredLatest = true;
@@ -1898,13 +1962,14 @@ async function poll(session, epoch, take = false) {
           const fallback = setTimeout(resolve, 250);
           view.write(chunk.data, () => { clearTimeout(fallback); resolve(); });
         });
-        if (chunk.screen && epoch === viewEpoch) fitTerminal();
+        if (chunk.screen && active()) fitTerminal();
       }
       if (data.chunks.length && readingBack()) {
         get('scroll-bottom').querySelector('span').textContent = t('有新输出 · 回到最新');
       }
-      if (epoch !== viewEpoch) return;
+      if (!active()) return;
       if (data.exit) {
+        clearTakenOver();
         if (current && !current.exit) {
           current.exit = data.exit;
           drawer.render();
@@ -1913,19 +1978,23 @@ async function poll(session, epoch, take = false) {
         if (data.more) continue;
         return;
       }
-      if (!terminalReady) {
+      if (takenSession) {
+        if (get('terminal-dot').dataset.state !== 'online') terminalState(get('terminal-taken-text').textContent, 'online');
+        if (hostState(profile) !== 'online') updateHost('online');
+      } else if (!terminalReady) {
         terminalState(t('会话中'), 'online');
         if (hostState(profile) !== 'online') updateHost('online');
         sendSize();
       }
       backoff = 350;
     } catch (error) {
-      if (epoch !== viewEpoch) return;
+      if (!active()) return;
       if (error.revoked) {
         handleTerminalError(error);
         return;
       }
       if (SESSION_GONE_ERRORS.includes(error.message)) {
+        clearTakenOver();
         saveDraft();
         sessions = sessions.filter(item => item.id !== session.id);
         drawer.overview.remove([session.id]);
@@ -1933,8 +2002,11 @@ async function poll(session, epoch, take = false) {
         terminalState(t('原会话已不存在 · 草稿保留，可新建终端恢复'), 'offline');
         return;
       }
-      terminalState(t('连接中断，正在接回会话…'), 'offline');
+      const reconnecting = t('连接中断，正在接回会话…');
+      if (takenSession) get('terminal-taken-text').textContent = reconnecting;
+      terminalState(reconnecting, 'offline');
       latest = true;
+      claimed = false;
       if (hostState(profile) !== 'offline') updateHost('offline');
       await new Promise(resolve => setTimeout(resolve, backoff));
       backoff = Math.min(backoff * 2, 3000);
@@ -1948,7 +2020,7 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
     value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
     consumeModifiers();
   }
-  if (!terminalInput.enqueue(value, { id: selected, address: profile?.id, epoch: viewEpoch }, { enter, onComplete })) {
+  if (!terminalInput.enqueue(value, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease }, { enter, onComplete })) {
     get('terminal-status').textContent = t('输入过长，请分段粘贴。');
     return false;
   }
@@ -2490,7 +2562,8 @@ async function sendImage() {
   message('image-error', '');
   let inserted = 0;
   let count = 0;
-  const current = () => epoch === viewEpoch && selected === id && attempt === imageEpoch;
+  const lease = currentLease;
+  const current = () => epoch === viewEpoch && selected === id && attempt === imageEpoch && lease === currentLease && terminalReady;
   try {
     const capabilities = await desktopProtocol.capabilities(profile);
     if (capabilities && !capabilities.features.includes('images')) throw new Error(t('电脑端不支持图片上传，请更新电脑端 QingCode。'));

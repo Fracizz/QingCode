@@ -9,14 +9,14 @@
 ```json
 {
   "protocolVersion": 1,
-  "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions"],
+  "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view"],
   "sessionScope": "shared"
 }
 ```
 
 版本 1 的字段扩展需保持旧客户端行为；功能按 `features` 判断，不用业务写操作探测功能。只有专门的只读能力请求被旧电脑拒绝时使用 legacy 路径；网络或认证失败不能缓存为“不支持”。缓存按地址和证书标识，重新配对后清除。不兼容的协议版本提示更新。
 
-手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。图片和文本使用同一共享规则；终端尺寸采用最后一次调整，不承诺多设备独立网格。桌面终端与手机终端继续隔离。
+手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。支持 `shared_view` 时，安卓打开会话发送 `attach(shared=true, take=false)`，点「接管」才发送 `take=true`。每端使用自己的输出游标；`poll(shared=true)` 的 `control` 含主控网格 `cols/rows`，向主控返回 `lease`，向旁观者返回主控名称 `by`。输入、上传及 PTY 尺寸变化按请求设备与当前控制权校验。
 
 ## 自动验证
 
@@ -31,6 +31,8 @@ pnpm build
 `test:android-native` 需要 JDK 8+，直接编译生产 `NativeRequests.java`，验证上传不阻塞控制/输出、控制顺序、排队过期不再执行、取消传输与迟到回调、队列上限。无需 Android SDK。Android Release 构建在 JDK 安装后也执行它。
 
 浏览器运行 `pnpm test:web`；Windows / macOS 使用 Ego，Linux 使用 agent-browser。Ego 执行 `scripts/web-tests/mobile-reliability.ego.mjs` 的 `run()`，可传 `spaceId`、`baseUrl`、`artifactDir`，连续回归时传 `finish: false` 并由调用者最终结束同一 TaskSpace。截图和 JSON 结果位于 `.dev/web-tests/mobile-reliability/`。覆盖输入失败后恢复、旧记录保留且不重发、上传时 Ctrl+C、能力协商/旧版兼容，以及 320px、横屏和模拟键盘高度。
+
+Linux 的三端共享观看回归使用 `node scripts/web-tests/mobile-shared-view.agent-browser.mjs`。它运行真实安卓页面，以内存桥模拟 Windows 与另一台安卓设备，验证持续输出、轮流接管、重连和旁观网格；结果与截图保存在 `.dev/web-tests/mobile-shared-view/`。
 
 浏览器 fixture 不模拟 Android 调度线程；原生队列使用上述 JVM 回归验证。JVM 测试也不能替代 Android TLS、WebView、输入法和系统生命周期。
 
@@ -47,6 +49,7 @@ pnpm build
 | PNG/JPEG/HEIC、多选、取消选择 | 待执行 | 待执行 | 单独记录 | 逐张读取，压缩/方向正确，局部失败保留已插入路径 |
 | 上传慢速/中断同时 Ctrl+C、结束会话 | 待执行 | 待执行 | 单独记录 | 控制不等待上传，超时结果未知，不自动重发 |
 | 后台、杀进程、离线后恢复 | 待执行 | 待执行 | 单独记录 | 接回最新屏幕，未知提交不重发，草稿可恢复 |
+| Windows、平板、手机同时查看 | 待执行 | 待执行 | 单独记录 | 分别从 Windows 和手机创建会话；三端看见同一输出，轮流接管后原端继续刷新；旁观者旋转屏幕、重连、翻历史不影响主控 |
 | 两台设备接入同一会话、传图、撤销 | 待执行 | 待执行 | 单独记录 | 共享规则一致；创建中撤销后不保留新 PTY |
 | 输入框拖动移光标、双指缩放字号 | 待执行 | 待执行 | 单独记录 | 草稿光标逐字移动、直发只发 ← / →；缩放不误触滚动、选字或程序点击 |
 | 快捷键栏排序 / 隐藏 | 待执行 | 待执行 | 单独记录 | 覆盖升级后布局保留，隐藏键在「更多」可用 |

@@ -424,13 +424,14 @@ fn create_terminal(
 }
 
 #[tauri::command]
-fn write_terminal(
+async fn write_terminal(
     id: String,
     data: String,
     state: tauri::State<'_, TerminalManager>,
     mobile_state: tauri::State<'_, mobile::MobileState>,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
+    let _control = mobile_state.lock_control(&id).await;
     mobile::check_desktop_write(&mobile_state, &id)?;
     state.write(&id, &data)
 }
@@ -480,7 +481,7 @@ fn kill_terminal(
 }
 
 #[tauri::command]
-fn resize_terminal(
+async fn resize_terminal(
     id: String,
     cols: u16,
     rows: u16,
@@ -489,10 +490,13 @@ fn resize_terminal(
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
     // 手机使用期间终端按手机尺寸，电脑窗口变化不影响它。
+    let _control = mobile_state.lock_control(&id).await;
     if mobile::desktop_blocked(&mobile_state, &id) {
         return Ok(());
     }
-    state.resize(&id, cols, rows)
+    state.resize(&id, cols, rows)?;
+    mobile::desktop_resized(&mobile_state, &id, cols, rows);
+    Ok(())
 }
 
 #[tauri::command]

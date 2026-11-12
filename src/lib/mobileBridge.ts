@@ -100,15 +100,15 @@ async function startDesktopTerminalMirror(id: string, device: string) {
   return null
 }
 
-/** 使用权变化：有设备在用时电脑只读并跟随对方行列，否则恢复并停止转发。 */
-export function applyTerminalControl(payload: { id: string; controller: string | null; cols: number; rows: number }) {
+/** 使用权变化：有设备在用时电脑只读并跟随对方行列，电脑接回后仍向旁观者转发。 */
+export function applyTerminalControl(payload: { id: string; controller: string | null; cols: number; rows: number; mirroring?: boolean }) {
   const controls = useTerminalControlStore.getState()
   if (payload.controller) {
     controls.setControl(payload.id, { name: payload.controller, cols: payload.cols, rows: payload.rows })
     return
   }
   controls.clearControl(payload.id)
-  stopTerminalMirror(payload.id)
+  if (!payload.mirroring) stopTerminalMirror(payload.id)
 }
 
 /** 只有 Server 模式的连接有持久终端；指纹未确认的主机要用户在电脑上确认，后台不碰。 */

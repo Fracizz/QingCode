@@ -332,18 +332,23 @@ impl Hub {
         self.inner.lock().unwrap().desktop_terminals
     }
 
-    /// 校验使用权。手机会话兼容不带编号的旧版手机；电脑终端必须持当前编号。
-    pub(super) fn authorize(&self, id: &str, lease: Option<u64>) -> Result<(), String> {
+    /// Writes are bound to the authenticated controller. Legacy phones can omit
+    /// the lease only on a phone session they currently control.
+    pub(super) fn authorize(
+        &self,
+        id: &str,
+        device: &str,
+        lease: Option<u64>,
+    ) -> Result<(), String> {
         let inner = self.inner.lock().unwrap();
-        if let Some(session) = inner.sessions.get(id) {
-            return if lease.is_none_or(|lease| lease == session.lease) {
-                Ok(())
-            } else {
-                Err(TAKEN_OVER.into())
-            };
-        }
-        let mirror = inner.mirrors.get(id).ok_or("终端不存在。")?;
-        if lease == Some(mirror.lease) && !mirror.dormant {
+        require_device(&inner, device)?;
+        let session = inner.live(id).ok_or("终端不存在。")?;
+        let valid_lease =
+            lease.map_or_else(|| inner.sessions.contains_key(id), |n| n == session.lease);
+        if !session.dormant
+            && valid_lease
+            && matches!(&session.controller, Controller::Device(holder) if holder == device)
+        {
             Ok(())
         } else {
             Err(TAKEN_OVER.into())
@@ -404,10 +409,14 @@ impl Hub {
         if !inner.desktop_terminals {
             return Err("电脑端未开启手机接入电脑终端。".into());
         }
-        let lease = inner.mirrors.get(&id).map_or(1, |mirror| mirror.lease + 1);
         let mut session = Session::new(project, device.to_string(), 0);
+        if let Some(previous) = inner.mirrors.get(&id) {
+            session.lease = previous.lease + 1;
+            // A resumed viewer with the old output cursor must get this new snapshot.
+            session.next = previous.next + 1;
+        }
         session.ready = true;
-        session.lease = lease;
+        session.controller = Controller::Desktop;
         session.label = name;
         let (cols, rows) = size(cols, rows);
         session.screen.resize(cols, rows);
@@ -443,7 +452,13 @@ impl Hub {
                     })
             })
             .map(|(id, mirror)| {
-                mirror.release_mirror();
+                if device.is_some() {
+                    mirror.controller = Controller::Desktop;
+                    mirror.lease += 1;
+                    mirror.changed.notify_waiters();
+                } else {
+                    mirror.release_mirror();
+                }
                 id.clone()
             })
             .collect()
@@ -451,17 +466,11 @@ impl Hub {
 
     pub(super) fn take_for_desktop(&self, id: &str) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(session) = inner.sessions.get_mut(id) {
-            if session.controller != Controller::Desktop {
-                session.controller = Controller::Desktop;
-                session.lease += 1;
-                session.changed.notify_waiters();
-            }
-            return Ok(());
-        }
-        let mirror = inner.mirrors.get_mut(id).ok_or("终端不存在。")?;
-        if !mirror.dormant {
-            mirror.release_mirror();
+        let session = inner.live_mut(id).ok_or("终端不存在。")?;
+        if session.controller != Controller::Desktop {
+            session.controller = Controller::Desktop;
+            session.lease += 1;
+            session.changed.notify_waiters();
         }
         Ok(())
     }
@@ -745,7 +754,8 @@ pub(super) fn emit_control(app: &AppHandle, id: &str) {
         let holder = (session.controller != Controller::Desktop && !session.dormant)
             .then(|| inner.controller_name(&session.controller));
         let (cols, rows) = session.screen.size();
-        json!({ "id": id, "controller": holder, "cols": cols, "rows": rows })
+        json!({ "id": id, "controller": holder, "cols": cols, "rows": rows,
+            "mirroring": inner.mirrors.contains_key(id) && !session.dormant })
     };
     let _ = app.emit(CONTROL_EVENT, payload);
 }
@@ -774,6 +784,26 @@ pub(crate) fn deliver_exit(app: &AppHandle, id: &str, exit_code: u32, disconnect
 /// 定期结束空闲超过 24 小时的手机终端；结束失败的会话恢复原状，下一轮再试。
 pub(super) async fn sweep_idle_terminals(app: &AppHandle) {
     let hub = &app.state::<MobileState>().inner().hub;
+    let unused = {
+        let mut inner = hub.inner.lock().unwrap();
+        inner
+            .mirrors
+            .iter_mut()
+            .filter_map(|(id, mirror)| {
+                if mirror.dormant
+                    || mirror.controller != Controller::Desktop
+                    || mirror.last_viewed.elapsed() < Duration::from_secs(60)
+                {
+                    return None;
+                }
+                mirror.release_mirror();
+                Some(id.clone())
+            })
+            .collect::<Vec<_>>()
+    };
+    for id in unused {
+        emit_control(app, &id);
+    }
     for (id, kind) in hub.take_idle_sessions(TERMINAL_IDLE) {
         let result = end(app, id.clone(), kind).await;
         {

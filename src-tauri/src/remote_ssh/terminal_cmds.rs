@@ -909,6 +909,7 @@ pub async fn ssh_write_terminal(
     mobile_state: State<'_, crate::mobile::MobileState>,
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
+    let _control = mobile_state.lock_control(&id).await;
     crate::mobile::check_desktop_write(&mobile_state, &id)?;
     ssh_write_terminal_unchecked(id, data, manager).await
 }
@@ -922,10 +923,13 @@ pub async fn ssh_resize_terminal(
     mobile_state: State<'_, crate::mobile::MobileState>,
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
+    let _control = mobile_state.lock_control(&id).await;
     if crate::mobile::desktop_blocked(&mobile_state, &id) {
         return Ok(());
     }
-    ssh_resize_terminal_unchecked(id, cols, rows, manager).await
+    ssh_resize_terminal_unchecked(id.clone(), cols, rows, manager).await?;
+    crate::mobile::desktop_resized(&mobile_state, &id, cols, rows);
+    Ok(())
 }
 
 #[tauri::command]

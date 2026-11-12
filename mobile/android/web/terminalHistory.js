@@ -18,7 +18,7 @@ export function localLogicalDepth(buffer) {
  * 上滑即原始终端：普通终端滚手机 xterm 的滚动记录，滑到顶后接电脑端保留的更早输出（只读面板）；
  * 全屏程序开启鼠标时滚轮交给程序自己滚动。
  */
-export function attachTerminalHistory({ term, get, loadPage, onClose = () => {}, onUnsupportedScroll = () => {} }) {
+export function attachTerminalHistory({ term, get, loadPage, readOnly = () => false, onClose = () => {}, onUnsupportedScroll = () => {} }) {
   const panel = get('terminal-history');
   const scroll = get('history-scroll');
   const content = get('history-content');
@@ -189,6 +189,12 @@ export function attachTerminalHistory({ term, get, loadPage, onClose = () => {},
       return;
     }
     const buffer = term.buffer.active;
+    if (readOnly() && (buffer.type === 'alternate' || term.modes.mouseTrackingMode !== 'none')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.deltaY < 0) open(event.deltaY);
+      return;
+    }
     // 全屏程序没有开启鼠标时，xterm 会把滚轮转成方向键（Codex 里会翻出输入历史），手指滑动不发给程序。
     if (event.qingTouch && buffer.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
       event.preventDefault();

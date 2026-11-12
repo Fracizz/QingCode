@@ -208,13 +208,21 @@
       case 'poll': {
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
-        if (request.lease !== undefined && request.lease !== session.lease) {
+        if (!request.shared && request.lease !== undefined && request.lease !== session.lease) {
           return { ok: true, data: { takenOver: true, by: session.holder } }
+        }
+        const withControl = data => {
+          if (request.shared) {
+            const holder = session.holder ?? 'me'
+            data.control = { ...(holder === 'me' ? { lease: session.lease } : { by: holder }),
+              cols: session.snapshot?.cols ?? 80, rows: session.snapshot?.rows ?? 24 }
+          }
+          return data
         }
         state.polls.push({ id: request.id, from: request.from, latest: request.latest, tail: request.tail })
         if (state.pollErrors > 0) { state.pollErrors--; return { ok: false, error: '模拟网络断开' } }
         if (request.latest || (request.tail && request.from < session.next - session.output.length)) {
-          return { ok: true, data: latest(session) }
+          return { ok: true, data: withControl(latest(session)) }
         }
         if (request.from === session.next && !session.exit) {
           await new Promise(resolve => {
@@ -222,7 +230,7 @@
             setTimeout(resolve, 900)
           })
         }
-        return { ok: true, data: read(session, request.from) }
+        return { ok: true, data: withControl(read(session, request.from)) }
       }
       case 'history': {
         const session = state.sessions.get(request.id)
@@ -259,7 +267,14 @@
         state.images.push(request)
         return { ok: true, data: { path: state.imagePaths?.[state.images.length - 1] ?? "'/tmp/mobile-image.jpg'" } }
       }
-      case 'resize': state.resizes.push(request); return { ok: true, data: null }
+      case 'resize': {
+        state.resizes.push(request)
+        if (state.capabilities?.features.includes('shared_view')) {
+          const session = state.sessions.get(request.id)
+          if (session) session.snapshot = { ...latest(session).chunks[0], cols: request.cols, rows: request.rows }
+        }
+        return { ok: true, data: null }
+      }
       case 'end': {
         state.ends.push(request.id)
         if (state.endErrors.has(request.id)) return { ok: false, error: '模拟结束失败' }
@@ -502,7 +517,10 @@
       for (const wake of session.waiters.splice(0)) wake()
     },
     pushScreen(id, text, cols = 80, rows = 24) {
-      push(state.sessions.get(id), { data: text, cols, rows })
+      const session = state.sessions.get(id)
+      const snapshot = { data: text, cols, rows }
+      if (state.capabilities?.features.includes('shared_view')) session.snapshot = snapshot
+      push(session, snapshot)
     },
     link(host, port, fingerprint = FINGERPRINT, name = 'DEVBOX') {
       const query = new URLSearchParams({ v: '1', host, port: String(port), fp: fingerprint, name })

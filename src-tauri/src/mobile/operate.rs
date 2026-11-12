@@ -26,6 +26,8 @@ pub(super) enum Operation {
         id: String,
         #[serde(default)]
         take: bool,
+        #[serde(default)]
+        shared: bool,
     },
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
@@ -46,6 +48,8 @@ pub(super) enum Operation {
         latest: bool,
         #[serde(default)]
         tail: bool,
+        #[serde(default)]
+        shared: bool,
         #[serde(default)]
         lease: Option<u64>,
     },
@@ -97,7 +101,7 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff"],
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
@@ -117,7 +121,7 @@ pub(super) async fn operate(
             }
             Ok(json!(list))
         }
-        Operation::Attach { id, take } => attach(app, device, id, take).await,
+        Operation::Attach { id, take, shared } => attach(app, device, id, take, shared).await,
         Operation::Sessions {
             project: Some(project),
             ..
@@ -180,24 +184,44 @@ pub(super) async fn operate(
             latest,
             tail,
             lease,
+            shared,
         } => {
-            let wait = {
-                let inner = hub.inner.lock().unwrap();
-                if let Some(reply) = inner.takeover_reply(&id, lease) {
-                    return Ok(reply);
-                }
+            let read = |inner: &HubState, after_wait: bool| -> Result<Option<Value>, String> {
+                require_device(inner, device)?;
                 let session = inner.live(&id).ok_or("终端不存在。")?;
-                if latest || (tail && session.should_send_latest(from)) {
-                    return Ok(session.latest());
+                if !shared {
+                    if let Some(reply) = inner.takeover_reply(&id, lease) {
+                        return Ok(Some(reply));
+                    }
+                } else if session.dormant {
+                    return Err("终端转发已停止。".into());
                 }
-                if from != session.next
+                let mut reply = if latest || (tail && session.should_send_latest(from)) {
+                    session.latest()
+                } else if after_wait
+                    || from != session.next
                     || session
                         .drain_until
                         .is_some_and(|until| Instant::now() >= until)
                 {
-                    return Ok(session.read(from));
+                    session.read(from)
+                } else {
+                    return Ok(None);
+                };
+                if shared {
+                    reply["control"] = inner.view_control(session, device);
                 }
-                session.changed.clone().notified_owned()
+                Ok(Some(reply))
+            };
+            let wait = {
+                let mut inner = hub.inner.lock().unwrap();
+                if let Some(mirror) = inner.mirrors.get_mut(&id) {
+                    mirror.last_viewed = Instant::now();
+                }
+                if let Some(reply) = read(&inner, false)? {
+                    return Ok(reply);
+                }
+                inner.live(&id).unwrap().changed.clone().notified_owned()
             };
             if tokio::time::timeout(Duration::from_millis(900), wait)
                 .await
@@ -205,29 +229,21 @@ pub(super) async fn operate(
             {
                 tokio::time::sleep(OUTPUT_COALESCE).await;
             }
-            let inner = hub.inner.lock().unwrap();
-            if let Some(reply) = inner.takeover_reply(&id, lease) {
-                return Ok(reply);
-            }
-            let session = inner.live(&id).ok_or("终端不存在。")?;
-            Ok(if tail && session.should_send_latest(from) {
-                session.latest()
-            } else {
-                session.read(from)
-            })
+            read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into())
         }
         Operation::Input { id, data, lease } => {
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
-            hub.authorize(&id, lease)?;
+            let _control = app.state::<MobileState>().lock_control(&id).await;
+            hub.authorize(&id, device, lease)?;
             hub.with_session(&id, |session| session.note_user_input(&data));
             let kind = hub.session_kind(&id)?;
             write_input(app, kind, id, data).await?;
             Ok(Value::Null)
         }
         Operation::Image { id, data, lease } => {
-            hub.authorize(&id, lease)?;
+            hub.authorize(&id, device, lease)?;
             let project = {
                 let inner = hub.inner.lock().unwrap();
                 image_project(&inner, &id, device)?
@@ -287,7 +303,8 @@ pub(super) async fn operate(
             rows,
             lease,
         } => {
-            hub.authorize(&id, lease)?;
+            let _control = app.state::<MobileState>().lock_control(&id).await;
+            hub.authorize(&id, device, lease)?;
             hub.with_session(&id, Session::note_resize);
             let kind = hub.session_kind(&id)?;
             apply_resize(app, kind, &id, cols, rows).await?;
@@ -365,17 +382,24 @@ pub(super) async fn attach(
     device: &str,
     id: String,
     take: bool,
+    shared: bool,
 ) -> Result<Value, String> {
     let hub = &app.state::<MobileState>().inner().hub;
     if !hub.is_phone_session(&id) && !hub.mirror_active(&id) {
         if !hub.desktop_terminals_enabled() {
             return Err("电脑端未开启手机接入电脑终端。".into());
         }
-        if !take {
+        if !take && !shared {
             return Ok(json!({ "takenOver": true, "by": DESKTOP_NAME }));
         }
-        desktop_query(app, json!({ "mirrorStart": id, "device": device })).await?;
+        // Serialize initial snapshots so concurrent viewers share one output cursor sequence.
+        let state = app.state::<MobileState>();
+        let _starting = state.mirror_start.lock().await;
+        if !hub.mirror_active(&id) {
+            desktop_query(app, json!({ "mirrorStart": id, "device": device })).await?;
+        }
     }
+    let _control = app.state::<MobileState>().lock_control(&id).await;
     let reply = hub.claim(&id, device, take)?;
     emit_control(app, &id);
     Ok(reply)

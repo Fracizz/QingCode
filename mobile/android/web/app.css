@@ -435,9 +435,12 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 #history-more { width: 100%; }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
-#terminal-empty, #terminal-taken { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
+#terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
 #terminal-empty[hidden], #terminal-taken[hidden] { display: none; }
 #terminal-empty-new, #terminal-take-back { min-height: 44px; padding: 0 24px; }
+#terminal-taken { flex: none; display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 4px 12px max(4px, var(--safe-bottom)); border-top: 1px solid var(--divider); background: var(--paper); }
+#terminal-screen[data-viewing="false"] .terminal-body { visibility: hidden; }
+#terminal-screen[data-viewing="true"] #viewport { overflow: auto; touch-action: pan-x pan-y; }
 #terminal-taken p { margin: 0; }
 #terminal-taken-text { color: var(--ink, inherit); font-weight: 600; }
 #terminal-screen[data-taken="true"] #terminal-tools { display: none; }

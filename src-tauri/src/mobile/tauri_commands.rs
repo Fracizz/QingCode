@@ -268,6 +268,15 @@ pub(crate) fn desktop_blocked(state: &MobileState, id: &str) -> bool {
         })
 }
 
+pub(crate) fn desktop_resized(state: &MobileState, id: &str, cols: u16, rows: u16) {
+    state.hub.with_session(id, |session| {
+        if !session.dormant && session.controller == Controller::Desktop {
+            session.screen.resize(cols, rows);
+            session.changed.notify_waiters();
+        }
+    });
+}
+
 pub(crate) fn check_desktop_write(state: &MobileState, id: &str) -> Result<(), String> {
     if desktop_blocked(state, id) {
         Err("终端正在其他设备上使用，请先点「接回」。".into())
@@ -290,7 +299,8 @@ pub fn mobile_set_desktop_terminals(enabled: bool, app: AppHandle) -> Result<Sta
 }
 
 #[tauri::command]
-pub fn mobile_terminal_take(id: String, app: AppHandle) -> Result<(), String> {
+pub async fn mobile_terminal_take(id: String, app: AppHandle) -> Result<(), String> {
+    let _control = app.state::<MobileState>().lock_control(&id).await;
     app.state::<MobileState>().hub.take_for_desktop(&id)?;
     emit_control(&app, &id);
     Ok(())
@@ -385,6 +395,7 @@ pub fn mobile_view_close(id: String, state: State<'_, MobileState>) {
 #[tauri::command]
 pub async fn mobile_view_input(id: String, data: String, app: AppHandle) -> Result<(), String> {
     let hub = &app.state::<MobileState>().inner().hub;
+    let _control = app.state::<MobileState>().lock_control(&id).await;
     let kind = hub.desktop_controls(&id)?;
     hub.with_session(&id, |session| session.note_user_input(&data));
     write_input(&app, kind, id, data).await
@@ -399,6 +410,7 @@ pub async fn mobile_view_resize(
     app: AppHandle,
 ) -> Result<(), String> {
     let hub = &app.state::<MobileState>().inner().hub;
+    let _control = app.state::<MobileState>().lock_control(&id).await;
     match hub.desktop_controls(&id) {
         Ok(kind) => apply_resize(&app, kind, &id, cols, rows).await,
         Err(_) => Ok(()),

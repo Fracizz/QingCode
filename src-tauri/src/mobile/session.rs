@@ -73,8 +73,10 @@ pub(super) struct Session {
     pub(super) controller: Controller,
     /// 使用权编号，每次接管加一；持旧编号的输入和改尺寸被拒绝。
     pub(super) lease: u64,
+    pub(super) control_gate: Arc<tokio::sync::Mutex<()>>,
     /// 电脑已接回的镜像：停止接收输出，只保留编号，让被顶下去的手机知道是谁接走的。
     pub(super) dormant: bool,
+    pub(super) last_viewed: Instant,
     pub(super) view: Option<ViewBacklog>,
 }
 
@@ -85,7 +87,9 @@ impl Session {
             project,
             controller: Controller::Device(owner.clone()),
             lease: 1,
+            control_gate: Arc::default(),
             dormant: false,
+            last_viewed: Instant::now(),
             view: None,
             owner,
             number,

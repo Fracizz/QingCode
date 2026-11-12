@@ -337,8 +337,11 @@ fn takeover_requires_an_explicit_take_and_invalidates_the_old_lease() {
     assert_eq!(passive["takenOver"], true);
     assert_eq!(passive["by"], "phone-name");
     assert_eq!(hub.claim("mobile-a", "tablet", true).unwrap()["lease"], 2);
-    assert_eq!(hub.authorize("mobile-a", Some(1)).unwrap_err(), TAKEN_OVER);
-    assert!(hub.authorize("mobile-a", Some(2)).is_ok());
+    assert_eq!(
+        hub.authorize("mobile-a", "phone", Some(1)).unwrap_err(),
+        TAKEN_OVER
+    );
+    assert!(hub.authorize("mobile-a", "tablet", Some(2)).is_ok());
     let inner = hub.inner.lock().unwrap();
     assert_eq!(
         inner.takeover_reply("mobile-a", Some(1)).unwrap()["by"],
@@ -370,11 +373,13 @@ fn restore_scan_stays_off_while_the_listener_is_stopped() {
 }
 
 #[test]
-fn phones_without_a_lease_keep_using_phone_sessions() {
+fn lease_or_legacy_writes_are_bound_to_the_current_device() {
     let hub = handoff_hub();
     ready_session(&hub, "mobile-a", "phone");
+    assert!(hub.authorize("mobile-a", "phone", None).is_ok());
     hub.claim("mobile-a", "tablet", true).unwrap();
-    assert!(hub.authorize("mobile-a", None).is_ok());
+    assert!(hub.authorize("mobile-a", "phone", None).is_err());
+    assert!(hub.authorize("mobile-a", "phone", Some(2)).is_err());
     assert!(hub
         .inner
         .lock()
@@ -405,19 +410,32 @@ fn mirrors_never_reach_paths_that_end_processes() {
 }
 
 #[test]
-fn desktop_takeback_stops_the_mirror_and_tells_the_phone_who_took_it() {
+fn two_viewers_keep_reading_one_mirror_across_desktop_takeback() {
     let hub = handoff_hub();
     hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
         .unwrap();
+    for device in ["phone", "tablet"] {
+        assert_eq!(
+            hub.claim("term-1", device, false).unwrap()["by"],
+            DESKTOP_NAME
+        );
+    }
     let lease = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
-    assert!(hub.authorize("term-1", lease).is_ok());
-    assert!(hub.authorize("term-1", None).is_err());
+    assert!(hub.authorize("term-1", "phone", lease).is_ok());
+    assert!(hub.authorize("term-1", "phone", None).is_err());
     hub.take_for_desktop("term-1").unwrap();
-    assert_eq!(hub.authorize("term-1", lease).unwrap_err(), TAKEN_OVER);
-    assert!(!hub.mirror_active("term-1"));
+    assert_eq!(
+        hub.authorize("term-1", "phone", lease).unwrap_err(),
+        TAKEN_OVER
+    );
+    assert!(hub.mirror_active("term-1"));
     hub.mirror_push("term-1", OutputChunk::Bytes("eA==".into()));
     let inner = hub.inner.lock().unwrap();
-    assert_eq!(inner.mirrors["term-1"].next, 0);
+    let session = &inner.mirrors["term-1"];
+    for device in ["phone", "tablet"] {
+        assert_eq!(inner.view_control(session, device)["by"], DESKTOP_NAME);
+        assert_eq!(session.read(0)["chunks"], json!(["eA=="]));
+    }
     assert_eq!(
         inner.takeover_reply("term-1", lease).unwrap()["by"],
         DESKTOP_NAME
@@ -430,12 +448,13 @@ fn reseeded_mirror_never_reuses_an_old_lease() {
     hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
         .unwrap();
     let old = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
-    hub.take_for_desktop("term-1").unwrap();
+    hub.release_mirrors(None);
     hub.seed_mirror("term-1".into(), project(), "tablet", None, 80, 24, "y")
         .unwrap();
     let new = hub.claim("term-1", "tablet", true).unwrap()["lease"].as_u64();
     assert!(new > old);
-    assert!(hub.authorize("term-1", old).is_err());
+    assert!(hub.inner.lock().unwrap().mirrors["term-1"].should_send_latest(0));
+    assert!(hub.authorize("term-1", "phone", old).is_err());
 }
 
 #[test]
