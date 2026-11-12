@@ -107,7 +107,7 @@ Set-CargoVersion $serverCargoToml $Version 'qingcode-server/Cargo.toml'
 Set-CargoLockPackageVersion $cargoLock 'qingcode' $Version
 Set-CargoLockPackageVersion $cargoLock 'qingcode-server' $Version
 Set-ReadmeVersion (Join-Path $projectRoot 'README.md') $Version
-Set-ReadmeVersion (Join-Path $projectRoot 'README.en.md') $Version
+Set-ReadmeVersion (Join-Path $projectRoot 'README.zh-CN.md') $Version
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green

@@ -6,7 +6,7 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 # Web 测试页与浏览器验收
 
-终端工作台项目切换：启动 `pnpm dev:web-test`（38419），Linux 运行 `node scripts/web-tests/terminal-project-switch.agent-browser.mjs`。复用完整 App 与业务 Store，覆盖无终端项目的菜单切换、当前项目禁用、组头加载与重复点击限制、失败保留及重试、布局与侧栏保持，以及英文浅色窄窗。截图与 JSON 结果在 `.dev/web-tests/terminal-project-switch/`；文件、数据库、终端与连接采用隔离测试环境，不替代真实 SSH、PTY 和原生集成验收。
+终端工作台项目切换：启动 `pnpm dev:web-test`（38419），Linux 运行 `node scripts/web-tests/terminal-project-switch.agent-browser.mjs`。复用完整 App 与业务 Store，覆盖无终端时搜索框常驻、按项目名和来源搜索空项目、Escape 与清除恢复列表、无匹配时的空态，以及无终端项目的菜单切换、当前项目禁用、组头加载与重复点击限制、失败保留及重试、布局与侧栏保持和英文浅色窄窗。截图与 JSON 结果在 `.dev/web-tests/terminal-project-switch/`；文件、数据库、终端与连接采用隔离测试环境，不替代真实 SSH、PTY 和原生集成验收。
 
 手机会话运行状态：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-session-activity.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖两个会话同时转动、未选中会话完成、手动名称、退出、刷新失败恢复、迟到响应、320px 布局、减少动画和后台/关闭侧栏后暂停刷新。截图与 JSON 位于 `.dev/web-tests/mobile-session-activity/`；使用内存 RPC，不代替 Android 真机和实际 CLI 标题更新验收。
 

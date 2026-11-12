@@ -34,13 +34,15 @@
   --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
   --color-tree-fg: #d4d4d8;
-  /* 终端列表文字：会话名一档亮、项目名/来源/时间一档暗，两档拉开（参考 Z：#d4d4d4 / #909090），纯中性灰；
+  /* 终端列表文字：会话名一档亮、项目名/时间一档暗，两档拉开（参考 Z：#d4d4d4 / #909090），纯中性灰；
      辅助级在选中底上也 ≥ 4.5:1。 */
   --color-term-list-active: #ececec;
   --color-term-list-fg: #d4d4d4;
   --color-term-list-project: #9a9a9a;
   --color-term-list-meta: #989898;
-  --color-term-list-remote: #b7a99b;
+  /* 来源标签单独提亮，时间和状态仍保持辅助层级；远端保留暖灰。 */
+  --color-term-list-source: #adadad;
+  --color-term-list-remote: #c6b8aa;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
   --color-brand: #4ecdb5;
@@ -135,6 +137,8 @@ html[data-theme="light"] {
   --color-term-list-fg: #374151;
   --color-term-list-project: #4b5563;
   --color-term-list-meta: #626872;
+  /* 浅色保持深灰对比度，远端沿用暖灰。 */
+  --color-term-list-source: #626872;
   --color-term-list-remote: #736253;
 
   --color-brand: #0d9488;
@@ -228,7 +232,9 @@ html[data-theme="ink"] {
   --color-term-list-fg: #c2c2c2;
   --color-term-list-project: #a0a0a0;
   --color-term-list-meta: #999999;
-  --color-term-list-remote: #b4a698;
+  /* 来源标签单独提亮，时间和状态仍保持辅助层级；远端保留暖灰。 */
+  --color-term-list-source: #aeaeae;
+  --color-term-list-remote: #c3b5a7;
 
   --color-brand: #4ecdb5;
   --color-accent: #3b82f6;
@@ -288,7 +294,9 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-term-list-fg: #b5c2b8;
   --color-term-list-project: #a6b5a9;
   --color-term-list-meta: #9aab9e;
-  --color-term-list-remote: #b9ad9f;
+  /* 来源标签单独提亮，时间和状态仍保持辅助层级；远端保留暖灰。 */
+  --color-term-list-source: #acbbb0;
+  --color-term-list-remote: #c7bbad;
 
   /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。
      品牌色（标题栏 QingCode、工作区标签下划线等）同样降为低饱和青绿，不沿用深色主题的 #4ecdb5。 */

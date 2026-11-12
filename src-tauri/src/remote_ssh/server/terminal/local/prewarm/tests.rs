@@ -97,7 +97,7 @@ fn simultaneous_reservations_cannot_claim_the_same_shell_twice() {
     assert_eq!(
         workers
             .into_iter()
-            .filter_map(|worker| worker.join().unwrap())
+            .filter_map(|worker| worker.join().unwrap().ok())
             .count(),
         1
     );
@@ -115,7 +115,7 @@ fn stale_reservations_and_mismatched_launches_never_supply_a_shell() {
     assert!(pool.take_key("reserved-id", &key).is_none());
     let mut different = key;
     different.args.push("-NoProfile".into());
-    assert!(pool.reserve_key(&different, false).is_none());
+    assert!(pool.reserve_key(&different, false).is_err());
 }
 
 #[test]
@@ -123,6 +123,7 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
     let pool = ShellPrewarmPool::default();
     let shell = fake_shell();
     pool.0.lock().unwrap().target = Some(Target {
+        project_path: "project".into(),
         key: shell.key.clone(),
         launch: shell.launch.clone(),
         count: 1,
@@ -139,13 +140,46 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
     assert_eq!(state.generation, 1);
 }
 
+#[test]
+fn status_and_reservation_reasons_are_scoped_to_the_target() {
+    let pool = ShellPrewarmPool::default();
+    let entry = fake_shell();
+    let key = entry.key.clone();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(Target {
+            project_path: "test".into(),
+            key: key.clone(),
+            launch: entry.launch.clone(),
+            count: 2,
+            window: "main".into(),
+            remote: None,
+        });
+        state.shells.push(entry);
+        state.preparing = true;
+    }
+    assert_eq!(pool.status("other")["ready"], 0);
+    assert_eq!(pool.status("test")["ready"], 1);
+    assert_eq!(pool.status("test")["preparing"], 1);
+    let mut other = key.clone();
+    other.shell = Some("cmd.exe".into());
+    assert_eq!(pool.reserve_key(&other, false), Err("shell_mismatch"));
+    assert_eq!(pool.reserve_key(&key, true), Err("startup_unsupported"));
+    assert!(pool.reserve_key(&key, false).is_ok());
+    assert_eq!(pool.reserve_key(&key, false), Err("empty"));
+    assert_eq!(pool.status("test")["reserved"], 1);
+    assert_eq!(pool.status("test")["ready"], 0);
+    pool.clear_window("main");
+    assert_eq!(pool.status("test")["reason"], "no_target");
+}
+
 #[tokio::test]
 async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
     let pool = ShellPrewarmPool::default();
     let shell = fake_shell();
     let key = shell.key.clone();
     pool.0.lock().unwrap().shells.push(shell);
-    assert!(pool.reserve_key(&key, false).is_some());
+    assert!(pool.reserve_key(&key, false).is_ok());
     assert!(pool.take_key("reserved-id", &key).is_some());
     // 许可在领取时即保留，补充循环稍后才开始等待也能立刻醒来。
     tokio::time::timeout(Duration::from_millis(100), pool.2.notified())

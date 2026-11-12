@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { reservePrewarmedShellId } from '../lib/terminal/shellPrewarmSettings'
+import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { ensureTerminalProfileTrust } from '../lib/terminal/terminalProfileTrust'
 import { getTerminalProfile } from '../lib/terminal/terminalProfiles'
 import type { TerminalTab } from '../types'
@@ -12,7 +12,7 @@ import {
 
 vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/terminal/shellPrewarmSettings')>(),
-  reservePrewarmedShellId: vi.fn(async () => null),
+  reservePrewarmedShell: vi.fn(async () => ({ reason: 'empty' })),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -108,13 +108,13 @@ describe('terminal pane isolation', () => {
   it('reserves a local PowerShell for a trusted Claude startup command', async () => {
     const profile = { id: 'assistant', name: 'Claude', command: 'claude', shell: 'pwsh' } as const
     vi.mocked(getTerminalProfile).mockReturnValueOnce(profile).mockReturnValueOnce(profile)
-    vi.mocked(reservePrewarmedShellId).mockClear().mockResolvedValueOnce('warm-claude')
+    vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 'warm-claude' })
     vi.mocked(ensureTerminalProfileTrust).mockResolvedValueOnce(false)
     const store = useTerminalStore.getState()
     expect(await store.addTerminal('D:/proj', 'p1')).toBeNull()
-    expect(reservePrewarmedShellId).not.toHaveBeenCalled()
+    expect(reservePrewarmedShell).not.toHaveBeenCalled()
     expect(await store.addTerminal('D:/proj', 'p1')).toBe('warm-claude')
-    expect(reservePrewarmedShellId).toHaveBeenCalledWith('D:/proj', expect.any(String), true)
+    expect(reservePrewarmedShell).toHaveBeenCalledWith('D:/proj', expect.any(String), true)
     expect(useTerminalStore.getState().terminals[0]).toMatchObject({
       id: 'warm-claude', profileId: 'assistant', launchCommand: 'claude',
     })

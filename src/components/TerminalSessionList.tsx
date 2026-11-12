@@ -241,7 +241,7 @@ export default function TerminalSessionList() {
       ? scopeFilter
       : 'all'
   const scopeFiltering = activeScope !== 'all'
-  const searching = totalTerminals > 0 && query.trim() !== ''
+  const searching = query.trim() !== ''
   const groups = filterTerminalSessionGroups(allGroups, {
     query,
     scope: activeScope,
@@ -629,7 +629,7 @@ export default function TerminalSessionList() {
     const rowHighlighted = !managing && expanded && terminals.some(term => term.id === paneActiveId)
     const source = projectSources.get(project.id)
     const sourceColor = terminalProjectScopeKey(project) === 'local'
-      ? 'text-term-list-meta'
+      ? 'text-term-list-source'
       : 'text-term-list-remote'
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
@@ -941,81 +941,79 @@ export default function TerminalSessionList() {
         </Tooltip>
       </div>
 
-      {totalTerminals > 0 && (
-        <div data-terminal-list-search className="flex flex-shrink-0 items-center gap-1 pb-1.5 pl-3 pr-1.5">
-          <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded-md border border-transparent bg-bg-hover px-1.5 transition-colors focus-within:border-accent/60">
-            <Search size={13} className="flex-shrink-0 text-fg-dim" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Escape' && query) {
-                  event.preventDefault()
-                  event.stopPropagation()
+      <div data-terminal-list-search className="flex flex-shrink-0 items-center gap-1 pb-1.5 pl-3 pr-1.5">
+        <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded-md border border-transparent bg-bg-hover px-1.5 transition-colors focus-within:border-accent/60">
+          <Search size={13} className="flex-shrink-0 text-fg-dim" />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Escape' && query) {
+                event.preventDefault()
+                event.stopPropagation()
+                setQuery('')
+              }
+            }}
+            placeholder={translate('搜索终端、项目或来源')}
+            aria-label={translate('搜索终端、项目或来源')}
+            className="h-full min-w-0 flex-1 bg-transparent text-ui outline-none placeholder:text-fg-dim"
+          />
+          {query && (
+            <Tooltip label={translate('清除搜索')} side="bottom">
+              <button
+                type="button"
+                aria-label={translate('清除搜索')}
+                className="flex rounded text-fg-dim hover:text-fg"
+                onClick={() => {
                   setQuery('')
-                }
-              }}
-              placeholder={translate('搜索终端、项目或来源')}
-              aria-label={translate('搜索终端、项目或来源')}
-              className="h-full min-w-0 flex-1 bg-transparent text-ui outline-none placeholder:text-fg-dim"
-            />
-            {query && (
-              <Tooltip label={translate('清除搜索')} side="bottom">
-                <button
-                  type="button"
-                  aria-label={translate('清除搜索')}
-                  className="flex rounded text-fg-dim hover:text-fg"
-                  onClick={() => {
-                    setQuery('')
-                    searchRef.current?.focus()
-                  }}
-                >
-                  <X size={13} />
-                </button>
-              </Tooltip>
-            )}
-          </label>
-          <Tooltip label={translate('按来源筛选（本地 / 远程）')} side="bottom">
-            <button
-              type="button"
-              aria-label={translate('按来源筛选')}
-              aria-haspopup="menu"
-              aria-expanded={scopeMenu !== null}
-              aria-pressed={scopeFiltering}
-              data-terminal-scope-filter={activeScope}
-              className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
-              onClick={event => {
-                if (scopeMenu) {
-                  setScopeMenu(null)
-                  return
-                }
-                const rect = event.currentTarget.getBoundingClientRect()
-                setScopeMenu({ x: rect.left, y: rect.bottom + 4 })
-              }}
-            >
-              <MonitorCloud size={15} />
-            </button>
-          </Tooltip>
-          <Tooltip
-            label={runningFirst ? translate('运行中优先 · 再点恢复默认顺序') : translate('运行中优先')}
-            side="bottom"
+                  searchRef.current?.focus()
+                }}
+              >
+                <X size={13} />
+              </button>
+            </Tooltip>
+          )}
+        </label>
+        <Tooltip label={translate('按来源筛选（本地 / 远程）')} side="bottom">
+          <button
+            type="button"
+            aria-label={translate('按来源筛选')}
+            aria-haspopup="menu"
+            aria-expanded={scopeMenu !== null}
+            aria-pressed={scopeFiltering}
+            data-terminal-scope-filter={activeScope}
+            className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
+            onClick={event => {
+              if (scopeMenu) {
+                setScopeMenu(null)
+                return
+              }
+              const rect = event.currentTarget.getBoundingClientRect()
+              setScopeMenu({ x: rect.left, y: rect.bottom + 4 })
+            }}
           >
-            <button
-              type="button"
-              aria-label={translate('运行中优先')}
-              aria-pressed={runningFirst}
-              className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
-              onClick={() => {
-                setBusyCheckedAt(Date.now())
-                setRunningFirst(value => !value)
-              }}
-            >
-              <MessageCircleMore size={15} />
-            </button>
-          </Tooltip>
-        </div>
-      )}
+            <MonitorCloud size={15} />
+          </button>
+        </Tooltip>
+        <Tooltip
+          label={runningFirst ? translate('运行中优先 · 再点恢复默认顺序') : translate('运行中优先')}
+          side="bottom"
+        >
+          <button
+            type="button"
+            aria-label={translate('运行中优先')}
+            aria-pressed={runningFirst}
+            className={`${HEADER_BUTTON} aria-pressed:bg-accent/15 aria-pressed:text-accent`}
+            onClick={() => {
+              setBusyCheckedAt(Date.now())
+              setRunningFirst(value => !value)
+            }}
+          >
+            <MessageCircleMore size={15} />
+          </button>
+        </Tooltip>
+      </div>
 
       {managing && (
         <div
@@ -1076,7 +1074,7 @@ export default function TerminalSessionList() {
               title={translate('没有匹配的终端')}
             />
           )}
-          {totalTerminals === 0 && currentProject && (
+          {totalTerminals === 0 && currentProject && !searching && !scopeFiltering && (
             <EmptyState
               className="min-h-0 flex-1"
               icon={<TerminalIcon size={28} strokeWidth={1.2} />}

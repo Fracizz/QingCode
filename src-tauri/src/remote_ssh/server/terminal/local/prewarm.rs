@@ -53,6 +53,7 @@ struct RemoteTarget {
 
 #[derive(Clone)]
 struct Target {
+    project_path: String,
     key: LaunchKey,
     launch: PersistentLaunch,
     count: usize,
@@ -88,8 +89,8 @@ struct PoolState {
     generation: u64,
     shells: Vec<WarmShell>,
     running: bool,
-    /// 上一轮不可用已记录过诊断，避免每 1.5 秒重复写。
-    unusable: bool,
+    paused_reason: Option<&'static str>,
+    preparing: bool,
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
@@ -162,6 +163,8 @@ impl ShellPrewarmPool {
             );
             state.target = None;
             state.generation += 1;
+            state.preparing = false;
+            state.paused_reason = None;
             state.shells.clear();
             self.1.notify_waiters();
         }
@@ -220,9 +223,12 @@ impl ShellPrewarmPool {
         if changed {
             state.shells.clear();
             state.generation += 1;
+            state.preparing = false;
+            state.paused_reason = None;
             self.1.notify_waiters();
         }
         state.target = (count > 0).then_some(Target {
+            project_path: cwd,
             key,
             launch,
             count,
@@ -237,83 +243,82 @@ impl ShellPrewarmPool {
         Ok(count)
     }
 
+    pub(crate) fn status(&self, cwd: &str) -> serde_json::Value {
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(target) = state.target.as_ref().filter(|t| t.project_path == cwd) else {
+            return serde_json::json!({"target": 0, "ready": 0, "preparing": 0, "reserved": 0,
+                "reason": if state.target.is_some() { "other_project" } else { "no_target" }});
+        };
+        let ready = state
+            .shells
+            .iter()
+            .filter(|s| s.reserved_at.is_none())
+            .count();
+        serde_json::json!({"target": target.count, "ready": ready, "preparing": usize::from(state.preparing),
+            "reserved": state.shells.len() - ready, "reason": state.paused_reason})
+    }
+
     pub(crate) fn reserve(
         &self,
         cwd: &str,
         shell: Option<&str>,
         has_startup: bool,
-    ) -> Option<String> {
+    ) -> Result<String, &'static str> {
         let remote = cwd.starts_with(SSH_URI_PREFIX);
-        let (idle, has_target) = {
-            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            let idle = state
-                .shells
-                .iter()
-                .filter(|entry| entry.reserved_at.is_none())
-                .count();
-            (idle, state.target.is_some())
-        };
-        if idle == 0 {
-            trace(
-                "reserve_miss",
-                serde_json::json!({"reason": if has_target { "empty" } else { "no_target" }, "remote": remote}),
-            );
-            return None;
-        }
-        let key = if remote {
-            remote_launch_key(cwd, shell).map(|(_, key)| key)
-        } else {
-            resolve_launch(cwd, shell).and_then(|launch| LaunchKey::new(cwd, &launch))
-        };
-        let key = match key {
-            Ok(key) => key,
-            Err(error) => {
-                trace(
-                    "reserve_miss",
-                    serde_json::json!({"reason": "launch", "error": error, "remote": remote}),
-                );
-                return None;
+        let attempt = || {
+            {
+                let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                if state.target.is_none() {
+                    return Err("no_target");
+                }
+                if state.shells.is_empty() {
+                    return Err(state.paused_reason.unwrap_or("empty"));
+                }
             }
+            let key = if remote {
+                remote_launch_key(cwd, shell).map(|(_, key)| key)
+            } else {
+                resolve_launch(cwd, shell).and_then(|launch| LaunchKey::new(cwd, &launch))
+            }
+            .map_err(|_| "launch_unavailable")?;
+            self.reserve_key(&key, has_startup)
         };
-        let hit = self.reserve_key(&key, has_startup);
-        if hit.is_some() {
-            trace("reserved", serde_json::json!({"remote": remote}));
-        } else {
-            // 只记录哪一部分不同，不记录具体值。
-            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            let diff = state.shells.first().map(|entry| {
-                let env_keys: Vec<&String> = entry
-                    .key
-                    .env
-                    .keys()
-                    .chain(key.env.keys())
-                    .filter(|name| entry.key.env.get(*name) != key.env.get(*name))
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .take(10)
-                    .collect();
-                serde_json::json!({
-                    "cwd": entry.key.cwd != key.cwd, "shell": entry.key.shell != key.shell,
-                    "args": entry.key.args != key.args, "envKeys": env_keys,
-                })
-            });
-            trace(
+        let result = attempt();
+        match &result {
+            Ok(_) => trace("reserved", serde_json::json!({"remote": remote})),
+            Err(reason) => trace(
                 "reserve_miss",
-                serde_json::json!({"reason": "key", "diff": diff, "remote": remote}),
-            );
+                serde_json::json!({"reason": reason, "remote": remote}),
+            ),
         }
-        hit
+        result
     }
 
-    fn reserve_key(&self, key: &LaunchKey, has_startup: bool) -> Option<String> {
+    fn reserve_key(&self, key: &LaunchKey, has_startup: bool) -> Result<String, &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = state.shells.iter_mut().find(|entry| {
-            &entry.key == key
-                && entry.reserved_at.is_none()
-                && (!has_startup || entry.startup_pipe.is_some())
-        })?;
+        // Reconfiguring the pool invalidates all entries. Every idle shell shares its target's launch key.
+        let entry = state
+            .shells
+            .iter_mut()
+            .find(|entry| entry.reserved_at.is_none())
+            .ok_or("empty")?;
+        if entry.key.cwd != key.cwd {
+            return Err("cwd_mismatch");
+        }
+        if entry.key.shell != key.shell {
+            return Err("shell_mismatch");
+        }
+        if entry.key.args != key.args {
+            return Err("args_mismatch");
+        }
+        if entry.key.env != key.env {
+            return Err("env_mismatch");
+        }
+        if has_startup && entry.startup_pipe.is_none() {
+            return Err("startup_unsupported");
+        }
         entry.reserved_at = Some(Instant::now());
-        Some(entry.id.clone())
+        Ok(entry.id.clone())
     }
 
     fn has_entry(&self, id: &str) -> bool {
@@ -475,6 +480,7 @@ impl ShellPrewarmPool {
         .await;
         match result {
             Ok(Ok(mut result)) => {
+                result.prewarm_hit = true;
                 result.resolved_shell = Some(entry.launch.resolved_shell.clone());
                 result.fallback_from = entry.launch.fallback_from.clone();
                 Some(result)
@@ -521,6 +527,8 @@ impl ShellPrewarmPool {
                 _ = tokio::time::sleep(Duration::from_millis(1500)) => {},
             }
             let changed = self.1.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             let (target, generation) = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 let before = state.shells.len();
@@ -543,44 +551,50 @@ impl ShellPrewarmPool {
             };
             let manager = app.state::<SshManager>();
             // 远端预热占用的是远端内存，本机内存压力只约束本机项目。
-            let usable = match &target.remote {
-                Some(remote) => remote_target_valid(&manager, remote),
+            let paused_reason = match &target.remote {
+                Some(remote) => {
+                    (!remote_target_valid(&manager, remote)).then_some("remote_unavailable")
+                }
                 None => {
                     let mut memory = sysinfo::System::new();
                     memory.refresh_memory();
-                    app.state::<PathAllowlist>()
+                    if app
+                        .state::<PathAllowlist>()
                         .ensure_executable(&target.key.cwd)
-                        .is_ok()
-                        && !under_pressure(memory.total_memory(), memory.available_memory())
+                        .is_err()
+                    {
+                        Some("untrusted")
+                    } else {
+                        under_pressure(memory.total_memory(), memory.available_memory())
+                            .then_some("memory_pressure")
+                    }
                 }
             };
-            if !usable {
-                let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if !state.shells.is_empty() || !std::mem::replace(&mut state.unusable, true) {
-                    trace(
-                        "unusable",
-                        serde_json::json!({"remote": target.remote.is_some(), "dropped": state.shells.len()}),
-                    );
-                }
-                state.shells.clear();
-                continue;
-            }
-            self.0.lock().unwrap_or_else(|e| e.into_inner()).unusable = false;
-            if self
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .shells
-                .len()
-                >= target.count
             {
-                continue;
+                let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                if state.generation != generation {
+                    continue;
+                }
+                if let Some(reason) = paused_reason {
+                    if state.paused_reason != Some(reason) {
+                        trace(
+                            "unusable",
+                            serde_json::json!({"reason": reason, "dropped": state.shells.len()}),
+                        );
+                    }
+                    state.shells.clear();
+                }
+                state.paused_reason = paused_reason;
+                if paused_reason.is_some() || state.shells.len() >= target.count {
+                    continue;
+                }
+                state.preparing = true;
             }
             let started = Instant::now();
             let remote = target.remote.is_some();
             let entry = tokio::select! {
                 biased;
-                _ = changed => {
+                _ = &mut changed => {
                     trace("create_cancelled", serde_json::json!({"remote": remote, "ms": started.elapsed().as_millis() as u64}));
                     continue;
                 }
@@ -589,7 +603,8 @@ impl ShellPrewarmPool {
             let ms = started.elapsed().as_millis() as u64;
             if let Ok(entry) = entry {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if state.generation == generation && state.shells.len() < target.count {
+                if state.generation == generation {
+                    state.preparing = false;
                     trace("ready", serde_json::json!({"remote": remote, "ms": ms}));
                     state.shells.push(entry);
                 } else {
@@ -601,11 +616,16 @@ impl ShellPrewarmPool {
                     serde_json::json!({"remote": remote, "ms": ms, "error": error}),
                 );
                 // Profile 报错/交互阻塞、旧宿主不支持协议等情况下，避免持续拉起失败 Shell。
-                if self.0.lock().unwrap_or_else(|e| e.into_inner()).generation != generation {
-                    continue;
+                {
+                    let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.generation != generation {
+                        continue;
+                    }
+                    state.preparing = false;
+                    state.paused_reason = Some("create_failed_backoff");
                 }
                 tokio::select! {
-                    _ = self.1.notified() => {},
+                    _ = &mut changed => {},
                     _ = tokio::time::sleep(Duration::from_secs(15)) => {},
                 }
             }

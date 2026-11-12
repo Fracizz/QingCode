@@ -70,6 +70,25 @@ pub enum Command {
         project: Option<String>,
     },
     TerminalProfiles,
+    TerminalDiagnostics {
+        query: String,
+        project: Option<String>,
+    },
+    TerminalPrewarmStatus {
+        project: Option<String>,
+    },
+    TerminalProfileGet {
+        query: String,
+    },
+    TerminalProfileRemove {
+        query: String,
+    },
+    TerminalProfileDefault {
+        query: String,
+    },
+    TerminalProfileUpsert {
+        json_source: String,
+    },
     TerminalList {
         project: Option<String>,
     },
@@ -88,6 +107,7 @@ pub enum Command {
     TerminalCreate {
         project: Option<String>,
         profile: Option<String>,
+        wait_secs: Option<u64>,
     },
     TerminalClose {
         query: String,
@@ -128,7 +148,7 @@ const ROOT_COMMANDS: &[&str] = &[
     "project", "run", "terminal", "settings", "trust", "open", "help", "version", "status",
 ];
 
-const TERMINAL_USAGE: &str = "usage: terminal profiles | terminal list [--project ...] | terminal create [--profile <id|name>] [--project ...] | terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>] | terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter] | terminal restart <id|name> [--project ...] | terminal close <id|name> --yes [--project ...]";
+const TERMINAL_USAGE: &str = "usage: terminal profiles | terminal profile get|default <id|name> | terminal profile upsert --json <file|-> | terminal profile remove <id|name> --yes | terminal prewarm status [--project ...] | terminal diagnostics <id|name> [--project ...] | terminal list [--project ...] | terminal create [--profile <id|name>] [--project ...] [--wait] [--timeout <seconds>] | terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>] | terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter] | terminal restart <id|name> [--project ...] | terminal close <id|name> --yes [--project ...]";
 const RUN_START_USAGE: &str = "usage: run start <name|id> [--project ...] [--task <id|name>] [--wait] [--wait-text <text>] [--timeout <seconds>]";
 const TRUST_USAGE: &str = "usage: trust grant <path> | trust revoke <path> | trust list";
 
@@ -513,9 +533,19 @@ fn parse_run_start(args: &[&str]) -> Result<Command, String> {
         return Err("--wait-text must not be empty".into());
     }
     let waiting = flags.has("--wait") || text.is_some();
+    let timeout_secs = parse_wait_timeout(&flags, waiting)?;
+    Ok(Command::RunStart {
+        query: flags.single(RUN_START_USAGE)?,
+        project: flags.string("--project"),
+        task: flags.string("--task"),
+        wait: timeout_secs.map(|timeout_secs| RunWait { text, timeout_secs }),
+    })
+}
+
+fn parse_wait_timeout(flags: &Flags<'_>, waiting: bool) -> Result<Option<u64>, String> {
     let timeout = flags.values.get("--timeout").copied();
     if timeout.is_some() && !waiting {
-        return Err(RUN_START_USAGE.into());
+        return Err("--timeout requires a wait option".into());
     }
     let timeout_secs = match timeout {
         None => DEFAULT_WAIT_SECS,
@@ -524,12 +554,52 @@ fn parse_run_start(args: &[&str]) -> Result<Command, String> {
             _ => return Err(format!("--timeout must be between 1 and {MAX_WAIT_SECS}")),
         },
     };
-    Ok(Command::RunStart {
-        query: flags.single(RUN_START_USAGE)?,
-        project: flags.string("--project"),
-        task: flags.string("--task"),
-        wait: waiting.then_some(RunWait { text, timeout_secs }),
-    })
+    Ok(waiting.then_some(timeout_secs))
+}
+
+fn parse_terminal_profile(args: &[&str]) -> Result<Command, String> {
+    let Some((action, rest)) = args.split_first() else {
+        return Err(TERMINAL_USAGE.into());
+    };
+    match *action {
+        "get" | "default" => {
+            let query = parse_flags(rest, &NO_FLAGS)?.single(TERMINAL_USAGE)?;
+            Ok(if *action == "get" {
+                Command::TerminalProfileGet { query }
+            } else {
+                Command::TerminalProfileDefault { query }
+            })
+        }
+        "upsert" => {
+            let flags = parse_flags(
+                rest,
+                &FlagSpec {
+                    values: &["--json"],
+                    ..NO_FLAGS
+                },
+            )?;
+            flags.expect_positional(0, TERMINAL_USAGE)?;
+            Ok(Command::TerminalProfileUpsert {
+                json_source: flags.string("--json").ok_or(TERMINAL_USAGE)?,
+            })
+        }
+        "remove" => {
+            let flags = parse_flags(
+                rest,
+                &FlagSpec {
+                    switches: &["--yes"],
+                    ..NO_FLAGS
+                },
+            )?;
+            if !flags.has("--yes") {
+                return Err("terminal profile remove requires --yes".into());
+            }
+            Ok(Command::TerminalProfileRemove {
+                query: flags.single(TERMINAL_USAGE)?,
+            })
+        }
+        _ => Err(TERMINAL_USAGE.into()),
+    }
 }
 
 fn parse_terminal(args: &[&str]) -> Result<Command, String> {
@@ -559,6 +629,23 @@ fn parse_terminal(args: &[&str]) -> Result<Command, String> {
                 project: flags.string("--project"),
             })
         }
+        "prewarm" => {
+            let flags = parse_flags(rest, &PROJECT_FLAG)?;
+            if flags.single(TERMINAL_USAGE)? != "status" {
+                return Err(TERMINAL_USAGE.into());
+            }
+            Ok(Command::TerminalPrewarmStatus {
+                project: flags.string("--project"),
+            })
+        }
+        "diagnostics" => {
+            let flags = parse_flags(rest, &PROJECT_FLAG)?;
+            Ok(Command::TerminalDiagnostics {
+                query: flags.single(TERMINAL_USAGE)?,
+                project: flags.string("--project"),
+            })
+        }
+        "profile" => parse_terminal_profile(rest),
         "profiles" => {
             parse_flags(rest, &NO_FLAGS)?.expect_positional(0, TERMINAL_USAGE)?;
             Ok(Command::TerminalProfiles)
@@ -567,7 +654,8 @@ fn parse_terminal(args: &[&str]) -> Result<Command, String> {
             let flags = parse_flags(
                 rest,
                 &FlagSpec {
-                    values: &["--project", "--profile"],
+                    values: &["--project", "--profile", "--timeout"],
+                    switches: &["--wait"],
                     ..NO_FLAGS
                 },
             )?;
@@ -579,6 +667,7 @@ fn parse_terminal(args: &[&str]) -> Result<Command, String> {
             Ok(Command::TerminalCreate {
                 project: flags.string("--project"),
                 profile,
+                wait_secs: parse_wait_timeout(&flags, flags.has("--wait"))?,
             })
         }
         "read" => {
@@ -995,6 +1084,40 @@ mod tests {
     }
 
     #[test]
+    fn terminal_inspection_and_profile_flags_are_strict() {
+        for valid in [
+            vec!["terminal", "prewarm", "status", "--project", "p"],
+            vec!["terminal", "diagnostics", "t"],
+            vec!["terminal", "profile", "get", "default"],
+            vec!["terminal", "profile", "default", "other"],
+            vec!["terminal", "profile", "remove", "other", "--yes"],
+            vec!["terminal", "profile", "upsert", "--json", "-"],
+        ] {
+            assert!(parse(&args(&valid)).unwrap().is_ok());
+        }
+        for invalid in [
+            vec!["terminal", "prewarm", "clear"],
+            vec!["terminal", "diagnostics"],
+            vec!["terminal", "profile", "remove", "other"],
+            vec!["terminal", "profile", "upsert"],
+            vec!["terminal", "create", "--timeout", "1"],
+            vec!["terminal", "create", "--wait", "--timeout", "0"],
+        ] {
+            assert!(parse(&args(&invalid)).unwrap().is_err());
+        }
+        assert_eq!(
+            parse(&args(&["terminal", "create", "--wait", "--timeout", "2"]))
+                .unwrap()
+                .unwrap(),
+            Command::TerminalCreate {
+                project: None,
+                profile: None,
+                wait_secs: Some(2)
+            }
+        );
+    }
+
+    #[test]
     fn terminal_management_commands() {
         assert_eq!(
             parse(&args(&[
@@ -1016,6 +1139,7 @@ mod tests {
             Command::TerminalCreate {
                 project: Some("p".into()),
                 profile: None,
+                wait_secs: None,
             }
         );
         assert_eq!(
@@ -1035,6 +1159,7 @@ mod tests {
             .unwrap(),
             Command::TerminalCreate {
                 project: Some("p".into()),
+                wait_secs: None,
                 profile: Some("Open Code".into())
             }
         );

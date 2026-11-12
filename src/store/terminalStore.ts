@@ -1,4 +1,4 @@
-import { reservePrewarmedShellId } from '../lib/terminal/shellPrewarmSettings'
+import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -627,9 +627,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const canReserve = remote
       ? profile.id === DEFAULT_TERMINAL_PROFILE.id && !startup
       : getTerminalPersistLocalSessions()
-    const warmId = canReserve ? await reservePrewarmedShellId(projectPath, shell, !!startup) : null
+    const reservation = canReserve
+      ? await reservePrewarmedShell(projectPath, shell, !!startup)
+      : { reason: remote ? 'remote_profile_unsupported' : 'persistence_disabled' }
     if (terminalExitInProgress) return null
-    const id = warmId ?? crypto.randomUUID()
+    const id = 'id' in reservation ? reservation.id : crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
     const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
     const shellLabel =
@@ -649,6 +651,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
       projectId,
       cwd: projectPath,
+      prewarm: 'id' in reservation ? { outcome: 'reserved' } : { outcome: 'miss', reason: reservation.reason },
       profileId: profile.id,
       shell,
       connectionId:
@@ -917,6 +920,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             ? {
                 ...terminal,
                 status: 'starting',
+                prewarm: { outcome: 'miss', reason: 'restart' },
                 endedAt: undefined,
                 restoreUnavailable: false,
                 exitCode: null,
@@ -1672,6 +1676,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             ? {
                 ...terminal,
                 status: 'running',
+                prewarm: spawnResult?.prewarmHit ? { outcome: 'hit' }
+                  : terminal.prewarm?.outcome === 'reserved' ? { outcome: 'miss', reason: 'claim_fallback' }
+                  : terminal.prewarm,
                 awaitingRestoreSpawn: false,
                 restorePreservedOutput: undefined,
                 ptySpawnPending: false,
@@ -1701,6 +1708,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             ? {
                 ...terminal,
                 status: 'exited',
+                prewarm: terminal.prewarm?.outcome === 'reserved' ? { outcome: 'unknown', reason: 'spawn_failed' } : terminal.prewarm,
                 exitCode: null,
                 awaitingRestoreSpawn: false,
                 restorePreservedOutput: undefined,

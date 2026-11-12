@@ -104,12 +104,15 @@ export function filterTerminalSessionGroups(
     if (!terminalScopeMatches(group.project, scope)) return []
     let terminals = group.terminals
     if (needles.length > 0) {
-      const context = [group.project.name, sources.get(group.project.id) ?? '']
+      const context = [group.project.name, sources.get(group.project.id) ?? ''].join('\n').toLowerCase()
       terminals = terminals.filter(terminal => {
-        const haystack = [formatTerminalName(terminal.name), ...context].join('\n').toLowerCase()
+        const haystack = `${formatTerminalName(terminal.name).toLowerCase()}\n${context}`
         return needles.every(needle => haystack.includes(needle))
       })
-      if (terminals.length === 0) return []
+      if (
+        terminals.length === 0 &&
+        (group.terminals.length > 0 || !needles.every(needle => context.includes(needle)))
+      ) return []
     }
     if (running) {
       terminals = [...terminals].sort((a, b) => Number(running(b)) - Number(running(a)))

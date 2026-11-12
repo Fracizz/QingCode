@@ -151,6 +151,27 @@ fn execute(cmd: Command) -> i32 {
             tail,
         } => online::run_logs(&query, project.as_deref(), task.as_deref(), tail),
         Command::RunStatus { project } => online::run_status(project.as_deref()),
+        Command::TerminalDiagnostics { project, query } => {
+            online::terminal_query("terminal.diagnostics", project.as_deref(), Some(&query))
+        }
+        Command::TerminalPrewarmStatus { project } => {
+            online::terminal_query("terminal.prewarmStatus", project.as_deref(), None)
+        }
+        Command::TerminalProfileGet { query } => {
+            online::terminal_query("terminal.profile.get", None, Some(&query))
+        }
+        Command::TerminalProfileRemove { query } => {
+            online::terminal_query("terminal.profile.remove", None, Some(&query))
+        }
+        Command::TerminalProfileDefault { query } => {
+            online::terminal_query("terminal.profile.default", None, Some(&query))
+        }
+        Command::TerminalProfileUpsert { json_source } => {
+            match run_config::read_json_source(&json_source) {
+                Ok(content) => online::terminal_profile_upsert(content),
+                Err(e) => output::fail(output::EXIT_ERROR, e),
+            }
+        }
         Command::TerminalProfiles => online::terminal_profiles(),
         Command::TerminalList { project } => online::terminal_list(project.as_deref()),
         Command::TerminalRead {
@@ -159,9 +180,11 @@ fn execute(cmd: Command) -> i32 {
             scope,
             tail,
         } => online::terminal_read(&query, project.as_deref(), scope.as_deref(), tail),
-        Command::TerminalCreate { project, profile } => {
-            online::terminal_create(project.as_deref(), profile.as_deref())
-        }
+        Command::TerminalCreate {
+            project,
+            profile,
+            wait_secs,
+        } => online::terminal_create(project.as_deref(), profile.as_deref(), wait_secs),
         Command::TerminalClose { query, project } => {
             online::terminal_close(&query, project.as_deref())
         }

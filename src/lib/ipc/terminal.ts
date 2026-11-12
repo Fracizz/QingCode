@@ -37,6 +37,7 @@ export function setTerminalOutputPaused(id: string, holder: object, paused: bool
 }
 
 export type TerminalSpawnResult = {
+  prewarmHit?: boolean
   resolvedShell?: unknown
   fallbackFrom?: unknown
   /** Set by `ssh_create_terminal` / `ssh_attach_terminal`. */

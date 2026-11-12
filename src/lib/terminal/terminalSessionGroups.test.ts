@@ -46,6 +46,16 @@ describe('filterTerminalSessionGroups', () => {
     expect(ids(filterTerminalSessionGroups(groups, { query: '本机 missing', sources }))).toEqual([])
   })
 
+  it('finds projects without terminals by name and source without keeping unrelated empty groups', () => {
+    const emptySources = new Map([...sources, ['empty', 'WSL · Ubuntu']])
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'EMPTY ubuntu', sources: emptySources }))).toEqual([['empty', []]])
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'wsl missing', sources: emptySources }))).toEqual([])
+    expect(ids(filterTerminalSessionGroups(groups, { query: 'claude', sources: emptySources }))).toEqual([
+      ['web', ['1']],
+      ['api', ['3']],
+    ])
+  })
+
   it('moves running terminals first within a group and keeps their order', () => {
     const running = (item: TerminalTab) => item.id === '2'
     expect(ids(filterTerminalSessionGroups(groups, { query: '', sources, running }))[0]).toEqual(['web', ['2', '1']])

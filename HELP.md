@@ -366,4 +366,4 @@ Built-in language packs are located in `src/locales/`. To add a new language:
 
 ---
 
-> For more technical details, see [README.en.md](./README.en.md) and [DESIGN.md](./DESIGN.md).
+> For more technical details, see [README.md](./README.md) and [DESIGN.md](./DESIGN.md).

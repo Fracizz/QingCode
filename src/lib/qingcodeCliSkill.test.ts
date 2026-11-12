@@ -34,6 +34,7 @@ describe('buildQingcodeCliSkillMarkdown', () => {
 
   it.each(['en', 'zh-CN'])('provides valid cross-platform JSON examples in %s', language => {
     const md = buildQingcodeCliSkillMarkdown('QingCode.exe', language)
+    for (const command of ['terminal diagnostics', 'terminal prewarm status', 'terminal profile upsert', '[--wait] [--timeout <seconds>]']) expect(md).toContain(command)
     const examples = [...md.matchAll(/```json\n([\s\S]*?)```/g)].map(match => JSON.parse(match[1]))
     const crossPlatform = examples.find(example => example.name === 'dev')
     expect(crossPlatform.tasks[0].os.windows.target).toBe(

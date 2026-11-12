@@ -13,7 +13,7 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, list or send input to terminals open in QingCode (local or SSH), grant
+  run configuration, manage terminal profiles, inspect shell prewarming, create or drive local/SSH terminals, grant
   workspace trust, open files in a running QingCode
   instance, import/export user or workspace settings and local project lists, restore defaults,
   or Windows cannot reach a frontend after starting an SSH/WSL run.
@@ -232,14 +232,23 @@ ${quoted} open <file>[:line[:col]] ...
 
 \`\`\`text
 ${quoted} terminal profiles
+${quoted} terminal diagnostics <id|name> [--project ...]
+${quoted} terminal prewarm status [--project ...]
+${quoted} terminal profile get <id|name>
+${quoted} terminal profile upsert --json <file|->
+${quoted} terminal profile default <id|name>
+${quoted} terminal profile remove <id|name> --yes
 ${quoted} terminal list [--project ...]
 ${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-${quoted} terminal create [--profile <id|name>] [--project ...]
+${quoted} terminal create [--profile <id|name>] [--project ...] [--wait] [--timeout <seconds>]
 ${quoted} terminal restart <id|name> [--project ...]
 ${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
+- Use \`terminal prewarm status\` before creating a tab. It reports the configured budget and this project's target, ready, preparing and reserved counts. A reason explains an inactive or paused pool.
+- Create with \`--wait\` to wait for writable input (default 60 seconds). On timeout, keep the returned terminal ID. Run \`terminal diagnostics <id>\` in the same project to distinguish reserved, hit, miss and unknown outcomes. A miss carries a reason; older/restored tabs may have no observation.
+- Profile upsert takes JSON with name and command (use an empty string for a plain shell), optional shell and optional id. Supply the existing id to rename; otherwise a unique exact name is matched. Changing a command or shell clears the profile's execution trust. Removing the default profile restores the built-in default.
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
   terminal through the GUI's authenticated session.
 - \`terminal create\` uses the default profile. Pass \`--profile\` with an ID or unique exact name from \`terminal profiles\` to select another. The command returns the terminal \`id\`. It starts asynchronously:
@@ -291,7 +300,7 @@ name: qingcode-cli
 description: >-
   使用 QingCode.exe 子命令管理多个项目，以及本地/SSH 运行配置的增删改查、启动和停止。
   当用户要求添加或列出项目、编辑 .qingcode/run.json、启动或停止运行配置、授予工作区
-  信任、列出 QingCode 已打开的本地/SSH 终端或向其发送输入、在运行中的 QingCode 中打开文件、
+  信任、管理终端配置、诊断 Shell 预热、创建和操作本地/SSH 终端、在运行中的 QingCode 中打开文件、
   导入导出用户/工作区设置与本地项目列表、恢复默认设置，
   或 SSH/WSL 启动后 Windows 无法访问前端时使用。
 ---
@@ -491,14 +500,23 @@ ${quoted} open <file>[:line[:col]] ...
 
 \`\`\`text
 ${quoted} terminal profiles
+${quoted} terminal diagnostics <id|name> [--project ...]
+${quoted} terminal prewarm status [--project ...]
+${quoted} terminal profile get <id|name>
+${quoted} terminal profile upsert --json <file|->
+${quoted} terminal profile default <id|name>
+${quoted} terminal profile remove <id|name> --yes
 ${quoted} terminal list [--project ...]
 ${quoted} terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 ${quoted} terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-${quoted} terminal create [--profile <id|name>] [--project ...]
+${quoted} terminal create [--profile <id|name>] [--project ...] [--wait] [--timeout <seconds>]
 ${quoted} terminal restart <id|name> [--project ...]
 ${quoted} terminal close <id|name> --yes [--project ...]
 \`\`\`
 
+- 新建前用 \`terminal prewarm status\` 查看设置预算、当前项目实际目标、就绪、准备中和已预留数量，池未启用或暂停时查看 reason。
+- \`create --wait\` 等到终端可输入，默认 60 秒。超时后保留返回的标签 ID。用同一项目的 \`terminal diagnostics <id>\` 查看 reserved（已预留）、hit（已领取）、miss（未命中及原因）或 unknown（无确定记录）。旧版或恢复的标签可能没有记录。
+- 单项配置 upsert 接收 JSON，必填 name 和 command（普通 Shell 使用空字符串），可选 shell 和 id。改名时传入已有 ID，省略 ID 时按唯一完整名称匹配。修改命令或 Shell 后需要重新确认运行信任；删除默认配置会切回内置普通终端。
 - 适用于 QingCode 中的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的终端。
 - \`terminal create\` 使用默认配置。可从 \`terminal profiles\` 获取 ID 或唯一的完整名称，通过 \`--profile\` 指定配置。新建后返回终端 \`id\`。终端异步启动，发送输入前先轮询
   \`terminal list\`，直到 \`writable\` 为 true。

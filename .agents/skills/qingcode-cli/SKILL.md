@@ -4,7 +4,7 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, list or send input to terminals open in QingCode (local or SSH), grant
+  run configuration, manage terminal profiles, inspect shell prewarming, create or drive local/SSH terminals, grant
   workspace trust, open files in a running QingCode
   instance, import/export user or workspace settings and local project lists, restore defaults,
   or Windows cannot reach a frontend after starting an SSH/WSL run.
@@ -223,14 +223,23 @@ matching ID is supplied. It is not a partial patch.
 
 ```text
 .\src-tauri\target\debug\qingcode.exe terminal profiles
+.\src-tauri\target\debug\qingcode.exe terminal diagnostics <id|name> [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal prewarm status [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal profile get <id|name>
+.\src-tauri\target\debug\qingcode.exe terminal profile upsert --json <file|->
+.\src-tauri\target\debug\qingcode.exe terminal profile default <id|name>
+.\src-tauri\target\debug\qingcode.exe terminal profile remove <id|name> --yes
 .\src-tauri\target\debug\qingcode.exe terminal list [--project ...]
 .\src-tauri\target\debug\qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
 .\src-tauri\target\debug\qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-.\src-tauri\target\debug\qingcode.exe terminal create [--profile <id|name>] [--project ...]
+.\src-tauri\target\debug\qingcode.exe terminal create [--profile <id|name>] [--project ...] [--wait] [--timeout <seconds>]
 .\src-tauri\target\debug\qingcode.exe terminal restart <id|name> [--project ...]
 .\src-tauri\target\debug\qingcode.exe terminal close <id|name> --yes [--project ...]
 ```
 
+- Use `terminal prewarm status` before creating a tab. It reports the configured budget and this project's target, ready, preparing and reserved counts. A reason explains an inactive or paused pool.
+- Create with `--wait` to wait for writable input (default 60 seconds). On timeout, keep the returned terminal ID. Run `terminal diagnostics <id>` in the same project to distinguish reserved, hit, miss and unknown outcomes. A miss carries a reason; older/restored tabs may have no observation.
+- Profile upsert takes JSON with name and command (use an empty string for a plain shell), optional shell and optional id. Supply the existing id to rename; otherwise a unique exact name is matched. Changing a command or shell clears the profile's execution trust. Removing the default profile restores the built-in default.
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
   terminal through the GUI's authenticated session.
 - `terminal create` uses the default profile. Pass `--profile` with an ID or unique exact name from `terminal profiles` to select another. The command returns the terminal `id`. It starts asynchronously:

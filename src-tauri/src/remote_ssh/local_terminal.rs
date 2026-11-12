@@ -275,11 +275,21 @@ pub async fn reserve_prewarmed_shell(
     allowlist: State<'_, PathAllowlist>,
     manager: State<'_, SshManager>,
     pool: State<'_, ShellPrewarmPool>,
-) -> Result<Option<String>, String> {
+) -> Result<serde_json::Value, String> {
     if cwd.starts_with(SSH_URI_PREFIX) {
         manager.root_for_uri(&cwd, true)?;
     } else {
         allowlist.ensure_executable(&cwd)?;
     }
-    Ok(pool.reserve(&cwd, shell.as_deref(), has_startup.unwrap_or(false)))
+    Ok(
+        match pool.reserve(&cwd, shell.as_deref(), has_startup.unwrap_or(false)) {
+            Ok(id) => serde_json::json!({"id": id}),
+            Err(reason) => serde_json::json!({"reason": reason}),
+        },
+    )
+}
+
+#[tauri::command]
+pub fn shell_prewarm_status(cwd: String, pool: State<'_, ShellPrewarmPool>) -> serde_json::Value {
+    pool.status(&cwd)
 }

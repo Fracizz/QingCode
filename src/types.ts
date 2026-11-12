@@ -92,6 +92,8 @@ export interface EditorTab {
 }
 
 export interface TerminalTab {
+  /** Outcome of the current launch; old/restored tabs may lack this observation. */
+  prewarm?: { outcome: 'reserved' | 'hit' | 'miss' | 'unknown'; reason?: string }
   id: string
   name: string
   projectId: string

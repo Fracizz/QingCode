@@ -213,6 +213,7 @@ fn spawn_terminal_writer(
 #[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSpawnResult {
+    pub prewarm_hit: bool,
     pub resolved_shell: Option<String>,
     pub fallback_from: Option<String>,
     /// SSH 终端由远端 daemon 托管；本地终端恒为 false。
@@ -716,6 +717,7 @@ struct ResolvedHostShell {
 impl ResolvedHostShell {
     fn spawn_result(&self) -> TerminalSpawnResult {
         TerminalSpawnResult {
+            prewarm_hit: false,
             resolved_shell: Some(self.id.clone()),
             fallback_from: self.fallback_from.clone(),
             persistent: false,

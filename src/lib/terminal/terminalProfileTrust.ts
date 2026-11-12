@@ -59,6 +59,11 @@ export function isTerminalProfileTrusted(profile: Pick<TerminalProfile, 'id' | '
   )
 }
 
+export function forgetTerminalProfileTrust(id: string): void {
+  const { entries } = readStore()
+  if (entries.some(entry => entry.profileId === id)) writeStore({ entries: entries.filter(entry => entry.profileId !== id) })
+}
+
 export function trustTerminalProfile(profile: Pick<TerminalProfile, 'id' | 'command'>): void {
   const command = normalizeCommand(profile.command)
   if (!command) return

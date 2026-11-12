@@ -1396,6 +1396,7 @@ async fn attach_terminal_on_session(
         Some(restore_name),
     );
     Ok(TerminalSpawnResult {
+        prewarm_hit: false,
         resolved_shell: None,
         fallback_from: None,
         persistent: true,
@@ -1568,6 +1569,7 @@ async fn spawn_terminal_on_session(
     });
 
     Ok(TerminalSpawnResult {
+        prewarm_hit: false,
         resolved_shell: Some(launch.resolved_shell),
         fallback_from: launch.fallback_from,
         persistent: true,

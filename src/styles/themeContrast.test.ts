@@ -66,7 +66,7 @@ describe('theme contrast', () => {
       const block = themeBlock(selector)
       const tiers = ['term-list-active', 'term-list-fg', 'term-list-project', 'term-list-meta']
       // 行可能处于悬停或选中状态，每一级都要在这三种底色上可读。
-      for (const foreground of tiers) {
+      for (const foreground of [...tiers, 'term-list-source', 'term-list-remote']) {
         for (const background of ['bg-sidebar', 'bg-hover', 'bg-active']) {
           expect(
             contrast(themeColor(block, foreground), themeColor(block, background)),

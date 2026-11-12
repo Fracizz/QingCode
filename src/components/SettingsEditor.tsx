@@ -1,3 +1,4 @@
+import { SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
@@ -28,6 +29,7 @@ import {
 import {
   loadTerminalProfileSettings,
   saveTerminalProfileSettings,
+  TERMINAL_PROFILES_KEY,
   type TerminalProfileSettings,
 } from '@/lib/terminal/terminalProfiles'
 import { useShortcutStore } from '../store/shortcutStore'
@@ -134,6 +136,19 @@ export default function SettingsEditor() {
     window.addEventListener('qingcode:settings-imported', refresh)
     return () => window.removeEventListener('qingcode:settings-imported', refresh)
   }, [currentProject, pushToast, t])
+
+  useEffect(() => {
+    const refresh = () => setTerminal(loadTerminalProfileSettings())
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === TERMINAL_PROFILES_KEY) refresh()
+    }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, refresh)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, refresh)
+    }
+  }, [])
 
   useEffect(() => {
     const onFonts = () => setFonts(loadFontSettings())

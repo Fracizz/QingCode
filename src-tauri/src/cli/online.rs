@@ -429,14 +429,77 @@ pub fn terminal_send(query: &str, project: Option<&str>, data: String) -> i32 {
     })
 }
 
-pub fn terminal_create(project: Option<&str>, profile: Option<&str>) -> i32 {
+pub fn terminal_query(op: &str, project: Option<&str>, query: Option<&str>) -> i32 {
+    dispatch(scoped(op, project, query))
+}
+
+pub fn terminal_profile_upsert(content: String) -> i32 {
+    dispatch(IpcRequest {
+        content: Some(content),
+        ..request("terminal.profile.upsert")
+    })
+}
+
+pub fn terminal_create(
+    project: Option<&str>,
+    profile: Option<&str>,
+    wait_secs: Option<u64>,
+) -> i32 {
     // An older GUI must reject an explicit profile instead of launching its default.
     let op = if profile.is_some() {
         "terminal.createProfile"
     } else {
         "terminal.create"
     };
-    dispatch(scoped(op, project, profile))
+    let req = scoped(op, project, profile);
+    let Some(seconds) = wait_secs else {
+        return dispatch(req);
+    };
+    let mut data = match call(&req) {
+        Ok(data) => data,
+        Err(code) => return code,
+    };
+    let (Some(id), Some(project_id)) = (
+        data.pointer("/terminal/id").and_then(Value::as_str),
+        data.pointer("/project/id").and_then(Value::as_str),
+    ) else {
+        return output::fail_with_data(EXIT_ERROR, "missing created terminal or project id", data);
+    };
+    let (id, project_id) = (id.to_owned(), project_id.to_owned());
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        if data.pointer("/terminal/writable") == Some(&Value::Bool(true)) {
+            return output::ok(data);
+        }
+        if data.pointer("/terminal/status").and_then(Value::as_str) == Some("exited") {
+            return output::fail_with_data(
+                EXIT_ERROR,
+                "terminal exited before becoming writable",
+                data,
+            );
+        }
+        if Instant::now() >= deadline {
+            return output::fail_with_data(
+                EXIT_TIMEOUT,
+                "terminal did not become writable in time",
+                data,
+            );
+        }
+        std::thread::sleep(
+            WAIT_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+        );
+        let list = match call(&scoped("terminal.list", Some(&project_id), None)) {
+            Ok(list) => list,
+            Err(code) => return code,
+        };
+        let tab = list["terminals"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|t| t["id"].as_str() == Some(&id)));
+        let Some(tab) = tab else {
+            return output::fail_with_data(EXIT_ERROR, "created terminal has closed", data);
+        };
+        data["terminal"] = tab.clone();
+    }
 }
 
 pub fn terminal_close(query: &str, project: Option<&str>) -> i32 {

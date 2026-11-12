@@ -26,8 +26,8 @@ import {
   runningTaskKeysForConfig,
   stopConfig,
 } from './runConfigRuntime'
-import { getEffectiveDefaultProfileId, loadTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
-import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
+import { DEFAULT_TERMINAL_PROFILE, getEffectiveDefaultProfileId, loadTerminalProfileSettings, saveTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
+import { forgetTerminalProfileTrust, isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
@@ -40,6 +40,10 @@ import {
   readCliTerminal,
   resolveCliTerminal,
 } from './terminal/cliTerminal'
+
+import { availableTerminalShells, detectTerminalHostPlatform, isTerminalShellId } from './terminal/terminalShell'
+import { loadScopedTerminalPersistLocalSessions } from './terminal/terminalPersistLocalSettings'
+import { loadShellPrewarmCount } from './terminal/shellPrewarmSettings'
 
 interface CliRequest {
   id: string
@@ -403,6 +407,69 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         project: { id: project.id, name: project.name, path: project.path },
         configs: running,
       }
+    }
+    case 'terminal.profile.upsert': {
+      const value = JSON.parse((req.content ?? '').replace(/^\uFEFF/, '')) as Partial<TerminalProfile> | null
+      if (!value || typeof value.name !== 'string' || !value.name.trim() || typeof value.command !== 'string') {
+        throw new Error('profile requires a nonempty name and a command string')
+      }
+      if (value.id !== undefined && (typeof value.id !== 'string' || !value.id.trim())) throw new Error('invalid profile id')
+      const settings = loadTerminalProfileSettings()
+      const name = value.name.trim()
+      const matches = settings.profiles.filter(p => p.name.trim() === name)
+      if (!value.id && matches.length > 1) throw new Error('ambiguous profile name; supply an id')
+      const requestedId = value.id?.trim()
+      const previous = requestedId ? settings.profiles.find(p => p.id === requestedId) : matches[0]
+      const id = previous?.id ?? requestedId ?? crypto.randomUUID()
+      if (id === DEFAULT_TERMINAL_PROFILE.id) throw new Error('the built-in profile cannot be edited')
+      const shell = value.shell ?? previous?.shell ?? settings.defaultShell
+      if (!isTerminalShellId(shell) || !availableTerminalShells().includes(shell)) throw new Error('unsupported profile shell')
+      const profile = { id, name, command: value.command, shell }
+      if (!previous || previous.shell !== shell || previous.command !== profile.command) forgetTerminalProfileTrust(id)
+      saveTerminalProfileSettings({ ...settings, profiles: previous
+        ? settings.profiles.map(item => item.id === id ? profile : item) : [...settings.profiles, profile] })
+      return { id, name, shell, trusted: isTerminalProfileTrusted(profile) }
+    }
+    case 'terminal.profile.get':
+    case 'terminal.profile.default':
+    case 'terminal.profile.remove': {
+      const settings = loadTerminalProfileSettings()
+      const id = resolveCliProfileId(settings.profiles, req.config ?? '')
+      if (req.op === 'terminal.profile.get') {
+        const profile = settings.profiles.find(item => item.id === id)!
+        return { ...profile, trusted: isTerminalProfileTrusted(profile) }
+      }
+      if (req.op === 'terminal.profile.default') {
+        saveTerminalProfileSettings({ ...settings, defaultProfileId: id === DEFAULT_TERMINAL_PROFILE.id ? null : id })
+        return { defaultProfileId: id }
+      }
+      if (id === DEFAULT_TERMINAL_PROFILE.id) throw new Error('the built-in profile cannot be removed')
+      forgetTerminalProfileTrust(id)
+      saveTerminalProfileSettings({ ...settings, profiles: settings.profiles.filter(p => p.id !== id),
+        defaultProfileId: settings.defaultProfileId === id ? null : settings.defaultProfileId })
+      return { removed: id }
+    }
+    case 'terminal.diagnostics': {
+      const project = resolveProject(req.project)
+      const tab = resolveCliTerminal(useTerminalStore.getState().terminals, project.id, req.config ?? '')
+      return { project: projectSummary(project), terminal: cliTerminalSummary(tab),
+        prewarm: tab.prewarm ?? { outcome: 'unknown', reason: 'no_observation' } }
+    }
+    case 'terminal.prewarmStatus': {
+      const project = resolveProject(req.project)
+      const pool = await safeInvoke<{ target: number; ready: number; preparing: number; reserved: number; reason: string | null }>(
+        '读取 Shell 预热状态', 'shell_prewarm_status', { cwd: project.path })
+      const configured = await loadShellPrewarmCount()
+      let reason = pool.reason
+      if (!pool.target) {
+        const local = !project.path.startsWith('ssh://')
+        if (!isProjectTrusted(project)) reason = 'untrusted'
+        else if (configured === 0) reason = 'disabled'
+        else if (project.ephemeral || (local && detectTerminalHostPlatform() !== 'win')) reason = 'unsupported_host'
+        else if (local && loadTerminalProfileSettings().defaultShell === 'wsl') reason = 'unsupported_shell'
+        else if (local && !await loadScopedTerminalPersistLocalSessions('project', project)) reason = 'persistence_disabled'
+      }
+      return { project: projectSummary(project), configured, ...pool, reason }
     }
     case 'terminal.profiles': {
       const settings = loadTerminalProfileSettings()

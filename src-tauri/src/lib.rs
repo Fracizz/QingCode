@@ -1085,6 +1085,7 @@ pub fn run() {
             remote_ssh::ssh_list_detached_terminals,
             remote_ssh::ssh_attach_terminal,
             remote_ssh::local_terminal::configure_shell_prewarm,
+            remote_ssh::local_terminal::shell_prewarm_status,
             remote_ssh::local_terminal::reserve_prewarmed_shell,
             remote_ssh::local_terminal::local_host_create_terminal,
             remote_ssh::local_terminal::local_host_spawn_profile,

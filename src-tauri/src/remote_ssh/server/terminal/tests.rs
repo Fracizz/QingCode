@@ -284,6 +284,7 @@ fn persistent_event_payloads_match_frontend_contract() {
     assert_eq!(exit["reason"], "daemon restarted");
 
     let spawn = serde_json::to_value(TerminalSpawnResult {
+        prewarm_hit: false,
         resolved_shell: Some("bash".into()),
         fallback_from: None,
         persistent: false,
@@ -297,6 +298,7 @@ fn persistent_event_payloads_match_frontend_contract() {
     assert!(spawn.get("persistent_fallback_reason").is_none());
 
     let persistent = serde_json::to_value(TerminalSpawnResult {
+        prewarm_hit: false,
         resolved_shell: None,
         fallback_from: None,
         persistent: true,

@@ -210,7 +210,7 @@ describe('TerminalSessionList', () => {
   it('keeps project names one step below terminal names and brightens them on hover', () => {
     render(<TerminalSessionList />)
     expect(within(group('p2')).getByText('api')).toHaveClass('text-term-list-project', 'group-hover/project:text-term-list-fg', 'font-normal')
-    expect(within(group('p1')).getByText('本机')).toHaveClass('text-term-list-meta')
+    expect(within(group('p1')).getByText('本机')).toHaveClass('text-term-list-source')
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {
@@ -655,6 +655,42 @@ describe('TerminalSessionList', () => {
     [...document.querySelectorAll<HTMLElement>('[data-terminal-session-row]')].map(
       item => item.dataset.terminalSessionRow,
     )
+
+  it('keeps search available without terminals and filters empty projects by name and source', () => {
+    mocks.state.terminals = []
+    render(<TerminalSessionList />)
+    expect(screen.getByLabelText('搜索终端、项目或来源')).toBeVisible()
+    search('docs 本机')
+    expect(group('p3')).toBeInTheDocument()
+    expect(group('p1')).toBeNull()
+    expect(group('p2')).toBeNull()
+    fireEvent.keyDown(screen.getByLabelText('搜索终端、项目或来源'), { key: 'Escape' })
+    expect(group('p1')).toBeInTheDocument()
+    expect(group('p2')).toBeInTheDocument()
+    expect(group('p3')).toBeInTheDocument()
+  })
+
+  it('keeps the query editable after the last terminal disappears and shows only the search empty state', () => {
+    mocks.state.terminals = [terminal()]
+    const { rerender } = render(<TerminalSessionList />)
+    const input = screen.getByRole('textbox', { name: '搜索终端、项目或来源' }) as HTMLInputElement
+    input.focus()
+    search('claude')
+    input.setSelectionRange(1, 4)
+    for (const terminals of [[], [terminal()], []]) {
+      mocks.state.terminals = terminals
+      rerender(<TerminalSessionList />)
+      expect(screen.getByRole('textbox', { name: '搜索终端、项目或来源' })).toBe(input)
+      expect(input).toHaveFocus()
+      expect(input).toHaveValue('claude')
+      expect([input.selectionStart, input.selectionEnd]).toEqual([1, 4])
+    }
+    expect(screen.getByText('没有匹配的终端')).toBeInTheDocument()
+    expect(screen.queryByText('当前项目「app」暂无终端，点击上方 + 新建')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(group('p1')).toBeInTheDocument()
+    expect(screen.getByLabelText('搜索终端、项目或来源')).toHaveFocus()
+  })
 
   it('filters rows by the search box and clears with Escape', () => {
     render(<TerminalSessionList />)

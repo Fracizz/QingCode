@@ -185,10 +185,16 @@ Usage:
   --wait waits until tasks started; --wait-text also waits for that text in task output.
 
   qingcode.exe terminal profiles
+  qingcode.exe terminal diagnostics <id|name> [--project ...]
+  qingcode.exe terminal prewarm status [--project ...]
+  qingcode.exe terminal profile get <id|name>
+  qingcode.exe terminal profile upsert --json <file|->
+  qingcode.exe terminal profile default <id|name>
+  qingcode.exe terminal profile remove <id|name> --yes
   qingcode.exe terminal list [--project ...]
   qingcode.exe terminal read <id|name> [--project ...] [--scope screen|buffer] [--tail <n>]
   qingcode.exe terminal send <id|name> [--project ...] [--text <text> | --stdin] [--enter]
-  qingcode.exe terminal create [--profile <id|name>] [--project ...]
+  qingcode.exe terminal create [--profile <id|name>] [--project ...] [--wait] [--timeout <seconds>]
   qingcode.exe terminal restart <id|name> [--project ...]
   qingcode.exe terminal close <id|name> --yes [--project ...]
   Terminal commands require the GUI. read/send/create/restart need a trusted project (local or
