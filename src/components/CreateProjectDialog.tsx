@@ -654,7 +654,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-project-title"
-        className="ui-font-scaled modal-content-enter relative flex max-h-[85vh] w-full max-w-[520px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative flex max-h-[85vh] w-full max-w-[620px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-5 pt-4 pb-3">
