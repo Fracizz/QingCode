@@ -21,6 +21,7 @@ function fixture(tabs: TerminalTab[], decisions = ['preserve']) {
     terminals: () => tabs,
     transferCount: () => 0,
     choose: vi.fn(async () => decisions.shift() ?? null),
+    showProgress: vi.fn(),
     confirmFiles: vi.fn(async () => { events.push('files'); return true }),
     finishRemote: vi.fn(async (tab, action) => { events.push(`${action}:${tab.id}`) }),
     closeTerminal: vi.fn(async tab => { events.push(`close:${tab.id}`) }),
@@ -83,6 +84,10 @@ describe('app close decisions', () => {
     vi.mocked(deps.finishRemote).mockImplementationOnce(async () => {})
       .mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
     await runAppClose(deps)
+    expect(vi.mocked(deps.showProgress).mock.calls.flat()).toEqual([
+      '正在结束终端（0/2）…', '正在结束终端（1/2）…', null,
+      '正在结束终端（1/2）…', '正在结束终端（2/2）…', '正在退出 QingCode…', null,
+    ])
     expect(deps.finishRemote).toHaveBeenCalledTimes(3)
     expect(deps.finishRemote).toHaveBeenNthCalledWith(3, tabs[1], 'terminate')
     expect(deps.choose).toHaveBeenLastCalledWith(expect.objectContaining({ title: '部分终端未确认结束' }))

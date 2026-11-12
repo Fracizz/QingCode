@@ -456,29 +456,35 @@ fn terminal_session_open(
 }
 
 #[tauri::command]
-fn kill_terminal(
+async fn kill_terminal(
     id: String,
     source: Option<String>,
     operation_id: Option<String>,
-    state: tauri::State<'_, TerminalManager>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
-    qingcode_server::diagnostics::record(
-        "terminal.kill_requested",
-        serde_json::json!({
-        "terminalId":id,"source":qingcode_server::diagnostics::termination_source(source.as_deref()),
-        "operationId":qingcode_server::diagnostics::identifier(operation_id.as_deref())}),
-        true,
-        false,
-    );
-    let result = state.kill(&id);
-    qingcode_server::diagnostics::record(
-        "terminal.kill_completed",
-        serde_json::json!({"terminalId":id,"ok":result.is_ok()}),
-        true,
-        false,
-    );
-    result
+    tauri::async_runtime::spawn_blocking(move || {
+        qingcode_server::diagnostics::record(
+            "terminal.kill_requested",
+            serde_json::json!({
+                "terminalId": id,
+                "source": qingcode_server::diagnostics::termination_source(source.as_deref()),
+                "operationId": qingcode_server::diagnostics::identifier(operation_id.as_deref()),
+            }),
+            true,
+            false,
+        );
+        let result = app.state::<TerminalManager>().kill(&id);
+        qingcode_server::diagnostics::record(
+            "terminal.kill_completed",
+            serde_json::json!({"terminalId":id,"ok":result.is_ok()}),
+            true,
+            false,
+        );
+        result
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

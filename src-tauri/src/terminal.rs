@@ -581,7 +581,7 @@ impl TerminalManager {
                 .map(snapshot_descendants)
                 .unwrap_or_default();
             if request_graceful_stop(&session, &owned) {
-                // 宽限期放到后台线程：同步 Tauri 命令运行在主线程，不能阻塞 UI。
+                // 宽限期放到独立线程，发送中断后即可返回。
                 // 会话已从表中移除，同 id 的新终端不受影响；shell 可能已随 Ctrl+C 自行退出，
                 // 因此这里的 kill 失败不再回滚。
                 let started = Instant::now();

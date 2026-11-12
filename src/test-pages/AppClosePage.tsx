@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import ChoiceDialog from '../components/ChoiceDialog'
-import { choiceDialog } from '../store/choiceStore'
+import { choiceDialog, showDialogProgress } from '../store/choiceStore'
 import { runAppClose } from '../lib/appCloseFlow'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
 import type { TerminalTab } from '../types'
@@ -31,8 +31,12 @@ export function AppClosePage() {
       await runAppClose({
         pauseSpawns: async () => { record('pause') }, resumeSpawns: () => record('resume'),
         terminals: () => tabs.current, transferCount: () => scenario === 'mixed' ? 2 : 0,
+        showProgress: showDialogProgress,
         choose: choiceDialog, confirmFiles: async () => { record('files'); return !cancelSave },
         finishRemote: async (tab, action) => {
+          if (scenario === 'mixed' && tab.id === 'SSH' && action === 'terminate') {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
           if (fail && tab.id === 'SSH' && action === 'terminate') {
             fail = false
             record('unconfirmed:SSH')

@@ -1,5 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { choiceDialog } from '../store/choiceStore'
+import { choiceDialog, showDialogProgress } from '../store/choiceStore'
 import { useEditorStore } from '../store/editorStore'
 import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
@@ -19,6 +19,7 @@ export function requestAppClose(): Promise<void> {
     resumeSpawns: resumeTerminalSpawnsAfterExit,
     terminals: () => useTerminalStore.getState().terminals,
     transferCount: () => useTransferStore.getState().tasks.filter(task => isTransferActive(task.status)).length,
+    showProgress: showDialogProgress,
     choose: choiceDialog,
     confirmFiles: () => confirmDiscardTabs(useEditorStore.getState().getAllTabs(), '退出应用'),
     finishRemote: (tab, action) => finishRemoteTerminalOnExit({

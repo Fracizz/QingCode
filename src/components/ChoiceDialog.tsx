@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, LoaderCircle } from 'lucide-react'
 import { useChoiceStore } from '../store/choiceStore'
 import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
@@ -10,6 +10,16 @@ export default function ChoiceDialog() {
   const { t } = useI18n()
   const request = useChoiceStore(s => s.request)
   const answer = useChoiceStore(s => s.answer)
+  const progress = useChoiceStore(s => s.progress)
+  if (progress) return (
+    <ModalOverlay zIndex={INTERRUPT_MODAL_Z}>
+      <div role="dialog" aria-modal="true" aria-label={t('退出 QingCode')}
+        className="flex w-full max-w-[360px] items-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-5 py-4 shadow-elevation-3">
+        <LoaderCircle size={18} aria-hidden className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        <p role="status" className="text-ui text-fg">{progress}</p>
+      </div>
+    </ModalOverlay>
+  )
   if (!request) return null
 
   const markdownDetail = Boolean(request.detailMarkdown && request.detail)

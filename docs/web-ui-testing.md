@@ -282,8 +282,8 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行
 `node scripts/web-tests/server-operation.agent-browser.mjs`。复用真实打开项目组件、后台操作 store 与进度卡片，
 覆盖首次安装非模态、真实阶段推进、取消打开、后台更新、计时、成功自动关闭、失败保留授权入口及英文浅色窄窗。
-后台更新、打开项目、通知与文件传输复用同一个右下角纵向堆栈；覆盖并行卡片无重叠、取消打开后更新继续、
-420px 英文浅色窄窗，以及短窗口中多任务滚动后仍可操作末项。
+多个远程任务共用一张可展开的进度卡，通知与传输各自独立展示。覆盖按连接选择、单项取消、失败定位和全部转入后台，
+并在 420px 英文浅色窄窗中验证九项任务的列表滚动与末项操作。
 结果与截图位于 `.dev/web-tests/server-operation/`。该场景不连接 SSH，不替代 Linux/macOS 原生生命周期验收。
 
 

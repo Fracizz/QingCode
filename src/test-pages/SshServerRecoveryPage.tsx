@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { mockIPC } from '@tauri-apps/api/mocks'
-import SshOpeningDialog from '../components/SshOpeningDialog'
+import ServerOperationTasks from '../components/ServerOperationTasks'
 import { cancelSshOpening, runSshOpening, SshPreparationError } from '../store/sshOpeningStore'
 import { useProjectStore, useWebTestOperations } from './projectManagerAdapters'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
@@ -36,7 +36,7 @@ function Page() {
       <button className={button} onClick={() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark' }}>切换主题</button>
     </div>
     <output data-testid="recovery-result" className="mt-3 block">{JSON.stringify({ saves, retries: operations.filter(op => op.action === 'switchProject').length, settings })}</output>
-    <SshOpeningDialog />
+    <ServerOperationTasks />
   </main>
 }
 if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {

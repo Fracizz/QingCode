@@ -40,6 +40,22 @@ describe('ServerOperationTasks background mode', () => {
     expect(screen.queryByRole('button', { name: '后台运行' })).not.toBeInTheDocument()
   })
 
+  it('keeps the chosen connection on failure and backgrounds only running tasks', () => {
+    const other = 'ssh://second/home/demo'
+    beginServerOperation(other, 'demo', 'install')
+    render(<ServerOperationTasks />)
+    fireEvent.click(screen.getByRole('button', { name: /远程任务 2/ }))
+    fireEvent.click(screen.getByRole('button', { name: /second demo/ }))
+    act(() => finishServerOperation(root, 'failed on c'))
+    expect(screen.getByRole('button', { name: /second demo/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '1 项需处理' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('failed on c')
+    fireEvent.click(screen.getByRole('button', { name: '全部转入后台' }))
+    expect(useServerOperationStore.getState().tasks[other]).toMatchObject({ background: true })
+    expect(screen.getByRole('alert')).toHaveTextContent('failed on c')
+  })
+
   it('stays hidden on success and removes the finished task', () => {
     render(<ServerOperationTasks />)
     hide()

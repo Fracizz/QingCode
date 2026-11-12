@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import SshOpeningDialog from './SshOpeningDialog'
+import ServerOperationTasks from './ServerOperationTasks'
 import { cancelSshOpening, runSshOpening, SshPreparationError, latestSshOpening } from '../store/sshOpeningStore'
 import type { Project } from '../types'
 
@@ -37,20 +37,21 @@ describe('SshOpeningDialog', () => {
       report('service')
       return new Promise(() => {})
     }).catch(error => error)
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     expect(await screen.findByRole('status')).toHaveTextContent('正在打开项目 demo')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(document.querySelector('[data-modal-overlay]')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
     expect((await opening).name).toBe('AbortError')
   })
-  it('shows one progress card per SSH connection and cancels only the chosen one', async () => {
+  it('stacks SSH connections and cancels only the chosen one', async () => {
     const first = runSshOpening(project, () => new Promise(() => {})).catch(error => error)
     const second = runSshOpening(windowsProject, () => new Promise(() => {})).catch(error => error)
-    render(<SshOpeningDialog />)
-    expect(await screen.findByRole('region', { name: 'demo' })).toBeInTheDocument()
+    render(<ServerOperationTasks />)
+    fireEvent.click(await screen.findByRole('button', { name: /远程任务 2/ }))
     expect(screen.getByRole('region', { name: 'Windows A' })).toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: '取消打开' })[0])
+    fireEvent.click(screen.getByRole('button', { name: /c demo/ }))
+    fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
     expect((await first).name).toBe('AbortError')
     expect(screen.queryByRole('region', { name: 'demo' })).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Windows A' })).toBeInTheDocument()
@@ -61,7 +62,7 @@ describe('SshOpeningDialog', () => {
   it('hides the progress card when run in background but keeps opening and re-shows on error', async () => {
     let fail!: (error: Error) => void
     const opening = runSshOpening(project, () => new Promise((_resolve, reject) => { fail = reject })).catch(error => error)
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     await screen.findByRole('status')
     fireEvent.click(screen.getByRole('button', { name: '后台运行' }))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -77,7 +78,7 @@ describe('SshOpeningDialog', () => {
       report('service', { rootUri: project.path, connectionId: 'c', connectionMode: 'server', phase: 'readyServer', mode: 'server', transport: 'serve', reason: null, version: '1' })
       return new Promise(() => {})
     }).catch(error => error)
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     expect(await screen.findByRole('status')).toHaveTextContent('正在准备远程终端')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', '第 4/4 步')
@@ -89,7 +90,7 @@ describe('SshOpeningDialog', () => {
 
   it('keeps readable failure details and retries the same project', async () => {
     await runSshOpening(project, async () => { throw new SshPreparationError('daemon failed\nnetwork detail') }).catch(() => {})
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     expect(screen.getByRole('alert')).toHaveTextContent('daemon failed network detail')
     expect(screen.getByRole('dialog')).toHaveAttribute('aria-busy', 'false')
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -100,7 +101,7 @@ describe('SshOpeningDialog', () => {
     let finish!: (accepted: boolean) => void
     mocks.confirm.mockImplementation(() => new Promise<boolean>(resolve => { finish = resolve }))
     await failOpening()
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     const signal = mocks.confirm.mock.calls[0][3] as AbortSignal
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
@@ -113,7 +114,7 @@ describe('SshOpeningDialog', () => {
     const finish: Array<(accepted: boolean) => void> = []
     mocks.confirm.mockImplementation(() => new Promise<boolean>(resolve => { finish.push(resolve) }))
     await failOpening()
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await act(async () => { await failOpening(otherWindowsProject) })
     expect(screen.getByRole('button', { name: '重试' })).toBeEnabled()
@@ -129,7 +130,7 @@ describe('SshOpeningDialog', () => {
     let finish!: (accepted: boolean) => void
     mocks.confirm.mockImplementation(() => new Promise<boolean>(resolve => { finish = resolve }))
     await failOpening()
-    const view = render(<SshOpeningDialog />)
+    const view = render(<ServerOperationTasks />)
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     const signal = mocks.confirm.mock.calls[0][3] as AbortSignal
     view.unmount()
@@ -141,7 +142,7 @@ describe('SshOpeningDialog', () => {
   it('can retry a failed opening whose original timeout signal is already aborted', async () => {
     await failOpening()
     latestSshOpening()!.controller.abort(new SshPreparationError('timeout'))
-    render(<SshOpeningDialog />)
+    render(<ServerOperationTasks />)
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试' })) })
     expect(mocks.switchProject).toHaveBeenCalledExactlyOnceWith(windowsProject)
     expect((mocks.confirm.mock.calls[0][3] as AbortSignal).aborted).toBe(false)

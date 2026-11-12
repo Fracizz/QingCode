@@ -5,7 +5,6 @@ import { useProjectStore, type Toast } from '../store/projectStore'
 import { ProjectSourceBadge } from './ProjectName'
 import TransferTasks from './TransferTasks'
 import ServerOperationTasks from './ServerOperationTasks'
-import SshOpeningDialog from './SshOpeningDialog'
 
 export default function Toaster() {
   const { t: translate } = useI18n()
@@ -86,7 +85,6 @@ export default function Toaster() {
         )
       })}
       <ServerOperationTasks />
-      <SshOpeningDialog />
       <TransferTasks />
     </div>
   )

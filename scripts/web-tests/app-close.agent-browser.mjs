@@ -21,7 +21,7 @@ try {
   browser('set', 'viewport', '1440', '900')
   click('混合终端退出')
   verify('separates persistent, compatibility, local and transfer effects',
-    `${dialog}.textContent.includes('2 个远程终端') && ${dialog}.textContent.includes('3 小时') && ${dialog}.textContent.includes('1 个本地终端') && ${dialog}.textContent.includes('2 项文件传输')`)
+    `${dialog}.textContent.includes('2 个远程终端') && ${dialog}.textContent.includes('24 小时') && ${dialog}.textContent.includes('1 个本地终端') && ${dialog}.textContent.includes('2 项文件传输')`)
   verify('preserve is initially focused', "document.activeElement.textContent === '保留远程终端并退出'")
   browser('screenshot', resolve(output, 'dark.png'))
   click('保留远程终端并退出')
@@ -30,6 +30,11 @@ try {
 
   click('混合终端退出')
   click('结束远程终端并退出')
+  browser('wait', '--fn', "document.querySelector('[role=status]')?.textContent === '正在结束终端（3/4）…'")
+  browser('press', 'Escape')
+  verify('pending cleanup keeps the progress dialog visible', "!!document.querySelector('[role=dialog] [role=status]')")
+  browser('screenshot', resolve(output, 'terminating.png'))
+  browser('wait', '--fn', `${events}.includes('destroy')`)
   verify('terminate records both remote sessions ended', `${events}.includes('ended:SSH') && ${events}.includes('ended:Server') && !${events}.includes('preserve:')`)
 
   click('模拟远端未确认')

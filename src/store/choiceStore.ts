@@ -20,6 +20,7 @@ export interface ChoiceRequest {
 }
 
 interface ChoiceState {
+  progress: string | null
   request: ChoiceRequest | null
   resolve: ((value: string | null) => void) | null
   choose: (options: ChoiceRequest) => Promise<string | null>
@@ -27,6 +28,7 @@ interface ChoiceState {
 }
 
 export const useChoiceStore = create<ChoiceState>((set, get) => ({
+  progress: null,
   request: null,
   resolve: null,
   choose: options =>
@@ -41,4 +43,8 @@ export const useChoiceStore = create<ChoiceState>((set, get) => ({
 
 export function choiceDialog(options: ChoiceRequest) {
   return useChoiceStore.getState().choose(options)
+}
+
+export function showDialogProgress(progress: string | null) {
+  useChoiceStore.setState({ progress })
 }

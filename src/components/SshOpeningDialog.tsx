@@ -4,62 +4,52 @@ import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey, sshServerVersionMismatch } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
-import { cancelSshOpening, setSshOpeningBackground, useSshOpeningStore, type SshOpeningAttempt } from '../store/sshOpeningStore'
+import { cancelSshOpening, useSshOpeningStore, type SshOpeningAttempt } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
 import SshServerRecovery from './SshServerRecovery'
 import ServerOperationProgress from './ServerOperationProgress'
-import { serverOperationForProject, useServerOperationStore } from '../store/serverOperationStore'
+import type { ServerOperation } from '../store/serverOperationStore'
 
-/** 每个 SSH 连接一张打开进度卡，可同时进行；失败弹框一次只显示一个。 */
-export default function SshOpeningDialog() {
-  const attempts = useSshOpeningStore(s => s.attempts)
-  const list = Object.values(attempts).sort((a, b) => a.id - b.id)
-  const failed = list.find(attempt => attempt.error)
-  return <>
-    {list.filter(attempt => !attempt.error).map(attempt => <SshOpeningCard key={attempt.key} attempt={attempt} />)}
-    {failed && <SshOpeningCard key={failed.key} attempt={failed} />}
-  </>
+export function SshOpeningProgress({ attempt, operation, status, onBackground }: {
+  attempt: SshOpeningAttempt
+  operation?: ServerOperation
+  status: string
+  onBackground: () => void
+}) {
+  const { t } = useI18n()
+  const { project, stage, server } = attempt
+
+  const step = stage === 'connecting' ? 1 : stage === 'files' ? 4
+    : server?.phase === 'installing' ? 3 : server?.phase === 'handshaking' || server?.phase === 'readyServer' ? 4 : 2
+  const label = attempt.reusingServer ? t('正在打开项目 {name}…', { name: project.name })
+    : server?.phase === 'readyServer' && server.transport === 'serve' ? t('正在准备远程终端…')
+      : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
+        : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
+  return (
+    <ServerOperationProgress name={project.name} rootUri={project.path} status={status}
+      label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
+      actions={<>
+        <button type="button" onClick={onBackground} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
+        <button type="button" onClick={() => cancelSshOpening(attempt.key)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
+      </>} />
+  )
 }
 
-function SshOpeningCard({ attempt }: { attempt: SshOpeningAttempt }) {
+export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttempt }) {
   const { t } = useI18n()
   const connections = useProjectStore(s => s.sshConnections)
-  const operation = useServerOperationStore(s => serverOperationForProject(s.tasks, attempt.project))
-  const [visibleController, setVisibleController] = useState<AbortController | null>(null)
   const [retryingController, setRetryingController] = useState<AbortController | null>(null)
   const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
   const controller = attempt.controller
   const retryBusy = retryingController === controller
   const [recoveryBusy, setRecoveryBusy] = useState(false)
   useEffect(() => () => retryRef.current?.controller.abort(), [])
-  useEffect(() => {
-    // Cached connections usually open immediately; avoid flashing a modal.
-    const timer = setTimeout(() => setVisibleController(controller), 300)
-    return () => clearTimeout(timer)
-  }, [controller])
-  if (!attempt.error && (attempt.background || visibleController !== controller)) return null
   const key = attempt.key
   const cancel = () => cancelSshOpening(key)
 
   const { project, stage, server, error } = attempt
-  if (!error) {
-    const step = stage === 'connecting' ? 1 : stage === 'files' ? 4
-      : server?.phase === 'installing' ? 3 : server?.phase === 'handshaking' || server?.phase === 'readyServer' ? 4 : 2
-    const label = attempt.reusingServer ? t('正在打开项目 {name}…', { name: project.name })
-      : server?.phase === 'readyServer' && server.transport === 'serve' ? t('正在准备远程终端…')
-        : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
-          : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
-    return (
-      <ServerOperationProgress name={project.name} rootUri={project.path} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
-        label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
-        actions={<>
-          <button type="button" onClick={() => setSshOpeningBackground(key, true)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
-          <button type="button" onClick={cancel} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
-        </>} />
-    )
-  }
   const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
   const activeStep = stage === 'connecting' ? 0 : stage === 'service' ? 1 : 2
   const phase = server?.phase === 'readyServer' && server.transport === 'serve'

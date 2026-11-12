@@ -39,16 +39,22 @@ try {
   check('elapsed seconds advance independently of stage progress', `/已用 [1-9][0-9]* 秒/.test(document.querySelector('.server-operation-card').textContent)`)
   capture('update-dark')
   click('添加并行更新')
-  check('parallel updates share a stack without overlap', `document.querySelectorAll('.server-operation-card').length === 2 && ${separateCards}`)
-  check('parallel updates identify their own remote connections', `JSON.stringify([...document.querySelectorAll('.server-operation-card [data-project-source]')].map(el => el.textContent)) === JSON.stringify(['windev', 'Linux 开发机'])`)
+  const summary = 'button[aria-expanded]'
+  const summaryHas = text => `document.querySelector('${summary}')?.textContent.includes('${text}')`
+  check('parallel updates collapse to one detail', `${summaryHas('远程任务 2')} && document.querySelectorAll('.server-operation-card').length === 1`)
   captureStack('parallel-updates-dark')
   click('并行打开项目')
-  check('opening another project stacks with both updates', `document.querySelectorAll('.server-operation-card').length === 3 && ${separateCards}`)
+  check('latest opening leads the mixed stack', `${summaryHas('远程任务 3')} && document.querySelector('.server-operation-card [data-project-source]').textContent === 'opening'`)
   click('添加通知与传输')
-  check('notifications and transfers also share the stack', `document.querySelector('[data-floating-task-stack]').children.length === 5 && ${separateCards}`)
+  check('notifications and transfers remain independent', `document.querySelector('[data-floating-task-stack]').children.length === 3 && ${separateCards}`)
+  run('click', summary)
+  check('expanded rows identify the connections', `document.querySelector('ul[aria-label="远程任务"]').innerText.includes('Linux 开发机')`)
   captureStack('parallel-mixed-dark')
   click('取消打开')
-  check('cancelling opening keeps both background updates', `document.querySelectorAll('.server-operation-card').length === 2 && ${separateCards}`)
+  check('cancel keeps both updates', summaryHas('远程任务 2'))
+  click('模拟失败')
+  click('1 项需处理')
+  check('attention shortcut selects the failed update', `document.querySelector('[role="alert"]')?.textContent.includes('SSH authentication failed')`)
   run('reload')
   click('模拟后台更新')
   click('更新第 4 步')
@@ -77,25 +83,23 @@ try {
   capture('update-light-en-narrow')
   click('添加并行更新')
   click('并行打开项目')
-  check('English light parallel cards stay separate at 420px', `document.querySelectorAll('.server-operation-card').length === 3 && ${separateCards}`)
+  check('English summary counts all tasks at 420px', summaryHas('Remote tasks 3'))
   captureStack('parallel-light-en-narrow')
-  // Keep fixture controls reachable before filling the narrow task stack.
   run('set', 'viewport', '1200', '800')
   click('添加多条更新')
   run('set', 'viewport', '420', '420')
-  check('many parallel tasks scroll within a short viewport', `(() => {
-    const stack = document.querySelector('[data-floating-task-stack]');
-    const rect = stack.getBoundingClientRect();
-    return stack.scrollHeight > stack.clientHeight && rect.top >= 0 && rect.bottom <= innerHeight - 24 &&
-      document.documentElement.scrollWidth <= innerWidth && ${separateCards};
+  run('click', summary)
+  const rows = 'ul[aria-label="Remote tasks"]'
+  check('nine tasks scroll inside the connection list', `(() => {
+    const list = document.querySelector('${rows}');
+    return list.children.length === 9 && list.scrollHeight > list.clientHeight && document.documentElement.scrollWidth <= innerWidth;
   })()`)
-  run('eval', `document.querySelector('[data-floating-task-stack]').scrollTop = 100000`)
-  check('last task actions remain reachable by scrolling', `(() => {
-    const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Cancel opening');
-    const rect = button.getBoundingClientRect();
-    return rect.top >= 0 && rect.bottom <= innerHeight - 24;
-  })()`)
+  run('eval', `document.querySelector('${rows}').scrollTop = document.querySelector('${rows}').scrollHeight`)
+  run('click', rows + ' li:last-child button')
+  check('last connection can be selected', `document.querySelector('.server-operation-card').textContent.includes('并行更新项目-5')`)
   captureStack('parallel-short-scrolled')
+  click('Run all in background')
+  check('all running tasks leave the foreground', `!document.querySelector('.server-operation-card')`)
 } catch (error) {
   results.push({ name: String(error), passed: false })
   capture('failure')

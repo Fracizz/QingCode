@@ -35,6 +35,7 @@ export interface AppCloseDependencies {
   terminals: () => TerminalTab[]
   transferCount: () => number
   choose: (request: ChoiceRequest) => Promise<string | null>
+  showProgress: (message: string | null) => void
   confirmFiles: () => Promise<boolean>
   finishRemote: (tab: TerminalTab, action: RemoteExitAction) => Promise<void>
   closeTerminal: (tab: TerminalTab) => Promise<void>
@@ -90,20 +91,27 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
 
     // No terminal side effects before all cancellable save confirmations finish.
     let pending = tabs.filter(tab => !canPreserve(tab) || action === 'terminate')
+    const total = pending.length
     let endedCount = 0
+    const reportEnded = () => deps.showProgress(t('正在结束终端（{ended}/{total}）…', {
+      ended: endedCount, total,
+    }))
     while (pending.length > 0) {
+      reportEnded()
       const results = await Promise.allSettled(pending.map(async tab => {
         if (hasPreservableSession(tab)) await deps.finishRemote(tab, 'terminate')
         else await deps.closeTerminal(tab)
         deps.markEnded(tab)
+        endedCount++
+        reportEnded()
       }))
       const failures = pending.flatMap((tab, index) => {
         const result = results[index]
         return result.status === 'rejected' ? [{ tab, error: String(result.reason) }] : []
       })
-      endedCount += pending.length - failures.length
       if (failures.length === 0) break
       deps.flush()
+      deps.showProgress(null)
       const retry = await deps.choose({
         title: t('部分终端未确认结束'),
         message: t('{count} 个终端未确认结束，远端进程可能仍在运行。', { count: failures.length }),
@@ -122,6 +130,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
       pending = failures.map(({ tab }) => tab)
     }
 
+    deps.showProgress(t('正在退出 QingCode…'))
     // Stop only this window's proxies, including failed kills. Keep their recoverable PTY ids.
     for (const tab of appExitTerminals(deps.terminals()).filter(canPreserve)) {
       await deps.finishRemote(tab, 'preserve')
@@ -130,6 +139,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     deps.flush()
     await deps.destroy()
   } finally {
+    deps.showProgress(null)
     deps.resumeSpawns()
   }
 }
