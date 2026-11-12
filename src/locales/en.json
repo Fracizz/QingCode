@@ -2038,7 +2038,7 @@
     "在电脑上打开": "Open on this computer",
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",
-    "在当前已信任的本地项目中提前准备普通 PowerShell / CMD。自动模式每 8 GiB 物理内存准备 1 个，至少 1 个、最多 8 个；也可关闭或手动指定。需开启「本地终端可接回」，内存不足时暂停预热。": "Prepare ordinary PowerShell / CMD terminals in the current trusted local project. Auto prepares one per 8 GiB of physical memory, with a minimum of 1 and a maximum of 8. You can turn this off or choose a count. Requires reconnectable local terminals; prewarming pauses when memory is low.",
-    "自动（按物理内存）": "Auto (physical memory)"
+    "在当前已信任的本地项目中提前准备普通 PowerShell / CMD。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个，用于连续快速新建。需开启「本地终端可接回」，内存不足时暂停预热。": "Prepare ordinary PowerShell / CMD terminals in the current trusted local project. Auto keeps one ready and refills it as soon as it is used. You can turn this off or choose 1–8 for rapid consecutive terminals. Requires reconnectable local terminals; prewarming pauses when memory is low.",
+    "自动（1 个）": "Auto (1)"
   }
 }

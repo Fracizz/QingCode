@@ -308,7 +308,7 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
-  // terminal.integrated.shellPrewarmCount：仅 Windows 普通 Shell；auto=每 8 GiB 物理内存预热 1 个（至少 1、最多 8），0=关闭，1–8=手动数量；需开启本地终端可接回，仅用户作用域
+  // terminal.integrated.shellPrewarmCount：仅 Windows 普通 Shell；auto=保留 1 个并在领取后立即补充，0=关闭，1–8=手动数量；需开启本地终端可接回，仅用户作用域
   "terminal.integrated.shellPrewarmCount": "auto",
 
   // ============================== 全局项目列表 ==============================

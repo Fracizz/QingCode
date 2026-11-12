@@ -7,17 +7,17 @@
 用户 `default-settings.json` 支持以下 JSON5 设置；工作区同名键会被忽略：
 
 ```json5
-// 不得删除注释。auto=按物理内存自动计算，0=关闭，1–8=手动指定。
+// 不得删除注释。auto=保留 1 个并在领取后立即补充，0=关闭，1–8=手动指定。
 "terminal.integrated.shellPrewarmCount": "auto",
 ```
 
-默认 `auto` 按 **已安装物理内存 / 8 GiB，向下取整，最小 1、最大 8** 计算。
-8 / 16 / 24 / 32 / 64 GiB 对应 1 / 2 / 3 / 4 / 8。
-Windows 优先读取已安装容量，避免硬件保留把 16 GiB 误算成 15.x GiB；读取失败退回系统物理总量。
+默认 `auto` 固定保留 **1 个**空闲 Shell：领取后立即补充，因此常驻多个只对补充完成前的连续快速新建有帮助。
+手动 1–8 用于需要连开多个终端的场景。
 设置数量是空闲预热项的目标，不限制用户已经打开的终端数量，也不会逐项目累加预算。
 当前聚焦的项目窗口协调同一个池；切换窗口可移交预算，独立文件窗口没有项目时不预热。
 
-池在后台逐个补充，每轮间隔 1.5 秒，项目激活和前台恢复先运行。
+池在后台逐个补充；领取会立即唤醒补充，其余时间每 1.5 秒复查一次内存与信任。
+窗口重新获得焦点且条件未变时保留已就绪项，只有项目、信任、设置变化才先失效。
 系统可用内存低于 `max(1 GiB, 实际物理总量的 10%)` 时回收空闲项并暂停补充，恢复后继续。
 池为空、正在准备、Shell 不匹配或领取失败时正常新建；命中后的接入最多等待 2 秒，失活缓存自动回退并后台清理。
 
@@ -44,6 +44,6 @@ Shell 按原目录加载用户 profile，再通过内部启动参数写入独立
 ## 验证
 
 - `pnpm test` / `pnpm build` / `pnpm lint`：设置范围、JSON5、协调器迟到结果和信任/持久化关闭。
-- `cargo test` / `cargo clippy --all-targets -- -D warnings`：数量、内存压力、启动条件隔离、并发领取、过期和窗口归属；真实 daemon 检查未领取项断线回收及已领取项保留。
+- `cargo test` / `cargo clippy --all-targets -- -D warnings`：数量、领取后立即补充、内存压力、启动条件隔离、并发领取、过期和窗口归属；真实 daemon 检查未领取项断线回收及已领取项保留。
 - 启动 `pnpm test:web` 后运行 `node scripts/web-tests/shell-prewarm.agent-browser.mjs`；复用真实设置组件，截图和结果在 `.dev/web-tests/shell-prewarm/`，不替代 Windows ConPTY 实机验收。
 - Windows `pnpm tauri:dev`：在可丢弃的已信任项目中验证 PowerShell 7、Windows PowerShell、CMD；检查 profile 仅执行一次、目录/终端 ID 正确、连续新建无重复领取、关闭/撤销信任/切项目回收、异常退出回收，以及已领取终端仍可接回。

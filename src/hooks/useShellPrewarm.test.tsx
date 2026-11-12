@@ -69,6 +69,16 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
+  it('keeps ready shells when the same window regains focus', async () => {
+    const hook = renderHook(() => useShellPrewarm(project))
+    await waitFor(() => expect(configuredPaths()).toContain(project.path))
+    mocks.invoke.mockClear()
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(configuredPaths()).toEqual([project.path]))
+    hook.unmount()
+    await act(async () => {})
+  })
+
   it('does not prewarm SSH or other platforms', async () => {
     const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: { ...project, path: 'ssh://c1/root' } } })
     await act(async () => {})

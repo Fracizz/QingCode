@@ -33,7 +33,7 @@ try {
   click('关闭', 'option')
   check('can disable prewarming', `${control}?.textContent === '关闭'`)
   click(label)
-  click('自动（按物理内存）', 'option')
+  click('自动（1 个）', 'option')
   check('can return to automatic mode', `${control}?.textContent.includes('自动')`)
   click('Windows')
   check('setting is hidden on Linux', `!${control}`)

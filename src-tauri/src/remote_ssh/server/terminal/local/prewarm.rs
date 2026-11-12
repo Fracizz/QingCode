@@ -59,30 +59,11 @@ struct PoolState {
     running: bool,
 }
 #[derive(Clone, Default)]
-pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>);
+pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
 
-fn resolve_count(value: &serde_json::Value, total_memory: u64) -> usize {
-    if let Some(count) = value.as_u64() {
-        return count.min(8) as usize;
-    }
-    (total_memory / (8 * GIB)).clamp(1, 8) as usize
-}
-/// Windows 的可用物理总量扣除了硬件保留，16 GiB 机器可能只报 15.x GiB；
-/// 自动分档读取已安装容量，内存压力判断仍读取系统实际可用容量。
-fn installed_memory(fallback: u64) -> u64 {
-    #[cfg(windows)]
-    {
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetPhysicallyInstalledSystemMemory(total_kilobytes: *mut u64) -> i32;
-        }
-        let mut kilobytes = 0u64;
-        // SAFETY: the API writes one u64 to a valid pointer owned by this stack frame.
-        if unsafe { GetPhysicallyInstalledSystemMemory(&mut kilobytes) } != 0 && kilobytes > 0 {
-            return kilobytes.saturating_mul(1024);
-        }
-    }
-    fallback
+/// auto 固定保留 1 个：领取后会立即补充，常驻更多只对极快的连续新建有帮助。
+fn resolve_count(value: &serde_json::Value) -> usize {
+    value.as_u64().map_or(1, |count| count.min(8) as usize)
 }
 
 fn under_pressure(total: u64, available: u64) -> bool {
@@ -131,9 +112,7 @@ impl ShellPrewarmPool {
         app.state::<PathAllowlist>().ensure_executable(&cwd)?;
         let launch = resolve_launch(&cwd, shell.as_deref())?;
         let key = LaunchKey::new(&cwd, &launch)?;
-        let mut memory = sysinfo::System::new();
-        memory.refresh_memory();
-        let count = resolve_count(&count, installed_memory(memory.total_memory()));
+        let count = resolve_count(&count);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.target.as_ref().is_none_or(|target| {
             target.key != key || target.count != count || target.window != window
@@ -262,13 +241,19 @@ impl ShellPrewarmPool {
                     .reserved_at
                     .is_some_and(|at| at.elapsed() < RESERVATION_TTL)
         })?;
-        Some(state.shells.remove(index))
+        let entry = state.shells.remove(index);
+        // 领走即补位；notify_one 会保留许可，补充循环正忙时也不会漏掉。
+        self.2.notify_one();
+        Some(entry)
     }
 
     async fn run(self, app: AppHandle) {
         loop {
-            // 留出前台恢复/连续新建的时间；每轮最多创建一个。
-            tokio::time::sleep(Duration::from_millis(1500)).await;
+            // 平时每 1.5 秒复查内存/信任；领取后立即补位。每轮最多创建一个。
+            tokio::select! {
+                _ = self.2.notified() => {},
+                _ = tokio::time::sleep(Duration::from_millis(1500)) => {},
+            }
             let changed = self.1.notified();
             let (target, generation) = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());

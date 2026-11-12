@@ -1,27 +1,13 @@
 use super::*;
 
 #[test]
-fn automatic_count_uses_physical_memory_with_one_to_eight_bounds() {
-    for (gib, expected) in [
-        (0, 1),
-        (4, 1),
-        (8, 1),
-        (15, 1),
-        (16, 2),
-        (24, 3),
-        (32, 4),
-        (64, 8),
-        (128, 8),
-    ] {
-        assert_eq!(
-            resolve_count(&serde_json::json!("auto"), gib * GIB),
-            expected
-        );
-    }
+fn automatic_count_keeps_one_idle_shell_and_manual_count_is_capped() {
+    assert_eq!(resolve_count(&serde_json::json!("auto")), 1);
+    assert_eq!(resolve_count(&serde_json::Value::Null), 1);
     for count in 0..=8 {
-        assert_eq!(resolve_count(&serde_json::json!(count), 64 * GIB), count);
+        assert_eq!(resolve_count(&serde_json::json!(count)), count);
     }
-    assert_eq!(resolve_count(&serde_json::json!(100), 8 * GIB), 8);
+    assert_eq!(resolve_count(&serde_json::json!(100)), 8);
 }
 
 #[test]
@@ -147,4 +133,18 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
     assert!(state.shells.is_empty());
     assert!(state.target.is_none());
     assert_eq!(state.generation, 1);
+}
+
+#[tokio::test]
+async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
+    let pool = ShellPrewarmPool::default();
+    let shell = fake_shell();
+    let key = shell.key.clone();
+    pool.0.lock().unwrap().shells.push(shell);
+    assert!(pool.reserve_key(&key).is_some());
+    assert!(pool.take_key("reserved-id", &key).is_some());
+    // 许可在领取时即保留，补充循环稍后才开始等待也能立刻醒来。
+    tokio::time::timeout(Duration::from_millis(100), pool.2.notified())
+        .await
+        .expect("领取后未唤醒补充");
 }

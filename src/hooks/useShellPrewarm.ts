@@ -22,38 +22,45 @@ export function useShellPrewarm(project: Project | null) {
     let disposed = false
     let revision = 0
     let sequence = Promise.resolve()
-    const refresh = () => {
+    // invalidate=true：先失效，再异步读设置，避免慢读取期间领取过期项。
+    // 仅窗口获得焦点时条件未变，直接重发同一配置，后端会保留已就绪的 Shell。
+    const refresh = (invalidate = true) => {
       const current = ++revision
-      // 先失效，再异步读设置；避免慢读取期间领取上一个项目的预热项。
-      const cleared = configure(null, null, 0)
+      const cleared = invalidate ? configure(null, null, 0) : Promise.resolve()
+      const stale = () => disposed || current !== revision || !document.hasFocus()
       sequence = sequence.then(async () => {
         await cleared
-        if (disposed || current !== revision || !document.hasFocus() || !project || project.ephemeral ||
-          project.path.startsWith('ssh://') || !isProjectTrusted(project)) return
+        if (stale()) return
+        if (!project || project.ephemeral || project.path.startsWith('ssh://') || !isProjectTrusted(project)) {
+          if (!invalidate) await configure(null, null, 0)
+          return
+        }
         const [count, persist] = await Promise.all([
           loadShellPrewarmCount(), loadEffectiveTerminalPersistLocalSessions(project),
         ])
         const shell = loadTerminalProfileSettings().defaultShell
-        if (disposed || current !== revision || !document.hasFocus() || !persist || shell === 'wsl') return
-        await configure(project.path, shell, count)
+        if (stale()) return
+        await configure(persist && shell !== 'wsl' ? project.path : null, shell, count)
       }).catch(() => {})
     }
+    const invalidate = () => refresh(true)
+    const focus = () => refresh(false)
     const storage = (event: StorageEvent) => {
-      if (!event.key || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') refresh()
+      if (!event.key || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
-    refresh()
-    window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, refresh)
-    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, refresh)
-    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, refresh)
-    window.addEventListener('focus', refresh)
+    invalidate()
+    window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
+    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
+    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, invalidate)
+    window.addEventListener('focus', focus)
     window.addEventListener('storage', storage)
     return () => {
       disposed = true
       revision++
-      window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, refresh)
-      window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, refresh)
-      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, refresh)
-      window.removeEventListener('focus', refresh)
+      window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
+      window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
+      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, invalidate)
+      window.removeEventListener('focus', focus)
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)
     }
