@@ -32,6 +32,22 @@ export function noteTerminalLeftView(terminalId: string, now = Date.now()) {
   leftViewAt.set(terminalId, now)
 }
 
+/** 上次同步时显示在界面上的终端。 */
+let terminalsInView: ReadonlySet<string> = new Set()
+
+/**
+ * 同步此刻显示在界面上的终端：离开视野的记下时间，在视野内的清除标记。
+ * 进入视野不只是切换当前终端：切回项目时当前终端可能没变，分屏的副窗格也会显示终端，
+ * 只看当前终端是否变化会漏掉这些情况，用户看过后标记仍在。
+ */
+export function syncTerminalsInView(inView: ReadonlySet<string>, now = Date.now()) {
+  for (const id of terminalsInView) {
+    if (!inView.has(id)) noteTerminalLeftView(id, now)
+  }
+  terminalsInView = inView
+  for (const id of inView) clearTerminalAttention(id)
+}
+
 /**
  * 记录程序工作状态的翻转；看不到的终端从工作转为空闲时标记。
  * lastWorkAt 是最后的工作信号时间：早于切走时刻说明用户看着它结束，只是保持期切走后才到期。
@@ -59,6 +75,9 @@ export function pruneTerminalAttention(existingIds: ReadonlySet<string>) {
   }
   for (const id of leftViewAt.keys()) {
     if (!existingIds.has(id)) leftViewAt.delete(id)
+  }
+  if ([...terminalsInView].some(id => !existingIds.has(id))) {
+    terminalsInView = new Set([...terminalsInView].filter(id => existingIds.has(id)))
   }
   if ([...attention].every(id => existingIds.has(id))) return
   replaceAttention(new Set([...attention].filter(id => existingIds.has(id))))

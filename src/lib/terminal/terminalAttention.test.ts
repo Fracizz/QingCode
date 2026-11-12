@@ -7,6 +7,7 @@ import {
   noteTerminalLeftView,
   pruneTerminalAttention,
   subscribeTerminalAttention,
+  syncTerminalsInView,
 } from './terminalAttention'
 
 describe('terminalAttention', () => {
@@ -65,6 +66,27 @@ describe('terminalAttention', () => {
     expect([...getTerminalAttentionSnapshot()]).toEqual(['alive'])
     noteTerminalBusyChange('busy-closed', false, false)
     expect(getTerminalAttentionSnapshot().has('busy-closed')).toBe(false)
+  })
+
+  it('clears a mark once the terminal comes into view, even if it was already the current one', () => {
+    // 切到别的项目时当前终端绑定可能没变；切回来时它重新显示，也算看过。
+    syncTerminalsInView(new Set(['t1']))
+    syncTerminalsInView(new Set())
+    markTerminalAttention('t1')
+    markTerminalAttention('t2')
+    syncTerminalsInView(new Set(['t1']))
+    expect([...getTerminalAttentionSnapshot()]).toEqual(['t2'])
+  })
+
+  it('records the leave time for every terminal that leaves view', () => {
+    syncTerminalsInView(new Set(['t1', 't2']), 1000)
+    noteTerminalBusyChange('t1', true, true, 500)
+    noteTerminalBusyChange('t2', true, true, 500)
+    // 两个终端一起离开视野（如切走项目），之前就停下的任务不算新结果。
+    syncTerminalsInView(new Set(), 2000)
+    noteTerminalBusyChange('t1', false, false, 1500)
+    noteTerminalBusyChange('t2', false, false, 2500)
+    expect([...getTerminalAttentionSnapshot()]).toEqual(['t2'])
   })
 
   it('notifies subscribers until they unsubscribe', () => {

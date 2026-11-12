@@ -55,6 +55,7 @@ vi.mock('./projectStore', () => ({
       ...mocks.projectState,
       pushToast: mocks.pushToast,
     }),
+    subscribe: () => () => {},
   },
 }))
 
@@ -71,6 +72,7 @@ vi.mock('./uiStore', () => ({
       setActiveTerminal: vi.fn(),
       toggleTerminalPanel: vi.fn(),
     }),
+    subscribe: () => () => {},
   },
 }))
 

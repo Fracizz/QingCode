@@ -61,11 +61,10 @@ import {
   subscribeTerminalProgramActivity,
 } from '@/lib/terminal/terminalProgramActivity'
 import {
-  clearTerminalAttention,
   markTerminalAttention,
   noteTerminalBusyChange,
-  noteTerminalLeftView,
   pruneTerminalAttention,
+  syncTerminalsInView,
 } from '@/lib/terminal/terminalAttention'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { finishTerminalMirror } from '../lib/terminal/terminalMirror'
@@ -1854,8 +1853,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         useProjectStore.getState().pushToast('info', message)
       }),
     ])
+    const unsubscribeView = subscribeTerminalViewSources()
 
     return () => {
+      unsubscribeView()
       unlistenData()
       unlistenExit()
       unlistenInputError()
@@ -1923,18 +1924,44 @@ export async function openMobileSessionTab(session: {
   }
 }
 
+/** 此刻显示在界面上的终端：当前项目里各窗格绑定的终端。 */
+function terminalIdsInView(): Set<string> {
+  const state = useTerminalStore.getState()
+  const projectId = useProjectStore.getState().currentProject?.id
+  // 单窗格的工作台里，副窗格绑定只是保留给切回分屏用，并不显示。
+  const panes =
+    useUIStore.getState().panelLayout === 'terminalWorkbench' ? ['primary' as const] : TERMINAL_FOCUS_PANES
+  const ids = new Set<string>()
+  for (const pane of panes) {
+    const id = readPaneTerminalId(state, pane)
+    // 切项目后各窗格绑定要等项目激活才更新，期间仍指向上一个项目的终端，并不显示。
+    if (id && state.terminals.some(tab => tab.id === id && tab.projectId === projectId)) ids.add(id)
+  }
+  return ids
+}
+
+/**
+ * 当前项目与面板布局也决定哪些终端可见：切回项目时当前终端可能没变，同样算看过。
+ * 在初始化终端事件时订阅，避免导入本模块时就依赖其他 store。
+ */
+function subscribeTerminalViewSources(): () => void {
+  const unsubscribeProject = useProjectStore.subscribe((state, previous) => {
+    if (state.currentProject?.id !== previous.currentProject?.id) syncTerminalsInView(terminalIdsInView())
+  })
+  const unsubscribeUI = useUIStore.subscribe((state, previous) => {
+    if (state.panelLayout !== previous.panelLayout) syncTerminalsInView(terminalIdsInView())
+  })
+  syncTerminalsInView(terminalIdsInView())
+  return () => {
+    unsubscribeProject()
+    unsubscribeUI()
+  }
+}
+
 /** 终端此刻是否显示在界面上；已关闭的终端视为无需提示。 */
 function isTerminalInView(id: string): boolean {
-  const state = useTerminalStore.getState()
-  const terminal = state.terminals.find(tab => tab.id === id)
-  if (!terminal) return true
-  if (terminal.projectId !== useProjectStore.getState().currentProject?.id) return false
-  if (state.activeTerminalId === id) return true
-  // 单窗格的工作台里，副窗格绑定只是保留给切回分屏用，并不显示。
-  return (
-    useUIStore.getState().panelLayout !== 'terminalWorkbench' &&
-    TERMINAL_FOCUS_PANES.some(pane => readPaneTerminalId(state, pane) === id)
-  )
+  if (!useTerminalStore.getState().terminals.some(tab => tab.id === id)) return true
+  return terminalIdsInView().has(id)
 }
 
 /** 回车提交太密时不必每次写状态和快照：列表按分钟显示，30 秒误差看不出来。 */
@@ -1966,13 +1993,15 @@ subscribeTerminalProgramActivity(id => {
 })
 
 useTerminalStore.subscribe((state, previous) => {
-  if (state.activeTerminalId !== previous.activeTerminalId) {
-    if (previous.activeTerminalId) noteTerminalLeftView(previous.activeTerminalId)
-    if (state.activeTerminalId) clearTerminalAttention(state.activeTerminalId)
-  }
   if (state.terminals !== previous.terminals) {
     const existingIds = new Set(state.terminals.map(tab => tab.id))
     pruneTerminalAttention(existingIds)
     for (const id of busyForLastActive) if (!existingIds.has(id)) busyForLastActive.delete(id)
+  }
+  if (
+    state.terminals !== previous.terminals ||
+    TERMINAL_FOCUS_PANES.some(pane => readPaneTerminalId(state, pane) !== readPaneTerminalId(previous, pane))
+  ) {
+    syncTerminalsInView(terminalIdsInView())
   }
 })
