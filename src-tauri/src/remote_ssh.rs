@@ -32,6 +32,7 @@ pub use direct_settings::*;
 pub use direct_update::*;
 #[cfg(test)]
 mod live_acceptance;
+pub(crate) mod mobile_files;
 pub(crate) mod mobile_restore;
 mod search;
 mod server;

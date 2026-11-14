@@ -37,7 +37,25 @@
     terminalProfileRequests: 0,
     attaches: [],
     leasedInputs: [],
-    capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions'], sessionScope: 'shared' },
+    capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions', 'project_files'], sessionScope: 'shared' },
+    // File metadata only: the fixture never materializes a large download in memory.
+    files: [
+      { name: 'src', path: 'src', isDir: true, size: null, modifiedAt: 1794600000000 },
+      { name: 'README.md', path: 'README.md', isDir: false, size: 1024, modifiedAt: 1794600000000 },
+      { name: '中文说明.txt', path: 'src/中文说明.txt', isDir: false, size: 512, modifiedAt: 1794600000000 },
+      { name: 'app.ts', path: 'src/app.ts', isDir: false, size: 2048, modifiedAt: 1794600000000 },
+      { name: 'release.zip', path: 'release.zip', isDir: false, size: 256 * 1024 * 1024, modifiedAt: 1794600000000 },
+      { name: '.env.example', path: '.env.example', isDir: false, size: 80, modifiedAt: 1794600000000 },
+      { name: 'empty', path: 'empty', isDir: true, size: null, modifiedAt: 1794600000000 },
+    ],
+    fileRequests: [],
+    fileDelay: 0,
+    fileError: null,
+    fileTruncated: false,
+    fileDownloads: [],
+    fileDownload: null,
+    fileDownloadDelay: 100,
+    fileDownloadError: null,
     capabilityRequests: 0,
     sessionNames: true,
     renameError: null,
@@ -141,6 +159,31 @@
         state.capabilityRequests += 1
         return state.capabilities ? { ok: true, data: state.capabilities } : { ok: false, error: '请求格式无效。' }
       case 'projects': return { ok: true, data: state.projects }
+      case 'file_list':
+      case 'file_search':
+      case 'file_stat': {
+        state.fileRequests.push({ ...request, profile })
+        const error = state.fileError
+        const root = request.path || ''
+        const visible = state.files.filter(entry => (!entry.project || entry.project === request.project)
+          && (request.hidden || !entry.path.split('/').some(part => part.startsWith('.'))))
+        const query = String(request.query || '').toLocaleLowerCase()
+        const matching = request.op === 'file_list'
+          ? visible.filter(entry => entry.path.split('/').slice(0, -1).join('/') === root)
+          : visible.filter(entry => !entry.isDir && (!root || entry.path.startsWith(root + '/'))
+            && entry.path.toLocaleLowerCase().includes(query))
+        if (state.fileDelay) await new Promise(resolve => setTimeout(resolve, state.fileDelay))
+        if (error) return { ok: false, error }
+        if (!state.projects.some(project => project.id === request.project)) return { ok: false, error: '项目已移除或不再受信任。' }
+        if (request.op === 'file_stat') {
+          const entry = visible.find(item => item.path === root && !item.isDir)
+          return entry ? { ok: true, data: { ...entry, version: 'fixture:' + entry.size + ':' + entry.modifiedAt } }
+            : { ok: false, error: '文件不存在或已删除。' }
+        }
+        const limit = request.op === 'file_search' ? 200 : 2000
+        matching.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name))
+        return { ok: true, data: { entries: matching.slice(0, limit), truncated: state.fileTruncated || matching.length > limit } }
+      }
       case 'sessions': {
         state.sessionRequests.push({ project: request.project, desktop: request.desktop, at: Date.now() })
         // 不带 project：新版电脑端返回全部项目的手机会话，附项目与创建设备（会话纵览）。
@@ -287,6 +330,37 @@
 
   async function perform(request) {
     switch (request.op) {
+      case 'file_download': {
+        if (state.fileDownload) return { ok: false, error: '已有文件正在下载，请先完成或取消。' }
+        const stat = await remote(request.profile, { op: 'file_stat', project: request.project, path: request.path, hidden: true })
+        if (!stat.ok) return stat
+        if (request.version && request.version !== stat.data.version) return { ok: false, error: '源文件已变化，请刷新后重试。' }
+        const task = { profile: request.profile, project: request.project, path: request.path,
+          name: stat.data.name, total: stat.data.size, received: 0 }
+        state.fileDownloads.push({ ...task })
+        state.fileDownload = task
+        const event = (phase, extra = {}) => window.qingFileDownload?.({ ...task, state: phase, ...extra })
+        setTimeout(async () => {
+          if (state.fileDownload !== task) return
+          event('choosing')
+          for (let step = 1; step <= 4; step++) {
+            await new Promise(resolve => setTimeout(resolve, state.fileDownloadDelay))
+            if (state.fileDownload !== task) return
+            task.received = Math.floor(task.total * step / 4)
+            event('downloading')
+          }
+          state.fileDownload = null
+          if (state.fileDownloadError) event('error', { message: state.fileDownloadError })
+          else event('done')
+        }, 30)
+        return { ok: true, data: { started: true } }
+      }
+      case 'file_download_cancel': {
+        const task = state.fileDownload
+        state.fileDownload = null
+        if (task) window.qingFileDownload?.({ ...task, state: 'canceled' })
+        return { ok: true, data: true }
+      }
       case 'profiles': return { ok: true, data: [...state.profiles.values()].map(summary) }
       case 'clipboard': return { ok: true, data: state.clipboard }
       case 'haptic': state.haptics = (state.haptics ?? 0) + 1; return { ok: true, data: true }

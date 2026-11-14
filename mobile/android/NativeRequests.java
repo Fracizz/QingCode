@@ -24,6 +24,7 @@ final class NativeRequests implements AutoCloseable {
     private final ThreadPoolExecutor transfer = lane(2);
     private final ThreadPoolExecutor output = lane(4);
     private final ThreadPoolExecutor agentReads = lane(8);
+    private final ThreadPoolExecutor fileReads = lane(4);
     private final ThreadPoolExecutor latency = lane(2);
     // Socket disconnect can block in platform code. Never run it on the timer,
     // JavaScript bridge or UI thread, where it could stall unrelated deadlines.
@@ -82,6 +83,7 @@ final class NativeRequests implements AutoCloseable {
             || "agent_threads".equals(operation) || "agent_history".equals(operation);
         ThreadPoolExecutor executor = "poll".equals(operation) ? output
             : agentRead ? agentReads
+            : operation.startsWith("file_") ? fileReads
             : "latency".equals(operation) ? latency
             : "image".equals(operation) || "read_image".equals(operation) || "agent_image".equals(operation) ? transfer : control;
         Job<T> job = new Job<>(id, executor, timeoutMillis, work, reply);
@@ -106,7 +108,7 @@ final class NativeRequests implements AutoCloseable {
     @Override public void close() {
         closed = true;
         for (Job<?> job : jobs.values()) job.cancel("应用已关闭。");
-        control.shutdownNow(); transfer.shutdownNow(); output.shutdownNow(); agentReads.shutdownNow(); latency.shutdownNow();
+        control.shutdownNow(); transfer.shutdownNow(); output.shutdownNow(); agentReads.shutdownNow(); fileReads.shutdownNow(); latency.shutdownNow();
         cancellation.shutdown();
         clock.shutdownNow();
     }

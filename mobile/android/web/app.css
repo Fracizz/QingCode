@@ -1107,3 +1107,47 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
   .virtual-mouse:not([hidden]), .virtual-mouse-pointer:not([hidden]) { animation: none; }
   .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { transform: none; }
 }
+
+/* 项目文件入口与原项目行并列，滑动复制仍移动整个前景。 */
+.project-face { display: flex; align-items: stretch; }
+.project-face > .row { flex: 1; min-width: 0; }
+.project-files { flex: none; width: 44px; min-height: 44px; margin-right: 4px; align-self: center; color: var(--muted); }
+#files-dialog[open] { background: var(--paper); opacity: 1; transform: none; animation: none; transition: none; }
+#files-dialog .workspace-head h2 { flex: 1; }
+.files-search { display: flex; gap: 4px; flex: none; }
+.files-search input { flex: 1; width: 0; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font: inherit; }
+.files-controls { display: flex; align-items: center; gap: 10px; flex: none; font-size: 13px; }
+.files-controls .select-field { flex: 1; min-width: 0; }
+.files-controls label { display: inline-flex; flex: none; align-items: center; gap: 6px; margin: 0; min-height: 44px; font-size: 13px; white-space: nowrap; }
+.files-controls input[type="checkbox"] { width: 20px; height: 20px; min-width: 20px; min-height: 20px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
+.files-location { display: flex; align-items: center; flex: none; min-width: 0; }
+#files-breadcrumbs { display: flex; align-items: center; overflow-x: auto; white-space: nowrap; font-size: 13px; min-width: 0; }
+#files-breadcrumbs button { flex: none; padding-inline: 6px; }
+#files-scroll { flex: 1; min-height: 44px; overflow-y: auto; overscroll-behavior: contain; }
+#files-status { margin: 4px 4px 10px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+#files-status[data-error="true"], #files-transfer-status[data-error="true"] { color: var(--error); }
+#files-truncated { margin: 4px 4px 10px; color: var(--warning); font-size: 12px; }
+.file-entry { display: flex; align-items: center; min-width: 0; }
+.file-entry > .row { flex: 1; min-width: 0; grid-template-columns: 22px minmax(0, 1fr) 18px; gap: 10px; min-height: 64px; padding-inline: 12px; }
+.file-entry .row > svg { width: 20px; height: 20px; color: var(--muted); }
+.file-entry .row-text strong { overflow-wrap: anywhere; white-space: normal; }
+.file-entry .row-text small { white-space: normal; overflow-wrap: anywhere; font-size: 11.5px; }
+.file-entry-path { font-family: var(--mono); }
+.file-locate { flex: none; width: 44px; min-height: 44px; color: var(--muted); }
+.files-rules { margin: 12px 4px; color: var(--muted); font-size: 12px; }
+.files-rules summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.files-rules p { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+#files-transfer { flex: none; border-top: 1px solid var(--divider); padding-top: 8px; }
+#files-transfer strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#files-transfer p { margin-block: 4px; font-size: 12px; }
+#files-progress { width: 100%; height: 6px; accent-color: var(--accent); }
+#files-download-cancel { min-height: 44px; padding: 6px 12px; }
+#file-detail-name { color: var(--ink); overflow-wrap: anywhere; }
+.file-detail-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin-block: 12px; font-size: 13px; }
+.file-detail-meta dt { color: var(--muted); }
+.file-detail-meta dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-height: 450px) {
+  #files-dialog .workspace-head { min-height: 44px; }
+  #files-dialog .files-controls { min-height: 44px; }
+  #files-transfer .hint { display: none; }
+}

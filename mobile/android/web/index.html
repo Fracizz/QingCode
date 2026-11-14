@@ -21,6 +21,7 @@
   <!-- Same Lucide paths as the EXE: Terminal, Folders (projects), Cloud (connections). -->
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M12 19h8"></path><path d="m4 17 6-6-6-6"></path></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></symbol>
     <symbol id="i-project" viewBox="0 0 24 24"><path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"></path><path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"></path></symbol>
     <symbol id="i-host" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></symbol>
@@ -547,6 +548,7 @@
     <div class="rows terminal-actions">
       <button id="menu-edit" type="button"><svg><use href="#i-edit"/></svg><span>展开编辑指令</span></button>
       <button id="menu-submissions" type="button"><svg><use href="#i-history"/></svg><span>最近提交与项目草稿</span></button>
+      <button id="menu-files" type="button"><svg><use href="#i-folder"/></svg><span>项目文件</span></button>
       <button id="menu-read" type="button"><svg><use href="#i-book"/></svg><span>阅读与搜索输出</span></button>
       <button id="menu-mouse" type="button"><svg><use href="#i-pointer"/></svg><span>鼠标模式</span></button>
       <button id="menu-sessions" type="button"><svg><use href="#i-sidebar"/></svg><span>会话列表</span></button>
@@ -556,6 +558,22 @@
     </div>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="terminal-menu-dialog">关闭</button></div>
   </dialog>
+  <dialog id="files-dialog" class="workspace-dialog" aria-labelledby="files-title">
+    <header class="workspace-head"><button id="files-back" type="button" class="icon-button" aria-label="返回"><svg><use href="#i-back"/></svg></button><h2 id="files-title">项目文件</h2><button id="files-refresh" type="button" class="icon-button" aria-label="刷新文件列表"><svg><use href="#i-refresh"/></svg></button><button type="button" class="icon-button" data-close="files-dialog" aria-label="关闭"><svg><use href="#i-close"/></svg></button></header>
+    <p id="files-context" data-i18n-skip></p>
+    <div class="files-search"><input id="files-query" type="search" placeholder="查询文件名或相对路径" aria-label="查询文件名或相对路径" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><button id="files-clear" type="button" class="icon-button" aria-label="清除查询"><svg><use href="#i-close"/></svg></button><button id="files-cancel-query" type="button" class="text-button" hidden>取消查询</button></div>
+    <div class="files-controls"><select id="files-scope" aria-label="文件查询范围"><option value="project">当前项目</option><option value="directory">当前目录</option></select><label><input id="files-hidden" type="checkbox">显示隐藏文件</label></div>
+    <div class="files-location"><button id="files-up" type="button" class="icon-button" aria-label="返回上级目录"><svg><use href="#i-arrow-up"/></svg></button><nav id="files-breadcrumbs" aria-label="文件目录" data-i18n-skip></nav></div>
+    <div id="files-scroll" tabindex="0" aria-label="项目文件列表"><p id="files-status" role="status"></p><p id="files-truncated" class="hint" hidden></p><div id="files-list" class="rows"></div><details class="files-rules"><summary>文件显示规则</summary><p>查询按文件名和相对路径递归匹配，不搜索文件内容。</p><p id="files-rules"></p></details></div>
+    <section id="files-transfer" aria-label="文件下载" hidden><strong id="files-transfer-name" data-i18n-skip></strong><p id="files-transfer-status" role="status"></p><progress id="files-progress" aria-label="下载进度"></progress><p class="hint">下载期间请保持应用在前台；失败后可手动重新下载。</p><button id="files-download-cancel" type="button" class="secondary">取消下载</button></section>
+  </dialog>
+  <dialog id="file-detail-dialog" aria-labelledby="file-detail-title">
+    <h2 id="file-detail-title">文件下载</h2><p id="file-detail-name" data-i18n-skip></p><code id="file-detail-path" data-i18n-skip></code>
+    <dl class="file-detail-meta"><dt>文件大小</dt><dd id="file-detail-size"></dd><dt>修改时间</dt><dd id="file-detail-modified"></dd></dl>
+    <p id="file-detail-loading" role="status">正在读取文件信息…</p><p id="file-detail-error" class="error" role="alert"></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="file-detail-dialog">取消</button><button id="file-download" type="button" class="primary">下载</button></div>
+  </dialog>
+
   <dialog id="expanded-dialog" class="workspace-dialog" aria-labelledby="expanded-title">
     <header class="workspace-head"><button type="button" class="icon-button" data-close="expanded-dialog" aria-label="收起"><svg><use href="#i-back"/></svg></button><h2 id="expanded-title">编辑指令</h2></header>
     <p id="expanded-context"></p>

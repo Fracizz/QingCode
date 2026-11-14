@@ -16,6 +16,21 @@
 
 版本 1 的字段扩展需保持旧客户端行为；功能按 `features` 判断，不用业务写操作探测功能。只有专门的只读能力请求被旧电脑拒绝时使用 legacy 路径；网络或认证失败不能缓存为“不支持”。缓存按地址和证书标识，重新配对后清除。不兼容的协议版本提示更新。
 
+### 项目文件协议
+
+`project_files` 能力提供四个只读 RPC，`project` 为已保存且可信的项目 ID，`path` 为项目内相对路径（根目录为 `""`）。本机、WSL 与 SSH 资源分别解析，禁止绝对路径、`..`、反斜杠路径及符号链接逃逸。
+
+| RPC | 额外参数 | 返回 |
+| --- | --- | --- |
+| `file_list` | `hidden` | `{ entries, truncated }`，单层目录，最多 2000 条 |
+| `file_search` | `query`, `hidden` | 同上，递归文件名 / 相对路径查询，最多 200 条 |
+| `file_stat` | 无 | `{ name, path, size, modifiedAt, version }` |
+| `file_chunk` | `version`, `offset`, `length` | `{ data, offset, nextOffset, eof, version }`，`data` 为最多 256 KiB 原始字节的 Base64 |
+
+目录项为 `{ name, path, isDir, size, modifiedAt }`；时间为 Unix 毫秒，未知大小或时间为 `null`。查询与列表使用相同的隐藏文件和项目排除规则。截断结果必须显示提示。分块下载在安卓原生线程上写入系统文档 URI，不经过 WebView 传输文件数据；每块校验偏移、长度和源文件版本，失败不自动重发。版本用于检测大小 / 修改时间变化，不是内容散列或文件锁。
+
+Web 到原生的 `file_download { profile, project, path, version }` 立即返回 `{ started: true }`，系统保存选择和网络传输的后续结果经 `window.qingFileDownload` 回报。事件含 `state`（`choosing` / `downloading` / `done` / `canceled` / `error`）、`profile`、`project`、`path`、`name`、`received`、`total` 及可选 `message`。`file_download_cancel` 取消选择或在途下载；不得把开始回执当成下载成功。
+
 手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。支持 `shared_view` 时，安卓打开会话发送 `attach(shared=true, take=false)`，点「接管」才发送 `take=true`（抢下独占）。每端使用自己的输出游标；`poll(shared=true)` 的 `control` 含终端网格 `cols/rows`。支持 `multi_writer` 时所有设备默认可写：可写时返回 `lease`，被独占时返回独占方名称 `by`，只读旁观时返回 `observe`；另带在线名单 `viewers`（含 `self`、`typing`、`observe`）、`sizeOwner` / `sizeOwnerHere`、`sizeLocked`、`exclusive` / `exclusiveHere` 与 `lastInput`。新增 `exclusive{on, force}`、`lock_size{locked}`、`take_size` 与 `attach{observe}`。输入、上传按设备身份、独占与只读校验；尺寸请求只在请求设备是尺寸方时生效，其余先记下。
 
 ## 自动验证
@@ -33,6 +48,8 @@ pnpm build
 浏览器运行 `pnpm test:web`；Windows / macOS 使用 Ego，Linux 使用 agent-browser。Ego 执行 `scripts/web-tests/mobile-reliability.ego.mjs` 的 `run()`，可传 `spaceId`、`baseUrl`、`artifactDir`，连续回归时传 `finish: false` 并由调用者最终结束同一 TaskSpace。截图和 JSON 结果位于 `.dev/web-tests/mobile-reliability/`。覆盖输入失败后恢复、旧记录保留且不重发、上传时 Ctrl+C、能力协商/旧版兼容，以及 320px、横屏和模拟键盘高度。
 
 Linux 的三端共享观看回归使用 `node scripts/web-tests/mobile-shared-view.agent-browser.mjs`。它运行真实安卓页面，以内存桥模拟 Windows 与另一台安卓设备，验证持续输出、轮流接管、重连和旁观网格；结果与截图保存在 `.dev/web-tests/mobile-shared-view/`。
+
+项目文件浏览回归使用 `node scripts/web-tests/mobile-files.agent-browser.mjs`，结果与 PNG 截图位于 `.dev/web-tests/mobile-files/`。覆盖无终端浏览、中文名称、项目 / 目录查询、隐藏文件、截断提示、迟到结果、大小提醒、取消 / 失败、窄屏 / 横屏、终端草稿保留与旧版能力提示。下载进度由内存桥模拟，不代表 Android 系统文档已实际落盘；原生复制策略另由 `test:android-native` 验证超过 2 GiB 的有界分块和空文件 / 源变更 / 取消 / 响应校验。
 
 浏览器 fixture 不模拟 Android 调度线程；原生队列使用上述 JVM 回归验证。JVM 测试也不能替代 Android TLS、WebView、输入法和系统生命周期。
 
@@ -58,5 +75,6 @@ Linux 的三端共享观看回归使用 `node scripts/web-tests/mobile-shared-vi
 | 屏幕常亮（开启 / 关闭 / 重启应用 / 切后台） | 待执行 | 待执行 | 单独记录 | 默认关闭时按系统超时息屏；开启后超过系统超时仍亮屏，重启应用保持；切到后台恢复系统息屏，关闭后立即恢复 |
 | WebGL 渲染与 emoji 宽度（中低端机、挂起恢复） | 待执行 | 待执行 | 单独记录 | 高输出 TUI 不卡顿，挂起恢复后无黑屏花屏，关闭设置立即退回 DOM；emoji 行不错位 |
 | 本机 / WSL / SSH / Server | 待执行 | 待执行 | 单独记录 | 项目边界、信任、远端指纹、输入、历史、文件落点分别验证 |
+| 项目文件列表 / 查询 / 下载 | 待执行 | 待执行 | 单独记录 | 无终端浏览、逐层返回、中文名称、隐藏与排除一致、查询截断、旧版能力回退；100 MiB 提醒；系统另存为、空文件及大文件字节一致；取消 / 断网 / 源文件变化清理；同时终端可输入 |
 
 “待执行”不算通过。2026-11-04 实施时 ADB 初始没有物理设备连接；模拟器结果和截图保存在本次 `.dev/` 验收目录，不自动将真机列改为通过。

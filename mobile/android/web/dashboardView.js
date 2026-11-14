@@ -21,7 +21,7 @@ function loadCollapsedGroups() {
  * sessionCount(projectId) 为该项目未结束的会话数，latency() 为当前电脑的延迟文字；
  * lastProject() / projectHistory() 读手机记录；activate / openPair / openHost / openProject / copyProjectPath 为点击动作。
  */
-export function createDashboardView({ state, lastProject, projectHistory, syncLatency, activate, openPair, openHost, openProject, copyProjectPath }) {
+export function createDashboardView({ state, lastProject, projectHistory, syncLatency, activate, openPair, openHost, openProject, openFiles, copyProjectPath }) {
   const collapsedGroups = loadCollapsedGroups();
 
   function renderConnections() {
@@ -167,7 +167,10 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     copy.append(icon('copy'), copyLabel);
     const face = document.createElement('div');
     face.className = 'project-face';
-    face.append(row);
+    const files = button('icon-button project-files', () => { void openFiles?.(item); });
+    files.setAttribute('aria-label', t('浏览 {name} 的文件', { name: item.name }));
+    files.append(icon('folder'));
+    face.append(row, files);
     wrapper.append(copy, face);
     const swipe = attachSwipeReveal(wrapper, face);
     attachLongPress(row, swipe.open);

@@ -1,0 +1,314 @@
+// 项目文件列表、名称/路径查询与单文件下载；弹层覆盖终端，保持会话和草稿。
+import { button, confirmAction, get, icon, rowText } from './dom.js';
+import { dateLocale, t } from './i18n.js';
+import { createFilePositions, createFileRequestScope, formatFileBytes, needsDownloadConfirmation, parentDirectory, relativeFilePath } from './fileBrowserState.js';
+
+export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () => {} }) {
+  const dialog = get('files-dialog');
+  const detail = get('file-detail-dialog');
+  const positions = createFilePositions(localStorage);
+  const requests = createFileRequestScope();
+  const scrolls = new Map();
+  let context = null;
+  let path = '';
+  let supported = false;
+  let timer;
+  let listAbort = null;
+  let detailAbort = null;
+  let entries = [];
+  let selected = null;
+  let selectionEpoch = 0;
+  let transfer = null;
+  let transferContext = '';
+
+  const searching = () => !!get('files-query').value.trim();
+  const activeTransfer = () => ['choosing', 'downloading'].includes(transfer?.state);
+  const currentContext = target => dialog.open && target === context;
+
+  function invalidate() {
+    requests.cancel();
+    listAbort?.abort();
+    listAbort = null;
+  }
+
+  function savePosition() {
+    if (!context || searching()) return;
+    const scroll = get('files-scroll').scrollTop;
+    scrolls.set(path, scroll);
+    positions.write(context.host.id, context.project.id, path, scroll);
+  }
+
+  function crumbs() {
+    const nav = get('files-breadcrumbs');
+    const root = button('text-button', () => navigate(''));
+    root.textContent = context.project.name;
+    const nodes = [root];
+    let current = '';
+    for (const part of path.split('/').filter(Boolean)) {
+      current = current ? current + '/' + part : part;
+      const target = current;
+      const control = button('text-button', () => navigate(target));
+      control.textContent = part;
+      nodes.push(document.createTextNode(' / '), control);
+    }
+    nodes[nodes.length - 1].setAttribute('aria-current', 'location');
+    nav.replaceChildren(...nodes);
+    get('files-up').disabled = !path;
+  }
+
+  function renderTransfer() {
+    get('files-transfer').hidden = !transfer;
+    if (!transfer) return;
+    const name = transfer.name || t('文件');
+    get('files-transfer-name').textContent = [transferContext, name].filter(Boolean).join(' / ');
+    const received = Number.isFinite(transfer.received) ? transfer.received : 0;
+    const total = transfer.total;
+    const progress = get('files-progress');
+    if (Number.isFinite(total) && total > 0) { progress.max = total; progress.value = Math.min(received, total); }
+    else progress.removeAttribute('value');
+    progress.hidden = transfer.state !== 'downloading';
+    get('files-transfer-status').textContent = {
+      choosing: t('请选择文件保存位置'),
+      downloading: t('已下载 {received} / {total}', { received: formatFileBytes(received), total: formatFileBytes(total) }),
+      done: t('下载完成'), canceled: t(transfer.message || '已取消下载。'), error: t(transfer.message || '下载失败，请检查网络后重试。'),
+    }[transfer.state] || '';
+    get('files-transfer-status').dataset.error = String(transfer.state === 'error');
+    get('files-download-cancel').hidden = !activeTransfer();
+    get('file-download').disabled = !selected || activeTransfer();
+  }
+
+  function renderEntries() {
+    const list = get('files-list');
+    const query = searching();
+    list.replaceChildren(...entries.map(entry => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'file-entry';
+      const control = button('row', () => entry.isDir ? navigate(entry.path) : showFile(entry));
+      control.dataset.path = entry.path;
+      const date = Number.isFinite(entry.modifiedAt) ? new Date(entry.modifiedAt).toLocaleString(dateLocale(), { dateStyle: 'short', timeStyle: 'short' }) : '';
+      const meta = [entry.isDir ? t('文件夹') : formatFileBytes(entry.size), date].filter(Boolean).join(' · ');
+      const text = rowText(entry.name, meta);
+      if (query) {
+        const location = document.createElement('small');
+        location.className = 'file-entry-path';
+        location.textContent = entry.path;
+        text.append(location);
+      }
+      control.append(icon(entry.isDir ? 'folder' : 'file'), text, icon(entry.isDir ? 'chevron' : 'down', 'arrow'));
+      wrapper.append(control);
+      if (query) {
+        const locate = button('icon-button file-locate', () => navigate(parentDirectory(entry.path), entry.path));
+        locate.setAttribute('aria-label', t('定位 {name}', { name: entry.name }));
+        locate.append(icon('folder'));
+        wrapper.append(locate);
+      }
+      return wrapper;
+    }));
+  }
+
+  function setLoading(value) {
+    get('files-list').setAttribute('aria-busy', String(value));
+    get('files-refresh').disabled = !supported;
+    get('files-cancel-query').hidden = !value || !searching();
+  }
+
+  async function load({ restore = null, highlight = null } = {}) {
+    clearTimeout(timer);
+    if (!context || !supported || !dialog.open) return;
+    const target = context;
+    invalidate();
+    const request = requests.begin();
+    const controller = new AbortController();
+    listAbort = controller;
+    const query = get('files-query').value.trim();
+    const args = { profile: target.host.id, project: target.project.id, path: query && get('files-scope').value === 'project' ? '' : path, hidden: get('files-hidden').checked };
+    entries = [];
+    renderEntries();
+    setLoading(true);
+    get('files-status').textContent = t(query ? '正在查询文件…' : '正在读取目录…');
+    get('files-status').dataset.error = 'false';
+    get('files-truncated').hidden = true;
+    try {
+      const result = await rpc(query ? 'file_search' : 'file_list', { ...args, ...(query ? { query } : {}) }, { signal: controller.signal });
+      if (!currentContext(target) || !requests.current(request)) return;
+      entries = Array.isArray(result.entries) ? result.entries : [];
+      renderEntries();
+      get('files-status').textContent = entries.length ? t('{n} 项', { n: entries.length }) : t(query ? '没有匹配的文件' : '此目录为空');
+      get('files-truncated').hidden = !result.truncated;
+      get('files-truncated').textContent = t(query ? '查询结果可能不完整（最多 200 条），请缩小查询范围。' : '目录未完整显示（最多 2000 项），可缩小范围查询。');
+      get('files-rules').textContent = t('列表与查询遵循电脑端 files.exclude；不跟随符号链接。')
+        + (result.excludeGitIgnore ? ' ' + t('同时遵循 .gitignore。') : '')
+        + (Array.isArray(result.excludedPatterns) && result.excludedPatterns.length ? '\n' + result.excludedPatterns.join(', ') : '');
+      if (restore !== null) get('files-scroll').scrollTop = restore;
+      else get('files-scroll').scrollTop = 0;
+      if (highlight) {
+        const row = [...get('files-list').querySelectorAll('[data-path]')].find(item => item.dataset.path === highlight);
+        row?.focus({ preventScroll: true });
+        row?.scrollIntoView({ block: 'center' });
+      }
+    } catch (error) {
+      if (!currentContext(target) || !requests.current(request)) return;
+      get('files-status').textContent = t(error.message);
+      get('files-status').dataset.error = 'true';
+    } finally {
+      if (currentContext(target) && requests.current(request)) setLoading(false);
+      if (listAbort === controller) listAbort = null;
+    }
+  }
+
+  function navigate(next, highlight = null) {
+    savePosition();
+    invalidate();
+    path = relativeFilePath(next);
+    get('files-query').value = '';
+    crumbs();
+    void load({ restore: scrolls.get(path) || 0, highlight });
+  }
+
+  function cancelQuery() {
+    clearTimeout(timer);
+    invalidate();
+    setLoading(false);
+    get('files-status').textContent = t('已取消查询');
+  }
+
+  function queueQuery() {
+    savePosition();
+    invalidate();
+    clearTimeout(timer);
+    entries = [];
+    renderEntries();
+    setLoading(false);
+    timer = setTimeout(() => load({ restore: searching() ? 0 : scrolls.get(path) || 0 }), 300);
+  }
+
+  async function showFile(entry) {
+    const target = context;
+    const epoch = ++selectionEpoch;
+    detailAbort?.abort();
+    const controller = new AbortController();
+    detailAbort = controller;
+    selected = null;
+    get('file-detail-name').textContent = entry.name;
+    get('file-detail-path').textContent = entry.path;
+    get('file-detail-size').textContent = formatFileBytes(entry.size);
+    get('file-detail-modified').textContent = Number.isFinite(entry.modifiedAt) ? new Date(entry.modifiedAt).toLocaleString(dateLocale()) : t('未知');
+    get('file-detail-error').textContent = '';
+    get('file-download').disabled = true;
+    get('file-detail-loading').hidden = false;
+    detail.showModal();
+    try {
+      const stat = await rpc('file_stat', { profile: target.host.id, project: target.project.id, path: entry.path }, { signal: controller.signal });
+      if (!currentContext(target) || !detail.open || epoch !== selectionEpoch) return;
+      if (stat.path !== entry.path || stat.name !== entry.name) throw new Error(t('文件信息发生变化，请刷新后重试。'));
+      selected = stat;
+      get('file-detail-size').textContent = formatFileBytes(stat.size);
+      get('file-detail-modified').textContent = Number.isFinite(stat.modifiedAt) ? new Date(stat.modifiedAt).toLocaleString(dateLocale()) : t('未知');
+      renderTransfer();
+      get('file-download').disabled = activeTransfer();
+    } catch (error) {
+      if (epoch === selectionEpoch && detail.open) get('file-detail-error').textContent = t(error.message);
+    } finally {
+      if (epoch === selectionEpoch) get('file-detail-loading').hidden = true;
+      if (detailAbort === controller) detailAbort = null;
+    }
+  }
+
+  async function download() {
+    if (!selected || activeTransfer()) return;
+    const file = selected;
+    const target = context;
+    const epoch = selectionEpoch;
+    try {
+      if (needsDownloadConfirmation(file.size)) {
+        const text = Number.isFinite(file.size) && file.size >= 0
+          ? t('文件大小为 {size}，下载可能耗时较长。请保持应用在前台，并确保保存位置有足够空间。', { size: formatFileBytes(file.size) })
+          : t('文件大小未知。请保持应用在前台，并确保保存位置有足够空间。');
+        if (!await confirmAction(t('下载提醒'), text, t('继续下载'))) return;
+      }
+      if (!currentContext(target) || !detail.open || epoch !== selectionEpoch || activeTransfer()) return;
+      get('file-download').disabled = true;
+      transferContext = target.host.name + ' / ' + target.project.name;
+      transfer = { state: 'choosing', name: file.name, received: 0, total: file.size, profile: target.host.id, project: target.project.id, path: file.path };
+      renderTransfer();
+      await rpc('file_download', { profile: target.host.id, project: target.project.id, path: file.path, version: file.version });
+      if (detail.open) detail.close();
+    } catch (error) {
+      transfer = { state: 'error', name: file.name, message: error.message };
+      renderTransfer();
+      if (detail.open) get('file-detail-error').textContent = t(error.message);
+    } finally {
+      get('file-download').disabled = !selected || activeTransfer();
+    }
+  }
+
+  async function open(item) {
+    const host = profile();
+    if (!host || !item) return;
+    beforeOpen();
+    if (dialog.open) { savePosition(); dialog.close(); }
+    invalidate();
+    context = { host: { ...host }, project: { ...item } };
+    const target = context;
+    const saved = positions.read(host.id, item.id);
+    path = saved.path;
+    scrolls.clear();
+    scrolls.set(path, saved.scroll);
+    supported = false;
+    get('files-context').textContent = host.name + ' / ' + item.name;
+    get('files-query').value = '';
+    get('files-hidden').checked = false;
+    get('files-scope').value = 'project';
+    get('files-rules').textContent = t('列表与查询遵循电脑端 files.exclude；不跟随符号链接。');
+    get('files-status').textContent = t('正在读取目录…');
+    get('files-status').dataset.error = 'false';
+    get('files-truncated').hidden = true;
+    entries = [];
+    renderEntries();
+    crumbs();
+    renderTransfer();
+    dialog.showModal();
+    setLoading(false);
+    try {
+      const info = await capabilities(host);
+      if (!currentContext(target)) return;
+      if (!info?.features.includes('project_files')) throw new Error(t('电脑端不支持项目文件，请更新电脑端 QingCode。'));
+      supported = true;
+      await load({ restore: saved.scroll });
+    } catch (error) {
+      if (currentContext(target)) { get('files-status').textContent = t(error.message); get('files-status').dataset.error = 'true'; }
+    }
+  }
+
+  function back() {
+    if (!dialog.open) return false;
+    if (searching()) { get('files-query').value = ''; invalidate(); void load({ restore: scrolls.get(path) || 0 }); }
+    else if (path) navigate(parentDirectory(path));
+    else dialog.close();
+    return true;
+  }
+
+  get('files-back').addEventListener('click', back);
+  get('files-up').addEventListener('click', () => navigate(parentDirectory(path)));
+  get('files-refresh').addEventListener('click', () => { savePosition(); void load({ restore: searching() ? 0 : scrolls.get(path) || 0 }); });
+  get('files-query').addEventListener('input', queueQuery);
+  get('files-scroll').addEventListener('scroll', savePosition, { passive: true });
+  get('files-clear').addEventListener('click', () => { get('files-query').value = ''; queueQuery(); });
+  get('files-cancel-query').addEventListener('click', cancelQuery);
+  get('files-scope').addEventListener('change', queueQuery);
+  get('files-hidden').addEventListener('change', queueQuery);
+  get('file-download').addEventListener('click', download);
+  get('files-download-cancel').addEventListener('click', async () => {
+    try { await rpc('file_download_cancel'); }
+    catch (error) { get('files-transfer-status').textContent = t(error.message); }
+  });
+  dialog.addEventListener('cancel', event => { event.preventDefault(); back(); });
+  dialog.addEventListener('close', () => { savePosition(); clearTimeout(timer); invalidate(); setLoading(false); selectionEpoch += 1; if (detail.open) detail.close(); });
+  detail.addEventListener('close', () => { selectionEpoch += 1; selected = null; detailAbort?.abort(); detailAbort = null; });
+  window.qingFileDownload = event => {
+    if (!event || (transfer && ['profile', 'project', 'path'].some(key => transfer[key] && event[key] && transfer[key] !== event[key]))) return;
+    transfer = { ...transfer, ...event };
+    renderTransfer();
+  };
+  return { open, back, isOpen: () => dialog.open, render: () => { if (dialog.open) { renderEntries(); renderTransfer(); } } };
+}

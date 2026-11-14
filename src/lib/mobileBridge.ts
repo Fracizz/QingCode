@@ -1,3 +1,4 @@
+import { loadExcludeSettingsForProject } from './excludeSettings'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useProjectStore } from '@/store/projectStore'
@@ -21,6 +22,8 @@ import type { TerminalTab } from '@/types'
 
 interface Request {
   id: string
+  fileAccess?: boolean
+  fileRules?: boolean
   project?: string | null
   attachment?: string | null
   /** 列出终端配置（不含命令）。 */
@@ -179,7 +182,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
 
 async function respond({
   project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, seed, endTerminal,
-  connectRemoteProjects: connectRemote,
+  connectRemoteProjects: connectRemote, fileAccess, fileRules,
 }: Request) {
   if (connectRemote) {
     // 主机可能很慢，不占用桥接请求的超时；连上后由电脑端的扫描接回。
@@ -205,6 +208,10 @@ async function respond({
     const ephemeral = useProjectStore.getState().projects.filter(project => project.ephemeral)
     await pushTrustedRootsToNative([...projects, ...ephemeral])
     await ensureSshWorkspaceConnected(project)
+    if (fileAccess) {
+      const rules = fileRules ? await loadExcludeSettingsForProject(project) : null
+      return { path: project.path, excludes: rules?.filesExclude ?? [], excludeGitIgnore: rules?.excludeGitIgnore ?? false }
+    }
     if (attachment) {
       if (!isSshProject(project)) throw new Error('附件上传需要远端项目。')
       return { path: await uploadLocalFilesForSshTerminal(project.path, [attachment]) }

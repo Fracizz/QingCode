@@ -18,6 +18,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
 vi.mock('../store/projectStore', () => ({
   useProjectStore: { getState: () => ({ projects: mocks.currentProjects }) },
 }))
+vi.mock('./excludeSettings', () => ({ loadExcludeSettingsForProject: async () => ({ filesExclude: ['**/private'], excludeGitIgnore: true }) }))
 vi.mock('./sshTerminalPaste', () => ({ uploadLocalFilesForSshTerminal: mocks.upload }))
 vi.mock('./tauri', () => ({
   isTauri: () => true,
@@ -68,6 +69,16 @@ describe('mobile project bridge', () => {
     mocks.listProjects.mockResolvedValue([local, wsl])
     trustProject(local)
     trustProject(wsl)
+  })
+
+  it('authorizes file requests against saved trusted projects and returns project explorer rules', async () => {
+    expect(await send({ project: local.id, fileAccess: true, fileRules: true })).toEqual({
+      id: 'request', data: { path: local.path, excludes: ['**/private'], excludeGitIgnore: true },
+    })
+    restrictProject(local)
+    expect(await send({ project: local.id, fileAccess: true })).toEqual({
+      id: 'request', error: '请在 Windows QingCode 中信任该项目后重试。',
+    })
   })
 
   it('connects only confirmed Server-mode projects when restoring phone terminals', () => {

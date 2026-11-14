@@ -34,6 +34,41 @@ describe('native RPC deadlines', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('aborts one read without affecting another and ignores its late reply', async () => {
+    vi.useFakeTimers()
+    const native = { request: vi.fn(), cancel: vi.fn() }
+    const rpc = createNativeRpc(native)
+    const controller = new AbortController()
+    const result = rpc.request('file_search', { query: 'old' }, { signal: controller.signal }).catch((error: Error) => error)
+    const next = rpc.request('file_stat', { path: 'new.txt' })
+    controller.abort()
+    expect((await result).name).toBe('AbortError')
+    expect(native.cancel).toHaveBeenCalledExactlyOnceWith(1)
+    rpc.receive(1, { ok: true, data: 'late old result' })
+    rpc.receive(2, { ok: true, data: 'new result' })
+    expect(await next).toBe('new result')
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(native.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not dispatch pre-aborted reads and removes abort listeners on successful replies', async () => {
+    vi.useFakeTimers()
+    const native = { request: vi.fn(), cancel: vi.fn() }
+    const rpc = createNativeRpc(native)
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(rpc.request('file_list', {}, { signal: aborted.signal })).rejects.toHaveProperty('name', 'AbortError')
+    expect(native.request).not.toHaveBeenCalled()
+    const controller = new AbortController()
+    const read = rpc.request('file_list', {}, { signal: controller.signal })
+    rpc.receive(1, { ok: true, data: [] })
+    expect(await read).toEqual([])
+    controller.abort()
+    expect(native.cancel).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('keeps user permission/picker requests open and clears timers after synchronous failures', async () => {
     vi.useFakeTimers()
     const native = { request: vi.fn(), cancel: vi.fn() }

@@ -13,6 +13,32 @@ pub(super) enum Operation {
     Ping,
     Capabilities,
     Projects,
+    FileList {
+        project: String,
+        #[serde(default)]
+        path: String,
+        #[serde(default)]
+        hidden: bool,
+    },
+    FileSearch {
+        project: String,
+        #[serde(default)]
+        path: String,
+        query: String,
+        #[serde(default)]
+        hidden: bool,
+    },
+    FileStat {
+        project: String,
+        path: String,
+    },
+    FileChunk {
+        project: String,
+        path: String,
+        version: String,
+        offset: u64,
+        length: u64,
+    },
     Sessions {
         /// 不传时返回这台电脑上全部项目的手机会话（附项目与创建设备），供手机纵览。
         #[serde(default)]
@@ -115,10 +141,45 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence"],
+            "features": ["project_files", "terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
+        Operation::FileList {
+            project,
+            path,
+            hidden,
+        } => files::operate(app, &project, files::FileRequest::list(path, hidden)).await,
+        Operation::FileSearch {
+            project,
+            path,
+            query,
+            hidden,
+        } => {
+            files::operate(
+                app,
+                &project,
+                files::FileRequest::search(path, query, hidden),
+            )
+            .await
+        }
+        Operation::FileStat { project, path } => {
+            files::operate(app, &project, files::FileRequest::stat(path)).await
+        }
+        Operation::FileChunk {
+            project,
+            path,
+            version,
+            offset,
+            length,
+        } => {
+            files::operate(
+                app,
+                &project,
+                files::FileRequest::chunk(path, version, offset, length),
+            )
+            .await
+        }
         Operation::Sessions {
             project: None,
             desktop,

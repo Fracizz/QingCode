@@ -571,7 +571,7 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
 export function renameProfileKeys(keys, prefix, from, to) {
   const moves = [];
   for (const key of keys) {
-    for (const scope of ['session:', 'session-pins:', 'project:', 'recent-projects:', 'sidebar-projects:', 'session-groups-collapsed:', 'session-order:']) {
+    for (const scope of ['files:', 'session:', 'session-pins:', 'project:', 'recent-projects:', 'sidebar-projects:', 'session-groups-collapsed:', 'session-order:']) {
       const old = prefix + scope + from;
       if (key === old || key.startsWith(old + ':')) moves.push([key, prefix + scope + to + key.slice(old.length)]);
     }

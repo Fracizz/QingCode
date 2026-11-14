@@ -33,6 +33,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch, Notify, Semaphore};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
+pub(crate) mod files;
 mod hub;
 mod launch;
 mod network;

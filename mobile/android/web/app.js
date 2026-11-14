@@ -1,6 +1,7 @@
 // QingCode Android 入口：连接与项目状态、终端生命周期、输入分发和会话增删。
 // 视图与弹窗拆在独立模块：dashboardView / pairingFlow / sessionDrawer / outputReader /
 // composeStatus / terminalSettings / shortcutBar；纯逻辑放在 protocol / composer / keyLayout 等文件并有 Vitest 覆盖。
+import { createFileBrowser } from './fileBrowser.js';
 import {
   applyModifiers,
   attachNeedsRedraw,
@@ -92,6 +93,7 @@ function applyLocale(value) {
   renderLatency();
   setRawKeyboard(inputMode === 'raw');
   updates.render();
+  files.render();
   if (profile && selected) drawer.render();
 }
 const prefix = 'qingcode:mobile:';
@@ -208,6 +210,10 @@ function remote(op, args = {}, address = profile?.id) {
   return rpc(op, { ...args, ...(scoped ? { lease: currentLease } : {}), profile: address });
 }
 const desktopProtocol = createDesktopProtocol(remote);
+const files = createFileBrowser({
+  rpc, profile: () => profile, capabilities: host => desktopProtocol.capabilities(host),
+  beforeOpen: () => { cancelKeyRepeats(); compose.blur(); term?.blur(); drawer?.close(); },
+});
 const terminalInput = createTerminalInput({
   write: (target, data) => remote('input', { id: target.id, data }, target.address),
   isCurrent: target => target.epoch === viewEpoch && target.id === selected
@@ -270,6 +276,7 @@ const dashboard = createDashboardView({
   openPair: (...args) => pairing.openPair(...args),
   openHost: item => pairing.openHost(item),
   openProject,
+  openFiles: item => files.open(item),
   copyProjectPath: async item => {
     try {
       await rpc('copy', { text: projectLocation(item) });
@@ -625,9 +632,10 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
+    if (id === 'files-dialog') return files.back();
     if (id !== 'pair-dialog' || !get('pair-submit').disabled) dialog.close('cancel');
     return true;
   }
@@ -741,7 +749,7 @@ function forgetProfile(item) {
   profiles = profiles.filter(saved => saved.id !== item.id);
   health.delete(item.id);
   for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':') || key.startsWith(prefix + 'session-order:' + item.id + ':')) {
+    if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':') || key.startsWith(prefix + 'session-order:' + item.id + ':') || key.startsWith(prefix + 'files:' + item.id + ':')) {
       localStorage.removeItem(key);
     }
   }
@@ -954,6 +962,7 @@ for (const [id, action] of Object.entries({
   'menu-edit': openEditor,
   'menu-submissions': showSubmissions,
   'menu-read': () => reader.open(),
+  'menu-files': () => files.open(project),
   'menu-mouse': toggleMouseMode,
   'menu-sessions': () => toggleSessions({ expandOnly: true }),
   'menu-new': () => { if (!busy) openNewSessionDialog(); },

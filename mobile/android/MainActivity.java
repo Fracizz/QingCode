@@ -11,6 +11,7 @@ import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.provider.Settings;
+import android.provider.DocumentsContract;
 import android.graphics.Insets;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -80,6 +81,7 @@ public final class MainActivity extends Activity {
     private static final int NOTIFICATION_REQUEST = 2;
     static final String OPEN_SESSION_ACTION = "com.qingcode.companion.OPEN_SESSION";
     private static final int IMAGE_REQUEST = 2;
+    private static final int FILE_DOWNLOAD_REQUEST = 3;
     private static final int MAX_IMAGE = 8 * 1024 * 1024;
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
     private static final String INSTALL_ACTION = "com.qingcode.companion.INSTALL_STATUS";
@@ -111,6 +113,8 @@ public final class MainActivity extends Activity {
     private volatile Thread updateThread;
     private volatile boolean updateCancelled;
     private volatile File updateApk;
+    private volatile FileDownload fileDownload;
+    private static final ThreadLocal<FileDownload> ACTIVE_FILE_DOWNLOAD = new ThreadLocal<>();
 
     private static final class ImageSelection {
         final List<Uri> uris;
@@ -226,6 +230,7 @@ public final class MainActivity extends Activity {
                         case "app.js": case "protocol.js": case "themeBoot.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "composer.js": case "terminalHistory.js": case "terminalScrollbar.js": case "terminalJog.js": case "terminalHold.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
                         case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
+                        case "fileBrowser.js": case "fileBrowserState.js":
                         case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "sessionOverview.js": case "sessionPrefs.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
                         case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js":
@@ -322,6 +327,18 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int code, int result, Intent intent) {
         super.onActivityResult(code, result, intent);
+        if (code == FILE_DOWNLOAD_REQUEST) {
+            FileDownload download = fileDownload;
+            Uri target = result == RESULT_OK && intent != null ? intent.getData() : null;
+            if (download == null) {
+                if (target != null) new Thread(() -> discardDownloadDocument(target), "qingcode-file-cleanup").start();
+            } else {
+                download.target = target;
+                if (target == null) download.finish("canceled", null);
+                else download.startTransfer();
+            }
+            return;
+        }
         if (code != IMAGE_REQUEST || imageReply == null) return;
         final int id = imageReply;
         final String compression = imageCompression;
@@ -548,6 +565,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         imageSelections.clear();
+        FileDownload download = fileDownload;
+        if (download != null) download.cancel();
         updateCancelled = true;
         requests.close();
         if (view != null) {
@@ -636,6 +655,16 @@ public final class MainActivity extends Activity {
                         reply(id, failure("无法打开系统图片选择器。"));
                     }
                 });
+                return;
+            }
+            if ("file_download".equals(op)) {
+                startFileDownload(id, request);
+                return;
+            }
+            if ("file_download_cancel".equals(op)) {
+                FileDownload download = fileDownload;
+                if (download != null) download.cancel();
+                replySafely(id, true);
                 return;
             }
             if ("read_image".equals(op)) {
@@ -770,6 +799,205 @@ public final class MainActivity extends Activity {
                 return;
             }
             enqueue(id, op, () -> perform(request));
+        }
+    }
+
+    private void startFileDownload(int id, JSONObject request) {
+        try {
+            Connection connection = connections.get(request.getString("profile"));
+            if (connection == null) throw new IOException("请先完成密码配对。");
+            FileDownload download = new FileDownload(connection, request.getString("project"),
+                request.getString("path"), request.optString("version", ""));
+            synchronized (this) {
+                if (fileDownload != null) throw new IOException("已有文件正在下载或选择保存位置，请先完成或取消。");
+                fileDownload = download;
+            }
+            replySafely(id, new JSONObject().put("started", true));
+            download.emit("choosing", null);
+            download.startPreparation();
+        } catch (Exception error) {
+            reply(id, failure(error.getMessage() == null ? "无法开始下载。" : error.getMessage()));
+        }
+    }
+
+    /** SAF creates a distinct document; failed/cancelled downloads must not leave it looking complete. */
+    private boolean discardDownloadDocument(Uri uri) {
+        try {
+            if (DocumentsContract.isDocumentUri(this, uri)) {
+                return DocumentsContract.deleteDocument(getContentResolver(), uri);
+            }
+            return getContentResolver().delete(uri, null, null) > 0;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private final class FileDownload {
+        final Connection connection;
+        final String project;
+        final String path;
+        final String requestedVersion;
+        volatile FileDownloadPolicy.Snapshot snapshot;
+        volatile boolean cancelled;
+        volatile boolean finished;
+        volatile boolean choosing;
+        volatile Thread worker;
+        volatile Uri target;
+        volatile long received;
+        private long lastProgressNanos;
+        private Runnable abort;
+
+        FileDownload(Connection connection, String project, String path, String version) throws IOException {
+            if (project.isEmpty() || path.isEmpty()) throw new IOException("请选择项目中的文件。");
+            this.connection = connection; this.project = project; this.path = path; requestedVersion = version;
+        }
+
+        void checkActive() throws IOException {
+            if (cancelled || finished || Thread.currentThread().isInterrupted()) {
+                throw new java.io.InterruptedIOException("已取消下载。");
+            }
+            Connection paired = connections.get(connection.address());
+            if (paired == null || !paired.token.equals(connection.token)
+                || !paired.fingerprint.equals(connection.fingerprint)) {
+                throw new IOException("电脑连接已变化，请重新选择文件下载。");
+            }
+        }
+
+        void bindAbort(Runnable action) throws IOException {
+            synchronized (this) { abort = action; }
+            checkActive();
+        }
+
+        synchronized void clearAbort(Runnable action) { if (abort == action) abort = null; }
+
+        void cancel() {
+            final Runnable action;
+            synchronized (this) {
+                if (finished) return;
+                cancelled = true;
+                action = abort;
+                abort = null;
+                if (worker != null) worker.interrupt();
+            }
+            // Disconnect can block inside Android networking; keep the UI and bridge responsive.
+            if (action != null) new Thread(() -> { try { action.run(); } catch (RuntimeException ignored) { } },
+                "qingcode-file-cancel").start();
+            // A pending picker keeps this slot until its result returns, preventing result mix-ups.
+            if (choosing) emit("canceled", null);
+        }
+
+        JSONObject call(JSONObject request) throws Exception {
+            checkActive();
+            JSONObject response = connection.call(request.put("project", project).put("path", path));
+            checkActive();
+            if (!response.optBoolean("ok")) throw new IOException(response.optString("error", "文件下载失败。"));
+            return response.getJSONObject("data");
+        }
+
+        FileDownloadPolicy.Snapshot stat() throws Exception {
+            JSONObject data = call(new JSONObject().put("op", "file_stat"));
+            return new FileDownloadPolicy.Snapshot(data.getString("name"), data.getString("version"), data.getLong("size"));
+        }
+
+        void startPreparation() {
+            worker = new Thread(() -> {
+                ACTIVE_FILE_DOWNLOAD.set(this);
+                try {
+                    snapshot = stat();
+                    if (!requestedVersion.isEmpty() && !requestedVersion.equals(snapshot.version)) {
+                        throw new IOException("源文件已变化，请刷新后重新下载。");
+                    }
+                    runOnUiThread(() -> {
+                        if (cancelled || isFinishing() || isDestroyed()) { finish("canceled", null); return; }
+                        try {
+                            choosing = true;
+                            emit("choosing", null);
+                            Intent picker = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/octet-stream")
+                                .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE, snapshot.name);
+                            startActivityForResult(picker, FILE_DOWNLOAD_REQUEST);
+                        } catch (Exception error) {
+                            choosing = false;
+                            finish("error", "无法打开系统文件保存位置选择器。");
+                        }
+                    });
+                } catch (Exception error) {
+                    finish(cancelled ? "canceled" : "error", cancelled ? null : error.getMessage());
+                } finally {
+                    ACTIVE_FILE_DOWNLOAD.remove();
+                }
+            }, "qingcode-file-prepare");
+            worker.start();
+        }
+
+        void startTransfer() {
+            choosing = false;
+            worker = new Thread(() -> {
+                ACTIVE_FILE_DOWNLOAD.set(this);
+                try {
+                    checkActive();
+                    snapshot.requireSame(stat());
+                    OutputStream destination = getContentResolver().openOutputStream(target, "wt");
+                    if (destination == null) throw new IOException("无法写入所选保存位置。");
+                    try (OutputStream output = destination) {
+                        FileDownloadPolicy.copy(snapshot, new FileDownloadPolicy.Source() {
+                            @Override public void checkActive() throws IOException { FileDownload.this.checkActive(); }
+                            @Override public FileDownloadPolicy.Chunk read(long offset, int length) throws Exception {
+                                JSONObject data = call(new JSONObject().put("op", "file_chunk")
+                                    .put("version", snapshot.version).put("offset", offset).put("length", length));
+                                String encoded = data.getString("data");
+                                if (encoded.length() > 4 * ((FileDownloadPolicy.CHUNK_BYTES + 2) / 3)) {
+                                    throw new IOException("文件下载数据块过大。");
+                                }
+                                byte[] bytes = Base64.decode(encoded, Base64.NO_WRAP);
+                                return new FileDownloadPolicy.Chunk(bytes, data.getLong("offset"), data.getLong("nextOffset"),
+                                    data.getBoolean("eof"), data.getString("version"));
+                            }
+                            @Override public FileDownloadPolicy.Snapshot stat() throws Exception { return FileDownload.this.stat(); }
+                            @Override public void progress(long count, long total) {
+                                received = count;
+                                long now = System.nanoTime();
+                                if (count == 0 || count == total || now - lastProgressNanos >= 150_000_000L) {
+                                    lastProgressNanos = now;
+                                    emit("downloading", null);
+                                }
+                            }
+                        }, output);
+                    }
+                    finish("done", null);
+                } catch (Exception error) {
+                    finish(cancelled ? "canceled" : "error", cancelled ? null : error.getMessage());
+                } finally {
+                    ACTIVE_FILE_DOWNLOAD.remove();
+                }
+            }, "qingcode-file-download");
+            worker.start();
+        }
+
+        void finish(String state, String message) {
+            synchronized (this) {
+                if (finished) return;
+                if (cancelled) state = "canceled";
+                finished = true;
+            }
+            if (!"done".equals(state) && target != null && !discardDownloadDocument(target)) {
+                message = (message == null ? "已取消下载。" : message) + " 无法移除未完成文件，请在保存位置删除。";
+            }
+            synchronized (MainActivity.this) { if (fileDownload == this) fileDownload = null; }
+            emit(state, message);
+        }
+
+        void emit(String state, String message) {
+            try {
+                JSONObject event = new JSONObject().put("state", state).put("profile", connection.address())
+                    .put("project", project).put("path", path).put("received", received)
+                    .put("total", snapshot == null ? -1 : snapshot.size)
+                    .put("name", snapshot == null ? path : snapshot.name);
+                if (message != null) event.put("message", message);
+                runOnUiThread(() -> {
+                    if (view != null && pageReady) view.evaluateJavascript(
+                        "window.qingFileDownload&&window.qingFileDownload(" + event + ")", null);
+                });
+            } catch (Exception ignored) { /* A closed page must not interrupt document cleanup. */ }
         }
     }
 
@@ -954,6 +1182,7 @@ public final class MainActivity extends Activity {
 
     private void enqueue(int id, String op, NativeRequests.Work<JSONObject> work) {
         long deadline = "create".equals(op) || "image".equals(op) || "read_image".equals(op)
+            || "file_list".equals(op) || "file_search".equals(op) || "file_stat".equals(op)
             || "agent_create".equals(op) || "agent_send".equals(op) || "agent_image".equals(op) ? 110_000
             : "agent_usage".equals(op) ? 70_000 : "latency".equals(op) ? 7_000 : 40_000;
         requests.submit(id, op, deadline, () -> {
@@ -1088,7 +1317,8 @@ public final class MainActivity extends Activity {
             case "projects": case "sessions": case "attach": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
             case "terminal_profiles": case "capabilities":
-                if (!"capabilities".equals(op) && !"terminal_profiles".equals(op)) watcher.touch(current);
+            case "file_list": case "file_search": case "file_stat": case "file_chunk":
+                if (!"capabilities".equals(op) && !"terminal_profiles".equals(op) && !op.startsWith("file_")) watcher.touch(current);
                 if ("input".equals(op)) watcher.noteInput();
                 return current.call(request);
             default:
@@ -1219,7 +1449,8 @@ public final class MainActivity extends Activity {
             // Creating a terminal may wait for a confirmation on the desktop.
             if ("ping".equals(op)) return 3000;
             if ("attention".equals(op)) return 8000;
-            return "create".equals(op) || "image".equals(op) ? 100_000 : 32_000;
+            return "create".equals(op) || "image".equals(op) || "file_list".equals(op)
+                || "file_search".equals(op) || "file_stat".equals(op) ? 100_000 : 32_000;
         }
 
         JSONObject call(JSONObject request) throws Exception {
@@ -1238,10 +1469,13 @@ public final class MainActivity extends Activity {
         private JSONObject send(String op, byte[] data) throws Exception {
             NativeRequests.Context pending = NativeRequests.current();
             if (pending != null) pending.checkActive();
+            FileDownload download = ACTIVE_FILE_DOWNLOAD.get();
+            if (download != null) download.checkActive();
             HttpsURLConnection http = (HttpsURLConnection) endpoint.toURL().openConnection(java.net.Proxy.NO_PROXY);
             Runnable abort = http::disconnect;
             if (pending != null) pending.cancelWith(abort);
             try {
+                if (download != null) download.bindAbort(abort);
                 http.setSSLSocketFactory(sockets);
                 http.setHostnameVerifier(hosts);
                 http.setInstanceFollowRedirects(false);
@@ -1263,6 +1497,7 @@ public final class MainActivity extends Activity {
                     ByteArrayOutputStream response = new ByteArrayOutputStream();
                     byte[] buffer = new byte[16384];
                     for (int size; (size = stream.read(buffer)) >= 0;) {
+                        if (download != null) download.checkActive();
                         if (response.size() + size > MAX_RESPONSE) {
                             http.disconnect();
                             throw new IOException("Windows 响应过大。");
@@ -1291,6 +1526,7 @@ public final class MainActivity extends Activity {
                 }
             } finally {
                 if (pending != null) pending.clearAbort(abort);
+                if (download != null) download.clearAbort(abort);
             }
         }
     }

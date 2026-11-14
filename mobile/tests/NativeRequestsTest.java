@@ -126,6 +126,22 @@ public final class NativeRequestsTest {
         } finally { release.countDown(); }
     }
 
+    static void fileSearchDoesNotBlockTerminalOrLatency() throws Exception {
+        try (NativeRequests queue = new NativeRequests()) {
+            CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+            CompletableFuture<String> search = new CompletableFuture<>(), input = new CompletableFuture<>(), latency = new CompletableFuture<>();
+            queue.submit(1, "file_search", 10_000, () -> { started.countDown(); await(release); return "results"; }, reply(search));
+            await(started);
+            queue.submit(2, "input", 2_000, () -> "Ctrl+C", reply(input));
+            queue.submit(3, "latency", 2_000, () -> "pong", reply(latency));
+            check("Ctrl+C".equals(input.get(2, TimeUnit.SECONDS)), "file search blocked terminal input");
+            check("pong".equals(latency.get(2, TimeUnit.SECONDS)), "file search blocked latency");
+            check(!search.isDone(), "file search did not stay in flight");
+            release.countDown();
+            search.get(2, TimeUnit.SECONDS);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         uploadDoesNotBlockControlOrOutput();
         expiredQueuedInputNeverExecutesAndOrderIsPreserved();
@@ -133,6 +149,7 @@ public final class NativeRequestsTest {
         transferBacklogIsBounded();
         blockedDisconnectDoesNotStallOtherDeadlines();
         agentPollAndImageDoNotBlockInterrupt();
-        System.out.println("6 native scheduler regressions passed");
+        fileSearchDoesNotBlockTerminalOrLatency();
+        System.out.println("7 native scheduler regressions passed");
     }
 }
