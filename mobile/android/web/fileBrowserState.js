@@ -46,3 +46,28 @@ export function createFileRequestScope() {
   let epoch = 0;
   return { begin: () => ++epoch, cancel: () => { epoch += 1; }, current: value => value === epoch };
 }
+
+/** 排序方向：desc 新的在前（默认），asc 旧的在前；只在手机保存。 */
+export const FILE_SORT_KEY = 'qingcode:mobile:files:sort';
+
+export function readFileSort(storage) {
+  try { return storage.getItem(FILE_SORT_KEY) === 'asc' ? 'asc' : 'desc'; }
+  catch { return 'desc'; }
+}
+
+export function writeFileSort(storage, order) {
+  try { storage.setItem(FILE_SORT_KEY, order === 'asc' ? 'asc' : 'desc'); }
+  catch { /* 排序偏好保存失败不影响本次浏览。 */ }
+}
+
+/** 文件夹在前，组内按修改时间排；没有时间的排在组末，同时间按名称。不修改原数组。 */
+export function sortFileEntries(entries, order = 'desc') {
+  const sign = order === 'asc' ? 1 : -1;
+  return [...entries].sort((a, b) => {
+    if (!!a.isDir !== !!b.isDir) return a.isDir ? -1 : 1;
+    const at = Number.isFinite(a.modifiedAt), bt = Number.isFinite(b.modifiedAt);
+    if (at !== bt) return at ? -1 : 1;
+    if (at && a.modifiedAt !== b.modifiedAt) return (a.modifiedAt - b.modifiedAt) * sign;
+    return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) || String(a.path).localeCompare(String(b.path));
+  });
+}

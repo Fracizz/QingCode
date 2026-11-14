@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFileBrowser } from '../../mobile/android/web/fileBrowser.js'
-import { createFilePositions, formatFileBytes, LARGE_FILE_BYTES, needsDownloadConfirmation, relativeFilePath } from '../../mobile/android/web/fileBrowserState.js'
+import { createFilePositions, FILE_SORT_KEY, formatFileBytes, LARGE_FILE_BYTES, needsDownloadConfirmation, readFileSort, relativeFilePath, sortFileEntries } from '../../mobile/android/web/fileBrowserState.js'
 
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T
 const input = (id: string, value: string) => {
@@ -166,5 +166,37 @@ describe('file browsing position and size policy', () => {
     expect(formatFileBytes(0)).toBe('0 B')
     expect(formatFileBytes(null)).toBe('大小未知')
     expect(formatFileBytes(1024 ** 3)).toBe('1.0 GiB')
+  })
+})
+
+describe('file browsing time sort', () => {
+  const entries = [
+    { name: 'b.txt', path: 'b.txt', isDir: false, modifiedAt: 300 },
+    { name: 'old', path: 'old', isDir: true, modifiedAt: 100 },
+    { name: 'a.txt', path: 'a.txt', isDir: false, modifiedAt: null },
+    { name: 'new', path: 'new', isDir: true, modifiedAt: 200 },
+    { name: 'c.txt', path: 'c.txt', isDir: false, modifiedAt: 500 },
+  ]
+
+  it('keeps folders first and orders each group by modified time, missing times last', () => {
+    expect(sortFileEntries(entries).map(entry => entry.name)).toEqual(['new', 'old', 'c.txt', 'b.txt', 'a.txt'])
+    expect(sortFileEntries(entries, 'asc').map(entry => entry.name)).toEqual(['old', 'new', 'b.txt', 'c.txt', 'a.txt'])
+    expect(entries[0].name).toBe('b.txt')
+  })
+
+  it('defaults to newest first and remembers the toggled direction on the phone', async () => {
+    const rpc = vi.fn(async () => ({ entries, truncated: false }))
+    const { browser } = setup(rpc)
+    await browser.open(project)
+    await flush()
+    const names = () => [...element('files-list').querySelectorAll<HTMLElement>('[data-path]')].map(row => row.dataset.path)
+    expect(names()).toEqual(['new', 'old', 'c.txt', 'b.txt', 'a.txt'])
+    expect(element('files-count').textContent).toBe('5 项')
+    expect(element('files-status').textContent).toBe('')
+    element('files-sort').click()
+    expect(names()).toEqual(['old', 'new', 'b.txt', 'c.txt', 'a.txt'])
+    expect(element('files-sort').dataset.order).toBe('asc')
+    expect(localStorage.getItem(FILE_SORT_KEY)).toBe('asc')
+    expect(readFileSort(localStorage)).toBe('asc')
   })
 })

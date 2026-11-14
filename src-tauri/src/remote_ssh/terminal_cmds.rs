@@ -491,10 +491,10 @@ pub(crate) async fn ssh_create_terminal_unchecked(
         // 远端 Windows 预热命中时直接领取；未命中、过期或失败都走正常新建。
         if let Some(result) = app
             .state::<super::local_terminal::ShellPrewarmPool>()
-            .take_remote(&id, &cwd, &launch, &root, size, app.clone(), &manager)
+            .take_remote(&id, &cwd, &launch, None, &root, size, app.clone(), &manager)
             .await
         {
-            return Ok(result);
+            return result;
         }
         return server::spawn_persistent_terminal(
             id,
@@ -677,6 +677,32 @@ pub(crate) async fn ssh_spawn_script_unchecked(
     if server_mode {
         let working_directory =
             persistent_cwd.expect("server mode validates the task working directory");
+        // 远端 Windows 配置终端：预热的 PowerShell 命中时接回后交付命令；带额外环境变量的
+        // 配置与预热项启动条件不同，照常新建。未命中或过期走正常新建。
+        if shell_kind == "interactive"
+            && env.is_empty()
+            && windows_native_path(&parsed.path).is_some()
+        {
+            let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
+            launch.name = name.clone();
+            let size = (cols.unwrap_or(80), rows.unwrap_or(24));
+            if let Some(result) = app
+                .state::<super::local_terminal::ShellPrewarmPool>()
+                .take_remote(
+                    &id,
+                    &cwd,
+                    &launch,
+                    Some(&target),
+                    &root,
+                    size,
+                    app.clone(),
+                    &manager,
+                )
+                .await
+            {
+                return result;
+            }
+        }
         let launch = if shell_kind == "interactive" {
             persistent_profile_launch(&parsed.path, &target, &env, shell.as_deref(), name)?
         } else {

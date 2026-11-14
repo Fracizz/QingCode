@@ -21,18 +21,29 @@ export function paletteColor(index, theme = {}) {
   return `rgb(${gray},${gray},${gray})`;
 }
 
-function cellColor(cell, kind, theme) {
+/** 与 xterm 默认的 drawBoldTextInBrightColors 一致：粗体的基础 8 色按对应亮色显示。 */
+function brightIndex(index, bold) {
+  return bold && index < 8 ? index + 8 : index;
+}
+
+/** xterm IBufferCell 的颜色模式：16 色调色板（256 色为 0x2000000，不做粗体变亮）。 */
+const COLOR_MODE_P16 = 0x1000000;
+
+function cellColor(cell, kind, theme, bold = false) {
   const is = name => cell[`is${kind}${name}`]?.();
   if (is('Default')) return null;
   const value = cell[`get${kind}Color`]();
   if (is('RGB')) return '#' + value.toString(16).padStart(6, '0');
-  if (is('Palette')) return paletteColor(value, theme);
+  if (is('Palette')) {
+    const p16 = cell[`get${kind}ColorMode`]?.() === COLOR_MODE_P16;
+    return paletteColor(p16 ? brightIndex(value, bold) : value, theme);
+  }
   return null;
 }
 
 /** 一个单元格的样式；相同样式的相邻单元格合并成一段。 */
 function cellStyle(cell, theme) {
-  let fg = cellColor(cell, 'Fg', theme);
+  let fg = cellColor(cell, 'Fg', theme, !!cell.isBold?.());
   let bg = cellColor(cell, 'Bg', theme);
   if (cell.isInverse?.()) [fg, bg] = [bg ?? theme.background ?? null, fg ?? theme.foreground ?? null];
   return {
@@ -195,21 +206,34 @@ function blockCell(doc, char, quadrants) {
   return span;
 }
 
-/** 对齐段里的方块字符逐格绘制，其余字符仍按段固定字格宽度。 */
+/**
+ * 对齐段里的方块字符逐格绘制；中文等双宽字符每字一段（连同其后的组合字符），段与段之间
+ * 可以换行，长段中文在窄屏上折行而不是溢出被截断（旁观平板等宽网格时很明显）；
+ * 表格线等单宽符号仍按整段固定宽度，保持不折断。
+ */
 function appendGridRun(parent, doc, run, meter) {
   let pending = '';
   let cells = 0;
+  let wide = false;
   const flush = () => {
     if (pending) parent.append(gridSpan(doc, { text: pending, cells }, meter));
     pending = '';
     cells = 0;
+    wide = false;
   };
   for (const char of run.text) {
     const cp = char.codePointAt(0);
     const quadrants = BLOCK_QUADRANTS.get(cp);
-    if (quadrants === undefined) { pending += char; cells += charCells(cp); continue; }
-    flush();
-    parent.append(blockCell(doc, char, quadrants));
+    if (quadrants !== undefined) {
+      flush();
+      parent.append(blockCell(doc, char, quadrants));
+      continue;
+    }
+    const width = charCells(cp);
+    if (width === 2 || (width === 1 && wide)) flush();
+    if (width === 2) wide = true;
+    pending += char;
+    cells += width;
   }
   flush();
 }
@@ -229,7 +253,8 @@ function appendSegment(parent, doc, segment, meter) {
   if (fg) span.style.color = fg;
   if (bg) span.style.backgroundColor = bg;
   if (bold) span.style.fontWeight = '700';
-  if (dim) span.style.opacity = '0.6';
+  // 与 xterm 一致：暗色按 50% 透明度绘制。
+  if (dim) span.style.opacity = '0.5';
   if (italic) span.style.fontStyle = 'italic';
   if (underline) span.style.textDecoration = 'underline';
   appendText(span, doc, segment.text, meter);
@@ -244,6 +269,7 @@ export function stripSgr(line) {
   return line.replace(SGR, '').replace(/\x1b/g, '');
 }
 
+/** 扩展颜色参数（256 色 / 真彩色）直接转成 CSS 颜色；xterm 不对 256 色做粗体变亮。 */
 function sgrColor(params, index, theme) {
   const mode = Number(params[index + 1]);
   if (mode === 5) return { color: paletteColor(Number(params[index + 2]) & 255, theme), used: 2 };
@@ -254,6 +280,7 @@ function sgrColor(params, index, theme) {
   return { color: null, used: 0 };
 }
 
+/** fg / bg 为 16 色索引（数字，粗体变亮在输出时再算）或 CSS 颜色（字符串），null 表示默认色。 */
 const DEFAULT_STATE = { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, inverse: false };
 
 /** 按 SGR 参数更新样式；只支持颜色、粗体、暗色、斜体、下划线与反显。 */
@@ -271,11 +298,11 @@ function applySgr(state, text, theme) {
     else if (code === 24) state.underline = false;
     else if (code === 7) state.inverse = true;
     else if (code === 27) state.inverse = false;
-    else if (code >= 30 && code <= 37) state.fg = paletteColor(code - 30, theme);
-    else if (code >= 90 && code <= 97) state.fg = paletteColor(code - 90 + 8, theme);
+    else if (code >= 30 && code <= 37) state.fg = code - 30;
+    else if (code >= 90 && code <= 97) state.fg = code - 90 + 8;
     else if (code === 39) state.fg = null;
-    else if (code >= 40 && code <= 47) state.bg = paletteColor(code - 40, theme);
-    else if (code >= 100 && code <= 107) state.bg = paletteColor(code - 100 + 8, theme);
+    else if (code >= 40 && code <= 47) state.bg = code - 40;
+    else if (code >= 100 && code <= 107) state.bg = code - 100 + 8;
     else if (code === 49) state.bg = null;
     else if (code === 38 || code === 48) {
       const { color, used } = sgrColor(params, index, theme);
@@ -293,7 +320,9 @@ export function sgrSegments(line, theme = {}) {
   const push = text => {
     text = text.replace(/\x1b/g, '');
     if (!text) return;
-    let { fg, bg } = state;
+    const css = (value, bold) => (typeof value === 'number' ? paletteColor(brightIndex(value, bold), theme) : value);
+    let fg = css(state.fg, state.bold);
+    let bg = css(state.bg, false);
     if (state.inverse) [fg, bg] = [bg ?? theme.background ?? null, fg ?? theme.foreground ?? null];
     const style = { fg, bg, bold: state.bold, dim: state.dim, italic: state.italic, underline: state.underline };
     segments.push({ text, style: plainStyle(style) ? null : style });

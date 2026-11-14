@@ -68,6 +68,8 @@ struct WarmShell {
     launch: PersistentLaunch,
     remote: Option<RemoteTarget>,
     startup_pipe: Option<IpcStream>,
+    /// 远端 PowerShell 预热项在 profile 后停住，等领取方经 PTY 输入交付一行（可为空）。
+    startup_input: bool,
     session: Option<DaemonSession>,
     transport: Option<SessionTransport>,
     reserved_at: Option<Instant>,
@@ -294,6 +296,31 @@ impl ShellPrewarmPool {
         result
     }
 
+    /// 预留一个空闲项并改按调用方的终端 id 领取。手机终端必须用 `mobile-` 前缀的 id
+    /// 才能把输出路由给手机，不能沿用预热时分配的 id；之后照常用 `take` / `take_remote` 领取。
+    pub(crate) fn reserve_as(
+        &self,
+        id: &str,
+        cwd: &str,
+        shell: Option<&str>,
+        has_startup: bool,
+    ) -> Result<(), &'static str> {
+        let warm_id = self.reserve(cwd, shell, has_startup)?;
+        self.rename_reserved(&warm_id, id)
+    }
+
+    fn rename_reserved(&self, warm_id: &str, id: &str) -> Result<(), &'static str> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // 预留与改名之间池可能被重配清空，此时按未命中处理。
+        let entry = state
+            .shells
+            .iter_mut()
+            .find(|entry| entry.id == warm_id && entry.reserved_at.is_some())
+            .ok_or("empty")?;
+        entry.id = id.to_string();
+        Ok(())
+    }
+
     fn reserve_key(&self, key: &LaunchKey, has_startup: bool) -> Result<String, &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         // Reconfiguring the pool invalidates all entries. Every idle shell shares its target's launch key.
@@ -314,7 +341,7 @@ impl ShellPrewarmPool {
         if entry.key.env != key.env {
             return Err("env_mismatch");
         }
-        if has_startup && entry.startup_pipe.is_none() {
+        if has_startup && entry.startup_pipe.is_none() && !entry.startup_input {
             return Err("startup_unsupported");
         }
         entry.reserved_at = Some(Instant::now());
@@ -368,7 +395,9 @@ impl ShellPrewarmPool {
             return Ok(None);
         }
         let pty_id = entry.pty_id.clone();
-        let Some(result) = self.attach(id, entry, None, size, app, manager).await else {
+        // 与正常新建相同的 daemon 名称规则：手机终端用 `mobile-` id，电脑重启后才能找回。
+        let name = daemon_terminal_name(id, None);
+        let Some(result) = self.attach(id, entry, name, size, app, manager).await else {
             return Ok(None);
         };
         if let Some(mut pipe) = pipe {
@@ -388,18 +417,21 @@ impl ShellPrewarmPool {
         Ok(Some(result))
     }
 
-    /// 远端 SSH 项目领取：启动参数与项目根都必须与预热时一致。
+    /// 远端 SSH 项目领取：启动参数与项目根都必须与预热时一致。`launch` 是不带启动命令的
+    /// 普通 Shell 参数（复用键），配置终端的命令经 `startup` 在接回后通过 PTY 输入交付。
+    /// 未命中返回 None 走正常新建；命令交付失败返回错误，不再冷启动，避免执行两次。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take_remote(
         &self,
         id: &str,
         cwd: &str,
         launch: &PersistentLaunch,
+        startup: Option<&str>,
         root: &RegisteredRoot,
         size: (u16, u16),
         app: AppHandle,
         manager: &SshManager,
-    ) -> Option<TerminalSpawnResult> {
+    ) -> Option<Result<TerminalSpawnResult, String>> {
         if !self.has_entry(id) {
             return None;
         }
@@ -419,11 +451,46 @@ impl ShellPrewarmPool {
             );
             return None;
         }
+        if startup.is_some() && !entry.startup_input {
+            trace(
+                "take_miss",
+                serde_json::json!({"remote": true, "reason": "startup_unsupported"}),
+            );
+            return None;
+        }
+        let startup_input = entry.startup_input;
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
         let name = daemon_terminal_name(id, launch.name.as_deref());
         let result = self.attach(id, entry, name, size, app, manager).await?;
+        if startup_input {
+            // 已接回才交付；空行即普通 Shell。写入排在用户的任何输入之前。
+            let line = remote_startup_line(startup.unwrap_or_default());
+            let terminal = manager
+                .persistent_terminals
+                .read()
+                .ok()
+                .and_then(|terminals| terminals.get(id).cloned());
+            let delivered = terminal.as_ref().map(|terminal| terminal.write(line));
+            if !matches!(delivered, Some(Ok(()))) {
+                trace(
+                    "startup_failed",
+                    serde_json::json!({"remote": true, "command": startup.is_some()}),
+                );
+                if startup.is_some() {
+                    let removed = manager
+                        .persistent_terminals
+                        .write()
+                        .ok()
+                        .and_then(|mut terminals| terminals.remove(id));
+                    if let Some(terminal) = removed {
+                        let _ = terminal.kill().await;
+                    }
+                    return Some(Err("预热 PowerShell 启动命令交付失败".into()));
+                }
+            }
+        }
         record_hit(id, true);
-        Some(result)
+        Some(Ok(result))
     }
 
     async fn attach(
@@ -657,6 +724,34 @@ async fn stage_startup(pipe: &mut IpcStream, command: &str) -> std::io::Result<(
     read_startup_ack(pipe).await
 }
 
+/// 远端预热 PowerShell 读取的一行：UTF-8 命令的 base64（只含可打印 ASCII，ReadKey 不回显），
+/// 以回车结束；空命令只发回车，进入普通提示符。
+fn remote_startup_line(command: &str) -> Vec<u8> {
+    use base64::Engine;
+    let mut line = base64::engine::general_purpose::STANDARD
+        .encode(command.trim())
+        .into_bytes();
+    line.push(b'\r');
+    line
+}
+
+/// 远端 PowerShell 预热参数：在原 UTF-8 设置之后等待领取方交付启动命令。
+/// CMD 无法不回显地读取输入，保持原参数，不支持配置命令。
+fn remote_ready_args(launch: &PersistentLaunch) -> (Vec<String>, bool) {
+    let mut args = launch.args.clone();
+    let count = args.len();
+    if launch.resolved_shell == "cmd"
+        || count < 2
+        || !args[count - 2].eq_ignore_ascii_case("-Command")
+    {
+        return (args, false);
+    }
+    let last = &mut args[count - 1];
+    last.push_str("; ");
+    last.push_str(include_str!("prewarm/start-remote-profile.ps1"));
+    (args, true)
+}
+
 const READY_FILE_ENV: &str = "QINGCODE_PREWARM_READY_FILE";
 const STARTUP_PIPE_ENV: &str = "QINGCODE_PREWARM_PIPE";
 
@@ -707,6 +802,7 @@ async fn create_local_warm_shell(
         launch: target.launch.clone(),
         remote: None,
         startup_pipe: None,
+        startup_input: false,
         session: Some(session),
         transport: None,
         reserved_at: None,
@@ -773,7 +869,8 @@ async fn create_local_warm_shell(
 }
 
 /// 远端无法观察本机标记文件：PTY 创建成功即入池，profile 在后台继续加载，
-/// 提前领取时用户直接看到加载中的 Shell，仍比冷启动快。
+/// 提前领取时用户直接看到加载中的 Shell，仍比冷启动快。PowerShell 加载完 profile 后
+/// 停在不回显的读行上，领取后由 `take_remote` 交付启动命令或空行。
 async fn create_remote_warm_shell(
     app: &AppHandle,
     manager: &SshManager,
@@ -802,6 +899,7 @@ async fn create_remote_warm_shell(
         launch: target.launch.clone(),
         remote: Some(remote.clone()),
         startup_pipe: None,
+        startup_input: false,
         session: Some(session),
         transport: Some(transport),
         reserved_at: None,
@@ -811,13 +909,15 @@ async fn create_remote_warm_shell(
         crate::terminal::terminal_identity_env(&entry.id)
             .map(|(key, value)| (key.to_string(), value)),
     );
+    let (args, startup_input) = remote_ready_args(&target.launch);
+    entry.startup_input = startup_input;
     let session = entry.session.as_mut().unwrap();
     let response = session
         .request(
             "pty.createTransient",
             &serde_json::json!({
                 "cwd": remote.working_directory, "shell": target.launch.shell, "env": env,
-                "args": target.launch.args, "cols": 120, "rows": 30,
+                "args": args, "cols": 120, "rows": 30,
             }),
         )
         .await?;

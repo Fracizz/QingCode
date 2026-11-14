@@ -624,8 +624,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const shell = normalizeTerminalShell(profile.shell)
     const startup = profile.command.trim().replace(/\s*\n+\s*/g, '; ')
     const remote = projectPath.startsWith('ssh://')
+    // 远端带命令的配置也可领取：仅远端 Windows 的 PowerShell 预热项支持，其余由后端按未命中返回。
     const canReserve = remote
-      ? profile.id === DEFAULT_TERMINAL_PROFILE.id && !startup
+      ? !!startup || profile.id === DEFAULT_TERMINAL_PROFILE.id
       : getTerminalPersistLocalSessions()
     const reservation = canReserve
       ? await reservePrewarmedShell(projectPath, shell, !!startup)

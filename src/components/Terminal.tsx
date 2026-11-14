@@ -5,6 +5,7 @@ import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
 import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
 import {
   isTerminalInputBlocked,
+  terminalControl,
   terminalFollowsRemoteGrid,
   useTerminalControlStore,
 } from '@/store/terminalControlStore'
@@ -79,6 +80,7 @@ import {
 } from '@/lib/terminal/terminalLinkActions'
 import { getTerminalShiftEnterNewline } from '@/lib/terminal/terminalShiftEnterSettings'
 import { createTerminalZoomWheel } from '@/lib/terminal/terminalZoomWheel'
+import { createReadOnlyTerminalWheel } from '@/lib/terminal/terminalReadOnlyWheel'
 import {
   restoredExitRecovery,
   shouldKeepShellAfterExit,
@@ -243,6 +245,8 @@ export default function TerminalView({
   const wasControlledRef = useRef(false)
   /** 跟随其他设备网格期间最近一次报给后端的电脑窗口行列。 */
   const reportedNaturalGridRef = useRef<TerminalGridSize | null>(null)
+  /** 本次被独占只读期间是否已提示过「全屏程序的历史要在独占设备上滚动」，解除后重置。 */
+  const altScrollNoticeRef = useRef(false)
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -1005,6 +1009,36 @@ export default function TerminalView({
     }
     container.addEventListener('wheel', onZoomWheel, { capture: true, passive: false })
 
+    // 其他设备使用期间电脑只读：开了鼠标上报的程序（Claude Code、Codex、opencode）会让 xterm
+    // 把滚轮转成发给程序的输入，只读时被丢弃，电脑端就完全无法上翻。这里改为直接滚动本地历史；
+    // 全屏程序的备用屏幕没有本地历史，滚轮又不能替对方操作程序，只提示一次。
+    const readOnlyWheel = createReadOnlyTerminalWheel()
+    const onReadOnlyWheel = (event: WheelEvent) => {
+      const blockedBy = terminalControl(terminalId)?.blockedBy
+      if (event.ctrlKey || event.metaKey || !blockedBy) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (term.buffer.active.type !== 'normal') {
+        if (!event.deltaY || altScrollNoticeRef.current) return
+        altScrollNoticeRef.current = true
+        const name = blockedBy
+        useProjectStore
+          .getState()
+          .pushToast('info', translate('全屏程序的历史请在 {name} 上滚动，或接回后查看', { name }))
+        return
+      }
+      const screen = term.element?.querySelector('.xterm-screen')
+      const height = screen?.getBoundingClientRect().height ?? 0
+      const lines = readOnlyWheel(event, {
+        cellHeight: height / term.rows,
+        rows: term.rows,
+        sensitivity: term.options.scrollSensitivity,
+        fastSensitivity: term.options.fastScrollSensitivity,
+      })
+      if (lines) term.scrollLines(lines)
+    }
+    container.addEventListener('wheel', onReadOnlyWheel, { capture: true, passive: false })
+
     // 布局改网格后的跟随窗口（见 commitGridSize）：渲染或输出时视口离开底部就拉回。
     const followBottomAfterResize = () => {
       if (followBottomUntilRef.current === 0) return
@@ -1323,6 +1357,7 @@ export default function TerminalView({
       writeFlow.dispose()
       disposeOscHandlers()
       container.removeEventListener('wheel', onZoomWheel, { capture: true })
+      container.removeEventListener('wheel', onReadOnlyWheel, { capture: true })
       followBottomRender.dispose()
       followBottomUntilRef.current = 0
       container.removeEventListener('wheel', stopFollowBottom, { capture: true })
@@ -1574,6 +1609,7 @@ export default function TerminalView({
     if (!term) return
     // 只有被设备独占时电脑才只读；其余情况电脑和手机都能输入。
     term.options.disableStdin = !!control?.blockedBy
+    if (!control?.blockedBy) altScrollNoticeRef.current = false
     const follow = control && !control.sizeOwnerIsDesktop ? control : undefined
     if (follow) {
       wasControlledRef.current = true

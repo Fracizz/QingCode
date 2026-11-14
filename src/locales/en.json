@@ -2060,6 +2060,7 @@
     "固定当前尺寸，打字不再切换": "Keep the current size even when someone else types",
     "解锁尺寸": "Unlock size",
     "锁定尺寸": "Lock size",
+    "全屏程序的历史请在 {name} 上滚动，或解除独占后查看": "Scroll this full-screen program's history on {name}, or ask it to release exclusive input to view it here.",
     "在电脑上打开": "Open on this computer",
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",

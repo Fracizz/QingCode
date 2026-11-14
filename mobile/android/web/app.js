@@ -25,6 +25,7 @@ import {
   terminalGridSize,
   terminalProfileChoices,
   TERMINAL_THEME,
+  viewerFontSize,
 } from './protocol.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
@@ -176,6 +177,9 @@ let naturalCell = null;
 let naturalGrid = null;
 /** 最近一次轮询带回的共享状态，供共享栏按钮使用。 */
 let shareControl = null;
+/** 旁观改字号后的逐帧校准次数，网格或可用空间变化时清零，避免意外的无限循环。 */
+let viewerRefits = 0;
+let viewerSizeKey = '';
 let pollGeneration = 0;
 const SESSION_GONE_ERRORS = ['终端不存在。', '该电脑终端已关闭或不可接入。', '电脑端未开启手机接入电脑终端。'];
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
@@ -1236,6 +1240,8 @@ function makeTerminal() {
   const historySession = selected;
   terminalHistory = attachTerminalHistory({
     term, get, readOnly: () => !!viewerGrid,
+    // 旁观时终端字号随对方网格缩放；历史面板会按手机宽度重排，始终用本机字号。
+    fontSize: () => settings.fontSize(),
     onClose: () => disposeTouchScroll?.cancel?.(),
     onUnsupportedScroll: gesture => {
       if (gesture !== undefined && gesture === unsupportedScrollGesture) return;
@@ -1525,18 +1531,33 @@ function fitTerminal() {
   const viewport = get('viewport');
   const grid = viewerGrid ?? followGrid;
   if (grid) {
-    // Preserve the controller's character grid. Fit its whole screen on entry,
-    // then allow the viewer to zoom the font locally without resizing the PTY.
+    const sizeKey = `${grid.cols}x${grid.rows}@${viewport.clientWidth}x${viewport.clientHeight}/${settings.fontSize()}`;
+    if (sizeKey !== viewerSizeKey) { viewerSizeKey = sizeKey; viewerRefits = 0; }
+    // Preserve the controller's character grid. Fit its whole screen on entry by font size,
+    // then allow the viewer to pinch-zoom locally without resizing the PTY.
     if (term.cols !== grid.cols || term.rows !== grid.rows) term.resize(grid.cols, grid.rows);
     const screen = term.element.querySelector('.xterm-screen');
     const padding = getComputedStyle(viewport);
     const width = viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
     const height = viewport.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
     if (screen?.offsetWidth && screen.offsetHeight && width > 0 && height > 0) {
-      const magnification = settings.fontSize() / grid.initialFont;
-      term.element.style.width = screen.offsetWidth + 'px';
-      term.element.style.zoom = Math.min(1, magnification * width / screen.offsetWidth, magnification * height / screen.offsetHeight);
+      // 平板看手机的窄网格时调大字号占满；手机看平板的宽网格时调小字号看全。
+      const termFont = term.options.fontSize;
+      const font = viewerFontSize({
+        width, height, screenWidth: screen.offsetWidth, screenHeight: screen.offsetHeight,
+        termFont, userFont: settings.fontSize(), initialFont: grid.initialFont,
+      });
+      // 画面宽度先按字号比例估算；小字号的字格不严格成比例，下一帧按实际尺寸再校准一次。
+      if (font !== termFont) {
+        term.options.fontSize = font;
+        if (viewerRefits < 4) {
+          viewerRefits += 1;
+          requestAnimationFrame(() => { if (viewerGrid || followGrid) fitTerminal(); });
+        }
+      }
+      term.element.style.width = Math.ceil(screen.offsetWidth * font / termFont) + 'px';
     }
+    term.element.style.zoom = '';
     term.element.style.marginTop = '';
     heldVisibleRows = 0;
     if (followGrid && naturalCell && width > 0 && height > 0) {
@@ -1550,6 +1571,8 @@ function fitTerminal() {
     return;
   }
   term.element.style.zoom = '';
+  // 旁观时可能临时放大过字号，恢复操作后回到用户字号。
+  if (term.options.fontSize !== settings.fontSize()) term.options.fontSize = settings.fontSize();
   const terminalColumns = settings.columns();
   const screen = term.element.querySelector('.xterm-screen');
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;

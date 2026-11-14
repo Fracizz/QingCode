@@ -430,7 +430,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .terminal-selection-handle { position: absolute; width: 44px; height: 44px; padding: 0; transform: translate(-50%, -8px); touch-action: none; background: transparent; }
 .terminal-selection-handle::after { content: ''; display: block; width: 18px; height: 22px; margin: 0 auto; border: 2px solid var(--console); border-radius: var(--control-radius); background: var(--accent); }
 .terminal-selection-handle:active:not(:disabled), .terminal-selection-handle:focus-visible { background: transparent; }
-#terminal-history { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--console); }
+#terminal-history { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--history-bg, var(--console)); }
 #history-more { color: var(--accent); font-size: 13px; }
 #history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 #history-more { width: 100%; }
@@ -470,7 +470,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-screen[data-viewing="true"] #viewport { overflow: auto; touch-action: pan-x pan-y; }
 #terminal-screen[data-taken="true"] #terminal-tools { display: none; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
-#history-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
+/* 文字与选区颜色跟随终端主题（见 terminalHistory.js applyTerminalColors），与实时终端观感一致。 */
+#history-content { margin: 0; color: var(--history-fg, var(--ink)); white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
+#history-content::selection, #history-content ::selection { background: var(--history-selection, #3a3d42); }
 /* 历史左右边距与 #viewport 一致，打开历史时文字不左右跳；分隔条仅用于旧版电脑端的全屏画面标记。 */
 /* 对齐段固定为 xterm 字格宽度（ch），表格边框与中文不错位。 */
 #history-content .cells { display: inline-block; white-space: pre; vertical-align: baseline; }
@@ -1113,25 +1115,51 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .project-face > .row { flex: 1; min-width: 0; }
 .project-files { flex: none; width: 44px; min-height: 44px; margin-right: 4px; align-self: center; color: var(--muted); }
 #files-dialog[open] { background: var(--paper); opacity: 1; transform: none; animation: none; transition: none; }
-#files-dialog .workspace-head h2 { flex: 1; }
-.files-search { display: flex; gap: 4px; flex: none; }
-.files-search input { flex: 1; width: 0; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font: inherit; }
-.files-controls { display: flex; align-items: center; gap: 10px; flex: none; font-size: 13px; }
-.files-controls .select-field { flex: 1; min-width: 0; }
-.files-controls label { display: inline-flex; flex: none; align-items: center; gap: 6px; margin: 0; min-height: 44px; font-size: 13px; white-space: nowrap; }
+/* 标题下的副标题显示「电脑 / 项目」，省去单独一行。 */
+.files-heading { flex: 1; min-width: 0; }
+#files-dialog .workspace-head h2 { line-height: 1.3; }
+#files-context { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-search { display: flex; align-items: center; gap: 4px; flex: none; }
+/* 放大镜与清除按钮放在框内；清除只在有输入时出现，避免与顶栏关闭按钮混淆。 */
+.files-search-box { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+.files-search-box > svg { position: absolute; left: 12px; width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
+.files-search-box input { flex: 1; width: 0; min-width: 0; min-height: 44px; padding: 8px 44px 8px 38px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font: inherit; }
+.files-search-box input:focus { border-color: var(--accent-border); outline: none; }
+.files-search-box input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+#files-clear { position: absolute; right: 0; color: var(--muted); }
+#files-clear svg { width: 18px; height: 18px; }
+.files-search-box input:placeholder-shown ~ #files-clear { display: none; }
+.files-controls { display: flex; align-items: center; gap: 12px; flex: none; font-size: 13px; }
+.files-controls .select-field { flex: 1; min-width: 0; margin: 0; }
+.files-controls label { display: inline-flex; flex: none; align-items: center; gap: 8px; margin: 0; min-height: 44px; color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap; }
 .files-controls input[type="checkbox"] { width: 20px; height: 20px; min-width: 20px; min-height: 20px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
-.files-location { display: flex; align-items: center; flex: none; min-width: 0; }
-#files-breadcrumbs { display: flex; align-items: center; overflow-x: auto; white-space: nowrap; font-size: 13px; min-width: 0; }
-#files-breadcrumbs button { flex: none; padding-inline: 6px; }
+/* 位置条：返回上级、面包屑和数量合在一个分组底上；上级目录灰色，当前目录正文色加粗。 */
+.files-location { display: flex; align-items: center; flex: none; min-width: 0; min-height: 44px; padding-right: 12px; border-radius: var(--group-radius); background: var(--surface); }
+#files-up { color: var(--muted); }
+#files-up svg { width: 18px; height: 18px; }
+#files-breadcrumbs { flex: 1; display: flex; align-items: center; overflow-x: auto; white-space: nowrap; color: var(--muted); font-size: 13px; min-width: 0; scrollbar-width: none; }
+#files-breadcrumbs::-webkit-scrollbar { display: none; }
+#files-breadcrumbs button { flex: none; padding-inline: 4px; color: var(--muted); font-weight: 400; }
+#files-breadcrumbs button[aria-current="location"] { color: var(--ink); font-weight: 620; }
+#files-count { flex: none; margin-left: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#files-count:empty { display: none; }
+/* 排序：点按在新→旧 / 旧→新间切换，箭头朝下表示新的在前。 */
+.files-sort { flex: none; display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; margin-right: -8px; padding: 0 8px; color: var(--muted); font-size: 12px; }
+.files-sort svg { width: 14px; height: 14px; transition: transform 160ms var(--ease); }
+.files-sort[data-order="desc"] svg { transform: rotate(180deg); }
 #files-scroll { flex: 1; min-height: 44px; overflow-y: auto; overscroll-behavior: contain; }
 #files-status { margin: 4px 4px 10px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+#files-status:empty { display: none; }
 #files-status[data-error="true"], #files-transfer-status[data-error="true"] { color: var(--error); }
 #files-truncated { margin: 4px 4px 10px; color: var(--warning); font-size: 12px; }
 .file-entry { display: flex; align-items: center; min-width: 0; }
-.file-entry > .row { flex: 1; min-width: 0; grid-template-columns: 22px minmax(0, 1fr) 18px; gap: 10px; min-height: 64px; padding-inline: 12px; }
-.file-entry .row > svg { width: 20px; height: 20px; color: var(--muted); }
+.file-entry > .row { flex: 1; min-width: 0; grid-template-columns: 36px minmax(0, 1fr) 18px; gap: 12px; min-height: 60px; padding: 10px 12px; }
+.file-tile { display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--control-radius); background: var(--surface-high); color: var(--muted); }
+.file-tile svg { width: 20px; height: 20px; }
+.row[data-entry="dir"] .file-tile { color: var(--accent); }
 .file-entry .row-text strong { overflow-wrap: anywhere; white-space: normal; }
-.file-entry .row-text small { white-space: normal; overflow-wrap: anywhere; font-size: 11.5px; }
+.file-entry .row-text small { white-space: normal; overflow-wrap: anywhere; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.file-entry .row-text small:empty { display: none; }
 .file-entry-path { font-family: var(--mono); }
 .file-locate { flex: none; width: 44px; min-height: 44px; color: var(--muted); }
 .files-rules { margin: 12px 4px; color: var(--muted); font-size: 12px; }
@@ -1148,6 +1176,7 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .file-detail-meta dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-height: 450px) {
   #files-dialog .workspace-head { min-height: 44px; }
+  #files-context { display: none; }
   #files-dialog .files-controls { min-height: 44px; }
   #files-transfer .hint { display: none; }
 }

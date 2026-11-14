@@ -15,10 +15,21 @@ export function localLogicalDepth(buffer) {
 }
 
 /**
+ * 历史面板沿用终端主题的前景、背景与选区颜色；未设置时回落到 CSS 里的页面配色。
+ * 默认文字若继承页面正文色（接近纯白），打开历史时会比终端的柔和灰明显刺眼。
+ */
+export function applyTerminalColors(panel, theme = {}) {
+  const set = (name, value) => (value ? panel.style.setProperty(name, value) : panel.style.removeProperty(name));
+  set('--history-fg', theme.foreground);
+  set('--history-bg', theme.background);
+  set('--history-selection', theme.selectionBackground);
+}
+
+/**
  * 上滑即原始终端：普通终端滚手机 xterm 的滚动记录，滑到顶后接电脑端保留的更早输出（只读面板）；
  * 全屏程序开启鼠标时滚轮交给程序自己滚动。
  */
-export function attachTerminalHistory({ term, get, loadPage, readOnly = () => false, onClose = () => {}, onUnsupportedScroll = () => {} }) {
+export function attachTerminalHistory({ term, get, loadPage, readOnly = () => false, fontSize = () => term.options.fontSize, onClose = () => {}, onUnsupportedScroll = () => {} }) {
   const panel = get('terminal-history');
   const scroll = get('history-scroll');
   const content = get('history-content');
@@ -152,10 +163,13 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
     startCursor = Math.max(0, latest - localLogicalDepth(term.buffer.active));
     // 先带颜色复制可见行：第一次滑动不会出现空白或加载画面的跳变。
     content.replaceChildren(renderScreen(content.ownerDocument, term, meter()));
-    content.style.fontSize = term.options.fontSize + 'px';
+    const font = fontSize();
+    content.style.fontSize = font + 'px';
     content.style.fontFamily = term.options.fontFamily;
+    applyTerminalColors(panel, term.options.theme);
+    // 行高取终端实际行高，并按历史字号与终端字号之比换算（旁观时两者可能不同）。
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;
-    const rowHeight = (screenHeight / term.rows) + 'px';
+    const rowHeight = (screenHeight / term.rows) * (font / term.options.fontSize) + 'px';
     content.style.lineHeight = rowHeight;
     content.style.setProperty('--history-row', rowHeight);
     cursor = null;

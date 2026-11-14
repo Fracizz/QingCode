@@ -6,7 +6,7 @@
 - **远端为 Windows 的 SSH 项目**：任意客户端，要求 Server 模式（远端 daemon 托管终端），不依赖“本地终端可接回”。
   **Linux / POSIX 远端不预热**，SSH 直连模式也不预热。
 
-本机 Windows 的 PowerShell 配置（例如默认配置 `claude`）与普通终端共用空闲 Shell。点击新建并通过配置命令的信任检查后，才在领取的 PowerShell 中运行启动命令。带启动命令的 CMD 配置、SSH 配置和运行任务沿用原启动方式。
+本机 Windows 的 PowerShell 配置（例如默认配置 `claude`）与普通终端共用空闲 Shell。点击新建并通过配置命令的信任检查后，才在领取的 PowerShell 中运行启动命令。远端 Windows 的 SSH Server 模式项目同样支持 PowerShell 配置（见下文“SSH 远端”）。带启动命令的 CMD 配置、远端 Linux 配置、带额外环境变量的远端配置和运行任务沿用原启动方式。
 
 用户 `default-settings.json` 支持以下 JSON5 设置；工作区同名键会被忽略：
 
@@ -44,6 +44,13 @@ PowerShell 在原目录加载用户 profile 后连接仅当前用户可访问的
 以及 1 / 4 / 8 个空闲 Shell 的宿主、ConPTY、Shell 和子进程总内存。
 本功能不承诺固定内存成本或固定启动时间，用户 profile 会显著影响两者。
 
+## Android 移动连接
+
+手机新建终端与电脑端共用同一个池，条件与电脑端新建一致：本机 Windows 项目（含 PowerShell 配置命令）、远端为 Windows 的 SSH Server 模式项目（含 PowerShell 配置命令）；WSL 和 CMD 配置命令不领取。
+池只为电脑端当前聚焦的项目准备 Shell，手机在其他项目新建时按未命中正常新建，不切换池的目标。
+领取前预留项改用手机终端的 `mobile-` id，输出因此路由给手机；Shell 内的 `QINGCODE_TERMINAL_ID` 仍是预热时分配的值。
+本机领取后终端由本机 PTY 宿主托管（未命中时仍由 QingCode 进程持有），停止移动连接、撤销设备或关闭应用时与其他手机终端一样被结束。
+
 ## SSH 远端（Windows）
 
 远端预热复用同一个池和协议：在远端 daemon 上用 `pty.createTransient` 创建，经 `pty.claim` 领取后按正常持久终端接入。
@@ -53,6 +60,8 @@ PowerShell 在原目录加载用户 profile 后连接仅当前用户可访问的
 - 配置时校验项目根已注册、已信任，并经 SFTP 解析项目内的工作目录；后台每轮复查信任、根路径和模式，变化即回收。
 - 启动参数与 `ssh_create_terminal` 共用 `persistent_shell_launch`，复用键为 `ssh://` 资源原文加启动参数，不会与本机路径互相命中。
 - 远端无法观察本机标记文件，PTY 创建成功即入池；profile 在后台继续加载，提前领取时看到的是加载中的 Shell。
+- PowerShell 预热项加载完 profile 后停在 `[Console]::ReadKey($true)` 读行上（不回显、不显示提示符）。领取并接回 PTY 后，经 PTY 输入写入一行：配置终端为启动命令 UTF-8 的 base64，普通终端为空行。命令不进入输入历史，也不需要升级远端 daemon。
+- 配置命令写入失败时结束该终端并返回错误，不回退冷启动，避免命令执行两次。CMD 预热项不支持配置命令；带额外环境变量的配置与预热启动条件不同，照常新建。
 - 本机内存压力判断只约束本机项目；远端预热不受本机内存影响。
 - 领取上限 5 秒（本机 2 秒），失败回退正常新建，并通过 `kill_detached_terminal` 后台清理已转为 detached 的 PTY。
 - 远端旧版 daemon 不认识 `pty.createTransient` 时预热失败并退避重试，终端照常新建。

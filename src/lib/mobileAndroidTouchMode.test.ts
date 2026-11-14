@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { attachTouchMouseGuard } from '../../mobile/android/web/terminalTouch.js'
-import { attachTerminalHistory, localLogicalDepth } from '../../mobile/android/web/terminalHistory.js'
+import { applyTerminalColors, attachTerminalHistory, localLogicalDepth } from '../../mobile/android/web/terminalHistory.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks() })
@@ -121,5 +121,18 @@ describe('local scrollback depth in desktop history lines', () => {
     expect(localLogicalDepth(buffer)).toBe(3)
     expect(localLogicalDepth({ ...buffer, viewportY: 4 })).toBe(1)
     expect(localLogicalDepth({ ...buffer, type: 'alternate' })).toBe(0)
+  })
+})
+
+describe('Android history colors', () => {
+  it('follows the terminal theme instead of the brighter page text color', () => {
+    const panel = document.createElement('div')
+    applyTerminalColors(panel, { foreground: '#c4c4c4', background: '#181818', selectionBackground: '#3a3d42' })
+    expect(panel.style.getPropertyValue('--history-fg')).toBe('#c4c4c4')
+    expect(panel.style.getPropertyValue('--history-bg')).toBe('#181818')
+    expect(panel.style.getPropertyValue('--history-selection')).toBe('#3a3d42')
+    // 主题缺项时去掉变量，由 CSS 回落到页面配色。
+    applyTerminalColors(panel, {})
+    expect(panel.style.getPropertyValue('--history-fg')).toBe('')
   })
 })

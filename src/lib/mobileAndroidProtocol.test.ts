@@ -55,6 +55,9 @@ import {
   terminalProfileChoices,
   terminalGridSize,
   toggleSessionPin,
+  viewerFontSize,
+  VIEWER_FONT_MAX,
+  VIEWER_FONT_MIN,
   APP_THEMES,
   parseAppTheme,
   TERMINAL_THEME,
@@ -76,6 +79,46 @@ describe('Android port-moved profile', () => {
     expect(findPortMovedProfile([old], '192.168.1.5', 8765, fingerprint)).toBeNull()
     const current = { ...old, id: '192.168.1.5:9000', port: 9000 }
     expect(findPortMovedProfile([old, current], '192.168.1.5', 9000, fingerprint)).toBeNull()
+  })
+})
+
+describe('Android viewer font sizing', () => {
+  // 13px 字号下手机网格画面 300×480，平板可用区域 1500×1200。
+  const tablet = { width: 1500, height: 1200, screenWidth: 300, screenHeight: 480, termFont: 13, userFont: 13, initialFont: 13 }
+
+  it('enlarges a phone grid on a roomy tablet by font size, limited by the tighter axis', () => {
+    // 高度方向 2.5 倍为瓶颈：13 × 2.5 × 0.98 ≈ 31.8，受上限约束。
+    expect(viewerFontSize(tablet)).toBe(VIEWER_FONT_MAX)
+    expect(viewerFontSize({ ...tablet, height: 720 })).toBe(19)
+  })
+
+  it('shrinks a wide tablet grid on a phone by font size instead of CSS zoom', () => {
+    // 手机 374×690 看 120 列网格（13px 时 840×624）：宽度为瓶颈 13 × 0.445 × 0.98 ≈ 5.67。
+    const phone = { width: 374, height: 690, screenWidth: 840, screenHeight: 624, termFont: 13, userFont: 13, initialFont: 13 }
+    expect(viewerFontSize(phone)).toBe(5.6)
+    // 已缩到 5.6px 后再算保持不变，不会来回跳。
+    expect(viewerFontSize({ ...phone, termFont: 5.6, screenWidth: 840 * 5.6 / 13, screenHeight: 624 * 5.6 / 13 })).toBe(5.6)
+    // 极宽的网格不低于最小字号，超出部分横向滚动。
+    expect(viewerFontSize({ ...phone, screenWidth: 9000 })).toBe(VIEWER_FONT_MIN)
+  })
+
+  it('stays stable once enlarged and follows pinch zoom relative to entry', () => {
+    // 已放大到 19px 后画面同比变大，再算仍是 19，不会来回跳。
+    const enlarged = { ...tablet, height: 720, termFont: 19, screenWidth: 300 * 19 / 13, screenHeight: 480 * 19 / 13 }
+    expect(viewerFontSize(enlarged)).toBe(19)
+    expect(viewerFontSize({ ...tablet, height: 720, userFont: 15 })).toBe(22)
+  })
+
+  it('settles once the screen fits within 5%, so per-frame refits converge', () => {
+    const fitted = { width: 374, height: 690, screenWidth: 360, screenHeight: 320, termFont: 6.8, userFont: 13, initialFont: 13 }
+    expect(viewerFontSize(fitted)).toBe(6.8)
+    // 溢出时仍然缩小。
+    expect(viewerFontSize({ ...fitted, screenWidth: 400 })).toBe(6.2)
+  })
+
+  it('falls back to the user font for hidden or unmeasured screens', () => {
+    expect(viewerFontSize({ ...tablet, screenWidth: 0 })).toBe(13)
+    expect(viewerFontSize({ ...tablet, width: Number.NaN })).toBe(13)
   })
 })
 

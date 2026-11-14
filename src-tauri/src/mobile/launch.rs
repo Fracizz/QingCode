@@ -65,6 +65,8 @@ pub(super) async fn create(
         .and_then(LaunchProfile::command)
         .map(str::to_owned);
     let shell = profile.map(|profile| profile.shell);
+    let prewarmed =
+        reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), command.is_some());
     let result = if project.kind == ProjectKind::Ssh {
         if let Some(command) = command {
             // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
@@ -97,6 +99,21 @@ pub(super) async fn create(
             )
             .await
         }
+    } else if let Some(result) = match prewarmed {
+        true => {
+            take_local_prewarmed_shell(
+                app,
+                &id,
+                &project.path,
+                shell.as_deref(),
+                command.as_deref(),
+                (cols, rows),
+            )
+            .await
+        }
+        false => None,
+    } {
+        result
     } else {
         let app = app.clone();
         let id = id.clone();
@@ -144,6 +161,43 @@ pub(super) async fn create(
     let inner = hub.inner.lock().unwrap();
     let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
     Ok(session.metadata(&id))
+}
+
+/// 与电脑端新建相同的预热条件：本机项目（Windows、电脑端开启了「本地终端可接回」才有预热目标）
+/// 与远端 Windows 的 Server 模式项目都可带配置命令（PowerShell），WSL 不预热。预热池只为电脑端
+/// 当前项目准备 Shell，其他项目在这里按未命中处理。预留后改用手机终端 id，领取由各自的新建链路完成。
+fn reserve_prewarmed_shell(
+    app: &AppHandle,
+    id: &str,
+    project: &Project,
+    shell: Option<&str>,
+    has_startup: bool,
+) -> bool {
+    project.kind != ProjectKind::Wsl
+        && app
+            .state::<crate::remote_ssh::local_terminal::ShellPrewarmPool>()
+            .reserve_as(id, &project.path, shell, has_startup)
+            .is_ok()
+}
+
+/// 领取本机预热 Shell；未命中返回 None 走原来的进程内新建。启动命令交付后确认丢失时
+/// 返回错误而不是重新新建，避免命令执行两次（与电脑端一致）。
+async fn take_local_prewarmed_shell(
+    app: &AppHandle,
+    id: &str,
+    cwd: &str,
+    shell: Option<&str>,
+    startup: Option<&str>,
+    size: (u16, u16),
+) -> Option<Result<crate::terminal::TerminalSpawnResult, String>> {
+    if let Err(error) = app.state::<crate::PathAllowlist>().ensure_executable(cwd) {
+        return Some(Err(error));
+    }
+    let manager = app.state::<crate::remote_ssh::SshManager>();
+    app.state::<crate::remote_ssh::local_terminal::ShellPrewarmPool>()
+        .take(id, cwd, shell, startup, size, app.clone(), &manager)
+        .await
+        .transpose()
 }
 
 /// 手机会话记录只在电脑内存里，电脑重启或升级后要从 daemon 找回仍在运行的终端。

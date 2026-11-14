@@ -121,6 +121,17 @@ describe('terminal pane isolation', () => {
     await store.closeTerminal('warm-claude')
   })
 
+  it('reserves a remote prewarmed shell for a profile with a startup command', async () => {
+    const profile = { id: 'assistant', name: 'Claude', command: 'claude', shell: 'powershell' } as const
+    vi.mocked(getTerminalProfile).mockReturnValueOnce(profile)
+    vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 'warm-remote' })
+    vi.mocked(ensureTerminalProfileTrust).mockResolvedValueOnce(true)
+    const path = 'ssh://conn/C:/work/proj'
+    expect(await useTerminalStore.getState().addTerminal(path, 'p1')).toBe('warm-remote')
+    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), true)
+    await useTerminalStore.getState().closeTerminal('warm-remote')
+  })
+
   it('inferTerminalPaneOwnership assigns legacy bindings to panes', () => {
     const terminals = [tab('a'), tab('b'), tab('c'), tab('d')]
     const owned = inferTerminalPaneOwnership(terminals, {

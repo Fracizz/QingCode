@@ -36,6 +36,49 @@ fn readiness_runs_after_profiles_without_disabling_them_or_typing_commands() {
 }
 
 #[test]
+fn remote_powershell_waits_for_a_hidden_startup_line_after_its_setup() {
+    let mut launch = crate::remote_ssh::terminal_cmds::persistent_shell_launch(
+        "/C:/work/project",
+        Some("powershell"),
+    )
+    .unwrap();
+    let (args, startup) = remote_ready_args(&launch);
+    assert!(startup);
+    assert_eq!(args.len(), launch.args.len());
+    assert_eq!(
+        &args[..args.len() - 1],
+        &launch.args[..launch.args.len() - 1]
+    );
+    let script = args.last().unwrap();
+    assert!(script.starts_with(launch.args.last().unwrap().as_str()));
+    assert!(script.contains("[Console]::ReadKey($true)"));
+    assert!(script.contains("FromBase64String"));
+    assert!(!args.iter().any(|arg| arg == "-NoProfile"));
+
+    launch.resolved_shell = "cmd".into();
+    launch.args = vec!["/K".into(), "chcp 65001>nul".into()];
+    assert_eq!(remote_ready_args(&launch), (launch.args.clone(), false));
+}
+
+#[test]
+fn remote_startup_line_is_printable_base64_ending_with_enter() {
+    use base64::Engine;
+    assert_eq!(remote_startup_line(""), b"\r".to_vec());
+    assert_eq!(remote_startup_line("   "), b"\r".to_vec());
+    let line = remote_startup_line(" claude --resume; echo 中文 ");
+    assert_eq!(line.last(), Some(&b'\r'));
+    let body = &line[..line.len() - 1];
+    assert!(body.iter().all(|byte| byte.is_ascii_graphic()));
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(body)
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(decoded).unwrap(),
+        "claude --resume; echo 中文"
+    );
+}
+
+#[test]
 fn launch_key_separates_shell_arguments_environment_and_cwd() {
     let launch = PersistentLaunch {
         shell: Some("pwsh.exe".into()),
@@ -75,6 +118,7 @@ fn fake_shell() -> WarmShell {
         launch,
         remote: None,
         startup_pipe: None,
+        startup_input: false,
         session: None,
         transport: None,
         reserved_at: None,
@@ -103,6 +147,29 @@ fn simultaneous_reservations_cannot_claim_the_same_shell_twice() {
     );
     assert!(pool.take_key("reserved-id", &key).is_some());
     assert!(pool.take_key("reserved-id", &key).is_none());
+}
+
+#[test]
+fn phone_reservations_are_claimed_under_the_phone_terminal_id() {
+    let pool = ShellPrewarmPool::default();
+    let shell = fake_shell();
+    let key = shell.key.clone();
+    pool.0.lock().unwrap().shells.push(shell);
+    // 未预留的空闲项不能被改名领走。
+    assert_eq!(
+        pool.rename_reserved("reserved-id", "mobile-abc"),
+        Err("empty")
+    );
+    assert_eq!(pool.reserve_key(&key, false).as_deref(), Ok("reserved-id"));
+    assert!(pool.rename_reserved("reserved-id", "mobile-abc").is_ok());
+    assert!(!pool.has_entry("reserved-id"));
+    assert!(pool.take_key("reserved-id", &key).is_none());
+    assert!(pool.take_key("mobile-abc", &key).is_some());
+    // 预留后池被清空（重配或窗口移交）时按未命中处理。
+    assert_eq!(
+        pool.rename_reserved("mobile-abc", "mobile-def"),
+        Err("empty")
+    );
 }
 
 #[test]
@@ -165,6 +232,11 @@ fn status_and_reservation_reasons_are_scoped_to_the_target() {
     other.shell = Some("cmd.exe".into());
     assert_eq!(pool.reserve_key(&other, false), Err("shell_mismatch"));
     assert_eq!(pool.reserve_key(&key, true), Err("startup_unsupported"));
+    // 远端 PowerShell 预热项经 PTY 输入交付命令，也能领取配置终端。
+    pool.0.lock().unwrap().shells[0].startup_input = true;
+    assert!(pool.reserve_key(&key, true).is_ok());
+    pool.0.lock().unwrap().shells[0].reserved_at = None;
+    pool.0.lock().unwrap().shells[0].startup_input = false;
     assert!(pool.reserve_key(&key, false).is_ok());
     assert_eq!(pool.reserve_key(&key, false), Err("empty"));
     assert_eq!(pool.status("test")["reserved"], 1);
@@ -256,6 +328,76 @@ async fn powershell_runs_the_staged_profile_only_after_commit() {
             assert_eq!(std::fs::read_to_string(output).unwrap(), "已启动");
         } else {
             assert!(!output.exists());
+        }
+    }
+}
+
+/// 真实 ConPTY：远端预热脚本在 profile 后读取一行，执行命令且不回显 base64；空行进入普通 Shell。
+#[cfg(windows)]
+#[test]
+fn remote_powershell_runs_the_delivered_command_without_echoing_it() {
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+
+    for command in [
+        Some("[IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '已启动')"),
+        None,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("started.txt");
+        let pair = portable_pty::native_pty_system()
+            .openpty(portable_pty::PtySize {
+                rows: 30,
+                cols: 120,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut builder = portable_pty::CommandBuilder::new("powershell.exe");
+        builder.args([
+            "-NoProfile",
+            "-NoLogo",
+            "-Command",
+            &format!(
+                "{}; [IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '|done')",
+                include_str!("start-remote-profile.ps1")
+            ),
+        ]);
+        builder.env("QC_TEST_OUTPUT", &output);
+        let mut child = pair.slave.spawn_command(builder).unwrap();
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            while let Ok(read) = reader.read(&mut buffer) {
+                if read == 0 || tx.send(buffer[..read].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut writer = pair.master.take_writer().unwrap();
+        let line = remote_startup_line(command.unwrap_or_default());
+        writer.write_all(&line).unwrap();
+        writer.flush().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !std::fs::read_to_string(&output).is_ok_and(|text| text.ends_with("|done")) {
+            assert!(Instant::now() < deadline, "预热脚本未在时限内结束");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        drop(writer);
+        drop(pair.master);
+        let echoed: Vec<u8> = rx.try_iter().flatten().collect();
+        let expected = if command.is_some() {
+            "已启动|done"
+        } else {
+            "|done"
+        };
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), expected);
+        let body = String::from_utf8_lossy(&line[..line.len() - 1]).into_owned();
+        if !body.is_empty() {
+            assert!(!String::from_utf8_lossy(&echoed).contains(&body));
         }
     }
 }

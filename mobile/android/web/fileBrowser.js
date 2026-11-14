@@ -1,7 +1,7 @@
 // 项目文件列表、名称/路径查询与单文件下载；弹层覆盖终端，保持会话和草稿。
 import { button, confirmAction, get, icon, rowText } from './dom.js';
 import { dateLocale, t } from './i18n.js';
-import { createFilePositions, createFileRequestScope, formatFileBytes, needsDownloadConfirmation, parentDirectory, relativeFilePath } from './fileBrowserState.js';
+import { createFilePositions, createFileRequestScope, formatFileBytes, needsDownloadConfirmation, parentDirectory, readFileSort, relativeFilePath, sortFileEntries, writeFileSort } from './fileBrowserState.js';
 
 export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () => {} }) {
   const dialog = get('files-dialog');
@@ -20,6 +20,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   let selectionEpoch = 0;
   let transfer = null;
   let transferContext = '';
+  let sortOrder = readFileSort(localStorage);
 
   const searching = () => !!get('files-query').value.trim();
   const activeTransfer = () => ['choosing', 'downloading'].includes(transfer?.state);
@@ -77,24 +78,46 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     get('file-download').disabled = !selected || activeTransfer();
   }
 
+  function renderSort() {
+    const control = get('files-sort');
+    control.dataset.order = sortOrder;
+    control.setAttribute('aria-label', t(sortOrder === 'asc' ? '按修改时间排序：旧的在前' : '按修改时间排序：新的在前'));
+  }
+
+  function toggleSort() {
+    sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    writeFileSort(localStorage, sortOrder);
+    renderSort();
+    entries = sortFileEntries(entries, sortOrder);
+    renderEntries();
+    get('files-scroll').scrollTop = 0;
+  }
+
   function renderEntries() {
     const list = get('files-list');
     const query = searching();
+    if (!entries.length) get('files-count').textContent = '';
     list.replaceChildren(...entries.map(entry => {
       const wrapper = document.createElement('div');
       wrapper.className = 'file-entry';
       const control = button('row', () => entry.isDir ? navigate(entry.path) : showFile(entry));
       control.dataset.path = entry.path;
       const date = Number.isFinite(entry.modifiedAt) ? new Date(entry.modifiedAt).toLocaleString(dateLocale(), { dateStyle: 'short', timeStyle: 'short' }) : '';
-      const meta = [entry.isDir ? t('文件夹') : formatFileBytes(entry.size), date].filter(Boolean).join(' · ');
+      // 文件夹图标已表达类型，副标题只放修改时间；读屏仍读出「文件夹」。
+      const meta = [entry.isDir ? '' : formatFileBytes(entry.size), date].filter(Boolean).join(' · ');
       const text = rowText(entry.name, meta);
+      if (entry.isDir) control.setAttribute('aria-label', [entry.name, t('文件夹'), date].filter(Boolean).join(', '));
+      control.dataset.entry = entry.isDir ? 'dir' : 'file';
       if (query) {
         const location = document.createElement('small');
         location.className = 'file-entry-path';
         location.textContent = entry.path;
         text.append(location);
       }
-      control.append(icon(entry.isDir ? 'folder' : 'file'), text, icon(entry.isDir ? 'chevron' : 'down', 'arrow'));
+      const tile = document.createElement('span');
+      tile.className = 'file-tile';
+      tile.append(icon(entry.isDir ? 'folder' : 'file'));
+      control.append(tile, text, icon(entry.isDir ? 'chevron' : 'down', 'arrow'));
       wrapper.append(control);
       if (query) {
         const locate = button('icon-button file-locate', () => navigate(parentDirectory(entry.path), entry.path));
@@ -125,15 +148,18 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     entries = [];
     renderEntries();
     setLoading(true);
+    get('files-count').textContent = '';
     get('files-status').textContent = t(query ? '正在查询文件…' : '正在读取目录…');
     get('files-status').dataset.error = 'false';
     get('files-truncated').hidden = true;
     try {
       const result = await rpc(query ? 'file_search' : 'file_list', { ...args, ...(query ? { query } : {}) }, { signal: controller.signal });
       if (!currentContext(target) || !requests.current(request)) return;
-      entries = Array.isArray(result.entries) ? result.entries : [];
+      entries = sortFileEntries(Array.isArray(result.entries) ? result.entries : [], sortOrder);
       renderEntries();
-      get('files-status').textContent = entries.length ? t('{n} 项', { n: entries.length }) : t(query ? '没有匹配的文件' : '此目录为空');
+      // 有结果时数量放在面包屑条右侧，状态行只留给加载、空目录和错误。
+      get('files-count').textContent = entries.length ? t('{n} 项', { n: entries.length }) : '';
+      get('files-status').textContent = entries.length ? '' : t(query ? '没有匹配的文件' : '此目录为空');
       get('files-truncated').hidden = !result.truncated;
       get('files-truncated').textContent = t(query ? '查询结果可能不完整（最多 200 条），请缩小查询范围。' : '目录未完整显示（最多 2000 项），可缩小范围查询。');
       get('files-rules').textContent = t('列表与查询遵循电脑端 files.exclude；不跟随符号链接。')
@@ -262,10 +288,12 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     get('files-rules').textContent = t('列表与查询遵循电脑端 files.exclude；不跟随符号链接。');
     get('files-status').textContent = t('正在读取目录…');
     get('files-status').dataset.error = 'false';
+    get('files-count').textContent = '';
     get('files-truncated').hidden = true;
     entries = [];
     renderEntries();
     crumbs();
+    renderSort();
     renderTransfer();
     dialog.showModal();
     setLoading(false);
@@ -297,6 +325,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   get('files-cancel-query').addEventListener('click', cancelQuery);
   get('files-scope').addEventListener('change', queueQuery);
   get('files-hidden').addEventListener('change', queueQuery);
+  get('files-sort').addEventListener('click', toggleSort);
   get('file-download').addEventListener('click', download);
   get('files-download-cancel').addEventListener('click', async () => {
     try { await rpc('file_download_cancel'); }
@@ -310,5 +339,5 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     transfer = { ...transfer, ...event };
     renderTransfer();
   };
-  return { open, back, isOpen: () => dialog.open, render: () => { if (dialog.open) { renderEntries(); renderTransfer(); } } };
+  return { open, back, isOpen: () => dialog.open, render: () => { if (dialog.open) { renderSort(); renderEntries(); renderTransfer(); } } };
 }

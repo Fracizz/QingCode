@@ -35,7 +35,7 @@ OSC 8 超链接同样需要 `Ctrl`／`Cmd` 点击：`file:` 与 `vscode://file/.
 已启动的进程内终端不能无损转交给宿主；开启设置不会把现有终端变成可接回终端。未托管终端仍会在退出时结束、重启后按原配置新建；退出确认会单独列出将关闭的本地终端，不将恢复历史输出视为接回原进程。
 
 - **宿主**：`qingcode-server` 的 daemon，运行体是当前 QingCode.exe 的版本化副本 `qingcode-pty-host.exe`（`%LOCALAPPDATA%\com.qingcode.app\pty-host`，开发构建在 `.dev/pty-host`），因此不占用安装目录、不影响升级。连接走命名管道，DACL 只放行当前用户并校验 token，运行目录与 SSH 远端 daemon 分开。
-- **范围**：仅 Windows 的 PowerShell / PowerShell 7 / CMD 交互终端和终端配置。一次性运行任务、WSL 与手机端新建的终端仍由 QingCode 进程持有；不能托管或宿主启动失败时回退进程内 PTY，原因记在标签的 `persistentFallbackReason`。
+- **范围**：仅 Windows 的 PowerShell / PowerShell 7 / CMD 交互终端和终端配置。一次性运行任务、WSL 与手机端新建的终端仍由 QingCode 进程持有（手机端领取到 Shell 预热项时除外，见 [Windows Shell 预热](windows-shell-prewarm.md)）；不能托管或宿主启动失败时回退进程内 PTY，原因记在标签的 `persistentFallbackReason`。
 - **作业对象**：调用方所在的作业对象会连带结束子进程且禁止脱离时（典型是 `pnpm tauri:dev` 下 cargo 的作业），宿主改以当前桌面的 Shell（explorer）为父进程拉起，从而活过 QingCode；没有交互桌面或仍失败时照常拉起，退出确认不再把本地终端算作可保留，并说明原因（`local_host_survives_app_exit`）。
 - **生命周期**：退出确认提供保留/结束。连续断开 24 小时后宿主自动结束终端；宿主在无终端、无连接 10 分钟后退出。电脑重启后原进程不存在，标签按原配置重新启动。
 - **已知限制**：状态栏内存统计不含托管终端的进程树。关闭设置只影响之后新建的终端，已托管的终端继续可接回。

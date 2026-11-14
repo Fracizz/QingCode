@@ -38,11 +38,27 @@ describe('Android colored history lines', () => {
     expect(host.textContent).toBe('plain\nerror\nafter\n')
     expect((host.querySelector('span') as HTMLElement).style.color).toBe('rgb(244, 135, 113)')
   })
+
+  it('draws bold basic colors bright and dim text at half opacity, like xterm', () => {
+    const palette = { red: '#f48771', brightRed: '#ffaaaa' }
+    const [bold, bright, cube, plain] = [
+      '\x1b[1;31mbold', '\x1b[91mbright', '\x1b[1;38;5;1mcube', '\x1b[31mplain',
+    ].map(line => sgrSegments(line, palette)[0].style)
+    expect(bold).toMatchObject({ fg: '#ffaaaa', bold: true })
+    expect(bright).toMatchObject({ fg: '#ffaaaa' })
+    // xterm 只对 16 色模式做粗体变亮，256 色保持原色。
+    expect(cube).toMatchObject({ fg: '#f48771', bold: true })
+    expect(plain).toMatchObject({ fg: '#f48771' })
+    const host = document.createElement('pre')
+    host.append(renderHistoryPage(document, ['\x1b[2mhint\x1b[m'], palette))
+    expect((host.querySelector('span') as HTMLElement).style.opacity).toBe('0.5')
+  })
 })
 
 // 模拟 xterm IBufferCell：只实现渲染用到的方法。
-function cell(chars: string, { fg = -1, rgb = false, bold = false, width = 1 } = {}) {
+function cell(chars: string, { fg = -1, rgb = false, bold = false, width = 1, p256 = false } = {}) {
   return {
+    getFgColorMode: () => (fg < 0 ? 0 : rgb ? 0x3000000 : p256 ? 0x2000000 : 0x1000000),
     getChars: () => chars,
     getWidth: () => width,
     isFgDefault: () => fg < 0,
@@ -84,6 +100,12 @@ describe('Android history rendering', () => {
     expect(segments[1].style).toBeNull()
     expect(segments[2].style).toMatchObject({ fg: '#ff8800' })
     expect(segments[3].style).toMatchObject({ bold: true, fg: null })
+  })
+
+  it('brightens bold 16-color cells on the screen copy but not 256-color ones', () => {
+    const theme = { green: '#89d185', brightGreen: '#b0d6aa' }
+    const row = line([cell('a', { fg: 2, bold: true }), cell('b', { fg: 2, bold: true, p256: true }), cell('c', { fg: 2 })])
+    expect(lineSegments(row, 3, theme).map(segment => segment.style?.fg)).toEqual(['#b0d6aa', '#89d185', '#89d185'])
   })
 
   it('collapses blank runs and turns TUI frame markers into dividers', () => {
@@ -158,16 +180,23 @@ describe('Android history grid alignment', () => {
     host.append(renderHistoryPage(document, ['├──┼──┤', '│ 最新 │', 'plain', '\x1b[31m中\x1b[m!']))
     expect(host.textContent).toBe('├──┼──┤\n│ 最新 │\nplain\n中!\n')
     const widths = [...host.querySelectorAll<HTMLElement>('.cells')].map(span => [span.textContent, span.style.width])
-    expect(widths).toEqual([['├──┼──┤', '7ch'], ['│', '1ch'], ['最新', '4ch'], ['│', '1ch'], ['中', '2ch']])
+    expect(widths).toEqual([['├──┼──┤', '7ch'], ['│', '1ch'], ['最', '2ch'], ['新', '2ch'], ['│', '1ch'], ['中', '2ch']])
 
     const rows = [line([cell('中', { width: 2 }), cell('', { width: 0 }), cell('─')])]
     const term = { rows: 1, cols: 3, options: {}, buffer: { active: { viewportY: 0, getLine: (y: number) => rows[y] } } }
     const screen = document.createElement('pre')
     screen.append(renderScreen(document, term, text => ({ cell: 0.6, width: text.length * 1 })))
-    const span = screen.querySelector<HTMLElement>('.cells')!
-    expect(span.textContent).toBe('中─')
-    expect(span.style.width).toBe('3ch')
-    expect(span.style.letterSpacing).toBe('-0.1000em')
+    const [wide, line_] = [...screen.querySelectorAll<HTMLElement>('.cells')]
+    expect([wide.textContent, wide.style.width, wide.style.letterSpacing]).toEqual(['中', '2ch', '0.2000em'])
+    expect([line_.textContent, line_.style.width]).toEqual(['─', '1ch'])
+  })
+
+  it('gives each wide character its own cell box so long CJK runs can wrap', () => {
+    const host = document.createElement('pre')
+    host.append(renderHistoryPage(document, ['平板宽网格́内容──']))
+    expect(host.textContent).toBe('平板宽网格́内容──\n')
+    // 组合字符跟随前一个字；表格线整段保留。
+    expect([...host.querySelectorAll('.cells')].map(span => span.textContent)).toEqual(['平', '板', '宽', '网', '格́', '内', '容', '──'])
   })
 
   it('draws block elements per cell so rows join without gaps and text stays copyable', () => {

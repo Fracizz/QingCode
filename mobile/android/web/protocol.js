@@ -31,6 +31,31 @@ export function terminalGridSize(width, height, cellWidth, cellHeight, fixedColu
   };
 }
 
+/** 旁观时为看清对方画面允许的最大字号；高于手动调节上限，平板看手机网格时能放大到占满。 */
+export const VIEWER_FONT_MAX = 26;
+/** 旁观宽网格时的最小字号；再小也看不清，超出部分改为横向滚动。 */
+export const VIEWER_FONT_MIN = 4;
+
+/**
+ * 旁观其他设备时的终端字号。对方的行列不能改，整屏只能靠字号缩放：不用 CSS zoom，
+ * 因为 WebGL 渲染器会按缩放后的像素重设画布、字格却按原大小绘制，画面被截断
+ * （手机旁观平板的宽网格时出现过）；放大时 zoom 也会把画布拉糊。
+ * screenWidth / screenHeight 是 termFont 字号下的画面尺寸；userFont / initialFont 为
+ * 双指缩放后的字号与进入旁观时的字号。缩小可取一位小数，留 2% 余量吸收字格取整。
+ */
+export function viewerFontSize({ width, height, screenWidth, screenHeight, termFont, userFont, initialFont, maxFont = VIEWER_FONT_MAX, minFont = VIEWER_FONT_MIN }) {
+  if (![width, height, screenWidth, screenHeight, termFont].every(value => Number.isFinite(value) && value > 0)) return userFont;
+  const magnification = userFont / (initialFont || userFont);
+  const ratio = Math.min(width / screenWidth, height / screenHeight) * magnification;
+  // 已放得下且变化不到 5% 时保持不动：小字号的字格宽度按设备像素取整，不严格成比例，
+  // 逐帧校准时靠这个阈值收敛，不会在相邻两档之间来回跳。
+  if (ratio >= 1 && ratio < 1.05) return termFont;
+  const target = termFont * ratio * 0.98;
+  // 放大取整数字号，缩小保留一位小数，窄屏上不至于一下缩掉一整号。
+  const font = target >= userFont ? Math.floor(target) : Math.floor(target * 10) / 10;
+  return Math.max(minFont, Math.min(Math.max(maxFont, userFont), font));
+}
+
 /** 接入时后端画面的网格和本机不同：要先改尺寸等程序重绘，不能直接显示旧尺寸的画面。 */
 export function attachNeedsRedraw(snapshot, local) {
   return Number.isFinite(snapshot?.cols) && Number.isFinite(snapshot?.rows)
