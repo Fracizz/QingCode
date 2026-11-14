@@ -3,19 +3,21 @@ const STORAGE_KEY = 'qingcode:mobile:workspace-state';
 const MAX_ROOMS = 24;
 const MAX_CHARACTERS = 600_000;
 
-export function createWorkspaceState({ storage, onError = () => {} }) {
+export function createWorkspaceState({ storage, onError = () => {}, onSaved = () => {} }) {
   const rooms = new Map();
   let sequence = 0;
   try {
     const saved = JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
-    if (Array.isArray(saved)) for (const [key, room] of saved.slice(-MAX_ROOMS)) {
+    if (Array.isArray(saved)) for (const entry of saved) {
+      if (!Array.isArray(entry)) continue;
+      const [key, room] = entry;
       if (typeof key !== 'string' || !room || typeof room !== 'object') continue;
       rooms.set(key, {
         draft: typeof room.draft === 'string' ? room.draft : '',
         project: typeof room.project === 'string' ? room.project : '',
         name: typeof room.name === 'string' ? room.name : '',
         receipts: Array.isArray(room.receipts) ? room.receipts.filter(item => item && typeof item.id === 'string'
-          && typeof item.text === 'string' && ['sending', 'received', 'unknown'].includes(item.state)).slice(-3)
+          && typeof item.text === 'string' && ['sending', 'received', 'unknown'].includes(item.state))
           .map(item => ({ ...item, state: item.state === 'sending' ? 'unknown' : item.state })) : [],
       });
     }
@@ -25,19 +27,35 @@ export function createWorkspaceState({ storage, onError = () => {} }) {
     if (!rooms.has(key)) rooms.set(key, { draft: '', project: '', name: '', receipts: [] });
     return rooms.get(key);
   }
-  function save() {
-    while (rooms.size > MAX_ROOMS) rooms.delete(rooms.keys().next().value);
+  function save(current) {
     try {
-      let serialized = JSON.stringify([...rooms]);
-      // Prefer drafts over old submissions when the local history grows too large.
-      for (const room of rooms.values()) {
-        while (serialized.length > MAX_CHARACTERS && room.receipts.length) {
-          room.receipts.shift();
-          serialized = JSON.stringify([...rooms]);
+      // Limits apply to disposable history. Drafts and unconfirmed submissions must
+      // survive both pruning and reload, even when more than 24 sessions have them.
+      const saved = new Map([...rooms].map(([key, room]) => [key, { ...room, receipts: [...room.receipts] }]));
+      const protectedRoom = room => !!room.draft || room.receipts.some(item => item.state !== 'received');
+      for (const [key, room] of saved) {
+        if (saved.size <= MAX_ROOMS) break;
+        if (key !== current && !room.draft && !room.receipts.length) saved.delete(key);
+      }
+      for (const [key, room] of saved) {
+        if (saved.size <= MAX_ROOMS) break;
+        if (key !== current && !protectedRoom(room)) saved.delete(key);
+      }
+      let serialized = JSON.stringify([...saved]);
+      for (const room of saved.values()) {
+        while (serialized.length > MAX_CHARACTERS) {
+          const index = room.receipts.findIndex(item => item.state === 'received');
+          if (index < 0) break;
+          room.receipts.splice(index, 1);
+          serialized = JSON.stringify([...saved]);
         }
       }
-      if (serialized.length > MAX_CHARACTERS) { onError(); return; }
+      // The character budget is soft for protected text; actual quota failures are
+      // reported without deleting anything in memory or the previously saved data.
       storage.setItem(STORAGE_KEY, serialized);
+      rooms.clear();
+      for (const [key, room] of saved) rooms.set(key, room);
+      onSaved();
     } catch { onError(); }
   }
   function touch(key) {
@@ -49,24 +67,30 @@ export function createWorkspaceState({ storage, onError = () => {} }) {
 
   const drafts = {
     get(key) { return rooms.get(key)?.draft; },
-    set(key, text) { touch(key).draft = text; save(); },
-    delete(key) { if (rooms.has(key)) { rooms.get(key).draft = ''; save(); } },
+    set(key, text) { touch(key).draft = text; save(key); },
+    delete(key) { if (rooms.has(key)) { rooms.get(key).draft = ''; save(key); } },
     *keys() { for (const [key, room] of rooms) if (room.draft) yield key; },
     *[Symbol.iterator]() { for (const [key, room] of rooms) if (room.draft) yield [key, room.draft]; },
   };
   return {
     drafts,
-    context(key, project, name) { const room = touch(key); room.project = project; room.name = name; save(); },
+    context(key, project, name) { const room = touch(key); room.project = project; room.name = name; save(key); },
     submit(key, text) {
       const room = touch(key);
       const receipt = { id: Date.now() + '-' + ++sequence, text, state: 'sending', at: Date.now() };
-      room.receipts = [...room.receipts, receipt].slice(-3);
-      save();
+      room.receipts = [...room.receipts, receipt];
+      save(key);
       return receipt.id;
     },
     settle(key, id, state) {
       const receipt = rooms.get(key)?.receipts.find(item => item.id === id);
-      if (receipt && receipt.state === 'sending') { receipt.state = state; save(); }
+      if (receipt && receipt.state === 'sending') {
+        receipt.state = state;
+        const room = rooms.get(key);
+        const recent = new Set(room.receipts.filter(item => item.state === 'received').slice(-3));
+        room.receipts = room.receipts.filter(item => item.state !== 'received' || recent.has(item));
+        save(key);
+      }
     },
     recent(key) { return [...(rooms.get(key)?.receipts ?? [])].reverse(); },
     recoverable(host, project, current) {

@@ -10,7 +10,10 @@ const run = (...args) => execFileSync('agent-browser', ['--session', session, ..
 const evaluate = expression => run('eval', expression)
 const check = (name, expression) => { run('wait', '--fn', expression); results.push({ name, passed: true }) }
 const capture = name => run('screenshot', resolve(directory, `${name}.png`))
-const press = key => run('click', `#special-keys [data-key="${key}"]`)
+const press = key => {
+  evaluate(`document.querySelector('#special-keys [data-key="${key}"]').scrollIntoView({inline:'center',block:'nearest'})`)
+  run('click', `#special-keys [data-key="${key}"]`)
+}
 const more = key => {
   run('wait', '--fn', `!document.querySelector('#more-keys').disabled`)
   run('click', '#more-keys')
@@ -38,7 +41,7 @@ try {
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('终端可输入', `document.querySelector('#terminal-status').textContent === '会话中'`)
   evaluate(`window.__keyEvents = []; document.addEventListener('click', e => window.__keyEvents.push({id:e.target.id,key:e.target.dataset.key,disabled:e.target.disabled}),true)`)
-  check('常用区为单行，Esc、Tab、Ctrl+C 在最前，没有重复补全工具栏', `(() => { const keys = [...document.querySelector('#special-keys').children]; return keys.length === 11 && keys.slice(0, 3).map(k => k.dataset.key).join() === 'esc,tab,interrupt' && new Set(keys.map(k => Math.round(k.getBoundingClientRect().top))).size === 1 && !document.querySelector('#completion-tools'); })()`)
+  check('常用区为单行，Esc、Tab、Ctrl+C 在最前，没有重复补全工具栏', `(() => { const keys = [...document.querySelectorAll('#special-keys > [data-key]')]; return keys.length === 10 && keys.slice(0, 3).map(k => k.dataset.key).join() === 'esc,tab,interrupt' && new Set(keys.map(k => Math.round(k.getBoundingClientRect().top))).size === 1 && !document.querySelector('#completion-tools'); })()`)
 
   reset()
   run('fill', '#compose', '前👨‍👩‍👧‍👦后')
@@ -107,11 +110,13 @@ try {
   reset()
   hold()
   run('click', '#new-session')
+  run('wait', '--fn', `document.querySelector('#new-session-dialog').open && document.querySelector('#terminal-profiles').getAttribute('aria-busy')==='false' && !document.querySelector('#new-session-dialog').getAnimations().some(a=>a.playState==='running')`)
   run('click', '#new-session-dialog [data-profile="default"]')
   check('新会话使用独立的手机草稿输入位置', `document.querySelectorAll('#session-options .session-option').length === 2 && ${mode} === '命令输入'`)
   evaluate(`window.__switchedCount = window.__mobileFixture.state.inputs.join('').length; window.__switchedAt = performance.now()`)
   check('切换会话取消旧会话的长按计时器', `performance.now() - window.__switchedAt > 600 && ${inputs}.length === window.__switchedCount`)
   run('click', '#show-sessions')
+  run('wait', '--fn', `document.querySelector('#session-drawer').open && !document.querySelector('#session-drawer').getAnimations().some(a=>a.playState==='running')`)
   run('click', '#session-options .session-option:last-child .row')
   check('切回会话恢复远端实时输入位置', `${mode} === '终端实时输入' && document.querySelector('#terminal-status').textContent === '会话中' && !document.querySelector('#more-keys').disabled`)
   run('click', '#keyboard')

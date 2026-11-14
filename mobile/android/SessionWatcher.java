@@ -29,6 +29,7 @@ final class SessionWatcher {
     private static final String CHANNEL_WATCH = "session_watch";
     private static final String CHANNEL_EVENTS = "session_events";
     private static final long POLL_MS = 5_000;
+    private static final long FOREGROUND_POLL_MS = 15_000;
     private static SessionWatcher instance;
 
     private final Context context;
@@ -182,7 +183,8 @@ final class SessionWatcher {
                 if (thread != self) return;
                 if (background && finish()) return;
             }
-            delay = success ? POLL_MS : WatchPolicy.failureDelay(delay);
+            // 前台只维护后台提醒基线；当前终端和会话列表已有各自的刷新，不必重复高频查询。
+            delay = success ? (background ? POLL_MS : FOREGROUND_POLL_MS) : WatchPolicy.failureDelay(delay);
             try {
                 Thread.sleep(delay);
             } catch (InterruptedException wake) {
@@ -193,6 +195,11 @@ final class SessionWatcher {
 
     /** 持锁调用；返回真表示后台留意已结束。 */
     private boolean finish() {
+        if (!enabled || !notificationsAllowed()) {
+            stopService();
+            thread = null;
+            return true;
+        }
         WatchPolicy.Decision decision = targets.isEmpty() ? WatchPolicy.Decision.STOP_IDLE : policy.decide(now());
         if (decision == WatchPolicy.Decision.CONTINUE) return false;
         if (decision == WatchPolicy.Decision.STOP_OFFLINE) {
@@ -226,8 +233,9 @@ final class SessionWatcher {
             List<WatchPolicy.Event> events;
             boolean post;
             synchronized (this) {
+                if (thread != Thread.currentThread()) return false;
                 events = policy.observe(address, sessions, now());
-                post = background;
+                post = background && enabled && serviceWanted;
             }
             if (post) for (WatchPolicy.Event event : events) post(event);
             return true;
@@ -253,7 +261,9 @@ final class SessionWatcher {
             .build();
     }
 
-    private void post(WatchPolicy.Event event) {
+    private synchronized void post(WatchPolicy.Event event) {
+        // Settings or system permission can change while an attention request is in flight.
+        if (!background || !enabled || !serviceWanted || !notificationsAllowed()) return;
         WatchPolicy.Observation session = event.session;
         Intent intent = new Intent(context, MainActivity.class)
             .setAction(MainActivity.OPEN_SESSION_ACTION)

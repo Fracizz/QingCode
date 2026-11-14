@@ -68,6 +68,7 @@ final class WatchPolicy {
     }
 
     private final Map<String, Map<String, Tracked>> hosts = new HashMap<>();
+    private final Map<String, Long> hostSuccess = new HashMap<>();
     private long watchStart;
     private long lastActive;
     private long lastSuccess;
@@ -75,6 +76,7 @@ final class WatchPolicy {
     /** 合并一台电脑的最新状态。首次见到的会话只作基线，不提醒。 */
     List<Event> observe(String address, List<Observation> sessions, long now) {
         lastSuccess = now;
+        hostSuccess.put(address, now);
         Map<String, Tracked> tracked = hosts.get(address);
         if (tracked == null) {
             tracked = new HashMap<>();
@@ -133,6 +135,7 @@ final class WatchPolicy {
 
     void forget(String address) {
         hosts.remove(address);
+        hostSuccess.remove(address);
     }
 
     boolean anyActive() {
@@ -158,6 +161,20 @@ final class WatchPolicy {
     Decision decide(long now) {
         if (now - watchStart >= MAX_WATCH_MS) return Decision.STOP_TIMEOUT;
         if (now - lastSuccess >= OFFLINE_LIMIT_MS) return Decision.STOP_OFFLINE;
+        // An idle online computer must not keep stale busy state on another,
+        // unreachable computer watching forever. Discard that host's baseline;
+        // reconnecting establishes a fresh one without sending an old alert.
+        boolean lostActiveHost = false;
+        for (Iterator<Map.Entry<String, Long>> entries = hostSuccess.entrySet().iterator(); entries.hasNext();) {
+            Map.Entry<String, Long> entry = entries.next();
+            if (now - Math.max(entry.getValue(), watchStart) < OFFLINE_LIMIT_MS) continue;
+            Map<String, Tracked> stale = hosts.remove(entry.getKey());
+            if (stale != null) for (Tracked item : stale.values()) {
+                lostActiveHost |= !item.last.exited && (item.last.busy || item.pending);
+            }
+            entries.remove();
+        }
+        if (lostActiveHost && !anyActive()) return Decision.STOP_OFFLINE;
         if (anyActive()) {
             lastActive = now;
             return Decision.CONTINUE;

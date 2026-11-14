@@ -1195,8 +1195,14 @@ public final class MainActivity extends Activity {
                     ? "连接超时，请确认电脑在线并允许局域网访问。"
                     : error instanceof javax.net.ssl.SSLException
                         ? "Windows 身份校验失败，请重新核对证书指纹。"
-                        : error.getMessage();
-                reply(id, MainActivity.failure(reason == null ? "连接失败。" : reason));
+                        : error instanceof java.net.ConnectException
+                            ? "电脑连接未建立，请检查电脑端移动连接、地址端口和防火墙。"
+                            : error instanceof java.net.NoRouteToHostException || error instanceof java.net.UnknownHostException
+                                ? "网络无法到达电脑，请检查手机网络和 VPN 连接。"
+                                : error.getMessage();
+                String code = error instanceof javax.net.ssl.SSLException ? "identity"
+                    : error instanceof SocketTimeoutException ? "timeout" : "";
+                reply(id, MainActivity.failure(reason == null ? "连接失败。" : reason, code));
             }
         });
     }
@@ -1333,9 +1339,14 @@ public final class MainActivity extends Activity {
     }
 
     private static JSONObject failure(String message) {
+        return failure(message, "");
+    }
+
+    private static JSONObject failure(String message, String code) {
         JSONObject result = new JSONObject();
         try {
             result.put("ok", false).put("error", message);
+            if (!code.isEmpty()) result.put("code", code);
         } catch (Exception impossible) {
             throw new IllegalStateException(impossible);
         }

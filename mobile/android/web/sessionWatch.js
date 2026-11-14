@@ -10,12 +10,16 @@ export function createSessionWatch({ rpc, prefix, capabilities, notice, tipBlock
   const key = prefix + 'session-watch';
   const select = get('session-watch');
   const tip = get('watch-tip');
+  let revision = 0;
+  let preference = null;
+  try { preference = localStorage.getItem(key); } catch { /* 本次运行使用内存偏好。 */ }
 
   function read() {
-    try { return localStorage.getItem(key); } catch { return null; }
+    return preference;
   }
 
   function write(value) {
+    preference = value;
     try { localStorage.setItem(key, value); } catch { /* 本次运行仍然生效 */ }
   }
 
@@ -30,13 +34,15 @@ export function createSessionWatch({ rpc, prefix, capabilities, notice, tipBlock
       const value = await capabilities();
       return !!value?.features?.includes('attention');
     } catch {
-      return false;
+      return null;
     }
   }
 
   async function enable() {
+    const current = ++revision;
     let allowed = false;
     try { allowed = await rpc('notification_permission'); } catch { /* 按未授权处理 */ }
+    if (current !== revision) return;
     if (!allowed) {
       write('off');
       await apply();
@@ -45,12 +51,14 @@ export function createSessionWatch({ rpc, prefix, capabilities, notice, tipBlock
     }
     write('on');
     await apply();
-    if (!await supported()) notice(t('当前电脑不支持后台提醒，请更新电脑端 QingCode'));
+    const available = await supported();
+    if (current === revision && available === false) notice(t('当前电脑不支持后台提醒，请更新电脑端 QingCode'));
   }
 
   select.addEventListener('change', () => {
     if (select.value === 'on') void enable();
     else {
+      revision += 1;
       write('off');
       void apply();
     }
@@ -60,6 +68,7 @@ export function createSessionWatch({ rpc, prefix, capabilities, notice, tipBlock
     tip.hidden = true;
     if (next === 'on') void enable();
     else {
+      revision += 1;
       write('off');
       void apply();
     }

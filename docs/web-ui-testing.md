@@ -43,6 +43,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、终端周期刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
 
+手机现有功能可靠性运行 `node scripts/web-tests/mobile-reliability.agent-browser.mjs`。覆盖草稿超量保护、存储失败恢复、输入目标反馈、断线原因与证书错误、接回时保留草稿且不重发、空闲到期无确认、双指缩放余指拦截、TUI 松手无惯性，以及 320px 和横屏键盘布局。横屏菜单逐项滚动后检查真实命中元素，避免底部关闭按钮遮挡操作。截图、JSON 和 HTML 在 `.dev/web-tests/mobile-reliability-linux/`；内存桥不替代 Android 真机的网络、通知、输入法和耗电验收。
+
 Codex / OpenCode 全屏只读历史：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-tui-history.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖备用屏、鼠标上报和内联 TUI 的上下连续手势、进入历史后不立即退出、Claude 风格普通终端保持自然滚动、无缓存提示、读取失败重试及显式程序模式；只读模式断言没有终端输入。截图与 JSON 位于 `.dev/web-tests/mobile-tui-history/`。Rust `mobile_screen` 测试补充验证真实重绘的纯文本采样、频率、缓存上限、分片转义与 OSC 排除；浏览器模拟程序输出，不能代替 Android WebView 和实际 Codex / OpenCode 验收。
 
 全屏程序滚动与软键盘行数：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-program-scroll.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；Ego 窗口不渲染时 rAF 被节流，改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖程序开启鼠标上报后右侧回弹变速滑块的显示与隐藏、手指慢滑每两行一格的整格滚轮（绕开 xterm 对小像素滚动的 0.3 倍折扣）、按住滑块按速度持续发送且松手即停、上下箭头翻约三分之一屏，以及软键盘弹出时保持 PTY 行数、画面上移露出光标行（避免 Claude Code / Codex 重绘把旧状态栏挤进历史造成重复）。截图与 JSON 位于 `.dev/web-tests/mobile-program-scroll/`；使用内存 RPC，不替代 Android 真机手感与实际 Codex / OpenCode 验收。

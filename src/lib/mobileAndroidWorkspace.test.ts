@@ -7,6 +7,65 @@ const memoryStorage = () => {
 }
 
 describe('mobile durable editing and submission recovery', () => {
+  it('prunes disposable rooms before an older unsent draft and keeps over 24 drafts after reload', () => {
+    const storage = memoryStorage()
+    const state = createWorkspaceState({ storage })
+    state.context('pc/old', 'p', 'Old')
+    state.drafts.set('pc/old', '尚未发送')
+    for (let index = 0; index < 30; index++) state.context('pc/empty-' + index, 'p', 'Empty')
+    expect(createWorkspaceState({ storage }).drafts.get('pc/old')).toBe('尚未发送')
+    for (let index = 0; index < 30; index++) {
+      const key = 'pc/draft-' + index
+      state.context(key, 'p', 'Draft')
+      state.drafts.set(key, 'draft ' + index)
+    }
+    const restored = createWorkspaceState({ storage })
+    expect([...restored.drafts.keys()]).toHaveLength(31)
+    expect(restored.drafts.get('pc/old')).toBe('尚未发送')
+    expect(restored.recoverable('pc', 'p', '')).toHaveLength(31)
+  })
+
+  it('retains unknown submissions beyond three newer successful sends and room pruning', () => {
+    const storage = memoryStorage()
+    const state = createWorkspaceState({ storage })
+    const id = state.submit('pc/old', '未确认的原文')
+    state.settle('pc/old', id, 'unknown')
+    for (let index = 0; index < 5; index++) {
+      const next = state.submit('pc/old', 'received ' + index)
+      state.settle('pc/old', next, 'received')
+    }
+    for (let index = 0; index < 30; index++) state.context('pc/empty-' + index, 'p', 'Empty')
+    expect(createWorkspaceState({ storage }).recent('pc/old')).toEqual([
+      expect.objectContaining({ text: 'received 4' }),
+      expect.objectContaining({ text: 'received 3' }),
+      expect.objectContaining({ text: 'received 2' }),
+      expect.objectContaining({ text: '未确认的原文', state: 'unknown' }),
+    ])
+  })
+
+  it('protects drafts beyond the history character budget and recovers from a storage failure', () => {
+    const backing = memoryStorage()
+    const onError = vi.fn()
+    const onSaved = vi.fn()
+    let fail = false
+    const storage = { ...backing, setItem: (key: string, text: string) => {
+      if (fail) throw new Error('quota')
+      backing.setItem(key, text)
+    } }
+    const state = createWorkspaceState({ storage, onError, onSaved })
+    state.drafts.set('pc/old', 'before')
+    fail = true
+    state.drafts.set('pc/old', 'editing continues')
+    expect(state.drafts.get('pc/old')).toBe('editing continues')
+    expect(createWorkspaceState({ storage }).drafts.get('pc/old')).toBe('before')
+    expect(onError).toHaveBeenCalledOnce()
+    fail = false
+    onSaved.mockClear()
+    state.drafts.set('pc/old', 'x'.repeat(600_001))
+    expect(onSaved).toHaveBeenCalledOnce()
+    expect(createWorkspaceState({ storage }).drafts.get('pc/old')).toHaveLength(600_001)
+  })
+
   it('recovers drafts after reload, separates projects and never replays a pending submission', () => {
     const storage = memoryStorage()
     const first = createWorkspaceState({ storage })

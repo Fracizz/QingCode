@@ -7,6 +7,21 @@ export const LOCALE_CHOICES = Object.freeze(['auto', 'zh', 'en']);
 
 /** 中文原文 → 英文；`{name}` 为占位符。也收录 Android 原生层与电脑端返回的常见错误。 */
 export const EN = Object.freeze({
+  '直发：按键立即发送到终端': 'Direct input: keys are sent to the terminal immediately',
+  '草稿：在手机编辑，点发送后提交': 'Draft: edit on the phone, then tap Send to submit',
+  '删除终端中的文字': 'Delete text in the terminal',
+  '删除手机草稿中的文字': 'Delete text in the phone draft',
+  '向终端发送左方向键': 'Send Left to the terminal',
+  '向终端发送右方向键': 'Send Right to the terminal',
+  '向左移动草稿光标': 'Move the draft cursor left',
+  '向右移动草稿光标': 'Move the draft cursor right',
+  '向终端发送换行': 'Send a newline to the terminal',
+  '在手机草稿中换行': 'Insert a newline in the phone draft',
+  '电脑连接未建立，请检查电脑端移动连接、地址端口和防火墙。': 'Could not connect. Check desktop mobile connection, the address, port, and firewall.',
+  '网络无法到达电脑，请检查手机网络和 VPN 连接。': 'No route to the computer. Check the phone network and VPN connection.',
+  '电脑身份校验失败，请重新扫码或粘贴配对链接。': 'Computer identity verification failed. Scan or paste the pairing link again.',
+  '正在自动重连…': 'Reconnecting automatically…',
+  '读取超时，请检查网络或电脑端连接。': 'Reading timed out. Check the network or desktop connection.',
   '请求已取消。': 'Request canceled.',
   '已有文件正在下载或选择保存位置，请先完成或取消。': 'A file download or save picker is already active. Finish or cancel it first.',
   '无法开始下载。': 'Unable to start the download.',

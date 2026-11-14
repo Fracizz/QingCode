@@ -28,19 +28,34 @@ function spread(touches) {
  */
 export function attachPinchZoom(element, { currentSize, onStart, onPreview, onCommit, enabled = () => true } = {}) {
   let gesture = null;
+  let blocked = false;
+
+  function commit() {
+    if (!gesture) return;
+    const finished = gesture;
+    gesture = null;
+    if (finished.active && finished.last !== finished.size) onCommit?.(finished.last);
+    else onCommit?.(finished.size, { unchanged: true });
+  }
 
   function start(event) {
+    if (blocked) {
+      event.stopPropagation();
+      if (event.touches.length !== 2) commit();
+      return;
+    }
     if (event.touches.length !== 2 || !enabled()) return;
+    blocked = true;
     gesture = { distance: spread(event.touches), size: currentSize(), last: currentSize(), active: false };
     onStart?.();
     event.stopPropagation();
   }
 
   function move(event) {
-    if (!gesture) return;
-    if (event.touches.length !== 2) return;
+    if (!blocked) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
+    if (!gesture || event.touches.length !== 2) return;
     const distance = spread(event.touches);
     if (!gesture.active) {
       if (Math.abs(distance - gesture.distance) < PINCH_SLOP) return;
@@ -53,13 +68,12 @@ export function attachPinchZoom(element, { currentSize, onStart, onPreview, onCo
   }
 
   function end(event) {
-    if (!gesture) return;
+    if (!blocked) return;
+    if (event.cancelable) event.preventDefault();
     event.stopPropagation();
-    // 抬起一指后手势结束；剩下的手指不再触发单指滚动。
-    const finished = gesture;
-    gesture = null;
-    if (finished.active && finished.last !== finished.size) onCommit?.(finished.last);
-    else onCommit?.(finished.size, { unchanged: true });
+    // 抬起一指后保存字号，但直到所有手指松开前继续拦截，避免余指变成 TUI 点击或滚轮。
+    if (event.touches.length < 2 || event.type === 'touchcancel') commit();
+    if (!event.touches.length) blocked = false;
   }
 
   element.addEventListener('touchstart', start, { capture: true, passive: true });
@@ -68,6 +82,7 @@ export function attachPinchZoom(element, { currentSize, onStart, onPreview, onCo
   element.addEventListener('touchcancel', end, { capture: true });
   return () => {
     gesture = null;
+    blocked = false;
     element.removeEventListener('touchstart', start, { capture: true });
     element.removeEventListener('touchmove', move, { capture: true });
     element.removeEventListener('touchend', end, { capture: true });

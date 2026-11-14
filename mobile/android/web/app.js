@@ -38,7 +38,7 @@ import { attachTerminalScrollbar } from './terminalScrollbar.js';
 import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, isFreshLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState } from './workspaceState.js';
-import { createNativeRpc } from './nativeRpc.js';
+import { connectionFailure, createNativeRpc } from './nativeRpc.js';
 import { createTerminalInput } from './terminalInput.js';
 import { createDesktopProtocol } from './desktopProtocol.js';
 import { uploadTerminalImages } from './terminalImages.js';
@@ -106,7 +106,11 @@ const rpc = nativeRpc.request;
 window.qingReply = nativeRpc.receive;
 const health = new Map();
 let persistenceFailed = false;
-const workspace = createWorkspaceState({ storage: localStorage, onError: () => { persistenceFailed = true; } });
+const workspace = createWorkspaceState({
+  storage: localStorage,
+  onError: () => { persistenceFailed = true; },
+  onSaved: () => { persistenceFailed = false; },
+});
 const drafts = workspace.drafts;
 const inputModes = new Map();
 let inputMode = 'compose';
@@ -821,8 +825,23 @@ get('home-action').addEventListener('click', () => {
   else if (state === 'offline') void refreshProjects();
   else showPage(state === 'online' ? 'project' : 'connection');
 });
+let lastNavigationTap = null;
 for (const item of get('dashboard-nav').querySelectorAll('button')) {
-  item.addEventListener('click', () => showPage(item.dataset.page));
+  item.addEventListener('click', event => {
+    const next = item.dataset.page;
+    // WebView 触摸产生的 click.detail 不一定累加，按同一导航项的点击间隔识别双击。
+    const doubleTap = event.detail === 2 || (lastNavigationTap?.page === next && event.timeStamp - lastNavigationTap.time <= 300);
+    if (page === next && doubleTap) {
+      lastNavigationTap = null;
+      pages[next].scrollTo({
+        top: 0,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      });
+      return;
+    }
+    lastNavigationTap = { page: next, time: event.timeStamp };
+    showPage(next);
+  });
 }
 
 function setModifier(name, state) {
@@ -845,7 +864,7 @@ function consumeModifiers() {
 
 /**
  * 两种编辑目标：草稿（compose）先在手机编辑，点发送才提交；直发（raw）把每个按键立即发给终端。
- * 状态行用文字「草稿 / 直发」常驻标明，输入框配色、占位文字与键盘按钮选中态同步。
+ * 输入框配色、占位文字、无障碍说明与键盘按钮选中态同步。
  */
 function setRawKeyboard(enabled) {
   const nextMode = enabled ? 'raw' : 'compose';
@@ -858,6 +877,13 @@ function setRawKeyboard(enabled) {
   get('input-hint').textContent = enabled ? t('终端实时输入 · 按键直接发送 · ⌫ 删除远端文字 · ↵ 确认') : t('命令输入 · 空白发送回车 · ⌫ 编辑本地文字 · 斜杠命令先查看候选');
   get('input-mode').textContent = enabled ? t('终端实时输入') : t('命令输入');
   get('keys-target').textContent = t('编辑目标：{target}', { target: enabled ? t('终端实时输入') : t('手机草稿') });
+  for (const control of document.querySelectorAll('#special-keys [data-key], #keys-dialog [data-key]')) {
+    const action = { backspace: enabled ? t('删除终端中的文字') : t('删除手机草稿中的文字'),
+      left: enabled ? t('向终端发送左方向键') : t('向左移动草稿光标'),
+      right: enabled ? t('向终端发送右方向键') : t('向右移动草稿光标'),
+      newline: enabled ? t('向终端发送换行') : t('在手机草稿中换行') }[control.dataset.key];
+    if (action) control.setAttribute('aria-label', action);
+  }
   compose.placeholder = enabled ? t('直发中 · 按键立即发给终端') : t('草稿 · 编辑后点发送');
   get('compose-form').dataset.mode = nextMode;
   get('input-mode').dataset.mode = nextMode;
@@ -914,11 +940,9 @@ function saveDraft() {
   const key = draftKey(selected);
   if (compose.value) drafts.set(key, compose.value);
   else drafts.delete(key);
-  if (persistenceFailed) {
-    get('expanded-save-status').textContent = t('手机保存失败，请复制并保留原文。');
-    get('expanded-save-status').dataset.error = 'true';
-    composeStatus.renderSubmission();
-  }
+  get('expanded-save-status').textContent = persistenceFailed ? t('手机保存失败，请复制并保留原文。') : '';
+  get('expanded-save-status').dataset.error = String(persistenceFailed);
+  composeStatus.renderSubmission();
 }
 
 function openEditor() {
@@ -1263,8 +1287,8 @@ function makeTerminal() {
   });
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
     onLongPress: point => terminalSelection?.start(point),
-    // 惯性同样交给原始终端：普通终端滚本地记录，开了鼠标的全屏程序收到滚轮；不支持滚动的全屏程序不滑行。
-    canInertia: () => terminalHistory?.isOpen() || !!term && (term.buffer.active.type === 'normal' || term.modes.mouseTrackingMode !== 'none'),
+    // 只读历史与普通终端可惯性滚动；操作程序列表时松手即停，不继续向程序发送滚轮。
+    canInertia: () => terminalHistory?.isOpen() || !!term && term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none',
     // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
     programWheel: () => programMouse() ? cellHeight() : 0,
     onProgramWheel: () => terminalJog?.reveal(),
@@ -2114,12 +2138,13 @@ async function poll(session, epoch, take = false, explicitTake = false) {
         terminalState(t('原会话已不存在 · 草稿保留，可新建终端恢复'), 'offline');
         return;
       }
-      const reconnecting = t('连接中断，正在接回会话…');
-      if (takenSession) get('terminal-taken-text').textContent = reconnecting;
-      terminalState(reconnecting, 'offline');
+      const failure = connectionFailure(error);
+      if (takenSession) get('terminal-taken-text').textContent = failure.message;
+      terminalState(failure.message, 'offline', !failure.retry);
       latest = true;
       claimed = false;
       if (hostState(profile) !== 'offline') updateHost('offline');
+      if (!failure.retry) return;
       await new Promise(resolve => setTimeout(resolve, backoff));
       backoff = Math.min(backoff * 2, 3000);
     }
@@ -2587,6 +2612,7 @@ get('keyboard').addEventListener('click', () => {
     setRawKeyboard(false);
     compose.focus();
   } else focusRawKeyboard();
+  showTerminalToast(inputMode === 'raw' ? t('直发：按键立即发送到终端') : t('草稿：在手机编辑，点发送后提交'), 1800);
 });
 for (const id of ['send', 'toggle-keys']) {
   get(id).addEventListener('pointerdown', event => {

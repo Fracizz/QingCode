@@ -1009,6 +1009,10 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .setting-choices strong { font-size: 14px; font-weight: 600; }
 .setting-choices small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .terminal-actions { margin-top: 12px; background: var(--paper); }
+#terminal-menu-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+#terminal-menu-dialog > :not(.terminal-actions) { flex: none; }
+#terminal-menu-dialog .terminal-actions { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+#terminal-menu-dialog .dialog-actions { position: static; margin-top: 10px; }
 .terminal-menu-info { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .terminal-actions button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 14px; border-radius: 0; font-size: 14px; text-align: left; }
 .terminal-actions svg { width: 18px; height: 18px; color: var(--muted); }

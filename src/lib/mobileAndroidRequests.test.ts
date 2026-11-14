@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createNativeRpc } from '../../mobile/android/web/nativeRpc.js'
+import { connectionFailure, createNativeRpc } from '../../mobile/android/web/nativeRpc.js'
 import { createTerminalInput } from '../../mobile/android/web/terminalInput.js'
 import { createDesktopProtocol } from '../../mobile/android/web/desktopProtocol.js'
 import { uploadTerminalImages } from '../../mobile/android/web/terminalImages.js'
@@ -7,6 +7,29 @@ import { uploadTerminalImages } from '../../mobile/android/web/terminalImages.js
 afterEach(() => { vi.useRealTimers() })
 
 describe('native RPC deadlines', () => {
+  it('distinguishes a timed out read from an unconfirmed write without retrying either request', async () => {
+    vi.useFakeTimers()
+    const native = { request: vi.fn(), cancel: vi.fn() }
+    const rpc = createNativeRpc(native)
+    const read = rpc.request('poll').catch((error: Error) => error)
+    const write = rpc.request('input').catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect((await read).message).toBe('读取超时，请检查网络或电脑端连接。')
+    expect((await write).message).toContain('结果未知')
+    expect(native.request).toHaveBeenCalledTimes(2)
+    expect(native.cancel).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves identity errors and stops automatic reconnect until the connection is repaired', async () => {
+    const rpc = createNativeRpc({ request: vi.fn() })
+    const pending = rpc.request('poll').catch(error => error)
+    rpc.receive(1, { ok: false, error: 'Windows 身份校验失败，请重新核对证书指纹。', code: 'identity' })
+    const error = await pending
+    expect(error.code).toBe('identity')
+    expect(connectionFailure(error)).toEqual({ retry: false, message: '电脑身份校验失败，请重新扫码或粘贴配对链接。' })
+    expect(connectionFailure(new Error('Windows 身份校验失败，请重新核对证书指纹。')).retry).toBe(false)
+    expect(connectionFailure(new Error('网络连接中断'))).toEqual({ retry: true, message: '网络连接中断 正在自动重连…' })
+  })
   it.each(['agent_create', 'agent_send', 'agent_image', 'agent_usage'])('preserves the native %s deadline instead of expiring at the terminal default', async op => {
     vi.useFakeTimers()
     const native = { request: vi.fn(), cancel: vi.fn() }

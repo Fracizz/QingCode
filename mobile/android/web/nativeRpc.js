@@ -1,4 +1,15 @@
 import { t } from './i18n.js';
+
+/** Show the actual failure while reconnecting; a changed identity needs user action. */
+export function connectionFailure(error) {
+  const identity = error.code === 'identity' || error.message === 'Windows 身份校验失败，请重新核对证书指纹。';
+  return {
+    retry: !identity,
+    message: identity ? t('电脑身份校验失败，请重新扫码或粘贴配对链接。')
+      : [t(error.message || '连接失败。'), t('正在自动重连…')].join(' '),
+  };
+}
+
 /** One native request, one result. Expired writes are never retried. */
 export function createNativeRpc(native, { timers = globalThis } = {}) {
   const requests = new Map();
@@ -14,6 +25,7 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
       const error = new Error(result.error || t('连接失败。'));
       error.revoked = result.revoked === true;
       error.unsupported = result.unsupported === true;
+      error.code = result.code;
       request.reject(error);
     }
   }
@@ -43,7 +55,10 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
         requests.delete(id);
         cleanup();
         try { native.cancel?.(id); } catch { /* old bridges may not expose cancellation */ }
-        reject(new Error(t('请求超时，操作结果未知，请核对电脑端；不会自动重发。')));
+        const read = ['profiles', 'probe', 'projects', 'capabilities', 'sessions', 'poll', 'history', 'attention', 'terminal_profiles', 'file_list', 'file_search', 'file_stat', 'latency'].includes(op);
+        const error = new Error(read ? t('读取超时，请检查网络或电脑端连接。') : t('请求超时，操作结果未知，请核对电脑端；不会自动重发。'));
+        error.code = 'timeout';
+        reject(error);
       }, timeout) : null;
       requests.set(id, { resolve, reject, timer, cleanup });
       signal?.addEventListener('abort', abort, { once: true });

@@ -87,6 +87,26 @@ public final class WatchPolicyTest {
         check(WatchPolicy.failureDelay(5_000) == 10_000 && WatchPolicy.failureDelay(30_000) == 30_000, "backoff");
     }
 
+    static void idleOnlineHostDoesNotKeepAnOfflineBusyHostAlive() {
+        WatchPolicy policy = new WatchPolicy();
+        see(policy, 0, session(true, false, 0));
+        policy.beginBackground(0);
+        policy.observe("idle:1", Arrays.asList(new WatchPolicy.Observation(
+            "idle:1", "s2", "Shell", "p2", "Other", false, false, 0)), WatchPolicy.OFFLINE_LIMIT_MS);
+        check(policy.decide(WatchPolicy.OFFLINE_LIMIT_MS) == WatchPolicy.Decision.STOP_OFFLINE,
+            "unrelated online host cannot mask the busy host being offline");
+        check(see(policy, WatchPolicy.OFFLINE_LIMIT_MS + 5_000, session(false, false, 0)).isEmpty(),
+            "returning host gets a fresh baseline, not a stale completion alert");
+
+        WatchPolicy anotherBusy = new WatchPolicy();
+        see(anotherBusy, 0, session(true, false, 0));
+        anotherBusy.beginBackground(0);
+        anotherBusy.observe("active:1", Arrays.asList(new WatchPolicy.Observation(
+            "active:1", "s2", "Claude", "p2", "Other", true, false, 0)), WatchPolicy.OFFLINE_LIMIT_MS);
+        check(anotherBusy.decide(WatchPolicy.OFFLINE_LIMIT_MS) == WatchPolicy.Decision.CONTINUE,
+            "still watches another reachable busy host");
+    }
+
     public static void main(String[] args) {
         busyThenIdleWaitsForConfirmationAndFiresOnce();
         idleFromTheStartNeverFires();
@@ -94,6 +114,7 @@ public final class WatchPolicyTest {
         exitAndDisappearanceAlert();
         watchStartsOnlyWhenUseful();
         backgroundWatchEnds();
-        System.out.println("6 watch policy regressions passed");
+        idleOnlineHostDoesNotKeepAnOfflineBusyHostAlive();
+        System.out.println("7 watch policy regressions passed");
     }
 }

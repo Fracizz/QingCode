@@ -677,16 +677,10 @@ function idleRemaining(item, now) {
     : item.idleDeadline - now;
 }
 
-const IDLE_WARNING_MS = 2 * 60 * 60 * 1000;
-
-/**
- * 会话行的空闲信息：平时只说空闲多久，距自动结束不足 2 小时才带上倒计时并标记 expiring。
- * 已结束或旧版电脑端没有 `idleDeadline` 时 text 为空。
- */
 /**
  * 会话行的信息行：「本项目」与「全部」共用，字段和顺序保持一致。
  * running、active、last、pinned、fresh 由调用方按显示偏好和当前选择算好传入；
- * 接入方和创建设备只有列出全部会话时才有，缺失时不显示。距自动结束不足 2 小时的提醒另起一行，这里不重复。
+ * 接入方和创建设备只有列出全部会话时才有，缺失时不显示。
  */
 export function sessionStatusLine(session, { fallback = 1, running = false, active = false, last = false, pinned = false, fresh = false, now = Date.now() } = {}) {
   const identity = session.origin === 'desktop' ? t('电脑终端') : t('终端 {n}', { n: session.number ?? fallback });
@@ -696,13 +690,13 @@ export function sessionStatusLine(session, { fallback = 1, running = false, acti
     ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
-  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, idle.expiring ? '' : idle.text]
+  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, idle.text]
     .filter(Boolean).join(' · ');
 }
 
 export function sessionIdleInfo(item, now = Date.now()) {
   if (item?.exit || !Number.isFinite(item?.idleDeadline)) return { text: '', expiring: false };
-  if (idleRemaining(item, now) <= IDLE_WARNING_MS) return { text: idleLabel(item, now), expiring: true };
+  // 24 小时无输入输出后由电脑端直接关闭，不显示到期倒计时或提醒。
   return { text: idleHead(Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null), expiring: false };
 }
 

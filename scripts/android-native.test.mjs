@@ -19,9 +19,12 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
     const result = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.NativeRequestsTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
     assert.match(result, /7 native scheduler regressions passed/)
+    const update = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.UpdatePolicyTest'],
+      { encoding: 'utf8', timeout: 20_000, windowsHide: true })
+    assert.match(update, /[1-9]\d* update policy regressions passed/)
     const watch = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.WatchPolicyTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
-    assert.match(watch, /6 watch policy regressions passed/)
+    assert.match(watch, /7 watch policy regressions passed/)
     const download = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.FileDownloadPolicyTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
     assert.match(download, /5 file download regressions passed/)

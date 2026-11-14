@@ -64,6 +64,34 @@ describe('Android terminal pinch zoom', () => {
     expect(commits).toEqual([[13, { unchanged: true }]])
   })
 
+  it('blocks the remaining finger after zoom until every finger is lifted', () => {
+    const { touch, commits, innerTouch } = fixture(13)
+    touch('touchstart', [[100, 100], [200, 100]])
+    touch('touchmove', [[80, 100], [230, 100]])
+    expect(touch('touchend', [[80, 100]]).defaultPrevented).toBe(true)
+    expect(touch('touchmove', [[80, 50]]).defaultPrevented).toBe(true)
+    expect(innerTouch).not.toHaveBeenCalled()
+    touch('touchend', [])
+    expect(commits).toEqual([[20, undefined]])
+    touch('touchstart', [[100, 100]])
+    expect(touch('touchmove', [[100, 50]]).defaultPrevented).toBe(false)
+    expect(innerTouch).toHaveBeenCalledOnce()
+  })
+
+  it('does not restart zoom or leak a scroll when a third finger joins the gesture', () => {
+    const { touch, previews, commits, onStart, innerTouch } = fixture(13)
+    touch('touchstart', [[100, 100], [200, 100]])
+    touch('touchmove', [[90, 100], [215, 100]])
+    touch('touchstart', [[90, 100], [215, 100], [250, 100]])
+    touch('touchend', [[90, 100], [215, 100]])
+    touch('touchmove', [[50, 100], [250, 100]])
+    touch('touchend', [])
+    expect(onStart).toHaveBeenCalledOnce()
+    expect(previews).toEqual([16])
+    expect(commits).toEqual([[16, undefined]])
+    expect(innerTouch).not.toHaveBeenCalled()
+  })
+
   it('leaves single-finger touches to the terminal', () => {
     const { touch, previews, onStart, innerTouch } = fixture(13)
     touch('touchstart', [[100, 100]])

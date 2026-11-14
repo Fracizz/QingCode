@@ -258,10 +258,10 @@ describe('Android session row idle text', () => {
     expect(sessionIdleInfo({ lastActiveAt: now - 1000, idleDeadline: now + 24 * hour }, now)).toEqual({ text: '刚刚有活动', expiring: false })
   })
 
-  it('adds the countdown within two hours of auto-end', () => {
+  it('keeps the idle duration without a warning or countdown near and past auto-end', () => {
     const near = sessionIdleInfo({ lastActiveAt: now - 22 * hour, idleDeadline: now + 2 * hour }, now)
-    expect(near.expiring).toBe(true)
-    expect(near.text).toBe('空闲 22 小时，2 小时后自动结束')
+    expect(near).toEqual({ text: '空闲 22 小时', expiring: false })
+    expect(sessionIdleInfo({ lastActiveAt: now - 25 * hour, idleDeadline: now - hour }, now)).toEqual({ text: '空闲 25 小时', expiring: false })
   })
 
   it('shows nothing for exited sessions or old desktops', () => {

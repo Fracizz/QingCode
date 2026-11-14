@@ -51,6 +51,10 @@ Linux 的三端共享观看回归使用 `node scripts/web-tests/mobile-shared-vi
 
 项目文件浏览回归使用 `node scripts/web-tests/mobile-files.agent-browser.mjs`，结果与 PNG 截图位于 `.dev/web-tests/mobile-files/`。覆盖无终端浏览、中文名称、项目 / 目录查询、隐藏文件、截断提示、迟到结果、大小提醒、取消 / 失败、窄屏 / 横屏、终端草稿保留与旧版能力提示。下载进度由内存桥模拟，不代表 Android 系统文档已实际落盘；原生复制策略另由 `test:android-native` 验证超过 2 GiB 的有界分块和空文件 / 源变更 / 取消 / 响应校验。
 
+现有功能可靠性回归使用 `node scripts/web-tests/mobile-reliability.agent-browser.mjs`，复用真实 Android 资产和 xterm，结果、截图及 HTML 报告位于 `.dev/web-tests/mobile-reliability-linux/`。覆盖超过 24 个草稿与未知提交的恢复、存储失败后恢复保存、输入目标反馈、具体断线原因、证书校验失败停止自动重连、会话接回、不自动重发、24 小时到期无倒计时或确认、双指缩放余指拦截、TUI 松手无惯性，以及横屏键盘高度下所有菜单操作可滚动到可点击区域。RPC、证书错误和存储失败均使用内存 fixture，不代表真实 TLS 或 Android 系统生命周期验收。
+
+`WatchPolicyTest` 覆盖多电脑中一台空闲在线、另一台运行中但离线的场景：后者超时不能被前者的成功响应掩盖，重连后重新建立提醒基线。`mobileAndroidSessionWatch.test.ts` 覆盖通知授权迟到时不覆盖关闭选择、存储失败时保留本次偏好，以及网络失败不误报电脑版本不支持。自动回归不测量真机耗电；未连接 ADB 设备和未构建 APK 时，不得据此更新下方真机列。
+
 浏览器 fixture 不模拟 Android 调度线程；原生队列使用上述 JVM 回归验证。JVM 测试也不能替代 Android TLS、WebView、输入法和系统生命周期。
 
 ## Android 设备验收矩阵

@@ -30,7 +30,7 @@ public final class SessionWatchService extends Service {
     }
 
     @Override public void onDestroy() {
-        if (wake != null) wake.release();
+        if (wake != null && wake.isHeld()) wake.release();
         wake = null;
         super.onDestroy();
     }
