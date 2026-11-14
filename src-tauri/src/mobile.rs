@@ -37,8 +37,10 @@ mod hub;
 mod launch;
 mod network;
 mod operate;
+mod reply;
 mod session;
 mod settings;
+pub(crate) mod sharing;
 mod tauri_commands;
 pub(crate) use hub::*;
 use launch::*;
@@ -46,6 +48,7 @@ use network::*;
 use operate::*;
 use session::*;
 use settings::*;
+use sharing::*;
 pub use tauri_commands::*;
 
 /// Terminal ids owned by the companion endpoint. Emitters route these ids here.
@@ -69,10 +72,14 @@ const PREVIEW_OUTPUT_EVENT: &str = "mobile-session-output";
 const PREVIEW_NOTIFY_INTERVAL: Duration = Duration::from_millis(100);
 /// 电脑只读查看手机终端时积压的上限；超过后丢弃增量，下一轮改发整屏快照。
 const MAX_VIEW_BACKLOG: usize = 256 * 1024;
-/// 旧使用权发来的输入与改尺寸一律拒绝；手机端按这句文案进入被接管状态。
+/// 终端被其他设备独占时拒绝输入；旧版手机按这句文案进入被接管状态。
 const TAKEN_OVER: &str = "终端已在其他设备接入。";
-/// 使用权变化时通知电脑端：`controller` 为设备名表示电脑只读，为 null 表示电脑可操作。
+/// 共享状态变化时通知电脑端：独占方、尺寸方、在线设备与最近输入，见 `emit_control`。
 const CONTROL_EVENT: &str = "terminal-control";
+/// 已结束的电脑终端镜像保留这么久，让手机看到退出信息后再回收。
+const MIRROR_EXIT_RETENTION: Duration = Duration::from_secs(120);
+/// 在线状态巡检间隔：设备离开、「正在输入」过期、尺寸方交接都在这里处理。
+const PRESENCE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const DESKTOP_NAME: &str = "电脑";
 /// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
 /// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
@@ -274,31 +281,90 @@ impl HubState {
         }
     }
 
-    fn view_control(&self, session: &Session, viewer: &str) -> Value {
-        let (cols, rows) = session.screen.size();
-        if matches!(&session.controller, Controller::Device(id) if id == viewer) {
-            json!({ "lease": session.lease, "cols": cols, "rows": rows })
-        } else {
-            json!({ "by": self.controller_name(&session.controller), "cols": cols, "rows": rows })
+    fn controller_kind(controller: &Controller) -> &'static str {
+        match controller {
+            Controller::Desktop => "desktop",
+            Controller::Device(_) => "device",
         }
     }
 
-    /// 持旧使用权的轮询得到被接管答复，由手机显示「已在 X 上接入」。
-    fn takeover_reply(&self, id: &str, lease: Option<u64>) -> Option<Value> {
-        let session = self.live(id)?;
-        let stale = match lease {
-            Some(lease) => lease != session.lease,
-            // 旧版手机不带使用权，只能用手机会话；电脑终端必须先接入。
-            None => self.mirrors.contains_key(id),
-        };
-        stale.then(|| json!({ "takenOver": true, "by": self.controller_name(&session.controller) }))
+    /// 共享状态：在线的电脑与设备、谁在输入、尺寸方、是否锁定尺寸、独占方和最近一次输入。
+    fn presence(&self, session: &Session, now: Instant) -> Value {
+        let sharing = &session.sharing;
+        let typing = sharing.typing(now);
+        let mut viewers = Vec::new();
+        if sharing.desktop_present {
+            viewers.push(json!({ "id": null, "kind": "desktop", "name": DESKTOP_NAME,
+                "observe": false, "typing": typing == Some(&Controller::Desktop) }));
+        }
+        let mut devices: Vec<_> = sharing.present_devices(now).collect();
+        devices.sort_by_key(|(id, _)| id.as_str());
+        for (id, viewer) in devices {
+            let controller = Controller::Device(id.clone());
+            viewers.push(json!({ "id": id, "kind": "device",
+                "name": self.controller_name(&controller), "observe": viewer.observe,
+                "typing": typing == Some(&controller) }));
+        }
+        let last_input = sharing.last_input.as_ref().map(|(who, _, at)| {
+            json!({ "name": self.controller_name(who), "kind": Self::controller_kind(who), "at": at })
+        });
+        json!({
+            "viewers": viewers,
+            "sizeOwner": self.controller_name(&sharing.size_owner),
+            "sizeOwnerKind": Self::controller_kind(&sharing.size_owner),
+            "sizeLocked": sharing.size_locked,
+            "exclusive": sharing.exclusive.as_ref().map(|holder| self.controller_name(holder)),
+            "exclusiveKind": sharing.exclusive.as_ref().map(Self::controller_kind),
+            "lastInput": last_input,
+        })
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Controller {
-    Desktop,
-    Device(String),
+    /// 手机轮询附带的共享状态。可写时带 `lease`（旧版手机据此认为自己可以输入），
+    /// 被独占时带 `by`，只读旁观时带 `observe`。
+    fn view_control(&self, session: &Session, viewer: &str) -> Value {
+        let (cols, rows) = session.screen.size();
+        let me = Controller::Device(viewer.to_string());
+        let mut control = self.presence(session, Instant::now());
+        if let Some(viewers) = control["viewers"].as_array_mut() {
+            for entry in viewers {
+                entry["self"] = json!(entry["id"].as_str() == Some(viewer));
+            }
+        }
+        control["cols"] = json!(cols);
+        control["rows"] = json!(rows);
+        control["sizeOwnerHere"] = json!(session.sharing.size_owner == me);
+        control["exclusiveHere"] = json!(session.sharing.exclusive.as_ref() == Some(&me));
+        match session.sharing.check_writable(&me) {
+            Ok(()) => control["lease"] = json!(session.lease),
+            Err(InputRefusal::Exclusive(holder)) => {
+                control["by"] = json!(self.controller_name(&holder))
+            }
+            Err(InputRefusal::Observer) => control["observe"] = json!(true),
+        }
+        control
+    }
+
+    /// 不支持共享查看的旧版手机：终端被其他设备独占时得到被接管答复。
+    fn takeover_reply(&self, id: &str, device: &str) -> Option<Value> {
+        let session = self.live(id)?;
+        match session
+            .sharing
+            .check_writable(&Controller::Device(device.to_string()))
+        {
+            Err(InputRefusal::Exclusive(holder)) => {
+                Some(json!({ "takenOver": true, "by": self.controller_name(&holder) }))
+            }
+            _ => None,
+        }
+    }
+
+    /// 手机端的拒绝文案。独占一律用 `TAKEN_OVER`：旧版手机只认这句来进入被接管状态。
+    fn refusal_message(refusal: &InputRefusal) -> String {
+        match refusal {
+            InputRefusal::Exclusive(_) => TAKEN_OVER.into(),
+            InputRefusal::Observer => "当前为只读旁观，请先切换为可输入。".into(),
+        }
+    }
 }
 
 /// 电脑只读查看手机终端时待发送的输出，按预览通知的节奏合并后发出。

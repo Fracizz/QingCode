@@ -327,27 +327,157 @@ fn ready_session(hub: &Hub, id: &str, owner: &str) {
     assert!(hub.finish_create(id, true));
 }
 
+fn approved_mirror(hub: &Hub, id: &str) {
+    hub.approve_mirror(id.into(), project(), None, 120, 40, Some("x"))
+        .unwrap();
+}
+
 #[test]
-fn takeover_requires_an_explicit_take_and_invalidates_the_old_lease() {
+fn every_paired_device_can_type_until_someone_takes_exclusive() {
     let hub = handoff_hub();
     ready_session(&hub, "mobile-a", "phone");
-    assert_eq!(hub.claim("mobile-a", "phone", false).unwrap()["lease"], 1);
-    // 重连与恢复界面不抢使用权。
-    let passive = hub.claim("mobile-a", "tablet", false).unwrap();
-    assert_eq!(passive["takenOver"], true);
-    assert_eq!(passive["by"], "phone-name");
-    assert_eq!(hub.claim("mobile-a", "tablet", true).unwrap()["lease"], 2);
     assert_eq!(
-        hub.authorize("mobile-a", "phone", Some(1)).unwrap_err(),
+        hub.claim("mobile-a", "phone", false, None).unwrap()["lease"],
+        1
+    );
+    // 第二台设备接入后直接可以输入，不需要接管。
+    assert_eq!(
+        hub.claim("mobile-a", "tablet", false, None).unwrap()["lease"],
+        1
+    );
+    assert!(matches!(
+        hub.device_input("mobile-a", "phone", "a"),
+        Ok(InputDecision::Forward { .. })
+    ));
+    assert!(matches!(
+        hub.device_input("mobile-a", "tablet", "b"),
+        Ok(InputDecision::Forward { .. })
+    ));
+    // 没有独占时「接管」不改变什么；有独占时抢下独占，被抢的一方得到被接管答复。
+    assert_eq!(
+        hub.claim("mobile-a", "tablet", true, None).unwrap()["lease"],
+        1
+    );
+    hub.set_exclusive("mobile-a", Controller::Device("phone".into()), true, false)
+        .unwrap();
+    assert_eq!(
+        hub.claim("mobile-a", "tablet", true, None).unwrap()["lease"],
+        3
+    );
+    assert_eq!(
+        hub.device_input("mobile-a", "phone", "c").unwrap_err(),
         TAKEN_OVER
     );
-    assert!(hub.authorize("mobile-a", "tablet", Some(2)).is_ok());
-    let inner = hub.inner.lock().unwrap();
+    let passive = hub.claim("mobile-a", "phone", false, None).unwrap();
+    assert_eq!(passive["takenOver"], true);
+    assert_eq!(passive["by"], "tablet-name");
+    {
+        let inner = hub.inner.lock().unwrap();
+        assert_eq!(
+            inner.takeover_reply("mobile-a", "phone").unwrap()["by"],
+            "tablet-name"
+        );
+        assert!(inner.takeover_reply("mobile-a", "tablet").is_none());
+    }
+    hub.set_exclusive(
+        "mobile-a",
+        Controller::Device("tablet".into()),
+        false,
+        false,
+    )
+    .unwrap();
+    assert!(hub.device_input("mobile-a", "phone", "d").is_ok());
+}
+
+#[test]
+fn exclusive_can_only_be_taken_from_another_holder_with_force() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.set_exclusive("term-1", Controller::Device("phone".into()), true, false)
+        .unwrap();
+    assert!(hub
+        .set_exclusive("term-1", Controller::Desktop, true, false)
+        .unwrap_err()
+        .contains("phone-name"));
+    assert!(hub
+        .desktop_input("term-1", "x")
+        .unwrap_err()
+        .contains("phone-name"));
+    hub.set_exclusive("term-1", Controller::Desktop, true, true)
+        .unwrap();
+    assert!(hub.desktop_input("term-1", "x").is_ok());
     assert_eq!(
-        inner.takeover_reply("mobile-a", Some(1)).unwrap()["by"],
-        "tablet-name"
+        hub.device_input("term-1", "phone", "y").unwrap_err(),
+        TAKEN_OVER
     );
-    assert!(inner.takeover_reply("mobile-a", Some(2)).is_none());
+}
+
+#[test]
+fn observers_watch_without_typing_and_can_switch_back() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    assert_eq!(
+        hub.claim("term-1", "phone", false, Some(true)).unwrap()["observe"],
+        true
+    );
+    assert!(hub.device_input("term-1", "phone", "a").is_err());
+    assert!(hub.authorize_image("term-1", "phone").is_err());
+    assert_eq!(
+        hub.claim("term-1", "phone", false, Some(false)).unwrap()["lease"],
+        1
+    );
+    assert!(hub.device_input("term-1", "phone", "a").is_ok());
+}
+
+#[test]
+fn the_last_typist_owns_the_size_and_desktop_size_is_remembered() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    // 电脑是尺寸方：电脑的尺寸直接生效，手机的尺寸先记下。
+    assert!(hub.desktop_resize("term-1", 160, 48));
+    assert_eq!(hub.device_resize("term-1", "phone", 50, 30).unwrap(), None);
+    assert_eq!(
+        hub.device_input("term-1", "phone", "ls\r").unwrap(),
+        InputDecision::Forward {
+            resize: Some((50, 30))
+        }
+    );
+    // 手机成为尺寸方后，电脑窗口变化只记下。
+    assert!(!hub.desktop_resize("term-1", 170, 50));
+    assert_eq!(
+        hub.desktop_input("term-1", "x").unwrap(),
+        InputDecision::Forward {
+            resize: Some((170, 50))
+        }
+    );
+    // 自动应答不抢尺寸；非尺寸方的应答被丢弃。
+    assert_eq!(
+        hub.device_input("term-1", "phone", "\x1b[24;80R").unwrap(),
+        InputDecision::Drop
+    );
+    let log = hub.input_log("term-1").unwrap();
+    assert_eq!(log[0]["name"], DESKTOP_NAME);
+    assert_eq!(log[1]["name"], "phone-name");
+}
+
+#[test]
+fn locked_size_stays_with_its_owner_until_someone_takes_it_explicitly() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    hub.device_resize("term-1", "phone", 50, 30).unwrap();
+    hub.set_size_lock("term-1", &Controller::Desktop, true)
+        .unwrap();
+    assert_eq!(
+        hub.device_input("term-1", "phone", "a").unwrap(),
+        InputDecision::Forward { resize: None }
+    );
+    assert_eq!(
+        hub.take_size("term-1", Controller::Device("phone".into()))
+            .unwrap(),
+        Some((50, 30))
+    );
 }
 
 #[test]
@@ -373,26 +503,24 @@ fn restore_scan_stays_off_while_the_listener_is_stopped() {
 }
 
 #[test]
-fn lease_or_legacy_writes_are_bound_to_the_current_device() {
+fn revoked_devices_lose_presence_and_exclusive() {
     let hub = handoff_hub();
-    ready_session(&hub, "mobile-a", "phone");
-    assert!(hub.authorize("mobile-a", "phone", None).is_ok());
-    hub.claim("mobile-a", "tablet", true).unwrap();
-    assert!(hub.authorize("mobile-a", "phone", None).is_err());
-    assert!(hub.authorize("mobile-a", "phone", Some(2)).is_err());
-    assert!(hub
-        .inner
-        .lock()
-        .unwrap()
-        .takeover_reply("mobile-a", None)
-        .is_none());
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", true, None).unwrap();
+    hub.set_exclusive("term-1", Controller::Device("phone".into()), true, false)
+        .unwrap();
+    assert_eq!(
+        hub.release_mirrors(Some("phone")),
+        vec!["term-1".to_string()]
+    );
+    assert!(hub.desktop_input("term-1", "x").is_ok());
+    assert!(hub.release_all_devices().is_empty());
 }
 
 #[test]
 fn mirrors_never_reach_paths_that_end_processes() {
     let hub = handoff_hub();
-    hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
-        .unwrap();
+    approved_mirror(&hub, "term-1");
     ready_session(&hub, "mobile-a", "phone");
     assert!(!hub
         .take_idle_sessions(Duration::ZERO)
@@ -410,60 +538,86 @@ fn mirrors_never_reach_paths_that_end_processes() {
 }
 
 #[test]
-fn two_viewers_keep_reading_one_mirror_across_desktop_takeback() {
+fn tapped_output_reaches_every_viewer_without_the_desktop_frontend() {
     let hub = handoff_hub();
-    hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+    hub.tap_open("term-1");
+    hub.tap_output("term-1", b"x", "eA==");
+    assert!(hub.mirror_complete("term-1"));
+    // 检查通过前手机不能接入。
+    assert!(!hub.mirror_approved("term-1"));
+    assert!(hub.claim("term-1", "phone", false, None).is_err());
+    hub.approve_mirror("term-1".into(), project(), None, 80, 24, Some("ignored"))
         .unwrap();
     for device in ["phone", "tablet"] {
         assert_eq!(
-            hub.claim("term-1", device, false).unwrap()["by"],
-            DESKTOP_NAME
+            hub.claim("term-1", device, false, None).unwrap()["lease"],
+            1
         );
     }
-    let lease = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
-    assert!(hub.authorize("term-1", "phone", lease).is_ok());
-    assert!(hub.authorize("term-1", "phone", None).is_err());
-    hub.take_for_desktop("term-1").unwrap();
-    assert_eq!(
-        hub.authorize("term-1", "phone", lease).unwrap_err(),
-        TAKEN_OVER
-    );
-    assert!(hub.mirror_active("term-1"));
-    hub.mirror_push("term-1", OutputChunk::Bytes("eA==".into()));
     let inner = hub.inner.lock().unwrap();
     let session = &inner.mirrors["term-1"];
-    for device in ["phone", "tablet"] {
-        assert_eq!(inner.view_control(session, device)["by"], DESKTOP_NAME);
-        assert_eq!(session.read(0)["chunks"], json!(["eA=="]));
-    }
-    assert_eq!(
-        inner.takeover_reply("term-1", lease).unwrap()["by"],
-        DESKTOP_NAME
-    );
+    // 完整镜像不用电脑画面覆盖。
+    assert_eq!(session.read(0)["chunks"], json!(["eA=="]));
+    let control = inner.view_control(session, "phone");
+    assert_eq!(control["viewers"].as_array().unwrap().len(), 3);
+    assert_eq!(control["sizeOwner"], DESKTOP_NAME);
 }
 
 #[test]
-fn reseeded_mirror_never_reuses_an_old_lease() {
+fn incomplete_mirrors_are_seeded_from_the_desktop_screen() {
     let hub = handoff_hub();
-    hub.seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
-        .unwrap();
-    let old = hub.claim("term-1", "phone", true).unwrap()["lease"].as_u64();
-    hub.release_mirrors(None);
-    hub.seed_mirror("term-1".into(), project(), "tablet", None, 80, 24, "y")
-        .unwrap();
-    let new = hub.claim("term-1", "tablet", true).unwrap()["lease"].as_u64();
-    assert!(new > old);
-    assert!(hub.inner.lock().unwrap().mirrors["term-1"].should_send_latest(0));
-    assert!(hub.authorize("term-1", "phone", old).is_err());
+    hub.tap_output("term-1", b"late", "bGF0ZQ==");
+    assert!(!hub.mirror_complete("term-1"));
+    let before = hub.inner.lock().unwrap().mirrors["term-1"].next;
+    approved_mirror(&hub, "term-1");
+    let inner = hub.inner.lock().unwrap();
+    let mirror = &inner.mirrors["term-1"];
+    assert!(mirror.complete);
+    assert!(mirror.next > before);
+    assert!(mirror.should_send_latest(before));
 }
 
 #[test]
-fn mirrors_need_the_feature_enabled() {
+fn taps_are_skipped_until_desktop_terminals_are_enabled() {
     let hub = accepting_hub(vec![device("phone")]);
+    hub.tap_open("term-1");
+    hub.tap_output("term-1", b"x", "eA==");
+    assert!(hub.inner.lock().unwrap().mirrors.is_empty());
     let error = hub
-        .seed_mirror("term-1".into(), project(), "phone", None, 80, 24, "x")
+        .approve_mirror("term-1".into(), project(), None, 80, 24, Some("x"))
         .unwrap_err();
     assert!(error.contains("未开启"));
+}
+
+#[test]
+fn exited_mirrors_are_collected_after_the_retention_window() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.tap_exit("term-1", 0, false);
+    hub.with_session("term-1", |session| {
+        session.last_active = Instant::now() - MIRROR_EXIT_RETENTION - Duration::from_secs(1);
+    });
+    hub.sweep_presence();
+    assert!(hub.inner.lock().unwrap().mirrors.is_empty());
+}
+
+#[test]
+fn size_returns_to_the_desktop_when_the_phone_owner_leaves() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    hub.device_resize("term-1", "phone", 50, 30).unwrap();
+    hub.device_input("term-1", "phone", "a").unwrap();
+    hub.with_session("term-1", |session| {
+        let viewer = session.sharing.viewers.get_mut("phone").unwrap();
+        viewer.seen = Instant::now() - PRESENCE_TIMEOUT - Duration::from_secs(1);
+    });
+    let (changed, resizes) = hub.sweep_presence();
+    assert_eq!(changed, vec!["term-1".to_string()]);
+    assert_eq!(
+        resizes,
+        vec![("term-1".to_string(), ProjectKind::Local, 120, 40)]
+    );
 }
 
 #[test]
@@ -491,16 +645,20 @@ fn desktop_view_starts_with_a_snapshot_then_streams_and_falls_back_when_backlogg
 }
 
 #[test]
-fn only_the_desktop_controller_may_type_into_a_viewed_phone_session() {
+fn the_desktop_types_into_a_viewed_phone_session_without_taking_over() {
     let hub = handoff_hub();
     ready_session(&hub, "mobile-a", "phone");
-    assert_eq!(hub.desktop_controls("mobile-a").unwrap_err(), TAKEN_OVER);
-    hub.take_for_desktop("mobile-a").unwrap();
-    assert!(hub.desktop_controls("mobile-a").is_ok());
+    hub.open_view("mobile-a").unwrap();
+    assert!(hub.desktop_input("mobile-a", "x").is_ok());
+    // 电脑输入不影响手机继续输入。
     assert_eq!(
-        hub.claim("mobile-a", "phone", false).unwrap()["by"],
-        DESKTOP_NAME
+        hub.claim("mobile-a", "phone", false, None).unwrap()["lease"],
+        1
     );
+    assert!(hub.device_input("mobile-a", "phone", "y").is_ok());
+    hub.close_view("mobile-a");
+    let inner = hub.inner.lock().unwrap();
+    assert!(!inner.sessions["mobile-a"].sharing.desktop_present);
 }
 
 #[test]

@@ -69,27 +69,34 @@ pub(super) struct Session {
     pub(super) redraw: Option<(Instant, Instant)>,
     /// 已安排一次预览通知且尚未发出。
     pub(super) preview_notify_pending: bool,
-    /// 当前使用这个终端的一方，同一时刻只有一个。
-    pub(super) controller: Controller,
-    /// 使用权编号，每次接管加一；持旧编号的输入和改尺寸被拒绝。
+    /// 多端共享状态：独占、尺寸方、在线设备与输入来源。
+    pub(super) sharing: Sharing,
+    /// 独占权编号，每次有一方取得独占加一；旧版手机据此判断自己是否被接管。
     pub(super) lease: u64,
+    /// 串行化写入与改尺寸：一条输入整体写完，才处理下一条或改尺寸。
     pub(super) control_gate: Arc<tokio::sync::Mutex<()>>,
-    /// 电脑已接回的镜像：停止接收输出，只保留编号，让被顶下去的手机知道是谁接走的。
-    pub(super) dormant: bool,
-    pub(super) last_viewed: Instant,
+    /// 电脑终端镜像已通过电脑端检查（已信任项目里的交互式终端），手机可以接入。
+    pub(super) approved: bool,
+    /// 电脑终端镜像从终端启动或整屏快照开始记录，画面完整；否则接入时向电脑要一次当前画面。
+    pub(super) complete: bool,
+    /// 上次通知时的共享状态摘要，用于判断是否需要再通知。
+    pub(super) presence_signature: u64,
     pub(super) view: Option<ViewBacklog>,
 }
 
 impl Session {
     pub(super) fn new(project: Project, owner: String, number: u64) -> Self {
         let now_ms = unix_now_ms();
+        let mut sharing = Sharing::new(Controller::Device(owner.clone()));
+        sharing.see_device(&owner, None, Instant::now());
         Self {
             project,
-            controller: Controller::Device(owner.clone()),
+            sharing,
             lease: 1,
             control_gate: Arc::default(),
-            dormant: false,
-            last_viewed: Instant::now(),
+            approved: false,
+            complete: false,
+            presence_signature: 0,
             view: None,
             owner,
             number,
@@ -219,18 +226,42 @@ impl Session {
         self.last_active_ms = unix_now_ms();
     }
 
+    /// 电脑终端的镜像：尺寸跟随电脑，项目信息在电脑端检查通过后补上。
+    pub(super) fn mirror() -> Self {
+        let project = Project {
+            id: String::new(),
+            name: String::new(),
+            path: String::new(),
+            kind: ProjectKind::Local,
+            host: String::new(),
+        };
+        let mut session = Self::new(project, String::new(), 0);
+        session.sharing = Sharing::new(Controller::Desktop);
+        session.ready = true;
+        session
+    }
+
     pub(super) fn push(&mut self, chunk: OutputChunk) {
+        let raw = match &chunk {
+            OutputChunk::Bytes(data) => base64::engine::general_purpose::STANDARD.decode(data).ok(),
+            OutputChunk::Screen { .. } => None,
+        };
+        self.push_decoded(chunk, raw.as_deref());
+    }
+
+    /// `raw` 是 `Bytes` 块解码后的字节；调用方已有原始字节时直接传入，省去一次解码。
+    pub(super) fn push_decoded(&mut self, chunk: OutputChunk, raw: Option<&[u8]>) {
         self.touch();
         let mut previous_title = self.screen.title().map(str::to_owned);
         match &chunk {
-            OutputChunk::Bytes(data) => {
+            OutputChunk::Bytes(_) => {
                 self.note_output_at(self.last_active);
-                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                if let Some(bytes) = raw {
                     for section in bytes.split_inclusive(|byte| matches!(*byte, 0x07 | 0x1b)) {
                         self.screen.process(section);
                         self.observe_program_title(&mut previous_title);
                     }
-                    self.queue_view_bytes(&bytes);
+                    self.queue_view_bytes(bytes);
                 }
             }
             OutputChunk::Screen { data, cols, rows } => {
@@ -272,15 +303,34 @@ impl Session {
         }
     }
 
-    /// 电脑接回：丢弃缓存并停止接收，但保留表项让旧使用权的手机得到被接管答复。
-    pub(super) fn release_mirror(&mut self) {
-        self.controller = Controller::Desktop;
-        self.lease += 1;
-        self.dormant = true;
-        self.output.clear();
-        self.output_size = 0;
-        self.screen = MobileScreen::new();
+    /// 共享状态摘要：在线设备与角色、正在输入的一方、尺寸方、锁定、独占和终端尺寸。
+    pub(super) fn presence_digest(&self, now: Instant) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let sharing = &self.sharing;
+        let mut devices: Vec<_> = sharing
+            .present_devices(now)
+            .map(|(id, viewer)| (id.clone(), viewer.observe))
+            .collect();
+        devices.sort();
+        devices.hash(&mut hasher);
+        sharing.desktop_present.hash(&mut hasher);
+        sharing.typing(now).hash(&mut hasher);
+        sharing.size_owner.hash(&mut hasher);
+        sharing.size_locked.hash(&mut hasher);
+        sharing.exclusive.hash(&mut hasher);
+        self.screen.size().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// 共享状态是否和上次通知时不同；不同时记下新摘要并唤醒轮询中的手机。
+    pub(super) fn presence_changed(&mut self, now: Instant) -> bool {
+        let digest = self.presence_digest(now);
+        if std::mem::replace(&mut self.presence_signature, digest) == digest {
+            return false;
+        }
         self.changed.notify_waiters();
+        true
     }
 
     pub(super) fn observe_program_title(&mut self, previous_title: &mut Option<String>) {

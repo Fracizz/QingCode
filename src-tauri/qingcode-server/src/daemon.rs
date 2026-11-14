@@ -1171,6 +1171,10 @@ fn enqueue_pty_input(conn: &ConnCtx, pty: Arc<PtyHost>, request: Request) {
         conn.fail(id, "badRequest", "pty.input 参数错误");
         return;
     };
+    if let Err(message) = pty.check_owner(&params.id, &conn.client_id) {
+        conn.fail(id, "forbidden", message);
+        return;
+    }
     let input = PtyInput {
         request_id: id,
         pty_id: params.id,
@@ -2220,6 +2224,10 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 conn.fail(id, "badRequest", "pty.resize 参数错误");
                 return;
             };
+            if let Err(message) = daemon.pty.check_owner(&params.id, &conn.client_id) {
+                conn.fail(id, "forbidden", message);
+                return;
+            }
             match daemon
                 .pty
                 .resize(&params.id, params.cols.max(1), params.rows.max(1))
@@ -2401,6 +2409,10 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 "operationId":crate::diagnostics::identifier(params.operation_id.as_deref()),
                 "terminalId":crate::diagnostics::identifier(params.terminal_id.as_deref())});
             crate::diagnostics::record("pty.kill_requested", context.clone(), true, false);
+            if let Err(message) = daemon.pty.check_owner(&params.id, &conn.client_id) {
+                conn.fail(id, "forbidden", message);
+                return;
+            }
             conn.inputs.cancel(&params.id);
             let result = daemon.pty.kill(&params.id);
             crate::diagnostics::record(

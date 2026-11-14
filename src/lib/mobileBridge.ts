@@ -13,8 +13,8 @@ import { getTerminalProfile, loadTerminalProfileSettings } from './terminal/term
 import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import { normalizeTerminalShell } from './terminal/terminalShell'
 import { captureTerminalForMirror, useTerminalStore } from '@/store/terminalStore'
-import { useTerminalControlStore } from '@/store/terminalControlStore'
-import { beginTerminalMirror, stopTerminalMirror } from './terminal/terminalMirror'
+import { applyTerminalControlPayload, type TerminalControlPayload } from '@/store/terminalControlStore'
+import { terminalViewGrids } from '@/store/terminal/ptySizing'
 import { isTerminalProgramBusy } from './terminal/terminalProgramActivity'
 import { isMobileTerminalId } from './ipc/mobileSessions'
 import type { TerminalTab } from '@/types'
@@ -29,9 +29,10 @@ interface Request {
   profile?: string
   /** 列出可供手机接入的电脑终端。 */
   desktopTerminals?: boolean
-  /** 手机接入电脑终端：抓取当前画面并开始转发。 */
+  /** 手机接入电脑终端：检查能否共享，`seed` 为 true 时附上电脑当前画面。 */
   mirrorStart?: string
   device?: string
+  seed?: boolean
   /** 手机结束电脑上的终端。 */
   endTerminal?: string
   /** 电脑重启后在后台连接远端项目，以便接回仍在运行的手机终端。 */
@@ -84,31 +85,28 @@ async function shareableTerminal(id: string) {
   return { tab, project }
 }
 
-async function startDesktopTerminalMirror(id: string, device: string) {
+/**
+ * 手机首次接入电脑终端：检查是已信任项目里的交互式终端后登记给 Rust。输出由 Rust 直接分发，
+ * 只有 Rust 侧镜像不完整时才附上电脑当前画面；行列是电脑窗口自己的网格，供尺寸交还时使用。
+ */
+async function startDesktopTerminalMirror(id: string, seed: boolean) {
   const { tab, project } = await shareableTerminal(id)
-  const open = beginTerminalMirror(id)
-  try {
-    const capture = await captureTerminalForMirror(id)
-    await safeInvoke('建立终端转发', 'mobile_mirror_seed', {
-      id, device, project, name: tab.name, cols: capture.cols, rows: capture.rows, data: capture.data,
-    })
-    open()
-  } catch (error) {
-    stopTerminalMirror(id)
-    throw error
-  }
+  const capture = seed ? await captureTerminalForMirror(id) : undefined
+  const grid = terminalViewGrids.get(id) ?? capture
+  await safeInvoke('登记终端共享', 'mobile_mirror_seed', {
+    id,
+    project,
+    name: tab.name,
+    cols: grid?.cols ?? 80,
+    rows: grid?.rows ?? 24,
+    data: capture?.data ?? null,
+  })
   return null
 }
 
-/** 使用权变化：有设备在用时电脑只读并跟随对方行列，电脑接回后仍向旁观者转发。 */
-export function applyTerminalControl(payload: { id: string; controller: string | null; cols: number; rows: number; mirroring?: boolean }) {
-  const controls = useTerminalControlStore.getState()
-  if (payload.controller) {
-    controls.setControl(payload.id, { name: payload.controller, cols: payload.cols, rows: payload.rows })
-    return
-  }
-  controls.clearControl(payload.id)
-  if (!payload.mirroring) stopTerminalMirror(payload.id)
+/** 共享状态变化：设备在线、独占、尺寸方。电脑只在被设备独占时只读。 */
+export function applyTerminalControl(payload: TerminalControlPayload) {
+  applyTerminalControlPayload(payload)
 }
 
 /** 只有 Server 模式的连接有持久终端；指纹未确认的主机要用户在电脑上确认，后台不碰。 */
@@ -180,7 +178,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
 }
 
 async function respond({
-  project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, device, endTerminal,
+  project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, seed, endTerminal,
   connectRemoteProjects: connectRemote,
 }: Request) {
   if (connectRemote) {
@@ -189,7 +187,7 @@ async function respond({
     return null
   }
   if (desktopTerminals) return listDesktopTerminals()
-  if (mirrorStart !== undefined) return startDesktopTerminalMirror(mirrorStart, device ?? '')
+  if (mirrorStart !== undefined) return startDesktopTerminalMirror(mirrorStart, seed !== false)
   if (endTerminal !== undefined) {
     await shareableTerminal(endTerminal)
     await useTerminalStore.getState().closeTerminal(endTerminal)
@@ -221,12 +219,14 @@ async function respond({
 
 export async function listenForMobileRequests(): Promise<() => void> {
   if (!isTauri() || getCurrentWebviewWindow().label !== 'main') return () => {}
-  // 窗口重载后转发已丢失，把残留的使用权还给电脑。
-  void safeInvoke('释放手机接入', 'mobile_release_mirrors').catch(() => undefined)
-  const unlistenControl = await listen<Parameters<typeof applyTerminalControl>[0]>(
+  const unlistenControl = await listen<TerminalControlPayload>(
     'terminal-control',
     ({ payload }) => applyTerminalControl(payload),
   )
+  // 窗口重载后恢复共享提示；手机的接入与输出在 Rust 侧，重载不受影响。
+  void safeInvoke<TerminalControlPayload[]>('读取终端共享状态', 'mobile_terminal_controls')
+    .then(controls => controls.forEach(applyTerminalControl))
+    .catch(() => undefined)
   const unlistenRequests = await listen<Request>('mobile-request', async ({ payload }) => {
     const result = await respond(payload).then(
       data => ({ data }),

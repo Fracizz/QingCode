@@ -3,7 +3,11 @@ import TerminalConnectionNotice from './TerminalConnectionNotice'
 import TerminalControlNotice from './TerminalControlNotice'
 import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
 import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
-import { terminalControl, useTerminalControlStore } from '@/store/terminalControlStore'
+import {
+  isTerminalInputBlocked,
+  terminalFollowsRemoteGrid,
+  useTerminalControlStore,
+} from '@/store/terminalControlStore'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -237,6 +241,8 @@ export default function TerminalView({
   const ptySpawnPending = terminal?.ptySpawnPending === true
   const control = useTerminalControlStore(s => s.controls[terminalId])
   const wasControlledRef = useRef(false)
+  /** 跟随其他设备网格期间最近一次报给后端的电脑窗口行列。 */
+  const reportedNaturalGridRef = useRef<TerminalGridSize | null>(null)
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -244,7 +250,7 @@ export default function TerminalView({
 
   const isTerminalWritable = useCallback(() => {
     const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
-    return tab?.status === 'running' && !tab.ptySpawnPending && !terminalControl(terminalId)
+    return tab?.status === 'running' && !tab.ptySpawnPending && !isTerminalInputBlocked(terminalId)
   }, [terminalId])
 
   const prepareAttachmentPaths = useCallback(
@@ -519,6 +525,13 @@ export default function TerminalView({
     terminalId,
   ])
 
+  const reportNaturalGrid = useCallback((next: TerminalGridSize) => {
+    const reported = reportedNaturalGridRef.current
+    if (reported && !terminalGridSizeChanged(reported, next)) return
+    reportedNaturalGridRef.current = next
+    void resizeTerminal(terminalId, next.cols, next.rows)
+  }, [resizeTerminal, terminalId])
+
   const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
     window.clearTimeout(ptyResizeTimerRef.current)
@@ -529,8 +542,11 @@ export default function TerminalView({
     const term = xtermRef.current
     // next 总是按容器算出的网格：登记给 store，恢复/兜底启动按它接回而不是默认 80x24。
     if (term) setTerminalViewGrid(terminalId, next)
-    // 其他设备使用期间网格跟随对方，电脑窗口变化要等接回后才生效。
-    if (terminalControl(terminalId)) return false
+    // 其他设备是尺寸方时网格跟随对方；电脑窗口的行列只报给后端记下，电脑打字成为尺寸方时再用。
+    if (terminalFollowsRemoteGrid(terminalId)) {
+      reportNaturalGrid(next)
+      return false
+    }
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
     if (screenWriteLockRef.current > 0) return false
@@ -546,7 +562,7 @@ export default function TerminalView({
       followBottomUntilRef.current = Date.now() + TERMINAL_RESIZE_FOLLOW_BOTTOM_MS
     }
     return true
-  }, [terminalId])
+  }, [reportNaturalGrid, terminalId])
 
   const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
@@ -843,10 +859,8 @@ export default function TerminalView({
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
-    if (terminalControl(terminalId)) {
-      term.options.disableStdin = true
-      wasControlledRef.current = true
-    }
+    if (isTerminalInputBlocked(terminalId)) term.options.disableStdin = true
+    if (terminalFollowsRemoteGrid(terminalId)) wasControlledRef.current = true
     const serializeAddon = new SerializeAddon()
     term.loadAddon(serializeAddon)
     // 写入空串作标记：回调触发时，标记之前的输出都已解析，之后的输出还没有。
@@ -1057,6 +1071,8 @@ export default function TerminalView({
     })
 
     term.onResize(({ cols, rows }) => {
+      // 跟随其他设备网格引起的变化不发给 PTY：终端尺寸由尺寸方决定。
+      if (terminalFollowsRemoteGrid(terminalId)) return
       // 拖动时合并 ConPTY 整屏刷新；暂停或松手后再发送最新行列。
       // 拖动结束后、启动字体加载、系统窗口连续缩放都会在很短时间内产生多次网格
       // 变化，每条 SIGWINCH 都让 TUI 整屏重排一次（Claude Code 还会把每次重排
@@ -1145,8 +1161,9 @@ export default function TerminalView({
         // 普通屏幕的快照自带清屏，会抹掉当前视口：先把视口里已有的行推进滚动历史，
         // 断线前的输出不丢，快照只换掉当前屏幕。
         const buffer = term.buffer.active
+        // 新版 daemon 的快照以 CAN（\x18）开头，用来丢弃半截转义序列。
         if (
-          snapshot.data.startsWith('\x1b[?1049l') &&
+          snapshot.data.replace(/^\x18/, '').startsWith('\x1b[?1049l') &&
           buffer.type === 'normal' &&
           (buffer.baseY > 0 || buffer.cursorY > 0 || buffer.cursorX > 0)
         ) {
@@ -1555,16 +1572,21 @@ export default function TerminalView({
   useEffect(() => {
     const term = xtermRef.current
     if (!term) return
-    term.options.disableStdin = !!control
-    if (control) {
+    // 只有被设备独占时电脑才只读；其余情况电脑和手机都能输入。
+    term.options.disableStdin = !!control?.blockedBy
+    const follow = control && !control.sizeOwnerIsDesktop ? control : undefined
+    if (follow) {
       wasControlledRef.current = true
-      if (term.cols !== control.cols || term.rows !== control.rows) term.resize(control.cols, control.rows)
+      if (term.cols !== follow.cols || term.rows !== follow.rows) term.resize(follow.cols, follow.rows)
+      const natural = readProposedGridSize()
+      if (natural) reportNaturalGrid(natural)
     } else if (wasControlledRef.current) {
       wasControlledRef.current = false
+      reportedNaturalGridRef.current = null
       // 恢复电脑自己的网格；onResize 会把尺寸发给 PTY，程序随之重绘。
       resizeGridFromContainer()
     }
-  }, [control, resizeGridFromContainer])
+  }, [control, readProposedGridSize, reportNaturalGrid, resizeGridFromContainer])
 
   return (
     <div

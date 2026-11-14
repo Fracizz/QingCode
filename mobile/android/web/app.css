@@ -436,7 +436,20 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-more { width: 100%; }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
 #terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
-#terminal-empty[hidden], #terminal-taken[hidden] { display: none; }
+#terminal-empty[hidden], #terminal-taken[hidden], #terminal-share[hidden], .share-action[hidden] { display: none; }
+/* 多端共享栏：其他在线的端与按钮，贴在终端下方，和被接管提示同一样式。 */
+#terminal-share {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px max(12px, var(--corner-inset));
+  border-top: 1px solid var(--divider);
+}
+#terminal-share-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.share-action { flex: none; display: grid; align-items: center; padding: 0; color: var(--accent); font-size: 12px; font-weight: 600; }
+.share-action .compact { min-height: 28px; padding: 0 8px; border-radius: 8px; background: var(--accent-surface); display: inline-flex; align-items: center; }
+.share-action:is(:active, :focus-visible) .compact { background: var(--accent-pressed); }
 #terminal-empty-new { min-height: 44px; padding: 0 24px; }
 #terminal-taken {
   flex: none;

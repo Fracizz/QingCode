@@ -64,6 +64,13 @@ pub fn initialize(app: &AppHandle) {
             sweep_idle_terminals(&sweeper).await;
         }
     });
+    let presence = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(PRESENCE_SWEEP_INTERVAL).await;
+            sweep_presence(&presence).await;
+        }
+    });
     let state = app.state::<MobileState>();
     let saved_names = load_session_names();
     state
@@ -154,8 +161,8 @@ pub async fn mobile_stop(disable: Option<bool>, app: AppHandle) -> Result<Status
         let _ = end(&app, id.clone(), kind).await;
         emit_view_exit(&app, &id, 0, false);
     }
-    // 只让出使用权：电脑上开的终端继续运行，电脑恢复可操作。
-    for id in state.hub.release_mirrors(None) {
+    // 电脑上开的终端继续运行；设备都已断开，清掉它们的在线记录与独占，电脑恢复可操作。
+    for id in state.hub.release_all_devices() {
         emit_control(&app, &id);
     }
     Ok(status(&state))
@@ -254,35 +261,49 @@ pub async fn mobile_end_session(id: String, app: AppHandle) -> Result<(), String
     end_session(&app, id).await
 }
 
-/// 手机正在使用这个电脑终端时，电脑端输入被拒绝、改尺寸被忽略。
-pub(crate) fn desktop_blocked(state: &MobileState, id: &str) -> bool {
-    state
-        .hub
-        .inner
-        .lock()
-        .unwrap()
-        .mirrors
-        .get(id)
-        .is_some_and(|mirror| {
-            !mirror.dormant && mirror.exit.is_none() && mirror.controller != Controller::Desktop
-        })
+/// 电脑端写入前的共享检查。返回 `Drop` 表示这是非尺寸方的自动应答，静默丢弃；
+/// `Forward { resize }` 带尺寸时，调用方先把终端改成这个尺寸（电脑刚成为尺寸方）再写入。
+pub(crate) fn desktop_input(
+    app: &AppHandle,
+    state: &MobileState,
+    id: &str,
+    data: &str,
+) -> Result<DesktopWrite, String> {
+    let decision = state.hub.desktop_input(id, data)?;
+    Ok(match decision {
+        InputDecision::Drop => DesktopWrite::Drop,
+        InputDecision::Forward { resize } => {
+            if let Some((cols, rows)) = resize {
+                state.hub.with_session(id, |session| {
+                    session.screen.resize(cols, rows);
+                    session.note_resize();
+                });
+            }
+            emit_control_if_changed(app, id);
+            DesktopWrite::Forward { resize }
+        }
+    })
+}
+
+/// 电脑端写入的处理方式，见 [`desktop_input`]。
+pub(crate) enum DesktopWrite {
+    Forward { resize: Option<(u16, u16)> },
+    Drop,
+}
+
+/// 电脑窗口请求的尺寸。电脑是尺寸方时返回 true，调用方真正改终端尺寸；
+/// 其他设备是尺寸方时只记下电脑的尺寸，电脑下次打字成为尺寸方时再用。
+pub(crate) fn desktop_resize(state: &MobileState, id: &str, cols: u16, rows: u16) -> bool {
+    state.hub.desktop_resize(id, cols, rows)
 }
 
 pub(crate) fn desktop_resized(state: &MobileState, id: &str, cols: u16, rows: u16) {
     state.hub.with_session(id, |session| {
-        if !session.dormant && session.controller == Controller::Desktop {
+        if session.sharing.size_owner == Controller::Desktop {
             session.screen.resize(cols, rows);
             session.changed.notify_waiters();
         }
     });
-}
-
-pub(crate) fn check_desktop_write(state: &MobileState, id: &str) -> Result<(), String> {
-    if desktop_blocked(state, id) {
-        Err("终端正在其他设备上使用，请先点「接回」。".into())
-    } else {
-        Ok(())
-    }
 }
 
 #[tauri::command]
@@ -298,37 +319,85 @@ pub fn mobile_set_desktop_terminals(enabled: bool, app: AppHandle) -> Result<Sta
     Ok(status(&state))
 }
 
+/// 电脑端打开或解除独占。`force` 抢下设备的独占（「接管」）。
 #[tauri::command]
-pub async fn mobile_terminal_take(id: String, app: AppHandle) -> Result<(), String> {
+pub async fn mobile_terminal_exclusive(
+    id: String,
+    on: bool,
+    force: Option<bool>,
+    app: AppHandle,
+) -> Result<(), String> {
     let _control = app.state::<MobileState>().lock_control(&id).await;
-    app.state::<MobileState>().hub.take_for_desktop(&id)?;
+    app.state::<MobileState>().hub.set_exclusive(
+        &id,
+        Controller::Desktop,
+        on,
+        force.unwrap_or(false),
+    )?;
     emit_control(&app, &id);
     Ok(())
 }
 
-/// 主窗口重载后转发已丢失：把镜像全部还给电脑，手机按被接管处理。
+/// 电脑端锁定或解锁尺寸。
 #[tauri::command]
-pub fn mobile_release_mirrors(app: AppHandle, window: WebviewWindow) {
-    if window.label() != "main" {
-        return;
-    }
-    for id in app.state::<MobileState>().hub.release_mirrors(None) {
-        emit_control(&app, &id);
-    }
+pub fn mobile_terminal_lock_size(id: String, locked: bool, app: AppHandle) -> Result<(), String> {
+    app.state::<MobileState>()
+        .hub
+        .set_size_lock(&id, &Controller::Desktop, locked)?;
+    emit_control(&app, &id);
+    Ok(())
 }
 
+/// 电脑端「按电脑尺寸显示」：电脑直接成为尺寸方。
+#[tauri::command]
+pub async fn mobile_terminal_take_size(id: String, app: AppHandle) -> Result<(), String> {
+    let state = app.state::<MobileState>();
+    let _control = state.lock_control(&id).await;
+    if let Some((cols, rows)) = state.hub.take_size(&id, Controller::Desktop)? {
+        let kind = if is_mobile_terminal(&id) {
+            state.hub.desktop_session_kind(&id)?
+        } else {
+            state.hub.session_kind(&id)?
+        };
+        apply_resize(&app, kind, &id, cols, rows).await?;
+    }
+    emit_control(&app, &id);
+    Ok(())
+}
+
+/// 最近的输入来源（谁、何时、多少字节），不含内容。
+#[tauri::command]
+pub fn mobile_terminal_input_log(
+    id: String,
+    state: State<'_, MobileState>,
+) -> Result<Value, String> {
+    state.hub.input_log(&id)
+}
+
+/// 主窗口重载后恢复各终端的共享提示。镜像在 Rust 侧记录，重载不影响手机。
+#[tauri::command]
+pub fn mobile_terminal_controls(
+    state: State<'_, MobileState>,
+    window: WebviewWindow,
+) -> Vec<Value> {
+    if window.label() != "main" {
+        return Vec::new();
+    }
+    shared_controls(&state.hub.inner.lock().unwrap())
+}
+
+/// 电脑端检查通过后登记电脑终端镜像。`data` 是电脑当前画面，只在镜像不完整时提供。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn mobile_mirror_seed(
     window: WebviewWindow,
     state: State<'_, MobileState>,
     id: String,
-    device: String,
     project: Value,
     name: Option<String>,
     cols: u16,
     rows: u16,
-    data: String,
+    data: Option<String>,
 ) -> Result<(), String> {
     if window.label() != "main" || is_mobile_terminal(&id) {
         return Err("终端不存在。".into());
@@ -336,44 +405,10 @@ pub fn mobile_mirror_seed(
     let project: Project = serde_json::from_value(project).map_err(|error| error.to_string())?;
     state
         .hub
-        .seed_mirror(id, project, &device, name, cols, rows, &data)
+        .approve_mirror(id, project, name, cols, rows, data.as_deref())
 }
 
-#[tauri::command]
-pub fn mobile_mirror_output(state: State<'_, MobileState>, id: String, data: String) {
-    state.hub.mirror_push(&id, OutputChunk::Bytes(data));
-}
-
-#[tauri::command]
-pub fn mobile_mirror_screen(
-    state: State<'_, MobileState>,
-    id: String,
-    data: String,
-    cols: u16,
-    rows: u16,
-) {
-    state
-        .hub
-        .mirror_push(&id, OutputChunk::Screen { data, cols, rows });
-}
-
-#[tauri::command]
-pub fn mobile_mirror_finish(
-    state: State<'_, MobileState>,
-    id: String,
-    exit_code: u32,
-    disconnected: bool,
-) {
-    state.hub.mirror_finish(
-        &id,
-        Exit {
-            exit_code,
-            disconnected,
-        },
-    );
-}
-
-/// 在电脑标签中打开手机终端：默认只读，整屏快照随下一轮输出通知发出。
+/// 在电脑标签中打开手机终端：电脑可以直接输入，整屏快照随下一轮输出通知发出。
 #[tauri::command]
 pub fn mobile_view_open(id: String, app: AppHandle) -> Result<Value, String> {
     if !is_mobile_terminal(&id) {
@@ -382,26 +417,33 @@ pub fn mobile_view_open(id: String, app: AppHandle) -> Result<Value, String> {
     let state = app.state::<MobileState>();
     let reply = state.hub.open_view(&id)?;
     if state.hub.update_for_preview(&id, |_| {}) {
-        schedule_output_notify(app.clone(), id);
+        schedule_output_notify(app.clone(), id.clone());
     }
+    emit_control(&app, &id);
     Ok(reply)
 }
 
 #[tauri::command]
-pub fn mobile_view_close(id: String, state: State<'_, MobileState>) {
-    state.hub.close_view(&id);
+pub fn mobile_view_close(id: String, app: AppHandle) {
+    app.state::<MobileState>().hub.close_view(&id);
+    emit_control_if_changed(&app, &id);
 }
 
 #[tauri::command]
 pub async fn mobile_view_input(id: String, data: String, app: AppHandle) -> Result<(), String> {
-    let hub = &app.state::<MobileState>().inner().hub;
-    let _control = app.state::<MobileState>().lock_control(&id).await;
-    let kind = hub.desktop_controls(&id)?;
-    hub.with_session(&id, |session| session.note_user_input(&data));
+    let state = app.state::<MobileState>();
+    let _control = state.lock_control(&id).await;
+    let kind = state.hub.desktop_session_kind(&id)?;
+    let DesktopWrite::Forward { resize } = desktop_input(&app, &state, &id, &data)? else {
+        return Ok(());
+    };
+    if let Some((cols, rows)) = resize {
+        apply_resize(&app, kind, &id, cols, rows).await?;
+    }
     write_input(&app, kind, id, data).await
 }
 
-/// 手机仍在使用时电脑的布局变化不影响终端尺寸，这里直接忽略。
+/// 电脑查看标签的尺寸：电脑是尺寸方时才改终端，否则只记下。
 #[tauri::command]
 pub async fn mobile_view_resize(
     id: String,
@@ -409,10 +451,12 @@ pub async fn mobile_view_resize(
     rows: u16,
     app: AppHandle,
 ) -> Result<(), String> {
-    let hub = &app.state::<MobileState>().inner().hub;
-    let _control = app.state::<MobileState>().lock_control(&id).await;
-    match hub.desktop_controls(&id) {
-        Ok(kind) => apply_resize(&app, kind, &id, cols, rows).await,
-        Err(_) => Ok(()),
+    let state = app.state::<MobileState>();
+    let _control = state.lock_control(&id).await;
+    let kind = state.hub.desktop_session_kind(&id)?;
+    let (cols, rows) = size(cols, rows);
+    if desktop_resize(&state, &id, cols, rows) {
+        apply_resize(&app, kind, &id, cols, rows).await?;
     }
+    Ok(())
 }

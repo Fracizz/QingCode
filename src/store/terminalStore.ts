@@ -68,9 +68,9 @@ import {
   syncTerminalsInView,
 } from '@/lib/terminal/terminalAttention'
 import { activeTerminalOverlayNotice, clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
-import { finishTerminalMirror } from '../lib/terminal/terminalMirror'
 import { closeMobileView, isMobileTerminalId, openMobileView } from '../lib/ipc/mobileSessions'
 import { useTerminalControlStore } from './terminalControlStore'
+import { noteHumanTerminalInput } from '../lib/terminal/terminalInputGate'
 import { isSshProject, sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { choiceDialog } from './choiceStore'
 import { forgetPreservedTerminalName, terminalNameForReattach } from '@/lib/terminal/detachedTerminalNames'
@@ -1478,6 +1478,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return
     }
     recordTypedInput(id, data)
+    noteHumanTerminalInput(id, data)
     if (data.includes('\r')) {
       noteTerminalSubmit(id)
       noteTerminalLastActive(id)
@@ -1763,7 +1764,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         const parsed = parseTerminalExitEvent(event.payload)
         if (!parsed) return
         const { id, exitCode: exit_code, disconnected, reason } = parsed
-        finishTerminalMirror(id, exit_code, disconnected)
         useTerminalControlStore.getState().clearControl(id)
         clearTerminalCommandActivity(id)
         clearTerminalProgramActivity(id)
@@ -1934,14 +1934,8 @@ export async function openMobileSessionTab(session: {
     ...bindTerminalToPane(current, tab.projectId, pane, tab.id),
   }))
   try {
-    const opened = await openMobileView(session.id)
-    if (opened.controller) {
-      useTerminalControlStore.getState().setControl(session.id, {
-        name: opened.controller,
-        cols: opened.cols,
-        rows: opened.rows,
-      })
-    }
+    // 共享状态（在线设备、尺寸方、独占）由 Rust 随打开发出的 terminal-control 事件带来。
+    await openMobileView(session.id)
     return tab
   } catch (error) {
     await useTerminalStore.getState().closeTerminal(session.id)

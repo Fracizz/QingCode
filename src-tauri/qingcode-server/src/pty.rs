@@ -67,6 +67,8 @@ const EXITED_RETENTION: Duration = Duration::from_secs(30 * 60);
 /// 若直接按「字节预算 / 列数」折算，2MB/80 列 ≈ 26k 行，每个终端要吃掉几十 MB；
 /// 屏幕快照只需要可见屏 + 少量历史，这里封顶 1000 行。
 const MAX_PARSER_SCROLLBACK_LINES: usize = 1000;
+/// 接回时待补发的输出超过这么多就改给屏幕快照，不再逐段补发积压。
+const REPLAY_SNAPSHOT_THRESHOLD: usize = 1024 * 1024;
 
 /// PTY 尺寸下限：0 行/0 列会让 `vt100` 的网格退化，`ioctl` 也可能直接失败。
 const MIN_COLS: u16 = 2;
@@ -303,6 +305,15 @@ impl RingBuffer {
             Some(through) => from_seq > through,
             None => true,
         }
+    }
+
+    /// `seq >= from_seq` 的块共有多少字节，用来判断补发是否比快照更划算。
+    fn replay_bytes(&self, from_seq: u64) -> usize {
+        self.blocks
+            .iter()
+            .filter(|(seq, _)| *seq >= from_seq)
+            .map(|(_, data)| data.len())
+            .sum()
     }
 
     /// 重放 `seq >= from_seq` 的块；调用方应先确认 [`Self::can_replay`]。
@@ -729,6 +740,20 @@ impl PtyHost {
         }
     }
 
+    /// 只有终端的所有者（或尚无所有者的终端）可以输入、改尺寸和结束它。
+    /// 同一台 daemon 的 token 由多个客户端共享，不能只靠连接鉴权。
+    pub fn check_owner(&self, id: &str, client_id: &str) -> Result<(), String> {
+        let Ok(term) = self.term(id) else {
+            // 不存在的终端交给具体操作报错（kill 对不存在的终端是幂等的）。
+            return Ok(());
+        };
+        let state = lock(&term.state);
+        match state.owner.as_deref() {
+            Some(owner) if owner != client_id => Err("终端不属于当前客户端，拒绝操作".to_string()),
+            _ => Ok(()),
+        }
+    }
+
     /// 调整终端尺寸：内核 winsize（触发 SIGWINCH）+ 解析器网格一起改。
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let cols = clamp_cols(cols);
@@ -842,6 +867,9 @@ impl PtyHost {
             AttachScreenPolicy::OnAlternate => state.parser.alternate_screen(),
             AttachScreenPolicy::Always => true,
         };
+        // 落后太多（慢网络、长时间断开）时补发积压只会继续拖慢，直接给当前屏幕（同 herdr 的做法）。
+        let force_screen =
+            force_screen || state.ring.replay_bytes(from_seq) > REPLAY_SNAPSHOT_THRESHOLD;
         let (screen, replay) = if !force_screen && state.ring.can_replay(from_seq) {
             (None, state.ring.replay(from_seq))
         } else {
@@ -1451,12 +1479,13 @@ fn evict_locked(host: &mut HostInner, budget: usize) {
 
 /// Restore the active buffer before painting, then restore mouse/keypad/paste modes.
 /// Clipboard OSC actions are deliberately absent from vt100's serialized state.
+/// 开头的 CAN（0x18）让接收端丢弃停在半截的转义序列，快照不会被拼进上一段残缺输出里。
 fn render_screen(parser: &Parser) -> String {
     let screen = parser.screen();
     let mut contents = if screen.alternate_screen() {
-        "\x1b[?1049h".to_string()
+        "\x18\x1b[?1049h".to_string()
     } else {
-        "\x1b[?1049l".to_string()
+        "\x18\x1b[?1049l".to_string()
     };
     contents.push_str(&screen.state_formatted());
     contents
@@ -1984,6 +2013,10 @@ mod tests {
         let mut source = Parser::new(nonzero(24), nonzero(80), 0);
         source.process(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b=OpenCode / Claude\x1b]52;c;aGk=\x07");
         let snapshot = render_screen(&source);
+        assert!(
+            snapshot.starts_with('\x18'),
+            "快照以 CAN 开头，丢弃接收端半截的转义序列"
+        );
         assert!(!snapshot.contains("\x1b]52;"));
         let mut restored = Parser::new(nonzero(24), nonzero(80), 0);
         restored.process(snapshot.as_bytes());
@@ -2068,6 +2101,9 @@ mod tests {
             "重放应只给 seq >= from_seq 的块"
         );
         assert!(ring.replay(2).is_empty(), "追平后没有可重放的块");
+        assert_eq!(ring.replay_bytes(0), 6);
+        assert_eq!(ring.replay_bytes(1), 3);
+        assert_eq!(ring.replay_bytes(2), 0);
     }
 
     #[test]
@@ -2814,6 +2850,10 @@ mod tests {
             host.attach(&info.id, 0, "client-b").is_err(),
             "不同安装/客户端不能接走已有 owner 的终端"
         );
+        // 共享同一 token 的其他客户端也不能输入、改尺寸或结束它。
+        assert!(host.check_owner(&info.id, "client-b").is_err());
+        assert!(host.check_owner(&info.id, "client-a").is_ok());
+        assert!(host.check_owner("missing", "client-b").is_ok());
 
         // 终端的 shell 仍在运行，可以继续接收输入。
         host.write(&info.id, b"printf alive\n").unwrap();

@@ -717,3 +717,34 @@ export const TERMINAL_THEME = {
   brightCyan: '#a3d0d4',
   brightWhite: '#dcdcdc',
 };
+
+/**
+ * 多端共享时这台手机是否跟随其他端的尺寸：电脑端支持多写者（带 `sizeOwnerHere`）且尺寸方不是本机。
+ * 跟随期间仍可输入，画面按尺寸方的行列缩放显示；本机打字后成为尺寸方，恢复按本机尺寸。
+ */
+export function followGridFor(control, previous = null, fontSize = 14) {
+  if (!control || control.sizeOwnerHere !== false || control.by || control.observe) return null;
+  return {
+    cols: control.cols,
+    rows: control.rows,
+    owner: control.sizeOwner,
+    initialFont: previous?.initialFont ?? fontSize,
+  };
+}
+
+/** 共享栏的说明文字：其他在线的端、谁在输入、按谁的尺寸、是否锁定或独占；只有本机时返回空串。 */
+export function describeShare(control, translate = text => text) {
+  if (!control?.viewers) return '';
+  const others = control.viewers.filter(viewer => !(viewer.kind === 'device' && viewer.self));
+  const parts = [];
+  if (others.length === 1) parts.push(translate('{name} 也在看', { name: translate(others[0].name) }));
+  else if (others.length > 1) parts.push(translate('另有 {count} 端在看', { count: String(others.length) }));
+  const typing = others.find(viewer => viewer.typing);
+  if (typing) parts.push(translate('{name} 正在输入', { name: translate(typing.name) }));
+  if (control.exclusiveHere) parts.push(translate('本机已独占'));
+  if (control.sizeOwnerHere === false && control.sizeOwner) {
+    parts.push(translate('按 {name} 的尺寸显示', { name: translate(control.sizeOwner) }));
+  }
+  if (control.sizeLocked) parts.push(translate('尺寸已锁定'));
+  return parts.join(' · ');
+}

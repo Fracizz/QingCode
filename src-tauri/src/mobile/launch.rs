@@ -53,7 +53,13 @@ pub(super) async fn create(
         profile.as_ref().and_then(LaunchProfile::label),
     )?;
     let (cols, rows) = size(cols, rows);
-    hub.with_session(&id, |session| session.screen.resize(cols, rows));
+    hub.with_session(&id, |session| {
+        session.screen.resize(cols, rows);
+        // 创建的设备是最初的尺寸方。
+        session
+            .sharing
+            .request_size(Controller::Device(device.to_string()), cols, rows);
+    });
     let command = profile
         .as_ref()
         .and_then(LaunchProfile::command)

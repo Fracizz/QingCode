@@ -134,6 +134,10 @@ fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::S
     let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(TERMINAL_EMIT_CHANNEL);
     // Companion terminals bypass webview broadcast; the desktop UI never shows them.
     let mobile = crate::mobile::is_mobile_terminal(&id);
+    if !mobile {
+        // 终端从头开始记录，手机接入电脑终端时画面完整。
+        crate::mobile::tap_open(&app, &id);
+    }
     std::thread::spawn(move || {
         while let Ok(first) = receiver.recv() {
             let data = take_coalesced_terminal_output(
@@ -141,15 +145,17 @@ fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::S
                 || receiver.try_recv().ok(),
                 TERMINAL_EMIT_COALESCE_MAX,
             );
+            let encoded = encode_terminal_data(&data);
             if mobile {
-                crate::mobile::deliver_data(&app, &id, encode_terminal_data(&data));
+                crate::mobile::deliver_data(&app, &id, encoded);
                 continue;
             }
+            crate::mobile::tap_output(&app, &id, &data, &encoded);
             let _ = app.emit(
                 "terminal-data",
                 TerminalDataPayload {
                     id: id.clone(),
-                    data: encode_terminal_data(&data),
+                    data: encoded,
                 },
             );
         }
@@ -498,6 +504,7 @@ impl TerminalManager {
                     crate::mobile::deliver_exit(&app, &id, exit_code, false);
                     return;
                 }
+                crate::mobile::tap_exit(&app, &id, exit_code, false);
                 let _ = app.emit(
                     "terminal-exit",
                     TerminalExitPayload {

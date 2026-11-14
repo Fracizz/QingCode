@@ -597,6 +597,7 @@ fn emit_screen(app: &AppHandle, id: &str, screen: &str, (cols, rows): (u16, u16)
         crate::mobile::deliver_screen(app, id, screen.to_string(), cols.max(1), rows.max(1));
         return;
     }
+    crate::mobile::tap_screen(app, id, screen, cols.max(1), rows.max(1));
     let _ = app.emit(
         "terminal-screen",
         TerminalScreenPayload {
@@ -610,15 +611,17 @@ fn emit_screen(app: &AppHandle, id: &str, screen: &str, (cols, rows): (u16, u16)
 }
 
 fn emit_data(app: &AppHandle, id: &str, data: &[u8], next_seq: u64) {
+    let encoded = encode_terminal_data(data);
     if crate::mobile::is_mobile_terminal(id) {
-        crate::mobile::deliver_data(app, id, encode_terminal_data(data));
+        crate::mobile::deliver_data(app, id, encoded);
         return;
     }
+    crate::mobile::tap_output(app, id, data, &encoded);
     let _ = app.emit(
         "terminal-data",
         PersistentTerminalDataPayload {
             id: id.to_string(),
-            data: encode_terminal_data(data),
+            data: encoded,
             next_seq,
         },
     );
@@ -671,6 +674,7 @@ fn emit_exit(
         crate::mobile::deliver_exit(app, id, exit_code, disconnected);
         return;
     }
+    crate::mobile::tap_exit(app, id, exit_code, disconnected);
     let _ = app.emit(
         "terminal-exit",
         TerminalExitPayload {
@@ -1513,6 +1517,10 @@ async fn spawn_terminal_on_session(
         }
     };
 
+    if !crate::mobile::is_mobile_terminal(&id) {
+        // 新建的终端从头记录，手机接入时画面完整。
+        crate::mobile::tap_open(&app, &id);
+    }
     let (command_tx, command_rx) = mpsc::channel(8);
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),

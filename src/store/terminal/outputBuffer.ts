@@ -26,13 +26,7 @@ import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '@/lib/terminal/terminalPtySi
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import { clearTerminalProgramActivity } from '@/lib/terminal/terminalProgramActivity'
 import { isSessionPersistEnabled } from '../../lib/sessionPersistSettings'
-import {
-  finishTerminalMirror,
-  forwardTerminalMirrorOutput,
-  forwardTerminalMirrorScreen,
-  terminalCapture,
-  type TerminalCapture,
-} from '../../lib/terminal/terminalMirror'
+import { terminalCapture, type TerminalCapture } from '../../lib/terminal/terminalMirror'
 import { recordPerformanceThroughput } from '../../lib/performanceDiagnostics'
 import { decodeTerminalEventData } from '../../utils/terminalIpc'
 import { useTerminalControlStore } from '../terminalControlStore'
@@ -115,7 +109,6 @@ const terminalRingScreens = new Map<
 export function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot, resumeSeq?: number) {
   // 先把批处理中的输出交给视图，保证快照排在它们之后。
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-  forwardTerminalMirrorScreen(id, snapshot)
   const bytes = new TextEncoder().encode(snapshot.data)
   if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
   touchRing(id, bytes)
@@ -242,7 +235,6 @@ export function publishTerminalOutput(id: string, data: unknown, nextSeq?: unkno
   const bytes = decodeTerminalEventData(data)
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
-  forwardTerminalMirrorOutput(id, bytes)
   // 与 ring 同步更新，持久化时两者对应同一时刻。
   const resumeSeq = parseResumeSeq(nextSeq)
   if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
@@ -257,7 +249,6 @@ export function publishTerminalOutput(id: string, data: unknown, nextSeq?: unkno
 }
 
 export function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
-  finishTerminalMirror(id, 0, false)
   useTerminalControlStore.getState().clearControl(id)
   useTerminalDraftStore.getState().clearDraft(id)
   terminalScrollbackRings.delete(id)
@@ -435,8 +426,8 @@ export function hasTerminalScrollback(id: string): boolean {
 }
 
 /**
- * 抓取手机接入时的初始画面，必须和 `beginTerminalMirror` 在同一轮同步代码里调用：
- * 此前的输出都进入快照，此后的输出都进入转发队列，两边不重不漏。
+ * 抓取电脑终端当前画面。只在 Rust 侧镜像不完整（开启手机接入前已有输出）时用来补齐，
+ * 之后的输出由 Rust 直接分发给手机。
  */
 export function captureTerminalForMirror(id: string): Promise<TerminalCapture> {
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
@@ -447,4 +438,4 @@ export function captureTerminalForMirror(id: string): Promise<TerminalCapture> {
   const data = new TextDecoder().decode(terminalByteRingToBytes(terminalScrollbackRings.get(id)))
   return Promise.resolve({ data, cols: size.cols, rows: size.rows })
 }
-
+

@@ -16,7 +16,7 @@
 
 版本 1 的字段扩展需保持旧客户端行为；功能按 `features` 判断，不用业务写操作探测功能。只有专门的只读能力请求被旧电脑拒绝时使用 legacy 路径；网络或认证失败不能缓存为“不支持”。缓存按地址和证书标识，重新配对后清除。不兼容的协议版本提示更新。
 
-手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。支持 `shared_view` 时，安卓打开会话发送 `attach(shared=true, take=false)`，点「接管」才发送 `take=true`。每端使用自己的输出游标；`poll(shared=true)` 的 `control` 含主控网格 `cols/rows`，向主控返回 `lease`，向旁观者返回主控名称 `by`。输入、上传及 PTY 尺寸变化按请求设备与当前控制权校验。
+手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。支持 `shared_view` 时，安卓打开会话发送 `attach(shared=true, take=false)`，点「接管」才发送 `take=true`（抢下独占）。每端使用自己的输出游标；`poll(shared=true)` 的 `control` 含终端网格 `cols/rows`。支持 `multi_writer` 时所有设备默认可写：可写时返回 `lease`，被独占时返回独占方名称 `by`，只读旁观时返回 `observe`；另带在线名单 `viewers`（含 `self`、`typing`、`observe`）、`sizeOwner` / `sizeOwnerHere`、`sizeLocked`、`exclusive` / `exclusiveHere` 与 `lastInput`。新增 `exclusive{on, force}`、`lock_size{locked}`、`take_size` 与 `attach{observe}`。输入、上传按设备身份、独占与只读校验；尺寸请求只在请求设备是尺寸方时生效，其余先记下。
 
 ## 自动验证
 

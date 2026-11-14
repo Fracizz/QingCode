@@ -168,6 +168,30 @@ export function closeMobileView(id: string): Promise<void> {
 }
 
 /** 电脑取得使用权：电脑终端是接回，手机终端是接管，原设备随即被顶下去。 */
-export function takeTerminalForDesktop(id: string): Promise<void> {
-  return safeInvoke('接回终端', 'mobile_terminal_take', { id })
+/** 电脑打开或解除独占；`force` 抢下其他设备的独占。 */
+export function setTerminalExclusive(id: string, on: boolean, force = false): Promise<void> {
+  return safeInvoke(on ? '独占终端' : '解除独占', 'mobile_terminal_exclusive', { id, on, force })
+}
+
+/** 锁定或解锁尺寸：锁定后打字不再切换尺寸方。 */
+export function setTerminalSizeLock(id: string, locked: boolean): Promise<void> {
+  return safeInvoke(locked ? '锁定终端尺寸' : '解锁终端尺寸', 'mobile_terminal_lock_size', { id, locked })
+}
+
+/** 按电脑窗口的尺寸显示：电脑直接成为尺寸方。 */
+export function takeTerminalSizeForDesktop(id: string): Promise<void> {
+  return safeInvoke('按电脑尺寸显示', 'mobile_terminal_take_size', { id })
+}
+
+export interface TerminalInputRecord {
+  name: string
+  kind: 'desktop' | 'device'
+  at: number
+  bytes: number
+  automatic: boolean
+}
+
+/** 最近的输入来源（谁、何时、多少字节），不含内容。 */
+export function terminalInputLog(id: string): Promise<TerminalInputRecord[]> {
+  return safeInvoke('读取输入来源', 'mobile_terminal_input_log', { id })
 }

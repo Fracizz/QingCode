@@ -21,13 +21,32 @@ pub(super) enum Operation {
         #[serde(default)]
         desktop: bool,
     },
-    /// 接入终端并取得使用权。`take` 仅在用户主动点击时为 true；重连和恢复界面传 false，不抢。
+    /// 接入终端并登记在线。所有设备默认可输入；`take` 仅在用户主动点击「接管」时为 true，
+    /// 抢下其他方的独占。`observe` 选择只读旁观（true）或可输入（false），不传沿用之前的选择。
     Attach {
         id: String,
         #[serde(default)]
         take: bool,
         #[serde(default)]
         shared: bool,
+        #[serde(default)]
+        observe: Option<bool>,
+    },
+    /// 打开或解除独占；`force` 抢下其他方的独占。
+    Exclusive {
+        id: String,
+        on: bool,
+        #[serde(default)]
+        force: bool,
+    },
+    /// 锁定或解锁尺寸：锁定后打字不再切换尺寸方。
+    LockSize {
+        id: String,
+        locked: bool,
+    },
+    /// 按这台设备的尺寸显示（直接成为尺寸方）。
+    TakeSize {
+        id: String,
     },
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
@@ -60,24 +79,19 @@ pub(super) enum Operation {
         #[serde(default)]
         formatted: bool,
     },
+    // 旧版手机还会带 `lease`；共享模式下所有设备都能输入，未知字段直接忽略。
     Input {
         id: String,
         data: String,
-        #[serde(default)]
-        lease: Option<u64>,
     },
     Image {
         id: String,
         data: String,
-        #[serde(default)]
-        lease: Option<u64>,
     },
     Resize {
         id: String,
         cols: u16,
         rows: u16,
-        #[serde(default)]
-        lease: Option<u64>,
     },
     End {
         id: String,
@@ -101,7 +115,7 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view"],
+            "features": ["terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
@@ -121,7 +135,32 @@ pub(super) async fn operate(
             }
             Ok(json!(list))
         }
-        Operation::Attach { id, take, shared } => attach(app, device, id, take, shared).await,
+        Operation::Attach {
+            id,
+            take,
+            shared,
+            observe,
+        } => attach(app, device, id, take, shared, observe).await,
+        Operation::Exclusive { id, on, force } => {
+            let _control = app.state::<MobileState>().lock_control(&id).await;
+            hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?;
+            emit_control(app, &id);
+            Ok(Value::Null)
+        }
+        Operation::LockSize { id, locked } => {
+            hub.set_size_lock(&id, &Controller::Device(device.into()), locked)?;
+            emit_control_if_changed(app, &id);
+            Ok(Value::Null)
+        }
+        Operation::TakeSize { id } => {
+            let _control = app.state::<MobileState>().lock_control(&id).await;
+            if let Some((cols, rows)) = hub.take_size(&id, Controller::Device(device.into()))? {
+                let kind = hub.session_kind(&id)?;
+                apply_resize(app, kind, &id, cols, rows).await?;
+            }
+            emit_control(app, &id);
+            Ok(Value::Null)
+        }
         Operation::Sessions {
             project: Some(project),
             ..
@@ -189,12 +228,12 @@ pub(super) async fn operate(
             let read = |inner: &HubState, after_wait: bool| -> Result<Option<Value>, String> {
                 require_device(inner, device)?;
                 let session = inner.live(&id).ok_or("终端不存在。")?;
+                // 旧版手机仍会带上 lease，共享模式下不再用它判断能否输入。
+                let _ = lease;
                 if !shared {
-                    if let Some(reply) = inner.takeover_reply(&id, lease) {
+                    if let Some(reply) = inner.takeover_reply(&id, device) {
                         return Ok(Some(reply));
                     }
-                } else if session.dormant {
-                    return Err("终端转发已停止。".into());
                 }
                 let mut reply = if latest || (tail && session.should_send_latest(from)) {
                     session.latest()
@@ -213,11 +252,18 @@ pub(super) async fn operate(
                 }
                 Ok(Some(reply))
             };
-            let wait = {
+            // 轮询即在线：登记后若在线名单有变化，通知电脑端。
+            {
                 let mut inner = hub.inner.lock().unwrap();
-                if let Some(mirror) = inner.mirrors.get_mut(&id) {
-                    mirror.last_viewed = Instant::now();
+                if require_device(&inner, device).is_ok() {
+                    if let Some(session) = inner.live_mut(&id) {
+                        session.sharing.see_device(device, None, Instant::now());
+                    }
                 }
+            }
+            emit_control_if_changed(app, &id);
+            let wait = {
+                let inner = hub.inner.lock().unwrap();
                 if let Some(reply) = read(&inner, false)? {
                     return Ok(reply);
                 }
@@ -231,19 +277,25 @@ pub(super) async fn operate(
             }
             read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into())
         }
-        Operation::Input { id, data, lease } => {
+        Operation::Input { id, data } => {
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
             }
+            // 同一终端的输入与改尺寸串行：一条输入整体写完才处理下一条。
             let _control = app.state::<MobileState>().lock_control(&id).await;
-            hub.authorize(&id, device, lease)?;
-            hub.with_session(&id, |session| session.note_user_input(&data));
+            let InputDecision::Forward { resize } = hub.device_input(&id, device, &data)? else {
+                return Ok(Value::Null);
+            };
             let kind = hub.session_kind(&id)?;
-            write_input(app, kind, id, data).await?;
+            if let Some((cols, rows)) = resize {
+                apply_resize(app, kind, &id, cols, rows).await?;
+            }
+            write_input(app, kind, id.clone(), data).await?;
+            emit_control_if_changed(app, &id);
             Ok(Value::Null)
         }
-        Operation::Image { id, data, lease } => {
-            hub.authorize(&id, device, lease)?;
+        Operation::Image { id, data } => {
+            hub.authorize_image(&id, device)?;
             let project = {
                 let inner = hub.inner.lock().unwrap();
                 image_project(&inner, &id, device)?
@@ -297,19 +349,16 @@ pub(super) async fn operate(
             }
             result
         }
-        Operation::Resize {
-            id,
-            cols,
-            rows,
-            lease,
-        } => {
+        Operation::Resize { id, cols, rows } => {
             let _control = app.state::<MobileState>().lock_control(&id).await;
-            hub.authorize(&id, device, lease)?;
-            hub.with_session(&id, Session::note_resize);
-            let kind = hub.session_kind(&id)?;
-            apply_resize(app, kind, &id, cols, rows).await?;
-            // 电脑只读画面跟随使用者的行列，内容不错位。
-            emit_control(app, &id);
+            // 只有尺寸方的请求会改终端；其他设备的尺寸先记下，打字成为尺寸方时再用。
+            if let Some((cols, rows)) = hub.device_resize(&id, device, cols, rows)? {
+                hub.with_session(&id, Session::note_resize);
+                let kind = hub.session_kind(&id)?;
+                apply_resize(app, kind, &id, cols, rows).await?;
+                // 电脑画面跟随尺寸方的行列，内容不错位。
+                emit_control(app, &id);
+            }
             Ok(Value::Null)
         }
         Operation::RenameSession { id, name } => hub.rename_session(&id, &name),
@@ -376,31 +425,37 @@ pub(super) async fn apply_resize(
     Ok(())
 }
 
-/// 手机接入终端。电脑终端首次接入时由电脑端抓取当前画面并开始转发。
+/// 手机接入终端。电脑终端首次接入时由电脑端检查能否共享；镜像画面不完整时顺带要一份当前画面。
 pub(super) async fn attach(
     app: &AppHandle,
     device: &str,
     id: String,
     take: bool,
     shared: bool,
+    observe: Option<bool>,
 ) -> Result<Value, String> {
     let hub = &app.state::<MobileState>().inner().hub;
-    if !hub.is_phone_session(&id) && !hub.mirror_active(&id) {
+    if !hub.is_phone_session(&id) && !hub.mirror_approved(&id) {
         if !hub.desktop_terminals_enabled() {
             return Err("电脑端未开启手机接入电脑终端。".into());
         }
         if !take && !shared {
             return Ok(json!({ "takenOver": true, "by": DESKTOP_NAME }));
         }
-        // Serialize initial snapshots so concurrent viewers share one output cursor sequence.
+        // 串行化：并发接入的手机共用同一次检查和同一份初始画面。
         let state = app.state::<MobileState>();
         let _starting = state.mirror_start.lock().await;
-        if !hub.mirror_active(&id) {
-            desktop_query(app, json!({ "mirrorStart": id, "device": device })).await?;
+        if !hub.mirror_approved(&id) {
+            let seed = !hub.mirror_complete(&id);
+            desktop_query(
+                app,
+                json!({ "mirrorStart": id, "device": device, "seed": seed }),
+            )
+            .await?;
         }
     }
     let _control = app.state::<MobileState>().lock_control(&id).await;
-    let reply = hub.claim(&id, device, take)?;
+    let reply = hub.claim(&id, device, take, observe)?;
     emit_control(app, &id);
     Ok(reply)
 }

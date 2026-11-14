@@ -219,6 +219,7 @@ pub(super) async fn spawn_ssh_terminal(
             if crate::mobile::is_mobile_terminal(&terminal_id) {
                 crate::mobile::deliver_exit(&app_clone, &terminal_id, exit_code, disconnected);
             } else {
+                crate::mobile::tap_exit(&app_clone, &terminal_id, exit_code, disconnected);
                 let _ = app_clone.emit(
                     "terminal-exit",
                     TerminalExitPayload {
@@ -304,14 +305,16 @@ pub(super) async fn start_terminal_channel(
 
 /// Companion terminals go to the mobile buffer instead of every webview.
 pub(super) fn emit_direct_terminal_data(app: &AppHandle, id: &str, data: &[u8]) {
+    let encoded = encode_terminal_data(data);
     if crate::mobile::is_mobile_terminal(id) {
-        crate::mobile::deliver_data(app, id, encode_terminal_data(data));
+        crate::mobile::deliver_data(app, id, encoded);
     } else {
+        crate::mobile::tap_output(app, id, data, &encoded);
         let _ = app.emit(
             "terminal-data",
             TerminalDataPayload {
                 id: id.to_string(),
-                data: encode_terminal_data(data),
+                data: encoded,
             },
         );
     }
@@ -905,12 +908,21 @@ pub async fn ssh_spawn_script(
 pub async fn ssh_write_terminal(
     id: String,
     data: String,
+    app: AppHandle,
     manager: State<'_, SshManager>,
     mobile_state: State<'_, crate::mobile::MobileState>,
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
+    // 与手机输入串行：一条输入整体写完才处理下一条。
     let _control = mobile_state.lock_control(&id).await;
-    crate::mobile::check_desktop_write(&mobile_state, &id)?;
+    match crate::mobile::desktop_input(&app, &mobile_state, &id, &data)? {
+        crate::mobile::DesktopWrite::Drop => return Ok(()),
+        crate::mobile::DesktopWrite::Forward { resize } => {
+            if let Some((cols, rows)) = resize {
+                ssh_resize_terminal_unchecked(id.clone(), cols, rows, manager.clone()).await?;
+            }
+        }
+    }
     ssh_write_terminal_unchecked(id, data, manager).await
 }
 
@@ -924,7 +936,7 @@ pub async fn ssh_resize_terminal(
 ) -> Result<(), String> {
     crate::mobile::reject_desktop_use(&id)?;
     let _control = mobile_state.lock_control(&id).await;
-    if crate::mobile::desktop_blocked(&mobile_state, &id) {
+    if !crate::mobile::desktop_resize(&mobile_state, &id, cols, rows) {
         return Ok(());
     }
     ssh_resize_terminal_unchecked(id.clone(), cols, rows, manager).await?;

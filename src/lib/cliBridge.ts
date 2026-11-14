@@ -33,6 +33,7 @@ import { ensureSshWorkspaceConnected } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
 import { hasRunTaskTarget, parseRunTaskOs } from './runTaskPlatform'
 import { writeTerminal } from './ipc/terminal'
+import { waitForHumanInputQuiet } from './terminal/terminalInputGate'
 import {
   assertCliTerminalWritable,
   cliTerminalSummary,
@@ -502,6 +503,8 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         req.config
       )
       assertCliTerminalWritable(terminal)
+      // 有人正在这个终端里打字（任一端）或留着没提交的草稿时，先等人停下，免得和人的按键交错。
+      await waitForHumanInputQuiet(terminal.id)
       await writeTerminal(terminal.id, req.content)
       return {
         project: { id: project.id, name: project.name, path: project.path },

@@ -428,12 +428,21 @@ fn create_terminal(
 async fn write_terminal(
     id: String,
     data: String,
+    app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     mobile_state: tauri::State<'_, mobile::MobileState>,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
+    // 与手机输入串行：一条输入整体写完才处理下一条。
     let _control = mobile_state.lock_control(&id).await;
-    mobile::check_desktop_write(&mobile_state, &id)?;
+    match mobile::desktop_input(&app, &mobile_state, &id, &data)? {
+        mobile::DesktopWrite::Drop => return Ok(()),
+        mobile::DesktopWrite::Forward { resize } => {
+            if let Some((cols, rows)) = resize {
+                state.resize(&id, cols, rows)?;
+            }
+        }
+    }
     state.write(&id, &data)
 }
 
@@ -496,9 +505,9 @@ async fn resize_terminal(
     mobile_state: tauri::State<'_, mobile::MobileState>,
 ) -> Result<(), String> {
     mobile::reject_desktop_use(&id)?;
-    // 手机使用期间终端按手机尺寸，电脑窗口变化不影响它。
+    // 手机是尺寸方时终端按手机尺寸，电脑窗口变化只记下，电脑打字后再用。
     let _control = mobile_state.lock_control(&id).await;
-    if mobile::desktop_blocked(&mobile_state, &id) {
+    if !mobile::desktop_resize(&mobile_state, &id, cols, rows) {
         return Ok(());
     }
     state.resize(&id, cols, rows)?;
@@ -885,12 +894,12 @@ pub fn run() {
             mobile::mobile_rename_session,
             mobile::mobile_end_session,
             mobile::mobile_set_desktop_terminals,
-            mobile::mobile_terminal_take,
-            mobile::mobile_release_mirrors,
+            mobile::mobile_terminal_exclusive,
+            mobile::mobile_terminal_lock_size,
+            mobile::mobile_terminal_take_size,
+            mobile::mobile_terminal_input_log,
+            mobile::mobile_terminal_controls,
             mobile::mobile_mirror_seed,
-            mobile::mobile_mirror_output,
-            mobile::mobile_mirror_screen,
-            mobile::mobile_mirror_finish,
             mobile::mobile_view_open,
             mobile::mobile_view_close,
             mobile::mobile_view_input,

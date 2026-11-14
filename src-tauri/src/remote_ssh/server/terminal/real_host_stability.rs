@@ -12,7 +12,7 @@
 //! QC_STAB_LONG_SECS   长连接阶段时长（默认 300）
 //! QC_STAB_CONNS       并发连接数（默认 3）
 //! QC_STAB_TERMS       每个连接的并发终端数（默认 8）
-//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,tui,long,multi）
+//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,tui,long,multi；share 需显式指定）
 //!                     另有 prewarm（仅 Windows 远端：冷启动 vs 预热领取耗时、未领取回收），需显式指定
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
@@ -916,6 +916,179 @@ async fn phase_prewarm(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Stri
     Ok(())
 }
 
+/// 终端里当前的行列，用 shell 自己读到的窗口尺寸确认真实 PTY 已改好。
+async fn probe_size(term: &mut Term, windows: bool, tag: &str) -> Result<(u16, u16), String> {
+    // 标记用拼接写出：终端会回显输入的命令行，命令里不能出现完整的 `{tag}_` / `_END`，
+    // 否则等待和解析会命中回显而不是真实输出。
+    let command = if windows {
+        format!("Write-Output ('{tag}' + '_' + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height + '_E' + 'ND')\r")
+    } else {
+        format!("echo {tag}\"\"_$(stty size | awk '{{print $2\"x\"$1}}')_\"\"END\r")
+    };
+    term.send(&command).await?;
+    term.wait_for("_END", Duration::from_secs(20)).await?;
+    let text = strip_ansi(&term.tail);
+    let start = text
+        .rfind(&format!("{tag}_"))
+        .ok_or_else(|| format!("没有读到尺寸：{text:?}"))?;
+    let rest = &text[start + tag.len() + 1..];
+    let end = rest.find("_END").ok_or("尺寸输出不完整")?;
+    let (cols, rows) = rest[..end].split_once('x').ok_or("尺寸格式不对")?;
+    Ok((
+        cols.trim()
+            .parse()
+            .map_err(|_| format!("列数无效：{cols}"))?,
+        rows.trim()
+            .parse()
+            .map_err(|_| format!("行数无效：{rows}"))?,
+    ))
+}
+
+/// 多端共享：同一 token 的其他客户端不能操作终端；按「最后键盘输入的一方」切换尺寸后
+/// 真实 PTY 的行列跟着变；非尺寸方的自动应答被丢弃；接回快照以 CAN 开头，积压过大直接给快照。
+async fn phase_share(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    use crate::mobile::sharing::{Controller, InputDecision, Sharing};
+    let mut term = Term::open(ctx, 120, 40).await?;
+    term.pump_until(Instant::now() + Duration::from_secs(3))
+        .await?;
+
+    // 1. 其他客户端（同一 daemon token、不同 clientId）不能改尺寸、输入或结束终端。
+    let (intruder_transport, intruder) = open_terminal_daemon_session(
+        &ctx.manager,
+        &ctx.connection_id,
+        &ctx.root.uri,
+        "qc-stab-intruder:share",
+        &ctx.daemon,
+    )
+    .await?;
+    let pty_id = term.pty_id.clone();
+    for (method, params) in [
+        (
+            "pty.resize",
+            serde_json::json!({ "id": pty_id, "cols": 50, "rows": 20 }),
+        ),
+        ("pty.kill", serde_json::json!({ "id": pty_id })),
+    ] {
+        match intruder.request(method, &params).await {
+            Ok(_) => failures.push(format!("[share] 其他客户端的 {method} 未被拒绝")),
+            Err(error) => println!("[stab][share] 其他客户端 {method} 被拒绝：{error}"),
+        }
+    }
+    let intruder_seq = AtomicU64::new(0);
+    match send_input_to_session(
+        &intruder,
+        &pty_id,
+        &intruder_seq,
+        b"echo QC_INTRUDER\r".to_vec(),
+    )
+    .await
+    {
+        Ok(()) => failures.push("[share] 其他客户端的 pty.input 未被拒绝".into()),
+        Err((error, _)) => println!("[stab][share] 其他客户端 pty.input 被拒绝：{error}"),
+    }
+    intruder.shutdown();
+    intruder_transport.release();
+    let latency = term.echo_probe(ctx.windows, "SHARE").await?;
+    println!(
+        "[stab][share] 拒绝其他客户端后终端仍可用（echo {}）",
+        ms(latency)
+    );
+
+    // 2. 电脑 120x40、手机 60x25：谁最后打字终端就按谁的尺寸。
+    let started = Instant::now();
+    let phone = Controller::Device("phone".into());
+    let mut sharing = Sharing::new(Controller::Desktop);
+    sharing.request_size(Controller::Desktop, 120, 40);
+    sharing.see_device("phone", None, started);
+    sharing.request_size(phone.clone(), 60, 25);
+    let steps = [
+        (phone.clone(), (60u16, 25u16)),
+        (Controller::Desktop, (120, 40)),
+        (phone.clone(), (60, 25)),
+    ];
+    for (index, (who, expected)) in steps.into_iter().enumerate() {
+        match sharing.input(who.clone(), "x", Instant::now(), 0) {
+            Ok(InputDecision::Forward {
+                resize: Some((cols, rows)),
+            }) => {
+                term.session
+                    .request(
+                        "pty.resize",
+                        &serde_json::json!({ "id": pty_id, "cols": cols, "rows": rows }),
+                    )
+                    .await?;
+            }
+            other => failures.push(format!("[share] 第 {index} 次输入没有切换尺寸：{other:?}")),
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        term.pump_until(Instant::now() + Duration::from_millis(300))
+            .await?;
+        let actual = probe_size(&mut term, ctx.windows, &format!("QCSZ{index}")).await?;
+        println!(
+            "[stab][share] {who:?} 打字后终端尺寸 {}x{}",
+            actual.0, actual.1
+        );
+        if actual != expected {
+            failures.push(format!(
+                "[share] {who:?} 打字后终端应为 {}x{}，实际 {}x{}",
+                expected.0, expected.1, actual.0, actual.1
+            ));
+        }
+    }
+    if sharing.input(Controller::Desktop, "\x1b[24;80R", Instant::now(), 0)
+        != Ok(InputDecision::Drop)
+    {
+        failures.push("[share] 非尺寸方的光标位置应答没有被丢弃".into());
+    }
+
+    // 3. 断开期间产生约 1.3 MB 输出，接回时应直接给快照（以 CAN 开头），不逐段补发。
+    let flood = if ctx.windows {
+        "1..16000 | ForEach-Object { 'y' * 78 }; Write-Output QC_FLOOD_DONE\r"
+    } else {
+        "for i in $(seq 1 16000); do printf '%078d\\n' 0; done; echo QC_FLOOD_DONE\r"
+    };
+    term.send(flood).await?;
+    let (pty_id, next_seq) = term.detach();
+    tokio::time::sleep(Duration::from_secs(15)).await;
+    let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        &ctx.manager,
+        &ctx.connection_id,
+        &ctx.root.uri,
+        &client_id,
+        &ctx.daemon,
+    )
+    .await?;
+    let attach = session.attach(&pty_id, next_seq, false).await?;
+    let screen = attach
+        .response
+        .get("screen")
+        .and_then(serde_json::Value::as_str);
+    let seq_end = attach
+        .response
+        .get("seqEnd")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let replay_bytes: usize = attach.chunks.iter().map(|chunk| chunk.data.len()).sum();
+    println!(
+        "[stab][share] 接回：快照 {}，补发 {replay_bytes} 字节，seq {next_seq} → {seq_end}",
+        screen.map_or("无".to_string(), |screen| format!("{} 字节", screen.len()))
+    );
+    match screen {
+        Some(screen) if screen.starts_with('\u{18}') => {}
+        Some(_) => failures.push("[share] 接回快照没有以 CAN 开头".into()),
+        None => failures.push(format!(
+            "[share] 积压 {replay_bytes} 字节仍逐段补发，没有改给快照"
+        )),
+    }
+    let _ = session
+        .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+        .await;
+    session.shutdown();
+    transport.release();
+    Ok(())
+}
+
 async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
     let mut term = Term::open(ctx, 100, 30).await?;
     term.pump_until(Instant::now() + Duration::from_secs(2))
@@ -1716,7 +1889,7 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 9] = [
+    let phases_list: [(&str, Phase); 10] = [
         ("prewarm", |ctx, failures| {
             Box::pin(phase_prewarm(ctx, failures))
         }),
@@ -1735,6 +1908,9 @@ async fn run() -> Result<Vec<String>, String> {
         }),
         ("reattach", |ctx, failures| {
             Box::pin(phase_reattach(ctx, failures))
+        }),
+        ("share", |ctx, failures| {
+            Box::pin(phase_share(ctx, failures))
         }),
         ("tui", |ctx, failures| Box::pin(phase_tui(ctx, failures))),
         ("long", |ctx, failures| Box::pin(phase_long(ctx, failures))),

@@ -5,6 +5,8 @@ import {
   applyModifiers,
   attachNeedsRedraw,
   consumeModifier,
+  describeShare,
+  followGridFor,
   keySequence,
   mergeSessionActivity,
   mergeSessionList,
@@ -164,6 +166,14 @@ let currentLease = null;
 // 其他端主控时保留会话，以便用户显式接管。
 let takenSession = null;
 let viewerGrid = null;
+/** 可输入但跟随其他端尺寸时的行列（见 followGridFor）；与只读的 viewerGrid 互斥。 */
+let followGrid = null;
+/** 最近一次正常布局时的字格尺寸，跟随期间据此算出本机自己的行列。 */
+let naturalCell = null;
+/** 跟随期间本机按自己窗口算出的行列，报给电脑端，本机打字成为尺寸方时用。 */
+let naturalGrid = null;
+/** 最近一次轮询带回的共享状态，供共享栏按钮使用。 */
+let shareControl = null;
 let pollGeneration = 0;
 const SESSION_GONE_ERRORS = ['终端不存在。', '该电脑终端已关闭或不可接入。', '电脑端未开启手机接入电脑终端。'];
 // 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
@@ -1179,6 +1189,7 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFra
   get('scroll-bottom').hidden = true;
   get('terminal-empty').hidden = true;
   clearTakenOver();
+  clearShare();
   currentLease = null;
   get('input-tip').hidden = true;
   sessionWatch.hideTip();
@@ -1503,21 +1514,30 @@ function updateTerminalSize() {
 function fitTerminal() {
   if (!term || !fit || terminalScreen.hidden) return;
   const viewport = get('viewport');
-  if (viewerGrid) {
+  const grid = viewerGrid ?? followGrid;
+  if (grid) {
     // Preserve the controller's character grid. Fit its whole screen on entry,
     // then allow the viewer to zoom the font locally without resizing the PTY.
-    if (term.cols !== viewerGrid.cols || term.rows !== viewerGrid.rows) term.resize(viewerGrid.cols, viewerGrid.rows);
+    if (term.cols !== grid.cols || term.rows !== grid.rows) term.resize(grid.cols, grid.rows);
     const screen = term.element.querySelector('.xterm-screen');
     const padding = getComputedStyle(viewport);
     const width = viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
     const height = viewport.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
     if (screen?.offsetWidth && screen.offsetHeight && width > 0 && height > 0) {
-      const magnification = settings.fontSize() / viewerGrid.initialFont;
+      const magnification = settings.fontSize() / grid.initialFont;
       term.element.style.width = screen.offsetWidth + 'px';
       term.element.style.zoom = Math.min(1, magnification * width / screen.offsetWidth, magnification * height / screen.offsetHeight);
     }
     term.element.style.marginTop = '';
     heldVisibleRows = 0;
+    if (followGrid && naturalCell && width > 0 && height > 0) {
+      // 跟随期间仍按本机窗口算出自己的行列报给电脑端；本机打字成为尺寸方时终端改成这个尺寸。
+      const size = terminalGridSize(width - naturalCell.scrollbar, height, naturalCell.width, naturalCell.height, settings.columns());
+      if (size && (size.cols !== naturalGrid?.cols || size.rows !== naturalGrid?.rows)) {
+        naturalGrid = size;
+        sendSize();
+      }
+    }
     return;
   }
   term.element.style.zoom = '';
@@ -1526,6 +1546,7 @@ function fitTerminal() {
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;
   const cellHeight = screen?.getBoundingClientRect().height / term.rows;
   const scrollbar = term.options.scrollback === 0 ? 0 : term.options.overviewRuler?.width || 14;
+  if (cellWidth && cellHeight) naturalCell = { width: cellWidth, height: cellHeight, scrollbar };
   get('viewport').dataset.columns = terminalColumns ? 'fixed' : 'fit';
   term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth + scrollbar) + 'px' : '100%';
   // FitAddon uses the parent's border-box size. Our padded viewport must use its
@@ -1597,9 +1618,51 @@ attachPinchZoom(get('viewport').parentElement, {
   },
 });
 
+/** 本机自己的行列：跟随其他端尺寸时是按本机窗口算出的行列，而不是当前显示的网格。 */
 function dimensions() {
+  if (followGrid && naturalGrid) return { ...naturalGrid };
   return { cols: term?.cols ?? 80, rows: term?.rows ?? 24 };
 }
+
+/** 共享栏：其他在线的端、谁在输入、按谁的尺寸；可改回本机尺寸、独占或切换只读。 */
+function renderShare(control) {
+  shareControl = control;
+  const text = describeShare(control, t);
+  const bar = get('terminal-share');
+  bar.hidden = !text && !control?.exclusiveHere;
+  get('terminal-share-text').textContent = text || t('本机已独占');
+  get('terminal-share-size').hidden = control?.sizeOwnerHere !== false;
+  get('terminal-share-exclusive-label').textContent = control?.exclusiveHere ? t('解除独占') : t('独占');
+}
+
+function clearShare() {
+  shareControl = null;
+  followGrid = null;
+  naturalGrid = null;
+  get('terminal-share').hidden = true;
+}
+
+
+async function shareAction(op, args) {
+  if (!selected) return;
+  try {
+    await remote(op, { id: selected, ...args });
+  } catch (error) {
+    showToast(message(error));
+  }
+}
+
+get('terminal-share-size').addEventListener('click', () => {
+  // 先报上本机尺寸，电脑端才能改成它。
+  sendSize();
+  void shareAction('take_size', {});
+});
+get('terminal-share-exclusive').addEventListener('click', () => {
+  void shareAction('exclusive', { on: !shareControl?.exclusiveHere });
+});
+get('terminal-share-observe').addEventListener('click', () => {
+  void shareAction('attach', { shared: true, observe: true });
+});
 
 function sendSize() {
   if (!selected || !terminalReady) return;
@@ -1815,13 +1878,16 @@ async function redrawAfterAttach(id, epoch, from) {
 function clearTakenOver() {
   takenSession = null;
   viewerGrid = null;
+  followGrid = null;
   delete terminalScreen.dataset.viewing;
   get('terminal-taken').hidden = true;
   delete terminalScreen.dataset.taken;
 }
 
-function showTakenOver(session, by, grid = null) {
-  const text = t(grid ? '只读 · {name} 正在操作' : '已在 {name} 上接入', { name: t(by) });
+function showTakenOver(session, by, grid = null, observe = false) {
+  const text = observe ? t('只读旁观') : t(grid ? '只读 · {name} 正在操作' : '已在 {name} 上接入', { name: t(by) });
+  followGrid = null;
+  get('terminal-share').hidden = true;
   const changed = !takenSession || get('terminal-taken-text').textContent !== text;
   takenSession = session;
   viewerGrid = grid ? { ...grid, initialFont: viewerGrid?.initialFont ?? settings.fontSize() } : null;
@@ -1832,7 +1898,7 @@ function showTakenOver(session, by, grid = null) {
     terminalScreen.dataset.taken = 'true';
     terminalScreen.dataset.viewing = String(!!grid);
     get('terminal-taken-text').textContent = text;
-    get('terminal-take-label').textContent = t(grid ? '接管' : '接回');
+    get('terminal-take-label').textContent = observe ? t('可输入') : t(grid ? '接管' : '接回');
     get('terminal-taken').hidden = false;
     terminalState(text, grid ? 'online' : 'idle');
   }
@@ -1907,10 +1973,10 @@ async function poll(session, epoch, take = false, explicitTake = false) {
       if (shared) {
         const control = data.control;
         if (!control) throw new Error(t('电脑端移动协议不兼容，请更新电脑端和 Android APK。'));
-        if (control.by) {
+        if (control.by || control.observe) {
           const changedGrid = term.cols !== control.cols || term.rows !== control.rows;
           const entering = !viewerGrid;
-          showTakenOver(session, control.by, control);
+          showTakenOver(session, control.by, control, !!control.observe);
           if (entering || changedGrid) fitTerminal();
           if (changedGrid && !data.snapshot) {
             latest = true;
@@ -1923,6 +1989,20 @@ async function poll(session, epoch, take = false, explicitTake = false) {
             attaching = true;
           }
           currentLease = control.lease;
+          // 多写者：可输入，但尺寸方是其他端时按对方行列缩放显示，本机打字后恢复本机尺寸。
+          const nextFollow = followGridFor(control, followGrid, settings.fontSize());
+          const followChanged = !!nextFollow !== !!followGrid
+            || (nextFollow && (nextFollow.cols !== followGrid.cols || nextFollow.rows !== followGrid.rows));
+          followGrid = nextFollow;
+          if (!followGrid) naturalGrid = null;
+          renderShare(control);
+          if (followChanged) {
+            fitTerminal();
+            if (followGrid && !data.snapshot) {
+              latest = true;
+              continue;
+            }
+          }
         }
       }
       if (attaching) {
