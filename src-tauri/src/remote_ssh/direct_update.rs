@@ -11,6 +11,8 @@ use packages::{configure_package_source, management_root, progress};
 #[cfg(test)]
 mod live_acceptance;
 #[cfg(test)]
+mod tests;
+#[cfg(test)]
 pub(super) fn trace_exec(script: &str) {
     let first = script
         .lines()
@@ -60,7 +62,9 @@ if ($LASTEXITCODE -ne 0 -or $d.pid -ne {pid} -or $d.port -ne {port} -or $d.certi
 $p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}'
 $prefix = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.qingcode\server')) + '\'
 $state = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.qingcode\server\run'))
-$customState = $p -and $p.CommandLine -match '--state-dir' -and $p.CommandLine -notmatch ('--state-dir\s+"?' + [regex]::Escape($state) + '"?\s*$')
+# Canonicalized Windows paths may spell the same default directory with a verbatim prefix.
+$statePattern = '(?:' + [regex]::Escape('\\?\') + ')?' + [regex]::Escape($state)
+$customState = $p -and $p.CommandLine -match '--state-dir' -and $p.CommandLine -notmatch ('--state-dir\s+"?' + $statePattern + '"?\s*$')
 if (!$p -or !$p.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($p.ExecutablePath) -notin @('qingcode-server-windows-x86_64.exe','qingcode-server-windows-aarch64.exe') -or $p.CommandLine -notmatch '\s+direct(?:\s|$)' -or $customState) {{ throw 'Refusing to stop an unrecognized gateway' }}
 $old = $p.ExecutablePath
 Stop-Process -Id {pid} -ErrorAction Stop
@@ -363,37 +367,4 @@ pub async fn direct_agent_update(
     result?;
     server::ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await?;
     server_status::state_for_root(&manager, &root)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn refuses_another_user_or_gateway_before_stopping_processes() {
-        let direct = DirectConnectionConfig {
-            endpoint: "https://host:48763".into(),
-            certificate_fingerprint: "a".repeat(64),
-            token: "secret".into(),
-            tunnel: None,
-        };
-        let mut info = DirectInfo {
-            hostname: "0.0.0.0".into(),
-            port: 48763,
-            certificate_sha256: "a".repeat(64),
-            server_version: "old".into(),
-            protocol: 1,
-            pid: 123,
-            previous_ports: vec![],
-            token: Some("secret".into()),
-        };
-        assert!(check_identity(&info, &direct).is_ok());
-        info.token = Some("other".into());
-        assert!(check_identity(&info, &direct).is_err());
-        info.token = Some("secret".into());
-        info.port = 51234;
-        assert!(check_identity(&info, &direct).is_err());
-        info.port = 48763;
-        info.certificate_sha256 = "b".repeat(64);
-        assert!(check_identity(&info, &direct).is_err());
-    }
 }
