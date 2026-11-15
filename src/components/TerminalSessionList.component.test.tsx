@@ -209,7 +209,7 @@ describe('TerminalSessionList', () => {
 
   it('keeps project names one step below terminal names and brightens them on hover', () => {
     render(<TerminalSessionList />)
-    expect(within(group('p2')).getByText('api')).toHaveClass('text-term-list-project', 'group-hover/project:text-term-list-fg', 'font-normal')
+    expect(within(group('p2')).getByText('api')).toHaveClass('text-term-list-project', 'font-normal')
     expect(within(group('p1')).getByText('本机')).toHaveClass('text-term-list-source')
   })
 

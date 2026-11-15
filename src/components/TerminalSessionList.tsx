@@ -718,8 +718,8 @@ export default function TerminalSessionList() {
                 <ProjectKindIcon project={project} open={expanded} size={14} />
               </span>
               {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
-              {/* 项目名比会话名弱一级，让视线先落在终端上；悬停组头时提亮。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project transition-colors group-hover/project:text-term-list-fg">
+              {/* 项目名与会话名同亮，来源标签退到辅助级，靠明暗区分组头里的主次。 */}
+              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project">
                 {project.name}
               </span>
               {source && (

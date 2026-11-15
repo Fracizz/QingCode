@@ -38,10 +38,10 @@
      辅助级在选中底上也 ≥ 4.5:1。 */
   --color-term-list-active: #ececec;
   --color-term-list-fg: #d4d4d4;
-  --color-term-list-project: #9a9a9a;
+  /* 项目组头：项目名与条目同亮，来源标签退到辅助级（参考灰色主题 #c2c2c2 / #8d8c8c）。 */
+  --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #989898;
-  /* 来源标签统一亮灰，时间和状态仍保持辅助层级。 */
-  --color-term-list-source: #b8b8b8;
+  --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
@@ -135,10 +135,10 @@ html[data-theme="light"] {
   --color-tree-fg: #1f2937;
   --color-term-list-active: #111827;
   --color-term-list-fg: #374151;
-  --color-term-list-project: #4b5563;
+  /* 项目组头：项目名与条目同深，来源标签退到辅助级。 */
+  --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #626872;
-  /* 浅色来源统一深灰，保持白底上的可读性。 */
-  --color-term-list-source: #626872;
+  --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
   --color-brand: #0d9488;
@@ -230,10 +230,10 @@ html[data-theme="ink"] {
   --color-tree-fg: #c2c2c2;
   --color-term-list-active: #dfdfdf;
   --color-term-list-fg: #c2c2c2;
-  --color-term-list-project: #a0a0a0;
+  /* 项目组头按参考：项目名 = 条目色 #c2c2c2，来源 #8d8c8c；后者在选中底上低于 4.5:1，同样提亮到辅助级 #999999。 */
+  --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #999999;
-  /* 来源标签统一亮灰，时间和状态仍保持辅助层级。 */
-  --color-term-list-source: #b8b8b8;
+  --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
   --color-brand: #4ecdb5;
@@ -292,10 +292,10 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-tree-fg: #c0ccc3;
   --color-term-list-active: #cbd5cd;
   --color-term-list-fg: #b5c2b8;
-  --color-term-list-project: #a6b5a9;
+  /* 项目组头：项目名与条目同亮，来源标签退到辅助级。 */
+  --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #9aab9e;
-  /* 来源标签统一亮灰，时间和状态仍保持辅助层级。 */
-  --color-term-list-source: #b8b8b8;
+  --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
   /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。
