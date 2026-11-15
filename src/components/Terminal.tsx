@@ -1076,7 +1076,7 @@ export default function TerminalView({
         const name = blockedBy
         useProjectStore
           .getState()
-          .pushToast('info', translate('全屏程序的历史请在 {name} 上滚动，或接回后查看', { name }))
+          .pushToast('info', translate('全屏程序的历史请在 {name} 上滚动，或接回后查看；关闭该程序的全屏模式后电脑也能直接翻看', { name }))
         return
       }
       const screen = term.element?.querySelector('.xterm-screen')

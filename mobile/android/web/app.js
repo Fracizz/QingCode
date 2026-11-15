@@ -2004,6 +2004,17 @@ function retakeSession() {
 
 get('terminal-take-back').addEventListener('click', retakeSession);
 
+/** 电脑「断开其他端」：保留草稿退回工作台并提示，用户可重新打开这个终端。 */
+function leaveIfKicked(reply) {
+  const notice = kickedNotice(reply, t);
+  if (!notice) return false;
+  // 断开答复说明电脑可达：先前网络出错标成的离线要改回来，首页不能显示「电脑暂时不可达」。
+  if (hostState(profile) !== 'online') updateHost('online');
+  returnToDashboard('home');
+  showToast(document.body, notice, 4000);
+  return true;
+}
+
 async function poll(session, epoch, take = false, explicitTake = false) {
   const generation = ++pollGeneration;
   const active = () => epoch === viewEpoch && generation === pollGeneration;
@@ -2012,6 +2023,9 @@ async function poll(session, epoch, take = false, explicitTake = false) {
   let latest = true;
   let backoff = 350;
   let claimed = false;
+  // 用户打开终端后第一次接入成功之前可以从「断开其他端」恢复；接入成功后出错的自动重连不行，
+  // 否则网络一抖手机就悄悄接回被电脑断开的终端，用户看不到任何提示。
+  let rejoin = true;
   let attaching = true;
   while (active()) {
     if (document.hidden) {
@@ -2039,26 +2053,22 @@ async function poll(session, epoch, take = false, explicitTake = false) {
           const claimControl = shared ? explicitTake : take;
           explicitTake = false;
           take = false;
-          const claim = await remote('attach', { id: session.id, take: claimControl, shared });
+          const claim = await remote('attach', { id: session.id, take: claimControl, shared, rejoin });
           if (!active()) return;
+          if (leaveIfKicked(claim)) return;
           if (claim.takenOver && !shared) {
             showTakenOver(session, claim.by);
             return;
           }
           currentLease = claim.lease ?? null;
+          rejoin = false;
         }
         // 网络故障后重新确认当前角色，永远不重发接管请求。
         claimed = true;
       }
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true, shared, ...(currentLease !== null ? { lease: currentLease } : {}) });
       if (!active()) return;
-      // 电脑「断开其他端」：保留草稿退回工作台并提示，用户可重新打开这个终端。
-      const kicked = kickedNotice(data, t);
-      if (kicked) {
-        returnToDashboard('home');
-        showToast(document.body, kicked, 4000);
-        return;
-      }
+      if (leaveIfKicked(data)) return;
       if (data.takenOver) {
         showTakenOver(session, data.by);
         return;

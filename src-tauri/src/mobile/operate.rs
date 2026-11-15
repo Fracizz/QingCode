@@ -57,6 +57,10 @@ pub(super) enum Operation {
         shared: bool,
         #[serde(default)]
         observe: Option<bool>,
+        /// 被「断开其他端」后能否恢复接入：用户主动打开终端时为 true；网络出错后的自动重连
+        /// 传 false，得到断开答复而不是悄悄接回。旧版手机不传，沿用接入即恢复。
+        #[serde(default)]
+        rejoin: Option<bool>,
     },
     /// 打开或解除独占；`force` 抢下其他方的独占。
     Exclusive {
@@ -201,7 +205,8 @@ pub(super) async fn operate(
             take,
             shared,
             observe,
-        } => attach(app, device, id, take, shared, observe).await,
+            rejoin,
+        } => attach(app, device, id, take, shared, observe, rejoin).await,
         Operation::Exclusive { id, on, force } => {
             let _control = app.state::<MobileState>().lock_control(&id).await;
             hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?;
@@ -500,6 +505,7 @@ pub(super) async fn attach(
     take: bool,
     shared: bool,
     observe: Option<bool>,
+    rejoin: Option<bool>,
 ) -> Result<Value, String> {
     let hub = &app.state::<MobileState>().inner().hub;
     if !hub.is_phone_session(&id) && !hub.mirror_approved(&id) {
@@ -522,7 +528,7 @@ pub(super) async fn attach(
         }
     }
     let _control = app.state::<MobileState>().lock_control(&id).await;
-    let reply = hub.claim(&id, device, take, observe)?;
+    let reply = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
     emit_control(app, &id);
     Ok(reply)
 }

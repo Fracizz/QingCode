@@ -440,12 +440,26 @@ impl Hub {
 
     /// 接入终端并登记在线。`take` 为 true 时抢下独占（旧版手机的「接管」）；
     /// `observe` 选择只读旁观或可输入，None 沿用之前的选择。
+    #[cfg(test)]
     pub(super) fn claim(
         &self,
         id: &str,
         device: &str,
         take: bool,
         observe: Option<bool>,
+    ) -> Result<Value, String> {
+        self.claim_rejoin(id, device, take, observe, None)
+    }
+
+    /// 同 `claim`；`rejoin == Some(false)`（手机网络出错后的自动重连）时，被「断开其他端」的设备
+    /// 得到断开答复、保持断开，不会悄悄接回终端。用户主动打开（true）或旧版手机（None）恢复接入。
+    pub(super) fn claim_rejoin(
+        &self,
+        id: &str,
+        device: &str,
+        take: bool,
+        observe: Option<bool>,
+        rejoin: Option<bool>,
     ) -> Result<Value, String> {
         let mut inner = self.inner.lock().unwrap();
         require_device(&inner, device)?;
@@ -455,8 +469,13 @@ impl Hub {
             .filter(|session| session.ready && (session.approved || !session.project.id.is_empty()))
             .ok_or("终端不存在。")?;
         let observe = if take { Some(false) } else { observe };
-        // 被「断开其他端」后由用户重新打开：恢复正常接入。
-        session.sharing.kicked.remove(device);
+        if session.sharing.is_kicked(device) {
+            if rejoin == Some(false) && !take {
+                return Ok(json!({ "kicked": true, "takenOver": true, "by": DESKTOP_NAME }));
+            }
+            // 被「断开其他端」后由用户重新打开：恢复正常接入。
+            session.sharing.kicked.remove(device);
+        }
         session.sharing.see_device(device, observe, Instant::now());
         match session.sharing.check_writable(&me) {
             Ok(()) => {}

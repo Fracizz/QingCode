@@ -241,7 +241,12 @@
       case 'attach': {
         const session = state.sessions.get(request.id)
         if (!session) return { ok: false, error: '终端不存在。' }
-        state.attaches.push({ id: request.id, take: !!request.take })
+        state.attaches.push({ id: request.id, take: !!request.take, rejoin: request.rejoin })
+        // 同 Hub::claim_rejoin：被「断开其他端」后只有用户主动打开（或旧版不带 rejoin）才恢复。
+        if (session.kicked) {
+          if (request.rejoin === false && !request.take) return { ok: true, data: { kicked: true, takenOver: true, by: '电脑' } }
+          session.kicked = false
+        }
         const holder = session.holder ?? 'me'
         if (holder !== 'me' && !request.take) return { ok: true, data: { takenOver: true, by: holder } }
         if (holder !== 'me' || !session.lease) session.lease = (session.lease ?? 0) + 1
@@ -264,6 +269,7 @@
         }
         state.polls.push({ id: request.id, from: request.from, latest: request.latest, tail: request.tail })
         if (state.pollErrors > 0) { state.pollErrors--; return { ok: false, error: '模拟网络断开' } }
+        if (session.kicked) return { ok: true, data: { kicked: true, takenOver: true, by: '电脑' } }
         if (request.latest || (request.tail && request.from < session.next - session.output.length)) {
           return { ok: true, data: withControl(latest(session)) }
         }
@@ -586,6 +592,12 @@
       session.holder = name
       session.lease = (session.lease ?? 0) + 1
       for (const wake of session.waiters.splice(0)) wake()
+    },
+    /** 电脑「断开其他端」：设备的轮询与自动重连得到断开答复；errors 让接下来几次轮询先因网络失败。 */
+    kick(id, { errors = 0 } = {}) {
+      state.pollErrors = errors
+      state.sessions.get(id).kicked = true
+      for (const wake of state.sessions.get(id).waiters.splice(0)) wake()
     },
     addDesktopTerminal({ id, project, title }) {
       const session = { id, number: 0, project, title, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }

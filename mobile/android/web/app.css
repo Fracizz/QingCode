@@ -1149,19 +1149,21 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .files-controls .select-field { flex: 1; min-width: 0; margin: 0; }
 .files-controls label { display: inline-flex; flex: none; align-items: center; gap: 8px; margin: 0; min-height: 44px; color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap; }
 .files-controls input[type="checkbox"] { width: 20px; height: 20px; min-width: 20px; min-height: 20px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
-/* 位置条：返回上级、面包屑和数量合在一个分组底上；上级目录灰色，当前目录正文色加粗。 */
-.files-location { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; min-height: 56px; padding: 5px; border: 1px solid var(--line); border-radius: var(--group-radius); background: var(--surface); }
-#files-up { display: inline-flex; gap: 4px; width: auto; padding: 0 8px; border: 1px solid var(--line); background: var(--surface-high); color: var(--ink); font-size: 12px; }
-#files-up svg { width: 18px; height: 18px; }
-#files-breadcrumbs { flex: 1; display: flex; align-items: center; overflow-x: auto; white-space: nowrap; color: var(--muted); font-size: 13px; min-width: 0; scrollbar-width: none; }
+/* 位置条：像 App 导航栏的一行，不套卡片和按钮边框，底部一条细线与列表分开；
+   左侧纯图标返回上级（根目录时隐藏），中间面包屑（上级灰色、当前正文色加粗），右侧纯文字排序。 */
+.files-location { display: flex; align-items: center; gap: 2px; flex: none; min-width: 0; min-height: 48px; padding: 0 0 2px; border-bottom: 1px solid var(--divider); }
+#files-up { flex: none; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: var(--control-radius); background: transparent; color: var(--ink); }
+#files-up:disabled { display: none; }
+#files-up svg { width: 20px; height: 20px; }
+#files-breadcrumbs { flex: 1; display: flex; align-items: center; overflow-x: auto; white-space: nowrap; color: var(--muted); font-size: 15px; min-width: 0; scrollbar-width: none; }
 #files-breadcrumbs::-webkit-scrollbar { display: none; }
-#files-breadcrumbs button { flex: none; padding-inline: 8px; border: 1px solid var(--line); background: var(--surface-high); color: var(--ink); font-weight: 400; }
-#files-breadcrumbs button[aria-current="location"] { border-color: transparent; background: transparent; color: var(--ink); font-weight: 620; }
+#files-breadcrumbs button { flex: none; min-height: 44px; padding-inline: 6px; border: 0; border-radius: var(--control-radius); background: transparent; color: var(--muted); font-size: 15px; font-weight: 400; }
+#files-breadcrumbs button[aria-current="location"] { color: var(--ink); font-weight: 620; }
 #files-count { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 #files-count:empty { display: none; }
 /* 排序：点按在新→旧 / 旧→新间切换，箭头朝下表示新的在前。 */
-.files-sort { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--line); background: var(--surface-high); color: var(--ink); font-size: 12px; }
-#files-up:active:not(:disabled), .files-sort:active:not(:disabled), #files-breadcrumbs button:active { background: var(--raised); }
+.files-sort { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 10px; border: 0; border-radius: var(--control-radius); background: transparent; color: var(--muted); font-size: 13px; }
+#files-up:active:not(:disabled), .files-sort:active:not(:disabled), #files-breadcrumbs button:active { background: var(--surface-high); }
 .files-sort svg { width: 14px; height: 14px; transition: transform 160ms var(--ease); }
 .files-sort[data-order="desc"] svg { transform: rotate(180deg); }
 #files-scroll { flex: 1; min-height: 44px; overflow-y: auto; overscroll-behavior: contain; }

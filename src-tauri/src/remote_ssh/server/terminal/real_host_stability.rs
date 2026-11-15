@@ -822,7 +822,10 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
     let launch =
         crate::remote_ssh::terminal_cmds::persistent_shell_launch(&ctx.root.canonical_path, None)?;
     let (args, startup_input) = super::local::prewarm::remote_ready_args(&launch);
-    println!("[stab][prewarmidle] startup_input={startup_input} shell={:?}", launch.shell);
+    println!(
+        "[stab][prewarmidle] startup_input={startup_input} shell={:?}",
+        launch.shell
+    );
     for settle in settles {
         let label = format!("静置 {settle}s");
         let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
@@ -848,7 +851,9 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
             Err(error) => {
                 session.shutdown();
                 transport.release();
-                failures.push(format!("prewarmidle {label}：createTransient 失败：{error}"));
+                failures.push(format!(
+                    "prewarmidle {label}：createTransient 失败：{error}"
+                ));
                 continue;
             }
         };

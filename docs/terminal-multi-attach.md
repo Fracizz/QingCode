@@ -10,7 +10,7 @@
 | 只读旁观 | 设备可选 `observe`，旁观者不能输入、不抢尺寸 | `attach{observe}` |
 | 独占 | 任一端可独占，独占期间其他端只读；电脑可解除；旧版手机「接管」抢下独占 | `set_exclusive`，`claim(take)` |
 | 尺寸 | 跟随最后一次**键盘输入**的一方；焦点、滚动、自动应答不算 | `Sharing::claim_size` |
-| 断开其他端 | 电脑让所有设备退出该终端，收回设备的独占与尺寸；设备轮询得到 `kicked`（同时带 `takenOver` 兼容旧版）后回到工作台并提示，重新 `attach` 即恢复；保留配对 | `kick_devices`，`Sharing::kicked` |
+| 断开其他端 | 电脑让所有设备退出该终端，收回设备的独占与尺寸；设备轮询得到 `kicked`（同时带 `takenOver` 兼容旧版）后回到工作台并提示；用户重新打开终端（`attach{rejoin:true}`）才恢复，网络出错后的自动重连带 `rejoin:false`，得到同样的断开答复而不会悄悄接回（旧版手机不带该字段，接入即恢复）；保留配对 | `kick_devices`，`Sharing::kicked`，`Hub::claim_rejoin` |
 | 锁定尺寸 | 锁定后打字不切换；「按本端尺寸」显式改成本端 | `set_size_lock`，`take_size` |
 | 尺寸交还 | 尺寸方离开（设备 10 秒无轮询）且未锁定时交给电脑，其次最近活跃的可写设备 | `Sharing::hand_over_size`，每秒巡检 |
 | 自动应答 | 光标位置、设备属性、颜色、焦点等应答只转发尺寸方那份；尺寸方不在线时放行其他端 | `mobile/reply.rs` |

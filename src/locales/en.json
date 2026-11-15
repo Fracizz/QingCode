@@ -2061,7 +2061,7 @@
     "按电脑尺寸": "Use this size",
     "解锁尺寸": "Unlock size",
     "锁定尺寸": "Lock size",
-    "全屏程序的历史请在 {name} 上滚动，或接回后查看": "Scroll this full-screen program's history on {name}, or reattach the terminal to view it here.",
+    "全屏程序的历史请在 {name} 上滚动，或接回后查看；关闭该程序的全屏模式后电脑也能直接翻看": "Scroll this full-screen program's history on {name}, or reattach the terminal to view it here. Turn off the program's full-screen mode to scroll it on this computer too.",
     "在电脑上打开": "Open on this computer",
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",

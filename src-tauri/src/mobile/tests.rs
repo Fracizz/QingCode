@@ -559,6 +559,41 @@ fn kicked_devices_get_a_kicked_reply_until_they_reopen_the_terminal() {
 }
 
 #[test]
+fn automatic_reattach_after_a_network_error_keeps_the_device_kicked() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    hub.kick_devices("term-1").unwrap();
+    // 手机轮询出错后自动重连：拿到断开答复，仍不能输入，也不算在线。
+    let reply = hub
+        .claim_rejoin("term-1", "phone", false, None, Some(false))
+        .unwrap();
+    assert_eq!(reply["kicked"], true);
+    assert_eq!(reply["takenOver"], true);
+    assert_eq!(
+        hub.device_input("term-1", "phone", "a").unwrap_err(),
+        KICKED
+    );
+    {
+        let inner = hub.inner.lock().unwrap();
+        assert!(inner.kicked_reply("term-1", "phone").is_some());
+        let session = inner.live("term-1").unwrap();
+        assert_eq!(session.sharing.present_devices(Instant::now()).count(), 0);
+    }
+    // 用户主动打开终端（或旧版手机不带 rejoin）才恢复接入。
+    assert!(hub
+        .claim_rejoin("term-1", "phone", false, None, Some(true))
+        .unwrap()["lease"]
+        .is_u64());
+    assert!(hub.device_input("term-1", "phone", "b").is_ok());
+    hub.kick_devices("term-1").unwrap();
+    assert!(hub
+        .claim_rejoin("term-1", "phone", false, None, None)
+        .unwrap()["lease"]
+        .is_u64());
+}
+
+#[test]
 fn mirrors_never_reach_paths_that_end_processes() {
     let hub = handoff_hub();
     approved_mirror(&hub, "term-1");
