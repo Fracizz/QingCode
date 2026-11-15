@@ -14,6 +14,8 @@
 //! QC_STAB_TERMS       每个连接的并发终端数（默认 8）
 //! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,tui,long,multi；share 需显式指定）
 //!                     另有 prewarm（仅 Windows 远端：冷启动 vs 预热领取耗时、未领取回收），需显式指定
+//!                     prewarmidle（仅 Windows 远端：按产品链路预热、不读输出，静置后领取），需显式指定
+//! QC_STAB_PREWARM_IDLE_SECS  prewarmidle 的静置秒数列表（默认 3,12,40）
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
 
@@ -802,6 +804,151 @@ fn product_shell_params(ctx: &Ctx) -> Result<serde_json::Value, String> {
         "cols": 120,
         "rows": 30,
     }))
+}
+
+/// 严格按产品预热链路复现：`create_remote_warm_shell` 的启动参数（含 ReadKey 等待脚本）、
+/// 预热期间不取事件流也不消费输出，静置后按 `take_remote` 带名称领取、接回并交付空行。
+/// `phase_prewarm` 会边等边 pump 事件，覆盖不到产品里「无人读取」的会话。
+async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    if !ctx.windows {
+        println!("[stab][prewarmidle] 非 Windows 远端，不预热，跳过");
+        return Ok(());
+    }
+    let settles: Vec<u64> = env("QC_STAB_PREWARM_IDLE_SECS")
+        .unwrap_or_else(|| "3,12,40".into())
+        .split(',')
+        .filter_map(|value| value.trim().parse().ok())
+        .collect();
+    let launch =
+        crate::remote_ssh::terminal_cmds::persistent_shell_launch(&ctx.root.canonical_path, None)?;
+    let (args, startup_input) = super::local::prewarm::remote_ready_args(&launch);
+    println!("[stab][prewarmidle] startup_input={startup_input} shell={:?}", launch.shell);
+    for settle in settles {
+        let label = format!("静置 {settle}s");
+        let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
+        let (transport, mut session) = open_terminal_daemon_session(
+            &ctx.manager,
+            &ctx.connection_id,
+            &ctx.root.uri,
+            &client_id,
+            &ctx.daemon,
+        )
+        .await?;
+        let response = session
+            .request(
+                "pty.createTransient",
+                &serde_json::json!({
+                    "cwd": ctx.root.canonical_path, "shell": launch.shell, "env": launch.env,
+                    "args": args, "cols": 120, "rows": 30,
+                }),
+            )
+            .await;
+        let pty_id = match response {
+            Ok(value) => value["id"].as_str().unwrap_or_default().to_string(),
+            Err(error) => {
+                session.shutdown();
+                transport.release();
+                failures.push(format!("prewarmidle {label}：createTransient 失败：{error}"));
+                continue;
+            }
+        };
+        // 与产品一致：不取事件流，只让后台读循环把输出放进会话队列。
+        tokio::time::sleep(Duration::from_secs(settle)).await;
+        let closed_before = session.closed_reason();
+        let started = Instant::now();
+        let claim = session
+            .request(
+                "pty.claim",
+                &serde_json::json!({ "id": pty_id, "name": "qc-stab-idle" }),
+            )
+            .await;
+        let claim_ms = ms(started.elapsed());
+        match claim {
+            Err(error) => {
+                println!(
+                    "[stab][prewarmidle] {label}：claim 失败 {claim_ms}：{error}；领取前会话状态：{closed_before:?}"
+                );
+                failures.push(format!(
+                    "prewarmidle {label}：pty.claim 失败：{error}（领取前关闭原因 {closed_before:?}）"
+                ));
+                session.shutdown();
+                transport.release();
+                continue;
+            }
+            Ok(_) => println!(
+                "[stab][prewarmidle] {label}：claim OK {claim_ms}，领取前会话状态 {closed_before:?}"
+            ),
+        }
+        let queued = match session.take_events() {
+            Some(mut events) => {
+                let mut count = 0;
+                while let Ok(Some(_)) =
+                    tokio::time::timeout(Duration::from_millis(50), events.recv()).await
+                {
+                    count += 1;
+                }
+                Some((count, events))
+            }
+            None => None,
+        };
+        let Some((count, events)) = queued else {
+            failures.push(format!("prewarmidle {label}：事件流已被取走"));
+            session.shutdown();
+            transport.release();
+            continue;
+        };
+        println!("[stab][prewarmidle] {label}：领取前积压事件 {count} 条");
+        let attach = session.attach(&pty_id, u64::MAX, true).await;
+        let next_seq = match &attach {
+            // 冷接回给快照，续接起点是 daemon 回报的 seqEnd（同产品 attach 逻辑）。
+            Ok(result) => result
+                .response
+                .get("seqEnd")
+                .or_else(|| result.stream_end.summary.get("seqEnd"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            Err(error) => {
+                failures.push(format!("prewarmidle {label}：领取后 attach 失败：{error}"));
+                let _ = session
+                    .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+                    .await;
+                session.shutdown();
+                transport.release();
+                continue;
+            }
+        };
+        let mut term = Term {
+            transport,
+            session,
+            events,
+            pty_id,
+            next_seq,
+            input_seq: AtomicU64::new(0),
+            tail: Vec::new(),
+            total_bytes: 0,
+            seq_gaps: 0,
+            last_data: Instant::now(),
+            max_data_gap: Duration::ZERO,
+            exit_code: None,
+            probe_counter: 0,
+        };
+        // take_remote 对普通终端交付一个空行（ReadKey 读到回车后进入提示符）。
+        let started = Instant::now();
+        let delivered = term.send("\r").await;
+        let prompt = match delivered {
+            Ok(()) => term.echo_probe(true, "I").await.map(|_| started.elapsed()),
+            Err(error) => Err(format!("交付空行失败：{error}")),
+        };
+        match prompt {
+            Ok(elapsed) => println!(
+                "[stab][prewarmidle] {label}：接回后首条命令回显 {}",
+                ms(elapsed)
+            ),
+            Err(error) => failures.push(format!("prewarmidle {label}：接回后不可用：{error}")),
+        }
+        term.kill().await;
+    }
+    Ok(())
 }
 
 /// Windows 远端预热：对比「点击 → 首条命令有输出」的冷启动与预热领取耗时，
@@ -1889,9 +2036,12 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 10] = [
+    let phases_list: [(&str, Phase); 11] = [
         ("prewarm", |ctx, failures| {
             Box::pin(phase_prewarm(ctx, failures))
+        }),
+        ("prewarmidle", |ctx, failures| {
+            Box::pin(phase_prewarm_idle(ctx, failures))
         }),
         ("hs", |ctx, failures| {
             Box::pin(phase_handshake(ctx, failures))

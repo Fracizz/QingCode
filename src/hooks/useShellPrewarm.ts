@@ -50,23 +50,25 @@ export function useShellPrewarm(project: Project | null) {
       }).catch(() => {})
     }
     const invalidate = () => refresh(true)
-    const focus = () => refresh(false)
+    // 获得焦点、信任列表同步到原生（手机请求、项目列表刷新都会触发）只复查条件：
+    // 仍受信任且配置不变时保留已就绪项，不能把刚被领取预留的 Shell 一起清掉。
+    const recheck = () => refresh(false)
     const storage = (event: StorageEvent) => {
       if (!event.key || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     invalidate()
     window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
-    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, invalidate)
-    window.addEventListener('focus', focus)
+    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, recheck)
+    window.addEventListener('focus', recheck)
     window.addEventListener('storage', storage)
     return () => {
       disposed = true
       revision++
       window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
       window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
-      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, invalidate)
-      window.removeEventListener('focus', focus)
+      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, recheck)
+      window.removeEventListener('focus', recheck)
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)
     }

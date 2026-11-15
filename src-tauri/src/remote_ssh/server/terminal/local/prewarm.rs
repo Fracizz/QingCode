@@ -737,7 +737,7 @@ fn remote_startup_line(command: &str) -> Vec<u8> {
 
 /// 远端 PowerShell 预热参数：在原 UTF-8 设置之后等待领取方交付启动命令。
 /// CMD 无法不回显地读取输入，保持原参数，不支持配置命令。
-fn remote_ready_args(launch: &PersistentLaunch) -> (Vec<String>, bool) {
+pub(crate) fn remote_ready_args(launch: &PersistentLaunch) -> (Vec<String>, bool) {
     let mut args = launch.args.clone();
     let count = args.len();
     if launch.resolved_shell == "cmd"

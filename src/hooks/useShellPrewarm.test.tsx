@@ -79,6 +79,26 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
+  it('keeps ready shells on native trust sync (mobile requests) and clears only when trust is gone', async () => {
+    const hook = renderHook(() => useShellPrewarm(project))
+    await waitFor(() => expect(configuredPaths()).toContain(project.path))
+    mocks.invoke.mockClear()
+    act(() => window.dispatchEvent(new Event('trust-synced')))
+    await waitFor(() => expect(configuredPaths()).toEqual([project.path]))
+    // 后台（如人在用手机）窗口未聚焦时同步不得清池。
+    mocks.invoke.mockClear()
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('trust-synced')))
+    await act(async () => {})
+    expect(configuredPaths()).toEqual([])
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    mocks.trusted.mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('trust-synced')))
+    await waitFor(() => expect(configuredPaths().at(-1)).toBeNull())
+    hook.unmount()
+    await act(async () => {})
+  })
+
   it('hands trusted SSH projects to the backend without the local hosting opt-in, from any client', async () => {
     const remote = { ...project, path: 'ssh://c1/C:/work/app' }
     mocks.persist.mockResolvedValue(false)
