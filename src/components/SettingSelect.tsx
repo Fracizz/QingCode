@@ -57,13 +57,18 @@ export default function SettingSelect({
     if (!trigger || !menu) return
     const rect = trigger.getBoundingClientRect()
     const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
-    // Match trigger width; clamp vertically like context menus.
-    const width = rect.width
-    menu.style.width = `${width / zoom}px`
+    // 至少与触发按钮同宽；选项（含勾选列）更长时按内容撑开，不超出窗口。
+    // 触发按钮随选中项收窄时，固定同宽会把「自动（1 个）」这类选项截成省略号。
+    menu.style.width = 'max-content'
+    const width = Math.min(
+      Math.max(rect.width / zoom, menu.offsetWidth),
+      Math.max(rect.width / zoom, (window.innerWidth - 16) / zoom),
+    )
+    menu.style.width = `${width}px`
     const placed = getContextMenuStylePosition(
       rect.left,
       rect.bottom + 2,
-      { width: menu.offsetWidth || width, height: menu.scrollHeight },
+      { width: menu.offsetWidth || width * zoom, height: menu.scrollHeight },
       { width: window.innerWidth, height: window.innerHeight },
       false,
       zoom,
@@ -72,7 +77,7 @@ export default function SettingSelect({
     setMenuStyle({
       left: placed.x,
       top: placed.y,
-      width: width / zoom,
+      width,
       maxHeight: placed.maxHeight,
     })
     const selectedIdx = options.findIndex(option => option.value === value)
