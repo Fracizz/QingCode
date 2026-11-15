@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeShare, followGridFor } from '../../mobile/android/web/protocol.js'
+import { describeShare, followGridFor, kickedNotice, shareChip } from '../../mobile/android/web/protocol.js'
 
 const desktop = { id: null, kind: 'desktop', name: '电脑', observe: false, typing: false, self: false }
 const self = { id: 'me', kind: 'device', name: 'Pixel', observe: false, typing: false, self: true }
@@ -33,5 +33,31 @@ describe('Android multi-writer sharing', () => {
       viewers: [desktop, { id: 'tab', kind: 'device', name: 'Tab', observe: true, typing: false, self: false }, self],
       exclusiveHere: true,
     }, t)).toBe('另有 2 端在看 · 本机已独占')
+  })
+
+  it('summarizes sharing as a short header chip by priority', () => {
+    const t = (text: string, params: Record<string, string> = {}) =>
+      text.replace(/\{(\w+)\}/g, (_, key: string) => params[key] ?? '')
+    const tab = { id: 'tab', kind: 'device', name: 'Tab', observe: true, typing: false, self: false }
+    // 只有本机时不显示标签。
+    expect(shareChip({ viewers: [self] }, t)).toBeNull()
+    expect(shareChip(null, t)).toBeNull()
+    expect(shareChip({ viewers: [desktop, self] }, t)).toEqual({ label: '电脑', tone: 'idle' })
+    expect(shareChip({ viewers: [desktop, tab, self] }, t)).toEqual({ label: '2', tone: 'idle' })
+    expect(shareChip({ viewers: [desktop, self], sizeOwner: '电脑', sizeOwnerHere: false }, t))
+      .toEqual({ label: '按 电脑 尺寸', tone: 'notice' })
+    // 独占优先于跟随尺寸，对方输入中优先级最高。
+    expect(shareChip({ viewers: [desktop, self], exclusiveHere: true, sizeOwner: '电脑', sizeOwnerHere: false }, t))
+      .toEqual({ label: '已独占', tone: 'strong' })
+    expect(shareChip({ viewers: [self], exclusiveHere: true }, t)).toEqual({ label: '已独占', tone: 'strong' })
+    expect(shareChip({ viewers: [{ ...desktop, typing: true }, self], exclusiveHere: true }, t))
+      .toEqual({ label: '电脑 输入中', tone: 'active' })
+  })
+
+  it('turns a kicked poll reply into a notice and ignores ordinary takeovers', () => {
+    expect(kickedNotice({ kicked: true, takenOver: true, by: '电脑' })).toBe('电脑已断开本机与此终端的连接，可重新打开')
+    expect(kickedNotice({ takenOver: true, by: 'Pixel' })).toBeNull()
+    expect(kickedNotice({ chunks: [], next: 3 })).toBeNull()
+    expect(kickedNotice(null)).toBeNull()
   })
 })

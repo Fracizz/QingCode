@@ -173,6 +173,11 @@ export function setTerminalExclusive(id: string, on: boolean, force = false): Pr
   return safeInvoke(on ? '独占终端' : '解除独占', 'mobile_terminal_exclusive', { id, on, force })
 }
 
+/** 断开其他端：所有设备退出这个终端（保留配对，可重新打开），收回它们的独占与尺寸。 */
+export function kickTerminalDevices(id: string): Promise<void> {
+  return safeInvoke('断开其他端', 'mobile_terminal_kick_devices', { id })
+}
+
 /** 锁定或解锁尺寸：锁定后打字不再切换尺寸方。 */
 export function setTerminalSizeLock(id: string, locked: boolean): Promise<void> {
   return safeInvoke(locked ? '锁定终端尺寸' : '解锁终端尺寸', 'mobile_terminal_lock_size', { id, locked })

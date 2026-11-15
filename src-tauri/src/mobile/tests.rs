@@ -518,6 +518,47 @@ fn revoked_devices_lose_presence_and_exclusive() {
 }
 
 #[test]
+fn kicked_devices_get_a_kicked_reply_until_they_reopen_the_terminal() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    hub.claim("term-1", "tablet", false, None).unwrap();
+    hub.device_resize("term-1", "phone", 50, 30).unwrap();
+    hub.device_input("term-1", "phone", "a").unwrap();
+    hub.set_exclusive("term-1", Controller::Device("phone".into()), true, false)
+        .unwrap();
+    assert_eq!(hub.kick_devices("term-1").unwrap(), Some((120, 40)));
+    {
+        let inner = hub.inner.lock().unwrap();
+        for device in ["phone", "tablet"] {
+            let reply = inner.kicked_reply("term-1", device).unwrap();
+            assert_eq!(reply["kicked"], true);
+            assert_eq!(reply["takenOver"], true);
+        }
+        let session = inner.live("term-1").unwrap();
+        assert_eq!(session.sharing.present_devices(Instant::now()).count(), 0);
+        assert_eq!(session.sharing.exclusive, None);
+        assert_eq!(session.sharing.size_owner, Controller::Desktop);
+    }
+    assert_eq!(
+        hub.device_input("term-1", "phone", "b").unwrap_err(),
+        KICKED
+    );
+    assert_eq!(
+        hub.device_resize("term-1", "tablet", 60, 20).unwrap_err(),
+        KICKED
+    );
+    assert_eq!(hub.authorize_image("term-1", "phone").unwrap_err(), KICKED);
+    assert!(hub.desktop_input("term-1", "x").is_ok());
+    // 用户重新打开终端即恢复；没重新打开的设备仍是断开状态。
+    assert!(hub.claim("term-1", "phone", false, None).unwrap()["lease"].is_u64());
+    assert!(hub.device_input("term-1", "phone", "c").is_ok());
+    let inner = hub.inner.lock().unwrap();
+    assert!(inner.kicked_reply("term-1", "phone").is_none());
+    assert!(inner.kicked_reply("term-1", "tablet").is_some());
+}
+
+#[test]
 fn mirrors_never_reach_paths_that_end_processes() {
     let hub = handoff_hub();
     approved_mirror(&hub, "term-1");

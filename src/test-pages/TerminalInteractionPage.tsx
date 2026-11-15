@@ -7,6 +7,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useConfirmStore } from '../store/confirmStore'
 import { useLocaleStore } from '../lib/i18n'
+import { applyTerminalControlPayload, type TerminalControlPayload } from '../store/terminalControlStore'
 import '../App.css'
 
 // Use the production terminal/store with memory-only IPC. This page requires dev:web-test,
@@ -70,6 +71,8 @@ async function start() {
     toasts: () => useProjectStore.getState().toasts.map(toast => toast.text),
     confirmPending: () => useConfirmStore.getState().request?.detail ?? null,
     answerConfirm: (value: boolean) => useConfirmStore.getState().answer(value),
+    // 模拟多端共享：其他设备成为尺寸方时电脑跟随对方网格（payload 同 Rust terminal-control 事件）。
+    control: (payload: Omit<TerminalControlPayload, 'id'>) => applyTerminalControlPayload({ id, ...payload }),
   } })
   createRoot(document.getElementById('root')!).render(
     <main className="flex h-full flex-col bg-bg text-fg">

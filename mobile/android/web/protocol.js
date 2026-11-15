@@ -751,6 +751,15 @@ export function followGridFor(control, previous = null, fontSize = 14) {
   };
 }
 
+/**
+ * 电脑「断开其他端」后轮询得到 `kicked` 答复：返回退回列表时显示的提示，其他答复返回 null。
+ * 答复同时带 `takenOver`，旧版 APK 按「已在电脑上接入」处理。
+ */
+export function kickedNotice(reply, translate = t) {
+  if (reply?.kicked !== true) return null;
+  return translate('{name}已断开本机与此终端的连接，可重新打开', { name: translate(reply.by || '电脑') });
+}
+
 /** 共享栏的说明文字：其他在线的端、谁在输入、按谁的尺寸、是否锁定或独占；只有本机时返回空串。 */
 export function describeShare(control, translate = text => text) {
   if (!control?.viewers) return '';
@@ -766,4 +775,20 @@ export function describeShare(control, translate = text => text) {
   }
   if (control.sizeLocked) parts.push(translate('尺寸已锁定'));
   return parts.join(' · ');
+}
+
+/**
+ * 标题栏共享标签：一眼可见的短状态，点开后才看完整说明与操作。
+ * 只有本机且未独占时返回 null；tone 决定配色（idle 常态、active 对方输入中、notice 跟随对方尺寸、strong 本机独占）。
+ */
+export function shareChip(control, translate = text => text) {
+  const others = (control?.viewers ?? []).filter(viewer => !(viewer.kind === 'device' && viewer.self));
+  if (!others.length && !control?.exclusiveHere) return null;
+  const typing = others.find(viewer => viewer.typing);
+  if (typing) return { label: translate('{name} 输入中', { name: translate(typing.name) }), tone: 'active' };
+  if (control.exclusiveHere) return { label: translate('已独占'), tone: 'strong' };
+  if (control.sizeOwnerHere === false && control.sizeOwner) {
+    return { label: translate('按 {name} 尺寸', { name: translate(control.sizeOwner) }), tone: 'notice' };
+  }
+  return { label: others.length === 1 ? translate(others[0].name) : String(others.length), tone: 'idle' };
 }

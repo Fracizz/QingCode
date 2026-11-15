@@ -348,6 +348,9 @@ impl Hub {
         if session.project.id.is_empty() && !session.approved {
             return Err("终端不存在。".into());
         }
+        if session.sharing.is_kicked(device) {
+            return Err(KICKED.into());
+        }
         let now = Instant::now();
         session.sharing.see_device(device, None, now);
         let decision = session
@@ -365,6 +368,9 @@ impl Hub {
         let inner = self.inner.lock().unwrap();
         require_device(&inner, device)?;
         let session = inner.live(id).ok_or("终端不存在。")?;
+        if session.sharing.is_kicked(device) {
+            return Err(KICKED.into());
+        }
         session
             .sharing
             .check_writable(&Controller::Device(device.into()))
@@ -410,6 +416,9 @@ impl Hub {
         if !session.ready || session.exit.is_some() {
             return Err("终端已结束或正在启动。".into());
         }
+        if session.sharing.is_kicked(device) {
+            return Err(KICKED.into());
+        }
         session.sharing.see_device(device, None, Instant::now());
         let (cols, rows) = size(cols, rows);
         Ok(session
@@ -446,6 +455,8 @@ impl Hub {
             .filter(|session| session.ready && (session.approved || !session.project.id.is_empty()))
             .ok_or("终端不存在。")?;
         let observe = if take { Some(false) } else { observe };
+        // 被「断开其他端」后由用户重新打开：恢复正常接入。
+        session.sharing.kicked.remove(device);
         session.sharing.see_device(device, observe, Instant::now());
         match session.sharing.check_writable(&me) {
             Ok(()) => {}
@@ -536,6 +547,17 @@ impl Hub {
         let size = session.sharing.sizes.get(&who).copied();
         session.sharing.size_owner = who;
         Ok(size)
+    }
+
+    /// 电脑「断开其他端」：所有设备退出这个终端并收到断开答复，可以重新打开。
+    /// 返回电脑收回尺寸后需要应用的尺寸。
+    pub(super) fn kick_devices(&self, id: &str) -> Result<Option<(u16, u16)>, String> {
+        let mut inner = self.inner.lock().unwrap();
+        let session = inner.live_mut(id).ok_or("终端不存在。")?;
+        let (_, resize) = session.sharing.kick_devices();
+        // 唤醒等待中的轮询，让设备立刻收到断开答复。
+        session.changed.notify_waiters();
+        Ok(resize)
     }
 
     /// 最近的输入来源记录（不含内容），供电脑端查看谁在什么时候输入过。

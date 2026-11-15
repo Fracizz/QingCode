@@ -37,6 +37,10 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 安卓界面动效：先启动 `pnpm test:web`，运行 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/mobile-motion.ego.mjs`（窗口被节流时动画时间不走，所以用无头 Chrome）。覆盖弹层退出时 `close` 语义不变且不挡点击、退出途中重新打开、抽屉与返回键、页面和浮层入场、按压缩放、发送回执、延迟探测闪烁（失败不闪）、虚拟鼠标从尖端长出、会话行原地收起、图标对齐首行，以及减少动画时全部关闭。脚本固定了 `prefers-reduced-motion`，因为测试机系统可能开着减少动画，此时其他脚本走不到动画路径。截图与 JSON 位于 `.dev/web-tests/mobile-motion/`；流畅度须真机确认。
 
+安卓多端共享标签：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-share-chip.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖其他端加入后标题副行出现短标签且终端高度、行数不变，对方输入 / 跟随对方尺寸 / 本机独占 / 多端数量四种状态，点标签与「…」菜单打开同一弹层、改用本机尺寸与独占请求、返回键先收起弹层、只剩本机时隐藏，以及 320px 与横屏布局。截图与 JSON 位于 `.dev/web-tests/mobile-share-chip/`；内存桥模拟共享状态，不替代电脑与真机多端联调。
+
+电脑跟随其他端尺寸：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/terminal-follow-fit.ego.mjs').then(m=>m.run())"`（先启动 `pnpm dev:web-test`）。复用真实 `Terminal` 与 xterm，注入 `terminal-control` 载荷：手机 60×20 网格在宽窗中按字号放大铺满、电脑自己的行列仍按设置字号上报不受放大影响、改窗口宽度后重新铺满、平板 200×50 宽网格在窄窗中缩小放下，以及电脑重新成为尺寸方后恢复设置字号与自身网格。截图与 JSON 位于 `.dev/web-tests/terminal-follow-fit/`；Ego 在设备模拟下截图可能滞后或超时（只记录不影响断言），清晰截图可用 `headless-task-space.mjs` 运行同一脚本。不替代电脑与真机多端联调。
+
 安卓终端打磨：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-polish.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖状态行「草稿 / 直发」与首次说明、已接收回执约 4 秒后消失且重进终端不回放、输入框横向拖动移动草稿光标与直发 ← / →、快捷键栏排序 / 长按拖动排序（按住前滑动不触发、不误触开关）/ 隐藏到「更多」/ 重载保留 / 恢复默认、双指缩放字号且不发终端输入、实时终端链接点按（localhost 换成电脑地址、复制与打开、全屏程序鼠标上报下按坐标识别），以及 390px / 320px / 键盘高度 / 横屏布局。触摸经 CDP `Input.dispatchTouchEvent` 发出；截图与 JSON 位于 `.dev/web-tests/mobile-terminal-polish/`，截图超时只记录不影响断言。不替代 Android 真机的拖动、缩放手感与系统浏览器验收。
 
 无交互桌面的 Windows 主机（例如经 SSH 登录、`Get-Process` 看不到任何窗口标题）上 Ego 截图会因窗口不渲染而超时。此时可用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>` 以无头 Chrome 运行同一 `*.ego.mjs` 脚本：适配层实现脚本用到的 `taskSpace` / `page` 子集（`click` 支持 CSS 与 `loc=role:button[name=…]`，等元素位置稳定后再点），失败时也会关闭浏览器。有桌面的环境仍按上文默认使用 Ego。

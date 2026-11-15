@@ -7,6 +7,7 @@ import {
   attachNeedsRedraw,
   consumeModifier,
   describeShare,
+  shareChip,
   followGridFor,
   keySequence,
   mergeSessionActivity,
@@ -26,6 +27,7 @@ import {
   terminalProfileChoices,
   TERMINAL_THEME,
   viewerFontSize,
+  kickedNotice,
 } from './protocol.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
@@ -640,7 +642,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
     if (id === 'files-dialog') return files.back();
@@ -986,10 +988,12 @@ function showSubmissions() {
 get('terminal-menu').addEventListener('click', () => {
   get('menu-mouse').querySelector('span').textContent = terminalMouse?.isActive() ? t('退出鼠标模式') : t('鼠标模式');
   get('menu-mouse').disabled = !terminalMouse;
+  get('menu-share').hidden = get('terminal-share-chip').hidden;
   get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
   get('terminal-menu-dialog').showModal();
 });
 for (const [id, action] of Object.entries({
+  'menu-share': openShare,
   'menu-edit': openEditor,
   'menu-submissions': showSubmissions,
   'menu-read': () => reader.open(),
@@ -1220,7 +1224,7 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFra
   clearTimeout(resizing);
   clearTimeout(fitting);
   fitting = null;
-  for (const id of ['terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) get(id).close();
+  for (const id of ['share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) get(id).close();
   selected = null;
   composing = false;
   clearModifiers();
@@ -1683,22 +1687,41 @@ function dimensions() {
   return { cols: term?.cols ?? 80, rows: term?.rows ?? 24 };
 }
 
-/** 共享栏：其他在线的端、谁在输入、按谁的尺寸；可改回本机尺寸、独占或切换只读。 */
+/**
+ * 多端共享：标题栏只放短标签（谁在看 / 谁在输入 / 跟随谁的尺寸 / 已独占），不占终端高度，
+ * 其他端加入或离开时终端不重排；点标签弹出完整说明，可改回本机尺寸、独占或切换只读。
+ */
 function renderShare(control) {
   shareControl = control;
-  const text = describeShare(control, t);
-  const bar = get('terminal-share');
-  bar.hidden = !text && !control?.exclusiveHere;
-  get('terminal-share-text').textContent = text || t('本机已独占');
-  get('terminal-share-size').hidden = control?.sizeOwnerHere !== false;
-  get('terminal-share-exclusive-label').textContent = control?.exclusiveHere ? t('解除独占') : t('独占');
+  const chip = shareChip(control, t);
+  const button = get('terminal-share-chip');
+  button.hidden = !chip;
+  if (chip) {
+    button.dataset.tone = chip.tone;
+    get('terminal-share-chip-label').textContent = chip.label;
+  }
+  get('share-text').textContent = describeShare(control, t) || t('本机已独占');
+  get('share-size').hidden = control?.sizeOwnerHere !== false;
+  get('share-exclusive-label').textContent = control?.exclusiveHere ? t('解除独占') : t('独占');
+  if (!chip) hideShare();
+}
+
+/** 隐藏共享标签并收起弹层（离开终端、被接管或只剩本机时）。 */
+function hideShare() {
+  get('terminal-share-chip').hidden = true;
+  if (get('share-dialog').open) get('share-dialog').close();
 }
 
 function clearShare() {
   shareControl = null;
   followGrid = null;
   naturalGrid = null;
-  get('terminal-share').hidden = true;
+  hideShare();
+}
+
+function openShare() {
+  if (get('terminal-share-chip').hidden) return;
+  get('share-dialog').showModal();
 }
 
 
@@ -1711,15 +1734,19 @@ async function shareAction(op, args) {
   }
 }
 
-get('terminal-share-size').addEventListener('click', () => {
+get('terminal-share-chip').addEventListener('click', openShare);
+get('share-size').addEventListener('click', () => {
+  get('share-dialog').close();
   // 先报上本机尺寸，电脑端才能改成它。
   sendSize();
   void shareAction('take_size', {});
 });
-get('terminal-share-exclusive').addEventListener('click', () => {
+get('share-exclusive').addEventListener('click', () => {
+  get('share-dialog').close();
   void shareAction('exclusive', { on: !shareControl?.exclusiveHere });
 });
-get('terminal-share-observe').addEventListener('click', () => {
+get('share-observe').addEventListener('click', () => {
+  get('share-dialog').close();
   void shareAction('attach', { shared: true, observe: true });
 });
 
@@ -1946,7 +1973,7 @@ function clearTakenOver() {
 function showTakenOver(session, by, grid = null, observe = false) {
   const text = observe ? t('只读旁观') : t(grid ? '只读 · {name} 正在操作' : '已在 {name} 上接入', { name: t(by) });
   followGrid = null;
-  get('terminal-share').hidden = true;
+  hideShare();
   const changed = !takenSession || get('terminal-taken-text').textContent !== text;
   takenSession = session;
   viewerGrid = grid ? { ...grid, initialFont: viewerGrid?.initialFont ?? settings.fontSize() } : null;
@@ -2025,6 +2052,13 @@ async function poll(session, epoch, take = false, explicitTake = false) {
       }
       const data = await remote('poll', { id: session.id, from: next, latest, tail: true, shared, ...(currentLease !== null ? { lease: currentLease } : {}) });
       if (!active()) return;
+      // 电脑「断开其他端」：保留草稿退回工作台并提示，用户可重新打开这个终端。
+      const kicked = kickedNotice(data, t);
+      if (kicked) {
+        returnToDashboard('home');
+        showToast(document.body, kicked, 4000);
+        return;
+      }
       if (data.takenOver) {
         showTakenOver(session, data.by);
         return;

@@ -291,6 +291,9 @@ pub(super) async fn operate(
                 let session = inner.live(&id).ok_or("终端不存在。")?;
                 // 旧版手机仍会带上 lease，共享模式下不再用它判断能否输入。
                 let _ = lease;
+                if let Some(reply) = inner.kicked_reply(&id, device) {
+                    return Ok(Some(reply));
+                }
                 if !shared {
                     if let Some(reply) = inner.takeover_reply(&id, device) {
                         return Ok(Some(reply));
@@ -317,7 +320,10 @@ pub(super) async fn operate(
             {
                 let mut inner = hub.inner.lock().unwrap();
                 if require_device(&inner, device).is_ok() {
-                    if let Some(session) = inner.live_mut(&id) {
+                    if let Some(session) = inner
+                        .live_mut(&id)
+                        .filter(|session| !session.sharing.is_kicked(device))
+                    {
                         session.sharing.see_device(device, None, Instant::now());
                     }
                 }

@@ -365,6 +365,24 @@ pub async fn mobile_terminal_take_size(id: String, app: AppHandle) -> Result<(),
     Ok(())
 }
 
+/// 电脑端「断开其他端」：所有设备退出这个终端（保留配对，可重新打开），
+/// 收回设备持有的独占与尺寸。
+#[tauri::command]
+pub async fn mobile_terminal_kick_devices(id: String, app: AppHandle) -> Result<(), String> {
+    let state = app.state::<MobileState>();
+    let _control = state.lock_control(&id).await;
+    if let Some((cols, rows)) = state.hub.kick_devices(&id)? {
+        let kind = if is_mobile_terminal(&id) {
+            state.hub.desktop_session_kind(&id)?
+        } else {
+            state.hub.session_kind(&id)?
+        };
+        apply_resize(&app, kind, &id, cols, rows).await?;
+    }
+    emit_control(&app, &id);
+    Ok(())
+}
+
 /// 最近的输入来源（谁、何时、多少字节），不含内容。
 #[tauri::command]
 pub fn mobile_terminal_input_log(

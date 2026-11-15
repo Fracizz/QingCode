@@ -29,8 +29,8 @@ export function collapseAndRemove(row, duration = 160) {
 
 let toastTimer;
 
-/** 底部短提示；弹层打开时传入该弹层作为 host，否则会被顶层遮住。 */
-export function showToast(host, text) {
+/** 底部短提示；弹层打开时传入该弹层作为 host，否则会被顶层遮住。duration 为显示毫秒数。 */
+export function showToast(host, text, duration = 1600) {
   let toast = document.getElementById('sort-toast');
   if (!toast) {
     toast = document.createElement('p');
@@ -42,7 +42,7 @@ export function showToast(host, text) {
   toast.textContent = text;
   toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.hidden = true; }, 1600);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, duration);
 }
 
 /** 写入提示文字；空字符串时隐藏元素。 */

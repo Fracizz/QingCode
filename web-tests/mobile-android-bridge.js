@@ -258,7 +258,7 @@
           if (request.shared) {
             const holder = session.holder ?? 'me'
             data.control = { ...(holder === 'me' ? { lease: session.lease } : { by: holder }),
-              cols: session.snapshot?.cols ?? 80, rows: session.snapshot?.rows ?? 24 }
+              cols: session.snapshot?.cols ?? 80, rows: session.snapshot?.rows ?? 24, ...(session.share ?? {}) }
           }
           return data
         }
@@ -309,6 +309,18 @@
         if (!state.sessions.has(request.id)) return { ok: false, error: '终端不存在。' }
         state.images.push(request)
         return { ok: true, data: { path: state.imagePaths?.[state.images.length - 1] ?? "'/tmp/mobile-image.jpg'" } }
+      }
+      // 多端共享操作：只记录并更新 session.share（在线端、独占、尺寸方），由下一次 poll 带回。
+      case 'exclusive':
+      case 'take_size': {
+        const session = state.sessions.get(request.id)
+        if (!session) return { ok: false, error: '终端不存在。' }
+        ;(state.shareOps ??= []).push({ op: request.op, id: request.id, on: request.on })
+        session.share = request.op === 'exclusive'
+          ? { ...session.share, exclusiveHere: !!request.on }
+          : { ...session.share, sizeOwnerHere: true }
+        for (const wake of session.waiters.splice(0)) wake()
+        return { ok: true, data: true }
       }
       case 'resize': {
         state.resizes.push(request)
@@ -591,6 +603,12 @@
       const session = state.sessions.get(id)
       session.title = title
       session.nameRevision = (session.nameRevision ?? 0) + 1
+      for (const wake of session.waiters.splice(0)) wake()
+    },
+    // 模拟其他端加入、输入或改尺寸：替换共享状态并唤醒等待中的 poll。
+    setShare(id, share) {
+      const session = state.sessions.get(id)
+      session.share = share
       for (const wake of session.waiters.splice(0)) wake()
     },
     pushScreen(id, text, cols = 80, rows = 24) {

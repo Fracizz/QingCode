@@ -82,6 +82,8 @@ const MIRROR_EXIT_RETENTION: Duration = Duration::from_secs(120);
 /// 在线状态巡检间隔：设备离开、「正在输入」过期、尺寸方交接都在这里处理。
 const PRESENCE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const DESKTOP_NAME: &str = "电脑";
+/// 被电脑「断开其他端」后再输入时的拒绝文案。
+const KICKED: &str = "电脑已断开本机与此终端的连接，请重新打开终端。";
 /// 长轮询被新输出唤醒后再等一小段，把同一帧 TUI 重绘的后续字节一起返回，
 /// 避免一帧被拆成两次响应而在手机上露出半帧（闪烁）。
 const OUTPUT_COALESCE: Duration = Duration::from_millis(24);
@@ -343,6 +345,15 @@ impl HubState {
             Err(InputRefusal::Observer) => control["observe"] = json!(true),
         }
         control
+    }
+
+    /// 被电脑「断开其他端」的设备得到的轮询答复。新版手机认 `kicked` 退回列表并提示；
+    /// 旧版手机只认 `takenOver`，按「已在电脑上接入」处理并停止轮询。
+    fn kicked_reply(&self, id: &str, device: &str) -> Option<Value> {
+        self.live(id)?
+            .sharing
+            .is_kicked(device)
+            .then(|| json!({ "kicked": true, "takenOver": true, "by": DESKTOP_NAME }))
     }
 
     /// 不支持共享查看的旧版手机：终端被其他设备独占时得到被接管答复。

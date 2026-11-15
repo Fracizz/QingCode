@@ -9,9 +9,11 @@ import {
  * 终端连接状态浮层：叠在 xterm 上方而非写入缓冲，前台 TUI 的画面不受影响。
  * 不拦截鼠标，避免挡住 TUI 的点击与选择。
  */
-export default function TerminalConnectionNotice({ terminalId, offsetForSearch = false }: {
+export default function TerminalConnectionNotice({ terminalId, offsetForSearch = false, belowControl = false }: {
   terminalId: string
   offsetForSearch?: boolean
+  /** 多端共享角标占着右上角时，提示排到它下方。 */
+  belowControl?: boolean
 }) {
   // 按终端 id 记录，切换终端时旧终端的提示自然失效，无需在 effect 里重置。
   const [state, setState] = useState<{ id: string; notice: TerminalOverlayNotice | null } | null>(null)
@@ -37,7 +39,7 @@ export default function TerminalConnectionNotice({ terminalId, offsetForSearch =
       aria-live="polite"
       data-testid="terminal-connection-notice"
       className={`pointer-events-none absolute right-3 z-10 max-w-[min(480px,calc(100%-24px))] rounded border border-border bg-bg-deep/90 px-2.5 py-1 text-ui-sm text-fg-muted shadow-sm ${
-        offsetForSearch ? 'top-12' : 'top-2'
+        offsetForSearch ? (belowControl ? 'top-[5.5rem]' : 'top-12') : (belowControl ? 'top-10' : 'top-2')
       }`}
     >
       {notice.text}

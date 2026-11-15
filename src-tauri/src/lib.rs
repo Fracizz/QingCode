@@ -897,6 +897,7 @@ pub fn run() {
             mobile::mobile_terminal_exclusive,
             mobile::mobile_terminal_lock_size,
             mobile::mobile_terminal_take_size,
+            mobile::mobile_terminal_kick_devices,
             mobile::mobile_terminal_input_log,
             mobile::mobile_terminal_controls,
             mobile::mobile_mirror_seed,

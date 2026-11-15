@@ -420,6 +420,31 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-latency { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #terminal-host:not(:empty) + #terminal-latency::before { content: '·'; margin-right: 6px; }
 #new-session { color: var(--accent); }
+/* 多端共享标签：挂在标题副行末尾，只有图标 + 短字，无边框底色；状态靠文字颜色区分；伪元素扩大点击区域。 */
+.share-chip {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 8em;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.share-chip::before { content: '·'; margin-right: 3px; color: var(--muted); }
+.share-chip::after { content: ''; position: absolute; inset: -14px -6px; }
+.share-chip svg { flex: none; width: 12px; height: 12px; }
+.share-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-chip:is(:active, :focus-visible) { background: none; opacity: .7; }
+.share-chip[data-tone="active"], .share-chip[data-tone="strong"] { color: var(--accent); }
+.share-chip[data-tone="notice"] { color: var(--warning); }
+#share-text { margin-top: 4px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .row[aria-current="true"] { color: var(--accent); border-color: var(--accent-border); background: var(--accent-surface); }
 .terminal-body { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
 .terminal-selection-layer { position: absolute; z-index: 3; touch-action: none; }
@@ -436,20 +461,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-more { width: 100%; }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
 #terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
-#terminal-empty[hidden], #terminal-taken[hidden], #terminal-share[hidden], .share-action[hidden] { display: none; }
-/* 多端共享栏：其他在线的端与按钮，贴在终端下方，和被接管提示同一样式。 */
-#terminal-share {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px max(12px, var(--corner-inset));
-  border-top: 1px solid var(--divider);
-}
-#terminal-share-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.share-action { flex: none; display: grid; align-items: center; padding: 0; color: var(--accent); font-size: 12px; font-weight: 600; }
-.share-action .compact { min-height: 28px; padding: 0 8px; border-radius: 8px; background: var(--accent-surface); display: inline-flex; align-items: center; }
-.share-action:is(:active, :focus-visible) .compact { background: var(--accent-pressed); }
+#terminal-empty[hidden], #terminal-taken[hidden], .share-chip[hidden] { display: none; }
 #terminal-empty-new { min-height: 44px; padding: 0 24px; }
 #terminal-taken {
   flex: none;

@@ -57,6 +57,8 @@ pub(crate) struct Sharing {
     /// 各端最近一次请求的尺寸；只有尺寸方的请求会真正改终端。
     pub(crate) sizes: HashMap<Controller, (u16, u16)>,
     pub(crate) viewers: HashMap<String, Viewer>,
+    /// 被电脑「断开其他端」的设备：轮询得到断开答复、不能输入，重新接入（attach）后移除。
+    pub(crate) kicked: std::collections::HashSet<String>,
     /// 电脑是否正在显示这个终端：电脑终端始终为 true，手机终端在电脑打开查看标签时为 true。
     pub(crate) desktop_present: bool,
     pub(crate) last_input: Option<(Controller, Instant, u64)>,
@@ -72,6 +74,7 @@ impl Sharing {
             size_locked: false,
             sizes: HashMap::new(),
             viewers: HashMap::new(),
+            kicked: Default::default(),
             last_input: None,
             input_log: VecDeque::new(),
         }
@@ -189,6 +192,27 @@ impl Sharing {
         let resize = self.sizes.get(&next).copied();
         self.size_owner = next;
         Some(resize)
+    }
+
+    /// 电脑「断开其他端」：所有设备退出这个终端，收回设备持有的独占与尺寸。
+    /// 返回断开的设备数，以及电脑收回尺寸后需要应用的尺寸。
+    pub(crate) fn kick_devices(&mut self) -> (usize, Option<(u16, u16)>) {
+        let count = self.viewers.len();
+        let kicked: Vec<String> = self.viewers.drain().map(|(id, _)| id).collect();
+        self.kicked.extend(kicked);
+        if matches!(self.exclusive, Some(Controller::Device(_))) {
+            self.exclusive = None;
+        }
+        let mut resize = None;
+        if matches!(self.size_owner, Controller::Device(_)) {
+            self.size_owner = Controller::Desktop;
+            resize = self.sizes.get(&Controller::Desktop).copied();
+        }
+        (count, resize)
+    }
+
+    pub(crate) fn is_kicked(&self, device: &str) -> bool {
+        self.kicked.contains(device)
     }
 
     /// 清理已离开的设备记录，返回在线名单是否变化。
@@ -318,6 +342,23 @@ mod tests {
         let much_later = later + PRESENCE_TIMEOUT + Duration::from_secs(1);
         assert_eq!(sharing.hand_over_size(much_later), Some(None));
         assert_eq!(sharing.size_owner, Controller::Desktop);
+    }
+
+    #[test]
+    fn kicking_devices_releases_their_exclusive_and_size() {
+        let now = Instant::now();
+        let mut sharing = Sharing::new(Controller::Desktop);
+        sharing.see_device("phone", None, now);
+        sharing.request_size(Controller::Desktop, 120, 40);
+        sharing.request_size(phone(), 60, 25);
+        sharing.input(phone(), "a", now, 1).unwrap();
+        sharing.exclusive = Some(phone());
+        assert_eq!(sharing.kick_devices(), (1, Some((120, 40))));
+        assert!(sharing.is_kicked("phone"));
+        assert!(!sharing.present(&phone(), now));
+        assert_eq!(sharing.exclusive, None);
+        assert_eq!(sharing.size_owner, Controller::Desktop);
+        assert_eq!(sharing.kick_devices(), (0, None));
     }
 
     #[test]

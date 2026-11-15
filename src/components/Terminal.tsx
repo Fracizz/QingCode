@@ -10,6 +10,13 @@ import {
   useTerminalControlStore,
 } from '@/store/terminalControlStore'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
+import {
+  followFitFontSize,
+  gridForCell,
+  readTerminalArea,
+  readTerminalCell,
+  type TerminalCellSize,
+} from '@/lib/terminal/terminalFollowFit'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -245,6 +252,8 @@ export default function TerminalView({
   const wasControlledRef = useRef(false)
   /** 跟随其他设备网格期间最近一次报给后端的电脑窗口行列。 */
   const reportedNaturalGridRef = useRef<TerminalGridSize | null>(null)
+  /** 设置字号下的字格：跟随期间字号被放大缩小，电脑自己的行列仍按它算。 */
+  const baseCellRef = useRef<TerminalCellSize | null>(null)
   /** 本次被独占只读期间是否已提示过「全屏程序的历史要在独占设备上滚动」，解除后重置。 */
   const altScrollNoticeRef = useRef(false)
 
@@ -536,6 +545,39 @@ export default function TerminalView({
     void resizeTerminal(terminalId, next.cols, next.rows)
   }, [resizeTerminal, terminalId])
 
+  /**
+   * 跟随其他端网格时按字号把整屏铺满窗口（手机窄网格放大、平板宽网格缩小）。
+   * 字格不严格按字号成比例（小字号按整像素取整，降一号字格未必变窄），改字号后下一帧按实际字格再校准，最多六次。
+   * 返回本次是否改了字号（需要等待重绘）。
+   */
+  const fitFollowFont = useCallback((): boolean => {
+    const step = (term: XTerm, left: number): boolean => {
+      const area = readTerminalArea(term)
+      const cell = readTerminalCell(term)
+      const baseFontSize = getResolvedTerminalFontSize()
+      const fontSize = term.options.fontSize ?? baseFontSize
+      if (!area || !cell) return false
+      const next = followFitFontSize({ area, grid: { cols: term.cols, rows: term.rows }, cell, fontSize, baseFontSize })
+      if (next === fontSize) return false
+      term.options.fontSize = next
+      if (left > 0) {
+        window.requestAnimationFrame(() => {
+          if (xtermRef.current === term && terminalFollowsRemoteGrid(terminalId)) step(term, left - 1)
+        })
+      }
+      return true
+    }
+    const term = xtermRef.current
+    return term ? step(term, 6) : false
+  }, [terminalId])
+
+  /** 不再跟随其他端时恢复设置字号。 */
+  const restoreBaseFont = useCallback(() => {
+    const term = xtermRef.current
+    const baseFontSize = getResolvedTerminalFontSize()
+    if (term && term.options.fontSize !== baseFontSize) term.options.fontSize = baseFontSize
+  }, [])
+
   const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
     window.clearTimeout(ptyResizeTimerRef.current)
@@ -549,7 +591,8 @@ export default function TerminalView({
     // 其他设备是尺寸方时网格跟随对方；电脑窗口的行列只报给后端记下，电脑打字成为尺寸方时再用。
     if (terminalFollowsRemoteGrid(terminalId)) {
       reportNaturalGrid(next)
-      return false
+      // 窗口变了，按新窗口重新铺满对方的网格。
+      return fitFollowFont()
     }
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
@@ -566,14 +609,23 @@ export default function TerminalView({
       followBottomUntilRef.current = Date.now() + TERMINAL_RESIZE_FOLLOW_BOTTOM_MS
     }
     return true
-  }, [reportNaturalGrid, terminalId])
+  }, [fitFollowFont, reportNaturalGrid, terminalId])
 
   const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return undefined
+    const term = xtermRef.current
+    if (term && term.options.fontSize !== getResolvedTerminalFontSize()) {
+      // 跟随其他端时字号是为铺满窗口临时调的，电脑自己的行列要按设置字号的字格算。
+      const area = readTerminalArea(term)
+      const next = area && baseCellRef.current ? gridForCell(area, baseCellRef.current) : undefined
+      return isValidTerminalGridSize(next) ? next : undefined
+    }
+    if (term) baseCellRef.current = readTerminalCell(term) ?? baseCellRef.current
     const next = fitAddonRef.current?.proposeDimensions()
     return isValidTerminalGridSize(next) ? next : undefined
   }, [])
+
 
   const resizeGridFromContainer = useCallback(() => {
     const container = containerRef.current
@@ -1613,16 +1665,19 @@ export default function TerminalView({
     const follow = control && !control.sizeOwnerIsDesktop ? control : undefined
     if (follow) {
       wasControlledRef.current = true
-      if (term.cols !== follow.cols || term.rows !== follow.rows) term.resize(follow.cols, follow.rows)
+      // 先在设置字号下量出电脑自己的行列，再按对方网格调字号铺满窗口。
       const natural = readProposedGridSize()
       if (natural) reportNaturalGrid(natural)
+      if (term.cols !== follow.cols || term.rows !== follow.rows) term.resize(follow.cols, follow.rows)
+      fitFollowFont()
     } else if (wasControlledRef.current) {
       wasControlledRef.current = false
       reportedNaturalGridRef.current = null
+      restoreBaseFont()
       // 恢复电脑自己的网格；onResize 会把尺寸发给 PTY，程序随之重绘。
       resizeGridFromContainer()
     }
-  }, [control, readProposedGridSize, reportNaturalGrid, resizeGridFromContainer])
+  }, [control, fitFollowFont, readProposedGridSize, reportNaturalGrid, resizeGridFromContainer, restoreBaseFont])
 
   return (
     <div
@@ -1665,9 +1720,9 @@ export default function TerminalView({
           />
         ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
-        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} />
+        <TerminalControlNotice terminalId={terminalId} offsetForSearch={searchOpen} />
+        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} belowControl={!!control} />
       </div>
-      <TerminalControlNotice terminalId={terminalId} />
       {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && !isMobileTerminalId(terminalId) && (
         <TerminalExitNotice
           exitCode={terminal.exitCode}
