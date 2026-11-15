@@ -2,18 +2,51 @@ package com.qingcode.companion;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.File;
+import java.util.Locale;
 
 /** Bounded project downloads. Independent of Android so protocol integrity is testable. */
 final class FileDownloadPolicy {
     static final int CHUNK_BYTES = 256 * 1024;
+
+    static String extension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot <= 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    static String mimeType(String name, String platformType) {
+        if ("apk".equals(extension(name))) return "application/vnd.android.package-archive";
+        return platformType == null || platformType.isEmpty() ? "application/octet-stream" : platformType;
+    }
+
+    /** Atomically reserve a new name, preserving extensions and existing downloads on Android 8/9. */
+    static File reserveFile(File directory, String name) throws IOException {
+        requireName(name);
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("无法创建默认下载目录。");
+        int dot = name.lastIndexOf('.');
+        String stem = dot <= 0 ? name : name.substring(0, dot);
+        String suffix = dot <= 0 ? "" : name.substring(dot);
+        for (int index = 0; index < 10000; index++) {
+            File file = new File(directory, index == 0 ? name : stem + " (" + index + ")" + suffix);
+            if (file.createNewFile()) return file;
+        }
+        throw new IOException("同名下载文件过多，请清理下载目录后重试。");
+    }
+
+    private static void requireName(String name) throws IOException {
+        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)
+            || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            throw new IOException("文件信息无效，请刷新后重试。");
+        }
+    }
 
     static final class Snapshot {
         final String name;
         final String version;
         final long size;
         Snapshot(String name, String version, long size) throws IOException {
-            if (name == null || name.isEmpty() || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0
-                || name.indexOf('\0') >= 0 || version == null || version.isEmpty() || size < 0) {
+            requireName(name);
+            if (version == null || version.isEmpty() || size < 0) {
                 throw new IOException("文件信息无效，请刷新后重试。");
             }
             this.name = name; this.version = version; this.size = size;

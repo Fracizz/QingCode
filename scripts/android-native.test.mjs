@@ -27,7 +27,7 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
     assert.match(watch, /7 watch policy regressions passed/)
     const download = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.FileDownloadPolicyTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
-    assert.match(download, /5 file download regressions passed/)
+    assert.match(download, /8 file download regressions passed/)
   } finally {
     assert.equal(dirname(resolve(output)), resolve(tmpdir()))
     assert.ok(basename(output).startsWith('qingcode-native-'))

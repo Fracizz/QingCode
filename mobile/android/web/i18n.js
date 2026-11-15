@@ -7,6 +7,21 @@ export const LOCALE_CHOICES = Object.freeze(['auto', 'zh', 'en']);
 
 /** 中文原文 → 英文；`{name}` 为占位符。也收录 Android 原生层与电脑端返回的常见错误。 */
 export const EN = Object.freeze({
+  '上级': 'Up',
+  '保存位置': 'Save location',
+  '保存位置：{location}': 'Save location: {location}',
+  '正在读取下载位置…': 'Reading download location…',
+  '无法读取下载位置。': 'Unable to read the download location.',
+  '手机存储不可用，请稍后重试。': 'Phone storage is unavailable. Try again later.',
+  '无法创建默认下载文件。': 'Unable to create the download file.',
+  '无法读取下载文件名。': 'Unable to read the download filename.',
+  '无法写入默认下载位置。': 'Unable to write to the default download location.',
+  '无法完成下载文件保存。': 'Unable to finish saving the download.',
+  '无法创建默认下载目录。': 'Unable to create the default download folder.',
+  '同名下载文件过多，请清理下载目录后重试。': 'Too many downloads with the same name. Clean up the download folder and try again.',
+  '已有文件正在下载，请先完成或取消。': 'A file is already downloading. Finish or cancel it first.',
+  '已回到顶部': 'Returned to top',
+  '已在顶部': 'Already at the top',
   '直发：按键立即发送到终端': 'Direct input: keys are sent to the terminal immediately',
   '草稿：在手机编辑，点发送后提交': 'Draft: edit on the phone, then tap Send to submit',
   '删除终端中的文字': 'Delete text in the terminal',

@@ -27,9 +27,9 @@
 | `file_stat` | 无 | `{ name, path, size, modifiedAt, version }` |
 | `file_chunk` | `version`, `offset`, `length` | `{ data, offset, nextOffset, eof, version }`，`data` 为最多 256 KiB 原始字节的 Base64 |
 
-目录项为 `{ name, path, isDir, size, modifiedAt }`；时间为 Unix 毫秒，未知大小或时间为 `null`。查询与列表使用相同的隐藏文件和项目排除规则。截断结果必须显示提示。分块下载在安卓原生线程上写入系统文档 URI，不经过 WebView 传输文件数据；每块校验偏移、长度和源文件版本，失败不自动重发。版本用于检测大小 / 修改时间变化，不是内容散列或文件锁。
+目录项为 `{ name, path, isDir, size, modifiedAt }`；时间为 Unix 毫秒，未知大小或时间为 `null`。查询与列表使用相同的隐藏文件和项目排除规则。截断结果必须显示提示。分块下载在安卓原生线程上写入默认下载目录，不经过 WebView 传输文件数据；每块校验偏移、长度和源文件版本，失败不自动重发。版本用于检测大小 / 修改时间变化，不是内容散列或文件锁。
 
-Web 到原生的 `file_download { profile, project, path, version }` 立即返回 `{ started: true }`，系统保存选择和网络传输的后续结果经 `window.qingFileDownload` 回报。事件含 `state`（`choosing` / `downloading` / `done` / `canceled` / `error`）、`profile`、`project`、`path`、`name`、`received`、`total` 及可选 `message`。`file_download_cancel` 取消选择或在途下载；不得把开始回执当成下载成功。
+Web 到原生的 `file_download_location` 返回默认目录；`file_download { profile, project, path, version }` 立即返回 `{ started: true }`，目录创建和网络传输的后续结果经 `window.qingFileDownload` 回报。事件含 `state`（`preparing` / `downloading` / `done` / `canceled` / `error`）、`profile`、`project`、`path`、`name`、`received`、`total` 及可选 `message`、`location`（含重名处理后的实际文件名）。`file_download_cancel` 取消准备或在途下载；不得把开始回执当成下载成功。Android 10+ 用 MediaStore Downloads 的 `DISPLAY_NAME`、与后缀匹配的 MIME、`RELATIVE_PATH=Download/QingCode/` 和 `IS_PENDING`，写入和校验完成后才发布；Android 8/9 使用应用专属下载目录并原子保留新文件名。验收需覆盖 APK 后缀、重复下载不覆盖、取消和失败清理，以及完成路径与实际文件一致。
 
 手机会话由所有已配对设备共享，创建者仅决定撤销时的清理范围。`{ "op": "sessions", "project": id }` 返回该项目的会话；支持 `all_sessions` 的电脑端在省略 `project` 时返回全部项目的就绪会话，每项额外带 `project`（id / name / path / kind / host）、`deviceName` 与 `ownDevice`（是否由请求的手机创建），供会话纵览使用。支持 `shared_view` 时，安卓打开会话发送 `attach(shared=true, take=false)`，点「接管」才发送 `take=true`（抢下独占）。每端使用自己的输出游标；`poll(shared=true)` 的 `control` 含终端网格 `cols/rows`。支持 `multi_writer` 时所有设备默认可写：可写时返回 `lease`，被独占时返回独占方名称 `by`，只读旁观时返回 `observe`；另带在线名单 `viewers`（含 `self`、`typing`、`observe`）、`sizeOwner` / `sizeOwnerHere`、`sizeLocked`、`exclusive` / `exclusiveHere` 与 `lastInput`。新增 `exclusive{on, force}`、`lock_size{locked}`、`take_size` 与 `attach{observe}`。输入、上传按设备身份、独占与只读校验；尺寸请求只在请求设备是尺寸方时生效，其余先记下。
 

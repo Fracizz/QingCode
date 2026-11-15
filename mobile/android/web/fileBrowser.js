@@ -23,7 +23,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   let sortOrder = readFileSort(localStorage);
 
   const searching = () => !!get('files-query').value.trim();
-  const activeTransfer = () => ['choosing', 'downloading'].includes(transfer?.state);
+  const activeTransfer = () => ['preparing', 'downloading'].includes(transfer?.state);
   const currentContext = target => dialog.open && target === context;
 
   function invalidate() {
@@ -69,10 +69,12 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     else progress.removeAttribute('value');
     progress.hidden = transfer.state !== 'downloading';
     get('files-transfer-status').textContent = {
-      choosing: t('请选择文件保存位置'),
+      preparing: t('正在准备下载…'),
       downloading: t('已下载 {received} / {total}', { received: formatFileBytes(received), total: formatFileBytes(total) }),
       done: t('下载完成'), canceled: t(transfer.message || '已取消下载。'), error: t(transfer.message || '下载失败，请检查网络后重试。'),
     }[transfer.state] || '';
+    get('files-transfer-location').textContent = transfer.location ? t('保存位置：{location}', { location: transfer.location }) : '';
+    get('files-transfer-location').hidden = !transfer.location;
     get('files-transfer-status').dataset.error = String(transfer.state === 'error');
     get('files-download-cancel').hidden = !activeTransfer();
     get('file-download').disabled = !selected || activeTransfer();
@@ -220,9 +222,15 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     get('file-detail-size').textContent = formatFileBytes(entry.size);
     get('file-detail-modified').textContent = Number.isFinite(entry.modifiedAt) ? new Date(entry.modifiedAt).toLocaleString(dateLocale()) : t('未知');
     get('file-detail-error').textContent = '';
+    get('file-download-location').textContent = t('正在读取下载位置…');
     get('file-download').disabled = true;
     get('file-detail-loading').hidden = false;
     detail.showModal();
+    void rpc('file_download_location').then(location => {
+      if (detail.open && epoch === selectionEpoch) get('file-download-location').textContent = typeof location === 'string' ? location : t('无法读取下载位置。');
+    }).catch(() => {
+      if (detail.open && epoch === selectionEpoch) get('file-download-location').textContent = t('无法读取下载位置。');
+    });
     try {
       const stat = await rpc('file_stat', { profile: target.host.id, project: target.project.id, path: entry.path }, { signal: controller.signal });
       if (!currentContext(target) || !detail.open || epoch !== selectionEpoch) return;
@@ -255,7 +263,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
       if (!currentContext(target) || !detail.open || epoch !== selectionEpoch || activeTransfer()) return;
       get('file-download').disabled = true;
       transferContext = target.host.name + ' / ' + target.project.name;
-      transfer = { state: 'choosing', name: file.name, received: 0, total: file.size, profile: target.host.id, project: target.project.id, path: file.path };
+      transfer = { state: 'preparing', name: file.name, received: 0, total: file.size, profile: target.host.id, project: target.project.id, path: file.path };
       renderTransfer();
       await rpc('file_download', { profile: target.host.id, project: target.project.id, path: file.path, version: file.version });
       if (detail.open) detail.close();

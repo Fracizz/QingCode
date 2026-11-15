@@ -34,7 +34,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
-function setup(rpc = vi.fn(async (op: string) => op === 'file_stat' ? { ...file, version: 'v1' } : { entries: [file], truncated: false })) {
+function setup(rpc = vi.fn(async (op: string) => op === 'file_download_location' ? 'Download/QingCode' : op === 'file_stat' ? { ...file, version: 'v1' } : { entries: [file], truncated: false })) {
   const browser = createFileBrowser({ rpc, capabilities: async () => ({ features: ['project_files'] }), profile: () => host })
   return { browser, rpc }
 }
@@ -123,6 +123,25 @@ describe('Android project file browsing', () => {
     expect(element('files-transfer-status').textContent).toContain('清理失败')
     receive({ state: 'done', profile: 'other', project: project.id, path: file.path })
     expect(element('files-transfer-status').textContent).toContain('清理失败')
+  })
+
+  it('shows the default directory before downloading and the actual saved filename on completion', async () => {
+    const { browser } = setup()
+    await browser.open(project)
+    await openFile()
+    expect(element('file-download-location').textContent).toBe('Download/QingCode')
+    element('file-download').click()
+    await flush()
+    expect(element('files-transfer-status').textContent).toBe('正在准备下载…')
+    expect(element<HTMLButtonElement>('files-download-cancel').hidden).toBe(false)
+    const receive = (window as unknown as { qingFileDownload: (event: object) => void }).qingFileDownload
+    receive({ state: 'done', profile: host.id, project: project.id, path: file.path,
+      name: 'readme (1).md', location: 'Download/QingCode/readme (1).md', received: 12, total: 12 })
+    expect(element('files-transfer-status').textContent).toBe('下载完成')
+    expect(element('files-transfer-name').textContent).toContain('readme (1).md')
+    expect(element('files-transfer-location').hidden).toBe(false)
+    expect(element('files-transfer-location').textContent).toBe('保存位置：Download/QingCode/readme (1).md')
+    expect(element<HTMLButtonElement>('files-download-cancel').hidden).toBe(true)
   })
 
   it('blocks mismatched file metadata and explains unsupported desktop versions', async () => {

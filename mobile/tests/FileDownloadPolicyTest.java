@@ -3,6 +3,8 @@ package com.qingcode.companion;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.File;
+import java.nio.file.Files;
 import java.util.Arrays;
 
 /** Exercises bounded transfers and validation without Android or a live network. */
@@ -86,12 +88,56 @@ public final class FileDownloadPolicyTest {
         rejects(() -> new FileDownloadPolicy.Snapshot("file", "v", -1), "negative file size accepted");
     }
 
+    static void mimeTypesPreserveApkAndOtherExtensions() {
+        check("application/vnd.android.package-archive".equals(FileDownloadPolicy.mimeType("QingCode.APK", null)), "APK became generic binary");
+        check("application/vnd.android.package-archive".equals(FileDownloadPolicy.mimeType("QingCode.apk", "application/octet-stream")), "generic platform type overrode APK");
+        check("text/plain".equals(FileDownloadPolicy.mimeType("中文 说明.txt", "text/plain")), "known file type lost");
+        check("application/octet-stream".equals(FileDownloadPolicy.mimeType("custom.unknown", null)), "unknown type must remain binary");
+        check("gz".equals(FileDownloadPolicy.extension("source.tar.GZ")), "extension normalization failed");
+        check("".equals(FileDownloadPolicy.extension(".env")), "dotfile treated as extension");
+    }
+
+    static void duplicateDownloadsNeverOverwriteOrLoseExtensions() throws Exception {
+        File root = Files.createTempDirectory("qingcode-download-").toFile();
+        File directory = new File(root, "QingCode");
+        try {
+            File first = FileDownloadPolicy.reserveFile(directory, "QingCode.apk");
+            Files.write(first.toPath(), new byte[] { 37 });
+            File second = FileDownloadPolicy.reserveFile(directory, "QingCode.apk");
+            check("QingCode (1).apk".equals(second.getName()), "duplicate lost APK suffix");
+            check(Arrays.equals(Files.readAllBytes(first.toPath()), new byte[] { 37 }), "existing download overwritten");
+            check("QingCode (2).apk".equals(FileDownloadPolicy.reserveFile(directory, "QingCode.apk").getName()), "third duplicate collided");
+            check(".env".equals(FileDownloadPolicy.reserveFile(directory, ".env").getName()), "dotfile renamed");
+            check(".env (1)".equals(FileDownloadPolicy.reserveFile(directory, ".env").getName()), "duplicate dotfile gained extension");
+            check("README".equals(FileDownloadPolicy.reserveFile(directory, "README").getName()), "extensionless file gained suffix");
+        } finally {
+            File[] files = directory.listFiles();
+            if (files != null) for (File file : files) Files.delete(file.toPath());
+            Files.deleteIfExists(directory.toPath());
+            Files.delete(root.toPath());
+        }
+    }
+
+    static void invalidDownloadNamesCannotEscapeDirectory() throws Exception {
+        File root = Files.createTempDirectory("qingcode-download-").toFile();
+        try {
+            for (String name : new String[] { ".", "..", "../secret.apk", "dir/file.apk", "dir\\file.apk", "bad\0.apk", "" }) {
+                rejects(() -> FileDownloadPolicy.reserveFile(root, name), "invalid download name accepted: " + name);
+                rejects(() -> new FileDownloadPolicy.Snapshot(name, "v", 1), "invalid snapshot name accepted");
+            }
+            check(root.list().length == 0, "invalid name created a file");
+        } finally { Files.delete(root.toPath()); }
+    }
+
     public static void main(String[] args) throws Exception {
         largeFileUsesBoundedChunks();
         emptyFileStillChecksVersion();
         prematureEofIsRejected();
         cancellationAfterNetworkReadPreventsWrite();
         changingFileCannotFinishSuccessfully();
-        System.out.println("5 file download regressions passed");
+        mimeTypesPreserveApkAndOtherExtensions();
+        duplicateDownloadsNeverOverwriteOrLoseExtensions();
+        invalidDownloadNamesCannotEscapeDirectory();
+        System.out.println("8 file download regressions passed");
     }
 }

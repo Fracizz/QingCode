@@ -833,10 +833,13 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
     const doubleTap = event.detail === 2 || (lastNavigationTap?.page === next && event.timeStamp - lastNavigationTap.time <= 300);
     if (page === next && doubleTap) {
       lastNavigationTap = null;
+      const alreadyAtTop = pages[next].scrollTop <= 0;
       pages[next].scrollTo({
         top: 0,
         behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
       });
+      showToast(document.body, alreadyAtTop ? t('已在顶部') : t('已回到顶部'));
+      void rpc('haptic').catch(() => {});
       return;
     }
     lastNavigationTap = { page: next, time: event.timeStamp };

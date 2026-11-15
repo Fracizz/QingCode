@@ -330,19 +330,22 @@
 
   async function perform(request) {
     switch (request.op) {
+      case 'file_download_location': return { ok: true, data: 'Download/QingCode' }
       case 'file_download': {
         if (state.fileDownload) return { ok: false, error: '已有文件正在下载，请先完成或取消。' }
         const stat = await remote(request.profile, { op: 'file_stat', project: request.project, path: request.path, hidden: true })
         if (!stat.ok) return stat
         if (request.version && request.version !== stat.data.version) return { ok: false, error: '源文件已变化，请刷新后重试。' }
+        const duplicates = state.fileDownloads.filter(item => item.path === request.path).length
+        const name = duplicates ? stat.data.name.replace(/(\.[^.]+)?$/, ` (${duplicates})$1`) : stat.data.name
         const task = { profile: request.profile, project: request.project, path: request.path,
-          name: stat.data.name, total: stat.data.size, received: 0 }
+          name, location: 'Download/QingCode/' + name, total: stat.data.size, received: 0 }
         state.fileDownloads.push({ ...task })
         state.fileDownload = task
         const event = (phase, extra = {}) => window.qingFileDownload?.({ ...task, state: phase, ...extra })
         setTimeout(async () => {
           if (state.fileDownload !== task) return
-          event('choosing')
+          event('preparing')
           for (let step = 1; step <= 4; step++) {
             await new Promise(resolve => setTimeout(resolve, state.fileDownloadDelay))
             if (state.fileDownload !== task) return

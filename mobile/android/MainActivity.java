@@ -11,7 +11,6 @@ import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.provider.Settings;
-import android.provider.DocumentsContract;
 import android.graphics.Insets;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -81,7 +80,6 @@ public final class MainActivity extends Activity {
     private static final int NOTIFICATION_REQUEST = 2;
     static final String OPEN_SESSION_ACTION = "com.qingcode.companion.OPEN_SESSION";
     private static final int IMAGE_REQUEST = 2;
-    private static final int FILE_DOWNLOAD_REQUEST = 3;
     private static final int MAX_IMAGE = 8 * 1024 * 1024;
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
     private static final String INSTALL_ACTION = "com.qingcode.companion.INSTALL_STATUS";
@@ -327,18 +325,6 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int code, int result, Intent intent) {
         super.onActivityResult(code, result, intent);
-        if (code == FILE_DOWNLOAD_REQUEST) {
-            FileDownload download = fileDownload;
-            Uri target = result == RESULT_OK && intent != null ? intent.getData() : null;
-            if (download == null) {
-                if (target != null) new Thread(() -> discardDownloadDocument(target), "qingcode-file-cleanup").start();
-            } else {
-                download.target = target;
-                if (target == null) download.finish("canceled", null);
-                else download.startTransfer();
-            }
-            return;
-        }
         if (code != IMAGE_REQUEST || imageReply == null) return;
         final int id = imageReply;
         final String compression = imageCompression;
@@ -661,6 +647,11 @@ public final class MainActivity extends Activity {
                 startFileDownload(id, request);
                 return;
             }
+            if ("file_download_location".equals(op)) {
+                try { replySafely(id, DownloadStorage.directory(MainActivity.this)); }
+                catch (IOException error) { reply(id, failure(error.getMessage())); }
+                return;
+            }
             if ("file_download_cancel".equals(op)) {
                 FileDownload download = fileDownload;
                 if (download != null) download.cancel();
@@ -809,26 +800,14 @@ public final class MainActivity extends Activity {
             FileDownload download = new FileDownload(connection, request.getString("project"),
                 request.getString("path"), request.optString("version", ""));
             synchronized (this) {
-                if (fileDownload != null) throw new IOException("已有文件正在下载或选择保存位置，请先完成或取消。");
+                if (fileDownload != null) throw new IOException("已有文件正在下载，请先完成或取消。");
                 fileDownload = download;
             }
             replySafely(id, new JSONObject().put("started", true));
-            download.emit("choosing", null);
-            download.startPreparation();
+            download.emit("preparing", null);
+            download.startTransfer();
         } catch (Exception error) {
             reply(id, failure(error.getMessage() == null ? "无法开始下载。" : error.getMessage()));
-        }
-    }
-
-    /** SAF creates a distinct document; failed/cancelled downloads must not leave it looking complete. */
-    private boolean discardDownloadDocument(Uri uri) {
-        try {
-            if (DocumentsContract.isDocumentUri(this, uri)) {
-                return DocumentsContract.deleteDocument(getContentResolver(), uri);
-            }
-            return getContentResolver().delete(uri, null, null) > 0;
-        } catch (Exception ignored) {
-            return false;
         }
     }
 
@@ -840,9 +819,8 @@ public final class MainActivity extends Activity {
         volatile FileDownloadPolicy.Snapshot snapshot;
         volatile boolean cancelled;
         volatile boolean finished;
-        volatile boolean choosing;
         volatile Thread worker;
-        volatile Uri target;
+        volatile DownloadStorage.Target target;
         volatile long received;
         private long lastProgressNanos;
         private Runnable abort;
@@ -882,8 +860,6 @@ public final class MainActivity extends Activity {
             // Disconnect can block inside Android networking; keep the UI and bridge responsive.
             if (action != null) new Thread(() -> { try { action.run(); } catch (RuntimeException ignored) { } },
                 "qingcode-file-cancel").start();
-            // A pending picker keeps this slot until its result returns, preventing result mix-ups.
-            if (choosing) emit("canceled", null);
         }
 
         JSONObject call(JSONObject request) throws Exception {
@@ -899,46 +875,20 @@ public final class MainActivity extends Activity {
             return new FileDownloadPolicy.Snapshot(data.getString("name"), data.getString("version"), data.getLong("size"));
         }
 
-        void startPreparation() {
-            worker = new Thread(() -> {
-                ACTIVE_FILE_DOWNLOAD.set(this);
-                try {
-                    snapshot = stat();
-                    if (!requestedVersion.isEmpty() && !requestedVersion.equals(snapshot.version)) {
-                        throw new IOException("源文件已变化，请刷新后重新下载。");
-                    }
-                    runOnUiThread(() -> {
-                        if (cancelled || isFinishing() || isDestroyed()) { finish("canceled", null); return; }
-                        try {
-                            choosing = true;
-                            emit("choosing", null);
-                            Intent picker = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/octet-stream")
-                                .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE, snapshot.name);
-                            startActivityForResult(picker, FILE_DOWNLOAD_REQUEST);
-                        } catch (Exception error) {
-                            choosing = false;
-                            finish("error", "无法打开系统文件保存位置选择器。");
-                        }
-                    });
-                } catch (Exception error) {
-                    finish(cancelled ? "canceled" : "error", cancelled ? null : error.getMessage());
-                } finally {
-                    ACTIVE_FILE_DOWNLOAD.remove();
-                }
-            }, "qingcode-file-prepare");
-            worker.start();
-        }
-
         void startTransfer() {
-            choosing = false;
             worker = new Thread(() -> {
                 ACTIVE_FILE_DOWNLOAD.set(this);
                 try {
                     checkActive();
+                    snapshot = stat();
+                    if (!requestedVersion.isEmpty() && !requestedVersion.equals(snapshot.version)) {
+                        throw new IOException("源文件已变化，请刷新后重新下载。");
+                    }
+                    checkActive();
+                    target = DownloadStorage.create(MainActivity.this, snapshot.name);
+                    checkActive();
                     snapshot.requireSame(stat());
-                    OutputStream destination = getContentResolver().openOutputStream(target, "wt");
-                    if (destination == null) throw new IOException("无法写入所选保存位置。");
-                    try (OutputStream output = destination) {
+                    try (OutputStream output = target.open()) {
                         FileDownloadPolicy.copy(snapshot, new FileDownloadPolicy.Source() {
                             @Override public void checkActive() throws IOException { FileDownload.this.checkActive(); }
                             @Override public FileDownloadPolicy.Chunk read(long offset, int length) throws Exception {
@@ -963,6 +913,8 @@ public final class MainActivity extends Activity {
                             }
                         }, output);
                     }
+                    checkActive();
+                    target.publish();
                     finish("done", null);
                 } catch (Exception error) {
                     finish(cancelled ? "canceled" : "error", cancelled ? null : error.getMessage());
@@ -979,7 +931,7 @@ public final class MainActivity extends Activity {
                 if (cancelled) state = "canceled";
                 finished = true;
             }
-            if (!"done".equals(state) && target != null && !discardDownloadDocument(target)) {
+            if (!"done".equals(state) && target != null && !target.discard()) {
                 message = (message == null ? "已取消下载。" : message) + " 无法移除未完成文件，请在保存位置删除。";
             }
             synchronized (MainActivity.this) { if (fileDownload == this) fileDownload = null; }
@@ -991,7 +943,8 @@ public final class MainActivity extends Activity {
                 JSONObject event = new JSONObject().put("state", state).put("profile", connection.address())
                     .put("project", project).put("path", path).put("received", received)
                     .put("total", snapshot == null ? -1 : snapshot.size)
-                    .put("name", snapshot == null ? path : snapshot.name);
+                    .put("name", target != null ? target.name : snapshot == null ? path : snapshot.name);
+                if (target != null) event.put("location", target.location);
                 if (message != null) event.put("message", message);
                 runOnUiThread(() -> {
                     if (view != null && pageReady) view.evaluateJavascript(

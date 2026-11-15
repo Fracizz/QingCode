@@ -39,11 +39,17 @@ try {
     run('wait', '350')
     run('click', nav(page))
     check(`${page}: a single tap preserves the scroll position`, scrolled(page))
+    evaluate('window.__hapticsBeforeTap = window.__mobileFixture.state.haptics ?? 0')
     run('wait', '350')
     run('dblclick', nav(page))
+    check(`${page}: double-tap provides visible feedback and one haptic`, `!document.getElementById('sort-toast').hidden && document.getElementById('sort-toast').textContent === '已回到顶部' && window.__mobileFixture.state.haptics === window.__hapticsBeforeTap + 1`)
+    if (page === 'connection') run('screenshot', resolve(directory, 'connection-feedback.png'))
     check(`${page}: double-click scrolls to the top`, atTop(page))
   }
   run('screenshot', resolve(directory, 'connection-top.png'))
+  run('dblclick', nav('connection'))
+  check('double-tap at the top still provides feedback', `!document.getElementById('sort-toast').hidden && document.getElementById('sort-toast').textContent === '已在顶部'`)
+  check('feedback automatically dismisses', `document.getElementById('sort-toast').hidden`)
 
   // Android touch-generated clicks may all have detail=1. Use timestamps to exercise
   // touch compatibility and the timeout without relying on CLI process startup speed.
@@ -67,6 +73,9 @@ try {
   evaluate(`window.__navTap('connection', window.__navNow + 1300)`)
   assert.equal(evaluate(atTop('connection')).trim(), 'true')
   results.push({ name: 'reduced motion returns to the top immediately', passed: true })
+  evaluate(`(async () => { await import('/mobile-android/i18n.js').then(module => module.setLocale('en'));
+    window.__navTap('connection', window.__navNow + 2000); window.__navTap('connection', window.__navNow + 2100); })()`)
+  check('feedback is translated into English', `document.getElementById('sort-toast').textContent === 'Already at the top'`)
   const errors = JSON.parse(run('errors', '--json'))
   assert.deepEqual(errors.data?.errors ?? [], [])
 } catch (error) {
