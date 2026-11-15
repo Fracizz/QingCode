@@ -34,13 +34,17 @@
   --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
   --color-tree-fg: #d4d4d8;
-  /* 终端列表文字：会话名一档亮、项目名/时间一档暗，两档拉开（参考 Z：#d4d4d4 / #909090），纯中性灰；
-     辅助级在选中底上也 ≥ 4.5:1。 */
-  --color-term-list-active: #ececec;
-  --color-term-list-fg: #d4d4d4;
-  /* 项目组头：项目名与条目同亮，来源标签退到辅助级（参考灰色主题 #c2c2c2 / #8d8c8c）。 */
+  /* 终端列表沿用 Codex 侧栏的明暗层级，但取纯中性灰（R=G=B），与其他侧栏面板同底：
+     悬停 #272727 与选中 #2f2f2f 分开两档；条目 #c8c8c8、选中文字提亮到 #e6e6e6 便于找到当前行；
+     辅助级 #939393 在选中底上仍 ≥ 4.5:1。石墨灰保留 Codex 暖灰原值。
+     列表内的 bg-sidebar / bg-hover / bg-active 由下方 [data-terminal-session-list] 规则换成这三档。 */
+  --color-term-list-bg: #1c1c1c;
+  --color-term-list-hover: #272727;
+  --color-term-list-selected: #2f2f2f;
+  --color-term-list-active: #e6e6e6;
+  --color-term-list-fg: #c8c8c8;
   --color-term-list-project: var(--color-term-list-fg);
-  --color-term-list-meta: #989898;
+  --color-term-list-meta: #939393;
   --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
@@ -228,11 +232,16 @@ html[data-theme="ink"] {
   --color-fg-muted: #999999;
   --color-fg-dim: #999999;
   --color-tree-fg: #c2c2c2;
-  --color-term-list-active: #dfdfdf;
+  /* 石墨灰终端列表照 Codex 桌面端侧栏取色（深色是在此基础上的中性灰版本）：底 #1c1b1b，悬停/选中同为 #2e2d2d 一档，
+     条目与项目名 #c2c2c2、选中文字 #c5c5c4，来源/时间/状态等辅助级 #8d8c8c。
+     列表内的 bg-sidebar / bg-hover / bg-active 由下方 [data-terminal-session-list] 规则换成这三档。 */
+  --color-term-list-bg: #1c1b1b;
+  --color-term-list-hover: #2e2d2c;
+  --color-term-list-selected: #2e2d2d;
+  --color-term-list-active: #c5c5c4;
   --color-term-list-fg: #c2c2c2;
-  /* 项目组头按参考：项目名 = 条目色 #c2c2c2，来源 #8d8c8c；后者在选中底上低于 4.5:1，同样提亮到辅助级 #999999。 */
   --color-term-list-project: var(--color-term-list-fg);
-  --color-term-list-meta: #999999;
+  --color-term-list-meta: #8d8c8c;
   --color-term-list-source: var(--color-term-list-meta);
   --color-term-list-remote: var(--color-term-list-source);
 
@@ -248,6 +257,15 @@ html[data-theme="ink"] {
 
   --color-tab-active: #181818;
   --color-tab-inactive: #1c1b1b;
+}
+
+/* 深色、石墨灰的终端列表改用各自的三档列表底色；只在列表内部换变量，其余侧栏面板不受影响。
+   浅色、护眼绿未定义这组 token，保持全局底色。 */
+html[data-theme="dark"] [data-terminal-session-list],
+html[data-theme="ink"] [data-terminal-session-list] {
+  --color-bg-sidebar: var(--color-term-list-bg);
+  --color-bg-hover: var(--color-term-list-hover);
+  --color-bg-active: var(--color-term-list-selected);
 }
 
 /* 石墨灰为纯中性灰，标题栏加粗的 QingCode 若用高饱和品牌色会整屏最抢眼；
