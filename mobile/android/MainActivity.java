@@ -1275,6 +1275,8 @@ public final class MainActivity extends Activity {
         switch (op) {
             case "projects": case "sessions": case "attach": case "create": case "poll": case "history":
             case "input": case "resize": case "end": case "image": case "rename_session":
+            // 多端共享：独占、按本机尺寸、锁定尺寸。漏掉时网页按钮会被这里拒成「未知操作」。
+            case "exclusive": case "take_size": case "lock_size":
             case "terminal_profiles": case "capabilities":
             case "file_list": case "file_search": case "file_stat": case "file_chunk":
                 if (!"capabilities".equals(op) && !"terminal_profiles".equals(op) && !op.startsWith("file_")) watcher.touch(current);

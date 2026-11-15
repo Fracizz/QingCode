@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join, dirname, basename } from 'node:path'
 import test from 'node:test'
@@ -33,4 +33,20 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
     assert.ok(basename(output).startsWith('qingcode-native-'))
     rmSync(output, { recursive: true, force: true })
   }
+})
+
+test('every desktop op the web layer sends is allowed by the native bridge', () => {
+  const root = resolve(import.meta.dirname, '..')
+  const web = join(root, 'mobile/android/web')
+  const source = readdirSync(web).filter(name => name.endsWith('.js'))
+    .map(name => readFileSync(join(web, name), 'utf8')).join('\n')
+  // remote('op', …) 直接发出的，以及 shareAction('op', …) 转发给 remote 的。
+  const sent = new Set([...source.matchAll(/\b(?:remote|shareAction)\('([a-z_]+)'/g)].map(match => match[1]))
+  const activity = readFileSync(join(root, 'mobile/android/MainActivity.java'), 'utf8')
+  const block = activity.match(/request\.remove\("profile"\);\s*switch \(op\) \{([\s\S]*?)default:/)
+  assert.ok(block, 'MainActivity 中找不到桌面 op 白名单')
+  const allowed = new Set([...block[1].matchAll(/case "([a-z_]+)"/g)].map(match => match[1]))
+  for (const op of ['exclusive', 'take_size', 'attach']) assert.ok(sent.has(op), `未扫描到网页层发出的 ${op}`)
+  const missing = [...sent].filter(op => !allowed.has(op))
+  assert.deepEqual(missing, [], `原生白名单缺少：${missing.join(', ')}`)
 })
