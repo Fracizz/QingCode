@@ -104,6 +104,8 @@ public final class MainActivity extends Activity {
     private boolean foreground;
     private boolean immersive;
     private float cornerBottomInset;
+    /** 状态栏（含顶部挖孔）高度，单位 dp；页面用它把顶栏背景延伸到状态栏。 */
+    private float statusTopInset;
     private Integer imageReply;
     private String imageCompression;
     private final Map<String, ImageSelection> imageSelections = new ConcurrentHashMap<>();
@@ -150,8 +152,11 @@ public final class MainActivity extends Activity {
                 }
                 // System bars/IME resize the WebView once. Keep terminal controls wide;
                 // only add the corner clearance still needed above that resized bottom.
-                element.setPadding(padding.left, padding.top, padding.right, padding.bottom);
+                // 顶部不留白：WebView 画到状态栏下面，状态栏高度交给页面（--status-top），
+                // 由各页顶栏把背景延伸到状态栏，界面与状态栏连成一体。
+                element.setPadding(padding.left, 0, padding.right, padding.bottom);
                 final float density = getResources().getDisplayMetrics().density;
+                statusTopInset = padding.top / density;
                 final float cornerDp = corner / density;
                 cornerBottomInset = terminalCornerBottomInset(cornerDp, padding.bottom / density);
                 view.setTag(cornerDp);
@@ -319,7 +324,8 @@ public final class MainActivity extends Activity {
         if (pageReady && view != null && view.getTag() instanceof Float) {
             view.evaluateJavascript("document.documentElement.style.setProperty('--corner-inset','"
                 + view.getTag() + "px');document.documentElement.style.setProperty('--corner-bottom-inset','"
-                + cornerBottomInset + "px')", null);
+                + cornerBottomInset + "px');document.documentElement.style.setProperty('--status-top','"
+                + statusTopInset + "px')", null);
         }
     }
 

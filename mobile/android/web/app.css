@@ -14,22 +14,6 @@
   unicode-range: U+2190-21FF, U+2300-23FF, U+25A0-25FF, U+2700-27BF, U+2B00-2BFF;
   font-display: swap;
 }
-/*
- * 终端中文：终端每个汉字占两个英文字格（系统等宽字体约 0.6em × 2 = 1.2em），而系统中文字形只有 1em 宽，
- * 字与字之间会空出一截，看起来像加了字距。这里引用系统自带的思源黑体 / Noto Sans CJK，
- * 用 size-adjust 略微放大，让汉字基本填满两格；只覆盖中日韩字符和全角标点，不改变英文字格度量。
- * 找不到这些系统字体时整条规则不生效，回落到原来的系统字体。
- */
-@font-face {
-  font-family: 'QingCode CJK';
-  src: local('Noto Sans CJK SC'), local('Noto Sans CJK SC Regular'), local('NotoSansCJKsc-Regular'),
-    local('Source Han Sans SC'), local('Source Han Sans SC Regular'), local('SourceHanSansSC-Regular'),
-    local('Noto Sans SC'), local('NotoSansSC-Regular');
-  unicode-range: U+1100-11FF, U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+31F0-31FF,
-    U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF01-FF60, U+FFE0-FFE6;
-  size-adjust: 112%;
-  font-display: swap;
-}
 :root {
   color-scheme: dark;
   /* 深色（默认）：与电脑端深色同为纯中性灰。石墨灰见下方 :root[data-theme="graphite"]。 */
@@ -66,7 +50,8 @@
   --motion-exit: 140ms;
   --corner-inset: 0px;
   --corner-bottom-inset: 0px;
-  --safe-top: env(safe-area-inset-top, 0px);
+  /* Android 11+ 的 WebView 画到状态栏下面（MainActivity 传入 --status-top），各页顶栏自己把背景延伸到状态栏。 */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--status-top, 0px));
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -94,7 +79,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); -webkit-font-smoo
 main {
   height: 100vh;
   height: 100dvh;
-  padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+  /* 顶部不留白：状态栏高度由工作台和终端顶栏各自处理，背景与状态栏连成一体。 */
+  padding: 0 var(--safe-right) 0 var(--safe-left);
 }
 h1, h2, p { margin: 0; }
 h1, h2 { line-height: 1.2; }
@@ -183,6 +169,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   position: relative;
   isolation: isolate;
   height: 100%;
+  /* 内容从状态栏下方开始；氛围光（::before 从内边距顶端画起）和收起后的顶栏底色延伸到状态栏。 */
+  padding-top: var(--safe-top);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
@@ -213,7 +201,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .app-head {
   position: absolute;
   z-index: 4;
-  top: 0;
+  top: var(--safe-top);
   left: 0;
   right: 0;
   display: flex;
@@ -228,6 +216,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   transition: border-color var(--motion-enter) var(--ease), background-color var(--motion-enter) var(--ease);
 }
 .app-head > * { pointer-events: auto; }
+/* 顶栏底色向上铺满状态栏：展开时透明（露出氛围光），收起后与顶栏同为纯色。 */
+.app-head::before { content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--safe-top); background: inherit; pointer-events: none; }
 .dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); background: var(--paper); }
 .app-head-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .app-head-title {
@@ -529,8 +519,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
   align-items: center;
   gap: 2px;
-  min-height: 52px;
-  padding: 2px 6px;
+  /* 顶栏底色延伸到状态栏，内容从状态栏下方开始。 */
+  min-height: calc(52px + var(--safe-top));
+  padding: calc(2px + var(--safe-top)) 6px 2px;
   background: var(--paper);
   border-bottom: 1px solid var(--divider);
 }
@@ -700,7 +691,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   font: 13px var(--mono);
   color: var(--ink);
 }
-#special-keys > button { min-width: 44px; padding-inline: 4px; }
+/* 快捷键底色比工具区背景（--paper）高两档，键与键之间的空隙清楚可见；按下再亮一档。 */
+#special-keys > button { min-width: 44px; padding-inline: 4px; background: var(--raised); }
+#special-keys > button:active:not(:disabled), #special-keys > button:focus-visible { background: var(--line); }
 /* 方向、退格用 SVG：字体字形的基线和宽度因机型而异，按键里对不齐。 */
 :is(#special-keys, .extra-keys) button svg { width: 18px; height: 18px; }
 #special-keys [data-key="shift-tab"] svg, #keys-dialog [data-key="shift-left"] svg { width: 14px; height: 14px; }
@@ -915,7 +908,8 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-head span { flex: none; }
 .session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 侧栏组头：点按折叠，长按拖动排序，右侧常驻新建与项目操作。 */
-.session-group-head.session-group-head-tools { align-items: center; gap: 0; padding: 0 0 0 8px; }
+/* 右侧 2px 内边距：40px 按钮中心距右缘 22px，与会话行 44px「⋯」列的中心对齐。 */
+.session-group-head.session-group-head-tools { align-items: center; gap: 0; padding: 0 2px 0 8px; }
 .session-group-toggle { display: flex; flex: 1; align-items: baseline; gap: 6px; min-width: 0; min-height: 40px; padding: 0; border-radius: 0; color: inherit; font: inherit; text-align: left; line-height: 40px; }
 .session-group-toggle:active:not(:disabled), .session-group-toggle:focus-visible { background: transparent; transform: none; }
 .session-group-head .session-group-toggle .session-group-source { min-width: 0; }
@@ -933,7 +927,8 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 /* 没有终端的项目排在最后（groupSessionOverview）：名称减弱、行高收紧、不显示数量，第一项上方加「无会话的项目」说明。 */
 .session-group[data-empty="true"] .session-group-toggle { min-height: 36px; opacity: .6; line-height: 36px; }
 .session-group[data-empty="true"] .session-group-badge { display: none; }
-.session-group[data-empty="true"] .session-group-head-tools .icon-button { width: 36px; height: 36px; min-height: 36px; }
+/* 只压高度、宽度保持 40px，「+」「⋯」与上方有会话的组头对齐。 */
+.session-group[data-empty="true"] .session-group-head-tools .icon-button { height: 36px; min-height: 36px; }
 .session-group[data-empty="true"] + .session-group[data-empty="true"] { margin-top: 0; }
 .session-group[data-empty="false"] + .session-group[data-empty="true"]::before { content: attr(data-empty-label); display: block; margin-top: 6px; padding: 10px 8px 2px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 12px; }
 .session-group.dragging { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
@@ -1013,7 +1008,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 }
 /* 横屏或键盘压缩视口：压缩状态行与间距。 */
 @media (max-height: 540px) {
-  .terminal-head { min-height: 44px; padding-block: 0; }
+  .terminal-head { min-height: calc(44px + var(--safe-top)); padding-block: var(--safe-top) 0; }
   /* 矮屏顶栏只留一行：标题后跟状态点和延迟。 */
   #terminal-host { display: none; }
   .terminal-heading { display: flex; align-items: center; gap: 8px; }

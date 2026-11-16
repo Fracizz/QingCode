@@ -63,13 +63,16 @@ import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
 import { createUpdateView } from './updateView.js';
 import { attachMouseMode } from './mouseMode.js';
 import { attachHistorySelection } from './historySelection.js';
-import { createTerminalFontLoader } from './terminalFont.js';
+import { createCjkFontFace, createTerminalFontLoader } from './terminalFont.js';
 import { attachTerminalRenderer } from './terminalRenderer.js';
 import { createSessionWatch } from './sessionWatch.js';
 import { dateLocale, initLocale, loadLocalePreference, saveLocalePreference, t, translateDocument } from './i18n.js';
 
 const native = window.QingCodeNative;
-const loadTerminalFont = createTerminalFontLoader(document.fonts);
+// 中文字体只在 Android WebView（有原生桥）里注册，见 terminalFont.js。
+const loadTerminalFont = createTerminalFontLoader(document.fonts, 2500, {
+  cjkFace: () => (window.QingCodeNative ? createCjkFontFace(window.FontFace) : null),
+});
 document.documentElement.lang = initLocale(localStorage, navigator) === 'en' ? 'en' : 'zh-CN';
 translateDocument(document.body);
 // 语言切换：立即生效。原生 WebView 拦截了页面内跳转，location.reload() 不会真正重载，
@@ -1282,7 +1285,7 @@ function makeTerminal() {
     allowProposedApi: true,
     fontSize: settings.fontSize(),
     lineHeight: 1.2,
-    // 技术符号用内置符号字体，中文用略微放大的系统中文字体填满两格（见 app.css @font-face），其余用系统等宽字体。
+    // 技术符号用内置符号字体，中文用略微放大的系统中文字体填满两格（Android 上由 terminalFont.js 注册），其余用系统等宽字体。
     fontFamily: "'QingCode Symbols', 'QingCode CJK', monospace",
     scrollback: 10000,
     cursorBlink: true,
