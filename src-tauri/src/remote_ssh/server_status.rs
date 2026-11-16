@@ -572,6 +572,9 @@ fn apply_kept_daemon(state: &mut SshServerState, kept: &server::KeptDaemon) {
 
 fn emit_state(app: &AppHandle, manager: &SshManager, state: &SshServerState) {
     if manager.record_server_snapshot(state) {
+        if let Some(pools) = app.try_state::<super::local_terminal::ConnectionShellPools>() {
+            pools.changed();
+        }
         let _ = app.emit(SSH_SERVER_STATE_EVENT, state);
     }
 }

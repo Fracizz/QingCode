@@ -19,8 +19,12 @@ export async function saveShellPrewarmCount(value: ShellPrewarmCount): Promise<v
   await saveGlobalSettings(settings)
   notifyShellPrewarmChanged()
 }
-export function notifyShellPrewarmChanged() {
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SHELL_PREWARM_CHANGED_EVENT))
+export type ShellPrewarmChangeSource = 'settings' | 'project-switch'
+
+export function notifyShellPrewarmChanged(source: ShellPrewarmChangeSource = 'settings') {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SHELL_PREWARM_CHANGED_EVENT, { detail: source }))
+  }
 }
 
 /** 用预先分配的身份创建标签；未命中/功能不可用时立即走正常新建。 */

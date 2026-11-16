@@ -1,19 +1,13 @@
-//! Windows 普通 Shell 的全应用空闲池。每个连接只持有一个 transient PTY，
+//! Windows 普通 Shell 的空闲池。每个预热会话持有一个 transient PTY，
 //! 未领取时关闭连接即可由 daemon 回收；正式终端仍走原有持久化链路。
 //!
-//! 目标二选一：本机 Windows 项目（本机 PTY 宿主），或远端为 Windows 的 SSH
-//! Server 模式项目（远端 daemon）。Linux 远端与 SSH 直连模式不预热。
-//!
-//! 预热项按主机复用：同一主机（本机或同一条 SSH 连接）上启动参数相同即可领取，
-//! 切换到同机的其他项目时不清空。领取到别的项目目录时，经 PowerShell 启动通道先
-//! `Set-Location` 再出提示符；远端还要让 daemon 改记 PTY 目录（`pty.claimCwd`），
-//! 接回、找回与结束时的项目根校验才会以新目录为准。
-//!
-//! 切到另一主机（本机 ↔ SSH、换连接，或切到不预热的项目）时，为上一个主机保留 1 个
-//! 空闲项，来回切换后立即新建也能命中；它不补充，再换到第三个主机时回收。
+//! 本机目标由项目窗口协调；远端由 connections 按已认证连接补充，空闲时在用户主目录，
+//! 领取时确认项目目录后才交付启动命令。
+mod connections;
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest};
+pub(crate) use connections::ConnectionShellPools;
 use qingcode_server::ipc::{IpcEndpoint, IpcStream};
 use std::time::Instant;
 use tauri::Manager;
@@ -59,18 +53,20 @@ fn local_launch_key(
     Ok((cwd.to_string_lossy().into_owned(), launch, key))
 }
 
-/// 远端目标：PTY 在配置时校验过的项目内目录中启动。
+/// 远端目标：已认证的 daemon 和允许打开传输的受信任项目根。
 #[derive(Clone)]
 struct RemoteTarget {
     root: RegisteredRoot,
     connection_id: String,
-    working_directory: String,
+    daemon: server::DaemonAccess,
+    incarnation: Option<Arc<()>>,
+    direct_peer: Option<(String, String)>,
 }
 
 #[derive(Clone)]
 struct Target {
     project_path: String,
-    /// 新预热项的启动目录：本机为规范化路径，远端为 `ssh://` 资源。
+    /// 新预热项的启动目录：本机为规范化路径，远端为空，表示由 daemon 在用户主目录启动。
     cwd: String,
     key: LaunchKey,
     launch: PersistentLaunch,
@@ -92,18 +88,28 @@ struct WarmShell {
     startup_pipe: Option<IpcStream>,
     /// 远端 PowerShell 预热项在 profile 后停住，等领取方经 PTY 输入交付一行（可为空）。
     startup_input: bool,
+    marker: String,
+    from_seq: u64,
     session: Option<DaemonSession>,
     transport: Option<SessionTransport>,
     reserved_at: Option<Instant>,
 }
 impl WarmShell {
-    /// 能否领取到同主机的其他目录：要有不回显的启动通道先切换目录；远端还要 daemon
-    /// 改记 PTY 目录，否则接回时的项目根校验会拒绝。CMD 没有启动通道，只能原目录领取。
+    /// 远端先切换目录并由 daemon 改记 PTY 工作目录，供接回时验证项目根。
     fn can_rebind(&self) -> bool {
         match &self.remote {
             None => self.startup_pipe.is_some(),
-            Some(_) => self.startup_input && self.claim_cwd,
+            Some(_) => {
+                self.claim_cwd && (self.startup_input || self.launch.resolved_shell == "cmd")
+            }
         }
+    }
+
+    fn alive(&mut self) -> bool {
+        let Some(session) = &mut self.session else {
+            return true;
+        };
+        session.closed_reason().is_none() && !session.idle_pty_exited(&self.pty_id)
     }
 
     fn has_startup_channel(&self) -> bool {
@@ -135,39 +141,6 @@ struct PoolState {
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
-
-/// 换主机时为上一个主机保留的空闲项数。
-const PREVIOUS_HOST_KEEP: usize = 1;
-
-impl PoolState {
-    /// 换补充目标时整理池，返回回收数量。保留：未过期的预留项（正在领取）；新目标键的
-    /// 空闲项（此前换走时保留的，最多 `count` 个）；目标换到另一主机或不预热时，上一个
-    /// 目标键的空闲项 1 个。其余回收。
-    fn retarget(&mut self, next: Option<(&LaunchKey, usize)>) -> usize {
-        let previous = self
-            .target
-            .as_ref()
-            .filter(|target| next.is_none_or(|(key, _)| key.host != target.key.host))
-            .map(|target| target.key.clone());
-        let before = self.shells.len();
-        let (mut kept_next, mut kept_previous) = (0, 0);
-        self.shells.retain(|entry| {
-            if let Some(at) = entry.reserved_at {
-                return at.elapsed() < RESERVATION_TTL;
-            }
-            if let Some((_, count)) = next.filter(|(key, _)| entry.key == **key) {
-                kept_next += 1;
-                return kept_next <= count;
-            }
-            if previous.as_ref().is_some_and(|key| entry.key == *key) {
-                kept_previous += 1;
-                return kept_previous <= PREVIOUS_HOST_KEEP;
-            }
-            false
-        });
-        before - self.shells.len()
-    }
-}
 
 /// auto 固定保留 1 个：领取后会立即补充，常驻更多只对极快的连续新建有帮助。
 fn resolve_count(value: &serde_json::Value) -> usize {
@@ -215,12 +188,71 @@ fn remote_launch_key(
     Ok((launch, key))
 }
 
-/// 远端项目仍已注册、已信任、根未变化且仍是 Server 模式。
+impl RemoteTarget {
+    fn connected(manager: &SshManager, id: &str, root: &RegisteredRoot) -> Option<Self> {
+        if !manager.connection_is_open(id) || !manager.server_mode(id) {
+            return None;
+        }
+        let direct = manager.direct_config(id);
+        let direct_peer = direct
+            .as_ref()
+            .map(|cfg| (cfg.endpoint.clone(), cfg.certificate_fingerprint.clone()));
+        let daemon = match direct {
+            Some(config) => server::DaemonAccess {
+                bin: "direct".into(),
+                token: config.token,
+            },
+            None => {
+                manager
+                    .server_slot(&server::server_slot_key(id, &root.canonical_path))
+                    .and_then(|s| s.endpoint)?
+                    .daemon?
+            }
+        };
+        let incarnation = manager
+            .session(id)
+            .ok()
+            .map(|s| s.server_incarnation.clone());
+        Some(Self {
+            root: root.clone(),
+            connection_id: id.into(),
+            daemon,
+            incarnation,
+            direct_peer,
+        })
+    }
+
+    fn same_connection(&self, other: &Self) -> bool {
+        self.connection_id == other.connection_id
+            && self.direct_peer == other.direct_peer
+            && self.daemon == other.daemon
+            && match (&self.incarnation, &other.incarnation) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
 fn remote_target_valid(manager: &SshManager, remote: &RemoteTarget) -> bool {
-    manager.server_mode(&remote.connection_id)
-        && manager
-            .registered_root(&remote.root.uri)
-            .is_ok_and(|root| root.trusted && root.canonical_path == remote.root.canonical_path)
+    manager
+        .registered_root(&remote.root.uri)
+        .ok()
+        .filter(|root| root.trusted && root.canonical_path == remote.root.canonical_path)
+        .and_then(|root| RemoteTarget::connected(manager, &remote.connection_id, &root))
+        .is_some_and(|binding| binding.same_connection(remote))
+}
+
+impl PoolState {
+    fn prune_idle(&mut self) -> usize {
+        let before = self.shells.len();
+        self.shells.retain_mut(|entry| {
+            entry.alive()
+                && entry
+                    .reserved_at
+                    .is_none_or(|at| at.elapsed() < RESERVATION_TTL)
+        });
+        before - self.shells.len()
+    }
 }
 
 impl ShellPrewarmPool {
@@ -262,131 +294,134 @@ impl ShellPrewarmPool {
         self.1.notify_waiters();
     }
 
-    /// 窗口切到不预热的项目（Linux 远端、SSH 直连等）：停止补充，但为上一个主机保留 1 个空闲项。
-    fn retire_window(&self, window: &str) {
-        let Some(mut state) = self.lock_for_window(window) else {
-            return;
-        };
-        if state.target.is_none() {
-            return;
-        }
-        let dropped = state.retarget(None);
-        trace(
-            "retired",
-            serde_json::json!({"window": window, "dropped": dropped, "kept": state.shells.len()}),
-        );
-        state.target = None;
-        state.generation += 1;
-        state.preparing = false;
-        state.paused_reason = None;
-        self.1.notify_waiters();
+    fn stop(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        self.clear(&mut state, "connection");
+        self.2.notify_one();
     }
 
-    pub(crate) async fn configure(
+    pub(crate) fn configure(
         &self,
-        app: AppHandle,
-        window: String,
+        app: &AppHandle,
+        window: &str,
         cwd: Option<String>,
         shell: Option<String>,
         count: serde_json::Value,
     ) -> Result<usize, String> {
-        if self.lock_for_window(&window).is_none() {
+        let Some(mut state) = self.lock_for_window(window) else {
+            return Ok(0);
+        };
+        let count = resolve_count(&count);
+        if let Some(shell) = &shell {
+            app.state::<ConnectionShellPools>()
+                .configure(app, shell, count);
+        }
+        // A projectless or remote-only window may update the global setting while
+        // another window still owns the local project. Keep that project's budget.
+        let local_owner = state.target.as_ref().map(|t| t.window.as_str());
+        let owns_local = local_owner.is_none_or(|owner| owner == window);
+        if count == 0 || shell.as_deref() == Some("wsl") {
+            if shell.is_some() || owns_local {
+                self.clear(&mut state, window);
+            }
             return Ok(0);
         }
-        let count = resolve_count(&count);
-        let Some(cwd) = cwd.filter(|_| count > 0) else {
-            self.clear_window(&window);
-            return Ok(0);
-        };
-        let (target_cwd, key, launch, remote) = if cwd.starts_with(SSH_URI_PREFIX) {
-            let manager = app.state::<SshManager>();
-            let Some(connection_id) = remote_windows_connection(&manager, &cwd) else {
-                self.retire_window(&window);
-                return Ok(0);
-            };
-            let root = manager.root_for_uri(&cwd, true)?;
-            let parsed = parse_remote_uri(&cwd)?;
-            let sftp = manager.open_sftp(&connection_id).await?;
-            let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
-            let (launch, key) = remote_launch_key(&cwd, shell.as_deref())?;
-            let remote = RemoteTarget {
-                root,
-                connection_id,
-                working_directory,
-            };
-            (cwd.clone(), key, launch, Some(remote))
-        } else {
-            if !cfg!(windows) {
-                self.retire_window(&window);
+        let (cwd, owner) = match cwd.filter(|path| !path.starts_with(SSH_URI_PREFIX)) {
+            Some(path) if cfg!(windows) => (path, window.to_owned()),
+            _ if !owns_local => {
+                let target = state.target.as_ref().unwrap();
+                (target.project_path.clone(), target.window.clone())
+            }
+            _ => {
+                self.clear(&mut state, window);
                 return Ok(0);
             }
-            app.state::<PathAllowlist>().ensure_executable(&cwd)?;
-            let (target_cwd, launch, key) = local_launch_key(&cwd, shell.as_deref())?;
-            (target_cwd, key, launch, None)
         };
-        // 远端 SFTP 校验期间可能发生窗口移交，提交配置与归属检查共用一把锁。
-        let Some(mut state) = self.lock_for_window(&window) else {
-            return Ok(0);
-        };
-        // 同主机换项目只移动补充目标，已就绪项保留，切换目录后仍可领取。
-        let changed = state.target.as_ref().is_none_or(|target| {
-            target.key != key || target.count != count || target.window != window
-        });
-        let moved = !changed
-            && state
-                .target
-                .as_ref()
-                .is_some_and(|target| target.cwd != target_cwd);
-        // 换主机时保留上一个主机的 1 个空闲项，以及此前为新主机保留的项。
-        let dropped = if changed {
-            state.retarget(Some((&key, count)))
-        } else {
-            0
-        };
-        trace(
-            "configured",
-            serde_json::json!({
-                "window": window, "count": count, "remote": remote.is_some(),
-                "changed": changed, "moved": moved, "dropped": dropped,
-                "kept": if changed { state.shells.len() } else { 0 },
-            }),
+        app.state::<PathAllowlist>().ensure_executable(&cwd)?;
+        let (target_cwd, launch, key) = local_launch_key(&cwd, shell.as_deref())?;
+        self.set_target(
+            app,
+            &mut state,
+            Target {
+                project_path: cwd,
+                cwd: target_cwd,
+                key,
+                launch,
+                count,
+                window: owner,
+                remote: None,
+            },
         );
+        Ok(count)
+    }
+
+    fn configure_target(&self, app: &AppHandle, target: Target) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        self.set_target(app, &mut state, target);
+    }
+
+    fn set_target(&self, app: &AppHandle, state: &mut PoolState, target: Target) {
+        let same_transport = match (
+            state.target.as_ref().and_then(|t| t.remote.as_ref()),
+            &target.remote,
+        ) {
+            (Some(a), Some(b)) => a.same_connection(b),
+            (None, None) => true,
+            _ => false,
+        };
+        let changed = !same_transport
+            || state.target.as_ref().is_none_or(|old| {
+                old.key != target.key || old.count != target.count || old.window != target.window
+            });
         if changed {
+            if !same_transport {
+                state.shells.clear();
+            }
+            state.shells.retain(|entry| {
+                entry.key == target.key
+                    && entry
+                        .reserved_at
+                        .is_none_or(|at| at.elapsed() < RESERVATION_TTL)
+            });
+            state
+                .shells
+                .sort_by_key(|entry| entry.reserved_at.is_none());
+            state.shells.truncate(target.count);
+            trace(
+                "configured",
+                serde_json::json!({"count": target.count, "remote":target.remote.is_some()}),
+            );
             state.generation += 1;
             state.preparing = false;
             state.paused_reason = None;
             self.1.notify_waiters();
+            self.2.notify_one();
         }
-        state.target = Some(Target {
-            project_path: cwd,
-            cwd: target_cwd,
-            key,
-            launch,
-            count,
-            window,
-            remote,
-        });
+        state.target = Some(target);
         if !state.running {
             state.running = true;
             let pool = self.clone();
+            let app = app.clone();
             tauri::async_runtime::spawn(async move { pool.run(app).await });
         }
-        Ok(count)
     }
 
     pub(crate) fn status(&self, cwd: &str) -> serde_json::Value {
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(target) = state.target.as_ref().filter(|t| t.project_path == cwd) else {
+        let Some(target) = state.target.as_ref().filter(|t| {
+            t.project_path == cwd
+                || t.remote
+                    .as_ref()
+                    .is_some_and(|r| remote_uri_connection_id(cwd) == Some(&r.connection_id))
+        }) else {
             return serde_json::json!({"target": 0, "ready": 0, "preparing": 0, "reserved": 0,
                 "reason": if state.target.is_some() { "other_project" } else { "no_target" }});
         };
-        let ready = state
-            .shells
-            .iter()
-            .filter(|s| s.reserved_at.is_none())
-            .count();
+        let matching = state.shells.iter().filter(|s| s.key == target.key);
+        let ready = matching.clone().filter(|s| s.reserved_at.is_none()).count();
+        let reserved = matching.count() - ready;
         serde_json::json!({"target": target.count, "ready": ready, "preparing": usize::from(state.preparing),
-            "reserved": state.shells.len() - ready, "reason": state.paused_reason})
+            "reserved": reserved, "reason": state.paused_reason})
     }
 
     pub(crate) fn reserve(
@@ -399,7 +434,6 @@ impl ShellPrewarmPool {
         let attempt = || {
             {
                 let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                // 没有补充目标时仍可能留着上一个主机的空闲项。
                 if state.shells.is_empty() {
                     return Err(if state.target.is_none() {
                         "no_target"
@@ -459,8 +493,10 @@ impl ShellPrewarmPool {
         has_startup: bool,
     ) -> Result<String, &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        // Reconfiguring the pool invalidates all entries. Every idle shell shares its target's launch key.
-        // 池里可能同时有上一个主机保留的项，先按主机挑出可比较的空闲项。
+        // A dead primary must not hide a ready standby before the next maintenance tick.
+        if state.prune_idle() > 0 {
+            self.2.notify_one();
+        }
         let mut idle_entries = state
             .shells
             .iter()
@@ -585,8 +621,7 @@ impl ShellPrewarmPool {
 
     /// 远端 SSH 项目领取：同一连接上启动参数一致即可。`launch` 是不带启动命令的
     /// 普通 Shell 参数（复用键），配置终端的命令经 `startup` 在接回后通过 PTY 输入交付。
-    /// `working_directory` 是调用方已校验在 `root` 内的目录；预热项在别的项目目录时，
-    /// 领取请 daemon 改记目录，接回后先切换过去。
+    /// Shell 确认进入已校验的项目目录后才领取，并让 daemon 记录该目录以供接回。
     /// 未命中返回 None 走正常新建；命令交付失败返回错误，不再冷启动，避免执行两次。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take_remote(
@@ -612,48 +647,58 @@ impl ShellPrewarmPool {
             return None;
         };
         let remote = entry.remote.as_ref()?;
-        let rebind = entry.cwd != cwd;
-        let valid = if rebind {
-            // 新目录已由调用方按 `root` 校验；预热项只是同一连接上的普通 Shell。
-            root.trusted && manager.server_mode(&remote.connection_id)
-        } else {
-            remote.root.uri == root.uri
-                && remote.root.canonical_path == root.canonical_path
-                && remote_target_valid(manager, remote)
+        if startup.is_some() && !entry.has_startup_channel() {
+            return None;
+        }
+        let current = match manager.root_for_uri(cwd, true) {
+            Ok(current)
+                if current.uri == root.uri && current.canonical_path == root.canonical_path =>
+            {
+                current
+            }
+            _ => return Some(Err("预热领取期间项目授权已变化".into())),
         };
-        if !valid {
-            trace(
-                "take_miss",
-                serde_json::json!({"remote": true, "reason": "root"}),
-            );
+        if !RemoteTarget::connected(manager, &remote.connection_id, root)
+            .is_some_and(|binding| binding.same_connection(remote))
+        {
             return None;
         }
-        if (startup.is_some() || rebind) && !entry.startup_input {
-            trace(
-                "take_miss",
-                serde_json::json!({"remote": true, "reason": "startup_unsupported"}),
-            );
-            return None;
+        let directory = native?;
+        let line = directory_input(&directory, entry.startup_input)?;
+        match entry
+            .session
+            .as_mut()?
+            .enter_prewarm_directory(&entry.pty_id, &entry.marker, line)
+            .await
+        {
+            Ok(seq) => entry.from_seq = seq,
+            Err(_) => {
+                trace("cwd_failed", serde_json::json!({"remote": true}));
+                return None;
+            }
         }
-        if rebind {
-            // 之后的接回、清理与结束都按新项目的根校验。
-            entry.remote = Some(RemoteTarget {
-                root: root.clone(),
-                connection_id: remote.connection_id.clone(),
-                working_directory: working_directory.to_string(),
-            });
+        // Trust and the authenticated connection may change while awaiting the PTY.
+        let binding = RemoteTarget {
+            root: current.clone(),
+            ..remote.clone()
+        };
+        if !remote_target_valid(manager, &binding) {
+            return Some(Err("预热领取期间项目授权或远程连接已变化".into()));
         }
-        let script = claim_script(native.as_deref().filter(|_| rebind), startup);
+        entry.remote.as_mut()?.root = current;
         let startup_input = entry.startup_input;
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
         let name = daemon_terminal_name(id, launch.name.as_deref());
-        let claim_cwd = rebind.then(|| working_directory.to_string());
+        let claim_cwd = Some(working_directory.to_string());
         let result = self
             .attach(id, entry, name, claim_cwd, size, app, manager)
             .await?;
-        if startup_input {
-            // 已接回才交付；空行即普通 Shell。写入排在用户的任何输入之前。
-            let line = remote_startup_line(script.as_deref().unwrap_or_default());
+        {
+            let line = if startup_input {
+                remote_input_line(startup.unwrap_or_default().trim())
+            } else {
+                b"@set \"QINGCODE_PREWARM_NONCE=\" & cls\r".to_vec()
+            };
             let terminal = manager
                 .persistent_terminals
                 .read()
@@ -663,22 +708,17 @@ impl ShellPrewarmPool {
             if !matches!(delivered, Some(Ok(()))) {
                 trace(
                     "startup_failed",
-                    serde_json::json!({"remote": true, "command": startup.is_some(), "rebind": rebind}),
+                    serde_json::json!({"remote": true, "command": startup.is_some(), "rebind": true}),
                 );
-                if script.is_some() {
-                    let removed = manager
-                        .persistent_terminals
-                        .write()
-                        .ok()
-                        .and_then(|mut terminals| terminals.remove(id));
-                    if let Some(terminal) = removed {
-                        let _ = terminal.kill().await;
-                    }
-                    // 只差切换目录时命令尚未执行，可安全改走正常新建。
-                    return startup
-                        .is_some()
-                        .then(|| Err("预热 PowerShell 启动命令交付失败".to_string()));
+                let terminal = manager
+                    .persistent_terminals
+                    .write()
+                    .ok()
+                    .and_then(|mut t| t.remove(id));
+                if let Some(terminal) = terminal {
+                    let _ = terminal.kill().await;
                 }
+                return Some(Err("预热 Shell 启动命令交付失败".to_string()));
             }
         }
         record_hit(id, true);
@@ -734,7 +774,7 @@ impl ShellPrewarmPool {
                 connection_id,
                 client_id,
                 Some(size),
-                Some(0),
+                Some(entry.from_seq),
                 transport,
                 session,
                 app,
@@ -804,17 +844,9 @@ impl ShellPrewarmPool {
             changed.as_mut().enable();
             let (target, generation) = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                let before = state.shells.len();
-                state.shells.retain(|entry| {
-                    entry
-                        .reserved_at
-                        .is_none_or(|at| at.elapsed() < RESERVATION_TTL)
-                });
-                if state.shells.len() < before {
-                    trace(
-                        "reservation_expired",
-                        serde_json::json!({"dropped": before - state.shells.len()}),
-                    );
+                let dropped = state.prune_idle();
+                if dropped > 0 {
+                    trace("expired", serde_json::json!({"dropped": dropped}));
                 }
                 let Some(target) = state.target.clone() else {
                     state.running = false;
@@ -843,19 +875,14 @@ impl ShellPrewarmPool {
                     }
                 }
             };
-            {
+            let needs_another = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.generation != generation {
                     continue;
                 }
                 if let Some(reason) = paused_reason {
-                    // 内存紧张回收全部；目标不可用只回收目标主机的项，上一个主机保留的项照常可领。
                     let before = state.shells.len();
-                    if reason == "memory_pressure" {
-                        state.shells.clear();
-                    } else {
-                        state.shells.retain(|entry| entry.key != target.key);
-                    }
+                    state.shells.clear();
                     if state.paused_reason != Some(reason) {
                         trace(
                             "unusable",
@@ -873,7 +900,8 @@ impl ShellPrewarmPool {
                     continue;
                 }
                 state.preparing = true;
-            }
+                target_shells + 1 < target.count
+            };
             let started = Instant::now();
             let remote = target.remote.is_some();
             let entry = tokio::select! {
@@ -882,7 +910,7 @@ impl ShellPrewarmPool {
                     trace("create_cancelled", serde_json::json!({"remote": remote, "ms": started.elapsed().as_millis() as u64}));
                     continue;
                 }
-                entry = create_warm_shell(&app, &manager, &target) => entry,
+                entry = create_warm_shell(&manager, &target) => entry,
             };
             let ms = started.elapsed().as_millis() as u64;
             if let Ok(entry) = entry {
@@ -891,6 +919,9 @@ impl ShellPrewarmPool {
                     state.preparing = false;
                     trace("ready", serde_json::json!({"remote": remote, "ms": ms}));
                     state.shells.push(entry);
+                    if needs_another {
+                        self.2.notify_one();
+                    }
                 } else {
                     trace("stale", serde_json::json!({"remote": remote, "ms": ms}));
                 }
@@ -960,26 +991,93 @@ fn claim_script(directory: Option<&str>, startup: Option<&str>) -> Option<String
     })
 }
 
+impl DaemonSession {
+    pub(in crate::remote_ssh::server::terminal) async fn enter_prewarm_directory(
+        &mut self,
+        pty_id: &str,
+        marker: &str,
+        line: Vec<u8>,
+    ) -> Result<u64, String> {
+        tokio::time::timeout(REMOTE_CLAIM_TIMEOUT, async {
+            send_input_to_session(self, pty_id, &AtomicU64::new(0), line)
+                .await
+                .map_err(|e| e.0)?;
+            self.wait_shell_marker(pty_id, marker, "cwd").await
+        })
+        .await
+        .map_err(|_| "等待预热 Shell 确认工作目录超时".to_string())?
+    }
+    // ConPTY 可在任意字节处拆帧。只保留标记长度的后缀，不缓存 profile 的输出。
+    pub(in crate::remote_ssh::server::terminal) async fn wait_shell_marker(
+        &mut self,
+        pty_id: &str,
+        nonce: &str,
+        phase: &str,
+    ) -> Result<u64, String> {
+        let expected = format!("QC-{nonce}-{phase}!");
+        let failed = format!("QC-{nonce}-error!");
+        let keep = expected.len().max(failed.len()) - 1;
+        let mut tail = Vec::new();
+        let events = self.events_mut().ok_or("预热会话没有事件流")?;
+        while let Some(event) = events.recv().await {
+            match event {
+                Event::PtyData { id, seq, data, .. } if id == pty_id => {
+                    tail.extend(data);
+                    if tail.windows(failed.len()).any(|s| s == failed.as_bytes()) {
+                        return Err("远端 Shell 无法进入已校验的项目目录".into());
+                    }
+                    if tail
+                        .windows(expected.len())
+                        .any(|s| s == expected.as_bytes())
+                    {
+                        return Ok(seq + 1);
+                    }
+                    tail.drain(..tail.len().saturating_sub(keep));
+                }
+                Event::PtyExit { id, .. } if id == pty_id => break,
+                _ => {}
+            }
+        }
+        Err("远端预热 Shell 已退出或连接已关闭".into())
+    }
+}
+
 /// 远端预热 PowerShell 读取的一行：UTF-8 命令的 base64（只含可打印 ASCII，ReadKey 不回显），
 /// 以回车结束；空命令只发回车，进入普通提示符。
-fn remote_startup_line(command: &str) -> Vec<u8> {
+pub(in crate::remote_ssh::server::terminal) fn remote_input_line(command: &str) -> Vec<u8> {
     use base64::Engine;
     let mut line = base64::engine::general_purpose::STANDARD
-        .encode(command.trim())
+        .encode(command)
         .into_bytes();
     line.push(b'\r');
     line
 }
 
+fn directory_input(directory: &str, powershell: bool) -> Option<Vec<u8>> {
+    if powershell {
+        return Some(remote_input_line(directory));
+    }
+    // CMD expands percent variables even inside quotes. Use normal creation for
+    // paths the command parser cannot represent literally.
+    if directory.contains(['%', '"', '!', '\r', '\n']) || directory.chars().any(char::is_control) {
+        return None;
+    }
+    Some(format!("@cd /d \"{directory}\" && echo QC-%QINGCODE_PREWARM_NONCE%-cwd! || echo QC-%QINGCODE_PREWARM_NONCE%-error!\r").into_bytes())
+}
+
 /// 远端 PowerShell 预热参数：在原 UTF-8 设置之后等待领取方交付启动命令。
-/// CMD 无法不回显地读取输入，保持原参数，不支持配置命令。
+/// CMD 使用普通输入确认目录，仅支持普通终端。
 pub(crate) fn remote_ready_args(launch: &PersistentLaunch) -> (Vec<String>, bool) {
     let mut args = launch.args.clone();
     let count = args.len();
-    if launch.resolved_shell == "cmd"
-        || count < 2
-        || !args[count - 2].eq_ignore_ascii_case("-Command")
-    {
+    if launch.resolved_shell == "cmd" {
+        if let Some(setup) = args.last_mut() {
+            setup.push_str(" & echo QC-%QINGCODE_PREWARM_NONCE%-ready!");
+        }
+        args.insert(0, "/V:OFF".into());
+        return (args, false);
+    }
+    if count < 2 || !args[count - 2].eq_ignore_ascii_case("-Command") {
         return (args, false);
     }
     let last = &mut args[count - 1];
@@ -1014,13 +1112,9 @@ impl Drop for ReadyDirectory {
     }
 }
 
-async fn create_warm_shell(
-    app: &AppHandle,
-    manager: &SshManager,
-    target: &Target,
-) -> Result<WarmShell, String> {
+async fn create_warm_shell(manager: &SshManager, target: &Target) -> Result<WarmShell, String> {
     match &target.remote {
-        Some(remote) => create_remote_warm_shell(app, manager, target, remote).await,
+        Some(remote) => create_remote_warm_shell(manager, target, remote).await,
         None => create_local_warm_shell(manager, target).await,
     }
 }
@@ -1041,6 +1135,8 @@ async fn create_local_warm_shell(
         remote: None,
         startup_pipe: None,
         startup_input: false,
+        marker: String::new(),
+        from_seq: 0,
         session: Some(session),
         transport: None,
         reserved_at: None,
@@ -1106,29 +1202,30 @@ async fn create_local_warm_shell(
     Ok(entry)
 }
 
-/// 远端无法观察本机标记文件：PTY 创建成功即入池，profile 在后台继续加载，
-/// 提前领取时用户直接看到加载中的 Shell，仍比冷启动快。PowerShell 加载完 profile 后
-/// 停在不回显的读行上，领取后由 `take_remote` 交付启动命令或空行。
+/// 连接已认证且具有就绪 daemon；不在后台触发部署或重新登录。
 async fn create_remote_warm_shell(
-    app: &AppHandle,
     manager: &SshManager,
     target: &Target,
     remote: &RemoteTarget,
 ) -> Result<WarmShell, String> {
-    let endpoint = server::require_server_endpoint(app, manager, &remote.root, true).await?;
-    let daemon = endpoint
-        .daemon
-        .as_ref()
-        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
     let client_id = manager.daemon_client_id(&remote.connection_id);
     let (transport, session) = open_terminal_daemon_session(
         manager,
         &remote.connection_id,
         &remote.root.uri,
         &client_id,
-        daemon,
+        &remote.daemon,
     )
     .await?;
+    prepare_remote_shell(target, remote, transport, session).await
+}
+
+async fn prepare_remote_shell(
+    target: &Target,
+    remote: &RemoteTarget,
+    transport: SessionTransport,
+    session: DaemonSession,
+) -> Result<WarmShell, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
         id,
@@ -1140,6 +1237,8 @@ async fn create_remote_warm_shell(
         remote: Some(remote.clone()),
         startup_pipe: None,
         startup_input: false,
+        marker: String::new(),
+        from_seq: 0,
         session: Some(session),
         transport: Some(transport),
         reserved_at: None,
@@ -1149,14 +1248,22 @@ async fn create_remote_warm_shell(
         crate::terminal::terminal_identity_env(&entry.id)
             .map(|(key, value)| (key.to_string(), value)),
     );
+    if !entry.claim_cwd {
+        return Err("远端 daemon 不支持预热终端切换目录".into());
+    }
+    entry.marker = uuid::Uuid::new_v4().simple().to_string();
+    env.insert("QINGCODE_PREWARM_NONCE".into(), entry.marker.clone());
     let (args, startup_input) = remote_ready_args(&target.launch);
+    if !startup_input && target.launch.resolved_shell != "cmd" {
+        return Err("该远端 Shell 不支持连接预热".into());
+    }
     entry.startup_input = startup_input;
     let session = entry.session.as_mut().unwrap();
     let response = session
         .request(
             "pty.createTransient",
             &serde_json::json!({
-                "cwd": remote.working_directory, "shell": target.launch.shell, "env": env,
+                "shell": target.launch.shell, "env": env,
                 "args": args, "cols": 120, "rows": 30,
             }),
         )
@@ -1166,6 +1273,12 @@ async fn create_remote_warm_shell(
         .and_then(|value| value.as_str())
         .ok_or("预热应答缺少 id")?
         .to_string();
+    entry.from_seq = tokio::time::timeout(
+        READY_TIMEOUT,
+        session.wait_shell_marker(&entry.pty_id, &entry.marker, "ready"),
+    )
+    .await
+    .map_err(|_| "远端 PowerShell profile 未在时限内就绪".to_string())??;
     Ok(entry)
 }
 

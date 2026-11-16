@@ -828,6 +828,7 @@ pub fn run() {
         )
         .manage(TerminalManager::new())
         .manage(remote_ssh::local_terminal::ShellPrewarmPool::default())
+        .manage(remote_ssh::local_terminal::ConnectionShellPools::default())
         .manage(mobile::MobileState::default())
         .manage(FileWatcherManager::new())
         .manage(git_push_sync::GitPushSyncManager::default())

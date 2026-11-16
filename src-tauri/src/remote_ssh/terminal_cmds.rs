@@ -489,22 +489,23 @@ pub(crate) async fn ssh_create_terminal_unchecked(
         launch.name = name;
         let size = (cols.unwrap_or(80), rows.unwrap_or(24));
         // 远端 Windows 预热命中时直接领取；未命中、过期或失败都走正常新建。
-        if let Some(result) = app
-            .state::<super::local_terminal::ShellPrewarmPool>()
-            .take_remote(
-                &id,
-                &cwd,
-                &working_directory,
-                &launch,
-                None,
-                &root,
-                size,
-                app.clone(),
-                &manager,
-            )
-            .await
-        {
-            return result;
+        if let Some(pool) = super::local_terminal::pool_for_cwd(&app, &cwd) {
+            if let Some(result) = pool
+                .take_remote(
+                    &id,
+                    &cwd,
+                    &working_directory,
+                    &launch,
+                    None,
+                    &root,
+                    size,
+                    app.clone(),
+                    &manager,
+                )
+                .await
+            {
+                return result;
+            }
         }
         return server::spawn_persistent_terminal(
             id,
@@ -696,22 +697,23 @@ pub(crate) async fn ssh_spawn_script_unchecked(
             let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
             launch.name = name.clone();
             let size = (cols.unwrap_or(80), rows.unwrap_or(24));
-            if let Some(result) = app
-                .state::<super::local_terminal::ShellPrewarmPool>()
-                .take_remote(
-                    &id,
-                    &cwd,
-                    &working_directory,
-                    &launch,
-                    Some(&target),
-                    &root,
-                    size,
-                    app.clone(),
-                    &manager,
-                )
-                .await
-            {
-                return result;
+            if let Some(pool) = super::local_terminal::pool_for_cwd(&app, &cwd) {
+                if let Some(result) = pool
+                    .take_remote(
+                        &id,
+                        &cwd,
+                        &working_directory,
+                        &launch,
+                        Some(&target),
+                        &root,
+                        size,
+                        app.clone(),
+                        &manager,
+                    )
+                    .await
+                {
+                    return result;
+                }
             }
         }
         let launch = if shell_kind == "interactive" {

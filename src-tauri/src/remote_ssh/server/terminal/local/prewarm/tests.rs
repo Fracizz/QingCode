@@ -57,15 +57,18 @@ fn remote_powershell_waits_for_a_hidden_startup_line_after_its_setup() {
 
     launch.resolved_shell = "cmd".into();
     launch.args = vec!["/K".into(), "chcp 65001>nul".into()];
-    assert_eq!(remote_ready_args(&launch), (launch.args.clone(), false));
+    let (args, startup) = remote_ready_args(&launch);
+    assert!(!startup);
+    assert!(args.last().unwrap().contains("-ready!"));
+    assert!(directory_input(r"C:\work\%PATH%", false).is_none());
 }
 
 #[test]
 fn remote_startup_line_is_printable_base64_ending_with_enter() {
     use base64::Engine;
-    assert_eq!(remote_startup_line(""), b"\r".to_vec());
-    assert_eq!(remote_startup_line("   "), b"\r".to_vec());
-    let line = remote_startup_line(" claude --resume; echo 中文 ");
+    assert_eq!(remote_input_line(""), b"\r".to_vec());
+
+    let line = remote_input_line(" claude --resume; echo 中文 ");
     assert_eq!(line.last(), Some(&b'\r'));
     let body = &line[..line.len() - 1];
     assert!(body.iter().all(|byte| byte.is_ascii_graphic()));
@@ -74,7 +77,7 @@ fn remote_startup_line_is_printable_base64_ending_with_enter() {
         .unwrap();
     assert_eq!(
         String::from_utf8(decoded).unwrap(),
-        "claude --resume; echo 中文"
+        " claude --resume; echo 中文 "
     );
 }
 
@@ -105,7 +108,7 @@ fn launch_key_separates_host_shell_arguments_and_environment_but_not_cwd() {
 const CWD: &str = r"C:\work\a";
 const OTHER_CWD: &str = r"C:\work\b";
 
-fn fake_shell() -> WarmShell {
+pub(super) fn fake_shell() -> WarmShell {
     let launch = PersistentLaunch {
         shell: Some("pwsh.exe".into()),
         args: vec![],
@@ -124,6 +127,8 @@ fn fake_shell() -> WarmShell {
         remote: None,
         startup_pipe: None,
         startup_input: false,
+        marker: String::new(),
+        from_seq: 0,
         session: None,
         transport: None,
         reserved_at: None,
@@ -322,7 +327,7 @@ fn remote_keys_follow_the_ssh_terminal_launch_and_never_match_local_paths() {
     assert!(key != LaunchKey::from_parts(None, &launch));
 }
 
-fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
+pub(super) fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
     let (launch, key) = remote_launch_key(cwd, None).unwrap();
     let path = parse_remote_uri(cwd).unwrap().path;
     WarmShell {
@@ -338,11 +343,18 @@ fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
                 canonical_path: path.clone(),
                 trusted: true,
             },
-            connection_id: "conn-1".into(),
-            working_directory: path,
+            connection_id: parse_remote_uri(cwd).unwrap().connection_id,
+            daemon: server::DaemonAccess {
+                bin: String::new(),
+                token: String::new(),
+            },
+            incarnation: None,
+            direct_peer: None,
         }),
         startup_pipe: None,
         startup_input: true,
+        marker: String::new(),
+        from_seq: 0,
         session: None,
         transport: None,
         reserved_at: None,
@@ -375,7 +387,7 @@ fn same_connection_shells_move_to_other_projects_only_when_the_daemon_can_rebind
     assert!(pool.take_key("warm-a", &key, project_b, true).is_some());
 }
 
-fn target_for(shell: &WarmShell, count: usize) -> Target {
+pub(super) fn target_for(shell: &WarmShell, count: usize) -> Target {
     Target {
         project_path: shell.cwd.clone(),
         cwd: shell.cwd.clone(),
@@ -387,71 +399,9 @@ fn target_for(shell: &WarmShell, count: usize) -> Target {
     }
 }
 
-fn with_id(mut shell: WarmShell, id: &str) -> WarmShell {
+pub(super) fn with_id(mut shell: WarmShell, id: &str) -> WarmShell {
     shell.id = id.into();
     shell
-}
-
-#[test]
-fn switching_hosts_keeps_one_idle_shell_for_the_previous_host() {
-    let local = fake_shell();
-    let remote = remote_shell("remote-1", "ssh://conn-1/C:/work/a", true);
-    let other_host = remote_launch_key("ssh://conn-2/C:/work/a", None).unwrap().1;
-    let (local_key, remote_key) = (local.key.clone(), remote.key.clone());
-    let mut state = PoolState {
-        target: Some(target_for(&local, 2)),
-        ..PoolState::default()
-    };
-    let mut reserved = with_id(fake_shell(), "local-reserved");
-    reserved.reserved_at = Some(Instant::now());
-    state.shells.extend([
-        with_id(fake_shell(), "local-1"),
-        with_id(fake_shell(), "local-2"),
-        reserved,
-    ]);
-    // 本机 → SSH：本机只留 1 个空闲项，正在领取的预留项不受影响。
-    assert_eq!(state.retarget(Some((&remote_key, 1))), 1);
-    let ids = |state: &PoolState| {
-        state
-            .shells
-            .iter()
-            .map(|s| s.id.clone())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(ids(&state), ["local-1", "local-reserved"]);
-    state.shells.retain(|shell| shell.reserved_at.is_none());
-    state.target = Some(target_for(&remote, 1));
-    state.shells.push(remote);
-    // SSH → 本机：此前保留的本机项沿用，SSH 也留 1 个。
-    assert_eq!(state.retarget(Some((&local_key, 2))), 0);
-    assert_eq!(ids(&state), ["local-1", "remote-1"]);
-    // 再换到第三个主机：只留上一个主机（本机）的 1 个。
-    state.target = Some(target_for(&state.shells[0], 2));
-    assert_eq!(state.retarget(Some((&other_host, 1))), 1);
-    assert_eq!(ids(&state), ["local-1"]);
-    // 切到不预热的项目同样保留上一个主机的 1 个。
-    state.target = Some(target_for(&state.shells[0], 1));
-    state.shells.push(with_id(fake_shell(), "local-2"));
-    assert_eq!(state.retarget(None), 1);
-    assert_eq!(ids(&state), ["local-1"]);
-}
-
-#[test]
-fn shells_kept_for_another_host_do_not_mask_matching_ones() {
-    let pool = ShellPrewarmPool::default();
-    let local = fake_shell();
-    let key = local.key.clone();
-    pool.0.lock().unwrap().shells.extend([
-        remote_shell("remote-1", "ssh://conn-1/C:/work/a", true),
-        local,
-    ]);
-    // 没有补充目标（切到了不预热的项目）时，保留项仍可领取。
-    assert_eq!(
-        pool.reserve_key(&key, CWD, false).as_deref(),
-        Ok("reserved-id")
-    );
-    let other = remote_launch_key("ssh://conn-2/C:/work/a", None).unwrap().1;
-    assert_eq!(pool.reserve_key(&other, CWD, false), Err("host_mismatch"));
 }
 
 #[test]
@@ -608,72 +558,154 @@ async fn powershell_switches_to_the_claiming_project_before_its_command() {
     }
 }
 
-/// 真实 ConPTY：远端预热脚本在 profile 后读取一行，执行命令且不回显 base64；空行进入普通 Shell。
+/// Drive the two-stage handoff through an isolated daemon and real Windows ConPTY.
 #[cfg(windows)]
-#[test]
-fn remote_powershell_runs_the_delivered_command_without_echoing_it() {
-    use std::io::{Read, Write};
-    use std::sync::mpsc;
-
-    for command in [
-        Some("[IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '已启动')"),
-        None,
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let output = dir.path().join("started.txt");
-        let pair = portable_pty::native_pty_system()
-            .openpty(portable_pty::PtySize {
-                rows: 30,
-                cols: 120,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_shells_enter_each_claiming_project_before_running_commands() {
+    use qingcode_server::daemon::{DaemonOptions, RunDir};
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = RunDir::resolve(Some(dir.path())).unwrap();
+    let options = DaemonOptions {
+        state_dir: Some(dir.path().into()),
+        ..Default::default()
+    };
+    let daemon = tokio::spawn(qingcode_server::daemon::run_async(options));
+    tokio::time::timeout(READY_TIMEOUT, async {
+        while !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut ready = Vec::new();
+    for shell in ["powershell", "powershell", "cmd", "powershell"] {
+        let entry = remote_shell("test", "ssh://conn-1/D:/anchor", true);
+        let mut target = target_for(&entry, 2);
+        (target.launch, target.key) = remote_launch_key(&target.project_path, Some(shell)).unwrap();
+        target.cwd.clear();
+        let stream = qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir()))
+            .await
             .unwrap();
-        let mut builder = portable_pty::CommandBuilder::new("powershell.exe");
-        builder.args([
-            "-NoProfile",
-            "-NoLogo",
-            "-Command",
-            &format!(
-                "{}; [IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '|done')",
-                include_str!("start-remote-profile.ps1")
-            ),
-        ]);
-        builder.env("QC_TEST_OUTPUT", &output);
-        let mut child = pair.slave.spawn_command(builder).unwrap();
-        drop(pair.slave);
-        let mut reader = pair.master.try_clone_reader().unwrap();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buffer = [0u8; 4096];
-            while let Ok(read) = reader.read(&mut buffer) {
-                if read == 0 || tx.send(buffer[..read].to_vec()).is_err() {
-                    break;
-                }
-            }
-        });
-        let mut writer = pair.master.take_writer().unwrap();
-        let line = remote_startup_line(command.unwrap_or_default());
-        writer.write_all(&line).unwrap();
-        writer.flush().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !std::fs::read_to_string(&output).is_ok_and(|text| text.ends_with("|done")) {
-            assert!(Instant::now() < deadline, "预热脚本未在时限内结束");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let _ = child.kill();
-        drop(writer);
-        drop(pair.master);
-        let echoed: Vec<u8> = rx.try_iter().flatten().collect();
-        let expected = if command.is_some() {
-            "已启动|done"
-        } else {
-            "|done"
-        };
-        assert_eq!(std::fs::read_to_string(&output).unwrap(), expected);
-        let body = String::from_utf8_lossy(&line[..line.len() - 1]).into_owned();
-        if !body.is_empty() {
-            assert!(!String::from_utf8_lossy(&echoed).contains(&body));
-        }
+        let session =
+            DaemonSession::open_local(stream, "test:windev", run_dir.read_token().unwrap())
+                .await
+                .unwrap();
+        let start = Instant::now();
+        let entry = prepare_remote_shell(
+            &target,
+            target.remote.as_ref().unwrap(),
+            SessionTransport::Local,
+            session,
+        )
+        .await
+        .unwrap();
+        println!("{shell} create-to-ready {:?}", start.elapsed());
+        ready.push(entry);
     }
+    for (i, mut entry) in ready.into_iter().enumerate() {
+        let path = dir.path().join(format!("项目 [{i}] & test"));
+        std::fs::create_dir(&path).unwrap();
+        let cwd = path.to_str().unwrap();
+        let session = entry.session.as_mut().unwrap();
+        let start = Instant::now();
+        if i == 3 {
+            let missing = path.join("missing");
+            assert!(session
+                .enter_prewarm_directory(
+                    &entry.pty_id,
+                    &entry.marker,
+                    remote_input_line(missing.to_str().unwrap())
+                )
+                .await
+                .is_err());
+            continue;
+        }
+        let from_seq = session
+            .enter_prewarm_directory(
+                &entry.pty_id,
+                &entry.marker,
+                directory_input(cwd, entry.startup_input).unwrap(),
+            )
+            .await
+            .unwrap();
+        session
+            .request(
+                "pty.claim",
+                &serde_json::json!({"id":entry.pty_id, "cwd":cwd}),
+            )
+            .await
+            .unwrap();
+        let attach = session.attach(&entry.pty_id, from_seq, true).await.unwrap();
+        let input_seq = AtomicU64::new(attach.response["nextInputSeq"].as_u64().unwrap());
+        let write = |line| send_input_to_session(session, &entry.pty_id, &input_seq, line);
+        let command = "[IO.File]::AppendAllText((Join-Path $PWD 'once.txt'), 'X')";
+        if entry.startup_input {
+            write(remote_input_line(if i == 0 { command } else { "" }))
+                .await
+                .unwrap();
+            if i != 0 {
+                write(format!("{command}\r").into_bytes()).await.unwrap();
+            }
+        } else {
+            write(b"@echo X>once.txt\r".to_vec()).await.unwrap();
+        }
+        let file = path.join("once.txt");
+        tokio::time::timeout(READY_TIMEOUT, async {
+            while !std::fs::read_to_string(&file).is_ok_and(|v| v.trim() == "X") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("command must execute once in the claiming project");
+        println!(
+            "{} claim-to-output {:?}",
+            entry.launch.resolved_shell,
+            start.elapsed()
+        );
+        session
+            .request("pty.kill", &serde_json::json!({"id":entry.pty_id}))
+            .await
+            .unwrap();
+    }
+    // Compare a plain terminal from pty.create to the same first filesystem effect.
+    let (launch, _) = remote_launch_key("ssh://conn-1/D:/anchor", Some("powershell")).unwrap();
+    let stream = qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir()))
+        .await
+        .unwrap();
+    let session = DaemonSession::open_local(stream, "test:windev", run_dir.read_token().unwrap())
+        .await
+        .unwrap();
+    let start = Instant::now();
+    let created = session
+        .request(
+            "pty.create",
+            &serde_json::json!({
+                "cwd":dir.path(), "shell":launch.shell, "args":launch.args, "cols":120, "rows":30,
+            }),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+    send_input_to_session(
+        &session,
+        id,
+        &AtomicU64::new(0),
+        b"[IO.File]::AppendAllText((Join-Path $PWD 'cold.txt'), 'X')\r".to_vec(),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(READY_TIMEOUT, async {
+        while !std::fs::read_to_string(dir.path().join("cold.txt")).is_ok_and(|v| v == "X") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    println!("powershell cold-create-to-output {:?}", start.elapsed());
+    session
+        .request("pty.kill", &serde_json::json!({"id":id}))
+        .await
+        .unwrap();
+    session.shutdown();
+    daemon.abort();
 }

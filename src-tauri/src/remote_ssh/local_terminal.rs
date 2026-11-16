@@ -6,8 +6,16 @@ use super::terminal_exit::TerminalExitAction;
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest, TerminalManager};
-pub(crate) use local_terminal::prewarm::ShellPrewarmPool;
+pub(crate) use local_terminal::prewarm::{ConnectionShellPools, ShellPrewarmPool};
 use tauri::Manager;
+
+pub(crate) fn pool_for_cwd(app: &AppHandle, cwd: &str) -> Option<ShellPrewarmPool> {
+    if cwd.starts_with(SSH_URI_PREFIX) {
+        app.state::<ConnectionShellPools>().for_cwd(cwd)
+    } else {
+        Some(app.state::<ShellPrewarmPool>().inner().clone())
+    }
+}
 
 fn fallback_result(mut result: TerminalSpawnResult, reason: Option<String>) -> TerminalSpawnResult {
     result.persistent_fallback_reason = reason;
@@ -247,7 +255,7 @@ pub async fn local_host_finish_terminal_on_exit(
     Ok(())
 }
 
-/// 全应用共用一个预算；只有当前持有池的窗口能清空它。
+/// 最近聚焦的窗口同步用户设置，本机和每条符合条件的连接各自补充。
 #[tauri::command]
 pub async fn configure_shell_prewarm(
     cwd: Option<String>,
@@ -257,9 +265,7 @@ pub async fn configure_shell_prewarm(
     app: AppHandle,
     pool: State<'_, ShellPrewarmPool>,
 ) -> Result<usize, String> {
-    let result = pool
-        .configure(app, window.label().to_string(), cwd, shell, count)
-        .await;
+    let result = pool.configure(&app, window.label(), cwd, shell, count);
     if result.is_err() {
         pool.clear_window(window.label());
     }
@@ -274,13 +280,16 @@ pub async fn reserve_prewarmed_shell(
     has_startup: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
     manager: State<'_, SshManager>,
-    pool: State<'_, ShellPrewarmPool>,
+    app: AppHandle,
 ) -> Result<serde_json::Value, String> {
     if cwd.starts_with(SSH_URI_PREFIX) {
         manager.root_for_uri(&cwd, true)?;
     } else {
         allowlist.ensure_executable(&cwd)?;
     }
+    let Some(pool) = pool_for_cwd(&app, &cwd) else {
+        return Ok(serde_json::json!({"reason": "no_target"}));
+    };
     Ok(
         match pool.reserve(&cwd, shell.as_deref(), has_startup.unwrap_or(false)) {
             Ok(id) => serde_json::json!({"id": id}),
@@ -290,6 +299,20 @@ pub async fn reserve_prewarmed_shell(
 }
 
 #[tauri::command]
-pub fn shell_prewarm_status(cwd: String, pool: State<'_, ShellPrewarmPool>) -> serde_json::Value {
-    pool.status(&cwd)
+pub fn shell_prewarm_status(cwd: String, app: AppHandle) -> serde_json::Value {
+    let inactive = |reason: &str| {
+        serde_json::json!({
+            "target": 0, "ready": 0, "reserved": 0, "preparing": 0, "reason": reason
+        })
+    };
+    if cwd.starts_with(SSH_URI_PREFIX) {
+        match app.state::<SshManager>().root_for_uri(&cwd, false) {
+            Ok(root) if !root.trusted => return inactive("untrusted"),
+            Err(_) => return inactive("no_target"),
+            _ => {}
+        }
+    }
+    pool_for_cwd(&app, &cwd)
+        .map(|pool| pool.status(&cwd))
+        .unwrap_or_else(|| inactive("no_target"))
 }

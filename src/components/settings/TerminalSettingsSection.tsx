@@ -213,7 +213,7 @@ export default function TerminalSettingsSection({
       {match('预热', 'Shell', 'shellPrewarmCount') && (
         <SettingItem
           title={t('终端 › 集成: Shell 预热数量')}
-          description={t('为已信任项目提前准备普通 PowerShell / CMD：本机 Windows 项目需开启「本地终端可接回」；SSH 项目仅限远端为 Windows 且使用 Server 模式，Linux 远端不预热。自动模式保留 1 个，领取后立即补充；也可关闭或手动指定 1–8 个。本机内存不足时暂停本机预热。')}
+          description={t('每条已连接且有受信任项目的 Windows Server 模式连接各自预热普通 PowerShell / CMD，本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，领取后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。')}
           modified={shellPrewarmCount !== 'auto'}
           locked={workspaceLocked}
           lockHint={t('此设置仅在用户作用域中可用')}

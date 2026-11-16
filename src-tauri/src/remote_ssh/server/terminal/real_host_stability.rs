@@ -837,11 +837,14 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
             &ctx.daemon,
         )
         .await?;
+        let marker = uuid::Uuid::new_v4().simple().to_string();
+        let mut env = launch.env.clone();
+        env.insert("QINGCODE_PREWARM_NONCE".into(), marker.clone());
         let response = session
             .request(
                 "pty.createTransient",
                 &serde_json::json!({
-                    "cwd": ctx.root.canonical_path, "shell": launch.shell, "env": launch.env,
+                    "shell": launch.shell, "env": env,
                     "args": args, "cols": 120, "rows": 30,
                 }),
             )
@@ -857,14 +860,28 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
                 continue;
             }
         };
-        // 与产品一致：不取事件流，只让后台读循环把输出放进会话队列。
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            session.wait_shell_marker(&pty_id, &marker, "ready"),
+        )
+        .await
+        .map_err(|_| "预热就绪超时")??;
         tokio::time::sleep(Duration::from_secs(settle)).await;
         let closed_before = session.closed_reason();
         let started = Instant::now();
+        let directory =
+            windows_native_path(&ctx.root.canonical_path).ok_or("无效 Windows 项目根")?;
+        let from_seq = session
+            .enter_prewarm_directory(
+                &pty_id,
+                &marker,
+                super::local::prewarm::remote_input_line(&directory),
+            )
+            .await?;
         let claim = session
             .request(
                 "pty.claim",
-                &serde_json::json!({ "id": pty_id, "name": "qc-stab-idle" }),
+                &serde_json::json!({ "id": pty_id, "name": "qc-stab-idle", "cwd": ctx.root.canonical_path }),
             )
             .await;
         let claim_ms = ms(started.elapsed());
@@ -903,15 +920,17 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
             continue;
         };
         println!("[stab][prewarmidle] {label}：领取前积压事件 {count} 条");
-        let attach = session.attach(&pty_id, u64::MAX, true).await;
-        let next_seq = match &attach {
-            // 冷接回给快照，续接起点是 daemon 回报的 seqEnd（同产品 attach 逻辑）。
-            Ok(result) => result
-                .response
-                .get("seqEnd")
-                .or_else(|| result.stream_end.summary.get("seqEnd"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
+        let attach = session.attach(&pty_id, from_seq, true).await;
+        let (next_seq, next_input_seq) = match attach {
+            Ok(result) => (
+                result
+                    .response
+                    .get("seqEnd")
+                    .or_else(|| result.stream_end.summary.get("seqEnd"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(from_seq),
+                result.response["nextInputSeq"].as_u64().unwrap_or(0),
+            ),
             Err(error) => {
                 failures.push(format!("prewarmidle {label}：领取后 attach 失败：{error}"));
                 let _ = session
@@ -928,7 +947,7 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
             events,
             pty_id,
             next_seq,
-            input_seq: AtomicU64::new(0),
+            input_seq: AtomicU64::new(next_input_seq),
             tail: Vec::new(),
             total_bytes: 0,
             seq_gaps: 0,

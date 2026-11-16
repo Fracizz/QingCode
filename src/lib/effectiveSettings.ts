@@ -1,4 +1,4 @@
-import { notifyShellPrewarmChanged } from './terminal/shellPrewarmSettings'
+import { notifyShellPrewarmChanged, type ShellPrewarmChangeSource } from './terminal/shellPrewarmSettings'
 import type { Project } from '../types'
 import {
   loadEffectiveAutoSaveSettings,
@@ -15,7 +15,10 @@ import { loadEditorStateCacheSize } from './editorStateCacheSettings'
  * Apply the complete global + project settings overlay to runtime modules.
  * Callers own any feature-specific follow-up work (for example tree refresh).
  */
-export async function applyEffectiveSettings(project?: Project | null): Promise<void> {
+export async function applyEffectiveSettings(
+  project?: Project | null,
+  source: ShellPrewarmChangeSource = 'settings',
+): Promise<void> {
   const [formatOnSave, minimap, terminalCursor, persistLocal] = await Promise.all([
     import('./formatOnSaveSettings'),
     import('./minimapSettings'),
@@ -54,5 +57,5 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)
-  notifyShellPrewarmChanged()
+  notifyShellPrewarmChanged(source)
 }

@@ -174,10 +174,10 @@ fn reserve_prewarmed_shell(
     has_startup: bool,
 ) -> bool {
     project.kind != ProjectKind::Wsl
-        && app
-            .state::<crate::remote_ssh::local_terminal::ShellPrewarmPool>()
-            .reserve_as(id, &project.path, shell, has_startup)
-            .is_ok()
+        && crate::remote_ssh::local_terminal::pool_for_cwd(app, &project.path).is_some_and(|pool| {
+            pool.reserve_as(id, &project.path, shell, has_startup)
+                .is_ok()
+        })
 }
 
 /// 领取本机预热 Shell；未命中返回 None 走原来的进程内新建。启动命令交付后确认丢失时

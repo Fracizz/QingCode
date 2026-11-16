@@ -986,6 +986,28 @@ impl DaemonSession {
         self.state.wait_closed().await;
     }
 
+    /// Idle prewarm output is replayable from the daemon. An exited PTY can no longer be claimed.
+    pub(super) fn idle_pty_exited(&mut self, pty_id: &str) -> bool {
+        let Some(events) = self.events.as_mut() else {
+            return true;
+        };
+        loop {
+            match events.receiver.try_recv() {
+                Ok(queued) => {
+                    if matches!(queued.event, Event::PtyExit { id, .. } if id == pty_id) {
+                        return true;
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => return false,
+                Err(mpsc::error::TryRecvError::Disconnected) => return true,
+            }
+        }
+    }
+
+    pub(super) fn events_mut(&mut self) -> Option<&mut SessionEventReceiver> {
+        self.events.as_mut()
+    }
+
     pub(super) fn take_events(&mut self) -> Option<SessionEventReceiver> {
         self.events.take()
     }

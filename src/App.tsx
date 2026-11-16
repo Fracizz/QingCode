@@ -148,7 +148,7 @@ function App() {
   // 运行时设置必须在 App 层加载：欢迎页或收起编辑器时 Editor 不挂载，
   // 否则终端滚动缓冲、SSH 粘贴上传等设置会一直停留在默认值。
   useEffect(() => {
-    void applyEffectiveSettings(currentProject)
+    void applyEffectiveSettings(currentProject, 'project-switch')
   }, [currentProject])
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)

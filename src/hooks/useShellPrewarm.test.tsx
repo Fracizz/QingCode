@@ -11,10 +11,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged }) }))
 vi.mock('../lib/tauri', () => ({ isTauri: () => true, safeInvoke: mocks.invoke }))
 vi.mock('../lib/workspaceTrust', () => ({ isProjectTrusted: mocks.trusted, WORKSPACE_TRUST_CHANGED_EVENT: 'trust-changed', WORKSPACE_TRUST_SYNCED_EVENT: 'trust-synced' }))
-vi.mock('../lib/terminal/shellPrewarmSettings', () => ({ loadShellPrewarmCount: mocks.count, SHELL_PREWARM_CHANGED_EVENT: 'prewarm-changed' }))
+vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/terminal/shellPrewarmSettings')>(),
+  loadShellPrewarmCount: mocks.count,
+}))
 vi.mock('../lib/terminal/terminalPersistLocalSettings', () => ({ loadEffectiveTerminalPersistLocalSessions: mocks.persist }))
 vi.mock('../lib/terminal/terminalProfiles', () => ({ loadTerminalProfileSettings: () => ({ defaultShell: 'auto' }), TERMINAL_PROFILES_KEY: 'profiles' }))
 vi.mock('../lib/terminal/terminalShell', () => ({ detectTerminalHostPlatform: mocks.platform }))
+import { notifyShellPrewarmChanged, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { useShellPrewarm } from './useShellPrewarm'
 const project: Project = { id: 'one', name: 'One', path: 'D:/work/one' }
 const configuredPaths = () => mocks.invoke.mock.calls.map(call => (call[2] as { cwd: string | null }).cwd)
@@ -37,7 +41,7 @@ describe('Windows prewarm coordinator', () => {
     await waitFor(() => expect(configuredPaths().at(-1)).toBeNull())
     mocks.trusted.mockReturnValue(true)
     mocks.persist.mockResolvedValue(false)
-    act(() => window.dispatchEvent(new Event('prewarm-changed')))
+    act(() => notifyShellPrewarmChanged())
     await act(async () => {})
     expect(configuredPaths().filter(path => path === project.path)).toHaveLength(1)
     hook.unmount()
@@ -80,20 +84,39 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
+  it('retains the local target while WinDev is active and settings reload', async () => {
+    const remote = { ...project, path: 'ssh://windev/D:/code/qingcode' }
+    const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: remote } })
+    try {
+      await waitFor(() => expect(configuredPaths()).toEqual([null]))
+      mocks.invoke.mockClear()
+      hook.rerender({ value: project })
+      await waitFor(() => expect(configuredPaths()).toEqual([project.path]))
+      act(() => notifyShellPrewarmChanged('project-switch'))
+      await waitFor(() => expect(configuredPaths()).toEqual([project.path, project.path]))
+      hook.rerender({ value: remote })
+      await waitFor(() => expect(configuredPaths()).toEqual([project.path, project.path, project.path]))
+      expect(configuredPaths()).not.toContain(null)
+    } finally {
+      hook.unmount()
+      await act(async () => {})
+    }
+  })
+
   it('re-enables the WinDev pool after a background settings import without waiting for focus', async () => {
     const remote = { ...project, path: 'ssh://windev/D:/code/qingcode' }
     const hook = renderHook(() => useShellPrewarm(remote))
-    await waitFor(() => expect(configuredPaths()).toContain(remote.path))
+    await waitFor(() => expect(configuredPaths()).toEqual([null]))
     vi.spyOn(document, 'hasFocus').mockReturnValue(false)
     mocks.count.mockResolvedValue(0)
-    act(() => window.dispatchEvent(new Event('prewarm-changed')))
+    act(() => notifyShellPrewarmChanged())
     await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
-      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: remote.path, shell: 'auto', count: 0 },
+      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: null, shell: 'auto', count: 0 },
     ))
     mocks.count.mockResolvedValue(2)
-    act(() => window.dispatchEvent(new Event('prewarm-changed')))
+    act(() => notifyShellPrewarmChanged())
     await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
-      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: remote.path, shell: 'auto', count: 2 },
+      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: null, shell: 'auto', count: 2 },
     ))
     hook.unmount()
     await act(async () => {})
@@ -101,7 +124,7 @@ describe('Windows prewarm coordinator', () => {
 
   it('rechecks settings imported by another window while the coordinator is in the background', async () => {
     const hook = renderHook(() => useShellPrewarm(project))
-    const otherWindow = new BroadcastChannel('prewarm-changed')
+    const otherWindow = new BroadcastChannel(SHELL_PREWARM_CHANGED_EVENT)
     try {
       await waitFor(() => expect(configuredPaths()).toContain(project.path))
       vi.spyOn(document, 'hasFocus').mockReturnValue(false)
@@ -147,16 +170,27 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
-  it('hands trusted SSH projects to the backend without the local hosting opt-in, from any client', async () => {
+  it('syncs the remote budget from a non-Windows client without a local hosting opt-in', async () => {
     const remote = { ...project, path: 'ssh://c1/C:/work/app' }
     mocks.persist.mockResolvedValue(false)
     mocks.platform.mockReturnValue('mac')
     const hook = renderHook(() => useShellPrewarm(remote))
-    await waitFor(() => expect(configuredPaths()).toContain(remote.path))
+    await waitFor(() => expect(configuredPaths()).toEqual([null]))
     expect(mocks.persist).not.toHaveBeenCalled()
     mocks.trusted.mockReturnValue(false)
     act(() => window.dispatchEvent(new Event('trust-changed')))
     await waitFor(() => expect(configuredPaths().at(-1)).toBeNull())
+    hook.unmount()
+    await act(async () => {})
+  })
+
+  it('sends the per-connection budget even when there is no foreground project', async () => {
+    mocks.count.mockResolvedValue(2)
+    const hook = renderHook(() => useShellPrewarm(null))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
+      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: null, shell: 'auto', count: 2 },
+    ))
+    expect(mocks.persist).not.toHaveBeenCalled()
     hook.unmount()
     await act(async () => {})
   })
