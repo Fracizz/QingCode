@@ -187,8 +187,15 @@ export function directAgentFirewallHintKey(platform: DirectAgentFirewallPlatform
   return 'Linux：在远端以 root 或可使用 sudo 的账户运行以下命令。此命令对所有来源放行，需要限定来源请由管理员调整；云服务器还需配置安全组。'
 }
 
+/** Older backends classify local cancellation as unreachable; it is not a dial failure. */
+export function isDirectAgentConnectionCancelled(error: unknown): boolean {
+  const text = String(error)
+  return text.includes('[direct:cancelled]') || text.includes('Server 连接已由当前连接配置关闭')
+}
+
 export function directAgentErrorKey(error: unknown): string {
   const text = String(error)
+  if (isDirectAgentConnectionCancelled(error)) return 'Server 连接在本机被取消。请重试；若刚修改连接配置，请等待保存完成后再打开项目。'
   if (text.includes('[direct:ssh-auth]')) return 'SSH 授权失败。请检查 SSH 密码、私钥或口令后重试。'
   if (text.includes('[direct:ssh-identity]')) return 'SSH 主机身份未确认或已变化。请先在远程连接中测试并确认 SSH 指纹。'
   if (text.includes('[direct:firewall-admin]')) return '当前 SSH 账户没有修改防火墙的权限。请使用远端管理员账户授权。'

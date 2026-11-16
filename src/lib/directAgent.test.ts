@@ -43,6 +43,15 @@ describe('direct Agent pairing import', () => {
 })
 
 describe('direct Agent network instructions', () => {
+  it.each([
+    '[direct:unreachable] Server 连接已由当前连接配置关闭',
+    '[direct:cancelled] connection cancelled',
+  ])('explains local cancellation before applying network instructions: %s', error => {
+    expect(directAgentErrorKey(error)).toContain('在本机被取消')
+    expect(directAgentErrorKey(error)).toContain('请重试')
+    expect(directAgentErrorKey(error)).not.toContain('TCP 端口')
+  })
+
   it('only builds firewall commands for valid ports, without executing them', () => {
     expect(directAgentFirewallCommand(48763, 'windows')).toContain('-Protocol TCP -LocalPort 48763')
     expect(directAgentFirewallCommand(48763, 'windows')).toContain('-Profile Private,Domain')

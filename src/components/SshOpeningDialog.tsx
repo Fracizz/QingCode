@@ -2,7 +2,8 @@ import { AlertTriangle, Check, LoaderCircle, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey, sshServerVersionMismatch } from '../lib/sshServerStatus'
-import { sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { sshConnectionIdFromUri, sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { directAgentErrorKey, isDirectAgentConnectionCancelled } from '../lib/directAgent'
 import { useProjectStore } from '../store/projectStore'
 import { cancelSshOpening, useSshOpeningStore, type SshOpeningAttempt } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
@@ -11,6 +12,13 @@ import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepa
 import SshServerRecovery from './SshServerRecovery'
 import ServerOperationProgress from './ServerOperationProgress'
 import type { ServerOperation } from '../store/serverOperationStore'
+import type { SshConnection } from '../types'
+
+function usesDirectServer({ project, server }: SshOpeningAttempt, connections: SshConnection[]): boolean {
+  if (server?.transport) return server.transport === 'agent'
+  const id = project.connection_id || sshConnectionIdFromUri(project.path)
+  return Boolean(connections.find(item => item.id === id)?.agentEndpoint)
+}
 
 export function SshOpeningProgress({ attempt, operation, status, onBackground }: {
   attempt: SshOpeningAttempt
@@ -20,12 +28,13 @@ export function SshOpeningProgress({ attempt, operation, status, onBackground }:
 }) {
   const { t } = useI18n()
   const { project, stage, server } = attempt
+  const direct = usesDirectServer(attempt, useProjectStore(s => s.sshConnections))
 
   const step = stage === 'connecting' ? 1 : stage === 'files' ? 4
     : server?.phase === 'installing' ? 3 : server?.phase === 'handshaking' || server?.phase === 'readyServer' ? 4 : 2
   const label = attempt.reusingServer ? t('正在打开项目 {name}…', { name: project.name })
     : server?.phase === 'readyServer' && server.transport === 'serve' ? t('正在准备远程终端…')
-      : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
+      : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? direct ? t('连接 Server') : t('连接 SSH')
         : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
   return (
     <ServerOperationProgress name={project.name} rootUri={project.path} status={status}
@@ -50,7 +59,9 @@ export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttem
   const cancel = () => cancelSshOpening(key)
 
   const { project, stage, server, error } = attempt
-  const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
+  const direct = usesDirectServer(attempt, connections)
+  const directFailure = Boolean(error && /\[direct:[^\]]+\]/.test(error))
+  const steps = [direct ? t('连接 Server') : t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
   const activeStep = stage === 'connecting' ? 0 : stage === 'service' ? 1 : 2
   const phase = server?.phase === 'readyServer' && server.transport === 'serve'
     ? t('正在准备远程终端…')
@@ -81,8 +92,9 @@ export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttem
           </div>
           <ol className="space-y-1.5 text-ui-sm">
             {steps.map((label, index) => (
-              <li key={label} className={`flex items-center gap-2 ${index === activeStep ? 'text-fg' : 'text-fg-muted'}`}>
-                {index < activeStep ? <Check size={14} className="text-ok" aria-hidden />
+              <li key={label} aria-current={index === activeStep ? 'step' : undefined} className={`flex items-center gap-2 ${index === activeStep ? error ? 'text-danger' : 'text-fg' : 'text-fg-muted'}`}>
+                {index < activeStep ? <Check size={14} className="shrink-0 text-ok" aria-hidden />
+                  : index === activeStep && error ? <AlertTriangle size={14} className="shrink-0 text-danger" aria-hidden />
                   : index === activeStep && !error ? <LoaderCircle size={14} className="animate-spin text-accent" aria-hidden />
                     : <span className="inline-flex h-3.5 w-3.5 items-center justify-center" aria-hidden>·</span>}
                 {label}
@@ -92,27 +104,31 @@ export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttem
               </li>
             ))}
           </ol>
-          <p id="ssh-opening-description" className="text-ui-sm text-fg-muted">
+          {!directFailure && <p id="ssh-opening-description" className="text-ui-sm text-fg-muted">
             {error
               ? t('请检查连接或远端服务后重试。')
               : t('首次连接可能需要下载、上传和启动远端服务。准备完成后将自动打开项目。')}
-          </p>
+          </p>}
           {error && (
-            <p role="alert" className="max-h-24 select-text overflow-y-auto whitespace-pre-wrap break-words rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui-sm text-danger">
-              {error}
+            <p id={directFailure ? 'ssh-opening-description' : undefined} role="alert" className="max-h-40 select-text overflow-y-auto whitespace-pre-wrap break-words rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui-sm text-danger">
+              {directFailure ? t(directAgentErrorKey(error)) : error}
             </p>
           )}
-          {error && server?.transport !== 'agent' && /server|daemon|远端服务|服务包|服务程序|二进制/i.test(error) && (
+          {directFailure && <details className="text-ui-sm text-fg-muted">
+            <summary className="cursor-pointer rounded hover:text-fg">{t('技术详情')}</summary>
+            <pre className="mt-2 max-h-32 select-text overflow-y-auto whitespace-pre-wrap break-words rounded border border-border bg-bg px-3 py-2 font-mono">{error}</pre>
+          </details>}
+          {error && !isDirectAgentConnectionCancelled(error) && !direct && /server|daemon|远端服务|服务包|服务程序|二进制/i.test(error) && (
             <SshServerRecovery key={attempt.id} project={project} opening={attempt.controller} onBusyChange={setRecoveryBusy}
               onRetry={async () => { await useProjectStore.getState().switchProject(project) }} />
           )}
         </div>
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <div className="flex flex-wrap justify-end gap-2 whitespace-nowrap border-t border-border px-4 py-3">
           <button type="button" onClick={cancel} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
             {error ? t('关闭') : t('取消打开')}
           </button>
           {error && <>
-            {server?.transport === 'agent' && sshServerVersionMismatch(error) && <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
+            {direct && sshServerVersionMismatch(error) && <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
               cancel()
               useUIStore.setState({ serverUpdateRootUri: project.path })
             }}>{t('通过 SSH 更新远端服务')}</button>}

@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import ServerOperationTasks from './ServerOperationTasks'
 import { cancelSshOpening, runSshOpening, SshPreparationError, latestSshOpening } from '../store/sshOpeningStore'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 
-const mocks = vi.hoisted(() => ({ switchProject: vi.fn(), confirm: vi.fn(), pushToast: vi.fn() }))
+const mocks = vi.hoisted(() => ({ switchProject: vi.fn(), confirm: vi.fn(), pushToast: vi.fn(), connections: [] as SshConnection[] }))
 vi.mock('../store/projectStore', () => ({
-  useProjectStore: Object.assign((selector: (state: unknown) => unknown) => selector({ sshConnections: [] }), {
+  useProjectStore: Object.assign((selector: (state: unknown) => unknown) => selector({ sshConnections: mocks.connections }), {
     getState: () => ({ switchProject: mocks.switchProject, pushToast: mocks.pushToast }),
   }),
 }))
@@ -26,11 +26,52 @@ async function failOpening(target = windowsProject) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.connections = []
   mocks.confirm.mockReset().mockResolvedValue(true)
 })
 afterEach(() => cancelSshOpening())
 
 describe('SshOpeningDialog', () => {
+  it('explains a cancelled Server connection and keeps raw diagnostics in a closed disclosure', async () => {
+    const error = '[direct:unreachable] Server 连接已由当前连接配置关闭'
+    await runSshOpening(project, async (_signal, report) => {
+      report('service', { rootUri: project.path, connectionId: 'c', connectionMode: 'server', phase: 'handshaking', mode: 'server', transport: 'agent', reason: null, version: null })
+      throw new SshPreparationError(error)
+    }).catch(() => {})
+    render(<ServerOperationTasks />)
+    expect(screen.getByText('连接 Server')).toBeVisible()
+    expect(screen.queryByText('连接 SSH')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Server 连接在本机被取消')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('[direct:unreachable]')
+    expect(screen.getByText('准备远端服务和终端').closest('li')).toHaveAttribute('aria-current', 'step')
+    const details = screen.getByText('技术详情').closest('details')!
+    expect(details).not.toHaveAttribute('open')
+    expect(details).toHaveTextContent(error)
+    expect(screen.queryByRole('region', { name: '修复远端服务包' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(mocks.switchProject).toHaveBeenCalledWith(project)
+  })
+
+  it('uses saved Server metadata before a runtime state arrives and preserves identity guidance', async () => {
+    mocks.connections = [{ id: 'c', name: 'WSL', host: 'localhost', port: 22, username: 'root', auth_kind: 'privateKey', host_key_fingerprint: 'SHA256:ssh', created_at: 1, agentEndpoint: { host: 'localhost', port: 48763 } }]
+    await runSshOpening(project, async () => { throw new SshPreparationError('[direct:identity] certificate changed') }).catch(() => {})
+    render(<ServerOperationTasks />)
+    expect(screen.getByText('连接 Server')).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('Server 证书指纹不匹配')
+    expect(screen.queryByRole('region', { name: '修复远端服务包' })).not.toBeInTheDocument()
+  })
+
+  it('retains SSH as the first step when the Server uses an SSH tunnel', async () => {
+    await runSshOpening(project, async (_signal, report) => {
+      report('service', { rootUri: project.path, connectionId: 'c', connectionMode: 'server', phase: 'handshaking', mode: 'server', transport: 'tunnel', reason: null, version: null })
+      throw new SshPreparationError('[direct:timeout] timeout')
+    }).catch(() => {})
+    render(<ServerOperationTasks />)
+    expect(screen.getByText('连接 SSH')).toBeVisible()
+    expect(screen.queryByText('连接 Server')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('连接超时')
+  })
+
   it('keeps the workspace usable when mounting a project on a ready shared daemon', async () => {
     const opening = runSshOpening(project, async (_signal, report) => {
       report('mounting')

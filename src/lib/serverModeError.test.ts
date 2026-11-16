@@ -71,6 +71,16 @@ describe('serverModeErrorAction', () => {
   describe('direct dial failures', () => {
     const dialFailure = `新建终端失败: ${SERVER_MODE_ERROR_PREFIX}[direct:unreachable] 无法连接 10.0.0.1:48763（系统错误 10061），请确认 Server 已启动且 TCP 48763 已放行`
 
+    it('retries a locally cancelled connection without restarting the remote service', async () => {
+      const retry = vi.fn()
+      const action = serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}[direct:unreachable] Server 连接已由当前连接配置关闭`, ready.rootUri, t, retry)!
+      expect(action.label).toBe('重试')
+      await action.onAction()
+      expect(retry).toHaveBeenCalledOnce()
+      expect(confirmDialog).not.toHaveBeenCalled()
+      expect(invoke).not.toHaveBeenCalled()
+    })
+
     it('offers the caller retry without a restart confirmation', async () => {
       const retry = vi.fn()
       const action = serverModeErrorAction(dialFailure, ready.rootUri, t, retry)!

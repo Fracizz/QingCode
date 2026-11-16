@@ -6,6 +6,7 @@ import { parseSshServerState } from './sshServerStatus'
 import { confirmDialog } from '../store/confirmStore'
 import { useUIStore } from '../store/uiStore'
 import { sshServerVersionMismatch } from './sshServerStatus'
+import { isDirectAgentConnectionCancelled } from './directAgent'
 
 /** 后端在 Server 模式无法继续时给错误消息加的统一前缀。 */
 export const SERVER_MODE_ERROR_PREFIX = 'Server 模式：'
@@ -45,7 +46,7 @@ export function serverModeErrorAction(
 ): { label: string; onAction: () => void | Promise<void> } | undefined {
   if (!isServerModeError(error) || !sshConnectionIdFromUri(rootUri)) return undefined
   const message = errorMessage(error)
-  if (retry && DIRECT_TRANSIENT_FAILURES.some(marker => message.includes(marker))) {
+  if (retry && (isDirectAgentConnectionCancelled(error) || DIRECT_TRANSIENT_FAILURES.some(marker => message.includes(marker)))) {
     return { label: t('重试'), onAction: retry }
   }
   const update = sshServerVersionMismatch(errorMessage(error))

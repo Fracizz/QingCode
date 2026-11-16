@@ -9,6 +9,7 @@ import { sshConnectionIdFromUri, sshConnectionTarget } from '../lib/sshWorkspace
 import { useProjectStore } from '../store/projectStore'
 import SshOpeningDialog, { SshOpeningProgress } from './SshOpeningDialog'
 import Tooltip from './Tooltip'
+import { directAgentErrorKey } from '../lib/directAgent'
 
 function OperationCard({ task }: { task: ServerOperation }) {
   const { t } = useI18n()
@@ -65,7 +66,7 @@ export default function ServerOperationTasks() {
       detail: attempt.error
         ? <div className="space-y-2 p-3">
             <p className="break-words font-medium text-fg">{attempt.project.name}</p>
-            <p role="alert" className="max-h-24 select-text overflow-y-auto whitespace-pre-wrap break-words text-ui-sm text-danger">{attempt.error}</p>
+            <p role="alert" className="max-h-24 select-text overflow-y-auto whitespace-pre-wrap break-words text-ui-sm text-danger">{/\[direct:[^\]]+\]/.test(attempt.error) ? t(directAgentErrorKey(attempt.error)) : attempt.error}</p>
             <button type="button" className="rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover" onClick={() => setReviewId(attempt.id)}>{t('点击查看详情')}</button>
           </div>
         : <SshOpeningProgress attempt={attempt} operation={operation} status={status} onBackground={background} />,
