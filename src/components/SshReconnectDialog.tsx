@@ -184,15 +184,15 @@ export default function SshReconnectDialog() {
                     value={privateKeyPath}
                     onChange={event => setPrivateKeyPath(event.target.value)}
                     placeholder={t('留空则使用 ~/.ssh/id_ed25519 等默认密钥')}
-                    className={fieldClass}
+                    className={`${fieldClass} min-w-0 flex-1`}
                   />
                   <button
                     type="button"
                     onClick={() => void choosePrivateKey()}
-                    className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-border-strong px-2.5 text-ui-sm text-fg hover:bg-bg-hover"
+                    className="inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border border-border-strong px-2.5 py-1.5 text-ui-sm text-fg hover:bg-bg-hover"
                   >
-                    <KeyRound size={13} />
-                    选择
+                    <KeyRound size={13} className="shrink-0" />
+                    {t('选择')}
                   </button>
                 </div>
               </label>
