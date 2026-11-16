@@ -88,6 +88,8 @@ pub const CAPABILITIES: &[&str] = &[
     "pty.compat.1",
     "server.shutdown",
     "git.watchPush",
+    // `pty.claim` 接受 cwd：预热终端可按主机复用到同机的其他项目目录。
+    "pty.claimCwd",
 ];
 
 /// daemon 启动参数。
@@ -2360,10 +2362,22 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 /// 领取时补上正式终端的标签名；旧客户端不传则保持原名。
                 #[serde(default)]
                 name: Option<String>,
+                /// 按主机复用的预热终端领取到别的项目目录时改记 cwd（能力 `pty.claimCwd`），
+                /// 接回、找回与结束时的项目根校验都以它为准。旧客户端不传则保持创建时目录。
+                #[serde(default)]
+                cwd: Option<String>,
             }
             let Ok(params) = params::<ClaimParams>(&request) else {
                 conn.fail(id, "badRequest", "pty.claim 参数错误");
                 return;
+            };
+            // 目录解析在加锁前完成；失败时不领取，客户端按未命中走正常新建。
+            let cwd = match params.cwd.as_deref().map(canonical_root).transpose() {
+                Ok(cwd) => cwd,
+                Err(message) => {
+                    conn.fail(id, "badCwd", message);
+                    return;
+                }
             };
             let claimed = {
                 let mut routes = daemon.routes.lock().unwrap();
@@ -2372,10 +2386,14 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     .is_some_and(|route| route.conn_id == conn.conn_id && route.transient)
                 {
                     // 与连接清理共用 routes 锁，避免刚领取就被当成预热进程结束。
-                    let result = match params.name {
-                        Some(name) => daemon.pty.set_name(&params.id, Some(name)),
+                    let result = match &cwd {
+                        Some(cwd) => daemon.pty.set_cwd(&params.id, cwd),
                         None => Ok(()),
                     }
+                    .and_then(|()| match params.name {
+                        Some(name) => daemon.pty.set_name(&params.id, Some(name)),
+                        None => Ok(()),
+                    })
                     .and_then(|()| daemon.pty.detach(&params.id, &conn.client_id));
                     if result.is_ok() {
                         routes.remove(&params.id);
@@ -4528,17 +4546,30 @@ mod tests {
         let mut observer = TestClient::connect(&run_dir, &token).await;
         let request = observer.request("pty.claim", &json!({"id": ids[0]})).await;
         assert_eq!(observer.wait_error(request).await.code, "pty");
+        // 改记的目录不存在时拒绝领取，预热项保持原样可再次领取。
+        let other = temp_dir("prewarm-claim-cwd");
+        let missing = other.join("missing");
         let request = client
-            .request("pty.claim", &json!({"id": ids[0], "name": "构建"}))
+            .request("pty.claim", &json!({"id": ids[0], "cwd": missing}))
+            .await;
+        assert_eq!(client.wait_error(request).await.code, "badCwd");
+        let request = client
+            .request(
+                "pty.claim",
+                &json!({"id": ids[0], "name": "构建", "cwd": other}),
+            )
             .await;
         client.wait_response(request).await;
         let request = client.request("pty.list", &json!({})).await;
         let listed = client.wait_response(request).await;
-        assert!(listed["ptys"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|info| info["id"] == ids[0] && info["name"] == "构建"));
+        let other_name = other.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(listed["ptys"].as_array().unwrap().iter().any(|info| {
+            info["id"] == ids[0]
+                && info["name"] == "构建"
+                && info["cwd"]
+                    .as_str()
+                    .is_some_and(|cwd| cwd.ends_with(&other_name) && !cwd.starts_with(r"\\?\"))
+        }));
         let request = client.request("pty.claim", &json!({"id": ids[0]})).await;
         assert_eq!(client.wait_error(request).await.code, "pty");
         drop(client);

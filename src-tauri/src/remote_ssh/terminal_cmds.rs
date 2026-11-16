@@ -491,7 +491,17 @@ pub(crate) async fn ssh_create_terminal_unchecked(
         // 远端 Windows 预热命中时直接领取；未命中、过期或失败都走正常新建。
         if let Some(result) = app
             .state::<super::local_terminal::ShellPrewarmPool>()
-            .take_remote(&id, &cwd, &launch, None, &root, size, app.clone(), &manager)
+            .take_remote(
+                &id,
+                &cwd,
+                &working_directory,
+                &launch,
+                None,
+                &root,
+                size,
+                app.clone(),
+                &manager,
+            )
             .await
         {
             return result;
@@ -691,6 +701,7 @@ pub(crate) async fn ssh_spawn_script_unchecked(
                 .take_remote(
                     &id,
                     &cwd,
+                    &working_directory,
                     &launch,
                     Some(&target),
                     &root,

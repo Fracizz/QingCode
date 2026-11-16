@@ -546,6 +546,8 @@ pub(super) struct DaemonSession {
     outbound: session_outbound::SessionSender,
     state: Arc<SessionState>,
     events: Option<SessionEventReceiver>,
+    /// HELLO 应答里的能力列表；按能力决定是否使用较新的可选参数（如 `pty.claim` 的 cwd）。
+    capabilities: Arc<[String]>,
 }
 
 pub(super) struct DaemonAttachResult {
@@ -628,6 +630,7 @@ impl DaemonSession {
     }
 
     fn from_channel(channel: DaemonChannel) -> Self {
+        let capabilities: Arc<[String]> = channel.capabilities.into();
         let (mut reader, mut writer) = channel.channel.split();
         let stderr_notes = channel.stderr_notes;
         let (outbound_tx, mut outbound_rx) = session_outbound::channel();
@@ -755,7 +758,12 @@ impl DaemonSession {
             outbound: outbound_tx,
             state,
             events: Some(events_rx),
+            capabilities,
         }
+    }
+
+    pub(super) fn supports(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|item| item == capability)
     }
 
     fn begin_oneshot_request<T: serde::Serialize>(

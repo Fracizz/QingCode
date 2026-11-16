@@ -450,7 +450,8 @@ struct PtyTerm {
     id: String,
     /// 预热终端创建时还没有标签名，领取时由 `pty.claim` 补上，因此可变。
     name: Mutex<Option<String>>,
-    cwd: String,
+    /// 预热终端按主机复用：领取时由 `pty.claim` 改记为目标项目目录，因此可变。
+    cwd: Mutex<String>,
     created: u64,
     /// Windows 上子进程退出后由等待线程取走并释放（关闭 ConPTY），读线程才能拿到 EOF；
     /// 取走后为 `None`，resize 视为无操作。
@@ -597,7 +598,7 @@ impl PtyHost {
         let term = Arc::new(PtyTerm {
             id: id.clone(),
             name: Mutex::new(opts.name.clone()),
-            cwd: cwd.to_string_lossy().into_owned(),
+            cwd: Mutex::new(cwd.to_string_lossy().into_owned()),
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
             master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(writer),
@@ -898,6 +899,18 @@ impl PtyHost {
         Ok(())
     }
 
+    /// 改记终端的工作目录（只影响 `pty.list` 等元数据，不会切换进程目录）。
+    /// 与创建时相同：去掉 Windows verbatim 前缀，目录必须存在。
+    pub fn set_cwd(&self, id: &str, cwd: &Path) -> Result<(), String> {
+        let term = self.term(id)?;
+        let cwd = pty_working_directory(cwd);
+        if !cwd.is_dir() {
+            return Err(format!("终端工作目录不存在：{}", cwd.display()));
+        }
+        *lock(&term.cwd) = cwd.to_string_lossy().into_owned();
+        Ok(())
+    }
+
     pub fn detach(&self, id: &str, client_id: &str) -> Result<(), String> {
         let term = self.term(id)?;
         let mut state = lock(&term.state);
@@ -1003,7 +1016,7 @@ impl PtyHost {
                             name: lock(&term.name).clone(),
                             next_input_seq: state.next_input_seq,
                             owner: state.owner.clone(),
-                            cwd: Some(term.cwd.clone()),
+                            cwd: Some(lock(&term.cwd).clone()),
                             seq: state.ring.seq_end(),
                             cols: state.cols,
                             rows: state.rows,

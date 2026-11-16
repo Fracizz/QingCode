@@ -79,7 +79,7 @@ fn remote_startup_line_is_printable_base64_ending_with_enter() {
 }
 
 #[test]
-fn launch_key_separates_shell_arguments_environment_and_cwd() {
+fn launch_key_separates_host_shell_arguments_and_environment_but_not_cwd() {
     let launch = PersistentLaunch {
         shell: Some("pwsh.exe".into()),
         args: vec!["-NoLogo".into()],
@@ -88,19 +88,22 @@ fn launch_key_separates_shell_arguments_environment_and_cwd() {
         resolved_shell: "pwsh".into(),
         fallback_from: None,
     };
-    let cwd = std::env::temp_dir();
-    let key = LaunchKey::new(&cwd.to_string_lossy(), &launch).unwrap();
+    let key = LaunchKey::from_parts(None, &launch);
+    assert!(key != LaunchKey::from_parts(Some("conn-1".into()), &launch));
     let mut changed = launch.clone();
     changed.env.insert("PATH".into(), "updated".into());
-    assert!(key != LaunchKey::new(&cwd.to_string_lossy(), &changed).unwrap());
+    assert!(key != LaunchKey::from_parts(None, &changed));
     changed = launch.clone();
     changed.args.push("-NoProfile".into());
-    assert!(key != LaunchKey::new(&cwd.to_string_lossy(), &changed).unwrap());
+    assert!(key != LaunchKey::from_parts(None, &changed));
     changed = launch;
     changed.shell = Some("cmd.exe".into());
-    assert!(key != LaunchKey::new(&cwd.to_string_lossy(), &changed).unwrap());
-    assert!(LaunchKey::new("this-directory-must-not-exist-qc-prewarm", &changed).is_err());
+    assert!(key != LaunchKey::from_parts(None, &changed));
+    assert!(local_launch_key("this-directory-must-not-exist-qc-prewarm", None).is_err());
 }
+
+const CWD: &str = r"C:\work\a";
+const OTHER_CWD: &str = r"C:\work\b";
 
 fn fake_shell() -> WarmShell {
     let launch = PersistentLaunch {
@@ -114,7 +117,9 @@ fn fake_shell() -> WarmShell {
     WarmShell {
         id: "reserved-id".into(),
         pty_id: "pty-id".into(),
-        key: LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap(),
+        key: LaunchKey::from_parts(None, &launch),
+        cwd: CWD.into(),
+        claim_cwd: false,
         launch,
         remote: None,
         startup_pipe: None,
@@ -135,7 +140,7 @@ fn simultaneous_reservations_cannot_claim_the_same_shell_twice() {
         .map(|_| {
             let pool = pool.clone();
             let key = key.clone();
-            std::thread::spawn(move || pool.reserve_key(&key, false))
+            std::thread::spawn(move || pool.reserve_key(&key, CWD, false))
         })
         .collect();
     assert_eq!(
@@ -145,8 +150,8 @@ fn simultaneous_reservations_cannot_claim_the_same_shell_twice() {
             .count(),
         1
     );
-    assert!(pool.take_key("reserved-id", &key).is_some());
-    assert!(pool.take_key("reserved-id", &key).is_none());
+    assert!(pool.take_key("reserved-id", &key, CWD, true).is_some());
+    assert!(pool.take_key("reserved-id", &key, CWD, true).is_none());
 }
 
 #[test]
@@ -160,11 +165,14 @@ fn phone_reservations_are_claimed_under_the_phone_terminal_id() {
         pool.rename_reserved("reserved-id", "mobile-abc"),
         Err("empty")
     );
-    assert_eq!(pool.reserve_key(&key, false).as_deref(), Ok("reserved-id"));
+    assert_eq!(
+        pool.reserve_key(&key, CWD, false).as_deref(),
+        Ok("reserved-id")
+    );
     assert!(pool.rename_reserved("reserved-id", "mobile-abc").is_ok());
     assert!(!pool.has_entry("reserved-id"));
-    assert!(pool.take_key("reserved-id", &key).is_none());
-    assert!(pool.take_key("mobile-abc", &key).is_some());
+    assert!(pool.take_key("reserved-id", &key, CWD, true).is_none());
+    assert!(pool.take_key("mobile-abc", &key, CWD, true).is_some());
     // 预留后池被清空（重配或窗口移交）时按未命中处理。
     assert_eq!(
         pool.rename_reserved("mobile-abc", "mobile-def"),
@@ -179,10 +187,10 @@ fn stale_reservations_and_mismatched_launches_never_supply_a_shell() {
     let key = shell.key.clone();
     shell.reserved_at = Some(Instant::now() - RESERVATION_TTL);
     pool.0.lock().unwrap().shells.push(shell);
-    assert!(pool.take_key("reserved-id", &key).is_none());
+    assert!(pool.take_key("reserved-id", &key, CWD, true).is_none());
     let mut different = key;
     different.args.push("-NoProfile".into());
-    assert!(pool.reserve_key(&different, false).is_err());
+    assert!(pool.reserve_key(&different, CWD, false).is_err());
 }
 
 #[test]
@@ -191,6 +199,7 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
     let shell = fake_shell();
     pool.0.lock().unwrap().target = Some(Target {
         project_path: "project".into(),
+        cwd: CWD.into(),
         key: shell.key.clone(),
         launch: shell.launch.clone(),
         count: 1,
@@ -216,6 +225,7 @@ fn status_and_reservation_reasons_are_scoped_to_the_target() {
         let mut state = pool.0.lock().unwrap();
         state.target = Some(Target {
             project_path: "test".into(),
+            cwd: CWD.into(),
             key: key.clone(),
             launch: entry.launch.clone(),
             count: 2,
@@ -230,15 +240,26 @@ fn status_and_reservation_reasons_are_scoped_to_the_target() {
     assert_eq!(pool.status("test")["preparing"], 1);
     let mut other = key.clone();
     other.shell = Some("cmd.exe".into());
-    assert_eq!(pool.reserve_key(&other, false), Err("shell_mismatch"));
-    assert_eq!(pool.reserve_key(&key, true), Err("startup_unsupported"));
+    assert_eq!(pool.reserve_key(&other, CWD, false), Err("shell_mismatch"));
+    let mut remote = key.clone();
+    remote.host = Some("conn-1".into());
+    assert_eq!(pool.reserve_key(&remote, CWD, false), Err("host_mismatch"));
+    assert_eq!(
+        pool.reserve_key(&key, CWD, true),
+        Err("startup_unsupported")
+    );
+    // 没有启动通道（CMD 或旧宿主）就不能切换目录，只能原目录领取。
+    assert_eq!(
+        pool.reserve_key(&key, OTHER_CWD, false),
+        Err("cwd_mismatch")
+    );
     // 远端 PowerShell 预热项经 PTY 输入交付命令，也能领取配置终端。
     pool.0.lock().unwrap().shells[0].startup_input = true;
-    assert!(pool.reserve_key(&key, true).is_ok());
+    assert!(pool.reserve_key(&key, CWD, true).is_ok());
     pool.0.lock().unwrap().shells[0].reserved_at = None;
     pool.0.lock().unwrap().shells[0].startup_input = false;
-    assert!(pool.reserve_key(&key, false).is_ok());
-    assert_eq!(pool.reserve_key(&key, false), Err("empty"));
+    assert!(pool.reserve_key(&key, CWD, false).is_ok());
+    assert_eq!(pool.reserve_key(&key, CWD, false), Err("empty"));
     assert_eq!(pool.status("test")["reserved"], 1);
     assert_eq!(pool.status("test")["ready"], 0);
     pool.clear_window("main");
@@ -251,8 +272,8 @@ async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
     let shell = fake_shell();
     let key = shell.key.clone();
     pool.0.lock().unwrap().shells.push(shell);
-    assert!(pool.reserve_key(&key, false).is_ok());
-    assert!(pool.take_key("reserved-id", &key).is_some());
+    assert!(pool.reserve_key(&key, CWD, false).is_ok());
+    assert!(pool.take_key("reserved-id", &key, CWD, true).is_some());
     // 许可在领取时即保留，补充循环稍后才开始等待也能立刻醒来。
     tokio::time::timeout(Duration::from_millis(100), pool.2.notified())
         .await
@@ -268,15 +289,190 @@ fn remote_keys_follow_the_ssh_terminal_launch_and_never_match_local_paths() {
         crate::remote_ssh::terminal_cmds::persistent_shell_launch("/C:/Users/dev/app", None)
             .unwrap();
     assert_eq!(launch.args, expected.args);
-    assert!(key == LaunchKey::from_parts(cwd.into(), &expected));
+    assert!(key == LaunchKey::from_parts(Some("conn-1".into()), &expected));
+    // 同一连接上的其他项目共用预热项；换连接、换 Shell 或本机都不命中。
+    assert!(
+        key == remote_launch_key("ssh://conn-1/C:/Users/dev/other", None)
+            .unwrap()
+            .1
+    );
     assert!(
         key != remote_launch_key("ssh://conn-2/C:/Users/dev/app", None)
             .unwrap()
             .1
     );
     assert!(key != remote_launch_key(cwd, Some("cmd")).unwrap().1);
-    let local = LaunchKey::new(&std::env::temp_dir().to_string_lossy(), &launch).unwrap();
-    assert!(key != local);
+    assert!(key != LaunchKey::from_parts(None, &launch));
+}
+
+fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
+    let (launch, key) = remote_launch_key(cwd, None).unwrap();
+    let path = parse_remote_uri(cwd).unwrap().path;
+    WarmShell {
+        id: id.into(),
+        pty_id: format!("pty-{id}"),
+        key,
+        cwd: cwd.into(),
+        claim_cwd,
+        launch,
+        remote: Some(RemoteTarget {
+            root: RegisteredRoot {
+                uri: cwd.into(),
+                canonical_path: path.clone(),
+                trusted: true,
+            },
+            connection_id: "conn-1".into(),
+            working_directory: path,
+        }),
+        startup_pipe: None,
+        startup_input: true,
+        session: None,
+        transport: None,
+        reserved_at: None,
+    }
+}
+
+#[test]
+fn same_connection_shells_move_to_other_projects_only_when_the_daemon_can_rebind() {
+    let project_a = "ssh://conn-1/C:/work/a";
+    let project_b = "ssh://conn-1/C:/work/b";
+    let pool = ShellPrewarmPool::default();
+    pool.0
+        .lock()
+        .unwrap()
+        .shells
+        .push(remote_shell("warm-a", project_a, false));
+    let key = remote_launch_key(project_b, None).unwrap().1;
+    // 旧 daemon 不能改记 PTY 目录：接回时会被项目根校验拒绝，不能跨项目领取。
+    assert_eq!(
+        pool.reserve_key(&key, project_b, false),
+        Err("cwd_mismatch")
+    );
+    pool.0.lock().unwrap().shells[0].claim_cwd = true;
+    assert_eq!(
+        pool.reserve_key(&key, project_b, true).as_deref(),
+        Ok("warm-a")
+    );
+    // 调用方给不出可切换的目录时只认原目录。
+    assert!(pool.take_key("warm-a", &key, project_b, false).is_none());
+    assert!(pool.take_key("warm-a", &key, project_b, true).is_some());
+}
+
+fn target_for(shell: &WarmShell, count: usize) -> Target {
+    Target {
+        project_path: shell.cwd.clone(),
+        cwd: shell.cwd.clone(),
+        key: shell.key.clone(),
+        launch: shell.launch.clone(),
+        count,
+        window: "main".into(),
+        remote: shell.remote.clone(),
+    }
+}
+
+fn with_id(mut shell: WarmShell, id: &str) -> WarmShell {
+    shell.id = id.into();
+    shell
+}
+
+#[test]
+fn switching_hosts_keeps_one_idle_shell_for_the_previous_host() {
+    let local = fake_shell();
+    let remote = remote_shell("remote-1", "ssh://conn-1/C:/work/a", true);
+    let other_host = remote_launch_key("ssh://conn-2/C:/work/a", None).unwrap().1;
+    let (local_key, remote_key) = (local.key.clone(), remote.key.clone());
+    let mut state = PoolState {
+        target: Some(target_for(&local, 2)),
+        ..PoolState::default()
+    };
+    let mut reserved = with_id(fake_shell(), "local-reserved");
+    reserved.reserved_at = Some(Instant::now());
+    state.shells.extend([
+        with_id(fake_shell(), "local-1"),
+        with_id(fake_shell(), "local-2"),
+        reserved,
+    ]);
+    // 本机 → SSH：本机只留 1 个空闲项，正在领取的预留项不受影响。
+    assert_eq!(state.retarget(Some((&remote_key, 1))), 1);
+    let ids = |state: &PoolState| {
+        state
+            .shells
+            .iter()
+            .map(|s| s.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&state), ["local-1", "local-reserved"]);
+    state.shells.retain(|shell| shell.reserved_at.is_none());
+    state.target = Some(target_for(&remote, 1));
+    state.shells.push(remote);
+    // SSH → 本机：此前保留的本机项沿用，SSH 也留 1 个。
+    assert_eq!(state.retarget(Some((&local_key, 2))), 0);
+    assert_eq!(ids(&state), ["local-1", "remote-1"]);
+    // 再换到第三个主机：只留上一个主机（本机）的 1 个。
+    state.target = Some(target_for(&state.shells[0], 2));
+    assert_eq!(state.retarget(Some((&other_host, 1))), 1);
+    assert_eq!(ids(&state), ["local-1"]);
+    // 切到不预热的项目同样保留上一个主机的 1 个。
+    state.target = Some(target_for(&state.shells[0], 1));
+    state.shells.push(with_id(fake_shell(), "local-2"));
+    assert_eq!(state.retarget(None), 1);
+    assert_eq!(ids(&state), ["local-1"]);
+}
+
+#[test]
+fn shells_kept_for_another_host_do_not_mask_matching_ones() {
+    let pool = ShellPrewarmPool::default();
+    let local = fake_shell();
+    let key = local.key.clone();
+    pool.0.lock().unwrap().shells.extend([
+        remote_shell("remote-1", "ssh://conn-1/C:/work/a", true),
+        local,
+    ]);
+    // 没有补充目标（切到了不预热的项目）时，保留项仍可领取。
+    assert_eq!(
+        pool.reserve_key(&key, CWD, false).as_deref(),
+        Ok("reserved-id")
+    );
+    let other = remote_launch_key("ssh://conn-2/C:/work/a", None).unwrap().1;
+    assert_eq!(pool.reserve_key(&other, CWD, false), Err("host_mismatch"));
+}
+
+#[test]
+fn a_shell_already_in_the_target_directory_is_preferred() {
+    let project_a = "ssh://conn-1/C:/work/a";
+    let project_b = "ssh://conn-1/C:/work/b";
+    let pool = ShellPrewarmPool::default();
+    pool.0.lock().unwrap().shells.extend([
+        remote_shell("warm-a", project_a, true),
+        remote_shell("warm-b", project_b, true),
+    ]);
+    let key = remote_launch_key(project_b, None).unwrap().1;
+    assert_eq!(
+        pool.reserve_key(&key, project_b, false).as_deref(),
+        Ok("warm-b")
+    );
+    assert_eq!(
+        pool.reserve_key(&key, project_b, false).as_deref(),
+        Ok("warm-a")
+    );
+}
+
+#[test]
+fn claim_script_switches_directory_before_the_configured_command() {
+    assert_eq!(claim_script(None, None), None);
+    assert_eq!(
+        claim_script(None, Some("npm run dev")).as_deref(),
+        Some("npm run dev")
+    );
+    assert_eq!(
+        claim_script(Some(r"C:\work\it's"), None).as_deref(),
+        Some(r"Set-Location -LiteralPath 'C:\work\it''s'")
+    );
+    // 配置命令单独解析：语法错误也不影响已切换的目录。
+    assert_eq!(
+        claim_script(Some(r"C:\work"), Some("echo 'hi'")).as_deref(),
+        Some(r"Set-Location -LiteralPath 'C:\work'; & ([ScriptBlock]::Create('echo ''hi'''))")
+    );
 }
 
 #[cfg(windows)]
@@ -329,6 +525,69 @@ async fn powershell_runs_the_staged_profile_only_after_commit() {
         } else {
             assert!(!output.exists());
         }
+    }
+}
+
+/// 真实 PowerShell：预热项领取到其他目录时先切换目录（含单引号的路径），配置命令在新目录
+/// 运行，语法错误的配置命令也不影响切换，之后的提示符停留在新目录。
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_switches_to_the_claiming_project_before_its_command() {
+    use std::process::Stdio;
+
+    for startup in [
+        Some("[IO.File]::AppendAllText($env:QC_TEST_OUTPUT, (Get-Location).ProviderPath)"),
+        Some("if ("),
+        None,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("it's project");
+        std::fs::create_dir(&project).unwrap();
+        let project = crate::terminal::strip_windows_verbatim_prefix(
+            &std::fs::canonicalize(&project).unwrap().to_string_lossy(),
+        )
+        .into_owned();
+        let endpoint = IpcEndpoint::new(dir.path());
+        let mut listener = endpoint.listen().unwrap().unwrap();
+        let address = endpoint.describe();
+        let output = dir.path().join("started.txt");
+        let mut child = tokio::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "{}; [IO.File]::AppendAllText($env:QC_TEST_OUTPUT, '|' + (Get-Location).ProviderPath)",
+                    include_str!("start-profile.ps1")
+                ),
+            ])
+            .current_dir(dir.path())
+            .env(
+                STARTUP_PIPE_ENV,
+                address.strip_prefix(r"\\.\pipe\").unwrap(),
+            )
+            .env("QC_TEST_OUTPUT", &output)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let script = claim_script(Some(&project), startup).unwrap();
+        tokio::time::timeout(READY_TIMEOUT, async {
+            let mut pipe = listener.accept().await.unwrap();
+            stage_startup(&mut pipe, &script).await.unwrap();
+            pipe.write_u8(1).await.unwrap();
+            read_startup_ack(&mut pipe).await.unwrap();
+            drop(pipe);
+            child.wait().await.unwrap();
+        })
+        .await
+        .unwrap();
+        let expected = match startup {
+            Some(command) if command.starts_with("[IO") => format!("{project}|{project}"),
+            _ => format!("|{project}"),
+        };
+        assert_eq!(std::fs::read_to_string(output).unwrap(), expected);
     }
 }
 

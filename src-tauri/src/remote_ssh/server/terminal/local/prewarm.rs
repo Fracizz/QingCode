@@ -3,6 +3,14 @@
 //!
 //! 目标二选一：本机 Windows 项目（本机 PTY 宿主），或远端为 Windows 的 SSH
 //! Server 模式项目（远端 daemon）。Linux 远端与 SSH 直连模式不预热。
+//!
+//! 预热项按主机复用：同一主机（本机或同一条 SSH 连接）上启动参数相同即可领取，
+//! 切换到同机的其他项目时不清空。领取到别的项目目录时，经 PowerShell 启动通道先
+//! `Set-Location` 再出提示符；远端还要让 daemon 改记 PTY 目录（`pty.claimCwd`），
+//! 接回、找回与结束时的项目根校验才会以新目录为准。
+//!
+//! 切到另一主机（本机 ↔ SSH、换连接，或切到不预热的项目）时，为上一个主机保留 1 个
+//! 空闲项，来回切换后立即新建也能命中；它不补充，再换到第三个主机时回收。
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest};
@@ -17,30 +25,38 @@ const RESERVATION_TTL: Duration = Duration::from_secs(15);
 /// 本机领取只经命名管道；远端领取要经过 SSH 往返，给更宽的上限。
 const LOCAL_CLAIM_TIMEOUT: Duration = Duration::from_secs(2);
 const REMOTE_CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
+/// daemon 支持在 `pty.claim` 时改记工作目录。
+const CLAIM_CWD_CAPABILITY: &str = "pty.claimCwd";
 
-/// 复用条件。本机 `cwd` 是规范化后的本地路径；远端是前端传入的 `ssh://` 资源，
-/// 两个域的字符串形态不同，不会互相命中。
+/// 复用条件：同一主机上启动参数相同。工作目录不在键里，见 [`WarmShell::can_rebind`]。
 #[derive(Clone, PartialEq, Eq)]
 struct LaunchKey {
-    cwd: String,
+    /// `None` 为本机 PTY 宿主；远端为 SSH 连接 id。
+    host: Option<String>,
     shell: Option<String>,
     args: Vec<String>,
     env: BTreeMap<String, String>,
 }
 impl LaunchKey {
-    fn new(cwd: &str, launch: &PersistentLaunch) -> Result<Self, String> {
-        let cwd = std::fs::canonicalize(cwd).map_err(|error| error.to_string())?;
-        Ok(Self::from_parts(cwd.to_string_lossy().into_owned(), launch))
-    }
-
-    fn from_parts(cwd: String, launch: &PersistentLaunch) -> Self {
+    fn from_parts(host: Option<String>, launch: &PersistentLaunch) -> Self {
         Self {
-            cwd,
+            host,
             shell: launch.shell.clone(),
             args: launch.args.clone(),
             env: launch.env.clone(),
         }
     }
+}
+
+/// 本机项目：规范化后的目录、启动参数与复用键。
+fn local_launch_key(
+    cwd: &str,
+    shell: Option<&str>,
+) -> Result<(String, PersistentLaunch, LaunchKey), String> {
+    let launch = resolve_launch(cwd, shell)?;
+    let cwd = std::fs::canonicalize(cwd).map_err(|error| error.to_string())?;
+    let key = LaunchKey::from_parts(None, &launch);
+    Ok((cwd.to_string_lossy().into_owned(), launch, key))
 }
 
 /// 远端目标：PTY 在配置时校验过的项目内目录中启动。
@@ -54,6 +70,8 @@ struct RemoteTarget {
 #[derive(Clone)]
 struct Target {
     project_path: String,
+    /// 新预热项的启动目录：本机为规范化路径，远端为 `ssh://` 资源。
+    cwd: String,
     key: LaunchKey,
     launch: PersistentLaunch,
     count: usize,
@@ -65,6 +83,10 @@ struct WarmShell {
     id: String,
     pty_id: String,
     key: LaunchKey,
+    /// 启动目录，与 [`Target::cwd`] 同一形态；领取到其他目录时需要切换。
+    cwd: String,
+    /// daemon 能在领取时改记目录（远端切换目录的前提）。
+    claim_cwd: bool,
     launch: PersistentLaunch,
     remote: Option<RemoteTarget>,
     startup_pipe: Option<IpcStream>,
@@ -74,6 +96,21 @@ struct WarmShell {
     transport: Option<SessionTransport>,
     reserved_at: Option<Instant>,
 }
+impl WarmShell {
+    /// 能否领取到同主机的其他目录：要有不回显的启动通道先切换目录；远端还要 daemon
+    /// 改记 PTY 目录，否则接回时的项目根校验会拒绝。CMD 没有启动通道，只能原目录领取。
+    fn can_rebind(&self) -> bool {
+        match &self.remote {
+            None => self.startup_pipe.is_some(),
+            Some(_) => self.startup_input && self.claim_cwd,
+        }
+    }
+
+    fn has_startup_channel(&self) -> bool {
+        self.startup_pipe.is_some() || self.startup_input
+    }
+}
+
 impl Drop for WarmShell {
     fn drop(&mut self) {
         if let Some(session) = &self.session {
@@ -96,6 +133,39 @@ struct PoolState {
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
+
+/// 换主机时为上一个主机保留的空闲项数。
+const PREVIOUS_HOST_KEEP: usize = 1;
+
+impl PoolState {
+    /// 换补充目标时整理池，返回回收数量。保留：未过期的预留项（正在领取）；新目标键的
+    /// 空闲项（此前换走时保留的，最多 `count` 个）；目标换到另一主机或不预热时，上一个
+    /// 目标键的空闲项 1 个。其余回收。
+    fn retarget(&mut self, next: Option<(&LaunchKey, usize)>) -> usize {
+        let previous = self
+            .target
+            .as_ref()
+            .filter(|target| next.is_none_or(|(key, _)| key.host != target.key.host))
+            .map(|target| target.key.clone());
+        let before = self.shells.len();
+        let (mut kept_next, mut kept_previous) = (0, 0);
+        self.shells.retain(|entry| {
+            if let Some(at) = entry.reserved_at {
+                return at.elapsed() < RESERVATION_TTL;
+            }
+            if let Some((_, count)) = next.filter(|(key, _)| entry.key == **key) {
+                kept_next += 1;
+                return kept_next <= count;
+            }
+            if previous.as_ref().is_some_and(|key| entry.key == *key) {
+                kept_previous += 1;
+                return kept_previous <= PREVIOUS_HOST_KEEP;
+            }
+            false
+        });
+        before - self.shells.len()
+    }
+}
 
 /// auto 固定保留 1 个：领取后会立即补充，常驻更多只对极快的连续新建有帮助。
 fn resolve_count(value: &serde_json::Value) -> usize {
@@ -139,7 +209,7 @@ fn remote_launch_key(
 ) -> Result<(PersistentLaunch, LaunchKey), String> {
     let parsed = parse_remote_uri(cwd)?;
     let launch = crate::remote_ssh::terminal_cmds::persistent_shell_launch(&parsed.path, shell)?;
-    let key = LaunchKey::from_parts(cwd.to_string(), &launch);
+    let key = LaunchKey::from_parts(Some(parsed.connection_id), &launch);
     Ok((launch, key))
 }
 
@@ -172,6 +242,28 @@ impl ShellPrewarmPool {
         }
     }
 
+    /// 窗口切到不预热的项目（Linux 远端、SSH 直连等）：停止补充，但为上一个主机保留 1 个空闲项。
+    fn retire_window(&self, window: &str) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !state
+            .target
+            .as_ref()
+            .is_some_and(|target| target.window == window)
+        {
+            return;
+        }
+        let dropped = state.retarget(None);
+        trace(
+            "retired",
+            serde_json::json!({"window": window, "dropped": dropped, "kept": state.shells.len()}),
+        );
+        state.target = None;
+        state.generation += 1;
+        state.preparing = false;
+        state.paused_reason = None;
+        self.1.notify_waiters();
+    }
+
     pub(crate) async fn configure(
         &self,
         app: AppHandle,
@@ -184,10 +276,10 @@ impl ShellPrewarmPool {
             self.clear_window(&window);
             return Ok(0);
         };
-        let (key, launch, remote) = if cwd.starts_with(SSH_URI_PREFIX) {
+        let (target_cwd, key, launch, remote) = if cwd.starts_with(SSH_URI_PREFIX) {
             let manager = app.state::<SshManager>();
             let Some(connection_id) = remote_windows_connection(&manager, &cwd) else {
-                self.clear_window(&window);
+                self.retire_window(&window);
                 return Ok(0);
             };
             let root = manager.root_for_uri(&cwd, true)?;
@@ -200,30 +292,42 @@ impl ShellPrewarmPool {
                 connection_id,
                 working_directory,
             };
-            (key, launch, Some(remote))
+            (cwd.clone(), key, launch, Some(remote))
         } else {
             if !cfg!(windows) {
-                self.clear_window(&window);
+                self.retire_window(&window);
                 return Ok(0);
             }
             app.state::<PathAllowlist>().ensure_executable(&cwd)?;
-            let launch = resolve_launch(&cwd, shell.as_deref())?;
-            (LaunchKey::new(&cwd, &launch)?, launch, None)
+            let (target_cwd, launch, key) = local_launch_key(&cwd, shell.as_deref())?;
+            (target_cwd, key, launch, None)
         };
         let count = resolve_count(&count);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // 同主机换项目只移动补充目标，已就绪项保留，切换目录后仍可领取。
         let changed = state.target.as_ref().is_none_or(|target| {
             target.key != key || target.count != count || target.window != window
         });
+        let moved = !changed
+            && state
+                .target
+                .as_ref()
+                .is_some_and(|target| target.cwd != target_cwd);
+        // 换主机时保留上一个主机的 1 个空闲项，以及此前为新主机保留的项。
+        let dropped = if changed {
+            state.retarget(Some((&key, count)))
+        } else {
+            0
+        };
         trace(
             "configured",
             serde_json::json!({
                 "window": window, "count": count, "remote": remote.is_some(),
-                "changed": changed, "dropped": if changed { state.shells.len() } else { 0 },
+                "changed": changed, "moved": moved, "dropped": dropped,
+                "kept": if changed { state.shells.len() } else { 0 },
             }),
         );
         if changed {
-            state.shells.clear();
             state.generation += 1;
             state.preparing = false;
             state.paused_reason = None;
@@ -231,6 +335,7 @@ impl ShellPrewarmPool {
         }
         state.target = (count > 0).then_some(Target {
             project_path: cwd,
+            cwd: target_cwd,
             key,
             launch,
             count,
@@ -270,20 +375,22 @@ impl ShellPrewarmPool {
         let attempt = || {
             {
                 let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if state.target.is_none() {
-                    return Err("no_target");
-                }
+                // 没有补充目标时仍可能留着上一个主机的空闲项。
                 if state.shells.is_empty() {
-                    return Err(state.paused_reason.unwrap_or("empty"));
+                    return Err(if state.target.is_none() {
+                        "no_target"
+                    } else {
+                        state.paused_reason.unwrap_or("empty")
+                    });
                 }
             }
-            let key = if remote {
-                remote_launch_key(cwd, shell).map(|(_, key)| key)
+            let (cwd, key) = if remote {
+                remote_launch_key(cwd, shell).map(|(_, key)| (cwd.to_string(), key))
             } else {
-                resolve_launch(cwd, shell).and_then(|launch| LaunchKey::new(cwd, &launch))
+                local_launch_key(cwd, shell).map(|(cwd, _, key)| (cwd, key))
             }
             .map_err(|_| "launch_unavailable")?;
-            self.reserve_key(&key, has_startup)
+            self.reserve_key(&key, &cwd, has_startup)
         };
         let result = attempt();
         match &result {
@@ -321,17 +428,26 @@ impl ShellPrewarmPool {
         Ok(())
     }
 
-    fn reserve_key(&self, key: &LaunchKey, has_startup: bool) -> Result<String, &'static str> {
+    fn reserve_key(
+        &self,
+        key: &LaunchKey,
+        cwd: &str,
+        has_startup: bool,
+    ) -> Result<String, &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         // Reconfiguring the pool invalidates all entries. Every idle shell shares its target's launch key.
-        let entry = state
+        // 池里可能同时有上一个主机保留的项，先按主机挑出可比较的空闲项。
+        let mut idle_entries = state
             .shells
-            .iter_mut()
-            .find(|entry| entry.reserved_at.is_none())
-            .ok_or("empty")?;
-        if entry.key.cwd != key.cwd {
-            return Err("cwd_mismatch");
+            .iter()
+            .filter(|entry| entry.reserved_at.is_none())
+            .peekable();
+        if idle_entries.peek().is_none() {
+            return Err("empty");
         }
+        let entry = idle_entries
+            .find(|entry| entry.key.host == key.host)
+            .ok_or("host_mismatch")?;
         if entry.key.shell != key.shell {
             return Err("shell_mismatch");
         }
@@ -341,9 +457,30 @@ impl ShellPrewarmPool {
         if entry.key.env != key.env {
             return Err("env_mismatch");
         }
-        if has_startup && entry.startup_pipe.is_none() && !entry.startup_input {
-            return Err("startup_unsupported");
-        }
+        let idle = |entry: &WarmShell| entry.reserved_at.is_none() && entry.key == *key;
+        let startup_ok = |entry: &WarmShell| !has_startup || entry.has_startup_channel();
+        // 优先原目录的预热项；否则取能切换目录的项。
+        let index = state
+            .shells
+            .iter()
+            .position(|entry| idle(entry) && entry.cwd == cwd && startup_ok(entry))
+            .or_else(|| {
+                state.shells.iter().position(|entry| {
+                    idle(entry) && entry.cwd != cwd && entry.can_rebind() && startup_ok(entry)
+                })
+            });
+        let Some(index) = index else {
+            let same_cwd = state
+                .shells
+                .iter()
+                .any(|entry| idle(entry) && entry.cwd == cwd);
+            return Err(if same_cwd {
+                "startup_unsupported"
+            } else {
+                "cwd_mismatch"
+            });
+        };
+        let entry = &mut state.shells[index];
         entry.reserved_at = Some(Instant::now());
         Ok(entry.id.clone())
     }
@@ -372,32 +509,37 @@ impl ShellPrewarmPool {
         if !self.has_entry(id) {
             return Ok(None);
         }
-        let launch = resolve_launch(cwd, shell)?;
-        let key = LaunchKey::new(cwd, &launch)?;
-        let Some(mut entry) = self.take_key(id, &key) else {
+        let (cwd, _, key) = local_launch_key(cwd, shell)?;
+        let Some(mut entry) = self.take_key(id, &key, &cwd, true) else {
             trace("take_miss", serde_json::json!({"remote": false}));
             return Ok(None);
         };
+        let directory = (entry.cwd != cwd)
+            .then(|| crate::terminal::strip_windows_verbatim_prefix(&cwd).into_owned());
+        let script = claim_script(directory.as_deref(), startup);
         let mut pipe = entry.startup_pipe.take();
         if let Some(pipe) = &mut pipe {
             // 接回之前只交付命令文本。此时即使管道断开，普通冷启动仍可安全重试。
             if !matches!(
                 tokio::time::timeout(
                     LOCAL_CLAIM_TIMEOUT,
-                    stage_startup(pipe, startup.unwrap_or_default())
+                    stage_startup(pipe, script.as_deref().unwrap_or_default())
                 )
                 .await,
                 Ok(Ok(()))
             ) {
                 return Ok(None);
             }
-        } else if startup.is_some() {
+        } else if script.is_some() {
             return Ok(None);
         }
         let pty_id = entry.pty_id.clone();
         // 与正常新建相同的 daemon 名称规则：手机终端用 `mobile-` id，电脑重启后才能找回。
         let name = daemon_terminal_name(id, None);
-        let Some(result) = self.attach(id, entry, name, size, app, manager).await else {
+        let Some(result) = self
+            .attach(id, entry, name, directory, size, app, manager)
+            .await
+        else {
             return Ok(None);
         };
         if let Some(mut pipe) = pipe {
@@ -417,14 +559,17 @@ impl ShellPrewarmPool {
         Ok(Some(result))
     }
 
-    /// 远端 SSH 项目领取：启动参数与项目根都必须与预热时一致。`launch` 是不带启动命令的
+    /// 远端 SSH 项目领取：同一连接上启动参数一致即可。`launch` 是不带启动命令的
     /// 普通 Shell 参数（复用键），配置终端的命令经 `startup` 在接回后通过 PTY 输入交付。
+    /// `working_directory` 是调用方已校验在 `root` 内的目录；预热项在别的项目目录时，
+    /// 领取请 daemon 改记目录，接回后先切换过去。
     /// 未命中返回 None 走正常新建；命令交付失败返回错误，不再冷启动，避免执行两次。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take_remote(
         &self,
         id: &str,
         cwd: &str,
+        working_directory: &str,
         launch: &PersistentLaunch,
         startup: Option<&str>,
         root: &RegisteredRoot,
@@ -435,36 +580,56 @@ impl ShellPrewarmPool {
         if !self.has_entry(id) {
             return None;
         }
-        let key = LaunchKey::from_parts(cwd.to_string(), launch);
-        let Some(entry) = self.take_key(id, &key) else {
+        let connection_id = parse_remote_uri(cwd).ok()?.connection_id;
+        let key = LaunchKey::from_parts(Some(connection_id), launch);
+        let native = windows_native_path(working_directory);
+        let Some(mut entry) = self.take_key(id, &key, cwd, native.is_some()) else {
             trace("take_miss", serde_json::json!({"remote": true}));
             return None;
         };
         let remote = entry.remote.as_ref()?;
-        if remote.root.uri != root.uri
-            || remote.root.canonical_path != root.canonical_path
-            || !remote_target_valid(manager, remote)
-        {
+        let rebind = entry.cwd != cwd;
+        let valid = if rebind {
+            // 新目录已由调用方按 `root` 校验；预热项只是同一连接上的普通 Shell。
+            root.trusted && manager.server_mode(&remote.connection_id)
+        } else {
+            remote.root.uri == root.uri
+                && remote.root.canonical_path == root.canonical_path
+                && remote_target_valid(manager, remote)
+        };
+        if !valid {
             trace(
                 "take_miss",
                 serde_json::json!({"remote": true, "reason": "root"}),
             );
             return None;
         }
-        if startup.is_some() && !entry.startup_input {
+        if (startup.is_some() || rebind) && !entry.startup_input {
             trace(
                 "take_miss",
                 serde_json::json!({"remote": true, "reason": "startup_unsupported"}),
             );
             return None;
         }
+        if rebind {
+            // 之后的接回、清理与结束都按新项目的根校验。
+            entry.remote = Some(RemoteTarget {
+                root: root.clone(),
+                connection_id: remote.connection_id.clone(),
+                working_directory: working_directory.to_string(),
+            });
+        }
+        let script = claim_script(native.as_deref().filter(|_| rebind), startup);
         let startup_input = entry.startup_input;
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
         let name = daemon_terminal_name(id, launch.name.as_deref());
-        let result = self.attach(id, entry, name, size, app, manager).await?;
+        let claim_cwd = rebind.then(|| working_directory.to_string());
+        let result = self
+            .attach(id, entry, name, claim_cwd, size, app, manager)
+            .await?;
         if startup_input {
             // 已接回才交付；空行即普通 Shell。写入排在用户的任何输入之前。
-            let line = remote_startup_line(startup.unwrap_or_default());
+            let line = remote_startup_line(script.as_deref().unwrap_or_default());
             let terminal = manager
                 .persistent_terminals
                 .read()
@@ -474,9 +639,9 @@ impl ShellPrewarmPool {
             if !matches!(delivered, Some(Ok(()))) {
                 trace(
                     "startup_failed",
-                    serde_json::json!({"remote": true, "command": startup.is_some()}),
+                    serde_json::json!({"remote": true, "command": startup.is_some(), "rebind": rebind}),
                 );
-                if startup.is_some() {
+                if script.is_some() {
                     let removed = manager
                         .persistent_terminals
                         .write()
@@ -485,7 +650,10 @@ impl ShellPrewarmPool {
                     if let Some(terminal) = removed {
                         let _ = terminal.kill().await;
                     }
-                    return Some(Err("预热 PowerShell 启动命令交付失败".into()));
+                    // 只差切换目录时命令尚未执行，可安全改走正常新建。
+                    return startup
+                        .is_some()
+                        .then(|| Err("预热 PowerShell 启动命令交付失败".to_string()));
                 }
             }
         }
@@ -493,11 +661,13 @@ impl ShellPrewarmPool {
         Some(Ok(result))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn attach(
         &self,
         id: &str,
         mut entry: WarmShell,
         name: Option<String>,
+        cwd: Option<String>,
         size: (u16, u16),
         app: AppHandle,
         manager: &SshManager,
@@ -524,6 +694,10 @@ impl ShellPrewarmPool {
             let mut claim = serde_json::json!({ "id": entry.pty_id });
             if let Some(name) = name {
                 claim["name"] = name.into();
+            }
+            // 旧 daemon 不认识 cwd：远端在预留时已排除，本机宿主没有项目根校验，不传即可。
+            if let Some(cwd) = cwd.filter(|_| session.supports(CLAIM_CWD_CAPABILITY)) {
+                claim["cwd"] = cwd.into();
             }
             session.request("pty.claim", &claim).await?;
             let session = entry.session.take().ok_or("预热会话不可用")?;
@@ -571,11 +745,19 @@ impl ShellPrewarmPool {
         }
     }
 
-    fn take_key(&self, id: &str, key: &LaunchKey) -> Option<WarmShell> {
+    /// `allow_rebind` 为 false 时只认原目录的预热项（调用方无法切换到目标目录）。
+    fn take_key(
+        &self,
+        id: &str,
+        key: &LaunchKey,
+        cwd: &str,
+        allow_rebind: bool,
+    ) -> Option<WarmShell> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let index = state.shells.iter().position(|entry| {
             entry.id == id
                 && &entry.key == key
+                && (entry.cwd == cwd || allow_rebind && entry.can_rebind())
                 && entry
                     .reserved_at
                     .is_some_and(|at| at.elapsed() < RESERVATION_TTL)
@@ -627,7 +809,7 @@ impl ShellPrewarmPool {
                     memory.refresh_memory();
                     if app
                         .state::<PathAllowlist>()
-                        .ensure_executable(&target.key.cwd)
+                        .ensure_executable(&target.cwd)
                         .is_err()
                     {
                         Some("untrusted")
@@ -643,16 +825,27 @@ impl ShellPrewarmPool {
                     continue;
                 }
                 if let Some(reason) = paused_reason {
+                    // 内存紧张回收全部；目标不可用只回收目标主机的项，上一个主机保留的项照常可领。
+                    let before = state.shells.len();
+                    if reason == "memory_pressure" {
+                        state.shells.clear();
+                    } else {
+                        state.shells.retain(|entry| entry.key != target.key);
+                    }
                     if state.paused_reason != Some(reason) {
                         trace(
                             "unusable",
-                            serde_json::json!({"reason": reason, "dropped": state.shells.len()}),
+                            serde_json::json!({"reason": reason, "dropped": before - state.shells.len()}),
                         );
                     }
-                    state.shells.clear();
                 }
                 state.paused_reason = paused_reason;
-                if paused_reason.is_some() || state.shells.len() >= target.count {
+                let target_shells = state
+                    .shells
+                    .iter()
+                    .filter(|entry| entry.key == target.key)
+                    .count();
+                if paused_reason.is_some() || target_shells >= target.count {
                     continue;
                 }
                 state.preparing = true;
@@ -722,6 +915,25 @@ async fn stage_startup(pipe: &mut IpcStream, command: &str) -> std::io::Result<(
     pipe.write_i32_le(length).await?;
     pipe.write_all(command.as_bytes()).await?;
     read_startup_ack(pipe).await
+}
+
+/// 领取时交付给预热 PowerShell 的脚本：先切到目标目录，再执行配置命令。配置命令单独
+/// 解析，即使有语法错误也不影响切换目录；都没有时返回 None（普通 Shell）。
+fn claim_script(directory: Option<&str>, startup: Option<&str>) -> Option<String> {
+    let Some(directory) = directory else {
+        return startup.map(str::to_string);
+    };
+    let location = format!(
+        "Set-Location -LiteralPath '{}'",
+        powershell_literal(directory)
+    );
+    Some(match startup {
+        Some(startup) => format!(
+            "{location}; & ([ScriptBlock]::Create('{}'))",
+            powershell_literal(startup)
+        ),
+        None => location,
+    })
 }
 
 /// 远端预热 PowerShell 读取的一行：UTF-8 命令的 base64（只含可打印 ASCII，ReadKey 不回显），
@@ -799,6 +1011,8 @@ async fn create_local_warm_shell(
         id,
         pty_id: String::new(),
         key: target.key.clone(),
+        cwd: target.cwd.clone(),
+        claim_cwd: session.supports(CLAIM_CWD_CAPABILITY),
         launch: target.launch.clone(),
         remote: None,
         startup_pipe: None,
@@ -839,7 +1053,7 @@ async fn create_local_warm_shell(
         .request(
             "pty.createTransient",
             &serde_json::json!({
-                "cwd": target.key.cwd, "shell": target.launch.shell, "env": env,
+                "cwd": target.cwd, "shell": target.launch.shell, "env": env,
                 "args": ready_args(&target.launch.resolved_shell, target.launch.args.clone()),
                 "cols": 120, "rows": 30,
             }),
@@ -896,6 +1110,8 @@ async fn create_remote_warm_shell(
         id,
         pty_id: String::new(),
         key: target.key.clone(),
+        cwd: target.cwd.clone(),
+        claim_cwd: session.supports(CLAIM_CWD_CAPABILITY),
         launch: target.launch.clone(),
         remote: Some(remote.clone()),
         startup_pipe: None,

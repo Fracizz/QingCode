@@ -57,6 +57,27 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
+  it('switching projects reconfigures without clearing, so same-host ready shells survive', async () => {
+    const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: project } })
+    await waitFor(() => expect(configuredPaths()).toContain(project.path))
+    mocks.invoke.mockClear()
+    const next = { ...project, id: 'two', path: 'D:/work/two' }
+    hook.rerender({ value: next })
+    await waitFor(() => expect(configuredPaths()).toEqual([next.path]))
+    // 临时项目自动信任，同样预热。
+    mocks.invoke.mockClear()
+    mocks.trusted.mockReturnValue(false)
+    const scratch = { ...next, id: 'tmp', path: 'D:/temp/qingcode-empty-1', ephemeral: true }
+    hook.rerender({ value: scratch })
+    await waitFor(() => expect(configuredPaths()).toEqual([scratch.path]))
+    // 切到不预热的项目（未信任）才清空。
+    mocks.invoke.mockClear()
+    hook.rerender({ value: { ...next, id: 'three', path: 'D:/work/three' } })
+    await waitFor(() => expect(configuredPaths()).toEqual([null]))
+    hook.unmount()
+    await act(async () => {})
+  })
+
   it('lets the focused window own the budget and rechecks focus after loading settings', async () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(false)
     const hook = renderHook(() => useShellPrewarm(project))
