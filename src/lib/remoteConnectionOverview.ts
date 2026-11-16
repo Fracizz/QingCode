@@ -37,3 +37,15 @@ export function connectionStatus(alive: boolean | null | undefined, states: SshS
   if (active.some(state => state.phase === 'readyServer')) return { label: '服务已就绪', tone: 'ok', attention: false } as const
   return { label: '已连接', tone: 'ok', attention: false } as const
 }
+
+/** 旧 daemon 被替换或退出后残留的原始通道错误：用户看不懂，也不知道下一步做什么。 */
+export function isDaemonChannelClosed(reason: string | null | undefined): boolean {
+  return /^daemon 连接(?:已关闭|代理已退出)/.test((reason ?? '').trim())
+}
+
+/** 强制更新进行中的展示步骤（1–4），跟随该根实时推送的阶段。 */
+export function forceUpdateStep(phase: SshServerState['phase'] | undefined): { step: number; label: string } {
+  if (phase === 'installing') return { step: 2, label: '正在安装新版远端服务…' }
+  if (phase === 'handshaking') return { step: 3, label: '正在连接新版远端服务…' }
+  return { step: 1, label: '正在结束旧服务并准备更新…' }
+}

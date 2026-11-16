@@ -337,6 +337,9 @@ pub(super) async fn update(
     if server::kept_daemon(&access).is_some_and(|kept| !kept.newer) {
         server::shutdown_remote_daemon(manager, &id, &access).await;
         server::forget_kept_daemon(&access);
+        // 与重启/SSH 更新一致：丢弃指向旧 daemon 的共享连接与绑定，
+        // 否则随后的 ensure 会复用已关闭的通道并留下「daemon 连接已关闭」。
+        server::invalidate_shared_daemon(manager, &id);
         manager.clear_server_endpoint(&server::server_slot_key(&id, &root.canonical_path));
         server::ensure_server_endpoint_with_app(manager, root, Some(app)).await?;
     }

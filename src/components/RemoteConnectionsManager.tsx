@@ -31,6 +31,7 @@ import DirectServerUpdateDialog from './DirectServerUpdateDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import DirectSshFallback from './DirectSshFallback'
+import ServerOperationProgress from './ServerOperationProgress'
 import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
@@ -64,7 +65,7 @@ import {
   type SshWorkspaceRoot,
 } from '../lib/sshWorkspace'
 import { getSshServerEnabled } from '../lib/sshServerSettings'
-import { connectionStatus, matchesConnection, groupConnectionProjects } from '../lib/remoteConnectionOverview'
+import { connectionStatus, forceUpdateStep, isDaemonChannelClosed, matchesConnection, groupConnectionProjects } from '../lib/remoteConnectionOverview'
 import { normalizeProjectPath, restrictProject } from '../lib/workspaceTrust'
 import {
   isAgentCommandUnavailable,
@@ -107,6 +108,28 @@ type LogView = { rootUri: string; text: string; loading: boolean }
 const NEW_AGENT_CONNECTION_ID = '__new_agent__'
 
 /** 远程连接管理页：连接是跨项目资源，远程项目与远端服务都挂在连接下。 */
+type ForceRun = {
+  connectionId: string
+  rootUri: string
+  from: string
+  to: string
+  terminals: number
+  startedAt: number
+  finishedAt?: number
+  error?: string
+}
+
+function startForceRun(state: SshServerState, impact: DeferredUpgrade): ForceRun {
+  return {
+    connectionId: state.connectionId, rootUri: state.rootUri, from: impact.runningVersion,
+    to: impact.targetVersion, terminals: impact.liveTerminals, startedAt: Date.now(),
+  }
+}
+
+function finishForceRun(run: ForceRun, error?: string): ForceRun {
+  return { ...run, finishedAt: Date.now(), ...(error ? { error } : {}) }
+}
+
 export default function RemoteConnectionsManager() {
   const { t } = useI18n()
   const connections = useProjectStore(s => s.sshConnections)
@@ -152,6 +175,8 @@ export default function RemoteConnectionsManager() {
   const [error, setError] = useState('')
   const [forceDirect, setForceDirect] = useState<{ rootUri: string; confirmed: DeferredUpgrade } | null>(null)
   const forceRequest = useRef<AbortController | null>(null)
+  /** 强制更新的进度与结果：留在连接详情里，直到用户关闭或再次操作。 */
+  const [forceRun, setForceRun] = useState<ForceRun | null>(null)
   useEffect(() => () => { forceRequest.current?.abort() }, [selectedId, editing])
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
   const [logView, setLogView] = useState<LogView | null>(null)
@@ -190,6 +215,11 @@ export default function RemoteConnectionsManager() {
   const deferredState = statusError ? undefined : serverStates.find(state =>
     state.phase === 'readyServer' && state.connectionId === selected?.id && state.deferredUpgrade)
   const statusReason = statusError || deferredState?.reason || serverStates.find(state => state.reason)?.reason
+  const run = forceRun && forceRun.connectionId === selected?.id ? forceRun : null
+  const forceRunning = Boolean(run && !run.finishedAt)
+  const forceProgress = forceUpdateStep(run ? serverStates.find(state => state.rootUri === run.rootUri)?.phase : undefined)
+  // 旧 daemon 被替换后残留的通道错误：换成可理解的说明，并就近提供重新连接。
+  const channelClosedState = statusError ? undefined : serverStates.find(state => state.reason === statusReason && isDaemonChannelClosed(state.reason))
   const filteredConnections = connections.filter(connection => {
     const summary = connectionStatus(aliveMap[connection.id], statesByConnection[connection.id] ?? [], statusErrors[connection.id])
     const info = directInfos[connection.id]
@@ -648,6 +678,8 @@ export default function RemoteConnectionsManager() {
     forceRequest.current = controller
     const { rootUri } = state
     setBusyRoot(rootUri)
+    setForceRun(null)
+    let run: ForceRun | null = null
     try {
       const impact = await safeInvoke<unknown>('核对远端终端数', 'ssh_deferred_upgrade_impact', { rootUri })
       if (controller.signal.aborted) return
@@ -666,13 +698,18 @@ export default function RemoteConnectionsManager() {
       if (state.transport === 'agent') {
         setForceDirect({ rootUri, confirmed: impact })
       } else {
+        run = startForceRun(state, impact)
+        setForceRun(run)
         const result = parseSshServerState(await safeInvoke('更新远端服务', 'ssh_server_update', { rootUri, confirmedUpgrade: impact }))
         if (result?.phase !== 'readyServer' || result.version !== impact.targetVersion)
           throw new Error(result?.reason || t('远端服务尚未更新到目标版本，请刷新状态。'))
-        pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
+        if (mountedRef.current) setForceRun(finishForceRun(run))
+        else pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
       }
     } catch (reason) {
-      if (!controller.signal.aborted) pushToast('error', t('更新远端服务'), String(reason))
+      // 已开始更新时把失败留在详情里并给出下一步；未开始（核对/确认阶段）仍用提示。
+      if (run && mountedRef.current) setForceRun(finishForceRun(run, String(reason)))
+      else if (!controller.signal.aborted) pushToast('error', t('更新远端服务'), String(reason))
     } finally {
       forceRequest.current = null
       if (mountedRef.current) {
@@ -708,6 +745,8 @@ export default function RemoteConnectionsManager() {
       }
     } finally {
       setBusyRoot(null)
+      const connectionId = sshConnectionIdFromUri(rootUri)
+      if (connectionId && mountedRef.current) void refreshStatus(connectionId)
     }
   }
 
@@ -1099,9 +1138,37 @@ export default function RemoteConnectionsManager() {
                         <p className="break-all font-mono text-ui-sm text-fg">{directEndpoint ? `${directEndpoint.host}:${directEndpoint.port}` : sshConnectionTarget(selected)}</p>
                         <p className={helpClass}>{t(connectionModeLabel)}</p>
                         <p className={helpClass}>{t('选择下方项目以打开或重新连接；需要认证时会提示输入凭据。')}</p>
-                        {statusReason && <p role="status" className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-ui-sm text-warn">{statusReason}</p>}
-                        {deferredState && <button type="button" className={secondaryButtonClass} disabled={!!busyRoot}
+                        {statusReason && !forceRunning && (channelClosedState ? (
+                          <div role="status" className="space-y-2 text-ui-sm">
+                            <p className="text-warn">{t('与远端服务的连接已断开，可能是服务刚被更新或重启。重新连接即可恢复；之前运行中的终端需要重新打开。')}</p>
+                            <p className="select-text break-words text-fg-muted">{t('详情：{reason}', { reason: statusReason })}</p>
+                            <button type="button" className={secondaryButtonClass} disabled={!!busyRoot}
+                              onClick={() => void restartServer(channelClosedState.rootUri, false, true)}>
+                              {t(busyRoot === channelClosedState.rootUri ? '正在重新连接…' : '重新连接服务')}
+                            </button>
+                          </div>
+                        ) : <p role="status" className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-ui-sm text-warn">{statusReason}</p>)}
+                        {deferredState && !run && <button type="button" className={secondaryButtonClass} disabled={!!busyRoot}
                           onClick={() => void forceUpdate(deferredState)}>{t('强制更新…')}</button>}
+                        {run && <ServerOperationProgress
+                          compact
+                          name={selected.name}
+                          status="更新中"
+                          label={run.error ? '强制更新失败' : forceProgress.label}
+                          step={forceProgress.step}
+                          startedAt={run.startedAt}
+                          finishedAt={run.finishedAt}
+                          error={run.error}
+                          actions={run.finishedAt ? <>
+                            {!run.error && <p className="mr-auto self-center text-ui-sm text-fg-muted">
+                              {t('已从 v{from} 更新到 v{to}，原有 {count} 个终端已结束；新建终端或重新打开项目即可继续。', { from: run.from, to: run.to, count: run.terminals })}
+                            </p>}
+                            {run.error && <button type="button" className={secondaryButtonClass} onClick={() => void showLogs(run.rootUri)}>{t('查看远端服务日志')}</button>}
+                            {run.error && <button type="button" className={secondaryButtonClass} disabled={!!busyRoot}
+                              onClick={() => { setForceRun(null); void restartServer(run.rootUri, false, true) }}>{t('重新连接服务')}</button>}
+                            <button type="button" className={secondaryButtonClass} onClick={() => setForceRun(null)}>{t(run.error ? '知道了' : '完成')}</button>
+                          </> : undefined}
+                        />}
                       </div>
                     )}
 

@@ -148,6 +148,49 @@ describe('remote connection compatibility settings', () => {
     fireEvent.click(screen.getByRole('button', { name: '强制更新…' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('更新远端服务', 'ssh_server_update', { rootUri, confirmedUpgrade: live }))
     await waitFor(() => expect(screen.queryByRole('button', { name: '强制更新…' })).toBeNull())
+    expect(await screen.findByText('已从 v1.0.0 更新到 v1.0.1，原有 3 个终端已结束；新建终端或重新打开项目即可继续。')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    await waitFor(() => expect(screen.queryByText(/原有 3 个终端已结束/)).toBeNull())
+  })
+
+  it('keeps a failed force update in the detail with recovery actions', async () => {
+    const rootUri = 'ssh://c1/home/app'
+    const impact = { runningVersion: '1.0.0', targetVersion: '1.0.1', liveTerminals: 2 }
+    const state = { connectionId: 'c1', rootUri, phase: 'readyServer', mode: 'server', connectionMode: 'server',
+      transport: 'tunnel', version: '1.0.0', reason: '已推迟升级', deferredUpgrade: impact }
+    listServerStates.mockResolvedValue([state])
+    invoke.mockImplementation(async (_label, command) => {
+      if (command === 'ssh_deferred_upgrade_impact') return impact
+      if (command === 'ssh_server_update') throw new Error('daemon 连接已关闭')
+    })
+    alive.mockResolvedValue(true)
+    confirmDialog.mockResolvedValue(true)
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    await act(async () => { render(<RemoteConnectionsManager />) })
+    fireEvent.click(await screen.findByRole('button', { name: '强制更新…' }))
+    const failure = await screen.findByText('Error: daemon 连接已关闭')
+    const card = failure.closest('section')!
+    expect(within(card).getByRole('button', { name: '查看远端服务日志' })).toBeVisible()
+    expect(within(card).getByRole('button', { name: '重新连接服务' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '强制更新…' })).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: '知道了' }))
+    expect(await screen.findByRole('button', { name: '强制更新…' })).toBeVisible()
+  })
+
+  it('explains a closed daemon channel and reconnects the affected root', async () => {
+    const rootUri = 'ssh://c1/home/app'
+    listServerStates.mockResolvedValue([{ connectionId: 'c1', rootUri, phase: 'handshaking', mode: 'server',
+      connectionMode: 'server', transport: 'tunnel', version: null, reason: 'daemon 连接已关闭' }])
+    invoke.mockResolvedValue(null)
+    alive.mockResolvedValue(true)
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    await act(async () => { render(<RemoteConnectionsManager />) })
+    expect(await screen.findByText(/与远端服务的连接已断开/)).toBeVisible()
+    expect(screen.getByText('详情：daemon 连接已关闭')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '重新连接服务' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重启远端服务', 'ssh_server_restart', { rootUri }))
   })
 
   it('keeps failed status checks actionable and allows refreshing without treating them as offline', async () => {

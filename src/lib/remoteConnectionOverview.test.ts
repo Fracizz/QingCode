@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionStatus, groupConnectionProjects, matchesConnection } from './remoteConnectionOverview'
+import { connectionStatus, forceUpdateStep, groupConnectionProjects, isDaemonChannelClosed, matchesConnection } from './remoteConnectionOverview'
 import type { Project, SshConnection } from '../types'
 import type { SshServerState } from './sshServerStatus'
 
@@ -33,5 +33,22 @@ describe('remote connection overview', () => {
     expect(connectionStatus(true, [state('installing')]).label).toBe('正在准备服务')
     expect(connectionStatus(true, [state('readyServer')]).label).toBe('服务已就绪')
     expect(connectionStatus(true, [state('readyDirect')]).label).toBe('已连接')
+  })
+})
+
+describe('force update helpers', () => {
+  it('recognizes raw daemon channel closures only', () => {
+    expect(isDaemonChannelClosed('daemon 连接已关闭')).toBe(true)
+    expect(isDaemonChannelClosed(' daemon 连接已关闭：exit 1')).toBe(true)
+    expect(isDaemonChannelClosed('daemon 连接代理已退出')).toBe(true)
+    expect(isDaemonChannelClosed('daemon 版本不匹配')).toBe(false)
+    expect(isDaemonChannelClosed(null)).toBe(false)
+  })
+
+  it('maps live phases to progress steps', () => {
+    expect(forceUpdateStep(undefined).step).toBe(1)
+    expect(forceUpdateStep('readyServer').step).toBe(1)
+    expect(forceUpdateStep('installing').step).toBe(2)
+    expect(forceUpdateStep('handshaking').step).toBe(3)
   })
 })
