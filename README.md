@@ -1,6 +1,41 @@
-# QingCode
+<p align="center">
+  <img src="./public/app-icon.svg" alt="QingCode" width="96" />
+</p>
 
-**English** | [简体中文](./README.zh-CN.md)
+<h1 align="center">QingCode</h1>
+
+<p align="center"><b>Run Claude Code, Codex and OpenCode across all your local &amp; SSH projects — and pick up the same terminal on your phone.</b></p>
+
+<p align="center">
+  <a href="https://github.com/Fracizz/QingCode/releases/latest"><strong>Download</strong></a> ·
+  <a href="#get-the-app">Install</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="./docs/ssh-workspaces.md">SSH workspaces</a> ·
+  <a href="./mobile/README.md">Android</a>
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Fracizz/QingCode/releases/latest"><img src="https://img.shields.io/github/v/release/Fracizz/QingCode?label=release&labelColor=333333&color=4ECDB5" alt="latest release" /></a>
+  <a href="https://github.com/Fracizz/QingCode/releases"><img src="https://img.shields.io/github/downloads/Fracizz/QingCode/total?labelColor=333333&color=4ECDB5" alt="total downloads" /></a>
+  <a href="https://github.com/Fracizz/QingCode/stargazers"><img src="https://img.shields.io/github/stars/Fracizz/QingCode?labelColor=333333&color=4ECDB5&logo=github" alt="GitHub stars" /></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Android-333333?labelColor=333333&color=4ECDB5" alt="platforms" />
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/Fracizz/QingCode?labelColor=333333&color=4ECDB5" alt="MIT license" /></a>
+</p>
+
+<p align="center">
+  <a href="./docs/screenshots/zh-06-four-terminals.png"><img src="./docs/screenshots/zh-06-four-terminals.png" width="100%" alt="QingCode with four AI CLI terminals running side by side" /></a>
+</p>
+
+- **Every project, one window** — pin local, WSL and SSH projects to the title bar; switching keeps unsaved edits and running terminals.
+- **Agents keep running when you leave** — terminals are hosted by a background process (or the remote server), so quitting the app or dropping the network doesn't kill your Claude Code / Codex session.
+- **Continue from your phone** — the Android app rejoins the *same* terminal on your computer: read output, type, send images.
+- **Start the whole stack in one click** — API, web and workers in one run configuration, one terminal per task.
+- **Agent-native** — agents drive QingCode through its CLI + Skill: add projects, edit run configs, start/stop services.
+- **Bring your own AI** — no built-in model, no proxying; the official CLIs stay official. Tauri 2 + Rust, no bundled Chromium.
 
 **QingCode** is a **project-management companion for the AI coding era**: multi-project switching, service startup, terminal sessions, and light editing in one window.  
 It is not another VS Code or Zed — it focuses on keeping local and remote projects and their processes under control.

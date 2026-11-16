@@ -1,6 +1,41 @@
-# QingCode
+<p align="center">
+  <img src="./public/app-icon.svg" alt="QingCode" width="96" />
+</p>
 
-[English](./README.md) | **简体中文**
+<h1 align="center">QingCode</h1>
+
+<p align="center"><b>在一个窗口里管好所有本地 / SSH 项目上的 Claude Code、Codex、OpenCode —— 离开电脑，用手机接着同一个终端。</b></p>
+
+<p align="center">
+  <a href="https://github.com/Fracizz/QingCode/releases/latest"><strong>下载</strong></a> ·
+  <a href="#获取应用">安装</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="./docs/ssh-workspaces.md">SSH 工作区</a> ·
+  <a href="./mobile/README.md">Android</a>
+</p>
+
+<p align="center">
+  <a href="./README.md">English</a> · <b>简体中文</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Fracizz/QingCode/releases/latest"><img src="https://img.shields.io/github/v/release/Fracizz/QingCode?label=release&labelColor=333333&color=4ECDB5" alt="最新版本" /></a>
+  <a href="https://github.com/Fracizz/QingCode/releases"><img src="https://img.shields.io/github/downloads/Fracizz/QingCode/total?labelColor=333333&color=4ECDB5" alt="下载量" /></a>
+  <a href="https://github.com/Fracizz/QingCode/stargazers"><img src="https://img.shields.io/github/stars/Fracizz/QingCode?labelColor=333333&color=4ECDB5&logo=github" alt="GitHub stars" /></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Android-333333?labelColor=333333&color=4ECDB5" alt="支持平台" />
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/Fracizz/QingCode?labelColor=333333&color=4ECDB5" alt="MIT 许可证" /></a>
+</p>
+
+<p align="center">
+  <a href="./docs/screenshots/zh-06-four-terminals.png"><img src="./docs/screenshots/zh-06-four-terminals.png" width="100%" alt="QingCode 中四个 AI CLI 终端并排运行" /></a>
+</p>
+
+- **所有项目一个窗口** —— 本地、WSL、SSH 项目钉在标题栏，切换时未保存内容和运行中的终端都在。
+- **人走了 Agent 照跑** —— 终端由后台进程（或远端服务）托管，关掉应用、网络断开，Claude Code / Codex 会话都不会中断。
+- **手机接着干** —— Android 端连回电脑上的*同一个*终端：看输出、打字、发图片。
+- **一键拉起整套服务** —— API、前端、Worker 写进一份运行配置，每个任务一个终端。
+- **Agent 原生** —— Agent 可通过 CLI + Skill 驱动 QingCode：添加项目、改运行配置、启停服务。
+- **自带 AI 工具** —— 不内置模型、不代理请求，官方 CLI 原样使用。基于 Tauri 2 + Rust，不打包 Chromium。
 
 **QingCode** 是 AI 开发时代下的**代码项目管理搭子**：把多项目切换、服务启动、终端现场和轻量编辑放进同一个桌面窗口。  
 不是再做一个 VS Code / Zed，而是补上「同时盯多个项目、一键拉起前后端与工具链」这件事。
