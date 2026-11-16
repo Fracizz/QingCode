@@ -37,7 +37,7 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5v10"></path><path d="M12 19.5h.01"></path></symbol>
     <symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></symbol>
     <!-- 「运行中优先」排序按钮（lucide message-square-more：会话气泡里的「…」表示正在进行）。 -->
-    <symbol id="i-message-more" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="m3 16 4 4 4-4"></path><path d="M7 20V4"></path><path d="M11 4h10"></path><path d="M11 8h7"></path><path d="M11 12h4"></path></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
     <symbol id="i-paste" viewBox="0 0 24 24"><path d="M11 14h10"></path><path d="M16 4h2a2 2 0 0 1 2 2v1.344"></path><path d="m17 18 4-4-4-4"></path><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"></path><rect x="8" y="2" width="8" height="4" rx="1"></rect></symbol>
     <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></symbol>
@@ -79,11 +79,11 @@
 
       <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
         <div id="home-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
-        <!-- 首屏大标题：上方小字是当前电脑与延迟（点按管理连接），下方「地平线」光随连接状态变化。 -->
+        <!-- 首屏大标题：上方小字是当前电脑与延迟（点按管理连接），与右上角设置按钮同一行。 -->
         <header class="hero">
           <button id="active-host" class="hero-eyebrow host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><span id="home-latency"></span><svg><use href="#i-chevron"/></svg></button>
           <h1 id="home-title" class="hero-title">QingCode</h1>
-          <span class="hero-horizon" aria-hidden="true"></span>
+
         </header>
         <div id="home-context" class="context-card" hidden>
           <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span></small></div>
@@ -130,7 +130,7 @@
         <header class="hero with-action">
           <div><p id="project-subtitle" class="hero-eyebrow"></p><h1 id="project-title" class="hero-title">项目</h1></div>
           <button id="refresh" class="icon-button" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
-          <span class="hero-horizon" aria-hidden="true"></span>
+
         </header>
         <div id="project-filters">
           <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索 IP、项目名或路径" aria-label="搜索 IP、项目名或路径" autocomplete="off" enterkeyhint="search"></div>
@@ -150,7 +150,7 @@
         <header class="hero with-action">
           <div><p id="connection-subtitle" class="hero-eyebrow"></p><h1 id="connection-title" class="hero-title">连接</h1></div>
           <button id="add-host" class="secondary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>
-          <span class="hero-horizon" aria-hidden="true"></span>
+
         </header>
         <p id="connection-error" class="error" role="alert" hidden></p>
         <div id="connection-list" class="rows"></div>
@@ -170,7 +170,7 @@
     <section id="terminal-screen" hidden aria-labelledby="terminal-name">
       <header class="terminal-head">
         <button id="show-sessions" class="icon-button" type="button" aria-label="打开会话侧栏" aria-controls="session-drawer" aria-expanded="false"><svg><use href="#i-sidebar"/></svg></button>
-        <div class="terminal-heading"><h1 id="terminal-name"></h1><p class="terminal-sub"><span id="terminal-dot" class="dot"></span><span id="terminal-host"></span><span id="terminal-latency" aria-label="手机到电脑往返延迟">电脑 --</span><button id="terminal-share-chip" class="share-chip" type="button" aria-label="多端共享" aria-haspopup="dialog" aria-controls="share-dialog" hidden><svg aria-hidden="true"><use href="#i-eye"/></svg><span id="terminal-share-chip-label" data-i18n-skip></span></button></p></div>
+        <div class="terminal-heading"><h1 id="terminal-name"></h1><p class="terminal-sub"><span id="terminal-dot" class="dot"></span><span id="terminal-host"></span><span id="terminal-latency" aria-label="手机到电脑往返延迟">--</span><button id="terminal-share-chip" class="share-chip" type="button" aria-label="多端共享" aria-haspopup="dialog" aria-controls="share-dialog" hidden><svg aria-hidden="true"><use href="#i-eye"/></svg><span id="terminal-share-chip-label" data-i18n-skip></span></button></p></div>
         <button id="new-session" class="icon-button" type="button" aria-label="新建终端"><svg><use href="#i-plus"/></svg></button>
         <button id="terminal-menu" class="icon-button" type="button" aria-label="终端操作菜单"><svg><use href="#i-more"/></svg></button>
       </header>
@@ -189,6 +189,13 @@
           <button id="terminal-empty-new" class="primary" type="button">新建终端</button>
         </div>
         <p id="font-toast" role="status" hidden></p>
+        <!-- 输入相关的单行短状态（图片进度 / 提交回执 / 补全提示）：浮在输出区顶部，
+             不挡住底部的提示符和程序状态栏；不参与布局，显隐不触发终端重新计算行列。 -->
+        <span class="compose-notes">
+          <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
+          <span id="image-state" class="compose-note" role="status" hidden></span>
+          <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
+        </span>
         <button id="scroll-bottom" class="secondary" type="button" hidden><svg><use href="#i-down"/></svg><span>回到最新</span></button>
       </div>
       <div id="terminal-taken" hidden>
@@ -205,12 +212,6 @@
             <p id="terminal-status" role="status"></p>
             <button id="terminal-retry" class="text-button" type="button" hidden>重试</button>
           </div>
-          <!-- 输入相关的单行短状态（图片进度 / 提交回执 / 补全提示）。 -->
-          <span class="compose-notes">
-            <span id="completion-help" class="compose-note" hidden>↑↓ 选择 · ↵ 确认</span>
-            <span id="image-state" class="compose-note" role="status" hidden></span>
-            <span id="submission-state" hidden><button id="review-submission" type="button" class="compose-note compose-chip"><span id="submission-status" role="status"></span></button></span>
-          </span>
         </div>
         <!-- 首次进入终端的一次性说明；点「知道了」或主动切换一次输入模式后不再显示。 -->
         <div id="input-tip" role="note" hidden>
@@ -371,7 +372,6 @@
     <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
     <div class="drawer-actions">
       <button id="back" class="secondary" type="button">返回工作台</button>
-      <button id="drawer-settings" class="secondary" type="button">终端设置</button>
       <button id="end-all-sessions" class="text-button danger" type="button">关闭全部会话</button>
     </div>
   </dialog>
@@ -550,19 +550,22 @@
   <dialog id="terminal-menu-dialog" class="sheet" aria-labelledby="terminal-menu-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 tabindex="-1" id="terminal-menu-title">终端操作</h2><p class="terminal-menu-info"><span id="terminal-menu-context"></span><span id="terminal-size" aria-label="终端列数和行数"></span></p>
-    <div class="rows terminal-actions">
-      <button id="menu-share" type="button" hidden><svg><use href="#i-eye"/></svg><span>多端共享</span></button>
-      <button id="menu-edit" type="button"><svg><use href="#i-edit"/></svg><span>展开编辑指令</span></button>
-      <button id="menu-submissions" type="button"><svg><use href="#i-history"/></svg><span>最近提交与项目草稿</span></button>
-      <button id="menu-files" type="button"><svg><use href="#i-folder"/></svg><span>项目文件</span></button>
-      <button id="menu-read" type="button"><svg><use href="#i-book"/></svg><span>阅读与搜索输出</span></button>
-      <button id="menu-mouse" type="button"><svg><use href="#i-pointer"/></svg><span>鼠标模式</span></button>
-      <button id="menu-sessions" type="button"><svg><use href="#i-sidebar"/></svg><span>会话列表</span></button>
-      <button id="menu-new" type="button"><svg><use href="#i-plus"/></svg><span>新建终端</span></button>
-      <button id="manage-sessions" type="button"><svg><use href="#i-settings"/></svg><span>终端设置</span></button>
-      <button id="menu-dashboard" type="button"><svg><use href="#i-home"/></svg><span>返回项目列表</span></button>
+    <!-- 只放顶栏没有的操作：会话列表、新建终端在顶栏，返回工作台在会话侧栏。按用途分组；点遮罩、下滑或返回键关闭。 -->
+    <div class="terminal-menu-groups">
+      <div class="rows terminal-actions" aria-label="输入">
+        <button id="menu-share" type="button" hidden><svg><use href="#i-eye"/></svg><span>多端共享</span></button>
+        <button id="menu-edit" type="button"><svg><use href="#i-edit"/></svg><span>展开编辑指令</span></button>
+        <button id="menu-submissions" type="button"><svg><use href="#i-history"/></svg><span>最近提交与项目草稿</span></button>
+      </div>
+      <div class="rows terminal-actions" aria-label="查看">
+        <button id="menu-files" type="button"><svg><use href="#i-folder"/></svg><span>项目文件</span></button>
+        <button id="menu-read" type="button"><svg><use href="#i-book"/></svg><span>阅读与搜索输出</span></button>
+        <button id="menu-mouse" type="button"><svg><use href="#i-pointer"/></svg><span>鼠标模式</span></button>
+      </div>
+      <div class="rows terminal-actions">
+        <button id="manage-sessions" type="button"><svg><use href="#i-settings"/></svg><span>终端设置</span></button>
+      </div>
     </div>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="terminal-menu-dialog">关闭</button></div>
   </dialog>
   <!-- 多端共享：标题栏共享标签点开后的完整说明与操作，不常驻占用终端高度。 -->
   <dialog id="share-dialog" class="sheet" aria-labelledby="share-title">

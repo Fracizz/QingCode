@@ -14,6 +14,22 @@
   unicode-range: U+2190-21FF, U+2300-23FF, U+25A0-25FF, U+2700-27BF, U+2B00-2BFF;
   font-display: swap;
 }
+/*
+ * 终端中文：终端每个汉字占两个英文字格（系统等宽字体约 0.6em × 2 = 1.2em），而系统中文字形只有 1em 宽，
+ * 字与字之间会空出一截，看起来像加了字距。这里引用系统自带的思源黑体 / Noto Sans CJK，
+ * 用 size-adjust 略微放大，让汉字基本填满两格；只覆盖中日韩字符和全角标点，不改变英文字格度量。
+ * 找不到这些系统字体时整条规则不生效，回落到原来的系统字体。
+ */
+@font-face {
+  font-family: 'QingCode CJK';
+  src: local('Noto Sans CJK SC'), local('Noto Sans CJK SC Regular'), local('NotoSansCJKsc-Regular'),
+    local('Source Han Sans SC'), local('Source Han Sans SC Regular'), local('SourceHanSansSC-Regular'),
+    local('Noto Sans SC'), local('NotoSansSC-Regular');
+  unicode-range: U+1100-11FF, U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3100-312F, U+3130-318F, U+31F0-31FF,
+    U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF01-FF60, U+FFE0-FFE6;
+  size-adjust: 112%;
+  font-display: swap;
+}
 :root {
   color-scheme: dark;
   /* 深色（默认）：与电脑端深色同为纯中性灰。石墨灰见下方 :root[data-theme="graphite"]。 */
@@ -30,10 +46,12 @@
   --accent-surface: #193a35;
   --accent-pressed: #244c44;
   --accent-border: #3b746b;
-  /* 首屏「地平线」：标题下方的细光线与从线上升起的青光，随连接状态切换（见 design.md）。 */
-  --horizon: #68dfc6;
-  --glow: #68dfc62b;
-  --glow-soft: #68dfc60f;
+  /* 工作台顶部氛围光，随连接状态切换（见 design.md）。 */
+  --glow: #68dfc624;
+  --glow-soft: #68dfc60d;
+  /* 浮动顶栏高度；页面顶部内边距让大标题上方的小字与右上角设置按钮同一行。 */
+  --app-head-height: 48px;
+  --page-top: 8px;
   /* 圆角规范见 ../design.md；容器与控件保持同一基准。 */
   --control-radius: 12px;
   --group-radius: var(--control-radius);
@@ -66,8 +84,7 @@
   --muted: #999999;
   --console: #181818;
   /* 石墨灰更内敛：光晕饱和度和亮度都压低一档。 */
-  --horizon: #5cc2ad;
-  --glow: #5cc2ad1f;
+  --glow: #5cc2ad1a;
   --glow-soft: #5cc2ad0a;
 }
 * { box-sizing: border-box; }
@@ -163,27 +180,55 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 
 /* ---------- 工作台框架 ---------- */
 .dashboard {
+  position: relative;
+  isolation: isolate;
   height: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
-.app-head, #dashboard-nav { background: var(--paper); }
-/* 顶栏平时只有设置按钮；大标题滚出后淡入紧凑标题和底部分隔线。 */
+/* 顶部氛围光：从屏幕上缘往下自然淡开的青光，没有任何边缘；固定在工作台背后，不随列表滚动。
+   在线常亮；连接中缓慢呼吸；离线或未配对时熄灭。只用渐变，不用 filter，滚动不卡。 */
+.dashboard::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 380px;
+  pointer-events: none;
+  background:
+    radial-gradient(75% 62% at 82% 0%, var(--glow), transparent 100%),
+    radial-gradient(120% 70% at 30% 0%, var(--glow-soft), transparent 100%);
+  transition: opacity 600ms var(--ease);
+}
+.dashboard[data-host-state="checking"]::before { animation: glow-breathe 2.4s ease-in-out infinite; }
+.dashboard:is([data-host-state="offline"], [data-host-state="saved"], [data-host-state="none"])::before { opacity: 0; }
+@keyframes glow-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dashboard[data-host-state="checking"]::before { animation: none; }
+}
+#dashboard-nav { background: var(--paper); }
+/* 顶栏浮在页面上方，平时透明、只露出右上角设置按钮（与大标题上方的小字同一行）；
+   大标题滚出后才铺底色、分隔线并淡入紧凑标题，展开时不额外占一行高度。 */
 .app-head {
-  position: relative;
+  position: absolute;
   z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 48px;
-  padding: 2px max(12px, calc((100% - 600px) / 2)) 2px max(16px, calc((100% - 600px) / 2));
+  height: var(--app-head-height);
+  padding: 0 max(4px, calc((100% - 600px) / 2 - 12px)) 0 max(16px, calc((100% - 600px) / 2));
   border-bottom: 1px solid transparent;
-  transition: border-color var(--motion-enter) var(--ease);
+  pointer-events: none;
+  transition: border-color var(--motion-enter) var(--ease), background-color var(--motion-enter) var(--ease);
 }
-.dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); }
+.app-head > * { pointer-events: auto; }
+.dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); background: var(--paper); }
 .app-head-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .app-head-title {
   display: inline-flex;
@@ -198,11 +243,11 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   font-weight: 600;
   opacity: 0;
   transform: translateY(6px);
-  pointer-events: none;
   transition: opacity var(--motion-enter) var(--ease), transform var(--motion-enter) var(--ease);
 }
+.dashboard:not([data-collapsed="true"]) .app-head-title { pointer-events: none; }
 .app-head-title > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dashboard[data-collapsed="true"] .app-head-title { opacity: 1; transform: none; pointer-events: auto; }
+.dashboard[data-collapsed="true"] .app-head-title { opacity: 1; transform: none; }
 .dashboard[data-collapsed="true"] .app-head-title:active:not(:disabled) { background: transparent; opacity: .7; }
 /* 首屏大标题上方的当前电脑：去掉胶囊底色，作为可点的小字说明。 */
 .host-pill {
@@ -232,64 +277,31 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 12px max(16px, calc((100% - 600px) / 2)) 24px;
+  padding: var(--page-top) max(16px, calc((100% - 600px) / 2)) 24px;
   overscroll-behavior: contain;
 }
 .with-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
-/* ---------- 首屏大标题与「地平线」 ----------
-   小字说明 + 细体大标题，底部一条青绿细光线，光从线上向上晕开，像天边泛起的青光。
-   在线常亮；连接中光沿线扫过、晕光呼吸；离线或未配对时线变灰、光熄灭。只用渐变，不用 filter，滚动不卡。 */
-.hero {
-  position: relative;
-  isolation: isolate;
-  margin: 0 -4px 20px;
-  padding: 12px 4px 18px;
-}
-.hero.with-action { align-items: flex-end; }
-.hero::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: -48px -16px 0;
-  pointer-events: none;
-  background:
-    radial-gradient(70% 90% at 12% 100%, var(--glow), transparent 72%),
-    radial-gradient(120% 60% at 30% 100%, var(--glow-soft), transparent 80%);
-  transition: opacity 600ms var(--ease);
-}
-.hero-horizon {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 0;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(90deg, var(--horizon), transparent 78%);
-  transition: opacity 600ms var(--ease);
-}
-.hero-eyebrow { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-p.hero-eyebrow { min-height: 32px; }
+/* ---------- 首屏大标题 ----------
+   小字说明与右上角设置按钮同一行（小字右侧给按钮留位），下方细体大标题。 */
+.hero { margin: 0 0 16px; padding: 0 0 4px; }
+.hero-eyebrow { display: flex; gap: 8px; align-items: center; min-width: 0; min-height: 32px; padding-right: 48px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+/* 带操作的页面（项目刷新、连接添加）：操作放在小字同一行、设置按钮左侧，大标题独占下一行。 */
+.hero.with-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+.hero.with-action > div { display: contents; }
+.hero.with-action .hero-eyebrow { grid-area: 1 / 1; padding-right: 0; }
+.hero.with-action > button { grid-area: 1 / 2; min-height: 36px; margin-right: 40px; }
+.hero.with-action > .compact { padding: 0 10px; border-color: transparent; background: transparent; color: var(--accent); font-size: 14px; }
+.hero.with-action > .compact:active:not(:disabled) { background: var(--accent-surface); }
+.hero.with-action > .compact svg { width: 18px; height: 18px; }
+.hero.with-action .hero-title { grid-area: 2 / 1 / 3 / 3; }
 .hero-title {
   margin-top: 2px;
-  font-size: 34px;
+  font-size: 30px;
   font-weight: 300;
-  line-height: 1.12;
+  line-height: 1.15;
   letter-spacing: -.015em;
   overflow-wrap: anywhere;
-}
-.dashboard[data-host-state="checking"] .hero::before { animation: horizon-breathe 2.4s ease-in-out infinite; }
-.dashboard[data-host-state="checking"] .hero-horizon {
-  background: linear-gradient(90deg, transparent 0%, var(--horizon) 45%, transparent 90%) 0 0 / 60% 100% no-repeat, linear-gradient(90deg, var(--line), transparent 78%);
-  animation: horizon-sweep 1.8s var(--ease) infinite;
-}
-.dashboard:is([data-host-state="offline"], [data-host-state="saved"], [data-host-state="none"]) .hero::before { opacity: 0; }
-.dashboard:is([data-host-state="saved"], [data-host-state="none"]) .hero-horizon { background: linear-gradient(90deg, var(--line), transparent 78%); }
-.dashboard[data-host-state="offline"] .hero-horizon { background: linear-gradient(90deg, var(--error), transparent 40%); opacity: .55; }
-@keyframes horizon-sweep { from { background-position: -150% 0, 0 0; } to { background-position: 250% 0, 0 0; } }
-@keyframes horizon-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .dashboard[data-host-state="checking"] .hero::before, .dashboard[data-host-state="checking"] .hero-horizon { animation: none; }
 }
 .with-action > div { min-width: 0; }
 .with-action > button { flex: none; }
@@ -423,7 +435,10 @@ p.hero-eyebrow { min-height: 32px; }
 .resume-card .arrow { color: var(--accent); }
 
 /* ---------- 项目页 ---------- */
-#project-filters { position: sticky; z-index: 2; top: -12px; margin: 0 -2px; padding: 8px 2px 2px; background: var(--paper); }
+#project-filters { position: sticky; z-index: 2; top: calc(var(--app-head-height) - var(--page-top)); margin: 0 -2px; padding: 8px 2px 2px; }
+/* 吸顶只发生在大标题收起后；展开时透明，不在顶部氛围光上切出矩形。 */
+/* 分组标题吸在搜索框（8 + 48 + 2 = 58px）下方。 */
+.dashboard[data-collapsed="true"] :is(#project-filters, .project-group-head) { background: var(--paper); }
 .search-field { position: relative; }
 .search-field > svg { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--muted); width: 18px; height: 18px; }
 #search, .overview-search { min-height: 48px; padding-left: 44px; border-radius: var(--control-radius); }
@@ -437,7 +452,7 @@ p.hero-eyebrow { min-height: 32px; }
 .rows > * + * { border-top: 1px solid var(--divider); }
 /* 项目分组：标题吸在搜索框下方，可折叠；组内只留名称和路径。 */
 .project-groups { display: grid; gap: 4px; }
-.project-group-head { position: sticky; z-index: 1; top: 46px; display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 4px; border-radius: 0; background: var(--paper); color: var(--muted); font-size: 13px; font-weight: 600; text-align: left; }
+.project-group-head { position: sticky; z-index: 1; top: calc(var(--app-head-height) - var(--page-top) + 58px); display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 4px; border-radius: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; text-align: left; }
 .project-group-head:active:not(:disabled), .project-group-head:focus-visible { background: var(--paper); color: var(--ink); transform: none; }
 .project-group-head:disabled { opacity: 1; }
 .project-group-head svg { width: 16px; height: 16px; }
@@ -565,7 +580,7 @@ p.hero-eyebrow { min-height: 32px; }
 .terminal-selection-handle:active:not(:disabled), .terminal-selection-handle:focus-visible { background: transparent; }
 #terminal-history { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--history-bg, var(--console)); }
 #history-more { color: var(--accent); font-size: 13px; }
-#history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+#history-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px calc(8px + var(--terminal-inset, 0px)); overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 #history-more { width: 100%; }
 #terminal-history ~ #scroll-bottom { z-index: 3; }
 #terminal-empty { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--console); color: var(--muted); font-size: 14px; text-align: center; }
@@ -612,6 +627,7 @@ p.hero-eyebrow { min-height: 32px; }
 #history-scroll::-webkit-scrollbar { display: none; }
 .touch-scrollbar { position: absolute; z-index: 4; top: 6px; right: 0; bottom: 6px; width: 44px; overflow: hidden; touch-action: none; }
 .touch-scrollbar[hidden] { display: none; }
+/* 滑块至少 16px 宽便于抓取；右侧 4px 落在 #viewport 右内边距里，终端只为其余部分预留（app.js TERMINAL_SCROLLBAR_GUTTER）。 */
 .touch-scrollbar-thumb { position: absolute; top: 0; right: 4px; width: 16px; border-radius: 8px; background: #a0a0a08c; transition: width .12s, background-color .12s; will-change: transform; }
 .touch-scrollbar.dragging .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); }
 .touch-scrollbar.pinned .touch-scrollbar-thumb { right: 3px; width: 22px; border-radius: 11px; background: var(--accent); box-shadow: 0 0 0 2px var(--console), 0 0 12px #5ee0c066; }
@@ -667,8 +683,8 @@ p.hero-eyebrow { min-height: 32px; }
 #special-keys > button { flex: 1 0 auto; white-space: nowrap; }
 #special-keys > #slash-command { flex-basis: 52px; }
 #special-keys > #more-keys { position: sticky; right: 0; z-index: 1; flex-basis: 44px; font-family: system-ui, sans-serif; box-shadow: -4px 0 0 var(--paper); }
-/* 按键滚到「更多」下面时渐隐，不露出半截。 */
-#special-keys > #more-keys::before { content: ''; position: absolute; top: 0; bottom: 0; right: calc(100% + 4px); width: 14px; background: linear-gradient(to right, transparent, var(--paper)); pointer-events: none; }
+/* 按键滚到「更多」下面时渐隐：渐隐区宽于常见的露出宽度，半截按键淡出成「还能滑动」的提示，而不是被硬切一刀。 */
+#special-keys > #more-keys::before { content: ''; position: absolute; top: 0; bottom: 0; right: calc(100% + 4px); width: 32px; background: linear-gradient(to right, transparent, var(--paper)); pointer-events: none; }
 #special-keys::-webkit-scrollbar { display: none; }
 :is(#special-keys, .extra-keys) button {
   position: relative;
@@ -718,7 +734,10 @@ p.hero-eyebrow { min-height: 32px; }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }
 #compose-form #keyboard[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 /* 输入短状态：浮在终端底部的小标签，进行中转圈、完成 ✓、异常 !，配文字说明。 */
-.compose-notes { flex: none; display: flex; align-items: center; }
+/* 浮在输出区右上角：底部是提示符和 AI 工具的状态栏，不能挡；终端行多数不满宽，右侧通常是空白。
+   右边避开触摸滚动条滑块；终端隐藏（visibility）时状态仍可见。 */
+.compose-notes { position: absolute; z-index: 4; top: 8px; right: 24px; display: flex; align-items: center; max-width: calc(100% - 32px); visibility: visible; }
+#terminal-screen[data-taken="true"] .compose-notes { display: none; }
 .compose-notes:not(:has(> :not([hidden]))) { display: none; }
 #completion-help { display: none; }
 .compose-note { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); color: var(--accent); font-size: 12px; white-space: nowrap; box-shadow: 0 4px 16px #0006; }
@@ -848,8 +867,8 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-option[data-pinned="true"] .session-pin { display: block; }
 .session-option[data-current="true"] .session-face { background: var(--surface-high); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
-#session-scope { flex: none; margin-top: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-#session-scope button { min-height: 36px; font-size: 13px; }
+#session-scope { flex: none; margin-top: 0; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#session-scope button { min-height: 34px; font-size: 13px; }
 /* 会话纵览（sessionOverview.js）：首页与抽屉共用。抽屉内列表独立滚动；首页随整页滚动。 */
 .session-overview { display: flex; flex-direction: column; gap: 8px; }
 #session-overview:not([hidden]) { flex: 1; min-height: 0; }
@@ -901,14 +920,22 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-toggle:active:not(:disabled), .session-group-toggle:focus-visible { background: transparent; transform: none; }
 .session-group-head .session-group-toggle .session-group-source { min-width: 0; }
 .session-group-chevron { flex: none; align-self: center; width: 14px; height: 14px; margin-right: 2px; transition: transform 160ms var(--ease); }
+/* 数量与展开箭头合成一个小标签：组头少一个独立元素，项目名能多显示几个字。 */
+.session-group-badge { display: inline-flex; flex: none; align-self: center; align-items: center; gap: 2px; height: 22px; margin: 0 4px 0 2px; padding: 0 4px 0 8px; border-radius: 11px; background: var(--raised); line-height: 22px; font-variant-numeric: tabular-nums; }
+.session-group-badge .session-group-chevron { margin-right: 0; }
+/* 侧栏会话行缩进到文件夹图标下方，左侧细线表示属于上面的项目。 */
+#session-overview .session-group-rows { margin: 2px 0 0 15px; border-left: 1px solid var(--line); border-radius: 0 var(--group-radius) var(--group-radius) 0; }
 .session-group-toggle[aria-expanded="false"] .session-group-chevron { transform: rotate(-90deg); }
 .session-group-head-tools .icon-button { width: 40px; min-height: 40px; height: 40px; color: var(--muted); }
 .session-group-head-tools .icon-button svg { width: 18px; height: 18px; }
 .session-group-head-tools .running-first[aria-pressed="true"] { color: var(--accent); }
 .session-overview[data-selecting="true"] .session-group-head-tools .icon-button { display: none; }
-/* 没有终端的项目继续显示，名称减弱，也没有可折叠的内容。 */
-.session-group[data-empty="true"] .session-group-toggle { opacity: .6; }
-.session-group[data-empty="true"] .session-group-chevron { visibility: hidden; }
+/* 没有终端的项目排在最后（groupSessionOverview）：名称减弱、行高收紧、不显示数量，第一项上方加「无会话的项目」说明。 */
+.session-group[data-empty="true"] .session-group-toggle { min-height: 36px; opacity: .6; line-height: 36px; }
+.session-group[data-empty="true"] .session-group-badge { display: none; }
+.session-group[data-empty="true"] .session-group-head-tools .icon-button { width: 36px; height: 36px; min-height: 36px; }
+.session-group[data-empty="true"] + .session-group[data-empty="true"] { margin-top: 0; }
+.session-group[data-empty="false"] + .session-group[data-empty="true"]::before { content: attr(data-empty-label); display: block; margin-top: 6px; padding: 10px 8px 2px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 12px; }
 .session-group.dragging { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
 :is(.overview-groups, .session-group-rows, #session-options)[data-dragging] { overflow: visible; }
 .session-option.dragging { z-index: 1; background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); }
@@ -929,7 +956,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 /* 首页「全部会话」：放在继续终端与最近打开之间，整页滚动，不做嵌套滚动区。 */
 .home-sessions { margin-top: 20px; }
 #home-session-count { margin-left: 4px; font-weight: 500; }
-.drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
+.drawer-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
 #end-all-sessions { grid-column: 1 / -1; }
 .drawer-actions button { padding-inline: 8px; font-size: 13px; }
 @media (max-height: 450px) {
@@ -944,7 +971,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #session-overview .session-group + .session-group { margin-top: 6px; }
   #session-scope button, #session-overview .overview-filter button { min-height: 32px; }
   /* 底部操作并成一行，给列表留出至少一整行。 */
-  .drawer-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .drawer-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #end-all-sessions { grid-column: auto; }
 }
 .sheet-handle { display: none; }
@@ -977,7 +1004,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   dialog.sheet .dialog-actions { bottom: calc(-16px - var(--safe-bottom)); }
 }
 @media (max-width: 360px) {
-  .hero-title { font-size: 30px; }
+  .hero-title { font-size: 28px; }
   dialog { padding: 18px 14px; }
   dialog.sheet { padding-inline: 14px; }
   dialog.sheet .sheet-handle { margin-inline: -14px; }
@@ -995,7 +1022,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
   #terminal-host:not(:empty) + #terminal-latency::before { content: none; }
   #terminal-tools { padding-top: 4px; padding-bottom: max(4px, var(--safe-bottom), var(--corner-bottom-inset)); }
   #compose-form { margin-top: 6px; }
-  .hero { margin-bottom: 14px; padding-block: 4px 12px; }
+  .hero { margin-bottom: 12px; }
   .hero-title { font-size: 26px; }
   dialog { padding-block: 16px; }
 }
@@ -1128,9 +1155,10 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .setting-choices small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .terminal-actions { margin-top: 12px; background: var(--paper); }
 #terminal-menu-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
-#terminal-menu-dialog > :not(.terminal-actions) { flex: none; }
-#terminal-menu-dialog .terminal-actions { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-#terminal-menu-dialog .dialog-actions { position: static; margin-top: 10px; }
+#terminal-menu-dialog > :not(.terminal-menu-groups) { flex: none; }
+/* 按用途分组（输入 / 查看 / 设置），组间留白代替分隔线；矮屏时分组区域整体滚动。 */
+.terminal-menu-groups { display: grid; align-content: start; gap: 10px; min-height: 0; margin-top: 12px; overflow-y: auto; overscroll-behavior: contain; }
+.terminal-menu-groups .terminal-actions { margin-top: 0; }
 .terminal-menu-info { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .terminal-actions button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 14px; border-radius: 0; font-size: 14px; text-align: left; }
 .terminal-actions svg { width: 18px; height: 18px; color: var(--muted); }

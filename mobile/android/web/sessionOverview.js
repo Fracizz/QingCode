@@ -4,7 +4,7 @@ import {
   countSessionOverview,
   groupSessionOverview,
   limitSessionGroups,
-  projectSourceLabel,
+  projectPlaceLabel,
   prunedSelection,
   sessionIdleInfo,
   sessionName,
@@ -253,7 +253,11 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       });
       const attention = document.createElement('span');
       attention.className = 'session-attention session-group-attention';
-      toggle.append(...summary, attention, icon('chevron-down', 'session-group-chevron'));
+      // 数量与展开箭头合成一个小标签，组头右侧少一个独立元素，项目名能多显示几个字。
+      const badge = document.createElement('span');
+      badge.className = 'session-group-badge';
+      badge.append(count, icon('chevron-down', 'session-group-chevron'));
+      toggle.append(icon('folder', 'session-group-icon'), name, source, attention, badge);
       const add = button('icon-button session-group-add', () => groupTools.add(renderedGroups.get(projectId).project));
       add.append(icon('plus'));
       const actions = button('icon-button session-group-more', () => groupTools.menu(renderedGroups.get(projectId).project));
@@ -288,7 +292,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     node.dataset.currentProject = String(current);
     node.querySelector('strong').textContent = title;
     // 组头只留连接名，地址在项目页和搜索中可见。
-    node.querySelector('.session-group-source').textContent = [projectSourceLabel({ ...group.project, host: '' }), current ? t('当前项目') : '',
+    node.querySelector('.session-group-source').textContent = [projectPlaceLabel({ ...group.project, host: '' }), current ? t('当前项目') : '',
       group.missing ? t('电脑端已移除') : ''].filter(Boolean).join(' · ');
     node.querySelector('.session-group-count').textContent = String(group.total ?? group.sessions.length);
     node.setAttribute('aria-label', title);
@@ -315,7 +319,9 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const collapsible = group.sessions.length > 0 && !narrowed;
     const collapsed = collapsible && groupTools.collapsed(id);
     node.dataset.empty = String(!group.sessions.length);
-    node.dataset.draggable = String(!!group.member && !narrowed);
+    // 没有会话的项目固定排在最后（见 groupSessionOverview），不参与拖动排序。
+    node.dataset.draggable = String(!!group.member && !narrowed && group.sessions.length > 0);
+    node.dataset.emptyLabel = t('无会话的项目');
     // 折叠后行内圆点看不到，提到组头。
     node.dataset.attention = String(collapsed && group.sessions.some(session => groupTools.attention(session.id)));
     rows.hidden = collapsed;

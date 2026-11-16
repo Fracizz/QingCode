@@ -94,7 +94,7 @@ try {
   run('set', 'viewport', '844', '230')
   run('click', '#terminal-menu')
   settled('terminal-menu-dialog')
-  for (const id of ['menu-edit','menu-submissions','menu-files','menu-read','menu-mouse','menu-sessions','menu-new','manage-sessions','menu-dashboard']) {
+  for (const id of ['menu-edit','menu-submissions','menu-files','menu-read','menu-mouse','manage-sessions']) {
     evaluate(`document.getElementById('${id}').scrollIntoView({block:'nearest'})`)
     check(`landscape keyboard: ${id} can be scrolled into an unobstructed tap target`, `(()=>{const b=document.getElementById('${id}'),r=b.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return b===hit||b.contains(hit)})()`)
   }

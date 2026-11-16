@@ -36,6 +36,7 @@ import {
   prunedSelection,
   summarizeSessionBatch,
   SESSION_PIN_LIMIT,
+  projectPlaceLabel,
   projectSourceLabel,
   groupProjectsByHost,
   projectLocation,
@@ -319,6 +320,11 @@ describe('Android project sources', () => {
 
   it('distinguishes remote projects by connection name and host', () => {
     expect(projectSourceLabel(wslRemote)).toBe('远端 · WSL · localhost')
+    // 标题副行与组头用的简短位置：远端只留连接名。
+    expect(projectPlaceLabel({ ...wslRemote, connectionName: 'WinDev' })).toBe('WinDev')
+    expect(projectPlaceLabel({ kind: 'ssh' })).toBe('远端')
+    expect(projectPlaceLabel({ kind: 'local' })).toBe('本机')
+    expect(projectPlaceLabel({ kind: 'wsl' })).toBe('WSL')
     expect(projectSourceLabel({ ...wslRemote, connectionName: 'WinDev', host: '192.168.252.107' }))
       .toBe('远端 · WinDev · 192.168.252.107')
     expect(projectSourceLabel({ kind: 'wsl', host: 'Ubuntu' })).toBe('WSL · Ubuntu')
@@ -691,23 +697,24 @@ describe('Android 会话纵览', () => {
 
   it('本项目与全部的信息行字段和顺序一致', () => {
     const base = { id: 'm1', number: 3, name: 'Claude', exit: null }
-    expect(sessionStatusLine(base, { running: true, active: true })).toBe('终端 3 · 运行中 · 当前会话')
-    expect(sessionStatusLine(base, { pinned: true, fresh: true, last: true })).toBe('已置顶 · 终端 3 · 有新结果 · 上次使用')
+    // 窄屏行尾会被省略：状态在前，「终端 N」编号放到最后。
+    expect(sessionStatusLine(base, { running: true, active: true })).toBe('运行中 · 当前会话 · 终端 3')
+    expect(sessionStatusLine(base, { pinned: true, fresh: true, last: true })).toBe('已置顶 · 有新结果 · 上次使用 · 终端 3')
     // 名称已是「终端 N」时不重复编号，当前会话优先于上次使用。
     expect(sessionStatusLine({ ...base, name: '终端 3' }, { active: true, last: true })).toBe('当前会话')
-    expect(sessionStatusLine({ ...base, exit: { code: 0 } }, { running: true, active: true })).toBe('终端 3 · 已结束')
+    expect(sessionStatusLine({ ...base, exit: { code: 0 } }, { running: true, active: true })).toBe('已结束 · 终端 3')
     expect(sessionStatusLine({ ...base, inUseHere: false, controllerName: 'Pixel', ownDevice: false, deviceName: 'Tablet' }))
-      .toBe('终端 3 · 在 Pixel 上使用中 · 来自 Tablet')
+      .toBe('在 Pixel 上使用中 · 来自 Tablet · 终端 3')
     // 已结束的会话没有使用方；电脑终端不显示编号。
-    expect(sessionStatusLine({ ...base, exit: { code: 0 }, inUseHere: false, controllerName: 'Pixel' })).toBe('终端 3 · 已结束')
+    expect(sessionStatusLine({ ...base, exit: { code: 0 }, inUseHere: false, controllerName: 'Pixel' })).toBe('已结束 · 终端 3')
     expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
     // 没有编号时用调用方给的序号。
     expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
-    // 创建时间与电脑端一致：状态之后、空闲之前；当天只显示时分。
+    // 空闲时长紧跟状态，创建时间其次；当天只显示时分。「电脑终端」表示来源，仍在最前。
     const now = new Date(2026, 10, 14, 15, 30).getTime()
     expect(sessionStatusLine({
       ...base, createdAt: new Date(2026, 10, 14, 9, 5).getTime(), lastActiveAt: now - 12 * 60000, idleDeadline: now + 3600000,
-    }, { last: true, now })).toBe('终端 3 · 上次使用 · 创建于 09:05 · 空闲 12 分钟')
+    }, { last: true, now })).toBe('上次使用 · 空闲 12 分钟 · 创建于 09:05 · 终端 3')
     expect(sessionStatusLine({
       ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑', createdAt: new Date(2026, 10, 3, 18, 30).getTime(),
     }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 创建于 11-03 18:30')
@@ -748,6 +755,15 @@ describe('Android 会话纵览', () => {
     expect(groupSessionOverview([], { projects, order: ['p2'], filter: 'live' })).toEqual([])
     expect(groupSessionOverview([], { projects, order: ['p2'], query: 'beta' })).toEqual([])
     expect(groupSessionOverview(list, { projects, order: ['p2'] }).at(-1)?.member).toBe(false)
+  })
+
+  it('没有会话的常驻项目排在有会话的项目之后，各自保持固定顺序', () => {
+    const three = [local, remote, { id: 'p3', name: 'Gamma', kind: 'local', path: 'D:/c', host: '' }]
+    const at = (id: string, project: { id: string }) => ({ id, name: id, exit: null, project })
+    const ids = (sessions: unknown[]) => groupSessionOverview(sessions, { projects: three, order: ['p1', 'p2', 'p3'] })
+      .map(group => [group.project.id, group.sessions.length])
+    expect(ids([at('a', three[2])])).toEqual([['p3', 1], ['p1', 0], ['p2', 0]])
+    expect(ids([at('a', three[2]), at('b', three[1])])).toEqual([['p2', 1], ['p3', 1], ['p1', 0]])
   })
 
   it('组内手动顺序优先，新会话在已排序会话之前，运行中优先时不生效', () => {

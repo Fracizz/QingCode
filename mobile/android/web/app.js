@@ -18,6 +18,7 @@ import {
   parseAppTheme,
   parsePairingLink,
   projectLocation,
+  projectPlaceLabel,
   projectSourceLabel,
   rememberProject,
   renameProfileKeys,
@@ -274,6 +275,7 @@ get('host-fingerprint-copy').addEventListener('click', async () => {
 
 const hero = createHeroHeader({
   root: get('dashboard'),
+  header: document.querySelector('.app-head'),
   pages,
   active: () => page,
   title: get('app-head-title'),
@@ -625,7 +627,8 @@ function renderLatency() {
       : [get('terminal-dot'), get('terminal-latency')];
     for (const element of targets) replayAnimation(element, 'ping-flash');
   }
-  get('terminal-latency').textContent = t('电脑 {value}', { value });
+  // 状态圆点已表示与电脑的连接，副行只显示数值，给项目名和连接名留出空间。
+  get('terminal-latency').textContent = value;
   get('terminal-latency').setAttribute('aria-label', t('手机到电脑往返延迟 {value}', { value }));
   get('home-latency').textContent = profile && hostState(profile) === 'online' ? value : '';
   dashboard.renderConnectionStats();
@@ -1023,10 +1026,7 @@ for (const [id, action] of Object.entries({
   'menu-read': () => reader.open(),
   'menu-files': () => files.open(project),
   'menu-mouse': toggleMouseMode,
-  'menu-sessions': () => toggleSessions({ expandOnly: true }),
-  'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'manage-sessions': () => get('session-dialog').showModal(),
-  'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
 get('review-submission').addEventListener('click', showSubmissions);
 get('expanded-compose').addEventListener('input', () => { compose.value = get('expanded-compose').value; resizeComposer(); });
@@ -1282,8 +1282,8 @@ function makeTerminal() {
     allowProposedApi: true,
     fontSize: settings.fontSize(),
     lineHeight: 1.2,
-    // 系统等宽字体缺字时回退到内置符号字体（见 app.css @font-face）。
-    fontFamily: "'QingCode Symbols', monospace",
+    // 技术符号用内置符号字体，中文用略微放大的系统中文字体填满两格（见 app.css @font-face），其余用系统等宽字体。
+    fontFamily: "'QingCode Symbols', 'QingCode CJK', monospace",
     scrollback: 10000,
     cursorBlink: true,
     // 与电脑端深色 / 石墨灰终端共用同一套柔和配色（见 protocol.js）。
@@ -1586,6 +1586,19 @@ function updateTerminalSize() {
   get('terminal-size').textContent = term ? term.cols + ' × ' + term.rows : '';
 }
 
+/**
+ * 终端右侧为触摸滚动条滑块预留的宽度（px）：滑块距右边 4px、宽 16px（app.css .touch-scrollbar-thumb），
+ * 减去 #viewport 8px 右内边距后还需 12px，文字不会被常驻的滑块盖住。xterm 自带滚动条已隐藏。
+ */
+const TERMINAL_SCROLLBAR_GUTTER = 12;
+
+/** 列数取整后剩下不到一格的宽度平分到左右两侧，终端左右留白对称；历史面板同步缩进，打开时文字不跳。 */
+function centerTerminalScreen(screen, spare) {
+  const inset = Math.max(0, Math.floor(spare / 2));
+  if (screen) screen.style.marginLeft = inset ? inset + 'px' : '';
+  terminalScreen.style.setProperty('--terminal-inset', inset + 'px');
+}
+
 function fitTerminal() {
   if (!term || !fit || terminalScreen.hidden) return;
   const viewport = get('viewport');
@@ -1617,6 +1630,7 @@ function fitTerminal() {
       }
       term.element.style.width = Math.ceil(screen.offsetWidth * font / termFont) + 'px';
     }
+    centerTerminalScreen(screen, 0);
     term.element.style.zoom = '';
     term.element.style.marginTop = '';
     heldVisibleRows = 0;
@@ -1637,19 +1651,22 @@ function fitTerminal() {
   const screen = term.element.querySelector('.xterm-screen');
   const cellWidth = screen?.getBoundingClientRect().width / term.cols;
   const cellHeight = screen?.getBoundingClientRect().height / term.rows;
-  const scrollbar = term.options.scrollback === 0 ? 0 : term.options.overviewRuler?.width || 14;
+  const scrollbar = term.options.scrollback === 0 ? 0 : TERMINAL_SCROLLBAR_GUTTER;
   if (cellWidth && cellHeight) naturalCell = { width: cellWidth, height: cellHeight, scrollbar };
   get('viewport').dataset.columns = terminalColumns ? 'fixed' : 'fit';
   term.element.style.width = terminalColumns && cellWidth ? Math.ceil(terminalColumns * cellWidth + scrollbar) + 'px' : '100%';
   // FitAddon uses the parent's border-box size. Our padded viewport must use its
   // content box, otherwise a last row/column can be hidden behind the tools.
   const padding = getComputedStyle(viewport);
+  const usableWidth = viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - scrollbar;
   const size = terminalGridSize(
-    viewport.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - scrollbar,
+    usableWidth,
     viewport.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom),
     cellWidth, cellHeight, terminalColumns,
   );
   if (!size) return;
+  // 固定列宽时可横向滚动，不做居中。
+  centerTerminalScreen(screen, terminalColumns ? 0 : usableWidth - size.cols * cellWidth);
   // 软键盘弹出、输入框变高时不缩小终端行数：改尺寸会让 Claude Code / Codex 重绘，
   // 旧画面被挤进滚动记录，历史里出现重复的状态栏和输入框。
   const rows = heldTerminalRows({ fitRows: size.rows, currentRows: term.rows, sameColumns: size.cols === term.cols, keyboardOpen: keyboardOpen() });
@@ -1824,8 +1841,8 @@ async function openProject(item, resumeOnly = false, target = null) {
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
-  // 头部只留一行：省略地址，完整来源在项目列表与会话设置中可见。
-  get('terminal-host').textContent = [profile.name, projectSourceLabel({ ...item, host: '' })].join(' · ');
+  // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
+  get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
   syncSessionDock();
@@ -2242,7 +2259,6 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
 
 get('back').addEventListener('click', () => returnToDashboard());
 get('show-sessions').addEventListener('click', () => toggleSessions());
-get('drawer-settings').addEventListener('click', () => { drawer.close(); get('session-dialog').showModal(); });
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });

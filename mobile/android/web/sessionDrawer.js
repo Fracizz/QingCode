@@ -12,6 +12,7 @@ import {
   phoneSessionProjectIds,
   prunedSessionPins,
   projectSessionsFromOverview,
+  projectPlaceLabel,
   projectSourceLabel,
   reorderSessionIds,
   reorderVisibleProjects,
@@ -208,7 +209,8 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
     get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? t('终端');
-    get('terminal-host').textContent = project ? project.name + ' · ' + projectSourceLabel({ ...project, host: '' }) : '';
+    // 顶栏副行空间有限：只留项目名和连接名（如 qingcode · WinDev），完整来源在会话侧栏里。
+    get('terminal-host').textContent = project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '';
     get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
     const options = get('session-options');
@@ -225,7 +227,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     get('drawer-project-more').disabled = busy;
     const projectTitle = project ? project.name ?? project.id : '';
     get('drawer-project-name').textContent = projectTitle;
-    get('drawer-project-source').textContent = project ? projectSourceLabel({ ...project, host: '' }) : '';
+    get('drawer-project-source').textContent = project ? projectPlaceLabel({ ...project, host: '' }) : '';
     get('drawer-project-count').textContent = String(sessions.length);
     get('drawer-project-more').setAttribute('aria-label', t('{name} 的项目操作', { name: projectTitle }));
     // 接入方和创建设备只有列出全部会话时才有，「本项目」从纵览补齐。

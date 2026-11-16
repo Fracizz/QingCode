@@ -243,8 +243,10 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     }
     const rank = new Map(order.map((id, index) => [id, index]));
     const position = group => rank.get(group.project.id) ?? order.length;
+    // 没有会话的项目统一排到最后，不打断有会话的项目；有了会话后回到自己的固定位置。
+    const empty = group => Number(!group.sessions.length);
     return [...groups.values()]
-      .sort((a, b) => position(a) - position(b) || byName(a, b))
+      .sort((a, b) => empty(a) - empty(b) || position(a) - position(b) || byName(a, b))
       .map(group => ({ ...group, member: rank.has(group.project.id) }));
   }
   return [...groups.values()].sort((a, b) =>
@@ -414,6 +416,15 @@ export function projectSourceLabel(project) {
   const kind = { local: t('本机'), wsl: 'WSL', ssh: t('远端') }[project.kind] || t('项目');
   const parts = project.kind === 'local' ? [kind] : [kind, project.connectionName, project.host];
   return [...new Set(parts.filter(Boolean))].join(' · ');
+}
+
+/**
+ * 项目所在位置的最短说明，用于空间紧张的标题副行与组头：远端只显示连接名（没有则主机 / 「远端」），
+ * 本机与 WSL 显示类型。完整来源仍由 projectSourceLabel 提供。
+ */
+export function projectPlaceLabel(project) {
+  if (project?.kind === 'ssh') return project.connectionName || project.host || t('远端');
+  return { local: t('本机'), wsl: 'WSL' }[project?.kind] || t('项目');
 }
 
 /**
@@ -712,8 +723,11 @@ export function sessionStatusLine(session, { fallback = 1, running = false, acti
     ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
-  // 与电脑端终端管理一致：创建时间放在状态之后、空闲之前；旧版电脑端没有 createdAt 时省略。
-  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, createdLabel(session, now), idle.text]
+  const named = sessionName(session, fallback) === identity ? '' : identity;
+  // 窄屏时行尾会被省略：状态与空闲时长最常用，排在前面；创建时间其次；
+  // 「终端 N」编号只用于区分，放到最后。「电脑终端」表示来源，仍放在前面。
+  const desktop = session.origin === 'desktop';
+  return [pinned ? t('已置顶') : '', desktop ? named : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, createdLabel(session, now), desktop ? '' : named]
     .filter(Boolean).join(' · ');
 }
 

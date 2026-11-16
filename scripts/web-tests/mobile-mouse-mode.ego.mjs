@@ -310,8 +310,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         document.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: init.clientX + 24, clientY: init.clientY + 24 }))
       })
       await page.waitForFunction(() => /\x1b\[<32;\d+;\d+M/.test(window.__mobileFixture.state.inputs.join('')) && /\x1b\[<0;\d+;\d+m/.test(window.__mobileFixture.state.inputs.join('')))
-      await click('#terminal-menu')
-      await click('#menu-dashboard')
+      // 返回工作台在会话侧栏底部（「…」菜单不再重复）。
+      await click('#show-sessions')
+      await click('#back')
       await page.waitForFunction(() => document.querySelectorAll('.virtual-mouse').length === 0)
     })
   } catch (error) {

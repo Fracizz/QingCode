@@ -17,16 +17,9 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', finish 
   const settings = async () => {
     await page.cdp('Emulation.clearDeviceMetricsOverride')
     await page.evaluate(() => window.qingOrientation(false))
-    if (await page.evaluate(() => document.querySelector('#terminal-menu').getBoundingClientRect().height > 0)) {
-      await page.click('#terminal-menu', { label: 'open terminal menu' })
-      await page.waitForSelector('#terminal-menu-dialog[open]')
-      await page.click('#manage-sessions', { label: 'open terminal settings' })
-    } else {
-      await page.click('#terminal-menu', { label: 'open fullscreen terminal menu' })
-      await page.click('#menu-sessions', { label: 'open terminal sessions' })
-      await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
-      await page.click('#drawer-settings', { label: 'open terminal settings' })
-    }
+    await page.click('#terminal-menu', { label: 'open terminal menu' })
+    await page.waitForSelector('#terminal-menu-dialog[open]')
+    await page.click('#manage-sessions', { label: 'open terminal settings' })
     await page.waitForSelector('#session-dialog[open]')
     await page.waitForFunction(() => !document.querySelector('#session-dialog').getAnimations().some(animation => animation.playState === 'running'))
   }

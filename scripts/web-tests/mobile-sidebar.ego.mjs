@@ -132,12 +132,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await page.screenshot({ path: resolve(output, 'drawer-narrow.png') })
     await page.evaluate(() => window.qingBack())
-    await step('landscape exposes the same drawer through the terminal menu', async () => {
+    await step('landscape exposes the same drawer through the header sidebar button', async () => {
       await page.cdp('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true })
       await page.evaluate(() => window.qingOrientation(true))
       await page.waitForFunction(() => window.__mobileFixture.state.fullscreen)
-      await page.click('#terminal-menu', { label: 'open landscape terminal menu' })
-      await page.click('#menu-sessions', { label: 'open landscape session drawer' })
+      await page.click('#show-sessions', { label: 'open landscape session drawer' })
       await page.waitForSelector('#session-drawer[open]')
       await page.waitForFunction(() => !document.querySelector('#session-drawer').getAnimations().some(animation => animation.playState === 'running'))
       assert.ok(await page.evaluate(() => document.querySelector('#session-drawer').getBoundingClientRect().right <= innerWidth))

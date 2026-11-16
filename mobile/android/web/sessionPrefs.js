@@ -77,7 +77,8 @@ export function runningFirstToggle(className = '') {
   const item = document.createElement('button');
   item.type = 'button';
   item.className = ['icon-button', 'running-first', className].filter(Boolean).join(' ');
-  item.append(icon('message-more'));
+  // 排序图标：气泡图标看不出含义，这里表达「重新排序」。
+  item.append(icon('sort'));
   item.setAttribute('aria-pressed', String(runningFirstValue));
   item.addEventListener('click', () => {
     setRunningFirst(!runningFirstValue);

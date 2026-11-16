@@ -8,16 +8,17 @@ export function heroCollapsed(scrollTop, titleBottom, slack = 8) {
 
 /**
  * root：工作台容器（写 data-collapsed）。pages：{ name: 滚动容器 }。active()：当前页名。
- * title：顶栏紧凑标题按钮；text：其中的文字节点。
+ * header：浮动顶栏；title：顶栏紧凑标题按钮；text：其中的文字节点。
  */
-export function createHeroHeader({ root, pages, active, title, text }) {
+export function createHeroHeader({ root, header, pages, active, title, text }) {
   let frame = 0;
 
   function sync() {
     frame = 0;
     const page = pages[active()];
     const heading = page?.querySelector('.hero-title');
-    const collapsed = !!heading && heroCollapsed(page.scrollTop, heading.offsetTop + heading.offsetHeight);
+    // 顶栏浮在页面上方：大标题完全滑到顶栏下面才收起。
+    const collapsed = !!heading && heroCollapsed(page.scrollTop, heading.offsetTop + heading.offsetHeight, header.offsetHeight);
     root.dataset.collapsed = String(collapsed);
     // 收起前紧凑标题对读屏和焦点都不可见，避免与大标题重复朗读。
     title.setAttribute('aria-hidden', String(!collapsed));
