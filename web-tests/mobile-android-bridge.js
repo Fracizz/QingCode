@@ -142,7 +142,7 @@
 
   function sessionMetadata(session) {
     const lastActiveAt = session.lastActiveAt ?? Date.now()
-    const basic = { id: session.id, number: session.number, exit: session.exit,
+    const basic = { id: session.id, number: session.number, exit: session.exit, createdAt: session.createdAt ?? null,
       lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3 }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
       programTitle: session.title ?? null,
@@ -220,7 +220,7 @@
         if (chosen && !chosen.trusted) return { ok: false, error: `请先在电脑上新建一次「${chosen.name}」终端并选择「信任此配置」，再从手机启动。` }
         state.creates.push({ project: request.project, terminalProfile: request.terminal_profile ?? null })
         const number = state.nextSession++
-        const session = { id: 'mobile-' + number, number, project: request.project, output: [], next: 0, waiters: [], exit: null }
+        const session = { id: 'mobile-' + number, number, project: request.project, createdAt: Date.now(), output: [], next: 0, waiters: [], exit: null }
         state.sessions.set(session.id, session)
         push(session, base64('PS D:\\code\\qingcode> '))
         return { ok: true, data: sessionMetadata(session) }
@@ -599,14 +599,14 @@
       state.sessions.get(id).kicked = true
       for (const wake of state.sessions.get(id).waiters.splice(0)) wake()
     },
-    addDesktopTerminal({ id, project, title }) {
-      const session = { id, number: 0, project, title, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
+    addDesktopTerminal({ id, project, title, createdAt = null }) {
+      const session = { id, number: 0, project, title, createdAt, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
       state.sessions.set(id, session)
       return session
     },
-    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null } = {}) {
+    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null, createdAt = Date.now() } = {}) {
       const number = state.nextSession++
-      const session = { id: 'mobile-' + number, number, project, title, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
+      const session = { id: 'mobile-' + number, number, project, title, createdAt, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
       state.sessions.set(session.id, session)
       push(session, base64('PS> '))
       return session.id

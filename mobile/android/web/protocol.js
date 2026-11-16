@@ -690,7 +690,8 @@ export function sessionStatusLine(session, { fallback = 1, running = false, acti
     ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
-  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, idle.text]
+  // 与电脑端终端管理一致：创建时间放在状态之后、空闲之前；旧版电脑端没有 createdAt 时省略。
+  return [pinned ? t('已置顶') : '', sessionName(session, fallback) === identity ? '' : identity, fresh ? t('有新结果') : '', status, inUse, device, createdLabel(session, now), idle.text]
     .filter(Boolean).join(' · ');
 }
 

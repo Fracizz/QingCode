@@ -703,6 +703,14 @@ describe('Android 会话纵览', () => {
     expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
     // 没有编号时用调用方给的序号。
     expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
+    // 创建时间与电脑端一致：状态之后、空闲之前；当天只显示时分。
+    const now = new Date(2026, 10, 14, 15, 30).getTime()
+    expect(sessionStatusLine({
+      ...base, createdAt: new Date(2026, 10, 14, 9, 5).getTime(), lastActiveAt: now - 12 * 60000, idleDeadline: now + 3600000,
+    }, { last: true, now })).toBe('终端 3 · 上次使用 · 创建于 09:05 · 空闲 12 分钟')
+    expect(sessionStatusLine({
+      ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑', createdAt: new Date(2026, 10, 3, 18, 30).getTime(),
+    }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 创建于 11-03 18:30')
   })
 
   it('组内新创建的在上，运行中优先时仍先排运行中', () => {
