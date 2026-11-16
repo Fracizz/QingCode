@@ -380,7 +380,7 @@ export default function RemoteConnectionsManager() {
     navigationPending.current = true
     try {
       const sshChanged = selected ? dirty : JSON.stringify(form) !== JSON.stringify(emptyConnectionForm()) || mode !== 'server'
-      const hasChanges = ((editing || isNew) && (sshChanged || password || passphrase)) || directDraft.dirty
+      const hasChanges = (editing || isNew) && (sshChanged || password || passphrase || directDraft.dirty)
       if (hasChanges && !await confirmDialog({
         title: t('放弃连接修改'), message: t('离开当前连接将放弃尚未保存的修改。'),
         kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('继续编辑'),

@@ -203,6 +203,10 @@ describe('remote connection compatibility settings', () => {
     render(<RemoteConnectionsManager />)
     fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     fireEvent.change(screen.getByLabelText('连接名称'), { target: { value: 'Unsaved' } })
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新状态' })).not.toBeDisabled())
+    expect(confirmDialog).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('连接名称')).toHaveValue('Unsaved')
     confirmDialog.mockResolvedValue(false)
     fireEvent.click(screen.getByRole('button', { name: '返回概览' }))
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '放弃连接修改' })))
@@ -212,6 +216,57 @@ describe('remote connection compatibility settings', () => {
     await screen.findByRole('button', { name: '编辑连接' })
     fireEvent.click(screen.getByRole('button', { name: '编辑连接' }))
     expect(screen.getByLabelText('连接名称')).toHaveValue('Remote')
+  })
+
+  it('refreshes an untouched connection and leaves its editor without a discard prompt', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server'), { ...connection('server'), id: 'c2', name: 'Other' }] })
+    useUIStore.setState({ remoteConnectionsCreating: false, remoteConnectionsOpen: true })
+    invoke.mockImplementation(async (_label, command) => command === 'direct_agent_info' ? {
+      enabled: true, host: 'server.example.test', port: 51234,
+      certificateFingerprint: 'SHA256:server', tokenSaved: true, previousPorts: [], autoStart: false,
+    } : undefined)
+    await act(async () => { render(<RemoteConnectionsManager />) })
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新状态' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '编辑连接' }))
+    await screen.findByRole('button', { name: /连接地址与凭据/ })
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新状态' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '返回概览' }))
+    await screen.findByRole('button', { name: '编辑连接' })
+    fireEvent.click(screen.getByRole('button', { name: /Other/ }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Other' })).toBeVisible())
+    expect(confirmDialog).not.toHaveBeenCalled()
+  })
+
+  it('clears the saved Server draft before refreshing or leaving the overview', async () => {
+    useUIStore.setState({ remoteConnectionsCreating: false, remoteConnectionsOpen: true })
+    const fingerprint = 'a'.repeat(64)
+    invoke.mockImplementation(async (_label, command) => {
+      if (command === 'direct_agent_probe') return { certificateFingerprint: fingerprint }
+      if (command === 'direct_agent_test') return { version: '0.1.test', protocol: 1 }
+    })
+    saveConnection.mockImplementation(async saved => {
+      useProjectStore.setState({ sshConnections: [saved] })
+    })
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(screen.getByRole('button', { name: '新建' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '新建 Server 直连' }))
+    fireEvent.change(await screen.findByLabelText('Server 主机'), { target: { value: 'server.example.test' } })
+    fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
+    fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ port: 48763, certificateFingerprint: fingerprint, token: 'fixture-token' }) } })
+    fireEvent.click(screen.getByRole('button', { name: '应用配对信息' }))
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
+    await screen.findByRole('button', { name: '编辑连接' })
+    confirmDialog.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新状态' })).not.toBeDisabled())
+    expect(screen.getByRole('button', { name: '关闭' })).not.toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(useUIStore.getState().remoteConnectionsOpen).toBe(false))
+    expect(confirmDialog).not.toHaveBeenCalled()
   })
 
   it('explains that an explicit SSH disconnect ends its remote terminals and tasks', async () => {

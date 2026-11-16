@@ -151,6 +151,11 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     fingerprint !== (info?.certificateFingerprint || '') || Boolean(token)
   const autoStartDirty = autoStart !== (info?.autoStart ?? true)
 
+  // 草稿只属于当前面板；保存或切回概览卸载后，不得留下离开确认/忙碌状态。
+  useEffect(() => () => {
+    onDraftStateChange?.({ dirty: false, busy: false })
+  }, [onDraftStateChange])
+
   useEffect(() => {
     onDraftStateChange?.({
       dirty: connectionDirty || Boolean(pairing || sshPassword || sshPassphrase) || autoStartDirty,

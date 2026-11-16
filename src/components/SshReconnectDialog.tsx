@@ -93,10 +93,6 @@ export default function SshReconnectDialog() {
       setError('请输入 SSH 密码。')
       return
     }
-    if (!directInfo?.enabled && connection.auth_kind === 'privateKey' && !privateKeyPath.trim()) {
-      setError('请选择 SSH 私钥文件。')
-      return
-    }
     setLoading(true)
     setError('')
     const secrets: SshSessionSecrets = directInfo?.enabled ? {} : {
@@ -182,17 +178,18 @@ export default function SshReconnectDialog() {
           ) : connection ? (
             <>
               <label className="block text-ui-sm text-fg-muted">
-                私钥文件
+                {t('私钥文件（可选）')}
                 <div className="mt-1 flex gap-2">
                   <input
                     value={privateKeyPath}
                     onChange={event => setPrivateKeyPath(event.target.value)}
+                    placeholder={t('留空则使用 ~/.ssh/id_ed25519 等默认密钥')}
                     className={fieldClass}
                   />
                   <button
                     type="button"
                     onClick={() => void choosePrivateKey()}
-                    className="inline-flex items-center gap-1 rounded border border-border-strong px-2.5 text-ui-sm text-fg hover:bg-bg-hover"
+                    className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-border-strong px-2.5 text-ui-sm text-fg hover:bg-bg-hover"
                   >
                     <KeyRound size={13} />
                     选择

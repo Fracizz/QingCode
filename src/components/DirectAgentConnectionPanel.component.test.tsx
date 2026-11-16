@@ -45,6 +45,20 @@ describe('direct Agent connection panel', () => {
     localStorage.clear()
   })
 
+  it('reports loaded settings as clean and clears its draft state when unmounted', async () => {
+    const onDraftStateChange = vi.fn()
+    const api = apiMock({ ...info, enabled: true, autoStart: false })
+    const panel = render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="ssh.example.test" api={api} initiallyOpen onDraftStateChange={onDraftStateChange} />)
+    await screen.findByRole('button', { name: /连接地址与凭据/ })
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    expect(onDraftStateChange.mock.calls.every(([state]) => !state.dirty)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /连接地址与凭据/ }))
+    fireEvent.change(screen.getByLabelText('TCP 端口'), { target: { value: '51234' } })
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    panel.unmount()
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+  })
+
   it('passes the default-on startup preference to installation and lets users turn it off', async () => {
     const api = apiMock(null)
     await openPanel(api)

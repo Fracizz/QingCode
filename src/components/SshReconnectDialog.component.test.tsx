@@ -57,6 +57,29 @@ describe('Agent workspace reconnect', () => {
     expect(connect).not.toHaveBeenCalled()
   })
 
+  it.each([null, '', '   '])('reconnects with default SSH keys when the saved key path is %j', async privateKeyPath => {
+    readConnection.mockResolvedValue({ id: 'c1', host: '192.168.252.108', port: 28822, username: 'administrator', auth_kind: 'privateKey', private_key_path: privateKeyPath, host_key_fingerprint: 'SHA256:ssh' })
+    readDirect.mockResolvedValue(null)
+    render(<SshReconnectDialog />)
+    act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-reconnect-request', { detail: project })))
+    expect(await screen.findByPlaceholderText('留空则使用 ~/.ssh/id_ed25519 等默认密钥')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '重新连接' }))
+    await waitFor(() => expect(connect).toHaveBeenCalledWith(project, expect.objectContaining({ host: '192.168.252.108', private_key_path: undefined, auth_kind: 'privateKey' }), { password: undefined, passphrase: undefined }))
+    expect(switchProject).toHaveBeenCalledWith(project)
+  })
+
+  it('shows the backend authentication error when a default key cannot connect', async () => {
+    readConnection.mockResolvedValue({ id: 'c1', host: 'host.test', port: 22, username: 'dev', auth_kind: 'privateKey', private_key_path: null, host_key_fingerprint: 'SHA256:ssh' })
+    readDirect.mockResolvedValue(null)
+    connect.mockRejectedValueOnce(new Error('未找到本机默认 SSH 私钥'))
+    render(<SshReconnectDialog />)
+    act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-reconnect-request', { detail: project })))
+    await screen.findByPlaceholderText('留空则使用 ~/.ssh/id_ed25519 等默认密钥')
+    fireEvent.click(screen.getByRole('button', { name: '重新连接' }))
+    expect(await screen.findByText('Error: 未找到本机默认 SSH 私钥')).toBeVisible()
+    expect(switchProject).not.toHaveBeenCalled()
+  })
+
   it('switches a failed direct connection to SSH and requests SSH credentials using the new mode', async () => {
     const profile = { id: 'c1', name: 'WSL', host: 'host.test', port: 2222, username: 'dev', auth_kind: 'password', host_key_fingerprint: 'SHA256:ssh', mode: 'server' }
     readConnection.mockResolvedValue(profile)
