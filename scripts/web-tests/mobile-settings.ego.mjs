@@ -117,8 +117,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.ok(await page.evaluate(() => {
         const gear = document.querySelector('#open-settings').getBoundingClientRect()
         const pill = document.querySelector('#active-host').getBoundingClientRect()
-        const brand = document.querySelector('.brand').getBoundingClientRect()
-        return gear.right <= innerWidth && gear.width >= 44 && pill.right <= gear.left && pill.left >= brand.right && pill.width > 60
+        // 连接切换在首屏大标题上方，长名称省略，不超出屏幕。
+        return gear.right <= innerWidth && gear.width >= 44 && pill.right <= innerWidth - 15 && pill.left >= 15 && pill.width > 60
       }))
       await shot('home-320.png')
       await openFromHome()

@@ -50,6 +50,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'terminalFont.js': ['mobile/android/web/terminalFont.js', 'text/javascript'],
   'terminalRenderer.js': ['mobile/android/web/terminalRenderer.js', 'text/javascript'],
   'sessionWatch.js': ['mobile/android/web/sessionWatch.js', 'text/javascript'],
+  'heroHeader.js': ['mobile/android/web/heroHeader.js', 'text/javascript'],
   'app.css': ['mobile/android/web/app.css', 'text/css'],
   'xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   'xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],

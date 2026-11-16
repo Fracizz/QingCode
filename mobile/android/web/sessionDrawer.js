@@ -41,7 +41,7 @@ const DOCKED_REFRESH_INTERVAL = 3000;
  * openOverviewSession / endOverviewSessions 处理纵览中（可能属于其他项目）的会话，后者接收会话数组并负责确认。
  * addProjectSession / switchProject / removeProject 响应「全部」范围项目组头上的新建、切换和移除。
  */
-export function createSessionDrawer({ prefix, remote, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSessions, addProjectSession, switchProject, removeProject }) {
+export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(), attention: new Set() }, state, setSessions, selectSession, endSession, openOverviewSession, endOverviewSessions, addProjectSession, switchProject, removeProject }) {
   const drawer = get('session-drawer');
   let drawerEpoch = 0;
   let refreshTimer;
@@ -55,7 +55,6 @@ export function createSessionDrawer({ prefix, remote, state, setSessions, select
   let allAvailable = null;
   let availabilityAddress = null;
   let actionProject = null;
-  const tracker = { busy: new Set(), attention: new Set() };
 
   // 「本项目」组头的「运行中优先」，与纵览中的按钮同步。
   const projectSort = runningFirstToggle('drawer-sort');

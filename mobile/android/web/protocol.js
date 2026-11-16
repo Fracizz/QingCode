@@ -313,6 +313,28 @@ export function updateSessionAttention({ busy, attention }, list, selected) {
   attention.delete(selected);
 }
 
+/** 待处理行右侧的时间：最近一次活动距今多久（不到 1 分钟为「刚刚」）；没有活动时间时为空。 */
+export function pendingTime(session, now = Date.now()) {
+  if (!Number.isFinite(session?.lastActiveAt)) return '';
+  const ms = now - session.lastActiveAt;
+  if (ms < 60000) return t('刚刚');
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 60) return t('{n} 分钟前', { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? t('{n} 小时前', { n: hours }) : t('{n} 天前', { n: Math.floor(hours / 24) });
+}
+
+/**
+ * 首页「待处理」：带「有新结果」标记的会话（含已退出），最近有活动的在前；缺少活动时间的排在后面。
+ * attention 为会话 id 的 Set，与会话侧栏共用同一份标记。
+ */
+export function pendingSessions(list, attention) {
+  const activity = session => (Number.isFinite(session?.lastActiveAt) ? session.lastActiveAt : 0);
+  return (Array.isArray(list) ? list : [])
+    .filter(session => typeof session?.id === 'string' && attention?.has(session.id))
+    .sort((a, b) => activity(b) - activity(a));
+}
+
 /**
  * 首页只先显示前 limit 个会话：按分组顺序截取，跨组时保留组头；hidden 为未显示的会话数。
  * 被截取的组保留 total（该项目的会话总数），组头仍显示完整数量。

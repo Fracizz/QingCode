@@ -28,6 +28,7 @@ import {
   TERMINAL_THEME,
   viewerFontSize,
   kickedNotice,
+  updateSessionAttention,
 } from './protocol.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
@@ -52,6 +53,7 @@ import { createOutputReader } from './outputReader.js';
 import { createComposeStatus } from './composeStatus.js';
 import { createSessionDrawer } from './sessionDrawer.js';
 import { createSessionOverview } from './sessionOverview.js';
+import { createHeroHeader } from './heroHeader.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
 import { attachCursorDrag } from './cursorDrag.js';
@@ -101,6 +103,8 @@ function applyLocale(value) {
 }
 const prefix = 'qingcode:mobile:';
 const pages = { home: get('home-screen'), project: get('project-screen'), connection: get('connection-screen') };
+// 「有新结果」标记：会话侧栏与首页「待处理」共用，只存内存，与电脑端语义一致。
+const attentionTracker = { busy: new Set(), attention: new Set() };
 const terminalScreen = get('terminal-screen');
 const compose = get('compose');
 const nativeRpc = createNativeRpc(native);
@@ -268,6 +272,14 @@ get('host-fingerprint-copy').addEventListener('click', async () => {
   setTimeout(() => { button.textContent = t('复制'); }, 1200);
 });
 
+const hero = createHeroHeader({
+  root: get('dashboard'),
+  pages,
+  active: () => page,
+  title: get('app-head-title'),
+  text: get('app-head-text'),
+});
+get('dashboard').dataset.page = page;
 const dashboard = createDashboardView({
   state: {
     profile: () => profile,
@@ -287,6 +299,12 @@ const dashboard = createDashboardView({
   openHost: item => pairing.openHost(item),
   openProject,
   openFiles: item => files.open(item),
+  pending: () => ({
+    list: homeOverview.list(),
+    attention: attentionTracker.attention,
+    visible: homeSessionsEnabled() && homeSessionsSupported && !!profile && hostState(profile) === 'online',
+  }),
+  openSession: session => openOverviewSession(session, homeOverview),
   copyProjectPath: async item => {
     try {
       await rpc('copy', { text: projectLocation(item) });
@@ -362,6 +380,7 @@ const composeStatus = createComposeStatus({
 const drawer = createSessionDrawer({
   prefix,
   remote,
+  tracker: attentionTracker,
   state: {
     profile: () => profile,
     project: () => project,
@@ -451,6 +470,7 @@ function renderHomeSessions() {
   get('home-session-count').textContent = String(count);
   get('home-sessions').hidden = !homeSessionsEnabled() || !homeSessionsSupported || !profile || hostState(profile) !== 'online'
     || (!count && !homeOverview.isSelecting());
+  dashboard.renderPending();
 }
 
 // 设置 → 工作台：首页「全部会话」默认显示；关闭后停止刷新，重新打开时立即读取。
@@ -492,6 +512,8 @@ async function refreshHomeSessions() {
     const list = await remote('sessions', { desktop: true }, address);
     if (epoch !== homeSessionsEpoch || profile?.id !== address || busy) return;
     homeOverview.setError('');
+    // 首页不显示任何终端，停下的会话都算看不到；先更新标记，列表重绘时「待处理」即为最新。
+    updateSessionAttention(attentionTracker, list, null);
     homeOverview.setList(list, address);
   } catch (error) {
     if (epoch === homeSessionsEpoch && profile?.id === address) homeOverview.setError(error.message);
@@ -625,7 +647,9 @@ function showPage(next) {
   terminalScreen.hidden = true;
   syncSessionDock();
   get('dashboard').hidden = false;
+  get('dashboard').dataset.page = next;
   for (const [name, section] of Object.entries(pages)) section.hidden = name !== next;
+  hero.sync();
   for (const navButton of get('dashboard-nav').querySelectorAll('button')) {
     if (navButton.dataset.page === next) navButton.setAttribute('aria-current', 'page');
     else navButton.removeAttribute('aria-current');
@@ -1182,6 +1206,11 @@ function awaitNewFrame(text) {
 }
 
 function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFrame = false } = {}) {
+  // 刚看过的终端：离开时不再视为「看不到时跑完」，之后再停下才重新标记。
+  if (selected) {
+    attentionTracker.busy.delete(selected);
+    attentionTracker.attention.delete(selected);
+  }
   if (!keepDrawer) drawer.close();
   get('rename-session-dialog').close();
   cancelKeyRepeats();

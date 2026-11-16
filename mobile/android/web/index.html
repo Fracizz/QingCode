@@ -69,21 +69,32 @@
 
   <main>
     <div id="dashboard" class="dashboard">
+      <!-- 顶栏只在大标题滚出视野后显示紧凑标题（heroHeader.js），平时只留设置按钮。 -->
       <header class="app-head">
-        <div class="brand"><img src="qingcode-icon.png" alt="" width="28" height="28">QingCode</div>
+        <button id="app-head-title" class="app-head-title" type="button" tabindex="-1" aria-hidden="true"><span class="dot"></span><span id="app-head-text">QingCode</span></button>
         <div class="app-head-actions">
-          <button id="active-host" class="host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><span id="home-latency"></span><svg><use href="#i-chevron"/></svg></button>
           <button id="open-settings" class="icon-button" type="button" aria-label="打开设置"><svg><use href="#i-settings"/></svg></button>
         </div>
       </header>
 
       <section id="home-screen" class="dashboard-page" aria-labelledby="home-title">
         <div id="home-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
-        <h1 id="home-title" class="sr-only">终端</h1>
+        <!-- 首屏大标题：上方小字是当前电脑与延迟（点按管理连接），下方「地平线」光随连接状态变化。 -->
+        <header class="hero">
+          <button id="active-host" class="hero-eyebrow host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><span id="home-latency"></span><svg><use href="#i-chevron"/></svg></button>
+          <h1 id="home-title" class="hero-title">QingCode</h1>
+          <span class="hero-horizon" aria-hidden="true"></span>
+        </header>
         <div id="home-context" class="context-card" hidden>
           <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span></small></div>
           <button id="home-reconnect" class="text-button" type="button" hidden>重连</button>
         </div>
+        <!-- 待处理：看不到的终端跑完后留下「有新结果」，与电脑端终端列表的标记一致；看过即清除。 -->
+        <section id="home-pending" class="home-pending" hidden aria-labelledby="home-pending-title">
+          <div class="section-heading"><h2 id="home-pending-title">待处理 <span id="home-pending-count"></span></h2></div>
+          <div id="home-pending-list" class="rows"></div>
+          <button id="home-pending-more" class="text-button home-pending-more" type="button" hidden></button>
+        </section>
         <button id="resume" class="resume-card" type="button" hidden>
           <span class="tile"><svg><use href="#i-terminal"/></svg></span>
           <span class="row-text"><small>继续终端</small><strong id="resume-name"></strong><small id="resume-host"></small></span>
@@ -101,10 +112,9 @@
           <div id="home-session-overview"></div>
         </section>
         <div id="home-empty" class="empty-card">
-          <span class="tile"><svg><use href="#i-terminal"/></svg></span>
           <h2 id="home-empty-title">连接一台 QingCode</h2>
           <p id="home-empty-text">配对电脑后，就能在这里打开远程终端。</p>
-          <button id="home-action" class="primary" type="button">添加连接</button>
+          <button id="home-action" class="dashed-action" type="button"><svg id="home-action-icon" aria-hidden="true"><use href="#i-plus"/></svg><span id="home-action-label">添加连接</span></button>
         </div>
         <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
         <section id="home-projects" class="home-projects" hidden aria-labelledby="home-projects-title">
@@ -112,18 +122,15 @@
           <div id="home-project-list" class="rows"></div>
           <p id="home-recent-empty" class="hint" hidden>还没有最近打开的项目，可从全部项目中选择。</p>
         </section>
-        <ol id="home-guide" class="setup-guide">
-          <li><span>1</span><div><strong>开启电脑连接</strong><p>电脑端设置 → 功能 → Android 移动连接</p></div></li>
-          <li><span>2</span><div><strong>扫码配对</strong><p>扫描电脑上的二维码，输入连接密码。</p></div></li>
-          <li><span>3</span><div><strong>继续工作</strong><p>选择项目，接回终端或新建会话。</p></div></li>
-        </ol>
+        <p id="home-footnote" class="home-footnote">在电脑端「设置 → 功能 → Android 移动连接」开启后扫码配对 · 密码与证书指纹只保存在这台手机</p>
       </section>
 
       <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
         <div id="project-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
-        <header class="page-heading with-action">
-          <div><h1 id="project-title">项目</h1><p id="project-subtitle"></p></div>
+        <header class="hero with-action">
+          <div><p id="project-subtitle" class="hero-eyebrow"></p><h1 id="project-title" class="hero-title">项目</h1></div>
           <button id="refresh" class="icon-button" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
+          <span class="hero-horizon" aria-hidden="true"></span>
         </header>
         <div id="project-filters">
           <div class="search-field"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索 IP、项目名或路径" aria-label="搜索 IP、项目名或路径" autocomplete="off" enterkeyhint="search"></div>
@@ -140,9 +147,10 @@
 
       <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
         <div id="connection-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
-        <header class="page-heading with-action">
-          <h1 id="connection-title">连接</h1>
+        <header class="hero with-action">
+          <div><p id="connection-subtitle" class="hero-eyebrow"></p><h1 id="connection-title" class="hero-title">连接</h1></div>
           <button id="add-host" class="secondary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>
+          <span class="hero-horizon" aria-hidden="true"></span>
         </header>
         <p id="connection-error" class="error" role="alert" hidden></p>
         <div id="connection-list" class="rows"></div>

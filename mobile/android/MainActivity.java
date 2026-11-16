@@ -231,7 +231,7 @@ public final class MainActivity extends Activity {
                         case "fileBrowser.js": case "fileBrowserState.js":
                         case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "sessionOverview.js": case "sessionPrefs.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
-                        case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js":
+                        case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js": case "heroHeader.js":
                         case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js": case "historySelection.js":
                         case "xterm.js": case "fit.js": case "unicode11.js": case "webgl.js": case "jsqr.js":
                             type = "application/javascript"; break;
