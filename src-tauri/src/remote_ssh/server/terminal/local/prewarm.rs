@@ -124,6 +124,8 @@ impl Drop for WarmShell {
 }
 #[derive(Default)]
 struct PoolState {
+    /// 最近获得原生焦点的窗口。应用在后台或预热关闭时仍保留，直到移交或销毁。
+    coordinator: Option<String>,
     target: Option<Target>,
     generation: u64,
     shells: Vec<WarmShell>,
@@ -222,34 +224,50 @@ fn remote_target_valid(manager: &SshManager, remote: &RemoteTarget) -> bool {
 }
 
 impl ShellPrewarmPool {
-    pub(crate) fn clear_window(&self, window: &str) {
+    pub(crate) fn focus_window(&self, window: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).coordinator = Some(window.to_owned());
+    }
+
+    fn lock_for_window(&self, window: &str) -> Option<std::sync::MutexGuard<'_, PoolState>> {
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        (state.coordinator.as_deref() == Some(window)).then_some(state)
+    }
+
+    pub(crate) fn close_window(&self, window: &str) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state
-            .target
-            .as_ref()
-            .is_some_and(|target| target.window == window)
-        {
-            trace(
-                "cleared",
-                serde_json::json!({"window": window, "dropped": state.shells.len()}),
-            );
-            state.target = None;
-            state.generation += 1;
-            state.preparing = false;
-            state.paused_reason = None;
-            state.shells.clear();
-            self.1.notify_waiters();
+        if state.coordinator.as_deref() == Some(window) {
+            state.coordinator = None;
+        } else if state.target.as_ref().is_none_or(|t| t.window != window) {
+            return;
         }
+        self.clear(&mut state, window);
+    }
+
+    pub(crate) fn clear_window(&self, window: &str) {
+        if let Some(mut state) = self.lock_for_window(window) {
+            self.clear(&mut state, window);
+        }
+    }
+
+    fn clear(&self, state: &mut PoolState, window: &str) {
+        trace(
+            "cleared",
+            serde_json::json!({"window": window, "dropped": state.shells.len()}),
+        );
+        state.target = None;
+        state.generation += 1;
+        state.preparing = false;
+        state.paused_reason = None;
+        state.shells.clear();
+        self.1.notify_waiters();
     }
 
     /// 窗口切到不预热的项目（Linux 远端、SSH 直连等）：停止补充，但为上一个主机保留 1 个空闲项。
     fn retire_window(&self, window: &str) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if !state
-            .target
-            .as_ref()
-            .is_some_and(|target| target.window == window)
-        {
+        let Some(mut state) = self.lock_for_window(window) else {
+            return;
+        };
+        if state.target.is_none() {
             return;
         }
         let dropped = state.retarget(None);
@@ -272,7 +290,11 @@ impl ShellPrewarmPool {
         shell: Option<String>,
         count: serde_json::Value,
     ) -> Result<usize, String> {
-        let Some(cwd) = cwd else {
+        if self.lock_for_window(&window).is_none() {
+            return Ok(0);
+        }
+        let count = resolve_count(&count);
+        let Some(cwd) = cwd.filter(|_| count > 0) else {
             self.clear_window(&window);
             return Ok(0);
         };
@@ -302,8 +324,10 @@ impl ShellPrewarmPool {
             let (target_cwd, launch, key) = local_launch_key(&cwd, shell.as_deref())?;
             (target_cwd, key, launch, None)
         };
-        let count = resolve_count(&count);
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // 远端 SFTP 校验期间可能发生窗口移交，提交配置与归属检查共用一把锁。
+        let Some(mut state) = self.lock_for_window(&window) else {
+            return Ok(0);
+        };
         // 同主机换项目只移动补充目标，已就绪项保留，切换目录后仍可领取。
         let changed = state.target.as_ref().is_none_or(|target| {
             target.key != key || target.count != count || target.window != window
@@ -333,7 +357,7 @@ impl ShellPrewarmPool {
             state.paused_reason = None;
             self.1.notify_waiters();
         }
-        state.target = (count > 0).then_some(Target {
+        state.target = Some(Target {
             project_path: cwd,
             cwd: target_cwd,
             key,
@@ -342,7 +366,7 @@ impl ShellPrewarmPool {
             window,
             remote,
         });
-        if !state.running && count > 0 {
+        if !state.running {
             state.running = true;
             let pool = self.clone();
             tauri::async_runtime::spawn(async move { pool.run(app).await });

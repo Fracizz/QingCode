@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Project } from '../types'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { isProjectTrusted, WORKSPACE_TRUST_CHANGED_EVENT, WORKSPACE_TRUST_SYNCED_EVENT } from '../lib/workspaceTrust'
@@ -16,7 +17,7 @@ function configure(cwd: string | null, shell: string | null, count: 'auto' | num
 }
 
 /**
- * 当前聚焦窗口协调全应用预算；配置串行，撤销信任、改设置立即使旧项失效。
+ * 最近聚焦的原生窗口协调全应用预算；配置串行，撤销信任、改设置立即使旧项失效。
  * 本机项目只在 Windows 客户端预热；SSH 项目交给后端判断远端是否为 Windows 且走 Server 模式。
  * 预热项按主机复用：切换项目只复查条件，同一主机上已就绪的 Shell 保留，领取时再切到目标目录。
  */
@@ -35,7 +36,7 @@ export function useShellPrewarm(project: Project | null) {
     const refresh = (invalidate = true) => {
       const current = ++revision
       const cleared = invalidate ? configure(null, null, 0) : Promise.resolve()
-      const stale = () => disposed || current !== revision || !document.hasFocus()
+      const stale = () => disposed || current !== revision
       void (async () => {
         await cleared
         if (stale()) return
@@ -59,24 +60,42 @@ export function useShellPrewarm(project: Project | null) {
     // 获得焦点、信任列表同步到原生（手机请求、项目列表刷新都会触发）、切换项目只复查条件：
     // 仍受信任且主机与配置不变时保留已就绪项，不能把刚被领取预留的 Shell 一起清掉。
     const recheck = () => refresh(false)
+    // 手机请求也会同步信任列表；空闲时由原生池定期复查，避免每次同步都发起 SFTP 请求。
+    const onTrustSynced = () => { if (document.hasFocus()) recheck() }
     recheckRef.current = recheck
     const storage = (event: StorageEvent) => {
       if (!event.key || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
-    invalidate()
-    window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
+    // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
+    let unlisten: (() => void) | undefined
+    void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused && !disposed) recheck()
+    }).then(stop => {
+      if (disposed) stop()
+      else unlisten = stop
+    }).finally(() => {
+      if (!disposed) recheck()
+    }).catch(() => {})
+    // CLI 设置导入可由主窗口处理，预算却在另一个窗口。接收方只重读，不再次广播。
+    const settingsChannel = new BroadcastChannel(SHELL_PREWARM_CHANGED_EVENT)
+    settingsChannel.onmessage = recheck
+    const onSettingsChanged = () => {
+      invalidate()
+      settingsChannel.postMessage(null)
+    }
+    window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, onSettingsChanged)
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
-    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, recheck)
-    window.addEventListener('focus', recheck)
+    window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
     window.addEventListener('storage', storage)
     return () => {
       disposed = true
       revision++
       recheckRef.current = null
-      window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, invalidate)
+      settingsChannel.close()
+      window.removeEventListener(SHELL_PREWARM_CHANGED_EVENT, onSettingsChanged)
       window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
-      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, recheck)
-      window.removeEventListener('focus', recheck)
+      window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
+      unlisten?.()
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)
     }

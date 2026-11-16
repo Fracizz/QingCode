@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 
 const mocks = vi.hoisted(() => ({
+  onFocusChanged: vi.fn(async (_listener: (event: { payload: boolean }) => void) => () => {}),
   invoke: vi.fn(async (..._args: unknown[]) => 0), count: vi.fn(async () => 'auto' as 'auto' | number),
   persist: vi.fn(async () => true), trusted: vi.fn(() => true), platform: vi.fn(() => 'win'),
 }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged }) }))
 vi.mock('../lib/tauri', () => ({ isTauri: () => true, safeInvoke: mocks.invoke }))
 vi.mock('../lib/workspaceTrust', () => ({ isProjectTrusted: mocks.trusted, WORKSPACE_TRUST_CHANGED_EVENT: 'trust-changed', WORKSPACE_TRUST_SYNCED_EVENT: 'trust-synced' }))
 vi.mock('../lib/terminal/shellPrewarmSettings', () => ({ loadShellPrewarmCount: mocks.count, SHELL_PREWARM_CHANGED_EVENT: 'prewarm-changed' }))
@@ -78,23 +80,48 @@ describe('Windows prewarm coordinator', () => {
     await act(async () => {})
   })
 
-  it('lets the focused window own the budget and rechecks focus after loading settings', async () => {
+  it('re-enables the WinDev pool after a background settings import without waiting for focus', async () => {
+    const remote = { ...project, path: 'ssh://windev/D:/code/qingcode' }
+    const hook = renderHook(() => useShellPrewarm(remote))
+    await waitFor(() => expect(configuredPaths()).toContain(remote.path))
     vi.spyOn(document, 'hasFocus').mockReturnValue(false)
-    const hook = renderHook(() => useShellPrewarm(project))
-    await act(async () => {})
-    expect(configuredPaths().every(path => path === null)).toBe(true)
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
-    act(() => window.dispatchEvent(new Event('focus')))
-    await waitFor(() => expect(configuredPaths()).toContain(project.path))
+    mocks.count.mockResolvedValue(0)
+    act(() => window.dispatchEvent(new Event('prewarm-changed')))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
+      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: remote.path, shell: 'auto', count: 0 },
+    ))
+    mocks.count.mockResolvedValue(2)
+    act(() => window.dispatchEvent(new Event('prewarm-changed')))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
+      '配置 Shell 预热', 'configure_shell_prewarm', { cwd: remote.path, shell: 'auto', count: 2 },
+    ))
     hook.unmount()
     await act(async () => {})
+  })
+
+  it('rechecks settings imported by another window while the coordinator is in the background', async () => {
+    const hook = renderHook(() => useShellPrewarm(project))
+    const otherWindow = new BroadcastChannel('prewarm-changed')
+    try {
+      await waitFor(() => expect(configuredPaths()).toContain(project.path))
+      vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+      mocks.count.mockResolvedValue(2)
+      otherWindow.postMessage(null)
+      await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith(
+        '配置 Shell 预热', 'configure_shell_prewarm', { cwd: project.path, shell: 'auto', count: 2 },
+      ))
+    } finally {
+      otherWindow.close()
+      hook.unmount()
+      await act(async () => {})
+    }
   })
 
   it('keeps ready shells when the same window regains focus', async () => {
     const hook = renderHook(() => useShellPrewarm(project))
     await waitFor(() => expect(configuredPaths()).toContain(project.path))
     mocks.invoke.mockClear()
-    act(() => window.dispatchEvent(new Event('focus')))
+    act(() => mocks.onFocusChanged.mock.calls.at(-1)![0]({ payload: true }))
     await waitFor(() => expect(configuredPaths()).toEqual([project.path]))
     hook.unmount()
     await act(async () => {})

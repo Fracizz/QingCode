@@ -207,6 +207,7 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
         remote: None,
     });
     pool.0.lock().unwrap().shells.push(shell);
+    pool.focus_window("main");
     pool.clear_window("secondary");
     assert_eq!(pool.0.lock().unwrap().shells.len(), 1);
     pool.clear_window("main");
@@ -214,6 +215,21 @@ fn only_the_owning_window_can_invalidate_the_shared_pool() {
     assert!(state.shells.is_empty());
     assert!(state.target.is_none());
     assert_eq!(state.generation, 1);
+}
+
+#[test]
+fn focus_ownership_survives_disable_and_rejects_old_windows_after_handoff() {
+    let pool = ShellPrewarmPool::default();
+    pool.focus_window("main");
+    pool.clear_window("main");
+    assert!(pool.lock_for_window("main").is_some());
+    pool.focus_window("secondary");
+    assert!(pool.lock_for_window("main").is_none());
+    pool.clear_window("main");
+    pool.close_window("main");
+    assert!(pool.lock_for_window("secondary").is_some());
+    pool.close_window("secondary");
+    assert!(pool.lock_for_window("secondary").is_none());
 }
 
 #[test]
@@ -262,6 +278,7 @@ fn status_and_reservation_reasons_are_scoped_to_the_target() {
     assert_eq!(pool.reserve_key(&key, CWD, false), Err("empty"));
     assert_eq!(pool.status("test")["reserved"], 1);
     assert_eq!(pool.status("test")["ready"], 0);
+    pool.focus_window("main");
     pool.clear_window("main");
     assert_eq!(pool.status("test")["reason"], "no_target");
 }

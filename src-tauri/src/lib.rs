@@ -1106,10 +1106,11 @@ pub fn run() {
             remote_ssh::ssh_forget_workspace_root,
         ])
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                window
-                    .state::<remote_ssh::local_terminal::ShellPrewarmPool>()
-                    .clear_window(window.label());
+            let pool = window.state::<remote_ssh::local_terminal::ShellPrewarmPool>();
+            match event {
+                tauri::WindowEvent::Focused(true) => pool.focus_window(window.label()),
+                tauri::WindowEvent::Destroyed => pool.close_window(window.label()),
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

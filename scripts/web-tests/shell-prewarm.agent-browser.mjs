@@ -36,7 +36,7 @@ try {
   click('自动（1 个）', 'option')
   check('can return to automatic mode', `${control}?.textContent.includes('自动')`)
   click('Windows')
-  check('setting is hidden on Linux', `!${control}`)
+  check('Linux clients can configure prewarming for Windows SSH hosts', `navigator.userAgent === 'Linux' && ${control}?.disabled === false && ${control}.textContent.includes('自动')`)
   click('Linux')
   run('eval', `(async () => {
     const { ensureBuiltinLocaleLoaded, useLocaleStore } = await import('/src/lib/i18n.ts')
