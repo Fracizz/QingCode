@@ -315,9 +315,12 @@ export function updateSessionAttention({ busy, attention }, list, selected) {
   attention.delete(selected);
 }
 
-/** 待处理行右侧的时间：最近一次活动距今多久（不到 1 分钟为「刚刚」）；没有活动时间时为空。 */
+/**
+ * 待处理行右侧的时间：最近一次活动距今多久（不到 1 分钟为「刚刚」）；没有活动时间时为空。
+ * 旧版电脑端给电脑终端填 0，按缺失处理，否则会显示成「20000 多天前」。
+ */
 export function pendingTime(session, now = Date.now()) {
-  if (!Number.isFinite(session?.lastActiveAt)) return '';
+  if (!Number.isFinite(session?.lastActiveAt) || session.lastActiveAt <= 0) return '';
   const ms = now - session.lastActiveAt;
   if (ms < 60000) return t('刚刚');
   const minutes = Math.floor(ms / 60000);

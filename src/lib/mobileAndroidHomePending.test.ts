@@ -46,5 +46,8 @@ describe('Android 待处理时间', () => {
     expect(pendingTime({ lastActiveAt: now - 3 * 3600e3 }, now)).toBe('3 小时前')
     expect(pendingTime({ lastActiveAt: now - 2 * 24 * 3600e3 }, now)).toBe('2 天前')
     expect(pendingTime({}, now)).toBe('')
+    // 旧版电脑端给电脑终端填 0：不能显示成「20774 天前」
+    expect(pendingTime({ lastActiveAt: 0 }, now)).toBe('')
+    expect(pendingTime({ lastActiveAt: null }, now)).toBe('')
   })
 })

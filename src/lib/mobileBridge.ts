@@ -17,6 +17,7 @@ import { captureTerminalForMirror, useTerminalStore } from '@/store/terminalStor
 import { applyTerminalControlPayload, type TerminalControlPayload } from '@/store/terminalControlStore'
 import { terminalViewGrids } from '@/store/terminal/ptySizing'
 import { isTerminalProgramBusy } from './terminal/terminalProgramActivity'
+import { terminalLastActiveAt } from './terminal/terminalLastActive'
 import { isMobileTerminalId } from './ipc/mobileSessions'
 import type { TerminalTab } from '@/types'
 
@@ -71,7 +72,8 @@ async function listDesktopTerminals() {
       programTitle: null,
       programBusy: isTerminalProgramBusy(tab.id),
       createdAt: tab.createdAt ?? tab.startedAt ?? null,
-      lastActiveAt: 0,
+      // 手机首页「待处理」据此显示「N 分钟前」；没有记录时给 null，不能给 0（会被算成 1970 年）
+      lastActiveAt: terminalLastActiveAt(tab),
       idleDeadline: null,
       project,
     }]
