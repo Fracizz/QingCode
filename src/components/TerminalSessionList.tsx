@@ -933,8 +933,8 @@ export default function TerminalSessionList() {
         role="group"
         aria-label={label}
         data-terminal-host-section={section.key}
-        // 主机之间用细分隔线和上边距分开，组内项目仍沿用 4px 的组间距。
-        className={`flex flex-col gap-1 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : ''}`}
+        // 主机之间用细分隔线和上边距分开，组内项目仍沿用 2px 的组间距。
+        className={`flex flex-col gap-0.5 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : ''}`}
       >
         <button
           type="button"
@@ -1189,8 +1189,8 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          // 组间 4px、组内 2px：分组靠留白区分，不再加分隔线；组间距过大时连续收起的项目显得稀疏。
-          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-1.5"
+          // 组间与组内同为 2px，项目行与会话行节奏一致；分组靠图标和缩进区分，不加分隔线。
+          className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
