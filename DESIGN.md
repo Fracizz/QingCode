@@ -38,7 +38,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 | `term-list-fg` | `#c8c8c8` | 终端列表：会话名 |
 | `term-list-project` | `= term-list-fg` | 终端列表：项目名（与会话名同亮） |
 | `term-list-meta` | `#939393` | 终端列表：时间、状态短词、已退出的名称；深色在悬停 / 选中底上 ≥ 4.5:1（石墨灰照 Codex 原值 `#8d8c8c`，悬停 / 选中底上 ≥ 4:1） |
-| `term-list-source` / `term-list-remote` / `term-list-wsl` | `= term-list-meta` / `#b393d6` / `#c39557` | 终端组头来源标签与主机分组头图标：本机中性灰、SSH 淡紫、WSL 琥珀（不用蓝色，避免与 `accent` 交互色混淆；手机端组头同色）；标签淡底与细边框取同色（`border-current/25`、`bg-current/[0.07]`），三者在列表底 ≥ 4.5:1、悬停 / 选中底 ≥ 4:1 |
+| `term-list-source` / `term-list-remote` / `term-list-wsl` | `= term-list-meta` / `#c98f8f` / `#c39557` | 终端组头来源标签与主机分组头图标：本机中性灰、SSH 豆沙、WSL 琥珀（暖色，不用蓝紫，避免与 `accent` 交互色混淆；手机端组头同色）；标签淡底与细边框取同色（`border-current/25`、`bg-current/[0.07]`），三者在列表底 ≥ 4.5:1、悬停 / 选中底 ≥ 4:1 |
 | `brand` | `#4ecdb5` | QingCode 品牌、当前工作上下文、Qing Rail |
 | `accent` | `#3b82f6` | 键盘焦点、加载、链接、拖拽高亮 |
 | `danger` | `#f48771` | 错误、删除 |

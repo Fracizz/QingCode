@@ -129,7 +129,7 @@ function PickBox({ state, ...rest }: { state: PickState } & Record<`data-${strin
   )
 }
 
-// 来源标签按种类分色：本机中性灰，WSL 琥珀，SSH 淡紫（不用蓝色）；淡底与细边框都取文字色，各主题只需定义文字色。
+// 来源标签按种类分色：本机中性灰，WSL 琥珀，SSH 豆沙（暖色，不用蓝紫）；淡底与细边框都取文字色，各主题只需定义文字色。
 const SOURCE_TEXT: Record<TerminalSourceKind, string> = {
   local: 'text-term-list-source',
   wsl: 'text-term-list-wsl',
