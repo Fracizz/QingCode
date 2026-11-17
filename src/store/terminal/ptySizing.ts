@@ -13,6 +13,12 @@ import { noteTerminalResize } from '@/lib/terminal/terminalProgramActivity'
 
 /** If xterm never reports a size (panel closed), spawn with defaults. */
 const PTY_SPAWN_FALLBACK_MS = 2500
+/**
+ * 已领取预热 Shell 时的兜底等待：视图的 fit 在后台也会由计时器兜底（约 50ms，见
+ * frameOrTimeout），通常早于此触发；这里防的是视图未挂载等 fit 不来的情况，不让预热
+ * 白等 2.5s。兜底时用同窗格终端的网格估计尺寸，视图 fit 后再按常规路径下发真实尺寸。
+ */
+export const PREWARM_SPAWN_FALLBACK_MS = 100
 const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Last fitted size per tab — used when restarting before the next fit. */
 export const lastPtySize = new Map<string, { cols: number; rows: number }>()
@@ -96,11 +102,21 @@ export function setTerminalViewGrid(id: string, size: { cols: number; rows: numb
   else terminalViewGrids.delete(id)
 }
 
-/** 启动/接回在拿不到视图 fit 回调时用的尺寸：视图网格 → 上次下发的尺寸 → 默认。 */
-export function preferredSpawnSize(id: string): { cols: number; rows: number } {
+/**
+ * 启动/接回在拿不到视图 fit 回调时用的尺寸：视图网格 → 上次下发的尺寸 →
+ * 同窗格参照终端的视图网格（新建标签尚未 fit 时的估计）→ 默认。
+ */
+export function preferredSpawnSize(
+  id: string,
+  siblingId?: string | null
+): { cols: number; rows: number } {
   return (
     terminalViewGrids.get(id) ??
-    lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
+    lastPtySize.get(id) ??
+    (siblingId ? terminalViewGrids.get(siblingId) : undefined) ?? {
+      cols: DEFAULT_PTY_COLS,
+      rows: DEFAULT_PTY_ROWS,
+    }
   )
 }
 
@@ -131,14 +147,18 @@ export function planDeferredPtySync(
   return deferred.redraw && attached ? { action: 'redraw', ...size } : null
 }
 
-export function schedulePtySpawnFallback(id: string, spawn: () => void) {
+export function schedulePtySpawnFallback(
+  id: string,
+  spawn: () => void,
+  delayMs: number = PTY_SPAWN_FALLBACK_MS
+) {
   clearPtySpawnFallback(id)
   ptySpawnFallbackTimers.set(
     id,
     setTimeout(() => {
       ptySpawnFallbackTimers.delete(id)
       spawn()
-    }, PTY_SPAWN_FALLBACK_MS)
+    }, delayMs)
   )
 }
 

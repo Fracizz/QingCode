@@ -9,6 +9,7 @@ import {
   terminalPaneOf,
   useTerminalStore,
 } from './terminalStore'
+import { PREWARM_SPAWN_FALLBACK_MS, setTerminalViewGrid } from './terminal/ptySizing'
 
 vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/terminal/shellPrewarmSettings')>(),
@@ -130,6 +131,37 @@ describe('terminal pane isolation', () => {
     expect(await useTerminalStore.getState().addTerminal(path, 'p1')).toBe('warm-remote')
     expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), true)
     await useTerminalStore.getState().closeTerminal('warm-remote')
+  })
+
+  it('spawns a reserved prewarmed shell without waiting for a late fit', async () => {
+    vi.useFakeTimers()
+    const original = useTerminalStore.getState().spawnPendingTerminal
+    const spawn = vi.fn(async () => {})
+    try {
+      // 同窗格已有终端：兜底启动按它的视图网格估计尺寸。
+      setTerminalViewGrid('sibling', { cols: 150, rows: 40 })
+      useTerminalStore.setState({
+        terminals: [tab('sibling', 'primary')],
+        activeTerminalId: 'sibling',
+        spawnPendingTerminal: spawn,
+      })
+      vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 'warm-bg' })
+      expect(await useTerminalStore.getState().addTerminal('ssh://conn/D:/work/proj', 'p1')).toBe('warm-bg')
+      await vi.advanceTimersByTimeAsync(PREWARM_SPAWN_FALLBACK_MS)
+      expect(spawn).toHaveBeenCalledWith('warm-bg', 150, 40)
+
+      // 未领取到预热项时保持原来的 2.5s 兜底，等视图 fit 给出真实尺寸。
+      spawn.mockClear()
+      const cold = await useTerminalStore.getState().addTerminal('D:/proj', 'p1')
+      await vi.advanceTimersByTimeAsync(PREWARM_SPAWN_FALLBACK_MS)
+      expect(spawn).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(spawn).toHaveBeenCalledWith(cold, expect.any(Number), expect.any(Number))
+    } finally {
+      setTerminalViewGrid('sibling', null)
+      useTerminalStore.setState({ spawnPendingTerminal: original })
+      vi.useRealTimers()
+    }
   })
 
   it('restart claims a prewarmed shell under the same tab id', async () => {

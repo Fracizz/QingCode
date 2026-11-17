@@ -35,6 +35,7 @@ import {
 } from '../store/terminalStore'
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
+import { runOnFrameOrTimeout } from '@/lib/terminal/frameOrTimeout'
 import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
 import { formatTerminalQuote } from '@/lib/terminal/terminalQuote'
 import {
@@ -207,7 +208,8 @@ export default function TerminalView({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const keepScrollOnFitRef = useRef(false)
-  const fitRafRef = useRef(0)
+  /** 排队中的 fit（下一帧或后台兜底计时器）的取消函数。 */
+  const fitCancelRef = useRef<(() => void) | null>(null)
   const ptyResizeTimerRef = useRef<number | null>(null)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
   const pendingPtySizeRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -779,9 +781,10 @@ export default function TerminalView({
         focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
       }
       // 非拖动场景每帧最多计算一次字符网格；拖动结束由 settle 统一提交。
-      if (fitRafRef.current !== 0 || isPanelResizing()) return
-      fitRafRef.current = window.requestAnimationFrame(() => {
-        fitRafRef.current = 0
+      // 窗口在后台不出帧时由计时器兜底，新标签照样按真实网格尽快新建 PTY。
+      if (fitCancelRef.current !== null || isPanelResizing()) return
+      fitCancelRef.current = runOnFrameOrTimeout(() => {
+        fitCancelRef.current = null
         if (isPanelResizing()) return
         const flags = pendingFitFlagsRef.current
         pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
@@ -1344,10 +1347,8 @@ export default function TerminalView({
         scheduleFit()
         return
       }
-      if (fitRafRef.current !== 0) {
-        window.cancelAnimationFrame(fitRafRef.current)
-        fitRafRef.current = 0
-      }
+      fitCancelRef.current?.()
+      fitCancelRef.current = null
       const flags = pendingFitFlagsRef.current
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
       // 【终端防闪烁关键时序，请勿改成固定 rAF】先订阅 onRender，再执行最终
@@ -1395,10 +1396,8 @@ export default function TerminalView({
       releaseTerminalWebglSlot(webglSlotKey)
       window.clearTimeout(subscribeTimer)
       for (const id of fitTimers) window.clearTimeout(id)
-      if (fitRafRef.current !== 0) {
-        window.cancelAnimationFrame(fitRafRef.current)
-        fitRafRef.current = 0
-      }
+      fitCancelRef.current?.()
+      fitCancelRef.current = null
       clearPtyResizeTimer()
       if (revealTimerRef.current !== null) {
         window.clearTimeout(revealTimerRef.current)

@@ -98,6 +98,7 @@ import {
   lastPtySize,
   markPtySizeChanged,
   planDeferredPtySync,
+  PREWARM_SPAWN_FALLBACK_MS,
   preferredSpawnSize,
   rememberPtySize,
   schedulePtySpawnFallback,
@@ -664,6 +665,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       shellLabel
     )
     const focusPane = get().terminalFocusPane
+    // 新标签将替换的同窗格终端：兜底启动时按其网格估计尺寸。
+    const paneSibling = readPaneTerminalId(get(), focusPane)
     const tab: TerminalTab = {
       id,
       name: disambiguateTerminalName(
@@ -694,10 +697,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
     useUIStore.getState().openTerminalPanel()
-    schedulePtySpawnFallback(id, () => {
-      const size = preferredSpawnSize(id)
-      void get().spawnPendingTerminal(id, size.cols, size.rows)
-    })
+    // 已领取预热 Shell 时不再等满 2.5s：窗口在后台时 fit 不会来，预热就白等了。
+    schedulePtySpawnFallback(
+      id,
+      () => {
+        const size = preferredSpawnSize(id, paneSibling)
+        void get().spawnPendingTerminal(id, size.cols, size.rows)
+      },
+      'id' in reservation ? PREWARM_SPAWN_FALLBACK_MS : undefined
+    )
     return id
   },
 
