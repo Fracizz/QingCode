@@ -47,7 +47,7 @@
   --color-term-list-meta: #939393;
   /* 来源标签按种类分色：本机沿用辅助灰，SSH 豆沙绿、WSL 琥珀（不用蓝紫，避免与交互强调色混淆；护眼绿主题取更亮一档，靠明度与绿底区分）；标签淡底和细边框取同色，仅文字色需过对比度。 */
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #88af8e;
+  --color-term-list-remote: #84a388;
   --color-term-list-wsl: #c39557;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
@@ -246,7 +246,7 @@ html[data-theme="ink"] {
   --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #8d8c8c;
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #8aab8e;
+  --color-term-list-remote: #82a086;
   --color-term-list-wsl: #bd955c;
 
   --color-brand: #4ecdb5;
