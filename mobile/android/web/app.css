@@ -1084,7 +1084,8 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 /* 新建会话：与其他弹层一致的分组列表。 */
 .session-shortcuts { margin: 12px 0; background: var(--paper); }
 .session-shortcuts > button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; width: 100%; min-height: 52px; padding: 8px 14px; border: 0; border-radius: 0; background: transparent; font-size: 15px; font-weight: 600; text-align: left; }
-.session-shortcuts > * + * { border-top: 1px solid var(--divider); }
+/* 行用 button 选择器抹掉了边框，分隔线要同等以上优先级才能生效。 */
+.session-shortcuts > button + button { border-top: 1px solid var(--divider); }
 .session-shortcuts > button small { font-size: 12px; font-weight: 400; color: var(--muted); }
 .session-shortcuts[aria-busy="true"] { opacity: .72; }
 #new-session-dialog .dialog-actions { margin-top: 12px; }

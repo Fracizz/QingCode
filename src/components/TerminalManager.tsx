@@ -860,6 +860,8 @@ function Row(props: RowProps) {
   const { t } = useI18n()
   const { entry, now, disabled } = props
   const { icon, sourceLabel, details } = describeEntry(entry, now, t, props.openedMobileIds)
+  // 程序标题在转圈：用持续转动的图标代替标题里随轮询跳动的转圈帧字符。
+  const working = isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now))
   const originalName = entry.source === 'mobile' ? [entry.session.name, entry.session.programTitle]
     .filter((value, index, values) => value && values.indexOf(value) === index).join('\n') : entry.name
   let actions: { label: string; icon: ReactNode; danger?: boolean; onClick: () => void }[]
@@ -925,24 +927,20 @@ function Row(props: RowProps) {
         disabled={disabled}
         onChange={props.onToggleSelect}
       />
-      <Tooltip label={sourceLabel} side="top" wrapperClassName="inline-flex">
-        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted" aria-label={sourceLabel}>
-          {icon}
-        </span>
+      {/* 程序在工作时，转圈图标占用来源图标位，标题与副标题左边保持对齐；来源仍在提示里。 */}
+      <Tooltip label={working ? `${sourceLabel} · ${t('程序正在工作')}` : sourceLabel} side="top" wrapperClassName="inline-flex">
+        {working ? (
+          <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-brand" aria-label={sourceLabel}>
+            <LoaderCircle size={14} role="img" aria-label={t('程序正在工作')} className="motion-safe:animate-spin" />
+          </span>
+        ) : (
+          <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted" aria-label={sourceLabel}>
+            {icon}
+          </span>
+        )}
       </Tooltip>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1">
-          {isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) && (
-            // 程序标题在转圈：用持续转动的图标代替标题里随轮询跳动的转圈帧字符。
-            <Tooltip label={t('程序正在工作')} side="top" wrapperClassName="inline-flex flex-shrink-0">
-              <LoaderCircle
-                size={13}
-                role="img"
-                aria-label={t('程序正在工作')}
-                className="text-brand motion-safe:animate-spin"
-              />
-            </Tooltip>
-          )}
+        <div className="flex min-w-0 items-center">
           <Tooltip label={originalName} onlyWhenOverflow={originalName === entry.name} side="top" wrapperClassName="block min-w-0 flex-1">
             <div className="truncate text-ui text-fg">{entry.name}</div>
           </Tooltip>
