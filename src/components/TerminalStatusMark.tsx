@@ -7,7 +7,9 @@ import {
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
 
-const SLOT_CLASS = 'inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center'
+// 下移 1px 做光学对齐：几何居中时，正文（Segoe UI 上伸部高于下伸部、含 p/g 等下伸字母）
+// 的墨迹中心比行框中心低 0.5–1.5px，标记会显得偏上。
+const SLOT_CLASS = 'inline-flex h-3.5 w-3.5 flex-shrink-0 translate-y-px items-center justify-center'
 
 /**
  * 终端列表行首的固定状态位（14px），每一行都有标记，扫读时左侧对齐成一列：
