@@ -99,8 +99,19 @@ pub(super) enum Operation {
         tail: bool,
         #[serde(default)]
         shared: bool,
+        // 旧版手机还会带 `lease`；共享模式下不再用它判断能否输入，未知字段直接忽略。
+    },
+    /// 输出推送：参数同 `Poll`，响应是一条不断开的 HTTP 流，每行一个 JSON（与 `Poll` 回复相同）。
+    /// 手机不必每收到一屏就再发一次请求，画面更新频率不再受网络往返限制。
+    PollStream {
+        id: String,
+        from: u64,
         #[serde(default)]
-        lease: Option<u64>,
+        latest: bool,
+        #[serde(default)]
+        tail: bool,
+        #[serde(default)]
+        shared: bool,
     },
     History {
         id: String,
@@ -145,7 +156,7 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["project_files", "terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence"],
+            "features": ["project_files", "terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
@@ -293,67 +304,10 @@ pub(super) async fn operate(
             from,
             latest,
             tail,
-            lease,
             shared,
-        } => {
-            let read = |inner: &HubState, after_wait: bool| -> Result<Option<Value>, String> {
-                require_device(inner, device)?;
-                let session = inner.live(&id).ok_or("终端不存在。")?;
-                // 旧版手机仍会带上 lease，共享模式下不再用它判断能否输入。
-                let _ = lease;
-                if let Some(reply) = inner.kicked_reply(&id, device) {
-                    return Ok(Some(reply));
-                }
-                if !shared {
-                    if let Some(reply) = inner.takeover_reply(&id, device) {
-                        return Ok(Some(reply));
-                    }
-                }
-                let mut reply = if latest || (tail && session.should_send_latest(from)) {
-                    session.latest()
-                } else if after_wait
-                    || from != session.next
-                    || session
-                        .drain_until
-                        .is_some_and(|until| Instant::now() >= until)
-                {
-                    session.read(from)
-                } else {
-                    return Ok(None);
-                };
-                if shared {
-                    reply["control"] = inner.view_control(session, device);
-                }
-                Ok(Some(reply))
-            };
-            // 轮询即在线：登记后若在线名单有变化，通知电脑端。
-            {
-                let mut inner = hub.inner.lock().unwrap();
-                if require_device(&inner, device).is_ok() {
-                    if let Some(session) = inner
-                        .live_mut(&id)
-                        .filter(|session| !session.sharing.is_kicked(device))
-                    {
-                        session.sharing.see_device(device, None, Instant::now());
-                    }
-                }
-            }
-            emit_control_if_changed(app, &id);
-            let wait = {
-                let inner = hub.inner.lock().unwrap();
-                if let Some(reply) = read(&inner, false)? {
-                    return Ok(reply);
-                }
-                inner.live(&id).unwrap().changed.clone().notified_owned()
-            };
-            if tokio::time::timeout(Duration::from_millis(900), wait)
-                .await
-                .is_ok()
-            {
-                tokio::time::sleep(OUTPUT_COALESCE).await;
-            }
-            read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into())
-        }
+        } => poll_reply(app, device, &id, from, latest, tail, shared).await,
+        // 推送流由 request_handler 直接接管成流式响应，不会走到这里。
+        Operation::PollStream { .. } => Err("输出推送须使用流式请求。".into()),
         Operation::Input { id, data } => {
             if data.len() > MAX_INPUT {
                 return Err("单次终端输入超过 16 KiB。".into());
@@ -634,4 +588,73 @@ pub(super) fn local_image_path(project: &Project, path: &str) -> Result<String, 
 
 pub(super) fn size(cols: u16, rows: u16) -> (u16, u16) {
     (cols.clamp(2, 300), rows.clamp(2, 150))
+}
+
+/// 一次输出轮询：有新输出（或需改发最新画面）时立即返回，否则最多等 900ms 后返回空结果。
+/// 推送流（`poll_stream`）逐帧复用这里，保证两条路径的回复格式与在线登记一致。
+pub(super) async fn poll_reply(
+    app: &AppHandle,
+    device: &str,
+    id: &str,
+    from: u64,
+    latest: bool,
+    tail: bool,
+    shared: bool,
+) -> Result<Value, String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let read = |inner: &HubState, after_wait: bool| -> Result<Option<Value>, String> {
+        require_device(inner, device)?;
+        let session = inner.live(id).ok_or("终端不存在。")?;
+        if let Some(reply) = inner.kicked_reply(id, device) {
+            return Ok(Some(reply));
+        }
+        if !shared {
+            if let Some(reply) = inner.takeover_reply(id, device) {
+                return Ok(Some(reply));
+            }
+        }
+        let mut reply = if latest || (tail && session.should_send_latest(from)) {
+            session.latest()
+        } else if after_wait
+            || from != session.next
+            || session
+                .drain_until
+                .is_some_and(|until| Instant::now() >= until)
+        {
+            session.read(from)
+        } else {
+            return Ok(None);
+        };
+        if shared {
+            reply["control"] = inner.view_control(session, device);
+        }
+        Ok(Some(reply))
+    };
+    // 轮询即在线：登记后若在线名单有变化，通知电脑端。
+    {
+        let mut inner = hub.inner.lock().unwrap();
+        if require_device(&inner, device).is_ok() {
+            if let Some(session) = inner
+                .live_mut(id)
+                .filter(|session| !session.sharing.is_kicked(device))
+            {
+                session.sharing.see_device(device, None, Instant::now());
+            }
+        }
+    }
+    emit_control_if_changed(app, id);
+    let wait = {
+        let inner = hub.inner.lock().unwrap();
+        if let Some(reply) = read(&inner, false)? {
+            return Ok(reply);
+        }
+        inner.live(id).unwrap().changed.clone().notified_owned()
+    };
+    if tokio::time::timeout(Duration::from_millis(900), wait)
+        .await
+        .is_ok()
+    {
+        tokio::time::sleep(OUTPUT_COALESCE).await;
+    }
+    read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into())
 }

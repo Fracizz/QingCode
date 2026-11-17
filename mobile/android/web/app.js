@@ -43,6 +43,7 @@ import { attachTerminalSelection } from './terminalSelection.js';
 import { createConnectionLatency, isFreshLatency, latencyText, TERMINAL_LATENCY_INTERVAL, HOME_LATENCY_INTERVAL } from './connectionLatency.js';
 import { createWorkspaceState } from './workspaceState.js';
 import { connectionFailure, createNativeRpc } from './nativeRpc.js';
+import { createOutputFeed } from './outputFeed.js';
 import { createTerminalInput } from './terminalInput.js';
 import { createDesktopProtocol } from './desktopProtocol.js';
 import { uploadTerminalImages } from './terminalImages.js';
@@ -115,6 +116,10 @@ const compose = get('compose');
 const nativeRpc = createNativeRpc(native);
 const rpc = nativeRpc.request;
 window.qingReply = nativeRpc.receive;
+window.qingStream = nativeRpc.receiveStream;
+window.qingStreamEnd = nativeRpc.endStream;
+/** 当前终端的输出推送；切换终端或重新轮询时先关闭旧的。 */
+let outputFeed = null;
 const health = new Map();
 let persistenceFailed = false;
 const workspace = createWorkspaceState({
@@ -2075,8 +2080,22 @@ function leaveIfKicked(reply) {
 }
 
 async function poll(session, epoch, take = false, explicitTake = false) {
+  // 电脑端支持时用输出推送：一屏画面到了就推过来，不必每屏等一次手机发起的请求往返。
+  outputFeed?.close();
+  const feed = createOutputFeed((args, handlers) => nativeRpc.stream('poll_stream', args, handlers));
+  outputFeed = feed;
+  try {
+    await pollLoop(session, epoch, take, explicitTake, feed);
+  } finally {
+    feed.close();
+    if (outputFeed === feed) outputFeed = null;
+  }
+}
+
+async function pollLoop(session, epoch, take, explicitTake, feed) {
   const generation = ++pollGeneration;
   const active = () => epoch === viewEpoch && generation === pollGeneration;
+  let streaming = false;
   let shared = false;
   let next = 0;
   let latest = true;
@@ -2088,6 +2107,8 @@ async function poll(session, epoch, take = false, explicitTake = false) {
   let attaching = true;
   while (active()) {
     if (document.hidden) {
+      // 后台不再接收推送，回到前台按游标重新接上。
+      feed.close();
       await new Promise(resolve => setTimeout(resolve, 350));
       continue;
     }
@@ -2095,6 +2116,7 @@ async function poll(session, epoch, take = false, explicitTake = false) {
     if (deferredLatest) {
       // 共享会话即使停在历史快照，也要继续收主控变化；回到底部再取最新画面。
       if (holdOutput && !shared) {
+        feed.close();
         await new Promise(resolve => setTimeout(resolve, 300));
         continue;
       }
@@ -2107,6 +2129,7 @@ async function poll(session, epoch, take = false, explicitTake = false) {
       if (!claimed) {
         const capabilities = await desktopProtocol.capabilities(profile);
         if (!active()) return;
+        streaming = nativeRpc.canStream && !!capabilities?.features.includes('output_stream');
         if (capabilities?.features.includes('handoff')) {
           shared = capabilities.features.includes('shared_view');
           const claimControl = shared ? explicitTake : take;
@@ -2125,7 +2148,8 @@ async function poll(session, epoch, take = false, explicitTake = false) {
         // 网络故障后重新确认当前角色，永远不重发接管请求。
         claimed = true;
       }
-      const data = await remote('poll', { id: session.id, from: next, latest, tail: true, shared, ...(currentLease !== null ? { lease: currentLease } : {}) });
+      const pollArgs = { id: session.id, from: next, latest, tail: true, shared, ...(currentLease !== null ? { lease: currentLease } : {}) };
+      const data = streaming ? await feed.next({ ...pollArgs, profile: profile?.id }) : await remote('poll', pollArgs);
       if (!active()) return;
       if (leaveIfKicked(data)) return;
       if (data.takenOver) {

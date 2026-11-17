@@ -239,11 +239,11 @@ pub(super) async fn request_handler(
     app: &AppHandle,
     peer: IpAddr,
     request: Request<Incoming>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<ResponseBody>, Infallible> {
     if request.method() != Method::POST || request.uri().path() != "/v1/rpc" {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(Full::default())
+            .body(Full::default().boxed())
             .unwrap());
     }
     let (parts, body) = request.into_parts();
@@ -288,6 +288,26 @@ pub(super) async fn request_handler(
                 .and_then(|value| value.strip_prefix("Bearer "));
             match app.state::<MobileState>().hub.authenticate(bearer) {
                 Ok(device) => {
+                    if let Operation::PollStream {
+                        id,
+                        from,
+                        latest,
+                        tail,
+                        shared,
+                    } = operation
+                    {
+                        return Ok(poll_stream_response(
+                            app.clone(),
+                            device,
+                            PollCursor {
+                                id,
+                                from,
+                                latest,
+                                tail,
+                                shared,
+                            },
+                        ));
+                    }
                     // The operation owns cleanup even if the HTTP stream is dropped.
                     let app = app.clone();
                     let result = tauri::async_runtime::spawn(async move {
@@ -310,8 +330,83 @@ pub(super) async fn request_handler(
         .status(status)
         .header("content-type", "application/json")
         .header("cache-control", "no-store")
-        .body(Full::new(Bytes::from(response.to_string())))
+        .body(Full::new(Bytes::from(response.to_string())).boxed())
         .unwrap())
+}
+
+/// 手机响应体：普通请求一次性返回，输出推送是不断开的流。
+pub(super) type ResponseBody = BoxBody<Bytes, Infallible>;
+
+/// 推送流当前读到的位置；每推出一帧就前移到该帧的 `next`。
+pub(super) struct PollCursor {
+    pub(super) id: String,
+    pub(super) from: u64,
+    pub(super) latest: bool,
+    pub(super) tail: bool,
+    pub(super) shared: bool,
+}
+
+/// 推送流里每行一个 JSON，格式与普通请求的响应相同（`{"ok":true,"data":…}`）。
+pub(super) fn stream_line(result: Result<Value, String>) -> (Bytes, bool) {
+    let (line, more) = match result {
+        // 被断开、被接管的答复没有 `next`，推送到这里结束，由手机按答复处理。
+        Ok(data) => {
+            let more = data.get("next").and_then(Value::as_u64).is_some();
+            (json!({ "ok": true, "data": data }), more)
+        }
+        Err(error) => (json!({ "ok": false, "error": error }), false),
+    };
+    let mut bytes = line.to_string().into_bytes();
+    bytes.push(b'\n');
+    (Bytes::from(bytes), more)
+}
+
+/// 输出推送：在一条 HTTP 响应里持续写出 `poll_reply` 的结果。没有新输出时约 0.9 秒一帧空结果，
+/// 兼作心跳与在线登记；手机断开后下一次写出失败，生产任务随之结束。
+/// 通道容量为 1：手机读得慢时这里停在发送处，不在电脑端堆积帧。
+pub(super) fn poll_stream_response(
+    app: AppHandle,
+    device: String,
+    mut cursor: PollCursor,
+) -> Response<ResponseBody> {
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Bytes>(1);
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let result = poll_reply(
+                &app,
+                &device,
+                &cursor.id,
+                cursor.from,
+                cursor.latest,
+                cursor.tail,
+                cursor.shared,
+            )
+            .await;
+            if let Some(next) = result
+                .as_ref()
+                .ok()
+                .and_then(|data| data.get("next"))
+                .and_then(Value::as_u64)
+            {
+                cursor.from = next;
+            }
+            cursor.latest = false;
+            let (line, more) = stream_line(result);
+            if sender.send(line).await.is_err() || !more {
+                break;
+            }
+        }
+    });
+    let frames = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        let line = receiver.recv().await?;
+        Some((Ok::<_, Infallible>(Frame::data(line)), receiver))
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/x-ndjson")
+        .header("cache-control", "no-store")
+        .body(StreamBody::new(frames).boxed())
+        .unwrap()
 }
 
 pub(super) async fn read_operation<B>(

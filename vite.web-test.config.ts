@@ -22,6 +22,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'connectionLatency.js': ['mobile/android/web/connectionLatency.js', 'text/javascript'],
   'workspaceState.js': ['mobile/android/web/workspaceState.js', 'text/javascript'],
   'nativeRpc.js': ['mobile/android/web/nativeRpc.js', 'text/javascript'],
+  'outputFeed.js': ['mobile/android/web/outputFeed.js', 'text/javascript'],
   'terminalInput.js': ['mobile/android/web/terminalInput.js', 'text/javascript'],
   'desktopProtocol.js': ['mobile/android/web/desktopProtocol.js', 'text/javascript'],
   'terminalImages.js': ['mobile/android/web/terminalImages.js', 'text/javascript'],

@@ -10,6 +10,15 @@ export function connectionFailure(error) {
   };
 }
 
+/** 原生失败结果转成 Error，保留吊销、不支持与错误码标记。 */
+export function rpcError(result) {
+  const error = new Error(result.error || t('连接失败。'));
+  error.revoked = result.revoked === true;
+  error.unsupported = result.unsupported === true;
+  error.code = result.code;
+  return error;
+}
+
 /** One native request, one result. Expired writes are never retried. */
 export function createNativeRpc(native, { timers = globalThis } = {}) {
   const requests = new Map();
@@ -21,13 +30,32 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
     timers.clearTimeout(request.timer);
     request.cleanup();
     if (result.ok) request.resolve(result.data);
-    else {
-      const error = new Error(result.error || t('连接失败。'));
-      error.revoked = result.revoked === true;
-      error.unsupported = result.unsupported === true;
-      error.code = result.code;
-      request.reject(error);
+    else request.reject(rpcError(result));
+  }
+  const streams = new Map();
+  /**
+   * 原生输出推送：一个请求持续收到多帧，每帧与普通请求的结果同形（`{ ok, data }` / `{ ok: false, error }`）。
+   * onEnd(result) 只回调一次；返回的函数用于取消（取消后不再回调）。
+   */
+  function stream(op, args, { onFrame, onEnd }) {
+    const id = ++sequence;
+    streams.set(id, { onFrame, onEnd });
+    try { native.stream(id, JSON.stringify({ op, ...args })); }
+    catch (error) {
+      streams.delete(id);
+      timers.setTimeout(() => onEnd({ ok: false, error: error?.message || t('连接失败。') }), 0);
     }
+    return () => {
+      if (!streams.delete(id)) return;
+      try { native.cancel?.(id); } catch { /* cancellation remains best effort */ }
+    };
+  }
+  function receiveStream(id, frame) { streams.get(id)?.onFrame(frame); }
+  function endStream(id, result) {
+    const entry = streams.get(id);
+    if (!entry) return;
+    streams.delete(id);
+    entry.onEnd(result);
   }
   function request(op, args = {}, { signal } = {}) {
     return new Promise((resolve, reject) => {
@@ -66,5 +94,5 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
       catch (error) { requests.delete(id); timers.clearTimeout(timer); cleanup(); reject(error); }
     });
   }
-  return { request, receive };
+  return { request, receive, stream, receiveStream, endStream, canStream: typeof native.stream === 'function' };
 }

@@ -92,6 +92,20 @@ public final class MainActivity extends Activity {
     }
 
     private final NativeRequests requests = new NativeRequests();
+    private final OutputStreams streams = new OutputStreams();
+    private final OutputStreams.Sink streamSink = new OutputStreams.Sink() {
+        @Override public void frame(int id, JSONObject frame) {
+            runOnUiThread(() -> {
+                if (view != null) view.evaluateJavascript("window.qingStream&&window.qingStream(" + id + "," + frame + ")", null);
+            });
+        }
+        @Override public void end(int id, JSONObject result) {
+            runOnUiThread(() -> {
+                if (view != null) view.evaluateJavascript("window.qingStreamEnd&&window.qingStreamEnd(" + id + "," + result + ")", null);
+            });
+        }
+        @Override public JSONObject failure(Exception error) { return networkFailure(error); }
+    };
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private final List<Integer> cameraReplies = new ArrayList<>();
     private WebView view;
@@ -232,7 +246,7 @@ public final class MainActivity extends Activity {
                         case "index.html": type = "text/html"; break;
                         case "app.js": case "protocol.js": case "themeBoot.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "composer.js": case "terminalHistory.js": case "terminalScrollbar.js": case "terminalJog.js": case "terminalHold.js": case "historyRender.js": case "terminalSelection.js": case "connectionLatency.js": case "workspaceState.js":
-                        case "nativeRpc.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
+                        case "nativeRpc.js": case "outputFeed.js": case "terminalInput.js": case "desktopProtocol.js": case "terminalImages.js":
                         case "fileBrowser.js": case "fileBrowserState.js":
                         case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "sessionOverview.js": case "sessionPrefs.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
@@ -561,6 +575,7 @@ public final class MainActivity extends Activity {
         if (download != null) download.cancel();
         updateCancelled = true;
         requests.close();
+        streams.close();
         if (view != null) {
             view.removeJavascriptInterface("QingCodeNative");
             view.destroy();
@@ -578,7 +593,23 @@ public final class MainActivity extends Activity {
     }
 
     public final class Bridge {
-        @JavascriptInterface public void cancel(int id) { requests.cancel(id); }
+        @JavascriptInterface public void cancel(int id) { requests.cancel(id); streams.cancel(id); }
+
+        /** 终端输出推送（poll_stream）：帧经 qingStream 回调，结束经 qingStreamEnd，取消用 cancel。 */
+        @JavascriptInterface public void stream(int id, String payload) {
+            try {
+                if (payload == null || payload.length() > 32_000) throw new IOException("请求过大。");
+                JSONObject request = new JSONObject(payload);
+                if (!"poll_stream".equals(request.optString("op"))) throw new IOException("未知操作。");
+                Connection current = connections.get(request.optString("profile"));
+                if (current == null) throw new IOException("请先完成密码配对。");
+                request.remove("profile");
+                watcher.touch(current);
+                streams.start(id, current, request.toString().getBytes(StandardCharsets.UTF_8), streamSink);
+            } catch (Exception error) {
+                streamSink.end(id, MainActivity.failure(error.getMessage() == null ? "请求无效。" : error.getMessage()));
+            }
+        }
 
         @JavascriptInterface public void request(int id, String payload) {
             if (payload == null || payload.length() > 12 * 1024 * 1024) {
@@ -1149,21 +1180,24 @@ public final class MainActivity extends Activity {
             catch (OutOfMemoryError error) { throw new IOException("内存不足，请选择较小图片或提高压缩等级。"); }
         }, new NativeRequests.Reply<JSONObject>() {
             @Override public void success(JSONObject result) { reply(id, result); }
-            @Override public void failure(Exception error) {
-                String reason = error instanceof SocketTimeoutException
-                    ? "连接超时，请确认电脑在线并允许局域网访问。"
-                    : error instanceof javax.net.ssl.SSLException
-                        ? "Windows 身份校验失败，请重新核对证书指纹。"
-                        : error instanceof java.net.ConnectException
-                            ? "电脑连接未建立，请检查电脑端移动连接、地址端口和防火墙。"
-                            : error instanceof java.net.NoRouteToHostException || error instanceof java.net.UnknownHostException
-                                ? "网络无法到达电脑，请检查手机网络和 VPN 连接。"
-                                : error.getMessage();
-                String code = error instanceof javax.net.ssl.SSLException ? "identity"
-                    : error instanceof SocketTimeoutException ? "timeout" : "";
-                reply(id, MainActivity.failure(reason == null ? "连接失败。" : reason, code));
-            }
+            @Override public void failure(Exception error) { reply(id, networkFailure(error)); }
         });
+    }
+
+    /** 网络异常转成网页可读的失败结果；普通请求与输出推送共用。 */
+    static JSONObject networkFailure(Exception error) {
+        String reason = error instanceof SocketTimeoutException
+            ? "连接超时，请确认电脑在线并允许局域网访问。"
+            : error instanceof javax.net.ssl.SSLException
+                ? "Windows 身份校验失败，请重新核对证书指纹。"
+                : error instanceof java.net.ConnectException
+                    ? "电脑连接未建立，请检查电脑端移动连接、地址端口和防火墙。"
+                    : error instanceof java.net.NoRouteToHostException || error instanceof java.net.UnknownHostException
+                        ? "网络无法到达电脑，请检查手机网络和 VPN 连接。"
+                        : error.getMessage();
+        String code = error instanceof javax.net.ssl.SSLException ? "identity"
+            : error instanceof SocketTimeoutException ? "timeout" : "";
+        return failure(reason == null ? "连接失败。" : reason, code);
     }
 
     private void loadConnections() {
@@ -1436,6 +1470,27 @@ public final class MainActivity extends Activity {
                 if (!idempotent(op)) throw error;
                 return send(op, data);
             }
+        }
+
+        /**
+         * 打开输出推送并发出请求体，返回尚未读取响应的连接。电脑端无输出时约 0.9 秒一帧心跳，
+         * 读超时远大于心跳间隔，连接静默断开时也能及时报错重连。
+         */
+        HttpsURLConnection openStream(byte[] data) throws Exception {
+            HttpsURLConnection http = (HttpsURLConnection) endpoint.toURL().openConnection(java.net.Proxy.NO_PROXY);
+            http.setSSLSocketFactory(sockets);
+            http.setHostnameVerifier(hosts);
+            http.setInstanceFollowRedirects(false);
+            http.setUseCaches(false);
+            http.setConnectTimeout(5000);
+            http.setReadTimeout(8000);
+            http.setRequestMethod("POST");
+            http.setRequestProperty("Content-Type", "application/json");
+            if (!token.isEmpty()) http.setRequestProperty("Authorization", "Bearer " + token);
+            http.setFixedLengthStreamingMode(data.length);
+            http.setDoOutput(true);
+            try (OutputStream stream = http.getOutputStream()) { stream.write(data); }
+            return http;
         }
 
         private JSONObject send(String op, byte[] data) throws Exception {

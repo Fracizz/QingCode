@@ -1693,3 +1693,46 @@ fn device_names_are_trimmed_and_defaulted() {
     assert_eq!(device_name(Some("  ")), "Android 设备");
     assert_eq!(device_name(Some(&"x".repeat(80))).len(), MAX_DEVICE_NAME);
 }
+
+#[test]
+fn poll_stream_requests_parse_with_poll_defaults() {
+    let operation: Operation = serde_json::from_value(
+        json!({"op":"poll_stream", "id":"mobile-1", "from":7, "tail":true, "lease":3}),
+    )
+    .unwrap();
+    assert!(matches!(
+        operation,
+        Operation::PollStream {
+            from: 7,
+            latest: false,
+            tail: true,
+            shared: false,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn stream_lines_are_newline_framed_and_stop_without_a_cursor() {
+    let (line, more) = stream_line(Ok(json!({ "chunks": [], "next": 9 })));
+    assert!(more);
+    assert!(line.ends_with(b"\n"));
+    let text = std::str::from_utf8(&line[..line.len() - 1]).unwrap();
+    // 每帧必须单行：JSON 内的换行被转义，手机按行切分不会切断一帧。
+    assert!(!text.contains('\n'));
+    assert_eq!(
+        serde_json::from_str::<Value>(text).unwrap(),
+        json!({ "ok": true, "data": { "chunks": [], "next": 9 } })
+    );
+    let (_, more) = stream_line(Ok(json!({ "chunks": ["a\nb"], "next": 10 })));
+    assert!(more);
+    // 被断开 / 被接管的答复没有游标，推送结束。
+    let (_, more) = stream_line(Ok(json!({ "kicked": true, "takenOver": true })));
+    assert!(!more);
+    let (line, more) = stream_line(Err("终端不存在。".into()));
+    assert!(!more);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&line).unwrap(),
+        json!({ "ok": false, "error": "终端不存在。" })
+    );
+}
