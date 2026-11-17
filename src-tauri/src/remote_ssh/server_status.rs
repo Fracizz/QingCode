@@ -833,28 +833,32 @@ pub(crate) async fn ssh_server_logs(
 ) -> Result<SshServerLogs, String> {
     let root = require_trusted_root(&manager, &root_uri)?;
     require_server_mode_connection(&manager, &parse_remote_uri(&root.uri)?.connection_id)?;
-    // 段一：daemon 日志（固定路径，远端 home 下）。
-    let daemon = manager
-        .exec_remote_shell(
+    // 段一 daemon 日志（固定路径，远端 home 下）、段二项目 serve 日志（serve 的
+    // stdout/stderr 落在这里）。两段在同一 SSH 会话的不同通道上并发读取：Windows
+    // 远端每段都要冷启动 PowerShell，串行时首次打开日志要等两倍时间。
+    let serve_log = server::server_serve_log_path(&root.canonical_path);
+    let daemon_script = windows_daemon_log_script();
+    let serve_command = serve_log_tail_command(&serve_log);
+    let serve_script = windows_serve_log_script(&serve_log);
+    let (daemon, serve) = tokio::join!(
+        manager.exec_remote_shell(
             &root.uri,
             SERVER_LOG_TAIL_COMMAND,
-            &windows_daemon_log_script(),
+            &daemon_script,
             true,
             REMOTE_EXEC_TIMEOUT,
-        )
-        .await
-        .and_then(|result| server_log_section(result.exit_code, &result.stdout, &result.stderr))?;
-    // 段二：项目 serve 日志（serve 的 stdout/stderr 落在这里）。
-    let serve_log = server::server_serve_log_path(&root.canonical_path);
-    let serve = manager
-        .exec_remote_shell(
+        ),
+        manager.exec_remote_shell(
             &root.uri,
-            &serve_log_tail_command(&serve_log),
-            &windows_serve_log_script(&serve_log),
+            &serve_command,
+            &serve_script,
             true,
             REMOTE_EXEC_TIMEOUT,
-        )
-        .await
+        ),
+    );
+    let daemon = daemon
+        .and_then(|result| server_log_section(result.exit_code, &result.stdout, &result.stderr))?;
+    let serve = serve
         .and_then(|result| server_log_section(result.exit_code, &result.stdout, &result.stderr))?;
     Ok(SshServerLogs {
         text: merge_server_logs(daemon.as_deref(), &serve_log, serve.as_deref()),

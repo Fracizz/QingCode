@@ -559,14 +559,26 @@ describe('SshServerStatusChip', () => {
 
   it('shows a log error inline and recovers through refresh', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
-    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    const chip = await screen.findByRole('button', { name: serverChipName() })
+    // 打开详情即后台预取日志；切到日志页沿用这次（失败的）请求。
     invoke.mockRejectedValueOnce(new Error('permission denied'))
+    fireEvent.click(chip)
     fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('permission denied')
     expect(screen.queryByText('暂无日志。服务启动后可刷新查看。')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '刷新日志' }))
     expect(await screen.findByText('daemon up')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('prefetches logs when details open so the logs tab reuses the request', async () => {
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    const logCalls = () => invoke.mock.calls.filter(call => call[1] === 'ssh_server_logs').length
+    expect(logCalls()).toBe(1)
+    fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
+    expect(await screen.findByText('daemon up')).toBeTruthy()
+    expect(logCalls()).toBe(1)
   })
 
   it('does not offer duplicate deployment while the service is being prepared', async () => {

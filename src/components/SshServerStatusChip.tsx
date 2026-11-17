@@ -224,13 +224,20 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
 
   const openLogs = () => {
     setDialog('logs')
-    fetchLogs()
+    // 打开详情时已在后台预取：仍在读取就沿用那次请求，避免重新计时。
+    if (!logsLoading) fetchLogs()
   }
 
   const agent = state.transport === 'agent'
   const sshMode = !agent && state.connectionMode === 'ssh'
   const direct = sshServerIsDirect(state)
   const switchBlocker = !sshMode && direct ? sshServerSwitchBlocker(state) : null
+
+  /** 打开详情时后台预取服务日志：远端读日志要起 shell，切到「服务日志」时通常已就绪。 */
+  const openDetails = () => {
+    setDialog('details')
+    if (!sshMode && !logs && !logsLoading) fetchLogs()
+  }
 
   const enableServerMode = async () => {
     if (busy || !state) return
@@ -300,7 +307,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-ui-sm ${STATUS_ACTION}`}
           data-tone={chip.kind}
           aria-label={tipLines.join(' ')}
-          onClick={() => setDialog('details')}
+          onClick={openDetails}
           onContextMenu={event => {
             event.preventDefault()
             setMenu({ x: event.clientX, y: event.clientY })
@@ -318,7 +325,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           preferAbove
           onClose={() => setMenu(null)}
           items={[
-            { label: t('查看远端服务详情'), action: () => setDialog('details') },
+            { label: t('查看远端服务详情'), action: openDetails },
             ...(sshMode
               ? [
                   {
