@@ -5,6 +5,15 @@ import { formatTerminalName } from '@/utils/terminalName'
 import type { Project, SshConnection, TerminalTab } from '../../types'
 
 export const TERMINAL_LIST_COLLAPSED_KEY = 'qingcode:terminal-list-collapsed'
+export const TERMINAL_LIST_COLLAPSED_HOSTS_KEY = 'qingcode:terminal-list-collapsed-hosts'
+export const TERMINAL_LIST_GROUP_BY_KEY = 'qingcode:terminal-list-group-by'
+
+/** 列表分组方式：按项目平铺，或先按主机（本机 / WSL / SSH 连接）再按项目。 */
+export type TerminalListGroupBy = 'project' | 'host'
+
+export function parseTerminalListGroupBy(raw: string | null): TerminalListGroupBy {
+  return raw === 'host' ? 'host' : 'project'
+}
 
 type Translate = (source: string, values?: Record<string, string | number>) => string
 
@@ -48,6 +57,53 @@ export function terminalProjectScopeKey(project: Project): string {
   }
   if (isWslProject(project)) return `wsl:${(wslDistroNameFromPath(project.path) ?? '').toLowerCase()}`
   return 'local'
+}
+
+/** 来源种类，决定来源标签与主机分组头的色调。 */
+export type TerminalSourceKind = 'local' | 'wsl' | 'ssh'
+
+export function terminalScopeKind(scopeKey: string): TerminalSourceKind {
+  if (scopeKey.startsWith('ssh:')) return 'ssh'
+  if (scopeKey.startsWith('wsl:')) return 'wsl'
+  return 'local'
+}
+
+export interface TerminalHostSection {
+  key: string
+  kind: TerminalSourceKind
+  label: string
+  groups: TerminalSessionGroup[]
+  terminalCount: number
+}
+
+/**
+ * 「按主机分组」视图：本机排最前，其余主机按首次出现的项目顺序；主机内保持原项目顺序。
+ * 只重新编排已经筛选好的分组，不改变搜索、来源筛选和排序的结果。
+ */
+export function groupTerminalSessionsByHost(
+  groups: readonly TerminalSessionGroup[],
+  connections: ReadonlyArray<SshConnection>,
+  translate: Translate,
+): TerminalHostSection[] {
+  const sections = new Map<string, TerminalHostSection>()
+  for (const group of groups) {
+    const key = terminalProjectScopeKey(group.project)
+    let section = sections.get(key)
+    if (!section) {
+      section = {
+        key,
+        kind: terminalScopeKind(key),
+        label: projectSource(group.project, connections, translate),
+        groups: [],
+        terminalCount: 0,
+      }
+      sections.set(key, section)
+    }
+    section.groups.push(group)
+    section.terminalCount += group.terminals.length
+  }
+  const ordered = [...sections.values()]
+  return [...ordered.filter(item => item.kind === 'local'), ...ordered.filter(item => item.kind !== 'local')]
 }
 
 export function terminalScopeMatches(project: Project, filter: TerminalScopeFilter): boolean {
@@ -167,12 +223,19 @@ function parentFolderName(project: Project): string {
   return segments[segments.length - 2] ?? ''
 }
 
-/** 组头项目名旁的来源文字；同名且同来源的项目再带上级目录名，否则仍然分不开。 */
-export function terminalProjectSources(
+export interface TerminalProjectSourceParts {
+  /** 本机 / WSL 发行版 / SSH 连接名。 */
+  source: string
+  /** 同名且同来源时用于区分的上级目录名，否则为空。 */
+  parent: string
+}
+
+/** 组头来源的两部分；按主机分组时主机已写在分组头上，组头只需要区分用的上级目录。 */
+export function terminalProjectSourceParts(
   projects: readonly Project[],
   connections: ReadonlyArray<SshConnection>,
   translate: Translate,
-): ReadonlyMap<string, string> {
+): ReadonlyMap<string, TerminalProjectSourceParts> {
   const identity = (project: Project) =>
     `${project.name}\0${projectSource(project, connections, translate)}`
   const counts = new Map<string, number>()
@@ -180,11 +243,27 @@ export function terminalProjectSources(
     counts.set(identity(project), (counts.get(identity(project)) ?? 0) + 1)
   }
   return new Map(
-    projects.map(project => {
-      const source = projectSource(project, connections, translate)
-      const parent = (counts.get(identity(project)) ?? 0) > 1 ? parentFolderName(project) : ''
-      return [project.id, parent ? `${source} · ${parent}` : source]
-    }),
+    projects.map(project => [
+      project.id,
+      {
+        source: projectSource(project, connections, translate),
+        parent: (counts.get(identity(project)) ?? 0) > 1 ? parentFolderName(project) : '',
+      },
+    ]),
+  )
+}
+
+/** 组头项目名旁的来源文字；同名且同来源的项目再带上级目录名，否则仍然分不开。 */
+export function terminalProjectSources(
+  projects: readonly Project[],
+  connections: ReadonlyArray<SshConnection>,
+  translate: Translate,
+): ReadonlyMap<string, string> {
+  return new Map(
+    [...terminalProjectSourceParts(projects, connections, translate)].map(([id, { source, parent }]) => [
+      id,
+      parent ? `${source} · ${parent}` : source,
+    ]),
   )
 }
 

@@ -42,6 +42,10 @@
   --error: #ff9d8c;
   --error-surface: #3a1f1b;
   --warning: #edcb8d;
+  /* 项目来源标签按种类分色，与电脑端终端列表一致：本机辅助灰、SSH 淡紫、WSL 琥珀（不用蓝色，避免与强调色混淆）。 */
+  --source-local: var(--muted);
+  --source-ssh: #b393d6;
+  --source-wsl: #c39557;
   --console: #181818;
   --mono: 'QingCode Symbols', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', 'Roboto Mono', 'Noto Sans Mono', 'Droid Sans Mono', monospace;
   --ease: cubic-bezier(.2, 0, 0, 1);
@@ -67,6 +71,8 @@
   --divider: #2c2c2c;
   --ink: #dfdfdf;
   --muted: #999999;
+  --source-ssh: #ad93cc;
+  --source-wsl: #bd955c;
   --console: #181818;
   /* 石墨灰更内敛：光晕饱和度和亮度都压低一档。 */
   --glow: #5cc2ad1a;
@@ -469,7 +475,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   text-align: left;
 }
 .row { width: 100%; border-radius: 0; }
-.row[data-kind="ssh"] .tile { color: #a8baff; background: #292e44; }
+.row[data-kind="ssh"] .tile { color: var(--source-ssh); background: #322b3c; }
 .row[data-kind="wsl"] .tile { color: var(--warning); background: #373126; }
 .row-text { min-width: 0; }
 .row-text strong, .row-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -902,13 +908,18 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 #session-overview .overview-groups { flex: 1; min-height: 0; overflow-y: auto; padding-block: 2px; }
 .session-group + .session-group { margin-top: 10px; }
 .session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
-/* 项目名优先完整显示，来源信息用剩余宽度省略；上限 70% 防止超长项目名把来源完全挤掉。 */
-.session-group-head strong { flex: none; max-width: 70%; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 来源标签按自然宽度显示，长项目名先省略：同名项目靠来源区分，被截成「W…」就没有意义了。 */
+.session-group-head strong { flex: 0 1 auto; min-width: 2em; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 文件夹图标与桌面终端列表一致；当前项目用强调色。 */
 .session-group-head .session-group-icon { flex: none; align-self: center; width: 15px; height: 15px; }
 .session-group[data-current-project="true"] .session-group-icon { color: var(--accent); }
 .session-group-head span { flex: none; }
-.session-group-head .session-group-source { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-group-head .session-group-source { display: inline-flex; flex: 0 1 auto; align-items: baseline; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* 来源小标签：淡底细边框都取文字色，与电脑端终端列表组头同款。 */
+.session-group-head .project-source-chip { flex: none; max-width: 12em; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 4px; background: color-mix(in srgb, currentColor 7%, transparent); color: var(--source-local); font-size: 11.5px; line-height: 1.5; }
+.session-group-head .project-source-chip[data-kind="ssh"] { color: var(--source-ssh); }
+.session-group-head .project-source-chip[data-kind="wsl"] { color: var(--source-wsl); }
+.session-group-head .project-source-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 侧栏组头：点按折叠，长按拖动排序，右侧常驻新建与项目操作。 */
 /* 右侧 2px 内边距：40px 按钮中心距右缘 22px，与会话行 44px「⋯」列的中心对齐。 */
 .session-group-head.session-group-head-tools { align-items: center; gap: 0; padding: 0 2px 0 8px; }

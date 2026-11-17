@@ -11,7 +11,7 @@ import {
   sessionRunning,
   sessionStatusLine,
 } from './protocol.js';
-import { icon, rowText, button } from './dom.js';
+import { fillProjectSource, icon, rowText, button } from './dom.js';
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -292,8 +292,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     node.dataset.currentProject = String(current);
     node.querySelector('strong').textContent = title;
     // 组头只留连接名，地址在项目页和搜索中可见。
-    node.querySelector('.session-group-source').textContent = [projectPlaceLabel({ ...group.project, host: '' }), current ? t('当前项目') : '',
-      group.missing ? t('电脑端已移除') : ''].filter(Boolean).join(' · ');
+    fillProjectSource(node.querySelector('.session-group-source'), group.project, projectPlaceLabel({ ...group.project, host: '' }),
+      [current ? t('当前项目') : '', group.missing ? t('电脑端已移除') : '']);
     node.querySelector('.session-group-count').textContent = String(group.total ?? group.sessions.length);
     node.setAttribute('aria-label', title);
     const rows = node.querySelector('.session-group-rows');

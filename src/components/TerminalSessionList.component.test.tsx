@@ -149,6 +149,17 @@ const dragFrom = (handle: HTMLElement, toY: number, fromY = 10) => {
   pointer('pointermove', window, toY)
 }
 const release = () => pointer('pointerup', window, 0)
+// 全部收起、批量管理和分组方式收在顶栏「更多」菜单里。
+const chooseListAction = (name: string) => {
+  fireEvent.click(screen.getByRole('button', { name: '终端列表更多操作' }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
+const chooseGroupBy = (name: '按项目分组' | '按主机分组') => {
+  fireEvent.click(screen.getByRole('button', { name: '终端列表更多操作' }))
+  fireEvent.click(screen.getByRole('menuitemcheckbox', { name }))
+}
+const host = (key: string) =>
+  document.querySelector<HTMLElement>(`[data-terminal-host-section="${key}"]`) as HTMLElement
 
 describe('TerminalSessionList', () => {
   // 拖动结束后吞 click 的监听在下一个宏任务才移除，不能漏到下一个用例。
@@ -211,6 +222,91 @@ describe('TerminalSessionList', () => {
     render(<TerminalSessionList />)
     expect(within(group('p2')).getByText('api')).toHaveClass('text-term-list-project', 'font-normal')
     expect(within(group('p1')).getByText('本机')).toHaveClass('text-term-list-source')
+  })
+
+  describe('with local, WSL and SSH projects', () => {
+    const original = mocks.projectState.projects
+    beforeEach(() => {
+      mocks.projectState.projects = [
+        { id: 'p1', path: '/home/app', name: 'app' },
+        { id: 'w1', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\api', name: 'api', kind: 'wsl' },
+        { id: 's1', path: 'ssh://conn-1/srv/api', name: 'api', kind: 'ssh', connection_id: 'conn-1' },
+        { id: 'p3', path: '/home/docs', name: 'docs' },
+      ] as typeof original
+      mocks.projectState.sshConnections = [{ id: 'conn-1', name: 'WinDev', host: '10.0.0.2' }] as never
+      mocks.projectState.currentProject = mocks.projectState.projects[0]
+      mocks.state.terminals = [
+        terminal(),
+        terminal({ id: 'wt', name: 'wsl shell', projectId: 'w1' }),
+        terminal({ id: 'st', name: 'remote shell', projectId: 's1' }),
+      ]
+    })
+    afterEach(() => {
+      mocks.projectState.projects = original
+      mocks.projectState.sshConnections = []
+    })
+
+    it('tints the source chip by kind', () => {
+      render(<TerminalSessionList />)
+      const source = (id: string) => group(id).querySelector('[data-terminal-project-source]')
+      expect(source('p1')).toHaveAttribute('data-terminal-project-source', 'local')
+      expect(source('p1')).toHaveClass('text-term-list-source', 'rounded', 'border')
+      expect(source('w1')).toHaveAttribute('data-terminal-project-source', 'wsl')
+      expect(source('w1')).toHaveClass('text-term-list-wsl')
+      expect(source('s1')).toHaveAttribute('data-terminal-project-source', 'ssh')
+      expect(source('s1')).toHaveClass('text-term-list-remote')
+      expect(source('s1')).toHaveTextContent('WinDev')
+    })
+
+    it('groups by host with local first, drops the source chip and remembers the choice', () => {
+      const { unmount } = render(<TerminalSessionList />)
+      chooseGroupBy('按主机分组')
+      const sections = [...document.querySelectorAll<HTMLElement>('[data-terminal-host-section]')]
+      expect(sections.map(item => item.dataset.terminalHostSection)).toEqual(['local', 'wsl:ubuntu', 'ssh:conn-1'])
+      expect(within(host('local')).getByRole('button', { name: '展开或收起主机「本机」' })).toHaveTextContent('本机1')
+      expect(host('local').querySelector('[data-terminal-project-group="p3"]')).not.toBeNull()
+      expect(host('ssh:conn-1').querySelector('[data-terminal-project-group="s1"]')).not.toBeNull()
+      expect(group('s1').querySelector('[data-terminal-project-source]')).toBeNull()
+      expect(localStorage.getItem('qingcode:terminal-list-group-by')).toBe('host')
+      unmount()
+      render(<TerminalSessionList />)
+      expect(host('wsl:ubuntu')).not.toBeNull()
+      chooseGroupBy('按项目分组')
+      expect(document.querySelector('[data-terminal-host-section]')).toBeNull()
+    })
+
+    it('collapses a host, skips its rows when moving with the keyboard and persists the state', () => {
+      localStorage.setItem('qingcode:terminal-list-group-by', 'host')
+      render(<TerminalSessionList />)
+      fireEvent.click(within(host('wsl:ubuntu')).getByRole('button', { name: /展开或收起主机/ }))
+      expect(row('wt')).toBeNull()
+      expect(JSON.parse(localStorage.getItem('qingcode:terminal-list-collapsed-hosts') ?? '[]')).toEqual(['wsl:ubuntu'])
+      fireEvent.keyDown(row('t1'), { key: 'End' })
+      expect(document.activeElement).toBe(row('st'))
+    })
+
+    it('opens a collapsed host while searching', () => {
+      localStorage.setItem('qingcode:terminal-list-group-by', 'host')
+      localStorage.setItem('qingcode:terminal-list-collapsed-hosts', JSON.stringify(['ssh:conn-1']))
+      render(<TerminalSessionList />)
+      expect(row('st')).toBeNull()
+      fireEvent.change(screen.getByRole('textbox', { name: '搜索终端、项目或来源' }), { target: { value: 'remote' } })
+      expect(row('st')).not.toBeNull()
+    })
+  })
+
+  it('gives every row a fixed status mark: idle, running, exited', () => {
+    busyTerminals.add('t2')
+    mocks.state.terminals = [
+      terminal(),
+      terminal({ id: 't2', name: 'dev' }),
+      terminal({ id: 'gone', name: 'gone', status: 'exited', exitCode: 0 }),
+    ]
+    render(<TerminalSessionList />)
+    expect(row('t1').querySelector('[data-terminal-status="idle"]')).not.toBeNull()
+    expect(row('t2').querySelector('[data-terminal-activity="running"] .animate-spin')).not.toBeNull()
+    expect(row('gone').querySelector('[data-terminal-status="exited"]')).not.toBeNull()
+    expect(row('gone').querySelector('[data-tooltip="已退出"]')).not.toBeNull()
   })
 
   it('selects a terminal and reopens a collapsed terminal panel', () => {
@@ -283,10 +379,10 @@ describe('TerminalSessionList', () => {
 
   it('collapses every project with one button and expands them all again', () => {
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '全部收起' }))
+    chooseListAction('全部收起')
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
     expect(JSON.parse(localStorage.getItem('qingcode:terminal-list-collapsed') ?? '[]')).toEqual(['p1', 'p2'])
-    fireEvent.click(screen.getByRole('button', { name: '全部展开' }))
+    chooseListAction('全部展开')
     expect(screen.getAllByRole('tab')).toHaveLength(3)
   })
 
@@ -387,7 +483,7 @@ describe('TerminalSessionList', () => {
     it('turns off project dragging in manage mode', () => {
       render(<TerminalSessionList />)
       layOut(group, { p1: [0, 40], p2: [50, 90], p3: [100, 140] })
-      fireEvent.click(screen.getByRole('button', { name: '管理' }))
+      chooseListAction('批量管理')
       dragFrom(header('p1'), 130)
       release()
       expect(mocks.projectState.reorderVisibleProjects).not.toHaveBeenCalled()
@@ -432,7 +528,7 @@ describe('TerminalSessionList', () => {
     expect(time).toHaveClass('group-hover:invisible', 'group-has-[[data-terminal-close]:focus-visible]:invisible')
     expect(time).toHaveAttribute('aria-hidden', 'true')
     // 旧快照没有活动记录时退回创建时间，悬停卡片则不冒充「最后活动」。
-    expect(row('legacy').querySelector('[data-terminal-row-time="legacy"]')).toHaveTextContent('13天')
+    expect(row('legacy').querySelector('[data-terminal-row-time="legacy"]')).toHaveTextContent('13天前')
     expect(row('legacy').querySelector('[data-tooltip*="最后活动"]')).toBeNull()
     expect(within(row('old')).getByRole('button', { name: '关闭终端' })).toBeInTheDocument()
   })
@@ -566,8 +662,8 @@ describe('TerminalSessionList', () => {
 
   it('enters manage mode: rows toggle a selection instead of switching terminals', () => {
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
-    expect(screen.getByRole('button', { name: '完成' })).toHaveAttribute('aria-pressed', 'true')
+    chooseListAction('批量管理')
+    expect(screen.getByRole('button', { name: '完成' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('已选 0')
     expect(within(row('t1')).queryByRole('button', { name: '关闭终端' })).toBeNull()
     fireEvent.click(row('t2'))
@@ -583,7 +679,7 @@ describe('TerminalSessionList', () => {
 
   it('extends and shrinks a Shift selection across visible project groups', () => {
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    chooseListAction('批量管理')
     fireEvent.click(row('t1'))
     fireEvent.click(row('other'), { shiftKey: true })
     expect(screen.getByRole('status')).toHaveTextContent('已选 3')
@@ -604,7 +700,7 @@ describe('TerminalSessionList', () => {
       terminal({ id: 'other', name: 'match two', projectId: 'p2' }),
     ]
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    chooseListAction('批量管理')
     fireEvent.click(row('t2'))
     search('match')
     fireEvent.click(row('other'), { shiftKey: true })
@@ -622,7 +718,7 @@ describe('TerminalSessionList', () => {
       terminal({ id: 'other', name: 'elsewhere', projectId: 'p2', status: 'exited', exitCode: 1 }),
     ]
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    chooseListAction('批量管理')
     fireEvent.click(screen.getByRole('button', { name: '选已结束' }))
     expect(screen.getByRole('status')).toHaveTextContent('已选 2')
     fireEvent.click(screen.getByRole('button', { name: '全选 3' }))
@@ -861,15 +957,15 @@ describe('TerminalSessionList', () => {
 
   it('leaves manage mode with 完成 or Escape and drops the selection', () => {
     render(<TerminalSessionList />)
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    chooseListAction('批量管理')
     fireEvent.click(row('t2'))
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
     expect(screen.queryByRole('status')).toBeNull()
     expect(within(row('t1')).getByRole('button', { name: '关闭终端' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '管理' }))
+    chooseListAction('批量管理')
     expect(screen.getByRole('status')).toHaveTextContent('已选 0')
     fireEvent.keyDown(row('t1'), { key: 'Escape' })
-    expect(screen.getByRole('button', { name: '管理' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('selects a whole project from its tri-state checkbox and via the context menu entry', () => {

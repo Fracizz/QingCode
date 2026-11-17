@@ -54,6 +54,12 @@ export const useProjectStore = create(() => ({
   pushToast(_kind: string, text: string) {
     record(text)
   },
+  async reorderVisibleProjects(from: number, to: number) {
+    record('reorderVisibleProjects', [String(from), String(to)])
+  },
+  async addEmptyProject() {
+    record('addEmptyProject')
+  },
 }))
 
 function setHidden(id: string, hidden: number) {
@@ -71,6 +77,7 @@ export const useUIStore = create(() => ({
   closeTerminalManager() { useUIStore.setState({ terminalManagerOpen: false }) },
   openTerminalManager() { useUIStore.setState({ terminalManagerOpen: true }) },
   openTerminalPanel() { record('openTerminalPanel') },
+  requestToggleTerminal() { record('requestToggleTerminal') },
   closeRemoteConnections() { useUIStore.setState({ remoteConnectionsOpen: false }) },
   requestSettings(query: string) { record('requestSettings', [query]) },
   closeProjectManager() {
@@ -87,8 +94,23 @@ export const useUIStore = create(() => ({
   },
 }))
 
+// 终端列表测试页（TerminalSessionListPage）用到的终端 Store 子集；操作只记录，不启动或结束真实进程。
+export const MAX_TERMINALS_PER_PROJECT = 20
+export { terminalPaneOf } from '../store/terminal/panes'
+
 export const useTerminalStore = create(() => ({
   terminals: [] as TerminalTab[],
+  activeTerminalId: null as string | null,
+  secondaryTerminalId: null as string | null,
+  blTerminalId: null as string | null,
+  brTerminalId: null as string | null,
+  reorderTerminal(id: string) { record('reorderTerminal', [id]) },
+  setTerminalFocusPane() { /* 单窗格测试页 */ },
+  async reopenTerminalShell(id: string) { record('reopenTerminalShell', [id]) },
+  async restartTerminal(id: string) { record('restartTerminal', [id]) },
+  async closeOtherTerminals(id: string) { record('closeOtherTerminals', [id]) },
+  async closeAllProjectTerminals(id: string) { record('closeAllProjectTerminals', [id]) },
+  async addTerminal() { record('addTerminal') },
   async closeTerminal(id: string) {
     record('closeTerminal', [id])
     if (useTerminalManagerFixture.getState().failedIds.includes(id)) return

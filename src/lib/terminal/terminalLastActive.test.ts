@@ -24,13 +24,13 @@ describe('terminalLastActiveAt', () => {
 })
 
 describe('formatTerminalAge', () => {
-  it('uses compact units without the word 前', () => {
+  it('uses compact units ending with 前', () => {
     expect(formatTerminalAge(NOW - 30_000, NOW, t)).toBe('刚刚')
-    expect(formatTerminalAge(NOW - 5 * MINUTE, NOW, t)).toBe('5分钟')
-    expect(formatTerminalAge(NOW - 3 * HOUR, NOW, t)).toBe('3小时')
-    expect(formatTerminalAge(NOW - 4 * DAY, NOW, t)).toBe('4天')
-    expect(formatTerminalAge(NOW - 65 * DAY, NOW, t)).toBe('2个月')
-    expect(formatTerminalAge(NOW - 800 * DAY, NOW, t)).toBe('2年')
+    expect(formatTerminalAge(NOW - 5 * MINUTE, NOW, t)).toBe('5分钟前')
+    expect(formatTerminalAge(NOW - 3 * HOUR, NOW, t)).toBe('3小时前')
+    expect(formatTerminalAge(NOW - 4 * DAY, NOW, t)).toBe('4天前')
+    expect(formatTerminalAge(NOW - 65 * DAY, NOW, t)).toBe('2个月前')
+    expect(formatTerminalAge(NOW - 800 * DAY, NOW, t)).toBe('2年前')
   })
 
   it('treats future timestamps as just now and invalid ones as missing', () => {

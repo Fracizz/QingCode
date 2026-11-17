@@ -8,8 +8,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import {
+  Activity,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Check,
@@ -18,17 +20,19 @@ import {
   Eye,
   EyeOff,
   FolderInput,
-  MonitorCloud,
   ListChecks,
   ListChevronsDownUp,
   ListChevronsUpDown,
+  ListFilter,
   LoaderCircle,
-  MessageCircleMore,
   Minus,
+  Monitor,
   MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
+  Server,
+  SquareTerminal,
   Terminal as TerminalIcon,
   X,
 } from 'lucide-react'
@@ -57,13 +61,22 @@ import {
 } from '@/lib/terminal/terminalAttention'
 import {
   groupTerminalSessions,
+  groupTerminalSessionsByHost,
   parseCollapsedProjects,
+  parseTerminalListGroupBy,
+  TERMINAL_LIST_COLLAPSED_HOSTS_KEY,
   TERMINAL_LIST_COLLAPSED_KEY,
+  TERMINAL_LIST_GROUP_BY_KEY,
   terminalProjectMove,
   terminalProjectScopeKey,
+  terminalProjectSourceParts,
   terminalProjectSources,
   terminalRemoteScopeOptions,
+  terminalScopeKind,
+  type TerminalHostSection,
+  type TerminalListGroupBy,
   type TerminalSessionGroup,
+  type TerminalSourceKind,
   filterTerminalSessionGroups,
 } from '@/lib/terminal/terminalSessionGroups'
 import {
@@ -82,10 +95,10 @@ import ContextMenu from './ContextMenu'
 import EmptyState from './EmptyState'
 import InfoTipCard from './InfoTipCard'
 import { ProjectKindIcon } from './ProjectKindMark'
-import TerminalActivityDot from './TerminalActivityDot'
 import TerminalRowTime from './TerminalRowTime'
 import { terminalLastActiveAt } from '@/lib/terminal/terminalLastActive'
 import TerminalRenameInput from './TerminalRenameInput'
+import TerminalStatusMark from './TerminalStatusMark'
 import Tooltip from './Tooltip'
 import { TooltipSuppressionContext } from './tooltipContext'
 import type { TerminalTab } from '../types'
@@ -116,19 +129,49 @@ function PickBox({ state, ...rest }: { state: PickState } & Record<`data-${strin
   )
 }
 
-function loadCollapsedProjects(): ReadonlySet<string> {
+// 来源标签按种类分色：本机中性灰，WSL 琥珀，SSH 淡紫（不用蓝色）；淡底与细边框都取文字色，各主题只需定义文字色。
+const SOURCE_TEXT: Record<TerminalSourceKind, string> = {
+  local: 'text-term-list-source',
+  wsl: 'text-term-list-wsl',
+  ssh: 'text-term-list-remote',
+}
+const SOURCE_CHIP = 'rounded border border-current/25 bg-current/[0.07] px-[5px] py-px'
+
+function HostKindIcon({ kind, size }: { kind: TerminalSourceKind; size: number }) {
+  if (kind === 'ssh') return <Server size={size} aria-hidden="true" />
+  if (kind === 'wsl') return <SquareTerminal size={size} aria-hidden="true" />
+  return <Monitor size={size} aria-hidden="true" />
+}
+
+function loadCollapsedSet(key: string): ReadonlySet<string> {
   try {
-    return parseCollapsedProjects(localStorage.getItem(TERMINAL_LIST_COLLAPSED_KEY))
+    return parseCollapsedProjects(localStorage.getItem(key))
   } catch {
     return new Set()
   }
 }
 
-function saveCollapsedProjects(collapsed: ReadonlySet<string>) {
+function saveCollapsedSet(key: string, collapsed: ReadonlySet<string>) {
   try {
-    localStorage.setItem(TERMINAL_LIST_COLLAPSED_KEY, JSON.stringify([...collapsed]))
+    localStorage.setItem(key, JSON.stringify([...collapsed]))
   } catch {
     // 折叠状态只是便利项，写不进去时本次会话仍然生效。
+  }
+}
+
+function loadGroupBy(): TerminalListGroupBy {
+  try {
+    return parseTerminalListGroupBy(localStorage.getItem(TERMINAL_LIST_GROUP_BY_KEY))
+  } catch {
+    return 'project'
+  }
+}
+
+function saveGroupBy(value: TerminalListGroupBy) {
+  try {
+    localStorage.setItem(TERMINAL_LIST_GROUP_BY_KEY, value)
+  } catch {
+    // 同上：写不进去时只在本次会话生效。
   }
 }
 
@@ -183,9 +226,13 @@ export default function TerminalSessionList() {
     getTerminalActivityIndicator,
   )
   const currentProjectId = currentProject?.id ?? null
-  const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects)
+  const [collapsedProjects, setCollapsedProjects] = useState(() => loadCollapsedSet(TERMINAL_LIST_COLLAPSED_KEY))
+  const [collapsedHosts, setCollapsedHosts] = useState(() => loadCollapsedSet(TERMINAL_LIST_COLLAPSED_HOSTS_KEY))
+  const [groupBy, setGroupByState] = useState(loadGroupBy)
+  const byHost = groupBy === 'host'
   const [seenProjectId, setSeenProjectId] = useState<string | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ x: number; y: number; projectId: string } | null>(null)
+  const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [manageMode, setManageMode] = useState(false)
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
@@ -205,13 +252,19 @@ export default function TerminalSessionList() {
   }, [runningFirst])
   const newDisabled =Boolean(currentProject && atLimit) || creatingTerminal
 
-  // 切到某个项目时展开它，否则当前终端藏在折叠的分组里。
+  // 切到某个项目时展开它（按主机分组时连同所在主机），否则当前终端藏在折叠的分组里。
   if (seenProjectId !== currentProjectId) {
     setSeenProjectId(currentProjectId)
     if (currentProjectId && collapsedProjects.has(currentProjectId)) {
       const next = new Set(collapsedProjects)
       next.delete(currentProjectId)
       setCollapsedProjects(next)
+    }
+    const currentHost = currentProject ? terminalProjectScopeKey(currentProject) : null
+    if (currentHost && collapsedHosts.has(currentHost)) {
+      const next = new Set(collapsedHosts)
+      next.delete(currentHost)
+      setCollapsedHosts(next)
     }
   }
 
@@ -223,6 +276,11 @@ export default function TerminalSessionList() {
     return groupTerminalSessions(listed, allTerminals)
   }, [allTerminals, currentProject, projects])
   const projectSources = terminalProjectSources(
+    allGroups.map(group => group.project),
+    sshConnections,
+    translate,
+  )
+  const projectSourceParts = terminalProjectSourceParts(
     allGroups.map(group => group.project),
     sshConnections,
     translate,
@@ -252,10 +310,16 @@ export default function TerminalSessionList() {
   })
   // 搜索和「运行中优先」下显示的不是保存的顺序，此时拖动的落点没有意义。
   const terminalOrderLocked = searching || runningFirst
-  // 搜索时展开命中的分组，否则结果藏在折叠的分组里。
+  const hostSections = byHost ? groupTerminalSessionsByHost(groups, sshConnections, translate) : []
+  // 搜索时展开命中的主机和分组，否则结果藏在折叠的分组里。
+  const isHostExpanded = (hostKey: string) => searching || !collapsedHosts.has(hostKey)
   const isExpanded = (group: TerminalSessionGroup) =>
     group.terminals.length > 0 && (searching || !collapsedProjects.has(group.project.id))
-  const visibleTerminals = groups.flatMap(group => (isExpanded(group) ? group.terminals : []))
+  // 键盘导航、全选和批量关闭只算看得见的行：按主机分组时按主机顺序，并排除收起的主机。
+  const orderedGroups = byHost
+    ? hostSections.flatMap(section => (isHostExpanded(section.key) ? section.groups : []))
+    : groups
+  const visibleTerminals = orderedGroups.flatMap(group => (isExpanded(group) ? group.terminals : []))
   // 没有终端可管理时自动退出管理模式；只处理当前可见（已展开）的终端，避免关掉折叠分组里看不到的会话。
   const managing = manageMode && totalTerminals > 0
   const picked = prunedTerminalSelection(selection, visibleTerminals)
@@ -297,6 +361,10 @@ export default function TerminalSessionList() {
   }, [paneActiveId, currentProjectId])
 
   const projectOfTerminal = (id: string) => allTerminals.find(terminal => terminal.id === id)?.projectId
+  const hostOfProject = (id: string) => {
+    const project = allGroups.find(group => group.project.id === id)?.project
+    return project ? terminalProjectScopeKey(project) : null
+  }
   const {
     draggedId: draggedTerminalId,
     drop: dropTarget,
@@ -320,20 +388,38 @@ export default function TerminalSessionList() {
     // 组头大部分是折叠按钮，要能从这里拖；只排除右侧操作和管理模式的勾选框。
     ignoreSelector: '[data-terminal-group-actions], [role="checkbox"]',
     listRef,
-    canDrop: (sourceId, drop) => terminalProjectMove(projects, sourceId, drop.id, drop.position) !== null,
+    // 按主机分组时只在同一主机内调整顺序：跨主机放下后位置仍由主机决定，看起来像没拖动成功。
+    canDrop: (sourceId, drop) =>
+      (!byHost || hostOfProject(sourceId) === hostOfProject(drop.id)) &&
+      terminalProjectMove(projects, sourceId, drop.id, drop.position) !== null,
     onDrop: (sourceId, drop) => {
       const move = terminalProjectMove(projects, sourceId, drop.id, drop.position)
       if (move) void reorderVisibleProjects(move.fromIndex, move.toIndex)
     },
   })
 
+  const setHostCollapsed = (hostKey: string, collapsed: boolean) => {
+    if (collapsedHosts.has(hostKey) === collapsed) return
+    const next = new Set(collapsedHosts)
+    if (collapsed) next.add(hostKey)
+    else next.delete(hostKey)
+    setCollapsedHosts(next)
+    saveCollapsedSet(TERMINAL_LIST_COLLAPSED_HOSTS_KEY, next)
+  }
   const setProjectCollapsed = (projectId: string, collapsed: boolean) => {
+    // 在收起的主机里新建终端时主机也要展开，否则新终端看不到。
+    const host = hostOfProject(projectId)
+    if (!collapsed && byHost && host) setHostCollapsed(host, false)
     if (collapsedProjects.has(projectId) === collapsed) return
     const next = new Set(collapsedProjects)
     if (collapsed) next.add(projectId)
     else next.delete(projectId)
     setCollapsedProjects(next)
-    saveCollapsedProjects(next)
+    saveCollapsedSet(TERMINAL_LIST_COLLAPSED_KEY, next)
+  }
+  const setGroupBy = (value: TerminalListGroupBy) => {
+    setGroupByState(value)
+    saveGroupBy(value)
   }
   // 标题栏一键收起/展开：只要还有展开的分组就全部收起，否则全部展开。
   const collapsibleProjectIds = groups.filter(group => group.terminals.length > 0).map(group => group.project.id)
@@ -345,7 +431,12 @@ export default function TerminalSessionList() {
       else next.delete(id)
     }
     setCollapsedProjects(next)
-    saveCollapsedProjects(next)
+    saveCollapsedSet(TERMINAL_LIST_COLLAPSED_KEY, next)
+    // 全部展开时连同收起的主机一起展开，否则「展开」之后仍然什么都看不到。
+    if (!anyGroupExpanded && byHost && collapsedHosts.size > 0) {
+      setCollapsedHosts(new Set())
+      saveCollapsedSet(TERMINAL_LIST_COLLAPSED_HOSTS_KEY, new Set())
+    }
   }
 
   const selectTerminal = (term: TerminalTab, extend = false, focusedId?: string) => {
@@ -480,40 +571,23 @@ export default function TerminalSessionList() {
             <PickBox state={isPicked ? 'on' : 'off'} data-terminal-pick={term.id} />
           </span>
         )}
-        {/* 状态点在名称前，与组头图标同列；管理模式下左侧是勾选框，改为排在勾选框之后。 */}
-        {/* 待恢复不属于活动指示，关闭该设置后仍要显示，否则无法和已恢复的终端区分。 */}
-        {(activityIndicator || awaitingRestore) && (
-          <span
-            className={
-              managing
-                ? 'flex flex-shrink-0'
-                : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
-            }
-          >
-            {awaitingRestore ? (
-              // 与「运行中」呼吸点一致：悬停说明这个灰点的含义。
-              <Tooltip
-                label={translate('切换到项目后恢复')}
-                side="top"
-                wrapperClassName="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center"
-              >
-                <span
-                  role="img"
-                  aria-label={translate('切换到项目后恢复')}
-                  data-terminal-awaiting-restore={term.id}
-                  className="block h-1.5 w-1.5 rounded-full bg-fg-dim/50"
-                />
-              </Tooltip>
-            ) : (
-              <TerminalActivityDot
-                terminalId={term.id}
-                exited={term.status === 'exited'}
-                attention={attentionIds.has(term.id) && !isActive}
-                size="md"
-              />
-            )}
-          </span>
-        )}
+        {/* 固定状态位在名称前，与组头图标同列，每行都有标记；管理模式下左侧是勾选框，改为排在勾选框之后。 */}
+        {/* 「标签运行状态」设置只控制运行中和新结果；已退出、待恢复始终显示，否则无法和正常终端区分。 */}
+        <span
+          className={
+            managing
+              ? 'flex flex-shrink-0'
+              : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
+          }
+        >
+          <TerminalStatusMark
+            terminalId={term.id}
+            exited={term.status === 'exited'}
+            awaitingRestore={awaitingRestore}
+            attention={attentionIds.has(term.id) && !isActive}
+            showActivity={activityIndicator}
+          />
+        </span>
         <div className="flex min-w-0 flex-1 flex-col justify-center">
           {isRenaming ? (
             <TerminalRenameInput
@@ -627,10 +701,9 @@ export default function TerminalSessionList() {
     const expanded = isExpanded(group)
     // 当前终端行已经高亮时组头不再铺底色，避免同一项目出现两块高亮。
     const rowHighlighted = !managing && expanded && terminals.some(term => term.id === paneActiveId)
-    const source = projectSources.get(project.id)
-    const sourceColor = terminalProjectScopeKey(project) === 'local'
-      ? 'text-term-list-source'
-      : 'text-term-list-remote'
+    // 按主机分组时主机已写在分组头上，组头只保留区分同名项目用的上级目录。
+    const source = byHost ? projectSourceParts.get(project.id)?.parent : projectSources.get(project.id)
+    const sourceKind = terminalScopeKind(terminalProjectScopeKey(project))
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
     const sortable = !managing && !searching && !scopeFiltering && !project.hidden && projects.some(item => item.id === project.id)
@@ -717,13 +790,18 @@ export default function TerminalSessionList() {
               >
                 <ProjectKindIcon project={project} open={expanded} size={14} />
               </span>
-              {/* 项目名优先完整显示，来源只用剩余宽度；来源字号更小，按基线对齐才不会悬在项目名上方。 */}
-              {/* 项目名与会话名同亮，来源标签退到辅助级，靠明暗区分组头里的主次。 */}
-              <span className="block min-w-0 max-w-[70%] flex-none truncate font-normal text-term-list-project">
+              {/* 来源标签按自然宽度显示（上限见 .project-source-badge），长项目名先截断：同名项目靠来源区分，「W…」没有意义。 */}
+              {/* 来源字号更小，按基线对齐才不会悬在项目名上方；项目名与会话名同亮，来源退到辅助级。 */}
+              <span className="block min-w-0 flex-initial truncate font-normal text-term-list-project">
                 {project.name}
               </span>
               {source && (
-                <span className={`project-source-badge min-w-0 shrink! truncate font-normal ${sourceColor}`}>
+                <span
+                  data-terminal-project-source={byHost ? 'parent' : sourceKind}
+                  className={`project-source-badge min-w-0 truncate font-normal ${
+                    byHost ? 'text-term-list-meta' : `${SOURCE_CHIP} ${SOURCE_TEXT[sourceKind]}`
+                  }`}
+                >
                   {source}
                 </span>
               )}
@@ -837,11 +915,56 @@ export default function TerminalSessionList() {
             role="tablist"
             aria-orientation="vertical"
             aria-label={project.name}
-            className="mt-[3px] flex flex-col gap-[3px]"
+            className="mt-0.5 flex flex-col gap-0.5"
           >
             {terminals.map(renderRow)}
           </div>
         )}
+      </section>
+    )
+  }
+
+  const renderHostSection = (section: TerminalHostSection, index: number) => {
+    const expanded = isHostExpanded(section.key)
+    const label = section.kind === 'local' ? translate('本机') : section.label
+    return (
+      <section
+        key={section.key}
+        role="group"
+        aria-label={label}
+        data-terminal-host-section={section.key}
+        // 主机之间用细分隔线和上边距分开，组内项目仍沿用 8px 的组间距。
+        className={`flex flex-col gap-2 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : ''}`}
+      >
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={translate('展开或收起主机「{name}」', { name: label })}
+          aria-disabled={searching || undefined}
+          data-terminal-host-header={section.key}
+          className="flex h-6 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-xs text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
+          onClick={() => {
+            if (!searching) setHostCollapsed(section.key, expanded)
+          }}
+        >
+          <ChevronRight
+            size={12}
+            aria-hidden="true"
+            className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+          <span className={`flex flex-shrink-0 ${SOURCE_TEXT[section.kind]}`}>
+            <HostKindIcon kind={section.kind} size={13} />
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+          <span
+            role="img"
+            aria-label={translate('{count} 个终端', { count: section.terminalCount })}
+            className="flex-shrink-0 tabular-nums"
+          >
+            {section.terminalCount}
+          </span>
+        </button>
+        {expanded && section.groups.map(renderGroup)}
       </section>
     )
   }
@@ -905,28 +1028,25 @@ export default function TerminalSessionList() {
           </button>
         </Tooltip>
         <span className="mx-0.5 h-4 w-px flex-shrink-0 bg-border" aria-hidden="true" />
-        <Tooltip label={anyGroupExpanded ? translate('全部收起') : translate('全部展开')} side="bottom">
+        {/* 低频操作（全部收起、批量管理、分组方式）收进「更多」，顶栏只留新建与收起面板。 */}
+        <Tooltip label={translate('更多操作')} side="bottom">
           <button
             type="button"
-            aria-label={anyGroupExpanded ? translate('全部收起') : translate('全部展开')}
-            data-terminal-toggle-all-groups={anyGroupExpanded ? 'collapse' : 'expand'}
-            className={HEADER_BUTTON}
-            disabled={searching || collapsibleProjectIds.length === 0}
-            onClick={toggleAllCollapsed}
+            aria-label={translate('终端列表更多操作')}
+            aria-haspopup="menu"
+            aria-expanded={listMenu !== null}
+            data-terminal-list-menu
+            className={`${HEADER_BUTTON} aria-expanded:bg-bg-active aria-expanded:text-fg`}
+            onClick={event => {
+              if (listMenu) {
+                setListMenu(null)
+                return
+              }
+              const rect = event.currentTarget.getBoundingClientRect()
+              setListMenu({ x: rect.left, y: rect.bottom + 4 })
+            }}
           >
-            {anyGroupExpanded ? <ListChevronsDownUp size={15} /> : <ListChevronsUpDown size={15} />}
-          </button>
-        </Tooltip>
-        <Tooltip label={managing ? translate('完成') : translate('管理')} side="bottom">
-          <button
-            type="button"
-            aria-label={managing ? translate('完成') : translate('管理')}
-            aria-pressed={managing}
-            className={`${HEADER_BUTTON} aria-pressed:bg-bg-active aria-pressed:text-fg`}
-            disabled={totalTerminals === 0 && !managing}
-            onClick={() => setManaging(!managing)}
-          >
-            {managing ? <Check size={15} /> : <ListChecks size={15} />}
+            <MoreHorizontal size={15} />
           </button>
         </Tooltip>
         <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="bottom">
@@ -993,7 +1113,7 @@ export default function TerminalSessionList() {
               setScopeMenu({ x: rect.left, y: rect.bottom + 4 })
             }}
           >
-            <MonitorCloud size={15} />
+            <ListFilter size={15} />
           </button>
         </Tooltip>
         <Tooltip
@@ -1010,7 +1130,7 @@ export default function TerminalSessionList() {
               setRunningFirst(value => !value)
             }}
           >
-            <MessageCircleMore size={15} />
+            <Activity size={15} />
           </button>
         </Tooltip>
       </div>
@@ -1049,6 +1169,14 @@ export default function TerminalSessionList() {
           >
             {translate('关闭所选')}
           </button>
+          {/* 进入入口收在「更多」菜单里，退出要就近可点；Esc 同样退出。 */}
+          <button
+            type="button"
+            className={`${BAR_BUTTON} text-fg`}
+            onClick={() => setManaging(false)}
+          >
+            {translate('完成')}
+          </button>
         </div>
       )}
 
@@ -1061,11 +1189,12 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-1.5"
+          // 组间 8px、组内 2px：分组靠留白区分，不再加分隔线。
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1.5 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
-            {groups.map(renderGroup)}
+            {byHost ? hostSections.map(renderHostSection) : groups.map(renderGroup)}
           </TooltipSuppressionContext>
           {(searching || scopeFiltering) && groups.length === 0 && (
             <EmptyState
@@ -1160,6 +1289,38 @@ export default function TerminalSessionList() {
           />
         )
       })()}
+      {listMenu && (
+        <ContextMenu
+          x={listMenu.x}
+          y={listMenu.y}
+          items={[
+            {
+              label: anyGroupExpanded ? translate('全部收起') : translate('全部展开'),
+              icon: anyGroupExpanded ? <ListChevronsDownUp size={14} /> : <ListChevronsUpDown size={14} />,
+              disabled: searching || collapsibleProjectIds.length === 0,
+              action: toggleAllCollapsed,
+            },
+            {
+              label: managing ? translate('退出批量管理') : translate('批量管理'),
+              icon: <ListChecks size={14} />,
+              disabled: totalTerminals === 0 && !managing,
+              action: () => setManaging(!managing),
+            },
+            {
+              label: translate('按项目分组'),
+              checked: !byHost,
+              separatorBefore: true,
+              action: () => setGroupBy('project'),
+            },
+            {
+              label: translate('按主机分组'),
+              checked: byHost,
+              action: () => setGroupBy('host'),
+            },
+          ]}
+          onClose={() => setListMenu(null)}
+        />
+      )}
       {scopeMenu && (
         <ContextMenu
           x={scopeMenu.x}

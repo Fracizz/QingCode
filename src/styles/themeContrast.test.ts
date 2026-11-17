@@ -80,7 +80,7 @@ describe('theme contrast', () => {
       const [listBg] = surfaces
       // 行可能处于悬停或选中状态，每一级都要在这三种底色上可读。
       // 辅助级照 Codex 原值 #8d8c8c：列表底上 ≥ 4.5:1，悬停/选中底上约 4.1:1，放宽到 ≥ 4。
-      for (const foreground of [...tiers, 'term-list-source', 'term-list-remote']) {
+      for (const foreground of [...tiers, 'term-list-source', 'term-list-remote', 'term-list-wsl']) {
         const secondary = !['term-list-active', 'term-list-fg', 'term-list-project'].includes(foreground)
         for (const background of surfaces) {
           expect(

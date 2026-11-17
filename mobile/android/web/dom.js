@@ -52,6 +52,28 @@ export function message(id, value) {
   target.hidden = !value;
 }
 
+/**
+ * 组头来源：连接名 / WSL / 本机做成按种类分色的小标签（与电脑端终端列表同色），
+ * 其后的补充说明（当前项目、电脑端已移除）保持普通辅助文字；textContent 仍是「来源 · 说明」。
+ */
+export function fillProjectSource(target, project, place, extras = []) {
+  target.replaceChildren();
+  if (place) {
+    const chip = document.createElement('span');
+    chip.className = 'project-source-chip';
+    chip.dataset.kind = ['ssh', 'wsl'].includes(project?.kind) ? project.kind : 'local';
+    chip.textContent = place;
+    target.append(chip);
+  }
+  const rest = extras.filter(Boolean);
+  if (!rest.length) return;
+  // 说明文字单独一段，窄屏时先省略它，来源标签保持完整。
+  const note = document.createElement('span');
+  note.className = 'project-source-note';
+  note.textContent = `${place ? ' · ' : ''}${rest.join(' · ')}`;
+  target.append(note);
+}
+
 export function icon(name, className) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const use = document.createElementNS(svg.namespaceURI, 'use');

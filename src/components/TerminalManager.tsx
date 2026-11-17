@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  Activity,
   ChevronLeft,
   ChevronRight,
   Cloud,
   Eye,
   ListTree,
   LoaderCircle,
-  MessageCircleMore,
   Monitor,
   Pencil,
   RefreshCw,
@@ -660,7 +660,7 @@ export default function TerminalManager() {
                   : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
             >
-              <MessageCircleMore size={15} />
+              <Activity size={15} />
             </button>
           </Tooltip>
         </div>

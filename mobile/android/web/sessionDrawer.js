@@ -26,7 +26,7 @@ import {
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
-import { get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
+import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
 import { t } from './i18n.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 
@@ -227,7 +227,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     get('drawer-project-more').disabled = busy;
     const projectTitle = project ? project.name ?? project.id : '';
     get('drawer-project-name').textContent = projectTitle;
-    get('drawer-project-source').textContent = project ? projectPlaceLabel({ ...project, host: '' }) : '';
+    fillProjectSource(get('drawer-project-source'), project, project ? projectPlaceLabel({ ...project, host: '' }) : '');
     get('drawer-project-count').textContent = String(sessions.length);
     get('drawer-project-more').setAttribute('aria-label', t('{name} 的项目操作', { name: projectTitle }));
     // 接入方和创建设备只有列出全部会话时才有，「本项目」从纵览补齐。

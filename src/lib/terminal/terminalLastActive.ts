@@ -24,16 +24,16 @@ export function terminalLastActiveAt(
 }
 
 /**
- * 列表行尾的紧凑相对时间：「刚刚」「5分钟」「3小时」「4天」「2个月」「1年」。
- * 不带「前」字，和参考产品一致，窄侧栏里也能对齐成一列。
+ * 列表行尾的紧凑相对时间：「刚刚」「5分钟前」「3小时前」「4天前」「2个月前」「1年前」。
+ * 带「前」字，一眼看出是最近活动距今多久，而不是运行时长；数字与单位之间不留空格，窄侧栏里更紧凑。
  */
 export function formatTerminalAge(at: number | null | undefined, now: number, t: Translate): string | null {
   if (!validTime(at)) return null
   const diff = Math.max(0, now - at)
   if (diff < MINUTE) return t('刚刚')
-  if (diff < HOUR) return t('{count}分钟', { count: Math.floor(diff / MINUTE) })
-  if (diff < DAY) return t('{count}小时', { count: Math.floor(diff / HOUR) })
-  if (diff < MONTH) return t('{count}天', { count: Math.floor(diff / DAY) })
-  if (diff < YEAR) return t('{count}个月', { count: Math.floor(diff / MONTH) })
-  return t('{count}年', { count: Math.floor(diff / YEAR) })
+  if (diff < HOUR) return t('{count}分钟前', { count: Math.floor(diff / MINUTE) })
+  if (diff < DAY) return t('{count}小时前', { count: Math.floor(diff / HOUR) })
+  if (diff < MONTH) return t('{count}天前', { count: Math.floor(diff / DAY) })
+  if (diff < YEAR) return t('{count}个月前', { count: Math.floor(diff / MONTH) })
+  return t('{count}年前', { count: Math.floor(diff / YEAR) })
 }

@@ -72,13 +72,13 @@ export function onSessionPrefsChange(listener) {
   return () => listeners.delete(listener);
 }
 
-/** 「运行中优先」会话气泡图标按钮（「…」表示会话正在进行；与行内运行中的转圈指示区分开）：点一下排出运行中的会话，再点恢复默认顺序；各处实例同步按下状态。 */
+/** 「运行中优先」波形图标按钮（与电脑端相同）：点一下排出运行中的会话，再点恢复默认顺序；各处实例同步按下状态。 */
 export function runningFirstToggle(className = '') {
   const item = document.createElement('button');
   item.type = 'button';
   item.className = ['icon-button', 'running-first', className].filter(Boolean).join(' ');
-  // 排序图标：气泡图标看不出含义，这里表达「重新排序」。
-  item.append(icon('sort'));
+  // 波形图标表达「正在工作」，与电脑端终端列表、终端管理一致。
+  item.append(icon('activity'));
   item.setAttribute('aria-pressed', String(runningFirstValue));
   item.addEventListener('click', () => {
     setRunningFirst(!runningFirstValue);

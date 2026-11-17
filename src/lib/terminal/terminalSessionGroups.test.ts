@@ -3,8 +3,11 @@ import type { Project, SshConnection, TerminalTab } from '../../types'
 import {
   filterTerminalSessionGroups,
   groupTerminalSessions,
+  groupTerminalSessionsByHost,
+  parseTerminalListGroupBy,
   parseCollapsedProjects,
   terminalProjectMove,
+  terminalProjectSourceParts,
   terminalProjectSources,
   terminalRemoteScopeOptions,
 } from './terminalSessionGroups'
@@ -203,5 +206,43 @@ describe('terminal scope filter', () => {
       { key: 'ssh:c1', label: 'WinDev', count: 1 },
       { key: 'ssh:c2', label: 'Box', count: 1 },
     ])
+  })
+})
+
+describe('groupTerminalSessionsByHost', () => {
+  const connections = [{ id: 'c1', name: 'WinDev', host: '10.0.0.2' }] as SshConnection[]
+  const translate = (source: string) => source
+
+  it('puts local first, keeps first-seen order for remote hosts and sums terminals', () => {
+    const groups = [
+      { project: project('remote', { kind: 'ssh', path: 'ssh://c1/srv/a', connection_id: 'c1' }), terminals: [terminal('1', 'remote')] },
+      { project: project('wsl', { kind: 'wsl', path: '\\\\wsl.localhost\\Ubuntu\\home\\a' }), terminals: [] },
+      { project: project('local'), terminals: [terminal('2', 'local'), terminal('3', 'local')] },
+      { project: project('remote2', { kind: 'ssh', path: 'ssh://c1/srv/b', connection_id: 'c1' }), terminals: [] },
+    ]
+    const sections = groupTerminalSessionsByHost(groups, connections, translate)
+    expect(sections.map(item => [item.key, item.kind, item.label, item.terminalCount])).toEqual([
+      ['local', 'local', '本机', 2],
+      ['ssh:c1', 'ssh', 'WinDev', 1],
+      ['wsl:ubuntu', 'wsl', 'WSL · Ubuntu', 0],
+    ])
+    expect(sections[1].groups.map(group => group.project.id)).toEqual(['remote', 'remote2'])
+  })
+
+  it('splits the source from the parent folder that tells same-name projects apart', () => {
+    const parts = terminalProjectSourceParts(
+      [project('a', { name: 'app', path: '/work/one/app' }), project('b', { name: 'app', path: '/work/two/app' })],
+      connections,
+      translate,
+    )
+    expect(parts.get('a')).toEqual({ source: '本机', parent: 'one' })
+    expect(parts.get('b')).toEqual({ source: '本机', parent: 'two' })
+  })
+
+  it('parses the saved grouping, falling back to by-project', () => {
+    expect(parseTerminalListGroupBy('host')).toBe('host')
+    expect(parseTerminalListGroupBy('project')).toBe('project')
+    expect(parseTerminalListGroupBy(null)).toBe('project')
+    expect(parseTerminalListGroupBy('weird')).toBe('project')
   })
 })
