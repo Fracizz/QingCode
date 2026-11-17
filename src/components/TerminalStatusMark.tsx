@@ -89,10 +89,10 @@ export default function TerminalStatusMark({
       </Tooltip>
     )
   }
-  // 空闲是常态，不加悬停提示，避免满屏提示打扰；只保留一个弱化的点占住这一列。
+  // 空闲是常态，不加悬停提示，避免满屏提示打扰；直径与空心圈一致（7px），只靠淡色弱化，实心/空心区分状态。
   return (
     <span className={SLOT_CLASS} aria-hidden="true">
-      <span data-terminal-status="idle" className="block h-[5px] w-[5px] rounded-full bg-term-list-meta/45" />
+      <span data-terminal-status="idle" className="block h-[7px] w-[7px] rounded-full bg-term-list-meta/45" />
     </span>
   )
 }
