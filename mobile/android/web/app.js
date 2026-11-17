@@ -722,14 +722,20 @@ function updateHost(state) {
   syncHomeSessions();
 }
 
+const REFRESH_CHECKING_DELAY = 1200;
+
 async function refreshProjects() {
   if (!profile) return false;
   const epoch = ++profileEpoch;
   message('project-error', '');
   message('connection-error', '');
-  updateHost('checking');
+  // 已在线时的刷新（下拉、刷新按钮、改端口）通常很快：先保持在线，超过 REFRESH_CHECKING_DELAY 仍没结果才显示「连接中」。
+  // 否则一来一回的「连接中 → 在线」会让光晕、状态点和首页会话列表闪一下；下拉刷新自己有转圈提示。
+  const slow = hostState(profile) === 'online'
+    ? setTimeout(() => { if (epoch === profileEpoch) updateHost('checking'); }, REFRESH_CHECKING_DELAY)
+    : (updateHost('checking'), null);
   try {
-    const list = await remote('projects');
+    const list = await remote('projects').finally(() => clearTimeout(slow));
     if (epoch !== profileEpoch) return false;
     projects = list;
     loaded = true;

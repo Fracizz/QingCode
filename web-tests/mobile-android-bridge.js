@@ -50,6 +50,8 @@
     ],
     fileRequests: [],
     fileDelay: 0,
+    // 读取项目列表的模拟耗时：验证刷新时的「连接中」延迟显示。
+    projectsDelay: 0,
     fileError: null,
     fileTruncated: false,
     fileDownloads: [],
@@ -158,7 +160,9 @@
       case 'capabilities':
         state.capabilityRequests += 1
         return state.capabilities ? { ok: true, data: state.capabilities } : { ok: false, error: '请求格式无效。' }
-      case 'projects': return { ok: true, data: state.projects }
+      case 'projects':
+        if (state.projectsDelay) await new Promise(resolve => setTimeout(resolve, state.projectsDelay))
+        return { ok: true, data: state.projects }
       case 'file_list':
       case 'file_search':
       case 'file_stat': {
