@@ -57,6 +57,7 @@ import { createSessionOverview } from './sessionOverview.js';
 import { createHeroHeader } from './heroHeader.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
+import { customKeyInput } from './keyLayout.js';
 import { attachCursorDrag } from './cursorDrag.js';
 import { attachPinchZoom } from './pinchZoom.js';
 import { attachTerminalLinks, phoneLink } from './terminalLinks.js';
@@ -572,7 +573,7 @@ function tabletLayout() {
 }
 window.addEventListener('resize', syncSessionDock);
 
-createShortcutBar({ prefix, onChange: () => updateComposerActions() });
+const shortcutBar = createShortcutBar({ prefix, onChange: () => updateComposerActions() });
 
 const sessionWatch = createSessionWatch({
   rpc,
@@ -1798,7 +1799,10 @@ get('share-size').addEventListener('click', () => {
 });
 get('share-exclusive').addEventListener('click', () => {
   get('share-dialog').close();
-  void shareAction('exclusive', { on: !shareControl?.exclusiveHere });
+  const on = !shareControl?.exclusiveHere;
+  // 独占时终端改成本机尺寸：先报上本机尺寸，电脑端才能改成它。
+  if (on) sendSize();
+  void shareAction('exclusive', { on });
 });
 get('share-observe').addEventListener('click', () => {
   get('share-dialog').close();
@@ -2619,6 +2623,30 @@ for (const keyButton of document.querySelectorAll('#special-keys [data-key], #ke
     if (get('keys-dialog').contains(keyButton) && !['ctrl', 'alt'].includes(keyButton.dataset.key) && !keyButton.hasAttribute('data-repeat')) get('keys-dialog').close();
   });
   if (keyButton.hasAttribute('data-repeat')) keyRepeats.push(attachKeyRepeat(keyButton, () => pressKey(keyButton)));
+}
+
+// 自定义键随布局重建，在快捷键栏和「更多」上委托处理。
+for (const container of [get('special-keys'), get('overflow-keys')]) {
+  container.addEventListener('pointerdown', event => {
+    if (!event.target.closest?.('[data-key="custom"]')) return;
+    if (document.activeElement === compose || document.activeElement === term?.textarea) event.preventDefault();
+  });
+  container.addEventListener('click', event => {
+    const keyButton = event.target.closest?.('[data-key="custom"]');
+    if (!keyButton) return;
+    pressCustomKey(keyButton);
+    if (get('keys-dialog').contains(keyButton)) get('keys-dialog').close();
+  });
+}
+
+/** 自定义键：把文本直接发给终端（不经过手机草稿），需要时隔一会儿再发回车。 */
+function pressCustomKey(keyButton) {
+  if (keyButton.disabled || composing || editorComposing || !terminalReady) return;
+  const def = shortcutBar.customKey(keyButton.dataset.customId);
+  if (!def) return;
+  clearModifiers();
+  const { data, enter } = customKeyInput(def);
+  sendInput(data, { raw: true, enter });
 }
 
 function pressKey(keyButton) {

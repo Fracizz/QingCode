@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 安卓终端打磨验收：输入模式标识与首次说明、已接收回执不常驻、输入框拖动移光标、
-// 快捷键栏排序 / 隐藏、双指缩放字号，以及 320px / 键盘高度 / 横屏布局。
+// 快捷键栏排序 / 隐藏 / 自定义键、双指缩放字号，以及 320px / 键盘高度 / 横屏布局。
 // 真实 Web 资产 + 内存桥；触摸经 CDP Input.dispatchTouchEvent 发出，不替代 Android 真机手感验收。
 export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifactDir, finish = true } = {}) {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -220,6 +220,74 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => Boolean(document.querySelector('#key-layout-list[data-dragging], .key-layout-row.dragging'))), false)
       assert.equal((await barKeys())[0], 'right')
       await page.click('#key-layout-reset', { label: 'restore default shortcut layout after drag' })
+      await closeDialogs()
+    })
+
+    await step('custom keys send their text (with a separate Enter) and can be added, edited, hidden and deleted', async () => {
+      const customLabels = () => page.evaluate(() => [...document.querySelectorAll('#special-keys > [data-key="custom"]')].map(item => item.textContent))
+      assert.deepEqual(await customLabels(), [])
+
+      await openKeyLayout()
+      await page.evaluate(() => document.querySelector('#key-layout-add').scrollIntoView({ block: 'center' }))
+      await capture('06c-key-layout-add-button')
+      await page.click('#key-layout-add', { label: 'add a custom key' })
+      await page.waitForSelector('#custom-key-dialog[open]')
+      await settled('#custom-key-dialog')
+      await capture('06c-custom-key-dialog')
+      // 空文本不保存，提示错误。
+      await page.click('#custom-key-form [type="submit"]', { label: 'save empty custom key' })
+      assert.equal(await page.evaluate(() => document.querySelector('#custom-key-error').hidden), false)
+      await page.fill('#custom-key-name', '状态')
+      await page.fill('#custom-key-text', 'git status')
+      await page.click('#custom-key-enter', { label: 'turn off Enter after sending' })
+      await page.click('#custom-key-form [type="submit"]', { label: 'save custom key' })
+      await page.waitForFunction(() => !document.querySelector('#custom-key-dialog').open)
+      assert.deepEqual(await customLabels(), ['状态'])
+      // 栏中按下：不带回车时只发文本，草稿不受影响。
+      await closeDialogs()
+      await page.evaluate(() => [...document.querySelectorAll('#special-keys > [data-key="custom"]')].at(-1).scrollIntoView({ inline: 'center' }))
+      await resetInputs()
+      await page.click('#special-keys > [data-key="custom"]', { label: 'press custom key in the bar' })
+      await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('') === 'git status')
+      assert.equal(await page.evaluate(() => document.querySelector('#compose').value), '')
+      await openKeyLayout()
+      const id = await page.evaluate(() => [...document.querySelectorAll('#special-keys > [data-key="custom"]')].at(-1).dataset.customId)
+      assert.equal(await text(`[data-layout-key="custom:${id}"] .key-detail`), 'git status')
+      await capture('06d-key-layout-with-custom')
+      // 编辑：改成发送后回车。
+      await page.evaluate(target => document.querySelector(target).scrollIntoView({ block: 'center' }), `[data-layout-key="custom:${id}"] [data-role="edit"]`)
+      await page.click(`[data-layout-key="custom:${id}"] [data-role="edit"]`, { label: 'edit custom key' })
+      await page.waitForSelector('#custom-key-dialog[open]')
+      assert.equal(await page.evaluate(() => document.querySelector('#custom-key-text').value), 'git status')
+      assert.equal(await page.evaluate(() => document.querySelector('#custom-key-delete').hidden), false)
+      await page.click('#custom-key-enter', { label: 'turn on Enter after sending' })
+      await page.click('#custom-key-form [type="submit"]', { label: 'save edited custom key' })
+      await page.waitForFunction(() => !document.querySelector('#custom-key-dialog').open)
+      assert.equal(await text(`[data-layout-key="custom:${id}"] .key-detail`), 'git status ↵')
+      // 隐藏后在「更多」中按下仍可发送。
+      await page.evaluate(target => document.querySelector(target).scrollIntoView({ block: 'center' }), `[data-layout-key="custom:${id}"] [data-role="toggle"]`)
+      await page.click(`[data-layout-key="custom:${id}"] [data-role="toggle"]`, { label: 'hide custom key' })
+      assert.deepEqual(await customLabels(), [])
+      await closeDialogs()
+      await page.click('#more-keys', { label: 'open More for custom key' })
+      await settled('#keys-dialog')
+      await resetInputs()
+      await page.click(`#overflow-keys [data-custom-id="${id}"]`, { label: 'send hidden custom key from More' })
+      await page.waitForFunction(() => window.__mobileFixture.state.inputs.join('') === 'git status\r')
+      assert.equal(await page.evaluate(() => document.querySelector('#keys-dialog').open), false)
+      // 重新加载后保留，删除后恢复默认。
+      await page.reload()
+      await metrics(390, 844)
+      await connect()
+      await openKeyLayout()
+      await page.evaluate(target => document.querySelector(target).scrollIntoView({ block: 'center' }), `[data-layout-key="custom:${id}"] [data-role="edit"]`)
+      await page.click(`[data-layout-key="custom:${id}"] [data-role="edit"]`, { label: 'edit custom key before deleting' })
+      await page.waitForSelector('#custom-key-dialog[open]')
+      await page.click('#custom-key-delete', { label: 'delete custom key' })
+      await page.waitForSelector('#confirm-dialog[open]')
+      await page.click('#confirm-action', { label: 'confirm delete custom key' })
+      await page.waitForFunction(key => !document.querySelector(`[data-layout-key="${key}"]`), 'custom:' + id)
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:key-layout')), null)
       await closeDialogs()
     })
 

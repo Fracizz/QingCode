@@ -209,7 +209,12 @@ pub(super) async fn operate(
         } => attach(app, device, id, take, shared, observe, rejoin).await,
         Operation::Exclusive { id, on, force } => {
             let _control = app.state::<MobileState>().lock_control(&id).await;
-            hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?;
+            if let Some((cols, rows)) =
+                hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?
+            {
+                let kind = hub.session_kind(&id)?;
+                apply_resize(app, kind, &id, cols, rows).await?;
+            }
             emit_control(app, &id);
             Ok(Value::Null)
         }

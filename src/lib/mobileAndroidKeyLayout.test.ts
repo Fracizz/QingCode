@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CUSTOM_KEY_LIMIT,
   SHORTCUT_KEYS,
+  customKeyDetail,
+  customKeyInput,
+  customKeyLabel,
   defaultKeyLayout,
+  findCustomKey,
+  newCustomKeyId,
+  normalizeCustomKey,
+  removeCustomKey,
+  saveCustomKey,
   dragProbe,
   dragTargetIndex,
   isDefaultKeyLayout,
@@ -13,12 +22,13 @@ import {
   visibleKeys,
 } from '../../mobile/android/web/keyLayout.js'
 
-const defaults = SHORTCUT_KEYS.map(item => item.key)
+const builtins = SHORTCUT_KEYS.map(item => item.key)
+const defaults = builtins
 
 describe('Android shortcut bar layout', () => {
   it('starts with the frequency-ordered defaults and nothing hidden', () => {
     expect(defaults.slice(0, 3)).toEqual(['esc', 'tab', 'interrupt'])
-    expect(defaultKeyLayout()).toEqual({ order: defaults, hidden: [] })
+    expect(defaultKeyLayout()).toEqual({ order: defaults, hidden: [], custom: [] })
     expect(isDefaultKeyLayout(defaultKeyLayout())).toBe(true)
   })
 
@@ -95,5 +105,61 @@ describe('Android shortcut bar layout', () => {
     expect(overflow).toEqual(['shift-tab', 'left'])
     expect(bar.length + overflow.length).toBe(defaults.length)
     expect(visibleKeys(toggleKeyHidden(layout, 'left')).bar).toContain('left')
+  })
+
+  it('has no custom keys by default, including layouts saved before custom keys existed', () => {
+    const old = parseKeyLayout(JSON.stringify({ order: [...builtins].reverse(), hidden: ['esc'] }))
+    expect(old.custom).toEqual([])
+    expect(old.order).toEqual([...builtins].reverse())
+  })
+
+  it('validates custom keys: trims text and rejects empty, multi-line or control text', () => {
+    expect(normalizeCustomKey({ id: 'a', name: '  新会话 ', text: ' /new ', enter: true }))
+      .toEqual({ id: 'a', name: '新会话', text: '/new', enter: true })
+    expect(normalizeCustomKey({ id: 'a', text: 'git status', enter: false })?.enter).toBe(false)
+    for (const text of ['', '   ', 'a\nb', 'a\rb', '\x1b[A', 'x'.repeat(201)]) {
+      expect(normalizeCustomKey({ id: 'a', text })).toBeNull()
+    }
+    expect(normalizeCustomKey({ id: 'bad id', text: '/new' })).toBeNull()
+    expect(normalizeCustomKey(null)).toBeNull()
+  })
+
+  it('labels and sends custom keys: text first, Enter as a separate write', () => {
+    const def = { id: 'a', name: '', text: '/new', enter: true }
+    expect(customKeyLabel(def)).toBe('/new')
+    expect(customKeyLabel({ ...def, name: '新会话' })).toBe('新会话')
+    expect(customKeyDetail(def)).toBe('/new ↵')
+    expect(customKeyInput(def)).toEqual({ data: '/new', enter: '\r' })
+    expect(customKeyInput({ ...def, enter: false })).toEqual({ data: '/new', enter: '' })
+  })
+
+  it('adds, edits, hides and removes custom keys', () => {
+    let layout = defaultKeyLayout()
+    const id = newCustomKeyId(layout, () => 0.5)
+    layout = saveCustomKey(layout, { id, name: '状态', text: 'git status', enter: true })
+    expect(layout.order.at(-1)).toBe('custom:' + id)
+    expect(findCustomKey(layout, 'custom:' + id)?.text).toBe('git status')
+    layout = saveCustomKey(layout, { id, name: '状态', text: 'git status -sb', enter: true })
+    expect(layout.custom.filter(def => def.id === id)).toHaveLength(1)
+    expect(findCustomKey(layout, id)?.text).toBe('git status -sb')
+    expect(saveCustomKey(layout, { id, text: '' })).toBe(layout)
+    layout = toggleKeyHidden(layout, 'custom:' + id)
+    expect(visibleKeys(layout).overflow).toEqual(['custom:' + id])
+    expect(parseKeyLayout(serializeKeyLayout(layout))).toEqual(layout)
+    layout = removeCustomKey(layout, id)
+    expect(layout.order).not.toContain('custom:' + id)
+    expect(layout.hidden).toEqual([])
+    expect(isDefaultKeyLayout(layout)).toBe(true)
+  })
+
+  it('stops adding custom keys at the limit and drops unknown custom entries when parsing', () => {
+    let layout = defaultKeyLayout()
+    for (let index = 0; index < CUSTOM_KEY_LIMIT; index++) layout = saveCustomKey(layout, { id: 'k' + index, text: 'x' + index })
+    expect(layout.custom).toHaveLength(CUSTOM_KEY_LIMIT)
+    expect(saveCustomKey(layout, { id: 'extra', text: 'y' })).toBe(layout)
+    const parsed = parseKeyLayout(JSON.stringify({ order: ['custom:ghost', 'esc'], hidden: ['custom:ghost'], custom: [{ id: 'bad', text: 'a\nb' }] }))
+    expect(parsed.custom).toEqual([])
+    expect(parsed.order).toEqual(builtins)
+    expect(parsed.hidden).toEqual([])
   })
 })

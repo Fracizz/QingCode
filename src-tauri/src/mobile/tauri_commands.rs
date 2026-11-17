@@ -327,13 +327,20 @@ pub async fn mobile_terminal_exclusive(
     force: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let _control = app.state::<MobileState>().lock_control(&id).await;
-    app.state::<MobileState>().hub.set_exclusive(
-        &id,
-        Controller::Desktop,
-        on,
-        force.unwrap_or(false),
-    )?;
+    let state = app.state::<MobileState>();
+    let _control = state.lock_control(&id).await;
+    if let Some((cols, rows)) =
+        state
+            .hub
+            .set_exclusive(&id, Controller::Desktop, on, force.unwrap_or(false))?
+    {
+        let kind = if is_mobile_terminal(&id) {
+            state.hub.desktop_session_kind(&id)?
+        } else {
+            state.hub.session_kind(&id)?
+        };
+        apply_resize(&app, kind, &id, cols, rows).await?;
+    }
     emit_control(&app, &id);
     Ok(())
 }

@@ -416,7 +416,7 @@
     <div class="settings-group">
       <div class="setting-row"><div class="setting-text"><strong>终端字号</strong><p>也可在终端上双指缩放</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
       <div class="setting-row" data-tappable><div class="setting-text"><label for="terminal-columns">终端列宽</label><p>固定列宽时可横向滚动</p></div><select id="terminal-columns" data-control="value"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select></div>
-      <div class="setting-row"><div class="setting-text"><strong>快捷键栏</strong><p>调整顺序，隐藏的键移到「更多」</p></div><button id="open-key-layout" class="secondary compact" type="button">调整</button></div>
+      <div class="setting-row"><div class="setting-text"><strong>快捷键栏</strong><p>调整顺序、添加自定义键，隐藏的键移到「更多」</p></div><button id="open-key-layout" class="secondary compact" type="button">调整</button></div>
       <div class="setting-row"><div class="setting-text"><strong>更多设置</strong><p>语言、图片压缩、发送按键、后台提醒等</p></div><button id="open-settings-from-terminal" class="secondary compact" type="button">打开</button></div>
     </div>
     <fieldset id="touch-mode" class="setting-choices" aria-describedby="touch-mode-hint">
@@ -622,7 +622,20 @@
     <h2 tabindex="-1" id="key-layout-title">快捷键栏</h2>
     <p class="hint">勾选的键显示在终端底部，长按一行可拖动排序，取消勾选的键移到「更多」。</p>
     <div id="key-layout-list" class="key-layout-list" aria-label="快捷键顺序与显示"></div>
+    <button id="key-layout-add" type="button" class="text-button key-layout-add"><svg><use href="#i-plus"/></svg>添加自定义键</button>
     <div class="dialog-actions"><button id="key-layout-reset" type="button" class="secondary">恢复默认</button><button type="button" class="primary" data-close="key-layout-dialog">完成</button></div>
+  </dialog>
+  <dialog id="custom-key-dialog" aria-labelledby="custom-key-title">
+    <form id="custom-key-form">
+      <h2 id="custom-key-title">添加自定义键</h2>
+      <label for="custom-key-name">键名（可选）</label>
+      <input id="custom-key-name" maxlength="24" autocomplete="off" placeholder="留空显示发送的文本">
+      <label for="custom-key-text">发送的文本</label>
+      <input id="custom-key-text" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/new">
+      <label class="custom-key-enter"><input id="custom-key-enter" class="switch-check" type="checkbox" checked> 发送后按回车</label>
+      <p id="custom-key-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="custom-key-delete" type="button" class="secondary danger" hidden>删除</button><button type="button" class="secondary" data-close="custom-key-dialog">取消</button><button type="submit" class="primary">保存</button></div>
+    </form>
   </dialog>
   <dialog id="link-dialog" class="sheet" aria-labelledby="link-title">
     <div class="sheet-handle" aria-hidden="true"><span></span></div>

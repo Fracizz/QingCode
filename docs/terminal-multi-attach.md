@@ -8,7 +8,7 @@
 |---|---|---|
 | 输入 | 所有接入端默认可写；一条输入整体写入，按终端串行 | `Sharing::input`，`MobileState::lock_control` |
 | 只读旁观 | 设备可选 `observe`，旁观者不能输入、不抢尺寸 | `attach{observe}` |
-| 独占 | 任一端可独占，独占期间其他端只读；电脑可解除；旧版手机「接管」抢下独占 | `set_exclusive`，`claim(take)` |
+| 独占 | 任一端可独占，独占期间其他端只读；独占方同时成为尺寸方，终端改成独占端尺寸（锁定时也生效）；电脑可解除；旧版手机「接管」抢下独占 | `set_exclusive`，`claim(take)` |
 | 尺寸 | 跟随最后一次**键盘输入**的一方；焦点、滚动、自动应答不算 | `Sharing::claim_size` |
 | 断开其他端 | 电脑让所有设备退出该终端，收回设备的独占与尺寸；设备轮询得到 `kicked`（同时带 `takenOver` 兼容旧版）后回到工作台并提示；用户重新打开终端（`attach{rejoin:true}`）才恢复，网络出错后的自动重连带 `rejoin:false`，得到同样的断开答复而不会悄悄接回（旧版手机不带该字段，接入即恢复）；保留配对 | `kick_devices`，`Sharing::kicked`，`Hub::claim_rejoin` |
 | 锁定尺寸 | 锁定后打字不切换；「按本端尺寸」显式改成本端 | `set_size_lock`，`take_size` |

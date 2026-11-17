@@ -327,7 +327,7 @@
         if (!session) return { ok: false, error: '终端不存在。' }
         ;(state.shareOps ??= []).push({ op: request.op, id: request.id, on: request.on })
         session.share = request.op === 'exclusive'
-          ? { ...session.share, exclusiveHere: !!request.on }
+          ? { ...session.share, exclusiveHere: !!request.on, ...(request.on ? { sizeOwnerHere: true } : {}) }
           : { ...session.share, sizeOwnerHere: true }
         for (const wake of session.waiters.splice(0)) wake()
         return { ok: true, data: true }

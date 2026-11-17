@@ -494,13 +494,14 @@ impl Hub {
     }
 
     /// 打开或解除独占。`force` 允许抢下其他方的独占（电脑端「接管」、手机端「接管」）。
+    /// 打开独占时独占方同时成为尺寸方（锁定时也生效），返回需要应用的尺寸。
     pub(super) fn set_exclusive(
         &self,
         id: &str,
         who: Controller,
         on: bool,
         force: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<(u16, u16)>, String> {
         let mut inner = self.inner.lock().unwrap();
         if let Controller::Device(device) = &who {
             require_device(&inner, device)?;
@@ -516,7 +517,12 @@ impl Hub {
             ));
         }
         let session = inner.live_mut(id).ok_or("终端不存在。")?;
+        let mut resize = None;
         if on {
+            if session.sharing.size_owner != who {
+                resize = session.sharing.sizes.get(&who).copied();
+                session.sharing.size_owner = who.clone();
+            }
             if session.sharing.exclusive.as_ref() != Some(&who) {
                 session.sharing.exclusive = Some(who);
                 session.lease += 1;
@@ -525,7 +531,7 @@ impl Hub {
             session.sharing.exclusive = None;
         }
         session.changed.notify_waiters();
-        Ok(())
+        Ok(resize)
     }
 
     /// 锁定或解锁尺寸：锁定后打字不再切换尺寸方。

@@ -481,6 +481,38 @@ fn locked_size_stays_with_its_owner_until_someone_takes_it_explicitly() {
 }
 
 #[test]
+fn taking_exclusive_also_takes_the_size_even_when_locked() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.claim("term-1", "phone", false, None).unwrap();
+    hub.device_resize("term-1", "phone", 50, 30).unwrap();
+    hub.set_size_lock("term-1", &Controller::Desktop, true)
+        .unwrap();
+    assert_eq!(
+        hub.set_exclusive("term-1", Controller::Device("phone".into()), true, false)
+            .unwrap(),
+        Some((50, 30))
+    );
+    // 已是尺寸方时再次独占不重复改尺寸；解除独占不交还尺寸。
+    assert_eq!(
+        hub.set_exclusive("term-1", Controller::Device("phone".into()), true, false)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        hub.set_exclusive("term-1", Controller::Device("phone".into()), false, false)
+            .unwrap(),
+        None
+    );
+    assert!(!hub.desktop_resize("term-1", 170, 50));
+    assert_eq!(
+        hub.set_exclusive("term-1", Controller::Desktop, true, false)
+            .unwrap(),
+        Some((170, 50))
+    );
+}
+
+#[test]
 fn restore_scan_runs_once_at_a_time_and_is_throttled() {
     let hub = handoff_hub();
     let start = Instant::now();
