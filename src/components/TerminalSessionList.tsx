@@ -1190,7 +1190,8 @@ export default function TerminalSessionList() {
         <div
           ref={listRef}
           // 组间与组内同为 2px，项目行与会话行节奏一致；分组靠图标和缩进区分，不加分隔线。
-          className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-1.5"
+          // 左右 8px：选中底色内缩，组头图标与表头标题、搜索框（12px）左对齐。
+          className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>

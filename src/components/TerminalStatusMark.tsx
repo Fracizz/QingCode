@@ -89,10 +89,16 @@ export default function TerminalStatusMark({
       </Tooltip>
     )
   }
-  // 空闲是常态，不加悬停提示，避免满屏提示打扰；直径与空心圈一致（7px），只靠淡色弱化，实心/空心区分状态。
+  // 空闲：直径与空心圈一致（7px），只靠淡色弱化，实心/空心区分状态；与其他状态一样悬停给出说明。
+  const label = t('空闲')
   return (
-    <span className={SLOT_CLASS} aria-hidden="true">
-      <span data-terminal-status="idle" className="block h-[7px] w-[7px] rounded-full bg-term-list-meta/45" />
-    </span>
+    <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
+      <span
+        role="img"
+        aria-label={label}
+        data-terminal-status="idle"
+        className="block h-[7px] w-[7px] rounded-full bg-term-list-meta/45"
+      />
+    </Tooltip>
   )
 }
