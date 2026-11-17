@@ -273,15 +273,20 @@ pub async fn configure_shell_prewarm(
 }
 
 /// 只保留已就绪项；无命中立即返回，由正常新建链路兜底。
+/// 传入 `id`（重启已有标签）时预留后改按该 id 领取，Shell 内的 `QINGCODE_TERMINAL_ID` 仍是预热时的值。
 #[tauri::command]
 pub async fn reserve_prewarmed_shell(
     cwd: String,
     shell: Option<String>,
     has_startup: Option<bool>,
+    id: Option<String>,
     allowlist: State<'_, PathAllowlist>,
     manager: State<'_, SshManager>,
     app: AppHandle,
 ) -> Result<serde_json::Value, String> {
+    if let Some(id) = &id {
+        crate::mobile::reject_desktop_use(id)?;
+    }
     if cwd.starts_with(SSH_URI_PREFIX) {
         manager.root_for_uri(&cwd, true)?;
     } else {
@@ -290,12 +295,17 @@ pub async fn reserve_prewarmed_shell(
     let Some(pool) = pool_for_cwd(&app, &cwd) else {
         return Ok(serde_json::json!({"reason": "no_target"}));
     };
-    Ok(
-        match pool.reserve(&cwd, shell.as_deref(), has_startup.unwrap_or(false)) {
-            Ok(id) => serde_json::json!({"id": id}),
-            Err(reason) => serde_json::json!({"reason": reason}),
-        },
-    )
+    let has_startup = has_startup.unwrap_or(false);
+    let result = match &id {
+        Some(id) => pool
+            .reserve_as(id, &cwd, shell.as_deref(), has_startup)
+            .map(|()| id.clone()),
+        None => pool.reserve(&cwd, shell.as_deref(), has_startup),
+    };
+    Ok(match result {
+        Ok(id) => serde_json::json!({"id": id}),
+        Err(reason) => serde_json::json!({"reason": reason}),
+    })
 }
 
 #[tauri::command]

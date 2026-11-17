@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     safeInvoke: vi.fn(),
     confirm: vi.fn(async () => true),
     sshReady: vi.fn(async () => true),
+    openMobileSessionTab: vi.fn(),
     outputListeners: [] as Array<(event: { payload: unknown }) => void>,
   }
 })
@@ -47,7 +48,10 @@ function store<T extends object>(state: T) {
   return Object.assign((selector: (value: T) => unknown) => selector(state), { getState: () => state })
 }
 
-vi.mock('../store/terminalStore', () => ({ useTerminalStore: store(mocks.terminalState) }))
+vi.mock('../store/terminalStore', () => ({
+  useTerminalStore: store(mocks.terminalState),
+  openMobileSessionTab: mocks.openMobileSessionTab,
+}))
 vi.mock('../store/projectStore', () => ({ useProjectStore: store(mocks.projectState) }))
 vi.mock('../store/uiStore', () => ({ useUIStore: store(mocks.uiState) }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog: mocks.confirm }))
@@ -133,6 +137,37 @@ describe('TerminalManager', () => {
     fireEvent.click(await screen.findByLabelText('跳转到终端：server'))
     await waitFor(() => expect(mocks.terminalState.setActiveTerminal).toHaveBeenCalledWith('t2'))
     expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1])
+    expect(mocks.uiState.closeTerminalManager).toHaveBeenCalled()
+  })
+
+  it('opens a phone terminal on the computer in the background and keeps the manager open', async () => {
+    mocks.openMobileSessionTab.mockImplementation(async (session: { id: string; project: { id: string } }) => {
+      const opened = tab(session.id, session.project.id, 'claude')
+      mocks.terminalState.terminals = [...mocks.terminalState.terminals, opened]
+      return opened
+    })
+    const { rerender } = render(<TerminalManager />)
+    fireEvent.click(await screen.findByLabelText('在电脑后台打开：claude'))
+    await waitFor(() => expect(mocks.openMobileSessionTab).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'mobile-1' }), { background: true },
+    ))
+    await waitFor(() => expect(mocks.projectState.pushToast).toHaveBeenCalledWith(
+      'success', '已在电脑后台打开「claude」', 'Beta', expect.objectContaining({ label: '查看' }),
+    ))
+    expect(mocks.projectState.switchProject).not.toHaveBeenCalled()
+    expect(mocks.terminalState.setActiveTerminal).not.toHaveBeenCalled()
+    expect(mocks.uiState.closeTerminalManager).not.toHaveBeenCalled()
+
+    rerender(<TerminalManager />)
+    expect(await screen.findByText(/已在电脑打开/)).toBeTruthy()
+    // 已打开的手机终端改为跳转，且仍只按手机会话列出一行。
+    expect(screen.queryByLabelText('在电脑后台打开：claude')).toBeNull()
+    expect(screen.getAllByText('claude')).toHaveLength(1)
+
+    const action = mocks.projectState.pushToast.mock.calls[0][3] as unknown as { onAction: () => Promise<void> }
+    await act(() => action.onAction())
+    expect(mocks.projectState.switchProject).toHaveBeenCalledWith(mocks.projectState.projects[1])
+    expect(mocks.terminalState.setActiveTerminal).toHaveBeenCalledWith('mobile-1')
     expect(mocks.uiState.closeTerminalManager).toHaveBeenCalled()
   })
 

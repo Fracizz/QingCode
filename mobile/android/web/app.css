@@ -1,5 +1,5 @@
 /*
- * QingCode Android WebView 样式。中性灰底色 + 青绿强调色；深色 / 石墨灰两套主题与电脑端同名主题一致。
+ * QingCode Android WebView 样式。中性灰底色 + 青绿强调色；深色 / 石墨灰两套主题与电脑端同名主题基调一致，卡片和按键表面比电脑端亮一档。
  * 交互形态参考开源项目：Material 3（导航指示条、分组列表、底部弹层、状态层）、
  * Termux（双排快捷键、修饰键锁定）、T3 Code 移动终端（会话操作与独立字号）。
  */
@@ -18,9 +18,9 @@
   color-scheme: dark;
   /* 深色（默认）：与电脑端深色同为纯中性灰。石墨灰见下方 :root[data-theme="graphite"]。 */
   --paper: #181818;
-  --surface: #1c1c1c;
-  --surface-high: #232323;
-  --raised: #292929;
+  --surface: #222222;
+  --surface-high: #2a2a2a;
+  --raised: #2e2e2e;
   --line: #3a3a3a;
   --divider: #2e2e2e;
   --ink: #f3f3f5;
@@ -60,10 +60,10 @@
 /* 石墨灰：取自电脑端石墨灰（带极轻暖调的灰阶，文字更柔和、分隔线更清楚）。终端底色与深色相同。 */
 :root[data-theme="graphite"] {
   --paper: #181818;
-  --surface: #1c1b1b;
-  --surface-high: #21201f;
-  --raised: #262626;
-  --line: #2e2d2d;
+  --surface: #222120;
+  --surface-high: #292827;
+  --raised: #2e2d2c;
+  --line: #363534;
   --divider: #2c2c2c;
   --ink: #dfdfdf;
   --muted: #999999;
@@ -710,7 +710,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .session-tab[aria-current="true"]:is(:active, :focus-visible),
 .row[aria-current="true"]:is(:active, :focus-visible),
 :is(#special-keys, .extra-keys) button[aria-pressed="true"]:not([data-locked="true"]):is(:active, :focus-visible) { background: var(--accent-pressed); }
-#compose-form { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 48px; align-items: end; column-gap: 2px; row-gap: 4px; margin-top: 8px; padding: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease, background-color 120ms ease; }
+#compose-form { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 48px; align-items: end; column-gap: 3px; row-gap: 4px; margin-top: 8px; padding: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease, background-color 120ms ease; }
 #compose-form:focus-within { border-color: var(--accent-border); }
 #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
 /* 横向拖动移动光标时用虚线强调色边框提示「触控板」状态。 */
@@ -721,7 +721,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #compose::placeholder { font-family: system-ui, sans-serif; font-size: 14px; }
 #compose-form .icon-button { width: 44px; height: 44px; color: var(--muted); }
 #compose-form :is(#keyboard, #attach-image) svg { width: 21px; height: 21px; stroke-width: 1.75; }
-#compose-form :is(#keyboard, #attach-image):is(:active, :focus-visible) { background: var(--raised); color: var(--ink); }
+/* 键盘、图片按钮与上方快捷键同为 --raised 底，按下再亮一档，和快捷键一致。 */
+#compose-form :is(#keyboard, #attach-image) { background: var(--raised); }
+#compose-form :is(#keyboard, #attach-image):is(:active, :focus-visible) { background: var(--line); color: var(--ink); }
 #compose-form #send { background: var(--accent); color: var(--accent-ink); }
 #compose-form #send:is(:active, :focus-visible) { background: var(--accent); filter: brightness(1.08); }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }

@@ -155,6 +155,30 @@ export function bindTerminalToPane(
   return next
 }
 
+const PANE_PROJECT_MAP = {
+  primary: 'activeTerminalByProject',
+  secondary: 'secondaryTerminalByProject',
+  bl: 'blTerminalByProject',
+  br: 'brTerminalByProject',
+} as const satisfies Record<TerminalFocusPane, keyof PaneBindingSlice>
+
+/**
+ * 后台加入终端：不抢占正在显示的终端。该项目此窗格已有终端时不改绑；
+ * 还没有时，当前项目直接绑定（避免窗格空着），其他项目只记下切回时显示谁。
+ */
+export function bindTerminalInBackground(
+  s: PaneBindingSlice,
+  projectId: string,
+  pane: TerminalFocusPane,
+  id: string,
+  isCurrentProject: boolean,
+): Partial<PaneBindingSlice> {
+  const key = PANE_PROJECT_MAP[pane]
+  if (s[key][projectId]) return {}
+  if (isCurrentProject && !readPaneTerminalId(s, pane)) return bindTerminalToPane(s, projectId, pane, id)
+  return { [key]: { ...s[key], [projectId]: id } }
+}
+
 export function clearClosedFromPanes(
   s: PaneBindingSlice,
   projectId: string,

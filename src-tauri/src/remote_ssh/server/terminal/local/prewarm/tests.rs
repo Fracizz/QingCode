@@ -186,6 +186,28 @@ fn phone_reservations_are_claimed_under_the_phone_terminal_id() {
 }
 
 #[test]
+fn restart_reservations_never_hold_two_shells_under_one_tab_id() {
+    let pool = ShellPrewarmPool::default();
+    let key = fake_shell().key.clone();
+    pool.0
+        .lock()
+        .unwrap()
+        .shells
+        .extend([fake_shell(), with_id(fake_shell(), "second")]);
+    let first = pool.reserve_key(&key, CWD, false).unwrap();
+    assert!(pool.rename_reserved(&first, "tab-1").is_ok());
+    // 同一标签再次重启（上次预留未领取）时，第二个空闲项放回池中。
+    let second = pool.reserve_key(&key, CWD, false).unwrap();
+    assert_eq!(pool.rename_reserved(&second, "tab-1"), Err("id_in_use"));
+    assert_eq!(
+        pool.reserve_key(&key, CWD, false).as_deref(),
+        Ok(second.as_str())
+    );
+    assert!(pool.take_key("tab-1", &key, CWD, true).is_some());
+    assert!(pool.take_key("tab-1", &key, CWD, true).is_none());
+}
+
+#[test]
 fn stale_reservations_and_mismatched_launches_never_supply_a_shell() {
     let pool = ShellPrewarmPool::default();
     let mut shell = fake_shell();

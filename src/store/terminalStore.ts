@@ -105,6 +105,7 @@ import {
   terminalViewGrids,
 } from './terminal/ptySizing'
 import {
+  bindTerminalInBackground,
   bindTerminalToPane,
   clearClosedFromPanes,
   clearProjectPaneMaps,
@@ -310,6 +311,25 @@ function consumeIntentionalPtyKill(id: string): boolean {
 /** Drop a kill mark once that process is gone, so it cannot lock the next shell. */
 function releaseIntentionalPtyKill(id: string) {
   intentionalPtyKills.delete(id)
+}
+
+/**
+ * 重启与新建同样从预热池领取，条件一致（远端：带启动命令或默认配置；本机：开启可接回）。
+ * 运行任务、带额外环境变量的配置和手机终端不领取。预留项改用原标签 id，标签身份不变。
+ */
+async function reserveShellForRestart(tab: TerminalTab): Promise<TerminalTab['prewarm']> {
+  const plan = planTerminalSpawn(tab)
+  const remote = tab.cwd.startsWith('ssh://')
+  const startup = plan.mode === 'interactive' ? plan.command : ''
+  const eligible = plan.mode !== 'script'
+    && Object.keys(tab.env ?? {}).length === 0
+    && !isMobileTerminalId(tab.id)
+    && (remote
+      ? !!startup || (tab.profileId ?? DEFAULT_TERMINAL_PROFILE.id) === DEFAULT_TERMINAL_PROFILE.id
+      : getTerminalPersistLocalSessions())
+  if (!eligible) return { outcome: 'miss', reason: 'restart' }
+  const reservation = await reservePrewarmedShell(tab.cwd, tab.shell ?? null, !!startup, tab.id)
+  return 'id' in reservation ? { outcome: 'reserved' } : { outcome: 'miss', reason: reservation.reason }
 }
 
 /** Convert a finished one-shot task into a plain terminal without replaying its command. */
@@ -915,13 +935,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // Leaving the mark set would treat the replacement shell's later exit as
       // intentional and block input.
       releaseIntentionalPtyKill(id)
+      // 旧进程结束后再领取，领取到的 Shell 由下面的新建链路按本标签 id 接回。
+      const prewarm = await reserveShellForRestart(tab)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id
             ? {
                 ...terminal,
                 status: 'starting',
-                prewarm: { outcome: 'miss', reason: 'restart' },
+                prewarm,
                 endedAt: undefined,
                 restoreUnavailable: false,
                 exitCode: null,
@@ -1907,12 +1929,16 @@ if (typeof window !== 'undefined') {
 }
 
 /** 在电脑标签中打开手机终端，默认只读；已打开时直接返回原标签。 */
+/**
+ * 把手机终端打开为电脑标签。`background` 时只加入标签，不抢占正在显示的终端，
+ * 便于在终端管理里连续打开多个。
+ */
 export async function openMobileSessionTab(session: {
   id: string
   name: string
   createdAt?: number | null
   project: { id: string; path: string }
-}): Promise<TerminalTab> {
+}, options: { background?: boolean } = {}): Promise<TerminalTab> {
   const state = useTerminalStore.getState()
   const existing = state.terminals.find(tab => tab.id === session.id)
   if (existing) return existing
@@ -1930,9 +1956,12 @@ export async function openMobileSessionTab(session: {
     startedAt: Date.now(),
   }
   // 先建标签再打开：首屏快照到达时要能找到它。
+  const isCurrentProject = useProjectStore.getState().currentProject?.id === tab.projectId
   useTerminalStore.setState(current => ({
     terminals: [...current.terminals, tab],
-    ...bindTerminalToPane(current, tab.projectId, pane, tab.id),
+    ...(options.background
+      ? bindTerminalInBackground(current, tab.projectId, pane, tab.id, isCurrentProject)
+      : bindTerminalToPane(current, tab.projectId, pane, tab.id)),
   }))
   try {
     // 共享状态（在线设备、尺寸方、独占）由 Rust 随打开发出的 terminal-control 事件带来。

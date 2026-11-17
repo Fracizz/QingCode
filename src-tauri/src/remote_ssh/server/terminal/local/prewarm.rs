@@ -462,7 +462,7 @@ impl ShellPrewarmPool {
     }
 
     /// 预留一个空闲项并改按调用方的终端 id 领取。手机终端必须用 `mobile-` 前缀的 id
-    /// 才能把输出路由给手机，不能沿用预热时分配的 id；之后照常用 `take` / `take_remote` 领取。
+    /// 才能把输出路由给手机；电脑端重启要沿用原标签 id。之后照常用 `take` / `take_remote` 领取。
     pub(crate) fn reserve_as(
         &self,
         id: &str,
@@ -470,12 +470,27 @@ impl ShellPrewarmPool {
         shell: Option<&str>,
         has_startup: bool,
     ) -> Result<(), &'static str> {
+        // 同一 id 已有未过期的预留（例如上次重启未领取）时不再占用第二个空闲项。
+        if self.has_entry(id) {
+            trace(
+                "reserve_miss",
+                serde_json::json!({"reason": "id_in_use", "remote": cwd.starts_with(SSH_URI_PREFIX)}),
+            );
+            return Err("id_in_use");
+        }
         let warm_id = self.reserve(cwd, shell, has_startup)?;
         self.rename_reserved(&warm_id, id)
     }
 
     fn rename_reserved(&self, warm_id: &str, id: &str) -> Result<(), &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // 预留期间另一请求已占用同一 id：放回空闲，按未命中处理。
+        if state.shells.iter().any(|entry| entry.id == id) {
+            if let Some(entry) = state.shells.iter_mut().find(|entry| entry.id == warm_id) {
+                entry.reserved_at = None;
+            }
+            return Err("id_in_use");
+        }
         // 预留与改名之间池可能被重配清空，此时按未命中处理。
         let entry = state
             .shells

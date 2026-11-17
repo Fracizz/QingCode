@@ -132,6 +132,34 @@ describe('terminal pane isolation', () => {
     await useTerminalStore.getState().closeTerminal('warm-remote')
   })
 
+  it('restart claims a prewarmed shell under the same tab id', async () => {
+    const path = 'ssh://conn/D:/work/proj'
+    useTerminalStore.setState({ terminals: [tab('t-claude', 'primary', {
+      cwd: path, profileId: 'assistant', launchCommand: 'claude', shell: 'powershell', status: 'exited',
+    })] })
+    vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 't-claude' })
+    await useTerminalStore.getState().restartTerminal('t-claude')
+    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, 'powershell', true, 't-claude')
+    expect(useTerminalStore.getState().terminals).toMatchObject([
+      { id: 't-claude', status: 'starting', prewarm: { outcome: 'reserved' } },
+    ])
+    await useTerminalStore.getState().closeTerminal('t-claude')
+  })
+
+  it('restart keeps run tasks and profiles with extra env on the normal spawn path', async () => {
+    vi.mocked(reservePrewarmedShell).mockClear()
+    for (const extras of [
+      { shellKind: 'command', launchCommand: 'pnpm dev' },
+      { profileId: 'assistant', launchCommand: 'claude', env: { API: '1' } },
+    ] as const) {
+      useTerminalStore.setState({ terminals: [tab('t-task', 'primary', { ...extras, status: 'exited' })] })
+      await useTerminalStore.getState().restartTerminal('t-task')
+      expect(useTerminalStore.getState().terminals[0].prewarm).toEqual({ outcome: 'miss', reason: 'restart' })
+      await useTerminalStore.getState().closeTerminal('t-task')
+    }
+    expect(reservePrewarmedShell).not.toHaveBeenCalled()
+  })
+
   it('inferTerminalPaneOwnership assigns legacy bindings to panes', () => {
     const terminals = [tab('a'), tab('b'), tab('c'), tab('d')]
     const owned = inferTerminalPaneOwnership(terminals, {

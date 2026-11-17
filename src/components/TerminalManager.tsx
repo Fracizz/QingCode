@@ -27,6 +27,7 @@ import { killDetachedTerminal } from '../lib/ipc/terminal'
 import {
   createCoalescedRunner,
   endMobileSession,
+  isMobileTerminalId,
   listenMobileSessionOutput,
   listMobileSessions,
   previewMobileSession,
@@ -96,8 +97,8 @@ function autoEndText(deadline: number | null | undefined, now: number, t: Transl
   return time ? t('{time} 自动结束', { time }) : ''
 }
 
-/** 行内展示与搜索共用：来源图标、来源标签与状态明细。 */
-function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) {
+/** 行内展示与搜索共用：来源图标、来源标签与状态明细。`openedIds` 为已打开到电脑标签的手机终端。 */
+function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate, openedIds: ReadonlySet<string>) {
   if (entry.source === 'desktop') {
     const created = formatCreatedTime(entry.tab.createdAt ?? entry.tab.startedAt, now)
     const status = entry.tab.status === 'running'
@@ -123,7 +124,7 @@ function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) 
         created ? t('创建于 {time}', { time: created }) : '',
         idle === null ? '' : t('空闲 {n} 分钟', { n: idle }),
         autoEndText(session.idleDeadline, now, t),
-        t('仅手机可操作'),
+        openedIds.has(session.id) ? t('已在电脑打开') : t('仅手机可操作'),
       ].filter(Boolean),
     }
   }
@@ -133,6 +134,20 @@ function describeEntry(entry: TerminalOverviewEntry, now: number, t: Translate) 
     sourceLabel: t('远端'),
     details: autoEnd ? [t('未接回'), autoEnd] : [t('未接回 · 仍在远端运行')],
   }
+}
+
+/** 切到终端所属项目并显示该终端，随后关闭终端管理；用户取消切换项目时返回 false。 */
+async function revealDesktopTerminal(tab: TerminalTab, t: Translate) {
+  const projectState = useProjectStore.getState()
+  if (projectState.currentProject?.id !== tab.projectId) {
+    const project = projectState.projects.find(candidate => candidate.id === tab.projectId)
+    if (!project) throw new Error(t('终端所属项目已不在项目列表中'))
+    if (!(await projectState.switchProject(project))) return false
+  }
+  useTerminalStore.getState().setActiveTerminal(tab.id)
+  useUIStore.getState().openTerminalPanel()
+  useUIStore.getState().closeTerminalManager()
+  return true
 }
 
 /** 原生复选框，支持半选状态。 */
@@ -294,6 +309,11 @@ export default function TerminalManager() {
     }),
     [projects, terminals, mobile, detached],
   )
+  /** 已打开到电脑标签的手机终端：行内改为「跳转到终端」。 */
+  const openedMobileIds = useMemo(
+    () => new Set(terminals.filter(tab => isMobileTerminalId(tab.id)).map(tab => tab.id)),
+    [terminals],
+  )
   const counts = useMemo(() => countTerminalOverview(entries), [entries])
   const groups = useMemo(
     () =>
@@ -303,12 +323,12 @@ export default function TerminalManager() {
         filter,
         query,
         entry => {
-          const { sourceLabel, details } = describeEntry(entry, now, t)
+          const { sourceLabel, details } = describeEntry(entry, now, t, openedMobileIds)
           return [sourceLabel, ...details]
         },
         runningFirst ? entry => isTerminalOverviewEntryRunning(entry, tab => isTerminalProgramBusy(tab.id, now)) : undefined,
       ),
-    [entries, projects, filter, query, now, t, runningFirst],
+    [entries, projects, filter, query, now, t, runningFirst, openedMobileIds],
   )
   const paged = useMemo(() => paginateTerminalOverview(groups, page, PAGE_SIZE), [groups, page])
   /** 当前筛选/搜索结果中的全部终端（跨页），批量操作都以此为范围。 */
@@ -366,15 +386,7 @@ export default function TerminalManager() {
 
   const jumpToDesktop = (tab: TerminalTab) =>
     run(`desktop:${tab.id}`, async () => {
-      const projectState = useProjectStore.getState()
-      if (projectState.currentProject?.id !== tab.projectId) {
-        const project = projectState.projects.find(candidate => candidate.id === tab.projectId)
-        if (!project) throw new Error(t('终端所属项目已不在项目列表中'))
-        if (!(await projectState.switchProject(project))) return
-      }
-      useTerminalStore.getState().setActiveTerminal(tab.id)
-      useUIStore.getState().openTerminalPanel()
-      close()
+      await revealDesktopTerminal(tab, t)
     })
 
   const renameDesktop = (tab: TerminalTab) => run(`desktop:${tab.id}`, async () => {
@@ -400,13 +412,30 @@ export default function TerminalManager() {
       await useTerminalStore.getState().closeTerminal(tab.id)
     })
 
-  const openMobile = async (session: MobileSessionSummary) => {
-    const opened: { tab?: TerminalTab } = {}
-    await run(`mobile:${session.id}`, async () => {
-      opened.tab = await openMobileSessionTab(session)
+  /** 后台打开到电脑标签：不切项目、不关闭终端管理，便于连续打开多个；提示里可一键查看。 */
+  const openMobile = (session: MobileSessionSummary) =>
+    run(`mobile:${session.id}`, async () => {
+      const tab = await openMobileSessionTab(session, { background: true })
+      const name = mobileSessionDisplayName(session)
+      useProjectStore.getState().pushToast(
+        'success',
+        t('已在电脑后台打开「{name}」', { name }),
+        session.project.name,
+        {
+          label: t('查看'),
+          onAction: async () => {
+            try {
+              if (!useTerminalStore.getState().terminals.some(item => item.id === tab.id)) {
+                throw new Error(t('该终端标签已关闭'))
+              }
+              await revealDesktopTerminal(tab, t)
+            } catch (error) {
+              useProjectStore.getState().pushToast('error', errorText(error))
+            }
+          },
+        },
+      )
     })
-    if (opened.tab) await jumpToDesktop(opened.tab)
-  }
 
   const renameMobile = (session: MobileSessionSummary) => run(`mobile:${session.id}`, async () => {
     const name = await promptDialog({
@@ -682,6 +711,7 @@ export default function TerminalManager() {
                         <Row
                           entry={entry}
                           now={now}
+                          openedMobileIds={openedMobileIds}
                           selected={selected.has(entry.key)}
                           onToggleSelect={() => toggleSelected([entry.key], !selected.has(entry.key))}
                           busy={busyKey === entry.key}
@@ -809,6 +839,8 @@ export default function TerminalManager() {
 interface RowProps {
   entry: TerminalOverviewEntry
   now: number
+  /** 已打开到电脑标签的手机终端 id。 */
+  openedMobileIds: ReadonlySet<string>
   selected: boolean
   onToggleSelect: () => void
   busy: boolean
@@ -827,7 +859,7 @@ interface RowProps {
 function Row(props: RowProps) {
   const { t } = useI18n()
   const { entry, now, disabled } = props
-  const { icon, sourceLabel, details } = describeEntry(entry, now, t)
+  const { icon, sourceLabel, details } = describeEntry(entry, now, t, props.openedMobileIds)
   const originalName = entry.source === 'mobile' ? [entry.session.name, entry.session.programTitle]
     .filter((value, index, values) => value && values.indexOf(value) === index).join('\n') : entry.name
   let actions: { label: string; icon: ReactNode; danger?: boolean; onClick: () => void }[]
@@ -841,14 +873,27 @@ function Row(props: RowProps) {
     ]
   } else if (entry.source === 'mobile') {
     const session = entry.session
+    const opened = props.openedMobileIds.has(session.id)
     actions = [
-      ...(session.exit
-        ? []
-        : [{
-            label: t('在电脑上打开'),
+      ...(opened
+        ? [{
+            label: t('跳转到终端'),
             icon: <SquareArrowOutUpRight size={14} />,
-            onClick: () => props.onOpenMobile(session),
-          }]),
+            onClick: () => {
+              const tab = useTerminalStore.getState().terminals.find(item => item.id === session.id)
+              if (tab) props.onJump(tab)
+            },
+          }]
+        : session.exit
+          ? []
+          : [{
+              label: t('在电脑后台打开'),
+              // 打开中显示转圈，完成后该按钮变为「跳转到终端」。
+              icon: props.busy
+                ? <LoaderCircle size={14} className="motion-safe:animate-spin" />
+                : <SquareArrowOutUpRight size={14} />,
+              onClick: () => props.onOpenMobile(session),
+            }]),
       {
         label: t('只读预览'),
         icon: <Eye size={14} />,

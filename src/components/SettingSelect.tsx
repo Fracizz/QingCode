@@ -57,25 +57,50 @@ export default function SettingSelect({
     if (!trigger || !menu) return
     const rect = trigger.getBoundingClientRect()
     const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
+    const triggerWidth = rect.width / zoom
+    const maxWidth = Math.max(triggerWidth, (window.innerWidth - 16) / zoom)
     // 至少与触发按钮同宽；选项（含勾选列）更长时按内容撑开，不超出窗口。
     // 触发按钮随选中项收窄时，固定同宽会把「自动（1 个）」这类选项截成省略号。
-    menu.style.width = 'max-content'
-    const width = Math.min(
-      Math.max(rect.width / zoom, menu.offsetWidth),
-      Math.max(rect.width / zoom, (window.innerWidth - 16) / zoom),
-    )
-    menu.style.width = `${width}px`
+    // 用计算样式里的小数宽度向上取整：offsetWidth 舍去的零点几像素也会让末字变成省略号；
+    // 不用 getBoundingClientRect，入场动画（menu-enter）的缩放会让它量小。
+    const fitContent = () => {
+      menu.style.width = 'max-content'
+      const content = Math.ceil(Number.parseFloat(getComputedStyle(menu).width) || menu.offsetWidth)
+      const next = Math.min(Math.max(triggerWidth, content), maxWidth)
+      menu.style.width = `${next}px`
+      return next
+    }
+    let width = fitContent()
     const placed = getContextMenuStylePosition(
       rect.left,
       rect.bottom + 2,
-      { width: menu.offsetWidth || width * zoom, height: menu.scrollHeight },
+      { width: width * zoom, height: menu.scrollHeight },
       { width: window.innerWidth, height: window.innerHeight },
       false,
       zoom,
     )
     menu.style.maxHeight = `${placed.maxHeight}px`
+    // 限高后可能出现竖向滚动条并占掉宽度：重新按内容测一次，再补上仍被截断的差值。
+    width = fitContent()
+    let clipped = 0
+    menu.querySelectorAll<HTMLElement>('[role="option"] .truncate').forEach(label => {
+      clipped = Math.max(clipped, label.scrollWidth - label.clientWidth)
+    })
+    if (clipped > 0) {
+      width = Math.min(width + clipped, maxWidth)
+      menu.style.width = `${width}px`
+    }
+    // 宽度变了就按最终宽度重新水平定位，避免贴右边缘时超出窗口。
+    const left = getContextMenuStylePosition(
+      rect.left,
+      rect.bottom + 2,
+      { width: width * zoom, height: menu.scrollHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+      false,
+      zoom,
+    ).x
     setMenuStyle({
-      left: placed.x,
+      left,
       top: placed.y,
       width,
       maxHeight: placed.maxHeight,
