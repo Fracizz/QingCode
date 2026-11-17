@@ -147,6 +147,19 @@ describe('terminal persistent connection events', () => {
     vi.useRealTimers()
   })
 
+  it('keeps terminal state unchanged when renaming to the same name', () => {
+    // 程序标题转圈时每帧都以相同名字重命名，不应产生新状态触发重渲染。
+    useTerminalStore.getState().renameTerminal('t1', 'Claude Code')
+    const before = useTerminalStore.getState().terminals
+    useTerminalStore.getState().renameTerminal('t1', ' Claude Code ')
+    useTerminalStore.getState().renameTerminal('t1', '   ')
+    useTerminalStore.getState().renameTerminal('missing', 'x')
+    expect(useTerminalStore.getState().terminals).toBe(before)
+    useTerminalStore.getState().renameTerminal('t1', 'Codex')
+    expect(useTerminalStore.getState().terminals).not.toBe(before)
+    expect(useTerminalStore.getState().terminals[0].name).toBe('Codex')
+  })
+
   it('freezes pending PTYs during an exit decision and resumes after cancellation', async () => {
     useTerminalStore.setState({ terminals: [terminal({ status: 'starting', ptySpawnPending: true })] })
     await pauseTerminalSpawnsForExit()

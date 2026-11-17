@@ -1756,9 +1756,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   renameTerminal: (id, name) =>
-    set(s => ({
-      terminals: s.terminals.map(t => (t.id === id ? { ...t, name: name.trim() || t.name } : t)),
-    })),
+    set(s => {
+      // 程序转圈时每帧都会以相同的清洗后标题调用这里：名字不变就保持原状态，
+      // 避免每帧生成新数组导致所有订阅 terminals 的组件重渲染。
+      const trimmed = name.trim()
+      const target = s.terminals.find(t => t.id === id)
+      if (!target || !trimmed || target.name === trimmed) return s
+      return { terminals: s.terminals.map(t => (t === target ? { ...t, name: trimmed } : t)) }
+    }),
 
   initializeTerminalEvents: async () => {
     const [
