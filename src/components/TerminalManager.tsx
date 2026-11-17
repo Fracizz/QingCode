@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  Activity,
+  Bell,
   ChevronLeft,
   ChevronRight,
   Cloud,
@@ -660,7 +660,7 @@ export default function TerminalManager() {
                   : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
             >
-              <Activity size={15} />
+              <Bell size={15} />
             </button>
           </Tooltip>
         </div>

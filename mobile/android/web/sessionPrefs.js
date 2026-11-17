@@ -72,13 +72,13 @@ export function onSessionPrefsChange(listener) {
   return () => listeners.delete(listener);
 }
 
-/** 「运行中优先」波形图标按钮（与电脑端相同）：点一下排出运行中的会话，再点恢复默认顺序；各处实例同步按下状态。 */
+/** 「运行中优先」铃铛图标按钮（与电脑端相同）：点一下排出运行中的会话，再点恢复默认顺序；各处实例同步按下状态。 */
 export function runningFirstToggle(className = '') {
   const item = document.createElement('button');
   item.type = 'button';
   item.className = ['icon-button', 'running-first', className].filter(Boolean).join(' ');
-  // 波形图标表达「正在工作」，与电脑端终端列表、终端管理一致。
-  item.append(icon('activity'));
+  // 铃铛图标表达「查看正在活动的会话」，与电脑端终端列表、终端管理一致。
+  item.append(icon('bell'));
   item.setAttribute('aria-pressed', String(runningFirstValue));
   item.addEventListener('click', () => {
     setRunningFirst(!runningFirstValue);

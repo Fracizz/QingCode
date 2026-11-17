@@ -45,9 +45,9 @@
   --color-term-list-fg: #c8c8c8;
   --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #939393;
-  /* 来源标签按种类分色：本机沿用辅助灰，SSH 豆沙、WSL 琥珀（暖色，不用蓝紫，避免与交互强调色混淆）；标签淡底和细边框取同色，仅文字色需过对比度。 */
+  /* 来源标签按种类分色：本机沿用辅助灰，SSH 豆沙绿、WSL 琥珀（不用蓝紫，避免与交互强调色混淆；护眼绿主题取更亮一档，靠明度与绿底区分）；标签淡底和细边框取同色，仅文字色需过对比度。 */
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #c98f8f;
+  --color-term-list-remote: #88af8e;
   --color-term-list-wsl: #c39557;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
@@ -145,7 +145,7 @@ html[data-theme="light"] {
   --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #626872;
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #9a4f4f;
+  --color-term-list-remote: #45734c;
   --color-term-list-wsl: #93590f;
 
   --color-brand: #0d9488;
@@ -246,7 +246,7 @@ html[data-theme="ink"] {
   --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #8d8c8c;
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #c39090;
+  --color-term-list-remote: #8aab8e;
   --color-term-list-wsl: #bd955c;
 
   --color-brand: #4ecdb5;
@@ -318,7 +318,7 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-term-list-project: var(--color-term-list-fg);
   --color-term-list-meta: #9aab9e;
   --color-term-list-source: var(--color-term-list-meta);
-  --color-term-list-remote: #d3a3a0;
+  --color-term-list-remote: #b3d0b6;
   --color-term-list-wsl: #cba366;
 
   /* 功能强调色：柔和琥珀（降低饱和，避免刺眼）。

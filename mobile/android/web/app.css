@@ -42,9 +42,9 @@
   --error: #ff9d8c;
   --error-surface: #3a1f1b;
   --warning: #edcb8d;
-  /* 项目来源标签按种类分色，与电脑端终端列表一致：本机辅助灰、SSH 豆沙、WSL 琥珀（暖色，不用蓝紫，避免与强调色混淆）。 */
+  /* 项目来源标签按种类分色，与电脑端终端列表一致：本机辅助灰、SSH 豆沙绿、WSL 琥珀（不用蓝紫，避免与强调色混淆）。 */
   --source-local: var(--muted);
-  --source-ssh: #c98f8f;
+  --source-ssh: #88af8e;
   --source-wsl: #c39557;
   --console: #181818;
   --mono: 'QingCode Symbols', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', 'Roboto Mono', 'Noto Sans Mono', 'Droid Sans Mono', monospace;
@@ -71,7 +71,7 @@
   --divider: #2c2c2c;
   --ink: #dfdfdf;
   --muted: #999999;
-  --source-ssh: #c39090;
+  --source-ssh: #8aab8e;
   --source-wsl: #bd955c;
   --console: #181818;
   /* 石墨灰更内敛：光晕饱和度和亮度都压低一档。 */
@@ -475,7 +475,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   text-align: left;
 }
 .row { width: 100%; border-radius: 0; }
-.row[data-kind="ssh"] .tile { color: var(--source-ssh); background: #3a2b2b; }
+.row[data-kind="ssh"] .tile { color: var(--source-ssh); background: #2b382d; }
 .row[data-kind="wsl"] .tile { color: var(--warning); background: #373126; }
 .row-text { min-width: 0; }
 .row-text strong, .row-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

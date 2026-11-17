@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import { CircleDashed, LoaderCircle } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import {
   getTerminalProgramBusySnapshot,
   subscribeTerminalProgramActivity,
@@ -11,7 +11,7 @@ const SLOT_CLASS = 'inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-c
 
 /**
  * 终端列表行首的固定状态位（14px），每一行都有标记，扫读时左侧对齐成一列：
- * 运行中 `accent` 转圈 > 有新结果 `brand` 实心点 > 空闲淡灰小点；已退出为空心圈，待恢复为虚线圈。
+ * 运行中 `accent` 转圈 > 有新结果 `brand` 实心点 > 空闲淡灰小点；已退出与待恢复都是空心圈（后者没有行尾的重启按钮）。
  * 关闭「标签运行状态」设置后不显示运行中和新结果，退回空闲点；已退出与待恢复不受影响。
  */
 export default function TerminalStatusMark({
@@ -41,9 +41,13 @@ export default function TerminalStatusMark({
     const label = t('切换到项目后恢复')
     return (
       <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
-        <span role="img" aria-label={label} data-terminal-awaiting-restore={terminalId} className="flex text-term-list-meta">
-          <CircleDashed size={10} strokeWidth={2.25} aria-hidden="true" />
-        </span>
+        {/* 与已退出同为空心圈：虚线圈在小尺寸下发糊；两者靠行尾（已退出才有重启与「已退出」）区分。 */}
+        <span
+          role="img"
+          aria-label={label}
+          data-terminal-awaiting-restore={terminalId}
+          className="block h-[7px] w-[7px] rounded-full border-[1.5px] border-term-list-meta"
+        />
       </Tooltip>
     )
   }
