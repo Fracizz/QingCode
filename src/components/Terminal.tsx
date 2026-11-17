@@ -810,6 +810,9 @@ export default function TerminalView({
       fontWeightBold: '600',
       minimumContrastRatio: 4.5,
       scrollback: getTerminalScrollback(),
+      // xterm 按整行渲染滚动位置；默认 0 时滚轮一格瞬间跳约 3 行，看起来一顿一顿。
+      // 加短动画让行逐帧过渡（与 VS Code 终端平滑滚动一致）；xterm 只对鼠标滚轮生效，触控板仍即时跟手。
+      smoothScrollDuration: 120,
       // WebGL/canvas: draw box/block glyphs ourselves so WebView2 font metrics
       // cannot stretch OpenCode ASCII banners.
       customGlyphs: true,
