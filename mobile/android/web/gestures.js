@@ -1,6 +1,7 @@
 // QingCode Android 的触摸手势：下拉刷新、底部弹层下滑关闭、快捷键长按连发。
 // 只处理 DOM 事件；阈值与阻尼等纯逻辑在 protocol.js。Vitest：src/lib/mobileAndroidGestures.test.ts。
 import { PULL_THRESHOLD, pullOffset, swipeRevealOffset, swipeRevealSettles } from './protocol.js';
+import { dragProbe } from './keyLayout.js';
 
 // 刷新结果在浮标上停留的时长：失败多留一会儿，让用户看清。
 const PULL_DONE_MS = 520;
@@ -374,6 +375,7 @@ export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, onHo
     drag = {
       row, pointerId, y, from, to: from, rows: all,
       mids: rects.map(rect => rect.top + rect.height / 2),
+      half: rects[from].height / 2,
       // 让位距离取被拖行的高度加行间距（含分隔线），行高不一时也准确；只有一行时不会让位。
       step: rects[from].height + (all.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0),
       // 被拖行不超出列表上下边界。
@@ -405,7 +407,8 @@ export function attachDragSort(list, { rowSelector, ignoreSelector, onDrop, onHo
     const offset = Math.max(drag.min, Math.min(drag.max, event.clientY - drag.y));
     if (Math.abs(event.clientY - drag.y) > slop) drag.moved = true;
     drag.row.style.transform = `translateY(${offset}px)`;
-    drag.to = targetIndex(drag.mids, drag.from, drag.mids[drag.from] + offset);
+    // 用行的前缘判断落点（见 keyLayout.js 的 dragProbe），拖到列表边界时能落到第一位 / 最后一位。
+    drag.to = targetIndex(drag.mids, drag.from, dragProbe(drag.mids[drag.from], offset, drag.half));
     for (const [index, item] of drag.rows.entries()) {
       if (index === drag.from) continue;
       const shift = index > drag.from && index <= drag.to ? -drag.step : index < drag.from && index >= drag.to ? drag.step : 0;

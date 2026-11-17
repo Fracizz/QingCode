@@ -77,6 +77,14 @@ export function moveKeyTo(layout, key, index) {
  * 拖动中的落点：mids 为拖动开始时各行中线的 Y，center 为被拖行当前中线。
  * 越过相邻行的中线才换位，返回松手后应插入的位置。
  */
+/**
+ * 拖动排序的落点探测点：上拖取被拖行上边、下拖取下边、未移动取中心。
+ * 被拖行夹在列表边界内，用中心点时拖到顶 / 底恰好与首 / 末行中线重合、不算越过，到不了第一位和最后一位。
+ */
+export function dragProbe(mid, offset, half) {
+  return mid + offset + (offset < 0 ? -half : offset > 0 ? half : 0);
+}
+
 export function dragTargetIndex(mids, from, center) {
   let to = from;
   while (to < mids.length - 1 && center > mids[to + 1]) to++;

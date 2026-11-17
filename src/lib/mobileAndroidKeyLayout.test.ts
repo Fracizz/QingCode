@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   SHORTCUT_KEYS,
   defaultKeyLayout,
+  dragProbe,
   dragTargetIndex,
   isDefaultKeyLayout,
   moveKey,
@@ -72,6 +73,18 @@ describe('Android shortcut bar layout', () => {
     expect(dragTargetIndex(mids, 1, 400)).toBe(3)
     expect(dragTargetIndex(mids, 2, 24)).toBe(0)
     expect(dragTargetIndex(mids, 2, 76)).toBe(2)
+  })
+
+  it('dragging to the list edge reaches the first and last slot', () => {
+    // 四行各高 50，列表 0~200；被拖行夹在列表内，拖到顶时中心 25 恰好等于首行中线。
+    const mids = [25, 75, 125, 175]
+    expect(dragTargetIndex(mids, 2, mids[2] - 100)).toBe(1)
+    expect(dragTargetIndex(mids, 2, dragProbe(mids[2], -100, 25))).toBe(0)
+    expect(dragTargetIndex(mids, 1, dragProbe(mids[1], 100, 25))).toBe(3)
+    // 越过邻行一半才让位，未移动时停在原位。
+    expect(dragTargetIndex(mids, 2, dragProbe(mids[2], -24, 25))).toBe(2)
+    expect(dragTargetIndex(mids, 2, dragProbe(mids[2], -26, 25))).toBe(1)
+    expect(dragProbe(125, 0, 25)).toBe(125)
   })
 
   it('hidden keys leave the bar but stay reachable in More, in order', () => {
