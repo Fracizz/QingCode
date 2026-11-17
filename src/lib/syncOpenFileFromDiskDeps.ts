@@ -40,6 +40,8 @@ export function createDefaultSyncOpenFileDeps(): SyncOpenFileDeps {
     reloadFromDisk: (id, content, mtime) =>
       useEditorStore.getState().reloadFromDisk(id, content, mtime),
     notifyViewChanged: tab => {
+      // 图片预览随 diskMtime 自动重新加载，用户直接就能看到新图；再弹提示只会在批量重写截图时刷屏。
+      if (tab.viewMode === 'image') return
       const { projects, pushToast } = useProjectStore.getState()
       pushToast(
         'info',
