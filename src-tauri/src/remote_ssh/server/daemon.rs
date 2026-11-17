@@ -1208,14 +1208,23 @@ async fn open_daemon_channel_with(
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
     if let Some(config) = manager.direct_config(connection_id) {
-        return open_direct_daemon_channel(
-            &config,
-            connection_id,
-            &manager.daemon_client_id(connection_id),
-            daemon,
-            policy,
-        )
-        .await;
+        let client_id = manager.daemon_client_id(connection_id);
+        let result =
+            open_direct_daemon_channel(&config, connection_id, &client_id, daemon, policy).await;
+        // 服务更新/换绑结束时会关闭该连接上的全部网络流以强制重连；正在建立的
+        // 打开流程不应因此失败。连接仍处于打开状态时按最新配置重试一次。
+        let retry = match &result {
+            Err(error) if error == super::super::direct::CLOSED_BY_CONFIG_ERROR => manager
+                .direct_config(connection_id)
+                .filter(|_| manager.connection_is_open(connection_id)),
+            _ => None,
+        };
+        return match retry {
+            Some(config) => {
+                open_direct_daemon_channel(&config, connection_id, &client_id, daemon, policy).await
+            }
+            None => result,
+        };
     }
     let channel = manager
         .open_session_channel(connection_id, "server 守护进程 ")

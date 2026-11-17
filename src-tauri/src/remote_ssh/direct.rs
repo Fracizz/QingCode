@@ -268,6 +268,10 @@ impl Transport for TcpStream {
 impl Transport for russh::ChannelStream<russh::client::Msg> {}
 pub(super) type ServerStream = TlsStream<Box<dyn Transport>>;
 
+/// 连接中途被 [`close_connection`] 取消时的错误。它表示“按当前配置重连”，不是拨号失败。
+pub(super) const CLOSED_BY_CONFIG_ERROR: &str =
+    "[direct:unreachable] Server 连接已由当前连接配置关闭";
+
 type ActiveStreams = Mutex<HashMap<(String, String), Vec<Weak<tokio::sync::Notify>>>>;
 static ACTIVE_STREAMS: OnceLock<ActiveStreams> = OnceLock::new();
 
@@ -783,7 +787,7 @@ pub(super) async fn open_stream_for(
         retry_timeout_once(|| async { connect_once().await.map_err(|_| timeout_error())? });
     let socket = tokio::select! {
         result = connect => result?,
-        _ = cancelled.notified() => return Err("[direct:unreachable] Server 连接已由当前连接配置关闭".into()),
+        _ = cancelled.notified() => return Err(CLOSED_BY_CONFIG_ERROR.into()),
     };
     let (client, network) = tokio::io::duplex(256 * 1024);
     let tunnel = config.tunnel.is_some();
@@ -1497,12 +1501,15 @@ pub(super) mod tests {
             tokio::spawn(async move { open_stream_for(&config, "pending-profile").await });
         let (_socket, _) = listener.accept().await.unwrap();
         close_connection(&address, "pending-profile");
-        assert!(tokio::time::timeout(Duration::from_secs(3), opening)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .starts_with("[direct:unreachable]"));
+        // daemon 通道按这条精确错误识别“需按新配置重连”并重试，见 open_daemon_channel_with。
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), opening)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err(),
+            CLOSED_BY_CONFIG_ERROR
+        );
     }
 
     #[tokio::test]
