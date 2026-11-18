@@ -10,9 +10,10 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!-- Online update: hands a downloaded, signature-checked QingCode APK to the system installer after user confirmation. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Background alerts: requested only after the user turns them on in terminal settings. -->
+    <!-- Requested when the user enables background alerts or starts a project file download. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application
@@ -48,5 +49,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Watches terminal sessions on a paired computer and alerts when a running program stops." />
         </service>
+        <service
+            android:name=".FileDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

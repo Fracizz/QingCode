@@ -56,6 +56,8 @@
     fileTruncated: false,
     fileDownloads: [],
     fileDownload: null,
+    fileDownloadStatus: null,
+    fileDownloadVisible: true,
     fileDownloadDelay: 100,
     fileDownloadError: null,
     capabilityRequests: 0,
@@ -353,6 +355,7 @@
   async function perform(request) {
     switch (request.op) {
       case 'file_download_location': return { ok: true, data: 'Download/QingCode' }
+      case 'file_download_status': return { ok: true, data: state.fileDownloadStatus }
       case 'file_download': {
         if (state.fileDownload) return { ok: false, error: '已有文件正在下载，请先完成或取消。' }
         const stat = await remote(request.profile, { op: 'file_stat', project: request.project, path: request.path, hidden: true })
@@ -360,14 +363,21 @@
         if (request.version && request.version !== stat.data.version) return { ok: false, error: '源文件已变化，请刷新后重试。' }
         const duplicates = state.fileDownloads.filter(item => item.path === request.path).length
         const name = duplicates ? stat.data.name.replace(/(\.[^.]+)?$/, ` (${duplicates})$1`) : stat.data.name
-        const task = { profile: request.profile, project: request.project, path: request.path,
+        const task = { id: String(state.fileDownloads.length + 1), profile: request.profile, project: request.project, path: request.path,
+          hostName: state.profiles.get(request.profile)?.name, projectName: request.projectName,
           name, location: 'Download/QingCode/' + name, total: stat.data.size, received: 0 }
         state.fileDownloads.push({ ...task })
         state.fileDownload = task
-        const event = (phase, extra = {}) => window.qingFileDownload?.({ ...task, state: phase, ...extra })
+        const event = (phase, extra = {}) => {
+          const revision = (state.fileDownloadStatus?.revision ?? 0) + 1
+          const snapshot = { ...task, state: phase, revision, ...extra }
+          state.fileDownloadStatus = snapshot
+          if (state.fileDownloadVisible) window.qingFileDownload?.(snapshot)
+          return snapshot
+        }
+        const started = event('preparing')
         setTimeout(async () => {
           if (state.fileDownload !== task) return
-          event('preparing')
           for (let step = 1; step <= 4; step++) {
             await new Promise(resolve => setTimeout(resolve, state.fileDownloadDelay))
             if (state.fileDownload !== task) return
@@ -378,12 +388,15 @@
           if (state.fileDownloadError) event('error', { message: state.fileDownloadError })
           else event('done')
         }, 30)
-        return { ok: true, data: { started: true } }
+        return { ok: true, data: started }
       }
       case 'file_download_cancel': {
         const task = state.fileDownload
-        state.fileDownload = null
-        if (task) window.qingFileDownload?.({ ...task, state: 'canceled' })
+        if (task?.id === request.id) {
+          state.fileDownload = null
+          state.fileDownloadStatus = { ...task, state: 'canceled', revision: state.fileDownloadStatus.revision + 1 }
+          if (state.fileDownloadVisible) window.qingFileDownload?.(state.fileDownloadStatus)
+        }
         return { ok: true, data: true }
       }
       case 'profiles': return { ok: true, data: [...state.profiles.values()].map(summary) }
