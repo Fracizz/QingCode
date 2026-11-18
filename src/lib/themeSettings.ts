@@ -6,12 +6,13 @@ export type ResolvedTheme = 'dark' | 'light' | 'ink' | 'olive'
 
 export const DEFAULT_THEME: AppTheme = 'dark'
 
+// 三套深色系相邻，其后浅色；「跟随系统」不是具体配色，放在最后。手机端设置页按同一顺序展示。
 export const THEMES: { label: string; value: AppTheme; hint: string }[] = [
   { label: '深色', value: 'dark', hint: '常驻深色' },
   { label: '石墨灰', value: 'ink', hint: '深色灰阶分层，细线分割' },
   { label: '护眼绿', value: 'olive', hint: '低饱和柔和绿（长时间阅读不刺眼）' },
-  { label: '跟随系统', value: 'auto', hint: '随操作系统明暗自动切换' },
   { label: '浅色', value: 'light', hint: '常驻浅色' },
+  { label: '跟随系统', value: 'auto', hint: '随操作系统明暗自动切换' },
 ]
 
 function systemPrefersDark(): boolean {

@@ -126,13 +126,15 @@
   --divider: #dedfe2;
   --ink: #111827;
   --muted: #4b5563;
-  --accent: #1d4ed8;
+  /* 强调色与深色主题同为品牌青绿，取电脑端浅色品牌色（#0d9488）的加深一档，
+     保证白底、淡青底上的小字和实心按钮白字均 ≥ 4.5:1；淡青选中底与电脑端浅色当前项一致。 */
+  --accent: #0f766e;
   --accent-ink: #ffffff;
-  --accent-surface: #e8efff;
-  --accent-pressed: #dce7ff;
-  --accent-border: #7d99dd;
-  --accent-fill-pressed: #1e40af;
-  --accent-halo: #2563eb26;
+  --accent-surface: #e6f4f1;
+  --accent-pressed: #dbefea;
+  --accent-border: #5ba497;
+  --accent-fill-pressed: #115e59;
+  --accent-halo: #0d948826;
   --glow: #0d948824;
   --glow-soft: #0d94880d;
   --error: #b91c34;

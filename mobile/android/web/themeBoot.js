@@ -1,7 +1,7 @@
 // 在 <head> 同步加载，首帧前恢复主题。设置页与系统外观变化共用同一套解析逻辑。
 (function () {
   const key = 'qingcode:mobile:theme';
-  const themes = ['dark', 'ink', 'olive', 'auto', 'light'];
+  const themes = ['dark', 'ink', 'olive', 'light', 'auto'];
   const root = document.documentElement;
   const native = window.QingCodeNative;
   // Android WebView 的媒体查询取 Activity 主题，系统明暗由原生配置提供。
