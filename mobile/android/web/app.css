@@ -1023,7 +1023,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-head.session-group-head-home { align-items: center; gap: 2px; padding: 0; }
 .session-group-open { display: flex; flex: 1; min-width: 0; align-items: center; justify-content: flex-start; gap: 6px; padding: 0 6px 0 8px; color: inherit; font: inherit; text-align: left; }
 .session-group-open:disabled { opacity: 1; }
-.session-group-open .session-group-enter-icon { flex: none; width: 14px; height: 14px; margin-inline-start: auto; }
+.session-group-open .session-group-summary { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
+.session-group-context { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
+.session-group-context .project-source-chip { max-width: min(12em, 100%); }
+.session-group-open-label { padding: 0; white-space: nowrap; }
 .session-group-head-home .session-group-add { color: var(--accent); }
 .session-group-head-home .session-group-add svg { width: 18px; height: 18px; }
 /* 侧栏组头：点按折叠，长按拖动排序，右侧常驻新建与项目操作。 */

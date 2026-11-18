@@ -134,19 +134,41 @@ try {
     fixture.addSession({ project: 'removed', projectInfo: { id: 'removed', name: '已移除的测试项目', kind: 'local' } });
     window.__homeCreates = fixture.state.creates.length`)
   run('click', '#dashboard-nav [data-page="home"]')
-  check('home project name and add button fit at 320px', `(() => {
+  check('the open project label and plus align without clipping at 320px', `(() => {
     const group = document.querySelector('${winGroup}');
     if (!group || document.querySelector('#home-sessions').hidden) return false;
-    const enter = group.querySelector('.session-group-open').getBoundingClientRect();
+    const enter = group.querySelector('.session-group-open');
+    const label = group.querySelector('.session-group-open-label');
+    const labelRect = label.getBoundingClientRect();
     const add = group.querySelector('.session-group-add').getBoundingClientRect();
-    return enter.height >= 44 && add.width >= 44 && add.height >= 44 && enter.right <= add.left && add.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
+    const center = rect => (rect.top + rect.bottom) / 2;
+    return label.textContent === '打开项目' && label.scrollWidth === label.clientWidth &&
+      getComputedStyle(label).color === getComputedStyle(document.querySelector('#home-all-projects')).color &&
+      enter.offsetHeight >= 44 && add.width >= 44 && add.height >= 44 && Math.abs(center(labelRect) - center(add)) < 1 &&
+      labelRect.right <= add.left && add.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
   })()`)
-  check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-add').hidden`)
+  check('the session count stays with a long source when they wrap under the project name', `(() => {
+    const group = document.querySelector('#home-session-overview .session-group[data-project="wsl-remote"]');
+    if (!group) return false;
+    const name = group.querySelector('strong').getBoundingClientRect();
+    const source = group.querySelector('.project-source-chip').getBoundingClientRect();
+    const count = group.querySelector('.session-group-count').getBoundingClientRect();
+    return name.bottom <= source.top && source.top < count.bottom && count.top < source.bottom && source.right < count.left;
+  })()`)
+  check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-open-label').hidden && document.querySelector('${removed} .session-group-add').hidden`)
   run('screenshot', resolve(directory, 'home-project-actions-320.png'))
+  run('eval', `document.querySelector('#app-language [data-locale="en"]').click()`)
+  check('English action stays readable on a narrow screen', `(() => {
+    const label = document.querySelector('${winGroup} .session-group-open-label');
+    const source = document.querySelector('${winGroup} .project-source-chip');
+    return label.textContent === 'Open project' && label.scrollWidth === label.clientWidth &&
+      source.textContent === 'WinDev' && source.scrollWidth === source.clientWidth && document.documentElement.scrollWidth <= innerWidth;
+  })()`)
+  run('eval', `document.querySelector('#app-language [data-locale="zh"]').click()`)
   run('click', '#home-sessions .overview-manage')
-  check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-add').hidden`)
+  check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-open-label').hidden && document.querySelector('${winGroup} .session-group-add').hidden`)
   run('click', '#home-sessions .overview-manage')
-  run('click', `${winGroup} .session-group-open`)
+  run('click', `${winGroup} .session-group-open-label`)
   check('the header opens the existing session in the matching project', `${ready} && document.querySelector('#terminal-host').textContent === 'django · WinDev' && localStorage.getItem('qingcode:mobile:session:192.168.1.8:48764:win-remote') === window.__winSession && window.__mobileFixture.state.creates.length === window.__homeCreates`)
 
   run('click', '#terminal-menu')

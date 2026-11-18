@@ -245,7 +245,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     source.className = 'session-group-source';
     const count = document.createElement('span');
     count.className = 'session-group-count';
-    const summary = [icon('folder', 'session-group-icon'), name, source, count];
+    const folder = icon('folder', 'session-group-icon');
     if (groupTools) {
       // 触屏没有悬停：新建和项目操作常驻，点组头其余区域折叠；没有会话的项目无可折叠内容。
       head.classList.add('session-group-head-tools');
@@ -260,7 +260,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       const badge = document.createElement('span');
       badge.className = 'session-group-badge';
       badge.append(count, icon('chevron-down', 'session-group-chevron'));
-      toggle.append(icon('folder', 'session-group-icon'), name, source, attention, badge);
+      toggle.append(folder, name, source, attention, badge);
       const add = button('icon-button session-group-add', () => groupTools.add(renderedGroups.get(projectId).project));
       add.append(icon('plus'));
       const actions = button('icon-button session-group-more', () => groupTools.menu(renderedGroups.get(projectId).project));
@@ -269,13 +269,21 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     } else if (projectActions) {
       head.classList.add('session-group-head-home');
       const enter = button('session-group-open', () => projectActions.open(renderedGroups.get(projectId).project));
-      enter.append(...summary, icon('chevron', 'session-group-enter-icon'));
+      const summary = document.createElement('span');
+      summary.className = 'session-group-summary';
+      const context = document.createElement('span');
+      context.className = 'session-group-context';
+      context.append(source, count);
+      summary.append(name, context);
+      const label = document.createElement('span');
+      label.className = 'text-button session-group-open-label';
+      enter.append(folder, summary, label);
       const add = button('icon-button session-group-add', () => projectActions.add(renderedGroups.get(projectId).project));
       add.setAttribute('aria-haspopup', 'dialog');
       add.append(icon('plus'));
       head.append(enter, add);
     } else {
-      head.append(...summary);
+      head.append(folder, name, source, count);
     }
     const rows = document.createElement('div');
     rows.className = 'rows session-group-rows';
@@ -330,8 +338,10 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const unavailable = selecting || group.missing;
     const enter = node.querySelector('.session-group-open');
     enter.disabled = busy || unavailable;
-    enter.setAttribute('aria-label', t('进入项目 {name}', { name: title }));
-    enter.querySelector('.session-group-enter-icon').toggleAttribute('hidden', unavailable);
+    enter.setAttribute('aria-label', t('打开项目 {name}', { name: title }));
+    const label = enter.querySelector('.session-group-open-label');
+    label.textContent = t('打开项目');
+    label.hidden = unavailable;
     const add = node.querySelector('.session-group-add');
     add.hidden = unavailable;
     add.disabled = busy;
