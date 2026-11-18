@@ -21,7 +21,7 @@ import org.json.JSONObject;
 final class OutputStreams implements AutoCloseable {
     interface Sink {
         /** 收到一帧（`{"ok":…}` 整行）。同一推送的帧按到达顺序回调。 */
-        void frame(int id, JSONObject frame);
+        void frame(int id, JSONObject frame, Runnable delivered);
         /** 推送结束：正常结束为 ok:true，网络或电脑端错误为 ok:false。之后不再回调。 */
         void end(int id, JSONObject result);
         /** 网络异常转成给网页的失败结果。 */
@@ -39,6 +39,7 @@ final class OutputStreams implements AutoCloseable {
     private final ThreadPoolExecutor cancellation = new ThreadPoolExecutor(0, 2, 30,
         TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<Runnable>());
     private final Map<Integer, Stream> streams = new ConcurrentHashMap<>();
+    private final OutputFrameWindow frames = new OutputFrameWindow(4);
     private volatile boolean closed;
 
     void start(int id, MainActivity.Connection connection, byte[] body, Sink sink) {
@@ -92,6 +93,7 @@ final class OutputStreams implements AutoCloseable {
 
         void cancel() {
             finish(failure("请求已取消。"));
+            frames.wakeCancelled();
             disconnect();
         }
 
@@ -155,7 +157,15 @@ final class OutputStreams implements AutoCloseable {
             if (line.size() > MAX_LINE) throw new IOException("Windows 响应过大。");
             if (line.size() > 0 && !done.get()) {
                 // 重新序列化后再交给网页，与普通响应同样经过 JSON 解析。
-                sink.frame(id, new JSONObject(line.toString("UTF-8")));
+                JSONObject frame = new JSONObject(line.toString("UTF-8"));
+                if (frames.acquire(done::get)) {
+                    try {
+                        sink.frame(id, frame, frames::delivered);
+                    } catch (RuntimeException error) {
+                        frames.delivered();
+                        throw error;
+                    }
+                }
             }
             line.reset();
         }

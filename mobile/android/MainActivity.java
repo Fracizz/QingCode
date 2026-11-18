@@ -94,9 +94,18 @@ public final class MainActivity extends Activity {
     private final NativeRequests requests = new NativeRequests();
     private final OutputStreams streams = new OutputStreams();
     private final OutputStreams.Sink streamSink = new OutputStreams.Sink() {
-        @Override public void frame(int id, JSONObject frame) {
+        @Override public void frame(int id, JSONObject frame, Runnable delivered) {
             runOnUiThread(() -> {
-                if (view != null) view.evaluateJavascript("window.qingStream&&window.qingStream(" + id + "," + frame + ")", null);
+                if (view == null) {
+                    delivered.run();
+                    return;
+                }
+                try {
+                    view.evaluateJavascript("window.qingStream&&window.qingStream(" + id + "," + frame + ")", ignored -> delivered.run());
+                } catch (RuntimeException error) {
+                    streams.cancel(id);
+                    delivered.run();
+                }
             });
         }
         @Override public void end(int id, JSONObject result) {

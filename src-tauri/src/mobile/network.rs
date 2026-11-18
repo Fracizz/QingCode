@@ -351,7 +351,8 @@ pub(super) fn stream_line(result: Result<Value, String>) -> (Bytes, bool) {
     let (line, more) = match result {
         // 被断开、被接管的答复没有 `next`，推送到这里结束，由手机按答复处理。
         Ok(data) => {
-            let more = data.get("next").and_then(Value::as_u64).is_some();
+            let exited = !data["exit"].is_null();
+            let more = data["next"].is_u64() && (!exited || data["more"] == true);
             (json!({ "ok": true, "data": data }), more)
         }
         Err(error) => (json!({ "ok": false, "error": error }), false),

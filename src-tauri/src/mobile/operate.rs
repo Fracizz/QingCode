@@ -220,13 +220,8 @@ pub(super) async fn operate(
         } => attach(app, device, id, take, shared, observe, rejoin).await,
         Operation::Exclusive { id, on, force } => {
             let _control = app.state::<MobileState>().lock_control(&id).await;
-            if let Some((cols, rows)) =
-                hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?
-            {
-                let kind = hub.session_kind(&id)?;
-                apply_resize(app, kind, &id, cols, rows).await?;
-            }
-            emit_control(app, &id);
+            let resize = hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?;
+            finish_device_claim(app, &id, device, resize).await?;
             Ok(Value::Null)
         }
         Operation::LockSize { id, locked } => {
@@ -487,9 +482,38 @@ pub(super) async fn attach(
         }
     }
     let _control = app.state::<MobileState>().lock_control(&id).await;
-    let reply = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
-    emit_control(app, &id);
-    Ok(reply)
+    let claim = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
+    finish_device_claim(app, &id, device, claim.resize).await?;
+    Ok(claim.reply)
+}
+
+/// 调用方持有终端控制锁。即使 PTY 改尺寸失败也发布已变更的控制权，
+/// 并让手机重报相同行列时可以重试。
+async fn finish_device_claim(
+    app: &AppHandle,
+    id: &str,
+    device: &str,
+    resize: Option<(u16, u16)>,
+) -> Result<(), String> {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let result = if let Some((cols, rows)) = resize {
+        match hub.session_kind(id) {
+            Ok(kind) => apply_resize(app, kind, id, cols, rows).await,
+            Err(error) => Err(error),
+        }
+    } else {
+        Ok(())
+    };
+    if result.is_err() {
+        hub.with_session(id, |session| {
+            session
+                .sharing
+                .sizes
+                .remove(&Controller::Device(device.into()));
+        });
+    }
+    emit_control(app, id);
+    result
 }
 
 /// 结束手机会话；已退出的会话直接移除。手机端与电脑端「终端管理」共用。

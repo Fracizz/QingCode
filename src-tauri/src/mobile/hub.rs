@@ -2,6 +2,11 @@
 
 use super::*;
 
+pub(super) struct ClaimResult {
+    pub(super) reply: Value,
+    pub(super) resize: Option<(u16, u16)>,
+}
+
 pub(super) fn prune(attempts: &mut VecDeque<Instant>, now: Instant) {
     while attempts
         .front()
@@ -449,6 +454,7 @@ impl Hub {
         observe: Option<bool>,
     ) -> Result<Value, String> {
         self.claim_rejoin(id, device, take, observe, None)
+            .map(|claim| claim.reply)
     }
 
     /// 同 `claim`；`rejoin == Some(false)`（手机网络出错后的自动重连）时，被「断开其他端」的设备
@@ -460,7 +466,7 @@ impl Hub {
         take: bool,
         observe: Option<bool>,
         rejoin: Option<bool>,
-    ) -> Result<Value, String> {
+    ) -> Result<ClaimResult, String> {
         let mut inner = self.inner.lock().unwrap();
         require_device(&inner, device)?;
         let me = Controller::Device(device.to_string());
@@ -471,26 +477,30 @@ impl Hub {
         let observe = if take { Some(false) } else { observe };
         if session.sharing.is_kicked(device) {
             if rejoin == Some(false) && !take {
-                return Ok(json!({ "kicked": true, "takenOver": true, "by": DESKTOP_NAME }));
+                return Ok(ClaimResult {
+                    reply: json!({ "kicked": true, "takenOver": true, "by": DESKTOP_NAME }),
+                    resize: None,
+                });
             }
             // 被「断开其他端」后由用户重新打开：恢复正常接入。
             session.sharing.kicked.remove(device);
         }
         session.sharing.see_device(device, observe, Instant::now());
-        match session.sharing.check_writable(&me) {
-            Ok(()) => {}
+        let mut resize = None;
+        let reply = match session.sharing.check_writable(&me) {
+            Ok(()) => json!({ "lease": session.lease }),
             Err(InputRefusal::Exclusive(_)) if take => {
-                session.sharing.exclusive = Some(me);
-                session.lease += 1;
+                resize = session.take_exclusive(me);
                 session.changed.notify_waiters();
+                json!({ "lease": session.lease })
             }
             Err(InputRefusal::Exclusive(holder)) => {
                 let by = inner.controller_name(&holder);
-                return Ok(json!({ "takenOver": true, "by": by }));
+                json!({ "takenOver": true, "by": by })
             }
-            Err(InputRefusal::Observer) => return Ok(json!({ "observe": true })),
-        }
-        Ok(json!({ "lease": session.lease }))
+            Err(InputRefusal::Observer) => json!({ "observe": true }),
+        };
+        Ok(ClaimResult { reply, resize })
     }
 
     /// 打开或解除独占。`force` 允许抢下其他方的独占（电脑端「接管」、手机端「接管」）。
@@ -517,19 +527,12 @@ impl Hub {
             ));
         }
         let session = inner.live_mut(id).ok_or("终端不存在。")?;
-        let mut resize = None;
-        if on {
-            if session.sharing.size_owner != who {
-                resize = session.sharing.sizes.get(&who).copied();
-                session.sharing.size_owner = who.clone();
-            }
-            if session.sharing.exclusive.as_ref() != Some(&who) {
-                session.sharing.exclusive = Some(who);
-                session.lease += 1;
-            }
+        let resize = if on {
+            session.take_exclusive(who)
         } else {
             session.sharing.exclusive = None;
-        }
+            None
+        };
         session.changed.notify_waiters();
         Ok(resize)
     }

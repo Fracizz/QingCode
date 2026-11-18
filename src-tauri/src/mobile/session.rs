@@ -85,6 +85,22 @@ pub(super) struct Session {
 }
 
 impl Session {
+    /// 独占与接管共用同一次控制权、尺寸权变更，忽略尺寸锁。
+    pub(super) fn take_exclusive(&mut self, who: Controller) -> Option<(u16, u16)> {
+        let mut resize = None;
+        if self.sharing.size_owner != who {
+            if self.exit.is_none() {
+                resize = self.sharing.sizes.get(&who).copied();
+            }
+            self.sharing.size_owner = who.clone();
+        }
+        if self.sharing.exclusive.as_ref() != Some(&who) {
+            self.sharing.exclusive = Some(who);
+            self.lease += 1;
+        }
+        resize
+    }
+
     pub(super) fn new(project: Project, owner: String, number: u64) -> Self {
         let now_ms = unix_now_ms();
         let mut sharing = Sharing::new(Controller::Device(owner.clone()));

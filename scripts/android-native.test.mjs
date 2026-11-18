@@ -13,12 +13,15 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
   try {
     execFileSync(executable('javac'), ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-d', output,
       join(root, 'mobile/android/NativeRequests.java'), join(root, 'mobile/tests/NativeRequestsTest.java'),
+      join(root, 'mobile/android/OutputFrameWindow.java'), join(root, 'mobile/tests/OutputFrameWindowTest.java'),
       join(root, 'mobile/android/UpdatePolicy.java'), join(root, 'mobile/tests/UpdatePolicyTest.java'),
       join(root, 'mobile/android/WatchPolicy.java'), join(root, 'mobile/tests/WatchPolicyTest.java'),
       join(root, 'mobile/android/FileDownloadPolicy.java'), join(root, 'mobile/tests/FileDownloadPolicyTest.java')], { timeout: 30_000, windowsHide: true })
     const result = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.NativeRequestsTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
     assert.match(result, /7 native scheduler regressions passed/)
+    execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.OutputFrameWindowTest'],
+      { timeout: 20_000, windowsHide: true })
     const update = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.UpdatePolicyTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
     assert.match(update, /[1-9]\d* update policy regressions passed/)

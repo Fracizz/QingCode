@@ -513,6 +513,34 @@ fn taking_exclusive_also_takes_the_size_even_when_locked() {
 }
 
 #[test]
+fn attach_take_moves_the_locked_grid_only_when_it_takes_exclusive() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.device_resize("term-1", "phone", 50, 30).unwrap();
+    hub.set_size_lock("term-1", &Controller::Desktop, true)
+        .unwrap();
+    hub.set_exclusive("term-1", Controller::Desktop, true, false)
+        .unwrap();
+
+    let passive = hub
+        .claim_rejoin("term-1", "phone", false, None, None)
+        .unwrap();
+    assert_eq!(passive.reply["takenOver"], true);
+    assert_eq!(passive.resize, None);
+    let taken = hub
+        .claim_rejoin("term-1", "phone", true, None, None)
+        .unwrap();
+    assert_eq!(taken.resize, Some((50, 30)));
+    assert!(taken.reply["lease"].is_u64());
+    assert!(!hub.desktop_resize("term-1", 120, 40));
+    let repeated = hub
+        .claim_rejoin("term-1", "phone", true, None, None)
+        .unwrap();
+    assert_eq!(repeated.resize, None);
+    assert_eq!(repeated.reply, taken.reply);
+}
+
+#[test]
 fn restore_scan_runs_once_at_a_time_and_is_throttled() {
     let hub = handoff_hub();
     let start = Instant::now();
@@ -597,11 +625,12 @@ fn automatic_reattach_after_a_network_error_keeps_the_device_kicked() {
     hub.claim("term-1", "phone", false, None).unwrap();
     hub.kick_devices("term-1").unwrap();
     // 手机轮询出错后自动重连：拿到断开答复，仍不能输入，也不算在线。
-    let reply = hub
+    let claim = hub
         .claim_rejoin("term-1", "phone", false, None, Some(false))
         .unwrap();
-    assert_eq!(reply["kicked"], true);
-    assert_eq!(reply["takenOver"], true);
+    assert_eq!(claim.reply["kicked"], true);
+    assert_eq!(claim.reply["takenOver"], true);
+    assert_eq!(claim.resize, None);
     assert_eq!(
         hub.device_input("term-1", "phone", "a").unwrap_err(),
         KICKED
@@ -615,13 +644,15 @@ fn automatic_reattach_after_a_network_error_keeps_the_device_kicked() {
     // 用户主动打开终端（或旧版手机不带 rejoin）才恢复接入。
     assert!(hub
         .claim_rejoin("term-1", "phone", false, None, Some(true))
-        .unwrap()["lease"]
+        .unwrap()
+        .reply["lease"]
         .is_u64());
     assert!(hub.device_input("term-1", "phone", "b").is_ok());
     hub.kick_devices("term-1").unwrap();
     assert!(hub
         .claim_rejoin("term-1", "phone", false, None, None)
-        .unwrap()["lease"]
+        .unwrap()
+        .reply["lease"]
         .is_u64());
 }
 
@@ -1735,4 +1766,20 @@ fn stream_lines_are_newline_framed_and_stop_without_a_cursor() {
         serde_json::from_slice::<Value>(&line).unwrap(),
         json!({ "ok": false, "error": "终端不存在。" })
     );
+}
+
+#[test]
+fn stream_sends_the_final_exit_frame_after_all_output_pages() {
+    let exit = json!({ "exitCode": 0 });
+    for more in [true, false] {
+        let data = json!({ "chunks": ["tail"], "next": 10, "exit": exit, "more": more });
+        let (line, keep_streaming) = stream_line(Ok(data.clone()));
+        assert_eq!(keep_streaming, more);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&line).unwrap()["data"],
+            data
+        );
+    }
+    let (_, keep_streaming) = stream_line(Ok(json!({ "next": 10, "exit": null, "more": false })));
+    assert!(keep_streaming);
 }
