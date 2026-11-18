@@ -243,6 +243,35 @@ fn remote_target_valid(manager: &SshManager, remote: &RemoteTarget) -> bool {
 }
 
 impl PoolState {
+    // Keep at most one extra transient PTY while a reservation is waiting for its view.
+    fn refill_slots(&self, count: usize) -> usize {
+        let idle = self
+            .shells
+            .iter()
+            .filter(|s| s.reserved_at.is_none())
+            .count();
+        count
+            .saturating_sub(idle)
+            .min((count + 1).saturating_sub(self.shells.len()))
+    }
+
+    fn trim_idle(&mut self, target: &Target) {
+        let mut remaining = target.count;
+        self.shells.retain(|entry| {
+            if entry.key != target.key {
+                return false;
+            }
+            if let Some(at) = entry.reserved_at {
+                return at.elapsed() < RESERVATION_TTL;
+            }
+            if remaining == 0 || (entry.cwd != target.cwd && !entry.can_rebind()) {
+                return false;
+            }
+            remaining -= 1;
+            true
+        });
+    }
+
     fn prune_idle(&mut self) -> usize {
         let before = self.shells.len();
         self.shells.retain_mut(|entry| {
@@ -371,22 +400,18 @@ impl ShellPrewarmPool {
         };
         let changed = !same_transport
             || state.target.as_ref().is_none_or(|old| {
-                old.key != target.key || old.count != target.count || old.window != target.window
+                old.key != target.key
+                    || old.count != target.count
+                    || old.window != target.window
+                    || (target.remote.is_none()
+                        && target.launch.resolved_shell == "cmd"
+                        && old.cwd != target.cwd)
             });
         if changed {
             if !same_transport {
                 state.shells.clear();
             }
-            state.shells.retain(|entry| {
-                entry.key == target.key
-                    && entry
-                        .reserved_at
-                        .is_none_or(|at| at.elapsed() < RESERVATION_TTL)
-            });
-            state
-                .shells
-                .sort_by_key(|entry| entry.reserved_at.is_none());
-            state.shells.truncate(target.count);
+            state.trim_idle(&target);
             trace(
                 "configured",
                 serde_json::json!({"count": target.count, "remote":target.remote.is_some()}),
@@ -438,7 +463,11 @@ impl ShellPrewarmPool {
                     return Err(if state.target.is_none() {
                         "no_target"
                     } else {
-                        state.paused_reason.unwrap_or("empty")
+                        state.paused_reason.unwrap_or(if state.preparing {
+                            "preparing"
+                        } else {
+                            "empty"
+                        })
                     });
                 }
             }
@@ -488,6 +517,9 @@ impl ShellPrewarmPool {
         if state.shells.iter().any(|entry| entry.id == id) {
             if let Some(entry) = state.shells.iter_mut().find(|entry| entry.id == warm_id) {
                 entry.reserved_at = None;
+                if let Some(target) = state.target.clone() {
+                    state.trim_idle(&target);
+                }
             }
             return Err("id_in_use");
         }
@@ -518,7 +550,15 @@ impl ShellPrewarmPool {
             .filter(|entry| entry.reserved_at.is_none())
             .peekable();
         if idle_entries.peek().is_none() {
-            return Err("empty");
+            return Err(if state.shells.is_empty() {
+                if state.preparing {
+                    "preparing"
+                } else {
+                    "empty"
+                }
+            } else {
+                "all_reserved"
+            });
         }
         let entry = idle_entries
             .find(|entry| entry.key.host == key.host)
@@ -557,6 +597,7 @@ impl ShellPrewarmPool {
         };
         let entry = &mut state.shells[index];
         entry.reserved_at = Some(Instant::now());
+        self.2.notify_one();
         Ok(entry.id.clone())
     }
 
@@ -906,16 +947,12 @@ impl ShellPrewarmPool {
                     }
                 }
                 state.paused_reason = paused_reason;
-                let target_shells = state
-                    .shells
-                    .iter()
-                    .filter(|entry| entry.key == target.key)
-                    .count();
-                if paused_reason.is_some() || target_shells >= target.count {
+                let slots = state.refill_slots(target.count);
+                if paused_reason.is_some() || slots == 0 {
                     continue;
                 }
                 state.preparing = true;
-                target_shells + 1 < target.count
+                slots > 1
             };
             let started = Instant::now();
             let remote = target.remote.is_some();
@@ -932,6 +969,9 @@ impl ShellPrewarmPool {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.generation == generation {
                     state.preparing = false;
+                    if state.refill_slots(target.count) == 0 {
+                        continue;
+                    }
                     trace("ready", serde_json::json!({"remote": remote, "ms": ms}));
                     state.shells.push(entry);
                     if needs_another {

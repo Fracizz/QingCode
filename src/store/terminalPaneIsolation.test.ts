@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { safeInvoke } from '../lib/tauri'
+import { recentShellOpens } from '../lib/terminal/shellOpenDiagnostics'
 import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { ensureTerminalProfileTrust } from '../lib/terminal/terminalProfileTrust'
 import { getTerminalProfile } from '../lib/terminal/terminalProfiles'
@@ -9,14 +11,15 @@ import {
   terminalPaneOf,
   useTerminalStore,
 } from './terminalStore'
-import { PREWARM_SPAWN_FALLBACK_MS, setTerminalViewGrid } from './terminal/ptySizing'
+import { FAST_PTY_SPAWN_FALLBACK_MS, setTerminalViewGrid } from './terminal/ptySizing'
 
 vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/terminal/shellPrewarmSettings')>(),
   reservePrewarmedShell: vi.fn(async () => ({ reason: 'empty' })),
 }))
 
-vi.mock('../lib/tauri', () => ({
+vi.mock('../lib/tauri', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/tauri')>(),
   safeInvoke: vi.fn(async () => undefined),
   isTauri: () => false,
 }))
@@ -122,15 +125,33 @@ describe('terminal pane isolation', () => {
     await store.closeTerminal('warm-claude')
   })
 
-  it('reserves a remote prewarmed shell for a profile with a startup command', async () => {
-    const profile = { id: 'assistant', name: 'Claude', command: 'claude', shell: 'powershell' } as const
+  it.each(['claude', ''])('reserves a remote prewarmed shell for custom profile command %j', async command => {
+    const profile = { id: 'assistant', name: 'Custom', command, shell: 'powershell' } as const
     vi.mocked(getTerminalProfile).mockReturnValueOnce(profile)
     vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 'warm-remote' })
     vi.mocked(ensureTerminalProfileTrust).mockResolvedValueOnce(true)
     const path = 'ssh://conn/C:/work/proj'
     expect(await useTerminalStore.getState().addTerminal(path, 'p1')).toBe('warm-remote')
-    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), true)
+    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), !!command)
     await useTerminalStore.getState().closeTerminal('warm-remote')
+  })
+
+  it('reports the final claim result once and keeps it after tab closure', async () => {
+    const projectId = 'prewarm-history'
+    const path = 'ssh://conn/D:/work/proj'
+    const store = useTerminalStore.getState()
+    for (const prewarmHit of [true, false]) {
+      const id = `reserved-${prewarmHit}`
+      vi.mocked(reservePrewarmedShell).mockResolvedValueOnce({ id })
+      expect(await store.addTerminal(path, projectId)).toBe(id)
+      vi.mocked(safeInvoke).mockResolvedValueOnce({ prewarmHit })
+      await store.spawnPendingTerminal(id, 80, 24)
+      await store.spawnPendingTerminal(id, 80, 24)
+      await store.closeTerminal(id)
+    }
+    expect(recentShellOpens(projectId)).toMatchObject({
+      hit: { count: 1 }, miss: { count: 1 }, missReasons: { claim_fallback: 1 },
+    })
   })
 
   it('spawns a reserved prewarmed shell without waiting for a late fit', async () => {
@@ -147,16 +168,46 @@ describe('terminal pane isolation', () => {
       })
       vi.mocked(reservePrewarmedShell).mockClear().mockResolvedValueOnce({ id: 'warm-bg' })
       expect(await useTerminalStore.getState().addTerminal('ssh://conn/D:/work/proj', 'p1')).toBe('warm-bg')
-      await vi.advanceTimersByTimeAsync(PREWARM_SPAWN_FALLBACK_MS)
+      await vi.advanceTimersByTimeAsync(FAST_PTY_SPAWN_FALLBACK_MS)
       expect(spawn).toHaveBeenCalledWith('warm-bg', 150, 40)
 
       // 未领取到预热项时保持原来的 2.5s 兜底，等视图 fit 给出真实尺寸。
       spawn.mockClear()
       const cold = await useTerminalStore.getState().addTerminal('D:/proj', 'p1')
-      await vi.advanceTimersByTimeAsync(PREWARM_SPAWN_FALLBACK_MS)
+      await vi.advanceTimersByTimeAsync(FAST_PTY_SPAWN_FALLBACK_MS)
       expect(spawn).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(2500)
       expect(spawn).toHaveBeenCalledWith(cold, expect.any(Number), expect.any(Number))
+    } finally {
+      setTerminalViewGrid('sibling', null)
+      useTerminalStore.setState({ spawnPendingTerminal: original })
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['codex', 'claude'])('starts a cold %s profile while its view mounts', async command => {
+    vi.useFakeTimers()
+    const original = useTerminalStore.getState().spawnPendingTerminal
+    const spawn = vi.fn(async () => {})
+    try {
+      setTerminalViewGrid('sibling', { cols: 144, rows: 36 })
+      useTerminalStore.setState({
+        terminals: [tab('sibling', 'primary')], activeTerminalId: 'sibling', spawnPendingTerminal: spawn,
+      })
+      const profile = { id: command, name: command, command, shell: 'pwsh' } as const
+      vi.mocked(getTerminalProfile).mockReturnValueOnce(profile).mockReturnValueOnce(profile)
+      const store = useTerminalStore.getState()
+      const first = await store.addTerminal('D:/proj', 'p1', command)
+      setTerminalViewGrid('sibling', null)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(spawn).toHaveBeenCalledWith(first, 144, 36)
+      spawn.mockClear()
+      const second = await store.addTerminal('D:/proj', 'p1', command)
+      await vi.advanceTimersByTimeAsync(FAST_PTY_SPAWN_FALLBACK_MS - 1)
+      expect(spawn).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(spawn).toHaveBeenCalledWith(second, expect.any(Number), expect.any(Number))
     } finally {
       setTerminalViewGrid('sibling', null)
       useTerminalStore.setState({ spawnPendingTerminal: original })

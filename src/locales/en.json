@@ -2085,7 +2085,7 @@
     "该终端标签已关闭": "This terminal tab has been closed",
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",
-    "每条已连接且有受信任项目的 Windows Server 模式连接各自预热普通 PowerShell / CMD，本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，领取后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。": "Each connected Windows host in Server mode with a trusted project keeps its own pool of ordinary PowerShell or CMD terminals. Local Windows terminals have a separate pool and require reconnectable terminals. Auto keeps one per pool and refills after use. Choose 0 to disable or 1–8 per pool. Low local memory pauses local prewarming.",
+    "每条已连接且有受信任项目的 Windows Server 模式连接各自预热普通 PowerShell / CMD，本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。": "Each connected Windows host in Server mode with a trusted project keeps its own pool of ordinary PowerShell or CMD terminals. Local Windows terminals have a separate pool and require reconnectable terminals. Auto keeps one per pool and starts refilling on reservation. Choose 0 to disable or 1–8 per pool. Low local memory pauses local prewarming.",
     "自动（1 个）": "Auto (1)"
   }
 }

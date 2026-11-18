@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_TERMINAL_PROFILE,
   getDefaultTerminalProfile,
+  getPrewarmShell,
   getTerminalProfile,
   loadTerminalProfileSettings,
   saveTerminalProfileSettings,
@@ -41,6 +42,24 @@ describe('terminalProfiles defaultShell', () => {
     expect(loadTerminalProfileSettings().defaultShell).toBe(globalShell)
     expect(getTerminalProfile('default').shell).toBe(globalShell)
     expect(getDefaultTerminalProfile().shell).toBe(globalShell)
+  })
+
+  it.each([
+    ['pwsh', 'claude', 'pwsh'],
+    ['cmd', '', 'cmd'],
+    ['cmd', 'tool', 'powershell'],
+    ['wsl', '', 'powershell'],
+  ])('selects the prewarm shell for a default %s profile with command %j', (shell, command, expected) => {
+    vi.stubGlobal('navigator', { userAgent: 'Windows' })
+    try {
+      localStorage.setItem(TERMINAL_PROFILES_KEY, JSON.stringify({
+        defaultProfileId: 'custom', defaultShell: 'powershell',
+        profiles: [{ id: 'custom', name: 'Custom', shell, command }],
+      }))
+      expect(getPrewarmShell()).toBe(expected)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('keeps custom profile shells independent of the global default', () => {

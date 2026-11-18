@@ -14,11 +14,11 @@ import { noteTerminalResize } from '@/lib/terminal/terminalProgramActivity'
 /** If xterm never reports a size (panel closed), spawn with defaults. */
 const PTY_SPAWN_FALLBACK_MS = 2500
 /**
- * 已领取预热 Shell 时的兜底等待：视图的 fit 在后台也会由计时器兜底（约 50ms，见
+ * 配置启动命令或已预留 Shell 时的兜底等待：视图的 fit 在后台也会由计时器兜底（约 50ms，见
  * frameOrTimeout），通常早于此触发；这里防的是视图未挂载等 fit 不来的情况，不让预热
  * 白等 2.5s。兜底时用同窗格终端的网格估计尺寸，视图 fit 后再按常规路径下发真实尺寸。
  */
-export const PREWARM_SPAWN_FALLBACK_MS = 100
+export const FAST_PTY_SPAWN_FALLBACK_MS = 100
 const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Last fitted size per tab — used when restarting before the next fit. */
 export const lastPtySize = new Map<string, { cols: number; rows: number }>()

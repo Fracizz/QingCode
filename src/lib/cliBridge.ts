@@ -26,7 +26,7 @@ import {
   runningTaskKeysForConfig,
   stopConfig,
 } from './runConfigRuntime'
-import { DEFAULT_TERMINAL_PROFILE, getEffectiveDefaultProfileId, loadTerminalProfileSettings, saveTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
+import { DEFAULT_TERMINAL_PROFILE, getEffectiveDefaultProfileId, getPrewarmShell, loadTerminalProfileSettings, saveTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
 import { forgetTerminalProfileTrust, isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
@@ -44,6 +44,7 @@ import {
 
 import { availableTerminalShells, detectTerminalHostPlatform, isTerminalShellId } from './terminal/terminalShell'
 import { loadScopedTerminalPersistLocalSessions } from './terminal/terminalPersistLocalSettings'
+import { recentShellOpens } from './terminal/shellOpenDiagnostics'
 import { loadShellPrewarmCount } from './terminal/shellPrewarmSettings'
 
 interface CliRequest {
@@ -467,10 +468,10 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
         if (!isProjectTrusted(project)) reason = 'untrusted'
         else if (configured === 0) reason = 'disabled'
         else if (project.ephemeral || (local && detectTerminalHostPlatform() !== 'win')) reason = 'unsupported_host'
-        else if (local && loadTerminalProfileSettings().defaultShell === 'wsl') reason = 'unsupported_shell'
+        else if (local && getPrewarmShell() === 'wsl') reason = 'unsupported_shell'
         else if (local && !await loadScopedTerminalPersistLocalSessions('project', project)) reason = 'persistence_disabled'
       }
-      return { project: projectSummary(project), configured, ...pool, reason }
+      return { project: projectSummary(project), configured, ...pool, reason, recent: recentShellOpens(project.id) }
     }
     case 'terminal.profiles': {
       const settings = loadTerminalProfileSettings()

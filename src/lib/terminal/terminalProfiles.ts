@@ -114,8 +114,7 @@ export function saveTerminalProfileSettings(settings: TerminalProfileSettings) {
   notifyShellPrewarmChanged()
 }
 
-export function getDefaultTerminalProfile(): TerminalProfile {
-  const settings = loadTerminalProfileSettings()
+export function getDefaultTerminalProfile(settings = loadTerminalProfileSettings()): TerminalProfile {
   const base =
     settings.profiles.find(profile => profile.id === settings.defaultProfileId) ??
     settings.profiles.find(profile => profile.id === DEFAULT_TERMINAL_PROFILE.id) ??
@@ -129,6 +128,14 @@ export function getDefaultTerminalProfile(): TerminalProfile {
   return base
 }
 
+/** 不能领取的默认配置仍为普通终端预热。 */
+export function getPrewarmShell(): TerminalShellId {
+  const settings = loadTerminalProfileSettings()
+  const profile = getDefaultTerminalProfile(settings)
+  return profile.shell === 'wsl' || (profile.shell === 'cmd' && profile.command.trim())
+    ? settings.defaultShell : profile.shell
+}
+
 export function getTerminalProfile(profileId?: string): TerminalProfile {
   const settings = loadTerminalProfileSettings()
   if (profileId) {
@@ -140,5 +147,5 @@ export function getTerminalProfile(profileId?: string): TerminalProfile {
       return found
     }
   }
-  return getDefaultTerminalProfile()
+  return getDefaultTerminalProfile(settings)
 }

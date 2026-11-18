@@ -1,3 +1,4 @@
+import { recordShellOpen } from '../lib/terminal/shellOpenDiagnostics'
 import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
 import { create } from 'zustand'
@@ -98,7 +99,7 @@ import {
   lastPtySize,
   markPtySizeChanged,
   planDeferredPtySync,
-  PREWARM_SPAWN_FALLBACK_MS,
+  FAST_PTY_SPAWN_FALLBACK_MS,
   preferredSpawnSize,
   rememberPtySize,
   schedulePtySpawnFallback,
@@ -315,7 +316,7 @@ function releaseIntentionalPtyKill(id: string) {
 }
 
 /**
- * 重启与新建同样从预热池领取，条件一致（远端：带启动命令或默认配置；本机：开启可接回）。
+ * 重启与新建同样从预热池领取，条件一致（远端：普通 Shell 或交互式配置；本机：开启可接回）。
  * 运行任务、带额外环境变量的配置和手机终端不领取。预留项改用原标签 id，标签身份不变。
  */
 async function reserveShellForRestart(tab: TerminalTab): Promise<TerminalTab['prewarm']> {
@@ -325,9 +326,7 @@ async function reserveShellForRestart(tab: TerminalTab): Promise<TerminalTab['pr
   const eligible = plan.mode !== 'script'
     && Object.keys(tab.env ?? {}).length === 0
     && !isMobileTerminalId(tab.id)
-    && (remote
-      ? !!startup || (tab.profileId ?? DEFAULT_TERMINAL_PROFILE.id) === DEFAULT_TERMINAL_PROFILE.id
-      : getTerminalPersistLocalSessions())
+    && (remote || getTerminalPersistLocalSessions())
   if (!eligible) return { outcome: 'miss', reason: 'restart' }
   const reservation = await reservePrewarmedShell(tab.cwd, tab.shell ?? null, !!startup, tab.id)
   return 'id' in reservation ? { outcome: 'reserved' } : { outcome: 'miss', reason: reservation.reason }
@@ -642,16 +641,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const profile = getTerminalProfile(profileId)
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
+    const openRequestedAt = performance.now()
     const shell = normalizeTerminalShell(profile.shell)
     const startup = profile.command.trim().replace(/\s*\n+\s*/g, '; ')
     const remote = projectPath.startsWith('ssh://')
     // 远端带命令的配置也可领取：仅远端 Windows 的 PowerShell 预热项支持，其余由后端按未命中返回。
-    const canReserve = remote
-      ? !!startup || profile.id === DEFAULT_TERMINAL_PROFILE.id
-      : getTerminalPersistLocalSessions()
+    const canReserve = remote || getTerminalPersistLocalSessions()
     const reservation = canReserve
       ? await reservePrewarmedShell(projectPath, shell, !!startup)
-      : { reason: remote ? 'remote_profile_unsupported' : 'persistence_disabled' }
+      : { reason: 'persistence_disabled' }
     if (terminalExitInProgress) return null
     const id = 'id' in reservation ? reservation.id : crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
@@ -667,6 +665,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const focusPane = get().terminalFocusPane
     // 新标签将替换的同窗格终端：兜底启动时按其网格估计尺寸。
     const paneSibling = readPaneTerminalId(get(), focusPane)
+    // 配置命令可与新视图挂载并行。先保存同窗格的实测尺寸，切换标签时旧视图可能卸载。
+    const startupGrid = startup && paneSibling ? terminalViewGrids.get(paneSibling) : undefined
     const tab: TerminalTab = {
       id,
       name: disambiguateTerminalName(
@@ -675,6 +675,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
       projectId,
       cwd: projectPath,
+      openRequestedAt,
       prewarm: 'id' in reservation ? { outcome: 'reserved' } : { outcome: 'miss', reason: reservation.reason },
       profileId: profile.id,
       shell,
@@ -697,14 +698,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
     useUIStore.getState().openTerminalPanel()
-    // 已领取预热 Shell 时不再等满 2.5s：窗口在后台时 fit 不会来，预热就白等了。
+    // 新视图先 fit 时会取消兜底。无可借用网格时给 fit 一小段时间，再启动配置命令。
+    const fastSpawnDelay = startupGrid ? 0 : FAST_PTY_SPAWN_FALLBACK_MS
     schedulePtySpawnFallback(
       id,
       () => {
-        const size = preferredSpawnSize(id, paneSibling)
+        const size = terminalViewGrids.get(id) ?? startupGrid ?? preferredSpawnSize(id, paneSibling)
         void get().spawnPendingTerminal(id, size.cols, size.rows)
       },
-      'id' in reservation ? PREWARM_SPAWN_FALLBACK_MS : undefined
+      startup || 'id' in reservation ? fastSpawnDelay : undefined
     )
     return id
   },
@@ -952,6 +954,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
                 ...terminal,
                 status: 'starting',
                 prewarm,
+                openRequestedAt: undefined,
                 endedAt: undefined,
                 restoreUnavailable: false,
                 exitCode: null,
@@ -1595,7 +1598,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     // Clear pending before await so concurrent fit callbacks do not double-spawn.
     set(s => ({
       terminals: s.terminals.map(terminal =>
-        terminal.id === id ? { ...terminal, ptySpawnPending: false } : terminal
+        terminal.id === id ? { ...terminal, ptySpawnPending: false, openRequestedAt: undefined } : terminal
       ),
     }))
     try {
@@ -1700,8 +1703,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       applyTerminalSpawnResult(id, spawnResult)
       // 新建按请求尺寸起进程、接回前也按它对齐过网格：紧随其后的 resize 同样要隔开。
       markPtySizeChanged(id)
-    const spawnedTab = get().terminals.find(terminal => terminal.id === id)
-    if (spawnedTab) recordTerminalDiagnostic('terminal.spawned', spawnedTab)
+      const spawnedTab = get().terminals.find(terminal => terminal.id === id)
+      if (spawnedTab) recordTerminalDiagnostic('terminal.spawned', spawnedTab)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id
@@ -1718,6 +1721,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             : terminal
         ),
       }))
+      if (tab.openRequestedAt !== undefined && !attached) {
+        const result = get().terminals.find(terminal => terminal.id === id)?.prewarm
+        if (result?.outcome === 'hit' || result?.outcome === 'miss') {
+          recordShellOpen(tab.projectId, result.outcome, performance.now() - tab.openRequestedAt, result.reason)
+        }
+      }
       // 先解除在途标记，补发的 resize/重绘才会真正下发。
       ptySpawnInFlight.delete(id)
       // 新建按 size 创建；接回按实测网格对齐，沿用 PTY 尺寸时本端不知道它的尺寸。

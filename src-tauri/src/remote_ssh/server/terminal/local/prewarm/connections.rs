@@ -204,7 +204,7 @@ mod tests {
             assert_eq!(pool.status(&project)["ready"], 2);
             assert_eq!(pool.reserve(&project, None, true).as_deref(), Ok("one"));
             assert_eq!(pool.reserve(&project, None, false).as_deref(), Ok("two"));
-            assert_eq!(pool.reserve(&project, None, false), Err("empty"));
+            assert_eq!(pool.reserve(&project, None, false), Err("all_reserved"));
         }
         assert_eq!(local.0.lock().unwrap().shells.len(), 2);
     }

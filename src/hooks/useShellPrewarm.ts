@@ -5,7 +5,7 @@ import { isTauri, safeInvoke } from '../lib/tauri'
 import { isProjectTrusted, WORKSPACE_TRUST_CHANGED_EVENT, WORKSPACE_TRUST_SYNCED_EVENT } from '../lib/workspaceTrust'
 import { loadShellPrewarmCount, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { loadEffectiveTerminalPersistLocalSessions } from '../lib/terminal/terminalPersistLocalSettings'
-import { loadTerminalProfileSettings, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminalProfiles'
+import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminalProfiles'
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
@@ -47,7 +47,7 @@ export function useShellPrewarm(project: Project | null) {
         const [count, persist] = await Promise.all([
           loadShellPrewarmCount(), local ? loadEffectiveTerminalPersistLocalSessions(local) : false,
         ])
-        const shell = loadTerminalProfileSettings().defaultShell
+        const shell = getPrewarmShell()
         if (stale()) return
         await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count)
       })().catch(() => {})

@@ -237,7 +237,7 @@ matching ID is supplied. It is not a partial patch.
 .\src-tauri\target\debug\qingcode.exe terminal close <id|name> --yes [--project ...]
 ```
 
-- Use `terminal prewarm status` before creating a tab. It reports the configured budget and this project's target, ready, preparing and reserved counts. A reason explains an inactive or paused pool.
+- Use `terminal prewarm status` before creating a tab. It reports the configured budget and this project's target, ready, preparing and reserved counts. A reason explains an inactive or paused pool. The recent field summarizes successful new tabs in this project from the last 100 in this window, with hit/miss counts, miss reasons and P50/P95 milliseconds to writable input after trust approval.
 - Create with `--wait` to wait for writable input (default 60 seconds). On timeout, keep the returned terminal ID. Run `terminal diagnostics <id>` in the same project to distinguish reserved, hit, miss and unknown outcomes. A miss carries a reason; older/restored tabs may have no observation.
 - Profile upsert takes JSON with name and command (use an empty string for a plain shell), optional shell and optional id. Supply the existing id to rename; otherwise a unique exact name is matched. Changing a command or shell clears the profile's execution trust. Removing the default profile restores the built-in default.
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's

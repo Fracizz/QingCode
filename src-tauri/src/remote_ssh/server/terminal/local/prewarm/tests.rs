@@ -221,6 +221,26 @@ fn stale_reservations_and_mismatched_launches_never_supply_a_shell() {
 }
 
 #[test]
+fn reservations_allow_one_extra_refill_and_survive_directory_changes() {
+    let mut state = PoolState::default();
+    let mut entry = fake_shell();
+    let mut target = target_for(&entry, 1);
+    target.cwd = OTHER_CWD.into();
+    entry.reserved_at = Some(Instant::now());
+    state.shells.push(entry);
+    assert_eq!(state.refill_slots(1), 1);
+    state.shells.push(with_id(fake_shell(), "old-idle"));
+    assert_eq!(state.refill_slots(1), 0);
+    state.trim_idle(&target);
+    assert_eq!(state.shells.len(), 1);
+    assert!(state.shells[0].reserved_at.is_some());
+    let mut second = with_id(fake_shell(), "second");
+    second.reserved_at = Some(Instant::now());
+    state.shells.push(second);
+    assert_eq!(state.refill_slots(1), 0);
+}
+
+#[test]
 fn only_the_owning_window_can_invalidate_the_shared_pool() {
     let pool = ShellPrewarmPool::default();
     let shell = fake_shell();
@@ -302,7 +322,7 @@ fn status_and_reservation_reasons_are_scoped_to_the_target() {
     pool.0.lock().unwrap().shells[0].reserved_at = None;
     pool.0.lock().unwrap().shells[0].startup_input = false;
     assert!(pool.reserve_key(&key, CWD, false).is_ok());
-    assert_eq!(pool.reserve_key(&key, CWD, false), Err("empty"));
+    assert_eq!(pool.reserve_key(&key, CWD, false), Err("all_reserved"));
     assert_eq!(pool.status("test")["reserved"], 1);
     assert_eq!(pool.status("test")["ready"], 0);
     pool.focus_window("main");
@@ -317,6 +337,9 @@ async fn claiming_a_shell_wakes_the_refill_loop_immediately() {
     let key = shell.key.clone();
     pool.0.lock().unwrap().shells.push(shell);
     assert!(pool.reserve_key(&key, CWD, false).is_ok());
+    tokio::time::timeout(Duration::from_millis(100), pool.2.notified())
+        .await
+        .expect("预留后未唤醒补充");
     assert!(pool.take_key("reserved-id", &key, CWD, true).is_some());
     // 许可在领取时即保留，补充循环稍后才开始等待也能立刻醒来。
     tokio::time::timeout(Duration::from_millis(100), pool.2.notified())

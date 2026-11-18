@@ -16,7 +16,7 @@ vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
   loadShellPrewarmCount: mocks.count,
 }))
 vi.mock('../lib/terminal/terminalPersistLocalSettings', () => ({ loadEffectiveTerminalPersistLocalSessions: mocks.persist }))
-vi.mock('../lib/terminal/terminalProfiles', () => ({ loadTerminalProfileSettings: () => ({ defaultShell: 'auto' }), TERMINAL_PROFILES_KEY: 'profiles' }))
+vi.mock('../lib/terminal/terminalProfiles', () => ({ getPrewarmShell: () => 'auto', TERMINAL_PROFILES_KEY: 'profiles' }))
 vi.mock('../lib/terminal/terminalShell', () => ({ detectTerminalHostPlatform: mocks.platform }))
 import { notifyShellPrewarmChanged, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { useShellPrewarm } from './useShellPrewarm'
