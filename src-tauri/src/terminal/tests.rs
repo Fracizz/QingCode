@@ -18,6 +18,60 @@ fn hosted_env_drops_values_the_daemon_rejects_and_applies_overlay_last() {
 }
 
 #[test]
+fn hosted_env_drops_agent_injected_values_from_base_but_keeps_profile_overlay() {
+    // QingCode 被 agent 远程拉起时会继承 CI / NO_COLOR，不能再传给新终端。
+    let base = [
+        ("PATH".to_string(), "base".to_string()),
+        ("CI".to_string(), "1".to_string()),
+        ("no_color".to_string(), "1".to_string()),
+        ("CLAUDECODE".to_string(), "1".to_string()),
+        (
+            "CLAUDE_CODE_GIT_BASH_PATH".to_string(),
+            "bash.exe".to_string(),
+        ),
+    ];
+    let overlay = HashMap::from([("NO_COLOR".to_string(), "1".to_string())]);
+    let env = hosted_env(base, overlay);
+    assert_eq!(env.get("CI"), None);
+    assert_eq!(env.get("no_color"), None);
+    assert_eq!(env.get("CLAUDECODE"), None);
+    assert_eq!(env.get("NO_COLOR").map(String::as_str), Some("1"));
+    assert_eq!(
+        env.get("CLAUDE_CODE_GIT_BASH_PATH").map(String::as_str),
+        Some("bash.exe")
+    );
+}
+
+#[test]
+fn inherited_env_is_scrubbed_and_color_capability_declared() {
+    let mut cmd = portable_pty::CommandBuilder::new("pwsh.exe");
+    cmd.env("CI", "1");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("CLAUDE_CODE_SESSION_ID", "s-1");
+    cmd.env("CLAUDE_CODE_GIT_BASH_PATH", "bash.exe");
+    cmd.env("TERM", "dumb");
+    super::prepare_inherited_env(&mut cmd);
+    let value = |name: &str| cmd.get_env(name).and_then(|value| value.to_str());
+    assert_eq!(value("CI"), None);
+    assert_eq!(value("NO_COLOR"), None);
+    assert_eq!(value("CLAUDE_CODE_SESSION_ID"), None);
+    assert_eq!(value("CLAUDE_CODE_GIT_BASH_PATH"), Some("bash.exe"));
+    assert_eq!(value("TERM"), Some("xterm-256color"));
+    assert_eq!(value("COLORTERM"), Some("truecolor"));
+}
+
+#[cfg(windows)]
+#[test]
+fn run_config_env_can_still_set_agent_style_variables() {
+    // 用户在运行配置里显式写的 NO_COLOR 是本意，叠加在清理之后。
+    let env = HashMap::from([("NO_COLOR".to_string(), "1".to_string())]);
+    let (cmd, _, _) = super::build_script_command("command", "echo hi", "", env, None).unwrap();
+    let value = |name: &str| cmd.get_env(name).and_then(|value| value.to_str());
+    assert_eq!(value("NO_COLOR"), Some("1"));
+    assert_eq!(value("TERM"), Some("xterm-256color"));
+}
+
+#[test]
 fn only_shells_the_daemon_accepts_are_hosted() {
     for shell in ["powershell", "pwsh", "cmd"] {
         assert!(hosted_shell_supported(shell));

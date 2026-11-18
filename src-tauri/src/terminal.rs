@@ -1110,6 +1110,40 @@ fn hosted_env_allowed(key: &str) -> bool {
         && !matches!(upper.as_str(), "TERM" | "COLORTERM")
 }
 
+/// agent 执行环境注入、只对 agent 自身有意义的变量。QingCode 被 agent 拉起时（例如
+/// agent-cli-x 远程装包后自动启动，或在 Claude Code 工具命令里启动）会继承这些变量；
+/// 如果原样传给新终端，`NO_COLOR` / `CI` 会让 Claude Code 等 TUI 关闭全部颜色，`CI`
+/// 还会让 pnpm 等工具进入 CI 模式，Claude Code 的会话标记则会被误认为嵌套会话。
+/// 只按名称精确剔除，不按前缀剔除，以免误删用户的全局配置（如 `CLAUDE_CODE_GIT_BASH_PATH`）。
+const AGENT_INJECTED_ENV: &[&str] = &[
+    "CI",
+    "NO_COLOR",
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
+
+fn is_agent_injected_env(key: &str) -> bool {
+    AGENT_INJECTED_ENV
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(key))
+}
+
+/// 进程内 PTY 的继承环境整理：剔除 agent 注入的变量，再和宿主 daemon 一样声明颜色能力。
+/// 必须在叠加运行配置 env 之前调用，用户显式配置的同名变量仍然生效。
+fn prepare_inherited_env(cmd: &mut CommandBuilder) {
+    for name in AGENT_INJECTED_ENV {
+        cmd.env_remove(name);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+}
+
 /// 宿主 daemon 在 Windows 上只接受这几种 Shell。
 fn hosted_shell_supported(shell_id: &str) -> bool {
     matches!(shell_id, "powershell" | "pwsh" | "cmd")
@@ -1117,11 +1151,13 @@ fn hosted_shell_supported(shell_id: &str) -> bool {
 
 /// 组装宿主 daemon 的环境：daemon 自身的环境是它启动时的旧快照，这里下发当前进程的
 /// 完整环境（再叠加配置环境），让新终端和进程内 PTY 看到同样的变量。
+/// 继承部分先剔除 agent 注入的变量；配置环境里显式写的同名变量保留。
 fn hosted_env(
     base: impl IntoIterator<Item = (String, String)>,
     overlay: HashMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
     base.into_iter()
+        .filter(|(key, _)| !is_agent_injected_env(key))
         .chain(overlay)
         .filter(|(key, value)| hosted_env_allowed(key) && !value.contains('\0'))
         .collect()
@@ -1167,6 +1203,7 @@ fn build_host_shell_command(
 ) -> Result<(CommandBuilder, ResolvedHostShell), String> {
     let resolved = resolve_host_shell(shell)?;
     let mut cmd = CommandBuilder::new(&resolved.program);
+    prepare_inherited_env(&mut cmd);
     for arg in &resolved.args {
         cmd.arg(arg);
     }
@@ -1188,6 +1225,7 @@ fn build_script_command(
 ) -> Result<(CommandBuilder, Option<ResolvedHostShell>, String), String> {
     let spec = resolve_script_command(shell_kind, target, cwd, env, host_shell)?;
     let mut cmd = CommandBuilder::new(&spec.program);
+    prepare_inherited_env(&mut cmd);
     for arg in &spec.args {
         cmd.arg(arg);
     }
