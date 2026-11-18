@@ -1,5 +1,5 @@
 // 工作台三页的渲染：连接列表、首页（当前电脑与最近项目）、项目列表。只读取状态，不发请求。
-import { groupProjectsByHost, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, projectSourceParts, recentProjects, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
+import { groupProjectsByHost, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, projectSourceParts, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
 import { get, icon, rowText, button, avatar } from './dom.js';
 import { attachLongPress, attachSwipeReveal } from './gestures.js';
 import { dateLocale, t } from './i18n.js';
@@ -21,10 +21,10 @@ function loadCollapsedGroups() {
 /**
  * state：profile、profiles、projects、loaded 的 getter 与 hostState(item)；resumeSession() 为「继续终端」对应的会话，
  * sessionCount(projectId) 为该项目未结束的会话数，latency() 为当前电脑的延迟文字；
- * lastProject() / projectHistory() 读手机记录；openProject 和 openNewSession 分别接回会话和打开新建终端选项。
+ * lastProject() 读手机记录；openProject 和 openNewSession 分别接回会话和打开新建终端选项。
  * pending() 返回 { list, attention, visible }：首页会话列表、「有新结果」标记与是否可显示；openSession(session) 接入会话。
  */
-export function createDashboardView({ state, lastProject, projectHistory, syncLatency, activate, openPair, openHost, openProject, openNewSession, openFiles, copyProjectPath, pending, openSession }) {
+export function createDashboardView({ state, lastProject, syncLatency, activate, openPair, openHost, openProject, openNewSession, openFiles, copyProjectPath, pending, openSession }) {
   const collapsedGroups = loadCollapsedGroups();
   let pendingExpanded = false;
 
@@ -85,7 +85,6 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
   function renderHome() {
     const profile = state.profile();
     const profiles = state.profiles();
-    const projects = state.projects();
     const recent = lastProject();
     const hostState = state.hostState(profile);
     const canResume = !!recent && hostState === 'online';
@@ -93,23 +92,14 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     get('browse-projects').hidden = !canResume;
     get('home-empty').hidden = canResume;
     get('home-footnote').hidden = profiles.length > 0;
-    // 在线状态已由顶栏电脑徽章表达，这里只说明离线、过期等需要处理的情况。
-    get('home-context').hidden = !profile || hostState === 'online';
-    get('home-context').dataset.state = hostState === 'expired' ? 'offline' : hostState;
-    get('home-context-name').textContent = profile?.name ?? '';
-    get('home-context-state').textContent = {
-      online: t('{n} 个已信任项目 · 可以打开终端', { n: projects.length }),
-      checking: t('正在读取项目…'), offline: t('电脑暂时不可达'), expired: t('配对已失效'), saved: t('等待连接'),
-    }[hostState];
-    get('home-reconnect').hidden = hostState !== 'offline';
+    // 连接状态由顶栏电脑徽章和下方状态卡表达，不再叠一张同义的提示卡，避免离线时出现两条一样的错误。
     if (canResume) renderResume();
-    const recentList = recentProjects(projects, projectHistory());
-    get('home-projects').hidden = hostState !== 'online' || !projects.length;
-    get('home-project-list').replaceChildren(...recentList.map(item => projectRow(item)));
-    get('home-recent-empty').hidden = recentList.length > 0;
     const homeStates = {
       checking: [t('正在连接电脑'), t('正在读取已信任的项目。'), t('查看连接')],
-      offline: [t('电脑暂时不可达'), t('检查手机和电脑的网络后重试。'), t('重新连接')],
+      // 连接被拒绝说明网络通但端口没人监听，绝大多数是电脑端 QingCode 还没打开，直接告诉用户该做什么。
+      offline: state.hostFailure(profile) === 'refused'
+        ? [t('电脑端 QingCode 未打开'), t('请在电脑上打开 QingCode，并确认已开启「Android 移动连接」，然后重新连接。'), t('重新连接')]
+        : [t('电脑暂时不可达'), t('检查手机和电脑的网络后重试。'), t('重新连接')],
       expired: [t('配对已失效'), t('请在电脑端重新启用 Android 移动连接。'), t('重新配对')],
       online: [t('打开终端'), t('选择已信任的项目，接回已有会话或启动 Shell。'), t('选择项目')],
       saved: profiles.length
@@ -184,12 +174,6 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     const label = count ? t('{n} 个会话', { n: count }) : '';
     if (badge.textContent !== label) badge.textContent = label;
     badge.hidden = !count;
-  }
-
-  function renderRecentProjectSessionCounts() {
-    for (const badge of get('home-project-list').querySelectorAll('.project-session-count')) {
-      updateProjectSessionCount(badge, badge.dataset.projectId);
-    }
   }
 
   /** grouped：所在主机已由分组标题说明，来源只留给读屏。 */
@@ -344,5 +328,5 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     renderPending();
   });
 
-  return { renderConnections, renderHome, renderProjects, renderAll, renderResume, renderConnectionStats, renderPending, renderRecentProjectSessionCounts };
+  return { renderConnections, renderHome, renderProjects, renderAll, renderResume, renderConnectionStats, renderPending };
 }

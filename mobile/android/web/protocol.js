@@ -184,8 +184,8 @@ function compareSessions({ pins = [], runningFirst = false, order = [] }) {
     || createdTime(b) - createdTime(a)
     || (b.number ?? 0) - (a.number ?? 0);
 }
-/** 会话纵览筛选：全部 / 未结束 / 已结束。 */
-export const OVERVIEW_FILTERS = ['all', 'live', 'exited'];
+/** 会话纵览筛选：未结束 / 已结束；都不选（filter 为 'all'）即显示全部。 */
+export const OVERVIEW_FILTERS = ['live', 'exited'];
 
 /** 纵览各筛选项的会话数。 */
 export function countSessionOverview(list) {
@@ -207,6 +207,7 @@ function createdTime(session) {
  * order（侧栏）：常驻项目的固定顺序。给出后切换项目不再改变分组位置，常驻项目没有会话时也显示空分组（筛选、搜索时除外）；
  * 只因电脑终端而显示的项目排在常驻项目之后，按项目名排序。
  * sessionOrder(projectId)（侧栏）：组内手动顺序；新会话排在已排序会话之前，与默认的新建在上一致；「运行中优先」时不生效。
+ * runningFirst：有运行中会话的项目组整体排到最前（含当前项目与侧栏固定顺序），组间保持原有相对顺序，只影响显示、不改保存的顺序。
  */
 export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null, pins = null } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
@@ -237,6 +238,8 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
   }
   const byName = (a, b) => String(a.project.name ?? '').localeCompare(String(b.project.name ?? ''))
     || a.project.id.localeCompare(b.project.id);
+  // 「运行中优先」：首页先显示的 8 个是跨项目计算的，只在组内提前时，靠后项目里运行中的会话仍会藏在「展开全部」后面。
+  const running = group => Number(runningFirst && group.sessions.some(sessionRunning));
   if (order) {
     if (filter === 'all' && !needles.length) {
       for (const id of order) if (!groups.has(id) && known.has(id)) groups.set(id, { project: known.get(id), missing: false, sessions: [] });
@@ -246,11 +249,12 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
     // 没有会话的项目统一排到最后，不打断有会话的项目；有了会话后回到自己的固定位置。
     const empty = group => Number(!group.sessions.length);
     return [...groups.values()]
-      .sort((a, b) => empty(a) - empty(b) || position(a) - position(b) || byName(a, b))
+      .sort((a, b) => running(b) - running(a) || empty(a) - empty(b) || position(a) - position(b) || byName(a, b))
       .map(group => ({ ...group, member: rank.has(group.project.id) }));
   }
   return [...groups.values()].sort((a, b) =>
-    Number(b.project.id === current) - Number(a.project.id === current)
+    running(b) - running(a)
+    || Number(b.project.id === current) - Number(a.project.id === current)
     || opened(b.project) - opened(a.project)
     || byName(a, b));
 }
@@ -399,19 +403,6 @@ export function rememberProject(history, id, openedAt = Date.now()) {
   return [{ id, openedAt }, ...entries.filter(item => item && item.id !== id
     && typeof item.id === 'string' && Number.isFinite(item.openedAt) && item.openedAt > 0)]
     .slice(0, RECENT_PROJECT_LIMIT);
-}
-
-/** Only current trusted projects qualify; desktop and phone opens share the ordering. */
-export function recentProjects(projects, history) {
-  const times = new Map();
-  for (const item of Array.isArray(history) ? history : []) {
-    if (item && typeof item.id === 'string' && Number.isFinite(item.openedAt) && item.openedAt > 0)
-      times.set(item.id, Math.max(times.get(item.id) || 0, item.openedAt));
-  }
-  const timestamp = project => Math.max(times.get(project.id) || 0,
-    Number.isFinite(project.lastOpenedAt) && project.lastOpenedAt > 0 ? project.lastOpenedAt : 0);
-  return projects.filter(project => timestamp(project) > 0)
-    .sort((a, b) => timestamp(b) - timestamp(a)).slice(0, RECENT_PROJECT_LIMIT);
 }
 
 /** 保留连接名称和实际主机；连接名为 WSL 的 SSH 项目仍使用远端通道。 */

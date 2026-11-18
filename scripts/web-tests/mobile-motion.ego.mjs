@@ -1,5 +1,6 @@
 // 安卓界面动效 Web 验收：弹层退出、按压回弹、页面与浮层入场、虚拟鼠标入场、发送回执、
-// 延迟探测闪烁、会话行收起，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
+// 延迟探测闪烁、会话行收起、页面按导航方向滑入与分区依次上浮、导航指示块展开、列表行柔和按下态、
+// 进入终端时标题原位上浮、全屏工作页关闭不变形、应用内减少动效，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
 // 使用内存桥，动画是否流畅仍需真机确认。
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -83,12 +84,54 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('switching dashboard pages plays the entrance once', async () => {
       await started()
       await page.click('#dashboard-nav [data-page="project"]')
-      await page.waitForFunction(() => window.__started.some(item => item.id === 'project-screen'))
-      assert.equal((await started()).filter(item => item.name === 'page-in' && item.id === 'project-screen').length, 1)
-      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations().length)
+      await page.waitForFunction(() => window.__started.some(item => item.id === 'project-screen') && window.__started.filter(item => item.name === 'rise-in').length >= 2)
+      const entrance = await started()
+      assert.equal(entrance.filter(item => item.name === 'page-in' && item.id === 'project-screen').length, 1)
+      // 按导航顺序往右切换：页面从右侧滑入，导航图标弹一下，页面分区依次上浮。
+      assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'forward')
+      assert.ok(entrance.some(item => item.name === 'nav-pop'), JSON.stringify(entrance))
+      assert.ok(entrance.filter(item => item.name === 'rise-in').length >= 2, JSON.stringify(entrance))
+      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).some(animation => animation.animationName === 'rise-in' || animation.animationName === 'page-in'))
+      // 分区入场只用 backwards 填充，结束后不残留 transform（否则吸顶搜索与固定元素会以它为容器）。
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#project-filters')).transform), 'none')
+    })
+
+    await step('switching back to the left page slides in from the left', async () => {
+      await page.click('#dashboard-nav [data-page="home"]')
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'page-in' && item.id === 'home-screen'))
+      assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'back')
+      await page.click('#dashboard-nav [data-page="project"]')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').hidden && document.querySelector('#dashboard').dataset.direction === 'forward')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).length)
+      await started()
+    })
+
+    await step('the selected navigation pill grows from the centre', async () => {
+      const pill = await page.evaluate(() => {
+        const read = selector => { const style = getComputedStyle(document.querySelector(selector), '::before'); return { opacity: style.opacity, transform: style.transform } }
+        return { current: read('#dashboard-nav [data-page="project"] .nav-icon'), other: read('#dashboard-nav [data-page="home"] .nav-icon') }
+      })
+      assert.deepEqual(pill.current, { opacity: '1', transform: 'none' })
+      assert.equal(pill.other.opacity, '0')
+      assert.notEqual(pill.other.transform, 'none')
     })
 
     await page.click('#project-list > :first-child .project-row:first-child .row')
+    await step('opening a project settles the header title in place, without flying across the screen', async () => {
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'title-settle'))
+      // 只读不清：下一步还要等终端页的淡入事件。
+      const settles = await page.evaluate(() => window.__started.filter(item => item.name === 'title-settle'))
+      assert.equal(settles.length, 1)
+      assert.equal(settles[0].className, 'terminal-heading')
+      // 起点只在原位下方 6px，不缩放；结束后不残留 transform。
+      const from = await page.evaluate(() => {
+        const animation = document.querySelector('.terminal-heading').getAnimations().find(item => item.animationName === 'title-settle')
+        return animation ? animation.effect.getKeyframes()[0].transform : 'finished'
+      })
+      assert.ok(from === 'finished' || from === 'translateY(6px)', from)
+      await page.waitForFunction(() => !document.querySelector('.terminal-heading').getAnimations().length)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.terminal-heading')).transform), 'none')
+    })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation?.(false))
@@ -122,11 +165,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       const state = await page.evaluate(async () => {
         const dialog = document.querySelector('#terminal-menu-dialog')
         dialog.showModal()
-        await new Promise(done => setTimeout(done, 220))
+        await new Promise(done => setTimeout(done, 480))
         dialog.close('cancel')
         await new Promise(done => setTimeout(done, 40))
         dialog.showModal()
-        await new Promise(done => setTimeout(done, 320))
+        await new Promise(done => setTimeout(done, 560))
         const style = getComputedStyle(dialog)
         return { open: dialog.open, opacity: style.opacity, transform: style.transform, display: style.display }
       })
@@ -239,10 +282,20 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#session-options > *')].map(row => row.dataset.id)), order.filter(id => id !== target))
     })
 
-    await step('a pressed list row shrinks only slightly', async () => {
+    await step('a pressed list row only tints softly, without shrinking or a ripple', async () => {
       // 抽屉刷新时复用行节点；项目列表会整表重建，强制的伪类会落在旧节点上。
-      const scale = await press('#session-options .session-option:first-child .row', scaleOf)
-      assert.ok(Math.abs(scale - .99) < .001, `row scale ${scale}`)
+      // 当前会话按设计保留自身底色，取一行非当前会话。
+      const selector = '#session-options .session-option:not([data-current="true"]) .row'
+      const state = await press(selector, target => {
+        const element = document.querySelector(target)
+        const style = getComputedStyle(element)
+        return { transform: style.transform, background: style.backgroundColor, image: style.backgroundImage, press: getComputedStyle(document.documentElement).getPropertyValue('--press').trim() }
+      })
+      assert.equal(state.transform, 'none')
+      assert.equal(state.image, 'none')
+      // 状态层是 5% 白（深色主题），不是整块 --raised。
+      assert.equal(state.background, 'rgba(255, 255, 255, 0.05)', JSON.stringify(state))
+      assert.equal(state.press, '#ffffff0d')
     })
 
     await step('the running spinner and the pin centre on the first title line', async () => {
@@ -272,6 +325,46 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
     })
 
+    await step('a full-screen page stays full screen while it leaves, with no dark backdrop', async () => {
+      const state = await page.evaluate(async () => {
+        const dialog = document.querySelector('#settings-dialog')
+        dialog.showModal()
+        await new Promise(done => setTimeout(done, 480))
+        dialog.close('cancel')
+        // 退出过渡刚开始：open 已移除但仍在显示，几何与底色必须和打开时一致。
+        const style = getComputedStyle(dialog)
+        const rect = dialog.getBoundingClientRect()
+        return { open: dialog.open, display: style.display, width: rect.width, height: rect.height, radius: style.borderRadius, background: style.backgroundColor, paper: getComputedStyle(document.body).backgroundColor, backdrop: getComputedStyle(dialog, '::backdrop').backgroundColor, properties: dialog.getAnimations().map(animation => animation.transitionProperty) }
+      })
+      assert.equal(state.open, false)
+      assert.notEqual(state.display, 'none')
+      assert.equal(state.width, 390)
+      assert.equal(state.height, 844)
+      assert.equal(state.radius, '0px')
+      assert.equal(state.background, state.paper)
+      assert.equal(state.backdrop, 'rgba(0, 0, 0, 0)')
+      assert.ok(state.properties.includes('transform') && state.properties.includes('opacity'), JSON.stringify(state))
+      await gone('settings-dialog')
+    })
+
+    await step('the in-app "reduce motion" setting turns motion off without the system switch', async () => {
+      await page.evaluate(() => { document.querySelector('#app-motion').value = 'reduce'; document.querySelector('#app-motion').dispatchEvent(new Event('change')) })
+      assert.equal(await page.evaluate(() => [document.documentElement.dataset.motion, localStorage.getItem('qingcode:mobile:motion')].join()), 'reduce,reduce')
+      await started()
+      const state = await page.evaluate(() => {
+        const dialog = document.querySelector('#settings-dialog')
+        dialog.showModal()
+        const opened = dialog.getAnimations().length
+        dialog.close('cancel')
+        return { opened, closing: getComputedStyle(dialog).display }
+      })
+      assert.deepEqual(state, { opened: 0, closing: 'none' })
+      await page.waitForTimeout(400)
+      assert.deepEqual((await started()).map(item => item.name), [])
+      await page.evaluate(() => { document.querySelector('#app-motion').value = 'auto'; document.querySelector('#app-motion').dispatchEvent(new Event('change')) })
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.motion ?? 'unset'), 'unset')
+    })
+
     await step('reduced motion turns all of it off', async () => {
       await page.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
       await started()
@@ -283,6 +376,12 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(display, 'none')
       const scale = await press('#terminal-menu', scaleOf)
       assert.equal(scale, 1)
+      // 减少动画时工作台切换不播放入场、指示块和图标弹跳。
+      await page.evaluate(() => window.qingBack())
+      await page.waitForFunction(() => !document.querySelector('#dashboard').hidden)
+      await page.click('#dashboard-nav [data-page="connection"]')
+      await page.waitForFunction(() => !document.querySelector('#connection-screen').hidden)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#dashboard-nav [data-page="connection"] .nav-icon'), '::before').transitionDuration), '0s')
       await page.waitForTimeout(11000)
       assert.deepEqual((await started()).map(item => item.name).filter(name => !['spin', 'compose-spin'].includes(name)), [])
     })

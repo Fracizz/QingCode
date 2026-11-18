@@ -75,6 +75,8 @@
     sessionRequests: [],
     sessionDelay: 0,
     sessionError: null,
+    // 模拟电脑端 QingCode 未打开：原生层把连接被拒绝报为 code: 'refused'。
+    desktopClosed: false,
     historyRequests: [],
     pairs: [],
     clipboard: '',
@@ -157,6 +159,7 @@
   async function remote(profile, request) {
     const saved = state.profiles.get(profile)
     if (!saved) return { ok: false, error: '请先完成密码配对。' }
+    if (state.desktopClosed) return { ok: false, error: '电脑端 QingCode 未打开或未开启 Android 移动连接，请在电脑上打开后重试。', code: 'refused' }
     if (state.hosts.get(saved.id) !== saved.fingerprint) return { ok: false, error: 'Windows 身份校验失败，请重新核对证书指纹。' }
     switch (request.op) {
       case 'capabilities':

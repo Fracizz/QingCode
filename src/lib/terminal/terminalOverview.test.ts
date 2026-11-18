@@ -240,4 +240,18 @@ describe('terminal overview running state and created time', () => {
       'desktop:busy', 'mobile:mobile-2', 'desktop:idle', 'desktop:gone', 'mobile:mobile-1', 'mobile:mobile-3',
     ])
   })
+
+  it('moves projects with running terminals first so they land on the first page', () => {
+    const entries = terminalOverviewEntries({
+      projects,
+      terminals: [tab('a1', 'a'), tab('a2', 'a'), tab('b1', 'b')],
+      mobile: [],
+      detached: [],
+    })
+    const running = (entry: (typeof entries)[number]) => entry.key === 'desktop:b1'
+    expect(groupTerminalOverview(entries, projects).map(group => group.projectId)).toEqual(['a', 'b'])
+    const groups = groupTerminalOverview(entries, projects, 'all', '', undefined, running)
+    expect(groups.map(group => group.projectId)).toEqual(['b', 'a'])
+    expect(paginateTerminalOverview(groups, 0, 1).groups[0].entries.map(entry => entry.key)).toEqual(['desktop:b1'])
+  })
 })

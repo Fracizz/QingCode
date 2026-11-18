@@ -38,4 +38,23 @@
   if (system.addEventListener) system.addEventListener('change', refresh);
   else system.addListener(refresh);
   refresh();
+
+  // 界面动效：跟随系统（Android「移除动画」映射为 prefers-reduced-motion）或在应用内单独减少。
+  // 选「减少」时写入 html[data-motion="reduce"]，app.css 据此关闭全部过渡与动画；系统已开启移除动画时始终减少。
+  const motionKey = 'qingcode:mobile:motion';
+  let motion = 'auto';
+  try { motion = localStorage.getItem(motionKey) === 'reduce' ? 'reduce' : 'auto'; } catch {}
+  const applyMotion = () => {
+    if (motion === 'reduce') root.dataset.motion = 'reduce';
+    else delete root.dataset.motion;
+  };
+  window.qingMotion = {
+    get preference() { return motion; },
+    save(value) {
+      motion = value === 'reduce' ? 'reduce' : 'auto';
+      try { localStorage.setItem(motionKey, motion); } catch {}
+      applyMotion();
+    },
+  };
+  applyMotion();
 })();

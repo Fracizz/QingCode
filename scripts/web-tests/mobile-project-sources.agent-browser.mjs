@@ -21,7 +21,7 @@ const hittable = selector => `(() => {
   return element.contains(document.elementFromPoint(x + width / 2, y + height / 2));
 })()`
 const sources = `[...document.querySelectorAll('#project-list .project-source')].map(node => node.textContent)`
-const recent = '#home-project-list .project-row'
+const single = '#project-list .project-row'
 const windowsPath = String.raw`D:\development\shared worktrees\android companion\a-long-project-directory\django`
 
 try {
@@ -41,16 +41,13 @@ try {
   run('fill', '#pair-code', 'A8z2D3')
   run('click', '#pair-submit')
   check('computer connects', `document.getElementById('active-host').dataset.state === 'online'`)
-  run('click', '#dashboard-nav [data-page="home"]')
-  check('recent projects distinguish same-name projects without changing recency order', `(() => {
-    const rows = [...document.querySelectorAll('${recent}')];
-    return rows.length === 3 && rows[0].querySelector('.project-source').textContent === '远端 · WSL · localhost' &&
-      rows[1].querySelector('.project-source').textContent === '远端 · WinDev · 192.168.252.107' &&
-      rows[2].querySelector('.project-source').textContent === '本机';
-  })()`)
+  check('home no longer shows a recent projects section', `!document.querySelector('#home-projects') && !document.querySelector('#home-project-list')`)
+  // 单条搜索结果不分组，来源直接显示在行内，用来验证项目行的小屏布局与快捷操作。
+  run('click', '#dashboard-nav [data-page="project"]')
+  run('fill', '#search', '252.107')
   run('set', 'viewport', '320', '780')
-  check('320px recent project gives the complete path a full-width line below the 44px actions', `(() => {
-    const row = document.querySelectorAll('${recent}')[1];
+  check('320px project row gives the complete path a full-width line below the 44px actions', `(() => {
+    const row = document.querySelector('${single}');
     const path = row.querySelector('.project-path');
     const source = row.querySelector('.project-source');
     const count = row.querySelector('.project-session-count');
@@ -61,28 +58,27 @@ try {
       actions.every(action => action.width === 44 && action.height === 44) && count?.textContent === '1 个会话' &&
       count.getBoundingClientRect().bottom <= path.getBoundingClientRect().top && document.documentElement.scrollWidth <= innerWidth;
   })()`)
-  run('eval', `document.querySelector('${recent}').scrollIntoView({ block: 'center' })`)
   run('wait', '300')
-  run('screenshot', resolve(directory, 'recent-projects-320.png'))
-  run('click', `${recent}:nth-child(2) .project-new-terminal`)
+  run('screenshot', resolve(directory, 'project-row-320.png'))
+  run('click', `${single} .project-new-terminal`)
   check('plus opens the correct project terminal profiles', `document.querySelector('#new-session-dialog').open &&
     document.querySelector('#new-session-context').textContent === 'django · 远端 · WinDev'`)
   run('press', 'Escape')
-  run('click', `${recent}:nth-child(2) .project-files`)
+  run('click', `${single} .project-files`)
   check('file shortcut opens the project file browser', `document.querySelector('#files-dialog').open &&
     document.querySelector('#files-context').textContent.includes('django')`)
   run('press', 'Escape')
   run('eval', `(() => {
-    const row = document.querySelectorAll('${recent}')[1].querySelector('.project-open');
+    const row = document.querySelector('${single} .project-open');
     row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, pointerType: 'touch' }));
   })()`)
-  const copy = `${recent}:nth-child(2) .project-copy`
+  const copy = `${single} .project-copy`
   check('long press reveals copy', hittable(copy))
   run('click', copy)
   check('copy preserves the complete display path', `window.__mobileFixture.state.clipboard === ${JSON.stringify(windowsPath)}`)
 
   run('set', 'viewport', '390', '844')
-  run('click', '#dashboard-nav [data-page="project"]')
+  run('fill', '#search', '')
   check('group headings show sources and rows retain them for screen readers', `document.querySelectorAll('#project-list .project-group').length === 5 &&
     ${sources}.includes('远端 · WSL · localhost') && ${sources}.includes('远端 · WinDev · 192.168.252.107') &&
     document.querySelector('#project-list .project-source').classList.contains('sr-only') &&
@@ -100,8 +96,6 @@ try {
   run('click', '#show-sessions')
   run('wait', '--fn', hittable('#back'))
   run('click', '#back')
-  run('click', '#dashboard-nav [data-page="home"]')
-  check('recent row keeps source and address after opening a terminal', `document.querySelector('${recent} .project-source').textContent === '远端 · WSL · localhost'`)
   run('click', '#dashboard-nav [data-page="project"]')
   run('fill', '#search', '252.107')
   check('address search distinguishes same-name projects', `document.querySelectorAll('#project-list .row').length === 1 &&
@@ -134,18 +128,20 @@ try {
     fixture.addSession({ project: 'removed', projectInfo: { id: 'removed', name: '已移除的测试项目', kind: 'local' } });
     window.__homeCreates = fixture.state.creates.length`)
   run('click', '#dashboard-nav [data-page="home"]')
-  check('the open project label and plus align without clipping at 320px', `(() => {
+  check('the group header uses the project-row plus and folder buttons at 320px', `(() => {
     const group = document.querySelector('${winGroup}');
     if (!group || document.querySelector('#home-sessions').hidden) return false;
-    const enter = group.querySelector('.session-group-open');
-    const label = group.querySelector('.session-group-open-label');
-    const labelRect = label.getBoundingClientRect();
-    const add = group.querySelector('.session-group-add').getBoundingClientRect();
+    const enter = group.querySelector('.session-group-open').getBoundingClientRect();
+    const add = group.querySelector('.session-group-add');
+    const files = group.querySelector('.session-group-files');
+    const addRect = add.getBoundingClientRect();
+    const filesRect = files.getBoundingClientRect();
     const center = rect => (rect.top + rect.bottom) / 2;
-    return label.textContent === '打开项目' && label.scrollWidth === label.clientWidth &&
-      getComputedStyle(label).color === getComputedStyle(document.querySelector('#home-all-projects')).color &&
-      enter.offsetHeight >= 44 && add.width >= 44 && add.height >= 44 && Math.abs(center(labelRect) - center(add)) < 1 &&
-      labelRect.right <= add.left && add.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
+    return add.querySelector('use').getAttribute('href') === '#i-plus' && files.querySelector('use').getAttribute('href') === '#i-folder' &&
+      files.getAttribute('aria-label') === '浏览 django 的文件' && enter.height >= 44 &&
+      addRect.width >= 44 && addRect.height >= 44 && filesRect.width >= 44 && filesRect.height >= 44 &&
+      Math.abs(center(addRect) - center(filesRect)) < 1 && enter.right <= addRect.left && addRect.right <= filesRect.left &&
+      filesRect.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
   })()`)
   check('the session count stays with a long source when they wrap under the project name', `(() => {
     const group = document.querySelector('#home-session-overview .session-group[data-project="wsl-remote"]');
@@ -155,20 +151,20 @@ try {
     const count = group.querySelector('.session-group-count').getBoundingClientRect();
     return name.bottom <= source.top && source.top < count.bottom && count.top < source.bottom && source.right < count.left;
   })()`)
-  check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-open-label').hidden && document.querySelector('${removed} .session-group-add').hidden`)
+  check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-add').hidden && document.querySelector('${removed} .session-group-files').hidden`)
   run('screenshot', resolve(directory, 'home-project-actions-320.png'))
   run('eval', `document.querySelector('#app-language [data-locale="en"]').click()`)
-  check('English action stays readable on a narrow screen', `(() => {
-    const label = document.querySelector('${winGroup} .session-group-open-label');
+  check('English header actions stay readable on a narrow screen', `(() => {
+    const files = document.querySelector('${winGroup} .session-group-files');
     const source = document.querySelector('${winGroup} .project-source-chip');
-    return label.textContent === 'Open project' && label.scrollWidth === label.clientWidth &&
+    return files.getAttribute('aria-label') === 'Browse files in django' &&
       source.textContent === 'WinDev' && source.scrollWidth === source.clientWidth && document.documentElement.scrollWidth <= innerWidth;
   })()`)
   run('eval', `document.querySelector('#app-language [data-locale="zh"]').click()`)
   run('click', '#home-sessions .overview-manage')
-  check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-open-label').hidden && document.querySelector('${winGroup} .session-group-add').hidden`)
+  check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-add').hidden && document.querySelector('${winGroup} .session-group-files').hidden`)
   run('click', '#home-sessions .overview-manage')
-  run('click', `${winGroup} .session-group-open-label`)
+  run('click', `${winGroup} .session-group-open strong`)
   check('the header opens the existing session in the matching project', `${ready} && document.querySelector('#terminal-host').textContent === 'django · WinDev' && localStorage.getItem('qingcode:mobile:session:192.168.1.8:48764:win-remote') === window.__winSession && window.__mobileFixture.state.creates.length === window.__homeCreates`)
 
   run('click', '#terminal-menu')

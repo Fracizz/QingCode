@@ -169,6 +169,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     const recent = gesture && now - gesture.at < 80 && gesture.axis === 'vertical';
     gesture = null;
     if (!recent || Math.abs(velocity) < .15 || !canInertia()
+      || view.document?.documentElement.dataset.motion === 'reduce'
       || view.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     let previous = now;
     const began = now;

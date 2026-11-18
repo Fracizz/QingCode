@@ -1,6 +1,7 @@
 // 页面通用 DOM 工具：元素查找、图标与列表行构建、对话框关闭与确认框。
 import { avatarFor } from './protocol.js';
 import { t } from './i18n.js';
+import { reducedMotion } from './motion.js';
 
 export const get = id => document.getElementById(id);
 
@@ -13,8 +14,8 @@ export function replayAnimation(element, className) {
 }
 
 /** 收起列表行再移除，下面的行不会突然跳上来；减少动画或不支持时立即移除。 */
-export function collapseAndRemove(row, duration = 160) {
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+export function collapseAndRemove(row, duration = 220) {
+  const reduced = reducedMotion();
   if (reduced || typeof row.animate !== 'function') { row.remove(); return; }
   const style = getComputedStyle(row);
   row.dataset.leaving = 'true';

@@ -55,6 +55,7 @@ import { createComposeStatus } from './composeStatus.js';
 import { createSessionDrawer } from './sessionDrawer.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { createHeroHeader } from './heroHeader.js';
+import { pageDirection, reducedMotion } from './motion.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
 import { customKeyInput } from './keyLayout.js';
@@ -120,6 +121,8 @@ window.qingStreamEnd = nativeRpc.endStream;
 /** 当前终端的输出推送；切换终端或重新轮询时先关闭旧的。 */
 let outputFeed = null;
 const health = new Map();
+// 最近一次连接失败的原因（如 'refused'：电脑可达但端口无人监听，多半是电脑端 QingCode 没打开），首页据此给出具体提示。
+const hostFailure = new Map();
 let persistenceFailed = false;
 const workspace = createWorkspaceState({
   storage: localStorage,
@@ -305,12 +308,12 @@ const dashboard = createDashboardView({
     projects: () => projects,
     loaded: () => loaded,
     hostState,
+    hostFailure: item => hostFailure.get(item?.id) ?? '',
     resumeSession: () => resumeSession(),
     sessionCount: projectId => homeOverview.list().filter(item => item.project?.id === projectId && !item.exit).length,
     latency: () => latencyText(connectionLatency.getSnapshot()),
   },
   lastProject,
-  projectHistory,
   syncLatency,
   activate,
   openPair: (...args) => pairing.openPair(...args),
@@ -364,6 +367,9 @@ const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () =
 const themeSelect = get('app-theme');
 themeSelect.value = window.qingTheme.preference;
 themeSelect.addEventListener('change', () => window.qingTheme.save(themeSelect.value));
+const motionSelect = get('app-motion');
+motionSelect.value = window.qingMotion.preference;
+motionSelect.addEventListener('change', () => window.qingMotion.save(motionSelect.value));
 document.addEventListener('qingcode:mobile:theme-changed', () => {
   const theme = terminalTheme(document.documentElement.dataset.theme);
   if (term) term.options.theme = theme;
@@ -456,12 +462,12 @@ const homeOverview = createSessionOverview({
   projectActions: {
     open: item => { void openProject(item); },
     add: item => { void openNewSessionDialog(item); },
+    files: item => { void files.open(item); },
   },
   onChange: () => {
     renderHomeSessions();
     dashboard.renderResume();
     dashboard.renderConnectionStats();
-    dashboard.renderRecentProjectSessionCounts();
     if (page === 'project') dashboard.renderProjects();
   },
 });
@@ -490,7 +496,7 @@ function homeSessionsVisible() {
     && foreground && !document.hidden && hostState(profile) === 'online';
 }
 
-/** 设置中未打开、没有会话（且不在多选中）或旧电脑端时隐藏整块，首页只保留最近打开。 */
+/** 设置中未打开、没有会话（且不在多选中）或旧电脑端时隐藏整块，首页只保留继续终端与项目入口。 */
 function renderHomeSessions() {
   const count = homeOverview.count();
   get('home-session-count').textContent = String(count);
@@ -672,6 +678,8 @@ function renderLatency() {
 }
 
 function showPage(next) {
+  // 页面入场方向：工作台本来就显示时按导航顺序左右滑入，从终端返回或首次进入原地淡入。
+  get('dashboard').dataset.direction = pageDirection(get('dashboard').hidden ? null : page, next);
   page = next;
   terminalScreen.hidden = true;
   syncSessionDock();
@@ -764,10 +772,12 @@ async function refreshProjects() {
     if (epoch !== profileEpoch) return false;
     projects = list;
     loaded = true;
+    hostFailure.delete(profile.id);
     updateHost('online');
     return true;
   } catch (error) {
     if (epoch !== profileEpoch) return false;
+    hostFailure.set(profile.id, error.code === 'refused' ? 'refused' : '');
     updateHost(error.revoked ? 'expired' : 'offline');
     const moved = error.revoked ? null : profiles.find(item => item.id !== profile.id && item.host === profile.host
       && item.fingerprint === profile.fingerprint);
@@ -819,6 +829,7 @@ function forgetProfile(item) {
   if (profile?.id === item.id) leaveTerminal();
   profiles = profiles.filter(saved => saved.id !== item.id);
   health.delete(item.id);
+  hostFailure.delete(item.id);
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith(prefix + 'session:' + item.id + ':') || key.startsWith(prefix + 'session-pins:' + item.id + ':') || key.startsWith(prefix + 'session-order:' + item.id + ':') || key.startsWith(prefix + 'files:' + item.id + ':')) {
       localStorage.removeItem(key);
@@ -851,6 +862,7 @@ function moveProfile(from, to) {
     health.set(to.id, health.get(from.id));
     health.delete(from.id);
   }
+  hostFailure.delete(from.id);
   profiles = profiles.filter(saved => saved.id !== from.id);
   if (profile?.id === from.id) {
     leaveTerminal();
@@ -870,8 +882,6 @@ get('refresh').addEventListener('click', () => { void refreshProjects(); });
 get('search').addEventListener('input', () => dashboard.renderProjects());
 get('resume').addEventListener('click', () => { void openProject(lastProject()); });
 get('browse-projects').addEventListener('click', () => showPage('project'));
-get('home-all-projects').addEventListener('click', () => showPage('project'));
-get('home-reconnect').addEventListener('click', () => { void refreshProjects(); });
 get('project-empty-action').addEventListener('click', () => {
   if (!profile) showPage('connection');
   else if (get('search').value.trim()) {
@@ -899,7 +909,7 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
       const alreadyAtTop = pages[next].scrollTop <= 0;
       pages[next].scrollTo({
         top: 0,
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+        behavior: reducedMotion() ? 'instant' : 'smooth',
       });
       showToast(document.body, alreadyAtTop ? t('已在顶部') : t('已回到顶部'));
       void rpc('haptic').catch(() => {});
