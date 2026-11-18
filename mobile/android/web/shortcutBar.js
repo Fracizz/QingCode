@@ -68,7 +68,7 @@ export function createShortcutBar({ prefix, onChange }) {
   function save(next) {
     layout = next;
     try {
-      if (isDefaultKeyLayout(layout)) localStorage.removeItem(storageKey);
+      if (!layout.custom.length && isDefaultKeyLayout(layout)) localStorage.removeItem(storageKey);
       else localStorage.setItem(storageKey, serializeKeyLayout(layout));
     } catch { /* 布局只是显示偏好，保存失败时本次仍然生效。 */ }
     apply();
@@ -208,7 +208,7 @@ export function createShortcutBar({ prefix, onChange }) {
     get('key-layout-dialog').showModal();
   });
   get('key-layout-add').addEventListener('click', () => openCustomKey(null));
-  get('key-layout-reset').addEventListener('click', () => save(defaultKeyLayout()));
+  get('key-layout-reset').addEventListener('click', () => save(defaultKeyLayout(layout.custom)));
   // 长按行拖动排序；上移 / 下移按钮保留给无障碍与精确微调。
   attachDragSort(get('key-layout-list'), {
     rowSelector: '.key-layout-row',

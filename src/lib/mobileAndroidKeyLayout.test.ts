@@ -32,6 +32,18 @@ describe('Android shortcut bar layout', () => {
     expect(isDefaultKeyLayout(defaultKeyLayout())).toBe(true)
   })
 
+  it('restores order and visibility while preserving saved custom commands across reloads', () => {
+    const custom = [
+      { id: 'a', name: '状态', text: 'git status', enter: true },
+      { id: 'b', name: '', text: '/help', enter: false },
+    ]
+    const edited = toggleKeyHidden(moveKeyTo(defaultKeyLayout(custom), 'custom:b', 0), 'custom:a')
+    expect(isDefaultKeyLayout(edited)).toBe(false)
+    const restored = parseKeyLayout(serializeKeyLayout(defaultKeyLayout(edited.custom)))
+    expect(restored).toEqual({ order: [...defaults, 'custom:a', 'custom:b'], hidden: [], custom })
+    expect(isDefaultKeyLayout(restored)).toBe(true)
+  })
+
   it.each([null, '', '{', '[]', '{"order":"esc"}', 42])('falls back to defaults for damaged value %j', raw => {
     expect(parseKeyLayout(raw)).toEqual(defaultKeyLayout())
   })

@@ -62,8 +62,9 @@ export function customKeyInput(def) {
   return { data: def.text, enter: def.enter ? '\r' : '' };
 }
 
-export function defaultKeyLayout() {
-  return { order: SHORTCUT_KEYS.map(item => item.key), hidden: [], custom: [] };
+export function defaultKeyLayout(custom = []) {
+  const order = [...SHORTCUT_KEYS.map(item => item.key), ...custom.map(def => CUSTOM_PREFIX + def.id)];
+  return { order, hidden: [], custom };
 }
 
 /**
@@ -102,7 +103,9 @@ export function serializeKeyLayout(layout) {
 }
 
 export function isDefaultKeyLayout(layout) {
-  return serializeKeyLayout(layout) === serializeKeyLayout(defaultKeyLayout());
+  const { order } = defaultKeyLayout(layout.custom);
+  return !layout.hidden.length && layout.order.length === order.length
+    && layout.order.every((key, index) => key === order[index]);
 }
 
 /** 新建自定义键的 id：与已有 id 不重复。 */
