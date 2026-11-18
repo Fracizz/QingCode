@@ -11,7 +11,6 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
   const page = task.page('p1')
   const results = []
   const step = async (name, action) => { await action(); results.push({ name, passed: true }) }
-  const names = () => page.evaluate(() => [...document.querySelectorAll('#home-project-list strong')].map(item => item.textContent))
   const pair = async (port, name) => {
     await page.evaluate(({ port, name }) => window.qingLink(window.__mobileFixture.link('192.168.1.8', port, undefined, name)), { port, name })
     await page.waitForSelector('#pair-dialog[open]')
@@ -41,48 +40,34 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await pair(48764, '电脑 A')
     await home()
-    await step('recent projects use actual opening times and show at most ten', async () => {
-      assert.equal(await page.evaluate(() => document.querySelector('#home-projects-title').textContent), '最近打开')
-      assert.deepEqual(await names(), Array.from({ length: 10 }, (_, i) => 'Project ' + (14 - i)))
+    await step('home no longer shows a recent projects section', async () => {
+      assert.equal(await page.evaluate(() => !document.querySelector('#home-projects') && !document.querySelector('#home-project-list')), true)
     })
-    await page.screenshot({ path: resolve(output, 'recent-top.png') })
-    await step('the home page scrolls to the last recent project while navigation stays fixed', async () => {
-      const navTop = await page.evaluate(() => document.querySelector('#dashboard-nav').getBoundingClientRect().top)
-      await page.mouse.move(200, 600)
-      await page.mouse.wheel(0, 1400, { label: 'scroll recent project list' })
-      await page.waitForFunction(() => document.querySelector('#home-screen').scrollTop > 0)
-      assert.equal(await page.evaluate(() => document.querySelector('#dashboard-nav').getBoundingClientRect().top), navTop)
-      assert.ok(await page.evaluate(() => document.querySelector('#home-screen').scrollHeight > document.querySelector('#home-screen').clientHeight
-        && document.documentElement.scrollWidth <= innerWidth))
-    })
-    await page.screenshot({ path: resolve(output, 'recent-bottom.png') })
-    await step('opening a project moves it to the top and saves its history', async () => {
-      await page.click('#home-project-list .project-row:last-child .row', { label: 'open older recent project' })
+    await page.screenshot({ path: resolve(output, 'home.png') })
+    await step('opening a project from the project page saves its phone history', async () => {
+      await page.click('#dashboard-nav [data-page="project"]', { label: 'open all projects' })
+      await page.evaluate(() => [...document.querySelectorAll('#project-list .project-row')]
+        .find(row => row.querySelector('strong')?.textContent === 'Project 5').querySelector('.row').click())
       await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
       await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
       await page.click('#show-sessions', { label: 'open session drawer' })
-      await page.click('#back', { label: 'return to recent projects' })
-      assert.equal((await names())[0], 'Project 5')
+      await page.click('#back', { label: 'return to dashboard' })
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qingcode:mobile:recent-projects:192.168.1.8:48764'))[0].id), 'p5')
     })
-    await step('older computers use phone history and separate computers keep separate records', async () => {
+    await step('separate computers keep separate phone history', async () => {
       await page.evaluate(() => { for (const item of window.__mobileFixture.state.projects) delete item.lastOpenedAt })
       await page.click('#dashboard-nav [data-page="project"]', { label: 'open all projects' })
       await page.click('#refresh', { label: 'refresh legacy project data' })
       await page.waitForFunction(() => !document.querySelector('#refresh').disabled)
-      await home()
-      assert.deepEqual(await names(), ['Project 5'])
       await pair(49000, '电脑 B')
-      await home()
-      assert.deepEqual(await names(), [])
-      assert.equal(await page.evaluate(() => document.querySelector('#home-recent-empty').hidden), false)
+      assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:recent-projects:192.168.1.8:49000')), null)
       await page.click('#dashboard-nav [data-page="connection"]', { label: 'choose first computer' })
       await page.click('#connection-list .connection-card:first-child .connection-main', { label: 'switch to computer A' })
       await page.waitForFunction(() => document.querySelector('#active-host-name').textContent === '电脑 A'
         && document.querySelector('#active-host').dataset.state === 'online')
-      assert.deepEqual(await names(), ['Project 5'])
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qingcode:mobile:recent-projects:192.168.1.8:48764'))[0].id), 'p5')
     })
-    await page.click('#home-all-projects', { label: 'browse all projects' })
+    await page.click('#dashboard-nav [data-page="project"]', { label: 'browse all projects' })
     await page.click('#project-list > :first-child .project-row:first-child .row', { label: 'open batch session project' })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')

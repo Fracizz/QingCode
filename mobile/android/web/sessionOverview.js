@@ -2,6 +2,7 @@
 // 工作台首页与终端会话抽屉各挂一个实例；只负责渲染与交互，数据由调用方读取后 setList 写入。
 import {
   countSessionOverview,
+  OVERVIEW_FILTERS,
   groupSessionOverview,
   limitSessionGroups,
   projectPlaceLabel,
@@ -28,7 +29,8 @@ import { t } from './i18n.js';
  * groupTools（侧栏）：项目固定顺序与组头操作，含 order()、collapsed(id)、toggle(id)、attention(sessionId)、
  * add(project)、menu(project)、reorder(visibleIds, from, to)、sessionOrder(projectId)、reorderSessions(projectId, visibleIds, from, to)、
  * pins(projectId)、sessionMenu(session)（行内 ⋯ 与长按打开的会话操作）；
- * projectActions（首页）：open(project)、add(project) 对应组头进入项目和新建终端，保持按最近打开排序。
+ * projectActions（首页）：open(project)、add(project)、files(project) 对应点组头进入项目、新建终端和浏览文件，
+ * 右侧按钮与项目列表同款（加号 + 文件夹），保持按最近打开排序。
  */
 export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {}, groupTools = null, projectActions = null }) {
   let items = [];
@@ -64,7 +66,13 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   hintText.textContent = t('搜索会话');
   search.append(icon('search'), input, hint);
   // 搜索行：搜索框、筛选、「运行中优先」图标、「管理」多选；会话少时只收起搜索框与筛选，其余靠右保留。
-  const filterToggle = button('icon-button overview-filter-toggle', () => { showFilters = !showFilters; render(); });
+  // 收起筛选条即回到全部，不留下看不见的筛选。
+  const filterToggle = button('icon-button overview-filter-toggle', () => {
+    const open = showFilters || filter !== 'all';
+    showFilters = !open;
+    if (open) filter = 'all';
+    render();
+  });
   filterToggle.append(icon('filter'));
   const sort = runningFirstToggle('overview-sort');
   const manage = button('text-button overview-manage', () => setSelecting(!selecting));
@@ -75,15 +83,14 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
 
   const filters = document.createElement('div');
   filters.className = 'segmented overview-filter';
-  filters.setAttribute('role', 'radiogroup');
+  // 没有「全部」项：都不选即全部，再点一次已选项取消筛选；可以取消，所以用切换按钮而不是单选。
+  filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', t('会话状态'));
-  for (const value of ['all', 'live', 'exited']) {
+  for (const value of OVERVIEW_FILTERS) {
     const option = button('', () => {
-      if (filter === value) return;
-      filter = value;
+      filter = filter === value ? 'all' : value;
       render();
     });
-    option.setAttribute('role', 'radio');
     option.dataset.filter = value;
     filters.append(option);
   }
@@ -202,8 +209,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     manage.disabled = !all.length && !selecting;
     manage.setAttribute('aria-pressed', String(selecting));
     for (const option of filters.children) {
-      option.setAttribute('aria-checked', String(option.dataset.filter === filter));
-      option.textContent = { all: t('全部'), live: t('未结束'), exited: t('已结束') }[option.dataset.filter] + ' ' + counts[option.dataset.filter];
+      option.setAttribute('aria-pressed', String(option.dataset.filter === filter));
+      option.textContent = { live: t('未结束'), exited: t('已结束') }[option.dataset.filter] + ' ' + counts[option.dataset.filter];
     }
     bar.hidden = !selecting;
     const matching = grouped.flatMap(group => group.sessions).filter(batchable);
@@ -275,13 +282,13 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       context.className = 'session-group-context';
       context.append(source, count);
       summary.append(name, context);
-      const label = document.createElement('span');
-      label.className = 'text-button session-group-open-label';
-      enter.append(folder, summary, label);
+      enter.append(folder, summary);
       const add = button('icon-button session-group-add', () => projectActions.add(renderedGroups.get(projectId).project));
       add.setAttribute('aria-haspopup', 'dialog');
       add.append(icon('plus'));
-      head.append(enter, add);
+      const files = button('icon-button session-group-files', () => projectActions.files(renderedGroups.get(projectId).project));
+      files.append(icon('folder'));
+      head.append(enter, add, files);
     } else {
       head.append(folder, name, source, count);
     }
@@ -339,13 +346,15 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const enter = node.querySelector('.session-group-open');
     enter.disabled = busy || unavailable;
     enter.setAttribute('aria-label', t('打开项目 {name}', { name: title }));
-    const label = enter.querySelector('.session-group-open-label');
-    label.textContent = t('打开项目');
-    label.hidden = unavailable;
+    // 已移除的项目或多选管理时，新建和浏览文件一起隐藏，组头只作标签。
     const add = node.querySelector('.session-group-add');
     add.hidden = unavailable;
     add.disabled = busy;
     add.setAttribute('aria-label', t('在 {name} 新建终端', { name: title }));
+    const files = node.querySelector('.session-group-files');
+    files.hidden = unavailable;
+    files.disabled = busy;
+    files.setAttribute('aria-label', t('浏览 {name} 的文件', { name: title }));
   }
 
   function renderGroupTools(node, rows, group, busy, narrowed, title) {
@@ -353,8 +362,8 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const collapsible = group.sessions.length > 0 && !narrowed;
     const collapsed = collapsible && groupTools.collapsed(id);
     node.dataset.empty = String(!group.sessions.length);
-    // 没有会话的项目固定排在最后（见 groupSessionOverview），不参与拖动排序。
-    node.dataset.draggable = String(!!group.member && !narrowed && group.sessions.length > 0);
+    // 没有会话的项目固定排在最后（见 groupSessionOverview），不参与拖动排序；「运行中优先」时显示的是临时顺序，也不允许拖动。
+    node.dataset.draggable = String(!!group.member && !narrowed && !runningFirst() && group.sessions.length > 0);
     node.dataset.emptyLabel = t('无会话的项目');
     // 折叠后行内圆点看不到，提到组头。
     node.dataset.attention = String(collapsed && group.sessions.some(session => groupTools.attention(session.id)));

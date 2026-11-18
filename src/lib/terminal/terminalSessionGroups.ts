@@ -79,11 +79,13 @@ export interface TerminalHostSection {
 /**
  * 「按主机分组」视图：本机排最前，其余主机按首次出现的项目顺序；主机内保持原项目顺序。
  * 只重新编排已经筛选好的分组，不改变搜索、来源筛选和排序的结果。
+ * 传入 running（「运行中优先」）时，有运行中终端的主机整体排到最前，彼此仍保持上述顺序。
  */
 export function groupTerminalSessionsByHost(
   groups: readonly TerminalSessionGroup[],
   connections: ReadonlyArray<SshConnection>,
   translate: Translate,
+  running?: (terminal: TerminalTab) => boolean,
 ): TerminalHostSection[] {
   const sections = new Map<string, TerminalHostSection>()
   for (const group of groups) {
@@ -103,7 +105,10 @@ export function groupTerminalSessionsByHost(
     section.terminalCount += group.terminals.length
   }
   const ordered = [...sections.values()]
-  return [...ordered.filter(item => item.kind === 'local'), ...ordered.filter(item => item.kind !== 'local')]
+  const result = [...ordered.filter(item => item.kind === 'local'), ...ordered.filter(item => item.kind !== 'local')]
+  if (!running) return result
+  const hot = (section: TerminalHostSection) => Number(section.groups.some(group => group.terminals.some(running)))
+  return result.sort((a, b) => hot(b) - hot(a))
 }
 
 export function terminalScopeMatches(project: Project, filter: TerminalScopeFilter): boolean {
@@ -139,7 +144,8 @@ export function terminalRemoteScopeOptions(
 
 /**
  * 列表的搜索、来源筛选与「运行中优先」，只影响显示。关键词按空白分隔、全部命中才保留，
- * 匹配终端名、项目名和来源；搜索时没有结果的项目组不列出。运行中的排在组内最前，彼此保持原顺序。
+ * 匹配终端名、项目名和来源；搜索时没有结果的项目组不列出。运行中的排在组内最前，彼此保持原顺序；
+ * 有运行中终端的项目组也整体排到最前，组间保持保存的顺序（只影响显示）。
  */
 export function filterTerminalSessionGroups(
   groups: readonly TerminalSessionGroup[],
@@ -156,7 +162,7 @@ export function filterTerminalSessionGroups(
   },
 ): TerminalSessionGroup[] {
   const needles = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  return groups.flatMap(group => {
+  const filtered = groups.flatMap(group => {
     if (!terminalScopeMatches(group.project, scope)) return []
     let terminals = group.terminals
     if (needles.length > 0) {
@@ -175,6 +181,10 @@ export function filterTerminalSessionGroups(
     }
     return [{ project: group.project, terminals }]
   })
+  if (!running) return filtered
+  // Array.prototype.sort 是稳定排序，运行中的组之间、其余组之间都保持原顺序。
+  const hot = (group: TerminalSessionGroup) => Number(group.terminals.some(running))
+  return filtered.sort((a, b) => hot(b) - hot(a))
 }
 
 /**

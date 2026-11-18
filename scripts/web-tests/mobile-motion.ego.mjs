@@ -1,5 +1,6 @@
 // 安卓界面动效 Web 验收：弹层退出、按压回弹、页面与浮层入场、虚拟鼠标入场、发送回执、
-// 延迟探测闪烁、会话行收起，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
+// 延迟探测闪烁、会话行收起、页面按导航方向滑入与分区依次上浮、导航指示块展开、列表行涟漪、
+// 进入终端时标题飞入，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
 // 使用内存桥，动画是否流畅仍需真机确认。
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -83,12 +84,75 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('switching dashboard pages plays the entrance once', async () => {
       await started()
       await page.click('#dashboard-nav [data-page="project"]')
-      await page.waitForFunction(() => window.__started.some(item => item.id === 'project-screen'))
-      assert.equal((await started()).filter(item => item.name === 'page-in' && item.id === 'project-screen').length, 1)
-      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations().length)
+      await page.waitForFunction(() => window.__started.some(item => item.id === 'project-screen') && window.__started.filter(item => item.name === 'rise-in').length >= 2)
+      const entrance = await started()
+      assert.equal(entrance.filter(item => item.name === 'page-in' && item.id === 'project-screen').length, 1)
+      // 按导航顺序往右切换：页面从右侧滑入，导航图标弹一下，页面分区依次上浮。
+      assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'forward')
+      assert.ok(entrance.some(item => item.name === 'nav-pop'), JSON.stringify(entrance))
+      assert.ok(entrance.filter(item => item.name === 'rise-in').length >= 2, JSON.stringify(entrance))
+      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).some(animation => animation.animationName === 'rise-in' || animation.animationName === 'page-in'))
+      // 分区入场只用 backwards 填充，结束后不残留 transform（否则吸顶搜索与固定元素会以它为容器）。
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#project-filters')).transform), 'none')
     })
 
+    await step('switching back to the left page slides in from the left', async () => {
+      await page.click('#dashboard-nav [data-page="home"]')
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'page-in' && item.id === 'home-screen'))
+      assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'back')
+      await page.click('#dashboard-nav [data-page="project"]')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').hidden && document.querySelector('#dashboard').dataset.direction === 'forward')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).length)
+      await started()
+    })
+
+    await step('the selected navigation pill grows from the centre', async () => {
+      const pill = await page.evaluate(() => {
+        const read = selector => { const style = getComputedStyle(document.querySelector(selector), '::before'); return { opacity: style.opacity, transform: style.transform } }
+        return { current: read('#dashboard-nav [data-page="project"] .nav-icon'), other: read('#dashboard-nav [data-page="home"] .nav-icon') }
+      })
+      assert.deepEqual(pill.current, { opacity: '1', transform: 'none' })
+      assert.equal(pill.other.opacity, '0')
+      assert.notEqual(pill.other.transform, 'none')
+    })
+
+    await step('a touched list row ripples from the finger', async () => {
+      const ripple = await page.evaluate(() => {
+        const row = document.querySelector('#project-list .project-open')
+        const rect = row.getBoundingClientRect()
+        const init = { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: rect.left + 30, clientY: rect.top + 12 }
+        row.dispatchEvent(new PointerEvent('pointerdown', init))
+        // 立即取消：行上挂着左滑 / 长按手势，只按不抬会让下一次点按变成「收起」。
+        row.dispatchEvent(new PointerEvent('pointercancel', init))
+        return { rippling: row.classList.contains('rippling'), x: row.style.getPropertyValue('--ripple-x'), y: row.style.getPropertyValue('--ripple-y'), image: getComputedStyle(row).backgroundImage }
+      })
+      assert.equal(ripple.rippling, true)
+      assert.deepEqual([ripple.x, ripple.y], ['30px', '12px'])
+      assert.ok(ripple.image.startsWith('radial-gradient'), ripple.image)
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'ripple'))
+      await page.waitForFunction(() => !document.querySelector('#project-list .project-open').classList.contains('rippling'), undefined, { timeout: 5000 })
+      await started()
+    })
+
+    // 记录 Web Animations：标题飞入不是 CSS 动画，不会派发 animationstart。
+    await page.evaluate(() => {
+      window.__flights = []
+      const animate = Element.prototype.animate
+      Element.prototype.animate = function (keyframes, options) {
+        if (this.id === 'terminal-name') window.__flights.push({ from: keyframes[0].transform, zIndex: this.style.zIndex })
+        return animate.call(this, keyframes, options)
+      }
+    })
     await page.click('#project-list > :first-child .project-row:first-child .row')
+    await step('opening a project flies its title up into the terminal header', async () => {
+      await page.waitForFunction(() => window.__flights.length > 0, undefined, { timeout: 5000 }).catch(() => {})
+      const flights = await page.evaluate(() => window.__flights)
+      assert.equal(flights.length, 1, JSON.stringify(flights))
+      assert.match(flights[0].from, /^translate\(-?\d+(\.\d+)?px, \d+(\.\d+)?px\) scale\(/)
+      // 飞行途中抬高层级，结束后清除内联样式。
+      assert.equal(flights[0].zIndex, '10')
+      await page.waitForFunction(() => !document.querySelector('#terminal-name').getAnimations().length && !document.querySelector('#terminal-name').style.zIndex)
+    })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
     await page.evaluate(() => window.qingOrientation?.(false))
@@ -283,6 +347,22 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(display, 'none')
       const scale = await press('#terminal-menu', scaleOf)
       assert.equal(scale, 1)
+      // 减少动画时点按不加涟漪层，工作台切换也不播放入场、指示块和图标弹跳。
+      const rippling = await page.evaluate(() => {
+        const row = document.createElement('div')
+        row.className = 'row'
+        document.body.append(row)
+        row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: 1, clientY: 1 }))
+        const result = row.classList.contains('rippling')
+        row.remove()
+        return result
+      })
+      assert.equal(rippling, false)
+      await page.evaluate(() => window.qingBack())
+      await page.waitForFunction(() => !document.querySelector('#dashboard').hidden)
+      await page.click('#dashboard-nav [data-page="connection"]')
+      await page.waitForFunction(() => !document.querySelector('#connection-screen').hidden)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#dashboard-nav [data-page="connection"] .nav-icon'), '::before').transitionDuration), '0s')
       await page.waitForTimeout(11000)
       assert.deepEqual((await started()).map(item => item.name).filter(name => !['spin', 'compose-spin'].includes(name)), [])
     })

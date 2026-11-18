@@ -46,7 +46,6 @@ import {
   sessionStatusLine,
   swipeRevealOffset,
   swipeRevealSettles,
-  recentProjects,
   rememberProject,
   pullOffset,
   renameProfileKeys,
@@ -227,20 +226,6 @@ describe('Android session names', () => {
 })
 
 describe('Android recent projects', () => {
-  it('orders phone and desktop opens by time and caps the result at ten', () => {
-    const projects = Array.from({ length: 15 }, (_, i) => ({ id: String(i), lastOpenedAt: i + 1 }))
-    const result = recentProjects(projects, [{ id: '0', openedAt: 30 }, { id: 'removed', openedAt: 100 }])
-    expect(result.map(item => item.id)).toEqual(['0', '14', '13', '12', '11', '10', '9', '8', '7', '6'])
-    expect(projects[0].id).toBe('0')
-  })
-
-  it('handles older desktops and damaged history without inventing opens', () => {
-    const projects = [{ id: 'old' }, { id: 'new', lastOpenedAt: 20 }, { id: 'invalid', lastOpenedAt: NaN }]
-    expect(recentProjects(projects, null).map(item => item.id)).toEqual(['new'])
-    expect(recentProjects(projects, [null, { id: 'old', openedAt: 30 }, { id: 'new', openedAt: 'bad' }])
-      .map(item => item.id)).toEqual(['old', 'new'])
-  })
-
   it('moves reopened projects to the top and bounds persisted history', () => {
     let history = null
     for (let i = 0; i < 15; i++) history = rememberProject(history, String(i), i + 1)
@@ -748,6 +733,27 @@ describe('Android 会话纵览', () => {
     }).map(group => group.project.id)
     expect(ids('p1', 5)).toEqual(['p2', 'p1', 'p3'])
     expect(ids('p2', 9)).toEqual(['p2', 'p1', 'p3'])
+  })
+
+  it('运行中优先时有运行中会话的项目整体提前，组间保持原顺序，关闭后恢复', () => {
+    const three = [local, remote, { id: 'p3', name: 'Gamma', kind: 'local', path: 'D:/c', host: '' }]
+    const at = (id: string, project: { id: string }, programBusy = false) => ({ id, name: id, programBusy, exit: null, project })
+    const sessions = [at('a', three[0]), at('b', three[1], true), at('c', three[2], true)]
+    const history = [{ id: 'p3', openedAt: 1 }, { id: 'p2', openedAt: 2 }]
+    const home = (runningFirst: boolean) => groupSessionOverview(sessions, { projects: three, current: 'p1', history, runningFirst })
+      .map(group => group.project.id)
+    // 首页：当前项目没有运行中会话时让位，运行中的项目之间仍按最近打开。
+    expect(home(false)).toEqual(['p1', 'p2', 'p3'])
+    expect(home(true)).toEqual(['p2', 'p3', 'p1'])
+    // 侧栏固定顺序：运行中的组提前，但不改保存的顺序；没有会话的常驻项目仍在最后。
+    const drawer = (runningFirst: boolean) => groupSessionOverview(sessions.slice(0, 2), {
+      projects: three, order: ['p3', 'p1', 'p2'], runningFirst,
+    }).map(group => group.project.id)
+    expect(drawer(false)).toEqual(['p1', 'p2', 'p3'])
+    expect(drawer(true)).toEqual(['p2', 'p1', 'p3'])
+    // 首页先显示的前几个会话因此包含靠后项目里运行中的会话。
+    expect(limitSessionGroups(groupSessionOverview(sessions, { projects: three, current: 'p1', runningFirst: true }), 2)
+      .groups.flatMap(group => group.sessions.map((item: { id: string }) => item.id))).toEqual(['b', 'c'])
   })
 
   it('常驻项目没有会话时显示空分组，筛选、搜索和电脑端已移除时不显示', () => {

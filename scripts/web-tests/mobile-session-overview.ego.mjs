@@ -96,13 +96,13 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:home-sessions')), null)
     })
 
-    await step('home lists all sessions above recent projects, shows eight first and marks the last used session', async () => {
+    await step('home lists all sessions without a recent projects section, shows eight first and marks the last used session', async () => {
       await goHome()
       await page.waitForFunction(() => !document.querySelector('#home-sessions').hidden
         && document.querySelector('#home-session-count').textContent === '11')
       const order = await page.evaluate(() => [...document.querySelector('#home-screen').children]
         .filter(node => !node.hidden).map(node => node.id).filter(Boolean))
-      assert.ok(order.indexOf('home-sessions') < order.indexOf('home-projects'), JSON.stringify(order))
+      assert.ok(order.includes('home-sessions') && !order.includes('home-projects'), JSON.stringify(order))
       assert.equal((await rowIds(home)).length, 8)
       assert.equal(await text(home + ' .overview-more'), '展开全部（还有 3 个）')
       // 「继续终端」只是快捷入口：mobile-1 仍在所属项目组中，只有这一个会话的项目也不会消失。
@@ -128,9 +128,21 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.deepEqual(await rowIds(home), ['mobile-11', 'mobile-3'])
       await fillIn(home + ' .overview-search', '')
       await tap(home + ' .overview-filter-toggle')
+      // 只有「未结束 / 已结束」，都不选即全部。
+      assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(selector + ' .overview-filter button')]
+        .map(node => [node.dataset.filter, node.getAttribute('aria-pressed')]), home), [['live', 'false'], ['exited', 'false']])
       await tap(home + ' [data-filter="live"]')
       assert.equal((await rowIds(home)).length, 9)
-      await tap(home + ' [data-filter="all"]')
+      // 再点一次已选项取消筛选，回到首页先显示 8 个。
+      await tap(home + ' [data-filter="live"]')
+      assert.equal(await page.evaluate(selector => document.querySelector(selector + ' [data-filter="live"]').getAttribute('aria-pressed'), home), 'false')
+      assert.equal((await rowIds(home)).length, 8)
+      // 收起筛选条同样回到全部。
+      await tap(home + ' [data-filter="exited"]')
+      assert.equal((await rowIds(home)).length, 2)
+      await tap(home + ' .overview-filter-toggle')
+      assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .overview-filter').hidden, home), true)
+      assert.equal((await rowIds(home)).length, 8)
     })
 
     await step('running first is an opt-in option shared by home and the drawer', async () => {
@@ -138,14 +150,18 @@ export async function run({ spaceId, finish = true } = {}) {
       await page.evaluate(() => window.__mobileFixture.setTitle('mobile-10', '⠋ 构建 6'))
       await new Promise(done => setTimeout(done, 600))
       assert.notEqual(await firstInSsh(home), 'mobile-10', 'default keeps desktop order')
+      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh'])
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .overview-sort').getAttribute('aria-pressed'), home), 'false')
       await tap(home + ' .overview-sort')
       await page.waitForFunction(selector => document.querySelector(selector + ' [data-project="p-ssh"] .session-option')?.dataset.id === 'mobile-10', home)
       assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .overview-sort').getAttribute('aria-pressed'), home), 'true')
       assert.equal(await page.evaluate(() => { const toast = document.querySelector('#sort-toast'); return toast && !toast.hidden ? toast.textContent : '' }), '已按运行中优先排序')
+      // 有运行中会话的项目连同组一起排到最前，当前项目没有运行中的会话时让位（这里 p-ssh 的 9 个会话占满先显示的 8 个）。
+      assert.deepEqual(await groupIds(home), ['p-ssh'])
       await page.screenshot({ path: resolve(output, 'home-running-first.png') })
       await tap(home + ' .overview-sort')
       await page.waitForFunction(selector => document.querySelector(selector + ' [data-project="p-ssh"] .session-option')?.dataset.id !== 'mobile-10', home)
+      assert.deepEqual(await groupIds(home), ['p-local', 'p-ssh'])
       await page.evaluate(() => window.__mobileFixture.setTitle('mobile-10', '构建 6'))
     })
 

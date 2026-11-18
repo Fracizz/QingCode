@@ -64,6 +64,16 @@ describe('filterTerminalSessionGroups', () => {
     expect(ids(filterTerminalSessionGroups(groups, { query: '', sources, running }))[0]).toEqual(['web', ['2', '1']])
     expect(groups[0].terminals.map(item => item.id)).toEqual(['1', '2'])
   })
+
+  it('moves groups with running terminals first and keeps the saved order otherwise', () => {
+    const running = (item: TerminalTab) => item.id === '3'
+    expect(ids(filterTerminalSessionGroups(groups, { query: '', sources, running }))).toEqual([
+      ['api', ['3']],
+      ['web', ['1', '2']],
+      ['empty', []],
+    ])
+    expect(ids(filterTerminalSessionGroups(groups, { query: '', sources }))[0][0]).toBe('web')
+  })
 })
 
 describe('groupTerminalSessions', () => {
@@ -227,6 +237,11 @@ describe('groupTerminalSessionsByHost', () => {
       ['wsl:ubuntu', 'wsl', 'WSL · Ubuntu', 0],
     ])
     expect(sections[1].groups.map(group => group.project.id)).toEqual(['remote', 'remote2'])
+    // 运行中优先：有运行中终端的主机排到本机前面，其余主机保持原顺序。
+    const running = (item: TerminalTab) => item.id === '1'
+    expect(groupTerminalSessionsByHost(groups, connections, translate, running).map(item => item.key)).toEqual([
+      'ssh:c1', 'local', 'wsl:ubuntu',
+    ])
   })
 
   it('splits the source from the parent folder that tells same-name projects apart', () => {

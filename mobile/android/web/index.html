@@ -85,10 +85,6 @@
           <h1 id="home-title" class="hero-title">QingCode</h1>
 
         </header>
-        <div id="home-context" class="context-card" hidden>
-          <span class="dot"></span><div class="row-text"><strong id="home-context-name"></strong><small><span id="home-context-state" role="status"></span></small></div>
-          <button id="home-reconnect" class="text-button" type="button" hidden>重连</button>
-        </div>
         <!-- 待处理：看不到的终端跑完后留下「有新结果」，与电脑端终端列表的标记一致；看过即清除。 -->
         <section id="home-pending" class="home-pending" hidden aria-labelledby="home-pending-title">
           <div class="section-heading"><h2 id="home-pending-title">待处理 <span id="home-pending-count"></span></h2></div>
@@ -117,11 +113,6 @@
           <button id="home-action" class="dashed-action" type="button"><svg id="home-action-icon" aria-hidden="true"><use href="#i-plus"/></svg><span id="home-action-label">添加连接</span></button>
         </div>
         <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
-        <section id="home-projects" class="home-projects" hidden aria-labelledby="home-projects-title">
-          <div class="section-heading"><h2 id="home-projects-title">最近打开</h2><button id="home-all-projects" class="text-button" type="button">全部项目 <svg><use href="#i-chevron"/></svg></button></div>
-          <div id="home-project-list" class="rows"></div>
-          <p id="home-recent-empty" class="hint" hidden>还没有最近打开的项目，可从全部项目中选择。</p>
-        </section>
         <p id="home-footnote" class="home-footnote">在电脑端「设置 → 功能 → Android 移动连接」开启后扫码配对 · 密码与证书指纹只保存在这台手机</p>
       </section>
 

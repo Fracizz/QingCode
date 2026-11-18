@@ -261,7 +261,7 @@ public final class MainActivity extends Activity {
                         case "fileBrowser.js": case "fileBrowserState.js":
                         case "dom.js": case "selectMenu.js": case "dashboardView.js": case "pairingFlow.js": case "outputReader.js": case "composeStatus.js":
                         case "sessionDrawer.js": case "sessionOverview.js": case "sessionPrefs.js": case "terminalSettings.js": case "shortcutBar.js": case "keyLayout.js": case "cursorDrag.js": case "pinchZoom.js":
-                        case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js": case "heroHeader.js":
+                        case "terminalLinks.js": case "terminalFont.js": case "terminalRenderer.js": case "sessionWatch.js": case "heroHeader.js": case "motion.js":
                         case "i18n.js": case "appUpdate.js": case "updateView.js": case "mouseMode.js": case "historySelection.js":
                         case "xterm.js": case "fit.js": case "unicode11.js": case "webgl.js": case "jsqr.js":
                             type = "application/javascript"; break;
@@ -1242,12 +1242,14 @@ public final class MainActivity extends Activity {
             : error instanceof javax.net.ssl.SSLException
                 ? "Windows 身份校验失败，请重新核对证书指纹。"
                 : error instanceof java.net.ConnectException
-                    ? "电脑连接未建立，请检查电脑端移动连接、地址端口和防火墙。"
+                    ? "电脑端 QingCode 未打开或未开启 Android 移动连接，请在电脑上打开后重试。"
                     : error instanceof java.net.NoRouteToHostException || error instanceof java.net.UnknownHostException
                         ? "网络无法到达电脑，请检查手机网络和 VPN 连接。"
                         : error.getMessage();
+        // refused：电脑可达但端口无人监听（连接被拒绝），网页据此提示打开电脑端，而不是笼统的网络不可达。
         String code = error instanceof javax.net.ssl.SSLException ? "identity"
-            : error instanceof SocketTimeoutException ? "timeout" : "";
+            : error instanceof SocketTimeoutException ? "timeout"
+            : error instanceof java.net.ConnectException ? "refused" : "";
         return failure(reason == null ? "连接失败。" : reason, code);
     }
 

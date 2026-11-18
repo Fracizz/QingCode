@@ -103,7 +103,8 @@ const SOURCE_ORDER: Record<TerminalOverviewSource, number> = { desktop: 0, mobil
 
 /**
  * 按项目分组：电脑端项目列表顺序在前，列表外的手机项目按名称排在后面。
- * 组内按来源（电脑 → 手机 → 远端）排列，来源内保持原顺序；传入 running（「运行中优先」）时程序正在工作的排最前。
+ * 组内按来源（电脑 → 手机 → 远端）排列，来源内保持原顺序；传入 running（「运行中优先」）时程序正在工作的排最前，
+ * 有运行中终端的项目组也整体排到最前（组间保持原顺序），否则靠后项目里运行中的终端会落到后面的分页。
  */
 export function groupTerminalOverview(
   entries: readonly TerminalOverviewEntry[],
@@ -142,9 +143,11 @@ export function groupTerminalOverview(
     }
     group.entries.push(entry)
   }
+  const hot = new Set<string>()
   for (const group of groups.values()) {
-    group.entries = group.entries
-      .map((entry, index) => ({ entry, index, running: running?.(entry) === true }))
+    const ranked = group.entries.map((entry, index) => ({ entry, index, running: running?.(entry) === true }))
+    if (ranked.some(item => item.running)) hot.add(group.projectId)
+    group.entries = ranked
       .sort((a, b) =>
         Number(b.running) - Number(a.running)
         || SOURCE_ORDER[a.entry.source] - SOURCE_ORDER[b.entry.source]
@@ -154,7 +157,8 @@ export function groupTerminalOverview(
   return [...groups.values()].sort((a, b) => {
     const left = known.get(a.projectId)?.index ?? Number.POSITIVE_INFINITY
     const right = known.get(b.projectId)?.index ?? Number.POSITIVE_INFINITY
-    return left - right || a.projectName.localeCompare(b.projectName, 'zh-CN')
+    return Number(hot.has(b.projectId)) - Number(hot.has(a.projectId))
+      || left - right || a.projectName.localeCompare(b.projectName, 'zh-CN')
   })
 }
 

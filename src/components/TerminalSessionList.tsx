@@ -300,17 +300,19 @@ export default function TerminalSessionList() {
       : 'all'
   const scopeFiltering = activeScope !== 'all'
   const searching = query.trim() !== ''
+  const runningTerminal = runningFirst
+    ? (term: TerminalTab) => term.status !== 'exited' && isTerminalProgramBusy(term.id, busyCheckedAt)
+    : undefined
+  // 「运行中优先」连同项目组（按主机分组时连同主机）一起提前，只影响显示、不改保存的顺序。
   const groups = filterTerminalSessionGroups(allGroups, {
     query,
     scope: activeScope,
     sources: projectSources,
-    running: runningFirst
-      ? term => term.status !== 'exited' && isTerminalProgramBusy(term.id, busyCheckedAt)
-      : undefined,
+    running: runningTerminal,
   })
   // 搜索和「运行中优先」下显示的不是保存的顺序，此时拖动的落点没有意义。
   const terminalOrderLocked = searching || runningFirst
-  const hostSections = byHost ? groupTerminalSessionsByHost(groups, sshConnections, translate) : []
+  const hostSections = byHost ? groupTerminalSessionsByHost(groups, sshConnections, translate, runningTerminal) : []
   // 搜索时展开命中的主机和分组，否则结果藏在折叠的分组里。
   const isHostExpanded = (hostKey: string) => searching || !collapsedHosts.has(hostKey)
   const isExpanded = (group: TerminalSessionGroup) =>
@@ -706,7 +708,7 @@ export default function TerminalSessionList() {
     const sourceKind = terminalScopeKind(terminalProjectScopeKey(project))
     // 菜单打开后鼠标会离开组头，操作按钮要保持显示，菜单才有明确的来源。
     const actionsHeld = profileMenu?.projectId === project.id || projectMenu?.projectId === project.id
-    const sortable = !managing && !searching && !scopeFiltering && !project.hidden && projects.some(item => item.id === project.id)
+    const sortable = !managing && !searching && !scopeFiltering && !runningFirst && !project.hidden && projects.some(item => item.id === project.id)
     const hasAttention =
       activityIndicator && !expanded && terminals.some(term => attentionIds.has(term.id))
     const groupAtLimit = terminals.length >= MAX_TERMINALS_PER_PROJECT

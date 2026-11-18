@@ -198,7 +198,7 @@ export default function TerminalManager() {
   const [loadingRemote, setLoadingRemote] = useState(false)
   const [filter, setFilter] = useState<TerminalOverviewFilter>('all')
   const [query, setQuery] = useState('')
-  // 「运行中优先」是临时排序：点一下把程序正在工作的终端排到组内最前，再点恢复默认顺序；不保存。
+  // 「运行中优先」是临时排序：点一下把程序正在工作的终端排到组内最前、所在项目组也排到最前，再点恢复默认顺序；不保存。
   const [runningFirst, setRunningFirst] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
@@ -653,7 +653,11 @@ export default function TerminalManager() {
               type="button"
               aria-label={runningFirst ? t('运行中优先 · 再点恢复默认顺序') : t('运行中优先')}
               aria-pressed={runningFirst}
-              onClick={() => setRunningFirst(value => !value)}
+              onClick={() => {
+                // 运行中的项目组会排到最前，回到第一页才能看到。
+                setRunningFirst(value => !value)
+                setPage(0)
+              }}
               className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border ${
                 runningFirst
                   ? 'border-accent/60 bg-accent/15 text-accent'

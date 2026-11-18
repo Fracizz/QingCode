@@ -61,6 +61,25 @@
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
   --motion-enter: 160ms;
   --motion-exit: 140ms;
+  /* 动效刻度（见 ../design.md「动效」）：短 = 状态反馈，中 = 小元素进出，长 = 页面、分区、抽屉与底部弹层入场，特长 = 带弹簧的图标与指示块。 */
+  --motion-short: 120ms;
+  --motion-medium: 200ms;
+  --motion-long: 280ms;
+  --motion-xlong: 320ms;
+  /* 强调减速：大位移（底部弹层、侧栏、页面）快速出发、缓慢落定，不回弹，贴屏的边不会露缝。 */
+  --ease-emphasized: cubic-bezier(.05, .7, .1, 1);
+  /* 轻弹簧：只用于小元素（导航指示块、图标、浮标、对话框），过冲约 2%。旧内核不认 linear() 时退回近似的贝塞尔曲线。 */
+  --ease-spring: cubic-bezier(.3, 1.25, .6, 1);
+  /* 表面层级（见 ../design.md「表面层级」）：深色靠 1px 边缘高光勾出轮廓，投影只做衬托；浅色反过来用细描边 + 浅投影。 */
+  --edge: #ffffff0d;
+  --edge-top: #ffffff14;
+  --elev-1: 0 1px 2px #00000052;
+  --elev-2: 0 1px 2px #0000004d, 0 8px 24px #00000047;
+  --elev-3: 0 2px 6px #0000004d, 0 16px 48px #00000073;
+  /* 快捷键键帽：顶部一线高光、底部一线暗边，按下下沉 1px。 */
+  --key-top: #ffffff12;
+  --key-bottom: #00000073;
+  --ripple: #ffffff1f;
   --corner-inset: 0px;
   --corner-bottom-inset: 0px;
   /* Android 11+ 的 WebView 画到状态栏下面（MainActivity 传入 --status-top），各页顶栏自己把背景延伸到状态栏。 */
@@ -85,6 +104,8 @@
   /* 石墨灰更内敛：光晕饱和度和亮度都压低一档。 */
   --glow: #5cc2ad1a;
   --glow-soft: #5cc2ad0a;
+  --edge: #ffffff0a;
+  --edge-top: #ffffff10;
 }
 :root[data-theme="olive"] {
   --paper: #1c241f;
@@ -112,6 +133,9 @@
   --source-ssh: #b3d0b6;
   --source-wsl: #cba366;
   --console: #1c241f;
+  --edge: #f0ffe80d;
+  --edge-top: #f0ffe814;
+  --key-top: #f0ffe812;
   --terminal-control: #253029e6;
   --terminal-track: #25302999;
   --terminal-thumb: #a2b3a68c;
@@ -150,6 +174,17 @@
   --terminal-track: #eceef199;
   --terminal-thumb: #4b55638c;
   --dialog-shadow: #0002;
+  --edge: #1118270f;
+  --edge-top: #1118270f;
+  --elev-1: 0 1px 2px #1118270d;
+  --elev-2: 0 1px 2px #1118270d, 0 6px 18px #1118270f;
+  --elev-3: 0 2px 6px #11182714, 0 16px 40px #11182724;
+  --key-top: #ffffffcc;
+  --key-bottom: #1118271f;
+  --ripple: #1118271a;
+}
+@supports (transition-timing-function: linear(0, 1)) {
+  :root { --ease-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1); }
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }
@@ -298,6 +333,12 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* 顶栏底色向上铺满状态栏：展开时透明（露出氛围光），收起后与顶栏同为纯色。 */
 .app-head::before { content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--safe-top); background: inherit; pointer-events: none; }
 .dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); background: var(--paper); }
+/* 收起后的顶栏用毛玻璃：滚到下面的列表隐约透出。只在这块 48px 区域模糊，面积小、不拖慢滚动；
+   不支持 backdrop-filter 或 color-mix 的内核保留上面的纯色。backdrop-filter 不继承，状态栏延伸部分单独设置。 */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dashboard[data-collapsed="true"] .app-head { background: color-mix(in srgb, var(--paper) 78%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+  .dashboard[data-collapsed="true"] .app-head::before { -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+}
 .app-head-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .app-head-title {
   display: inline-flex;
@@ -430,16 +471,21 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 }
 #dashboard-nav button { display: grid; justify-items: center; align-content: center; gap: 2px; height: 46px; color: var(--muted); font-size: 11px; font-weight: 550; }
 #dashboard-nav button:active:not(:disabled), #dashboard-nav button:focus-visible { background: transparent; }
-.nav-icon { display: grid; place-items: center; width: 60px; height: 32px; border-radius: var(--control-radius); transition: background-color 160ms var(--ease); }
+.nav-icon { position: relative; isolation: isolate; display: grid; place-items: center; width: 60px; height: 32px; border-radius: var(--control-radius); transition: background-color 160ms var(--ease), color 160ms var(--ease); }
+/* 选中指示块画在 ::before 上：切换时从中心横向展开（Material 3 导航栏），轻弹簧落定；离开的一项同时收拢淡出。 */
+.nav-icon::before { content: ''; position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: var(--accent-surface); opacity: 0; transform: scaleX(.45); transition: opacity var(--motion-medium) var(--ease), transform var(--motion-long) var(--ease-spring); }
 #dashboard-nav button:active .nav-icon { background: var(--raised); }
 #dashboard-nav svg { width: 22px; height: 22px; }
 #dashboard-nav [aria-current="page"] { color: var(--ink); font-weight: 700; }
-#dashboard-nav [aria-current="page"] .nav-icon { background: var(--accent-surface); color: var(--accent); }
+#dashboard-nav [aria-current="page"] .nav-icon { background: transparent; color: var(--accent); }
+#dashboard-nav [aria-current="page"] .nav-icon::before { opacity: 1; transform: none; }
+#dashboard-nav [aria-current="page"] .nav-icon svg { animation: nav-pop var(--motion-xlong) var(--ease-spring); }
+@keyframes nav-pop { from { transform: scale(.8); } }
 /* 还没有配对电脑时首页只留空状态，不显示两个点进去也是空页的导航。 */
 .dashboard[data-unpaired="true"][data-page="home"] #dashboard-nav { display: none; }
 
 /* ---------- 首页 ---------- */
-.resume-card, .context-card { background: var(--surface); }
+.resume-card { background: var(--surface); }
 /* 空状态：不套卡片，居中两行说明 + 虚线操作区，靠留白分组。 */
 .empty-card {
   display: grid;
@@ -469,12 +515,6 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .dashed-action svg { width: 22px; height: 22px; color: var(--accent); }
 .dashed-action:active:not(:disabled) { border-color: var(--accent-border); background: var(--accent-surface); }
 .home-footnote { margin: 22px 8px 0; color: var(--muted); font-size: 12px; line-height: 1.7; text-align: center; opacity: .75; }
-.context-card { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 8px 10px 16px; border-radius: var(--group-radius); min-height: 60px; }
-.context-card .row-text { flex: 1; }
-.context-card strong { font-size: 14px; }
-.context-card .text-button { flex: none; }
-.home-projects { margin-top: 20px; }
-.home-projects > p { color: var(--muted); font-size: 13px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 6px; }
 .section-heading h2 { font-size: 13px; color: var(--muted); font-weight: 500; letter-spacing: .02em; }
 .section-heading .text-button { display: inline-flex; align-items: center; padding-right: 0; }
@@ -490,8 +530,12 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   text-align: left;
   border-radius: var(--group-radius);
 }
+/* 首页主卡片是这一屏唯一的视觉焦点：第二层投影、左上角极淡的强调色渐变和一圈带强调色的边缘高光。
+   旧内核不认 color-mix 时整条渐变声明被丢弃，退回上面的纯色 --surface。 */
+.resume-card { position: relative; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface) 62%); box-shadow: var(--elev-2); }
+.resume-card::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px var(--edge); box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, var(--edge)); pointer-events: none; }
 .resume-card:active:not(:disabled) { background: var(--accent-surface); transform: scale(.99); }
-.resume-card .tile { width: 44px; height: 44px; background: var(--accent); color: var(--accent-ink); }
+.resume-card .tile { width: 44px; height: 44px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 16px -6px var(--accent); }
 .resume-card .row-text strong { font-size: 16px; font-weight: 600; }
 .resume-card .row-text small:first-child { color: var(--accent); font-weight: 500; }
 /* 待处理：看不到的终端跑完后留下的「有新结果」，强调色实心点与电脑端终端列表一致。 */
@@ -518,6 +562,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* 分组列表：同组条目共享一个圆角容器，用细分隔线区分（Material 3 / Android 设置页）。 */
 .rows { display: grid; gap: 0; overflow: hidden; border-radius: var(--group-radius); background: var(--surface); }
 .rows:empty { display: none; }
+/* 表面层级：工作台上的分组外框加 1px 边缘高光 + 一层浅投影。边缘画在 ::after 上并盖住行面，
+   行的底色和左滑面板不会把它遮掉；弹层里的列表保持平面，避免层层描边。 */
+.dashboard :is(.rows, .settings-group) { position: relative; box-shadow: var(--elev-1); }
+.dashboard :is(.rows, .settings-group)::after { content: ''; position: absolute; z-index: 2; inset: 0; border-radius: inherit; box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px var(--edge); pointer-events: none; }
 .rows > * + * { border-top: 1px solid var(--divider); }
 /* 项目分组：标题吸在搜索框下方，组内共用标题里的主机信息。 */
 .project-groups { display: grid; gap: 4px; }
@@ -773,7 +821,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #special-keys > #slash-command { flex-basis: 52px; }
 /* 自定义键的名称由用户填写，过长时截断，完整内容在编辑列表中。 */
 #special-keys > .custom-key, #overflow-keys > .custom-key { max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
-#special-keys > #more-keys { position: sticky; right: 0; z-index: 1; flex-basis: 44px; font-family: system-ui, sans-serif; box-shadow: -4px 0 0 var(--paper); }
+#special-keys > #more-keys { position: sticky; right: 0; z-index: 1; flex-basis: 44px; font-family: system-ui, sans-serif; box-shadow: -4px 0 0 var(--paper), inset 0 1px 0 var(--key-top), 0 1px 0 var(--key-bottom); }
+#terminal-tools #special-keys > #more-keys:active:not(:disabled) { box-shadow: -4px 0 0 var(--paper), inset 0 1px 0 var(--key-top); }
 /* 按键滚到「更多」下面时渐隐：渐隐区宽于常见的露出宽度，半截按键淡出成「还能滑动」的提示，而不是被硬切一刀。 */
 #special-keys > #more-keys::before { content: ''; position: absolute; top: 0; bottom: 0; right: calc(100% + 4px); width: 32px; background: linear-gradient(to right, transparent, var(--paper)); pointer-events: none; }
 #special-keys::-webkit-scrollbar { display: none; }
@@ -792,8 +841,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   color: var(--ink);
 }
 /* 快捷键底色比工具区背景（--paper）高两档，键与键之间的空隙清楚可见；按下再亮一档。 */
-#special-keys > button { min-width: 44px; padding-inline: 4px; background: var(--raised); }
+#special-keys > button { min-width: 44px; padding-inline: 4px; background: var(--raised); box-shadow: inset 0 1px 0 var(--key-top), 0 1px 0 var(--key-bottom); }
 #special-keys > button:active:not(:disabled), #special-keys > button:focus-visible { background: var(--line); }
+/* 键帽按下：下沉 1px、底边暗线收起，像实体键被按到底；不缩放，避免一排键按下时宽窄跳动。 */
+#terminal-tools #special-keys > button:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 0 var(--key-top); }
 /* 方向、退格用 SVG：字体字形的基线和宽度因机型而异，按键里对不齐。 */
 :is(#special-keys, .extra-keys) button svg { width: 18px; height: 18px; }
 #special-keys [data-key="shift-tab"] svg, #keys-dialog [data-key="shift-left"] svg { width: 14px; height: 14px; }
@@ -822,12 +873,13 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #compose-form .icon-button { width: 44px; height: 44px; color: var(--muted); }
 #compose-form :is(#keyboard, #attach-image) svg { width: 21px; height: 21px; stroke-width: 1.75; }
 /* 键盘、图片按钮与上方快捷键同为 --raised 底，按下再亮一档，和快捷键一致。 */
-#compose-form :is(#keyboard, #attach-image) { background: var(--raised); }
+#compose-form :is(#keyboard, #attach-image) { background: var(--raised); box-shadow: inset 0 1px 0 var(--key-top), 0 1px 0 var(--key-bottom); }
 #compose-form :is(#keyboard, #attach-image):is(:active, :focus-visible) { background: var(--line); color: var(--ink); }
 #compose-form #send { background: var(--accent); color: var(--accent-ink); }
 #compose-form #send:is(:active, :focus-visible) { background: var(--accent); filter: brightness(1.08); }
 #compose-form #send:disabled { background: var(--raised); color: var(--muted); }
-#compose-form #keyboard[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+/* 直发选中态用强调浅底 + 描边：命令栏已整框变强调色，同一行只保留「发送」一个实心主操作。 */
+#compose-form #keyboard[aria-pressed="true"] { background: var(--accent-pressed); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
 /* 输入短状态：浮在终端底部的小标签，进行中转圈、完成 ✓、异常 !，配文字说明。 */
 /* 浮在输出区右上角：底部是提示符和 AI 工具的状态栏，不能挡；终端行多数不满宽，右侧通常是空白。
    右边避开触摸滚动条滑块；终端隐藏（visibility）时状态仍可见。 */
@@ -902,10 +954,10 @@ dialog {
   scroll-padding-bottom: 76px;
   box-shadow: 0 16px 64px var(--dialog-shadow);
 }
-dialog[open] { animation: dialog-in 180ms var(--ease); }
+dialog[open] { animation: dialog-in 260ms var(--ease-spring); }
 dialog::backdrop { background: #000000b8; }
 :root[data-theme="light"] dialog::backdrop { background: #14192338; }
-dialog h2 { font-size: 19px; margin-bottom: 6px; }
+dialog h2 { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 6px; }
 dialog p { font-size: 14px; color: var(--muted); }
 dialog code { display: block; margin: 10px 0; padding: 10px 12px; border-radius: var(--control-radius); background: var(--paper); overflow-wrap: anywhere; font: 12.5px/1.6 var(--mono); }
 dialog label { display: block; margin: 10px 0 5px; font-size: 13px; font-weight: 650; }
@@ -932,10 +984,10 @@ dialog.session-drawer {
   border-width: 0 1px 0 0;
   border-radius: 0 var(--group-radius) var(--group-radius) 0;
 }
-dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-in 180ms var(--ease); }
+dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-in var(--motion-long) var(--ease-emphasized); }
 @keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.drawer-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; }
+.drawer-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
 #session-count { color: var(--muted); font-size: 13px; font-weight: 500; }
 #drawer-project-head { flex: none; }
 #session-options { flex: 1; min-height: 0; overflow-y: auto; align-content: start; background: transparent; border-radius: 0; padding-block: 2px; }
@@ -956,7 +1008,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-close:active:not(:disabled), .session-close:focus-visible { background: var(--error-pressed); transform: none; }
 .session-option .row { grid-template-columns: minmax(0, 1fr); min-height: 56px; padding: 10px 12px; text-align: left; }
 .session-option .row[aria-current="true"], .session-option .row[aria-current="true"]:is(:active, :focus-visible) { color: inherit; background: transparent; }
-.session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
+.session-option strong { display: flex; align-items: flex-start; gap: 6px; white-space: normal; overflow-wrap: anywhere; font-size: 14px; font-weight: 600; }
 .session-label { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .session-option small { margin-top: 2px; font-size: 11.5px; }
 /* 图标与标题第一行居中：多行标题时也只对齐首行；需高于通用 svg 尺寸规则的优先级。 */
@@ -1000,7 +1052,10 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .running-first svg { width: 18px; height: 18px; }
 .running-first[aria-pressed="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
 .session-overview .overview-filter { margin-top: 0; }
+/* 纵览筛选只有「未结束 / 已结束」两项，都不选即全部；选中态用 aria-pressed。 */
+.segmented.overview-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .overview-filter button { min-height: 36px; font-size: 13px; }
+.overview-filter button[aria-pressed="true"] { background: var(--accent-surface); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-border); }
 .overview-select-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 4px 4px 10px; border: 1px solid var(--accent-border); border-radius: var(--control-radius); background: var(--accent-surface); }
 .overview-picked { flex: 1 1 auto; min-width: 4em; color: var(--accent); font-size: 13px; font-weight: 650; }
 .overview-select-bar .text-button { min-height: 40px; padding-inline: 6px; font-size: 13px; }
@@ -1010,7 +1065,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group + .session-group { margin-top: 10px; }
 .session-group-head { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
 /* 来源标签按自然宽度显示，长项目名先省略：同名项目靠来源区分，被截成「W…」就没有意义了。 */
-.session-group-head strong { flex: 0 1 auto; min-width: 2em; color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-group-head strong { flex: 0 1 auto; min-width: 2em; color: var(--ink); font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 文件夹图标与桌面终端列表一致；当前项目用强调色。 */
 .session-group-head .session-group-icon { flex: none; align-self: center; width: 15px; height: 15px; }
 .session-group[data-current-project="true"] .session-group-icon { color: var(--accent); }
@@ -1021,16 +1076,16 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-group-head .project-source-chip[data-kind="ssh"] { color: var(--source-ssh); }
 .session-group-head .project-source-chip[data-kind="wsl"] { color: var(--source-wsl); }
 .session-group-head .project-source-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* 首页组头延续项目行的点按行为，右侧独立的新建按钮保持 44px 触控区。 */
+/* 首页组头延续项目行的点按行为；右侧新建终端与浏览文件和项目列表同款，各保持 44px 触控区。 */
 .session-group-head.session-group-head-home { align-items: center; gap: 2px; padding: 0; }
 .session-group-open { display: flex; flex: 1; min-width: 0; align-items: center; justify-content: flex-start; gap: 6px; padding: 0 6px 0 8px; color: inherit; font: inherit; text-align: left; }
 .session-group-open:disabled { opacity: 1; }
 .session-group-open .session-group-summary { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
 .session-group-context { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
 .session-group-context .project-source-chip { max-width: min(12em, 100%); }
-.session-group-open-label { padding: 0; white-space: nowrap; }
 .session-group-head-home .session-group-add { color: var(--accent); }
-.session-group-head-home .session-group-add svg { width: 18px; height: 18px; }
+.session-group-head-home .session-group-files { color: var(--muted); }
+.session-group-head-home .session-group-add svg, .session-group-head-home .session-group-files svg { width: 18px; height: 18px; }
 /* 侧栏组头：点按折叠，长按拖动排序，右侧常驻新建与项目操作。 */
 /* 右侧 2px 内边距：40px 按钮中心距右缘 22px，与会话行 44px「⋯」列的中心对齐。 */
 .session-group-head.session-group-head-tools { align-items: center; gap: 0; padding: 0 2px 0 8px; }
@@ -1072,7 +1127,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
 .session-overview[data-selecting="true"] .session-close { display: none; }
 .session-option[data-checked="true"] .session-check { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
 .session-overview[data-selecting="true"] .session-option[data-checked="true"] .session-face { background: var(--accent-surface); }
-/* 首页「全部会话」：放在继续终端与最近打开之间，整页滚动，不做嵌套滚动区。 */
+/* 首页「全部会话」：放在继续终端之后，整页滚动，不做嵌套滚动区。 */
 .home-sessions { margin-top: 20px; }
 #home-session-count { margin-left: 4px; font-weight: 500; }
 .drawer-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; flex: none; padding-top: 12px; border-top: 1px solid var(--divider); }
@@ -1106,7 +1161,7 @@ dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; 
     border-width: 1px 0 0;
     border-radius: var(--group-radius) var(--group-radius) 0 0;
   }
-  dialog.sheet[open] { animation: sheet-in 240ms var(--ease); }
+  dialog.sheet[open] { animation: sheet-in var(--motion-long) var(--ease-emphasized); }
   dialog.sheet .sheet-handle {
     position: sticky;
     top: 0;
@@ -1162,13 +1217,14 @@ dialog.session-drawer[data-docked="true"] [data-close="session-drawer"] { displa
 :root[data-sessions-docked="true"] #show-sessions { color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }
-@keyframes dialog-in { from { opacity: 0; transform: scale(.96); } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.94); } }
 @keyframes sheet-in { from { transform: translateY(100%); } }
 @keyframes backdrop-in { from { background: transparent; } }
-@keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
+/* 方向由 showPage 写入 .dashboard[data-direction]：按导航顺序往右是 forward，往左是 back，其余（首次进入、从终端返回）原地淡入。 */
+@keyframes page-in { from { opacity: 0; transform: translateX(var(--page-shift, 0px)); } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes float-in { from { opacity: 0; transform: translateY(6px); } }
-@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px) scale(.94); } }
 @keyframes ping-dot { 35% { opacity: .55; transform: scale(1.5); } }
 @keyframes ping-value { 35% { color: var(--accent); } }
 
@@ -1185,7 +1241,32 @@ dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
 dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
 /* 从隐藏变为显示时自动播放，同页刷新不会重播；终端页只淡入，避免位移影响行列测量。 */
-.dashboard-page:not([hidden]) { animation: page-in var(--motion-enter) var(--ease); }
+.dashboard-page:not([hidden]) { animation: page-in var(--motion-long) var(--ease-emphasized); }
+.dashboard[data-direction="forward"] { --page-shift: 20px; }
+.dashboard[data-direction="back"] { --page-shift: -20px; }
+/* 页面内的各分区（大标题、主卡片、会话分组、搜索…）依次上浮，前 6 块各错开 30ms，其余随最后一块；
+   只在分区从隐藏变为显示时播放，列表刷新复用分区节点，不会重播。只用 backwards 填充，结束后不残留 transform。 */
+.dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: rise-in var(--motion-long) var(--ease-emphasized) backwards; }
+.dashboard-page:not([hidden]) > :nth-child(2) { animation-delay: 30ms; }
+.dashboard-page:not([hidden]) > :nth-child(3) { animation-delay: 60ms; }
+.dashboard-page:not([hidden]) > :nth-child(4) { animation-delay: 90ms; }
+.dashboard-page:not([hidden]) > :nth-child(5) { animation-delay: 120ms; }
+.dashboard-page:not([hidden]) > :nth-child(n+6) { animation-delay: 150ms; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
+/* 列表行涟漪（motion.js 写入触点坐标并加 .rippling）：从手指处扩散的一圈浅色状态层，叠在行底色上，不增加子节点。
+   依赖 @property 动画半径；不支持的内核没有涟漪，仍保留按下时的底色变化。 */
+@property --ripple-radius { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --ripple-alpha { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+.rippling {
+  /* !important：部分行按下时用 background 简写换底色，会把涟漪层一起清掉。 */
+  background-image: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), color-mix(in srgb, var(--ripple) var(--ripple-alpha), transparent) var(--ripple-radius), transparent calc(var(--ripple-radius) + 1px)) !important;
+  animation: ripple 520ms var(--ease) forwards;
+}
+@keyframes ripple {
+  0% { --ripple-radius: 0px; --ripple-alpha: 100%; }
+  55% { --ripple-alpha: 100%; }
+  100% { --ripple-radius: var(--ripple-size, 480px); --ripple-alpha: 0%; }
+}
 #terminal-screen:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
 #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
 #font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
@@ -1201,6 +1282,9 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
   button, .pull-badge, .pull-ring circle, .nav-icon, .session-face, .project-face, .switch::before, .switch::after, .switch-check, .switch-check::after, .project-group-chevron, .session-group-chevron { transition: none; }
   dialog[open], dialog.sheet[open], dialog.session-drawer[open], [data-state="checking"] .dot { animation: none; }
   .session-spinner, .pull-indicator[data-state="refreshing"] .pull-ring { animation: none; }
+  .nav-icon::before { transition: none; }
+  #dashboard-nav [aria-current="page"] .nav-icon svg, .dashboard-page:not([hidden]) > :not(.pull-indicator), .rippling { animation: none; }
+  .rippling { background-image: none !important; }
 }
 
 /* 新建会话：与其他弹层一致的分组列表。 */
