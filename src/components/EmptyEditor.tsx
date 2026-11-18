@@ -110,7 +110,7 @@ export default function EmptyEditor() {
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-ui transition-all duration-150 hover:shadow-elevation-1 hover:-translate-y-[1px] active:translate-y-0 ${
+            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-ui transition-all duration-150 hover:shadow-elevation-1 ${
               action.primary
                 ? 'border-brand/50 bg-brand/10 text-brand font-medium hover:border-brand/70 hover:bg-brand/20'
                 : 'border-border-strong bg-bg-elevated/80 text-fg-muted hover:bg-bg-active hover:text-fg'

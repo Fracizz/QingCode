@@ -55,7 +55,7 @@ import { createComposeStatus } from './composeStatus.js';
 import { createSessionDrawer } from './sessionDrawer.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { createHeroHeader } from './heroHeader.js';
-import { pageDirection, reducedMotion } from './motion.js';
+import { pageDirection, reducedMotion, swapScreen } from './motion.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
 import { customKeyInput } from './keyLayout.js';
@@ -152,6 +152,8 @@ let projects = [];
 let loaded = false;
 let profileEpoch = 0;
 let page = 'home';
+// 当前应显示的整屏：'dashboard' 或 'terminal'。整屏切换可能推迟一帧（等旧画面快照），以这里的意图为准。
+let shownScreen = 'dashboard';
 let sessions = [];
 let selected = null;
 let foreground = true;
@@ -492,7 +494,7 @@ function lastSessionOf(projectId) {
 }
 
 function homeSessionsVisible() {
-  return homeSessionsEnabled() && !!profile && page === 'home' && terminalScreen.hidden && !get('dashboard').hidden
+  return homeSessionsEnabled() && !!profile && page === 'home' && shownScreen === 'dashboard'
     && foreground && !document.hidden && hostState(profile) === 'online';
 }
 
@@ -675,31 +677,47 @@ function renderLatency() {
   get('host-latency').textContent = t('手机到电脑往返延迟：{value}。', { value }) + time + state + t('不包含电脑到远端及终端程序处理耗时。');
 }
 
-function showPage(next) {
-  // 页面入场方向：工作台本来就显示时按导航顺序左右滑入，从终端返回或首次进入原地淡入。
-  get('dashboard').dataset.direction = pageDirection(get('dashboard').hidden ? null : page, next);
-  page = next;
-  terminalScreen.hidden = true;
+/** 按 shownScreen / page 摆放整屏；swapScreen 的回调与同步路径共用，重复执行只会落到最新状态。 */
+function placeScreen() {
+  const onTerminal = shownScreen === 'terminal';
+  terminalScreen.hidden = !onTerminal;
   syncSessionDock();
-  get('dashboard').hidden = false;
-  get('dashboard').dataset.page = next;
-  for (const [name, section] of Object.entries(pages)) section.hidden = name !== next;
+  get('dashboard').hidden = onTerminal;
+  if (onTerminal) return;
+  get('dashboard').dataset.page = page;
+  for (const [name, section] of Object.entries(pages)) section.hidden = name !== page;
   hero.sync();
   for (const navButton of get('dashboard-nav').querySelectorAll('button')) {
-    if (navButton.dataset.page === next) navButton.setAttribute('aria-current', 'page');
+    if (navButton.dataset.page === page) navButton.setAttribute('aria-current', 'page');
     else navButton.removeAttribute('aria-current');
   }
+}
+
+function showPage(next) {
+  // 页面入场方向：工作台本来就显示时按导航顺序左右滑入；从终端返回算后退，从左侧滑入；同一页原地不动。
+  const fromTerminal = shownScreen === 'terminal';
+  const direction = fromTerminal ? 'back' : pageDirection(page, next);
+  const changed = fromTerminal || page !== next;
+  if (changed) get('dashboard').dataset.direction = direction;
+  page = next;
+  shownScreen = 'dashboard';
+  // 旧画面（终端或上一页）以快照退出，同一页刷新不做过渡。
+  let placed = Promise.resolve();
+  if (changed) placed = swapScreen(placeScreen, direction);
+  else placeScreen();
   syncLatency();
   if (next === 'home') {
     homeOverview.render();
     void refreshHomeSessions();
   } else syncHomeSessions();
+  return placed;
 }
 
 function returnToDashboard(next = page) {
   localStorage.removeItem(prefix + 'open');
-  leaveTerminal();
-  showPage(next);
+  // 留住最后一帧终端画面给退出快照，工作台摆好后再释放；期间又进了终端则由那边的 leaveTerminal 释放。
+  leaveTerminal({ holdFrame: true });
+  void showPage(next).then(() => { if (shownScreen !== 'terminal') releaseTerminalFrame({ immediate: true }); });
 }
 
 window.qingBack = () => {
@@ -1059,6 +1077,7 @@ get('terminal-menu').addEventListener('click', () => {
   get('menu-mouse').disabled = !terminalMouse;
   get('menu-share').hidden = get('terminal-share-chip').hidden;
   get('terminal-menu-context').textContent = profile.name + ' / ' + project.name;
+  delete get('terminal-menu-dialog').dataset.handoff;
   get('terminal-menu-dialog').showModal();
 });
 for (const [id, action] of Object.entries({
@@ -1069,7 +1088,14 @@ for (const [id, action] of Object.entries({
   'menu-files': () => files.open(project),
   'menu-mouse': toggleMouseMode,
   'manage-sessions': () => get('session-dialog').showModal(),
-})) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
+})) get(id).addEventListener('click', () => {
+  // 交给子页或另一个弹层时菜单直接收起，只播下一层的入场，避免一下一上两段动画叠在一起；鼠标模式不开新层，照常下滑。
+  const menu = get('terminal-menu-dialog');
+  if (id === 'menu-mouse') delete menu.dataset.handoff;
+  else menu.dataset.handoff = 'true';
+  menu.close();
+  action();
+});
 get('review-submission').addEventListener('click', showSubmissions);
 get('expanded-compose').addEventListener('input', () => { compose.value = get('expanded-compose').value; resizeComposer(); });
 get('expanded-compose').addEventListener('compositionstart', () => { editorComposing = true; cancelKeyRepeats(); updateComposerActions(); });
@@ -1893,12 +1919,16 @@ async function openProject(item, resumeOnly = false, target = null) {
   get('terminal-name').textContent = item.name;
   // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
   get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
-  get('dashboard').hidden = true;
-  terminalScreen.hidden = false;
-  syncSessionDock();
+  // 从工作台进入时工作台以快照往左退出，终端原地淡入；切换项目时已在终端页，直接摆放。
+  const entering = shownScreen !== 'terminal';
+  shownScreen = 'terminal';
+  const placed = entering ? swapScreen(placeScreen, 'forward') : (placeScreen(), Promise.resolve());
   void syncTerminalFullscreen();
   awaitNewFrame(t('正在连接终端…'));
   try {
+    // 等终端页真正显示后再加载字体、测量行列。
+    await placed;
+    if (epoch !== viewEpoch) return;
     await loadTerminalFont();
     if (epoch !== viewEpoch) return;
     drawer.render();

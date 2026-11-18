@@ -86,6 +86,7 @@ import {
   type SearchContextTarget,
   type SearchRowProps,
 } from './SearchPanelParts'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 interface SearchHit {
   name: string
@@ -211,6 +212,9 @@ export default function SearchPanel() {
   const scopeMenuRef = useRef<HTMLDivElement>(null)
   const extPickerBtnRef = useRef<HTMLButtonElement>(null)
   const extPickerRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const scopeMenuExitRef = useExitMotionRef('menu', scopeMenuRef)
+  const extPickerExitRef = useExitMotionRef('menu', extPickerRef)
   const [searchFlush, setSearchFlush] = useState(0)
   const showReplace = mode === 'content'
   const extList = useMemo(() => typeFilterExtensions(typeFilter), [typeFilter])
@@ -1195,7 +1199,7 @@ export default function SearchPanel() {
         {scopeMenuOpen &&
           createPortal(
             <div
-              ref={scopeMenuRef}
+              ref={scopeMenuExitRef}
               role="listbox"
               aria-label={t('搜索范围')}
               className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
@@ -1500,7 +1504,7 @@ export default function SearchPanel() {
             {extPickerOpen &&
               createPortal(
                 <div
-                  ref={extPickerRef}
+                  ref={extPickerExitRef}
                   role="listbox"
                   className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
                   style={extPickerStyle}

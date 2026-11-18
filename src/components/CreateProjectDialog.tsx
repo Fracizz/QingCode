@@ -48,6 +48,7 @@ import {
 } from '../lib/sshWorkspace'
 import { getSshServerEnabled } from '../lib/sshServerSettings'
 import type { SshConnection } from '../types'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 interface Props {
   open: boolean
@@ -104,6 +105,8 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
   })
   const sourceTriggerRef = useRef<HTMLDivElement>(null)
   const sourceMenuRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const sourceMenuExitRef = useExitMotionRef('menu', sourceMenuRef)
   const nameRef = useRef<HTMLInputElement>(null)
   const secretsRef = useRef<SshSessionSecrets>({})
   /** 每次切换来源 / 关闭递增，丢弃过期的连接与浏览结果。 */
@@ -437,7 +440,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
   const sourceMenu = menuOpen
     ? createPortal(
         <div
-          ref={sourceMenuRef}
+          ref={sourceMenuExitRef}
           role="menu"
           aria-label={t('源文件夹位置')}
           className="menu-enter ui-font-scaled fixed z-[130] flex flex-col gap-[3px] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"

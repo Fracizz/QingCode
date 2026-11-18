@@ -1,7 +1,7 @@
 // 项目文件列表、名称/路径查询与单文件下载；弹层覆盖终端，保持会话和草稿。
 import { button, confirmAction, get, icon, rowText } from './dom.js';
 import { dateLocale, t } from './i18n.js';
-import { createFilePositions, createFileRequestScope, formatFileBytes, needsDownloadConfirmation, parentDirectory, readFileSort, relativeFilePath, sortFileEntries, writeFileSort } from './fileBrowserState.js';
+import { createFilePositions, createFileRequestScope, folderDirection, formatFileBytes, needsDownloadConfirmation, parentDirectory, readFileSort, relativeFilePath, sortFileEntries, writeFileSort } from './fileBrowserState.js';
 
 export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () => {} }) {
   const dialog = get('files-dialog');
@@ -137,7 +137,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     get('files-cancel-query').hidden = !value || !searching();
   }
 
-  async function load({ restore = null, highlight = null } = {}) {
+  async function load({ restore = null, highlight = null, slide = null } = {}) {
     clearTimeout(timer);
     if (!context || !supported || !dialog.open) return;
     const target = context;
@@ -159,6 +159,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
       if (!currentContext(target) || !requests.current(request)) return;
       entries = sortFileEntries(Array.isArray(result.entries) ? result.entries : [], sortOrder);
       renderEntries();
+      if (slide) slideList(slide);
       // 有结果时数量放在面包屑条右侧，状态行只留给加载、空目录和错误。
       get('files-count').textContent = entries.length ? t('{n} 项', { n: entries.length }) : '';
       get('files-status').textContent = entries.length ? '' : t(query ? '没有匹配的文件' : '此目录为空');
@@ -184,13 +185,22 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     }
   }
 
+  // 新目录内容到达后按层级方向轻移淡入（见 app.css #files-list[data-slide]）；先移除再写回属性，同方向连续进入也会重播。
+  function slideList(direction) {
+    const list = get('files-list');
+    delete list.dataset.slide;
+    void list.offsetWidth;
+    list.dataset.slide = direction;
+  }
+
   function navigate(next, highlight = null) {
     savePosition();
     invalidate();
+    const slide = folderDirection(path, next);
     path = relativeFilePath(next);
     get('files-query').value = '';
     crumbs();
-    void load({ restore: scrolls.get(path) || 0, highlight });
+    void load({ restore: scrolls.get(path) || 0, highlight, slide });
   }
 
   function cancelQuery() {

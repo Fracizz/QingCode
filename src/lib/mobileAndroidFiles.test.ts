@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFileBrowser } from '../../mobile/android/web/fileBrowser.js'
-import { createFilePositions, FILE_SORT_KEY, formatFileBytes, LARGE_FILE_BYTES, needsDownloadConfirmation, readFileSort, relativeFilePath, sortFileEntries } from '../../mobile/android/web/fileBrowserState.js'
+import { createFilePositions, FILE_SORT_KEY, folderDirection, formatFileBytes, LARGE_FILE_BYTES, needsDownloadConfirmation, readFileSort, relativeFilePath, sortFileEntries } from '../../mobile/android/web/fileBrowserState.js'
 
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T
 const input = (id: string, value: string) => {
@@ -217,5 +217,17 @@ describe('file browsing time sort', () => {
     expect(element('files-sort').dataset.order).toBe('asc')
     expect(localStorage.getItem(FILE_SORT_KEY)).toBe('asc')
     expect(readFileSort(localStorage)).toBe('asc')
+  })
+})
+
+describe('Android 文件夹切换方向', () => {
+  it('进入子目录为 forward，回到上级为 back，同级或定位为 none', () => {
+    expect(folderDirection('', 'src')).toBe('forward')
+    expect(folderDirection('src', 'src/lib/deep')).toBe('forward')
+    expect(folderDirection('src/lib', 'src')).toBe('back')
+    expect(folderDirection('src', '')).toBe('back')
+    expect(folderDirection('src', 'docs')).toBe('none')
+    expect(folderDirection('src', 'src')).toBe('none')
+    expect(folderDirection('src', 'srcx')).toBe('none')
   })
 })

@@ -10,17 +10,17 @@ const KIND_META: Record<
   warning: {
     icon: AlertTriangle,
     iconClass: 'text-warn bg-warn/10',
-    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm hover:-translate-y-[0.5px] active:translate-y-0',
+    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm',
   },
   danger: {
     icon: Trash2,
     iconClass: 'text-danger bg-danger/10',
-    confirmClass: 'bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm hover:-translate-y-[0.5px] active:translate-y-0',
+    confirmClass: 'bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm',
   },
   info: {
     icon: Info,
     iconClass: 'text-accent bg-accent/10',
-    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm hover:-translate-y-[0.5px] active:translate-y-0',
+    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm',
   },
 }
 

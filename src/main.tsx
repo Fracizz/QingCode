@@ -4,6 +4,7 @@ import App from './App'
 import { paintStartupSplashLogo } from './lib/appIconSvg'
 import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
 import { applyTheme, loadTheme } from './lib/themeSettings'
+import { applyMotionPreference, loadMotionPreference, startMotionPreferenceSync } from './lib/motionPreferences'
 import { revealAppWindow } from './lib/appWindow'
 import { initializeLanguage } from './lib/i18n'
 import { installStartupSplashGuard } from './lib/startupSplash'
@@ -25,6 +26,8 @@ initWindowSession()
 hydrateWorkspaceSessionsIfNeeded()
 installWorkspaceSessionPersistence()
 applyTheme(loadTheme())
+applyMotionPreference(loadMotionPreference())
+startMotionPreferenceSync()
 void initializeLanguage()
 paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())

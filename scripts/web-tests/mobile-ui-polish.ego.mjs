@@ -19,7 +19,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439' } = {}) 
   }
   const metrics = (width, height) => page.cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: true })
   const settled = id => page.waitForFunction(value => !document.getElementById(value).getAnimations().some(animation => animation.playState === 'running'), id)
-  const touch = (type, x, y) => page.cdp('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] })
+  const touch = async (type, x, y) => {
+    // 整屏切换的视图过渡（约 200ms）期间触摸都落在 html 上，手势开始前先等过渡结束。
+    if (type === 'touchStart') await page.waitForFunction(() => !document.documentElement.dataset.screenExit)
+    return page.cdp('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] })
+  }
   const swipeLeft = async (selector, distance) => {
     const box = await page.evaluate(target => {
       const rect = document.querySelector(target).getBoundingClientRect()

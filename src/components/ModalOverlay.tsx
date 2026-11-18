@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode, type SyntheticEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 /** Interrupt dialogs (confirm / prompt / choice) must sit above feature dialogs such as SSH. */
 export const INTERRUPT_MODAL_Z = 'z-[140]'
@@ -47,6 +48,8 @@ export default function ModalOverlay({
   align = 'center',
 }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null)
+  // 卸载时留下残影淡出；一个弹窗直接换成另一个时遮罩保持连续（见 exitMotion.ts）。
+  const overlayExitRef = useExitMotionRef('modal', overlayRef)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const onDismissRef = useRef(onDismiss)
 
@@ -132,7 +135,7 @@ export default function ModalOverlay({
 
   const overlay = (
     <div
-      ref={overlayRef}
+      ref={overlayExitRef}
       data-modal-overlay=""
       className={`window-no-drag-region fixed inset-0 isolate ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
       role="presentation"

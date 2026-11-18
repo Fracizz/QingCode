@@ -1248,6 +1248,8 @@ dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
 dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
 dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
+/* 终端操作菜单交给子页或另一个弹层时（app.js 写 data-handoff）：面板本身立即消失，只让遮罩照常淡出，与下一层的入场交叠而不是一下一上两段位移。 */
+dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; opacity: 0; }
 /* 从隐藏变为显示时自动播放，同页刷新不会重播；终端页只淡入，避免位移影响行列测量。 */
 .dashboard-page:not([hidden]) { animation: page-in var(--motion-long) var(--ease-emphasized); }
 .dashboard[data-direction="forward"] { --page-shift: 28px; }
@@ -1267,19 +1269,33 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 @keyframes title-settle { from { opacity: 0; transform: translateY(6px); } }
 #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
 #font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
+/* 浮层小提示退出：淡出并轻微下沉，隐藏时机不变；用独立的 translate，不覆盖居中用的 transform。淡出途中不挡点击。
+   输入提示在排版流里，淡出期间仍占高度会让底栏和终端行数晚一拍跳动，保持直接消失。 */
+#scroll-bottom, .mouse-mode-pill, #font-toast, .sort-toast { transition: opacity var(--motion-short) var(--ease-exit), translate var(--motion-short) var(--ease-exit), display var(--motion-short) allow-discrete; }
+:is(#scroll-bottom, .mouse-mode-pill, #font-toast, .sort-toast)[hidden] { opacity: 0; translate: 0 4px; pointer-events: none; }
+/* 整屏切换的退出（motion.js swapScreen）：旧画面快照盖在上层，往新画面来向的反方向轻移 12px 并淡出；
+   新画面不加整体动画，直接播放自己的入场（页面滑入、分区上浮、终端淡入）。快照用正常混合，避免默认的叠加提亮。 */
+::view-transition-group(root) { animation: none; }
+::view-transition-old(root), ::view-transition-new(root) { mix-blend-mode: normal; }
+::view-transition-new(root) { animation: none; }
+::view-transition-old(root) { z-index: 1; --screen-shift: 0px; animation: screen-out 200ms cubic-bezier(.3, 0, .8, .15) both; }
+:root[data-screen-exit="forward"]::view-transition-old(root) { --screen-shift: -12px; }
+:root[data-screen-exit="back"]::view-transition-old(root) { --screen-shift: 12px; }
+@keyframes screen-out { to { opacity: 0; transform: translateX(var(--screen-shift)); } }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
 #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop { transition: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   button, .pull-badge, .pull-ring circle, .nav-icon, .session-face, .project-face, .switch::before, .switch::after, .switch-check, .switch-check::after, .project-group-chevron, .session-group-chevron { transition: none; }
-  dialog[open], dialog.sheet[open], dialog.session-drawer[open], dialog.workspace-dialog[open], #terminal-screen:not([hidden]) .terminal-heading, [data-state="checking"] .dot { animation: none; }
+  dialog[open], dialog.sheet[open], dialog.session-drawer[open], dialog.workspace-dialog[open], #files-list[data-slide], #terminal-screen:not([hidden]) .terminal-heading, [data-state="checking"] .dot { animation: none; }
   .session-spinner, .pull-indicator[data-state="refreshing"] .pull-ring { animation: none; }
   .nav-icon::before { transition: none; }
+  #scroll-bottom, .mouse-mode-pill, #font-toast, .sort-toast { transition: none; }
   #dashboard-nav [aria-current="page"] .nav-icon svg, .dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: none; }
 }
 
@@ -1377,6 +1393,11 @@ dialog.workspace-dialog[open] { display: flex; animation: workspace-in var(--mot
 dialog.workspace-dialog:not([open]) { opacity: 0; transform: translateX(32px); }
 dialog.workspace-dialog::backdrop { background: transparent; }
 @keyframes workspace-in { from { opacity: 0; transform: translateX(32px); } }
+/* 项目文件进出文件夹：进入子目录列表从右侧轻移淡入，回到上级从左侧，同级跳转只淡入（fileBrowser.js 写 data-slide）。 */
+#files-list[data-slide] { animation: folder-in var(--motion-medium) var(--ease-emphasized); }
+#files-list[data-slide="forward"] { --folder-shift: 16px; }
+#files-list[data-slide="back"] { --folder-shift: -16px; }
+@keyframes folder-in { from { opacity: 0; transform: translateX(var(--folder-shift, 0px)); } }
 .workspace-head { flex: none; display: flex; align-items: center; gap: 4px; min-height: 48px; margin-left: -8px; }
 .workspace-head h2 { margin: 0; font-size: 18px; }
 .workspace-dialog > p { flex: none; margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -1472,7 +1493,6 @@ dialog.workspace-dialog::backdrop { background: transparent; }
   .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { transform: none; }
 }
 
-#files-dialog[open] { background: var(--paper); opacity: 1; transform: none; animation: none; transition: none; }
 /* 标题下的副标题显示「电脑 / 项目」，省去单独一行。 */
 .files-heading { flex: 1; min-width: 0; }
 #files-dialog .workspace-head h2 { line-height: 1.3; }

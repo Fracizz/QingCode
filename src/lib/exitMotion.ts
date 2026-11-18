@@ -1,0 +1,180 @@
+// 浮层退出动效（见 DESIGN.md「动效一览」）：弹窗、菜单、通知由 React 直接卸载，
+// 卸载前克隆一份只读「残影」留在原处淡出，组件的开关逻辑和 close 时机都不变。
+// 新的弹窗或菜单出现时清掉还没播完的残影（交接），只播下一层的入场，避免一出一进两段动画叠在一起。
+import { useCallback, type RefCallback, type RefObject } from 'react'
+import { motionReduced } from './motionPreferences'
+
+export type ExitKind = 'modal' | 'menu' | 'toast'
+
+interface Ghost {
+  kind: ExitKind
+  node: HTMLElement
+  animations: Animation[]
+  timer: ReturnType<typeof setTimeout>
+}
+
+const ghosts = new Set<Ghost>()
+
+/** 与 animations.css 中 --ease-exit 一致：加速离场。 */
+const EASE_EXIT = 'cubic-bezier(0.4, 0, 1, 1)'
+const FALLBACK_EXIT_MS = 100
+
+/** 退出时长取 CSS 变量 --motion-exit，参数只维护在 animations.css 一处。 */
+function exitDuration(): number {
+  try {
+    const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--motion-exit'))
+    if (Number.isFinite(value) && value > 0) return value
+  } catch {}
+  return FALLBACK_EXIT_MS
+}
+
+/** 克隆不带输入框当前值和滚动位置，逐个补上，避免淡出期间内容跳动。 */
+function copyLiveState(source: HTMLElement, clone: HTMLElement) {
+  const a = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT)
+  const b = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT)
+  let from: Node | null = source
+  let to: Node | null = clone
+  while (from && to) {
+    const s = from as HTMLElement
+    const c = to as HTMLElement
+    if (s instanceof HTMLInputElement || s instanceof HTMLTextAreaElement || s instanceof HTMLSelectElement) {
+      ;(c as HTMLInputElement).value = s.value
+      if (s instanceof HTMLInputElement) (c as HTMLInputElement).checked = s.checked
+    }
+    if (s.scrollTop || s.scrollLeft) {
+      // 克隆插入文档后才能滚动，先记下来。
+      c.dataset.exitScroll = `${s.scrollTop},${s.scrollLeft}`
+    }
+    from = a.nextNode()
+    to = b.nextNode()
+  }
+}
+
+function restoreScroll(clone: HTMLElement) {
+  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[data-exit-scroll]')]) {
+    const saved = el.dataset.exitScroll
+    if (!saved) continue
+    const [top, left] = saved.split(',').map(Number)
+    el.scrollTop = top
+    el.scrollLeft = left
+    delete el.dataset.exitScroll
+  }
+}
+
+/** 残影不可聚焦、不可点击、对读屏隐藏；去掉 id / role 及根节点的 data 标记，避免被查询或快捷键逻辑当成真实浮层。 */
+function sanitize(clone: HTMLElement) {
+  for (const name of clone.getAttributeNames()) {
+    if (name.startsWith('data-') && name !== 'data-exit-scroll') clone.removeAttribute(name)
+  }
+  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], [role], [data-modal-autofocus]')]) {
+    el.removeAttribute('id')
+    el.removeAttribute('role')
+    el.removeAttribute('data-modal-autofocus')
+  }
+  clone.setAttribute('inert', '')
+  clone.setAttribute('aria-hidden', 'true')
+  clone.dataset.exitGhost = ''
+  clone.style.pointerEvents = 'none'
+}
+
+function removeGhost(ghost: Ghost) {
+  if (!ghosts.delete(ghost)) return
+  clearTimeout(ghost.timer)
+  for (const animation of ghost.animations) {
+    try { animation.cancel() } catch {}
+  }
+  ghost.node.remove()
+}
+
+/**
+ * 在 element 被移除前留下残影并播放退出：弹窗淡出、面板微缩到 0.98；菜单只淡出；通知淡出并右移 8px。
+ * 减少动效、窗口在后台或环境不支持 Web Animations（如 jsdom）时什么都不做。
+ */
+export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
+  if (typeof document === 'undefined' || !element.isConnected) return
+  if (typeof element.animate !== 'function' || motionReduced() || document.visibilityState === 'hidden') return
+
+  const clone = element.cloneNode(true) as HTMLElement
+  copyLiveState(element, clone)
+  sanitize(clone)
+
+  if (kind === 'toast') {
+    // 通知在纵向堆栈里，残影脱离堆栈固定在原位，其余通知立即补位。
+    const rect = element.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const stackZ = element.parentElement ? getComputedStyle(element.parentElement).zIndex : ''
+    Object.assign(clone.style, {
+      position: 'fixed',
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      margin: '0',
+      zIndex: stackZ && stackZ !== 'auto' ? stackZ : '150',
+    })
+    document.body.appendChild(clone)
+  } else {
+    // 弹窗与菜单本身是 fixed 定位，放在原节点后面即可保持位置和继承的样式。
+    element.after(clone)
+  }
+  restoreScroll(clone)
+
+  const duration = exitDuration()
+  const timing: KeyframeAnimationOptions = { duration, easing: EASE_EXIT, fill: 'forwards' }
+  const animations: Animation[] = []
+  if (kind === 'toast') {
+    animations.push(clone.animate([
+      { opacity: 1, transform: 'translateX(0)' },
+      { opacity: 0, transform: 'translateX(8px)' },
+    ], timing))
+  } else {
+    animations.push(clone.animate([{ opacity: 1 }, { opacity: 0 }], timing))
+    const panel = kind === 'modal' ? clone.querySelector<HTMLElement>('.modal-content-enter') : null
+    if (panel) animations.push(panel.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.98)' }], timing))
+  }
+
+  const ghost: Ghost = { kind, node: clone, animations, timer: setTimeout(() => removeGhost(ghost), duration + 100) }
+  ghosts.add(ghost)
+  animations[0].finished.then(() => removeGhost(ghost), () => removeGhost(ghost))
+}
+
+/**
+ * 新浮层出现时的交接：弹窗清掉未播完的弹窗与菜单残影，菜单清掉菜单残影。
+ * 被替换的是弹窗时给新弹窗打 data-modal-handoff，遮罩不重新淡入，保持连续。
+ */
+export function handoffExitGhosts(kind: ExitKind, entering: HTMLElement) {
+  if (kind === 'toast') return
+  let replacedModal = false
+  for (const ghost of [...ghosts]) {
+    if (ghost.kind === 'toast' || (kind === 'menu' && ghost.kind !== 'menu')) continue
+    if (ghost.kind === 'modal') replacedModal = true
+    removeGhost(ghost)
+  }
+  if (replacedModal) entering.dataset.modalHandoff = ''
+}
+
+/** 仅测试用：清空残影。 */
+export function clearExitGhostsForTest() {
+  for (const ghost of [...ghosts]) removeGhost(ghost)
+}
+
+/**
+ * 给浮层根节点用的 ref：挂载时做交接，卸载时留下残影。可同时写入已有的对象 ref。
+ * 同一任务内挂上又卸下（如 StrictMode 开发期的双调用）不留残影，那一帧从未绘制。
+ */
+export function useExitMotionRef<T extends HTMLElement>(
+  kind: ExitKind,
+  ref?: RefObject<T | null> | null,
+): RefCallback<T> {
+  return useCallback((node: T | null) => {
+    if (ref) ref.current = node
+    if (!node) return
+    handoffExitGhosts(kind, node)
+    let painted = false
+    queueMicrotask(() => { painted = true })
+    return () => {
+      if (ref && ref.current === node) ref.current = null
+      if (painted) leaveExitGhost(node, kind)
+    }
+  }, [kind, ref])
+}

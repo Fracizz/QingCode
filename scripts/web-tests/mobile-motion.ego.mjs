@@ -347,6 +347,96 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await gone('settings-dialog')
     })
 
+    await step('a terminal menu handing off to a sub-page vanishes at once, so only the sub-page slides', async () => {
+      await page.click('#terminal-menu')
+      await page.waitForFunction(() => !document.querySelector('#terminal-menu-dialog').getAnimations().length)
+      const state = await page.evaluate(() => {
+        document.querySelector('#menu-read').click()
+        const menu = document.querySelector('#terminal-menu-dialog')
+        return { open: menu.open, opacity: getComputedStyle(menu).opacity, properties: menu.getAnimations().map(animation => animation.transitionProperty), reader: document.querySelector('#reader-dialog').open }
+      })
+      assert.equal(state.open, false)
+      assert.equal(state.opacity, '0')
+      assert.ok(!state.properties.includes('transform') && !state.properties.includes('opacity'), JSON.stringify(state))
+      assert.equal(state.reader, true)
+      await gone('terminal-menu-dialog')
+      await page.evaluate(() => window.qingBack())
+      await gone('reader-dialog')
+      // 之后点遮罩正常关闭菜单仍然下滑，不受上次交接影响。
+      await page.click('#terminal-menu')
+      await page.waitForFunction(() => !document.querySelector('#terminal-menu-dialog').getAnimations().length)
+      const plain = await closing('terminal-menu-dialog')
+      assert.ok(plain.properties.includes('transform'), JSON.stringify(plain))
+      await gone('terminal-menu-dialog')
+    })
+
+    await step('project files slide in like the other sub-pages, and folders slide by depth', async () => {
+      await started()
+      await page.click('#terminal-menu')
+      await page.waitForFunction(() => !document.querySelector('#terminal-menu-dialog').getAnimations().length)
+      await page.click('#menu-files')
+      await page.waitForFunction(() => document.querySelector('#files-list [data-path="src"]'))
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'workspace-in' && item.id === 'files-dialog'))
+      await page.click('#files-list [data-path="src"]')
+      await page.waitForFunction(() => document.querySelector('#files-list').dataset.slide === 'forward' && document.querySelector('#files-list [data-path="src/中文说明.txt"]'))
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'folder-in'))
+      await page.evaluate(() => window.qingBack())
+      await page.waitForFunction(() => document.querySelector('#files-list').dataset.slide === 'back' && document.querySelector('#files-list [data-path="src"]'))
+      await page.waitForFunction(() => !document.querySelector('#files-list').getAnimations().length)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#files-list')).transform), 'none')
+      const leaving = await closing('files-dialog')
+      assert.ok(leaving.properties.includes('transform') && leaving.properties.includes('opacity'), JSON.stringify(leaving))
+      await gone('files-dialog')
+    })
+
+    await step('a small hint fades out instead of vanishing', async () => {
+      const state = await page.evaluate(() => {
+        const button = document.querySelector('#scroll-bottom')
+        button.hidden = false
+        getComputedStyle(button).opacity
+        for (const animation of button.getAnimations()) animation.finish()
+        // 先让完全显示的样式生效，再隐藏，模拟真实的停留。
+        getComputedStyle(button).opacity
+        button.hidden = true
+        const style = getComputedStyle(button)
+        return { display: style.display, pointerEvents: style.pointerEvents, properties: button.getAnimations().map(animation => animation.transitionProperty) }
+      })
+      assert.notEqual(state.display, 'none')
+      assert.equal(state.pointerEvents, 'none')
+      assert.ok(state.properties.includes('opacity'), JSON.stringify(state))
+      await gone('scroll-bottom')
+    })
+
+    await step('returning from the terminal: the terminal snapshot leaves to the right, the dashboard slides in from the left', async () => {
+      await started()
+      await page.evaluate(() => window.qingBack())
+      await page.waitForFunction(() => !document.querySelector('#dashboard').hidden)
+      assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'back')
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#dashboard')).getPropertyValue('--page-shift').trim()), '-28px')
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'screen-out' && item.pseudo === '::view-transition-old(root)'))
+      // 停在退出中段截图：快照里应是离开前的终端画面（保留了最后一帧），不是空白终端。
+      const paused = await page.evaluate(() => {
+        const exit = document.getAnimations().find(animation => animation.animationName === 'screen-out')
+        if (!exit) return false
+        exit.pause()
+        exit.currentTime = 90
+        return true
+      })
+      if (paused) {
+        await page.screenshot({ path: resolve(output, 'screen-exit-terminal.png') })
+        await page.evaluate(() => document.getAnimations().find(animation => animation.animationName === 'screen-out')?.play())
+      }
+      // 快照方向写在 html 上，过渡结束后清除。
+      await page.waitForFunction(() => !document.documentElement.dataset.screenExit)
+      // 回到终端供后续步骤使用：进入时工作台快照往左退出。
+      await page.waitForFunction(() => !document.querySelector('#resume').hidden)
+      await started()
+      const direction = await page.evaluate(() => { document.querySelector('#resume').click(); return document.documentElement.dataset.screenExit })
+      assert.equal(direction, 'forward')
+      await page.waitForFunction(() => !document.querySelector('#terminal-screen').hidden && document.querySelector('#terminal-status').textContent === '会话中')
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'screen-out'))
+    })
+
     await step('the in-app "reduce motion" setting turns motion off without the system switch', async () => {
       await page.evaluate(() => { document.querySelector('#app-motion').value = 'reduce'; document.querySelector('#app-motion').dispatchEvent(new Event('change')) })
       assert.equal(await page.evaluate(() => [document.documentElement.dataset.motion, localStorage.getItem('qingcode:mobile:motion')].join()), 'reduce,reduce')

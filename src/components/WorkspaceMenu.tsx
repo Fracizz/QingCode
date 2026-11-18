@@ -24,6 +24,7 @@ import {
   type NamedWorkspace,
 } from '../lib/namedWorkspacePersist'
 import { focusHoveredMenuItem, MENU_ITEM_GAP_CLASS } from './menuHoverFocus'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 const MENU_WIDTH = 260
 
@@ -43,6 +44,8 @@ export default function WorkspaceMenu() {
 
   const anchorRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const dropdownExitRef = useExitMotionRef('menu', dropdownRef)
   const openAtEnd = useRef(false)
 
   const [open, setOpen] = useState(false)
@@ -206,7 +209,7 @@ export default function WorkspaceMenu() {
       {open &&
         createPortal(
           <div
-            ref={dropdownRef}
+            ref={dropdownExitRef}
             role="menu"
             className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}

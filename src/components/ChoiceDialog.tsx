@@ -83,9 +83,9 @@ export default function ChoiceDialog() {
                 data-modal-autofocus={isPrimary || undefined}
                 className={
                   option.danger
-                    ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
+                    ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm transition-all duration-150'
                     : isPrimary
-                      ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
+                      ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150'
                       : 'px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
                 }
                 onClick={() => answer(option.id)}

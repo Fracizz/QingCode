@@ -71,6 +71,7 @@ import InfoTipCard from './InfoTipCard'
 import { isTauri, isSshResource } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 import { focusHoveredMenuItem, MENU_ITEM_GAP_CLASS } from './menuHoverFocus'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 const CHIP_GAP = 4
 /** Pointer DnD threshold — HTML5 DnD is flaky in WebView2 title bar (see Sidebar). */
@@ -101,6 +102,8 @@ export default function ProjectPicker() {
   const measureRef = useRef<HTMLDivElement>(null)
   const overflowBtnRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const dropdownExitRef = useExitMotionRef('menu', dropdownRef)
   const chipDragRef = useRef<{
     dragId: string
     originIds: string[]
@@ -623,7 +626,7 @@ export default function ProjectPicker() {
       {overflowOpen &&
         createPortal(
           <div
-            ref={dropdownRef}
+            ref={dropdownExitRef}
             role="menu"
             className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}

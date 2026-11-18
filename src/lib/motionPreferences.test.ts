@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { preferredScrollBehavior } from './motionPreferences'
+import {
+  applyMotionPreference,
+  loadMotionPreference,
+  motionReduced,
+  preferredScrollBehavior,
+  saveMotionPreference,
+} from './motionPreferences'
 
 afterEach(() => vi.unstubAllGlobals())
 describe('preferredScrollBehavior', () => {
@@ -20,5 +26,49 @@ describe('preferredScrollBehavior', () => {
     expect(preferredScrollBehavior()).toBe('smooth')
     vi.stubGlobal('window', {})
     expect(preferredScrollBehavior()).toBe('smooth')
+  })
+})
+
+describe('motion preference', () => {
+  function memoryStorage() {
+    const data = new Map<string, string>()
+    return {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value) },
+      removeItem: (key: string) => { data.delete(key) },
+    }
+  }
+
+  it('in-app reduce wins even when the system allows motion', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('document', { documentElement: { dataset: { motion: 'reduce' } } })
+    expect(motionReduced()).toBe(true)
+    expect(preferredScrollBehavior()).toBe('auto')
+  })
+
+  it('following the system cannot force motion back on', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) })
+    vi.stubGlobal('document', { documentElement: { dataset: {} } })
+    expect(motionReduced()).toBe(true)
+  })
+
+  it('saves, loads and applies the preference to html[data-motion]', () => {
+    const dataset: Record<string, string> = {}
+    vi.stubGlobal('localStorage', memoryStorage())
+    vi.stubGlobal('document', { documentElement: { dataset } })
+    expect(loadMotionPreference()).toBe('system')
+    saveMotionPreference('reduce')
+    expect(loadMotionPreference()).toBe('reduce')
+    expect(dataset.motion).toBe('reduce')
+    saveMotionPreference('system')
+    expect(loadMotionPreference()).toBe('system')
+    expect(dataset.motion).toBeUndefined()
+    applyMotionPreference('reduce')
+    expect(dataset.motion).toBe('reduce')
+  })
+
+  it('treats unreadable storage as following the system', () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied') } })
+    expect(loadMotionPreference()).toBe('system')
   })
 })

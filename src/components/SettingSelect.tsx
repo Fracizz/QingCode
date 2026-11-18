@@ -12,6 +12,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import { getContextMenuStylePosition } from './contextMenuPosition'
 import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 import Tooltip from './Tooltip'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 export type SettingSelectOption = {
   value: string
@@ -44,6 +45,8 @@ export default function SettingSelect({
   const listId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const menuExitRef = useExitMotionRef('menu', menuRef)
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({ left: 0, top: 0, width: 0 })
   const [activeIndex, setActiveIndex] = useState(0)
@@ -210,7 +213,7 @@ export default function SettingSelect({
       {open &&
         createPortal(
           <div
-            ref={menuRef}
+            ref={menuExitRef}
             id={listId}
             role="listbox"
             tabIndex={-1}

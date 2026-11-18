@@ -2,6 +2,7 @@ import { AlertCircle, CheckCircle2, Download, Upload, X } from 'lucide-react'
 import { useTransferStore, isTransferActive, visibleTransferTasks, type TransferStatus } from '../store/transferStore'
 import { cancelSshTransfer, retrySshTransfer } from '../lib/sshTransfer'
 import { useI18n } from '../lib/i18n'
+import { useExitMotionRef } from '../lib/exitMotion'
 import { formatBytes } from '../utils/formatBytes'
 import { formatTransferLocation, transferTaskDetail } from '../utils/transferLabel'
 import Tooltip from './Tooltip'
@@ -19,6 +20,8 @@ export default function TransferTasks() {
   const { t } = useI18n()
   const tasks = visibleTransferTasks(useTransferStore(state => state.tasks))
   const dismiss = useTransferStore(state => state.dismiss)
+  // 与通知一致：完成后自动消失或手动关闭时淡出。
+  const cardExitRef = useExitMotionRef<HTMLElement>('toast')
   if (tasks.length === 0) return null
   return (
     <>
@@ -36,7 +39,7 @@ export default function TransferTasks() {
         const progress = active && (task.currentTotalBytes ?? 0) > 0
           ? Math.min(1, (task.currentBytes ?? 0) / task.currentTotalBytes!) : null
         return (
-          <section key={task.taskId} aria-label={t('文件传输')}
+          <section key={task.taskId} ref={cardExitRef} aria-label={t('文件传输')}
             className="toast-enter relative overflow-hidden rounded-lg border border-border-strong bg-bg-elevated px-3 py-2 text-ui-sm shadow-elevation-2">
             <div className="flex min-w-0 items-center gap-2">
               <Icon size={14} className={`shrink-0 ${iconColor}`} />

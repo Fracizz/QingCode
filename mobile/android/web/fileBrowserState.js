@@ -13,6 +13,16 @@ export function parentDirectory(value) {
   return relativeFilePath(value).split('/').slice(0, -1).join('/');
 }
 
+/** 文件夹切换方向：进入子目录为 forward、回到上级为 back，同级跳转或定位为 none（只淡入）。 */
+export function folderDirection(from, to) {
+  const a = relativeFilePath(from);
+  const b = relativeFilePath(to);
+  if (a === b) return 'none';
+  if (!a || b.startsWith(a + '/')) return 'forward';
+  if (!b || a.startsWith(b + '/')) return 'back';
+  return 'none';
+}
+
 export function formatFileBytes(value) {
   if (!Number.isFinite(value) || value < 0) return t('大小未知');
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];

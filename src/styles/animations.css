@@ -1,6 +1,16 @@
+/* 动效参数（DESIGN.md「动效一览」）：桌面端操作密集，时长约为手机端的三分之一，不用弹簧回弹。
+   退出比入场短；exitMotion.ts 读取 --motion-exit 作为弹窗、菜单、通知残影的退出时长。 */
+:root {
+  --motion-fast: 120ms;
+  --motion-enter: 160ms;
+  --motion-exit: 100ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
 /* Toasts */
 .toast-enter {
-  animation: toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: toast-in var(--motion-enter) var(--ease-out);
 }
 @keyframes toast-in {
   from {
@@ -33,16 +43,20 @@
 
 /* Modal / menu entrance animations */
 .modal-overlay-enter {
-  animation: modal-overlay-in 140ms ease-out;
+  animation: modal-overlay-in var(--motion-fast) ease-out;
   will-change: opacity;
 }
 @keyframes modal-overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* 交接：一个弹窗直接换成另一个时（exitMotion.ts 写 data-modal-handoff），遮罩保持不动，只播新面板的入场。 */
+[data-modal-handoff] > .modal-overlay-enter {
+  animation: none;
+}
 
 .modal-content-enter {
-  animation: modal-content-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modal-content-in var(--motion-enter) var(--ease-out);
 }
 @keyframes modal-content-in {
   from {
@@ -56,7 +70,7 @@
 }
 
 .menu-enter {
-  animation: menu-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: menu-in var(--motion-fast) var(--ease-out);
   transform-origin: top left;
 }
 @keyframes menu-in {
@@ -70,9 +84,16 @@
   }
 }
 
+/* 退出残影（exitMotion.ts）：克隆体只播 Web Animations 的退出，不能重播入场或残留过渡。 */
+[data-exit-ghost],
+[data-exit-ghost] * {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* Tooltip fade-in */
 .tooltip-enter {
-  animation: tooltip-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: tooltip-in var(--motion-fast) var(--ease-out);
   will-change: opacity, transform;
 }
 @keyframes tooltip-in {
@@ -98,21 +119,11 @@
 
 /* Chevron & Accordion smooth rotation */
 .chevron-transition {
-  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--motion-fast) var(--ease-out);
   will-change: transform;
 }
 
-/* Interactive item micro-hover & micro-press tactile feedback */
-.interactive-hover {
-  transition: transform 100ms ease-out, background-color 100ms ease-out, border-color 100ms ease-out;
-}
-.interactive-hover:hover {
-  transform: translateY(-1px);
-}
-.interactive-hover:active {
-  transform: translateY(0) scale(0.985);
-}
-
+/* 按下反馈：只做轻微缩放；悬停不位移（密集列表里上浮会抖），只变色。 */
 .btn-interactive {
   transition: transform 80ms ease, background-color 100ms ease, border-color 100ms ease;
 }
@@ -139,7 +150,7 @@
   animation: skeleton-shimmer 1.6s ease-in-out infinite;
 }
 
-/* Accessibility: Respect system reduced motion preferences */
+/* 减少动效：系统「减少动画」或应用内「设置 → 外观 → 界面动效 → 减少动效」（html[data-motion="reduce"]）任一开启即生效。 */
 @media (prefers-reduced-motion: reduce) {
   .toast-progress { display: none; }
   *,
@@ -150,4 +161,13 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+:root[data-motion="reduce"] .toast-progress { display: none; }
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }

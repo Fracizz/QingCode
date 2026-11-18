@@ -461,7 +461,7 @@ Windows SSH 的重试／重启确认框在预检发现可修复的配置格式�
 | 层级 | `z-[100]` |
 | 面板 | `relative` + `rounded-lg` + `border-border-strong` + `shadow-2xl` + `modal-content-enter`；宽度用 `max-w-*`，内容过高时 `max-h-[85vh]` + 内部滚动 |
 | 关闭 | 点击遮罩关闭（确认框等同取消）；`Escape` 由各对话框自行处理 |
-| 动效 | 遮罩 `modal-overlay-enter`（淡入 140ms），面板 `modal-content-enter`（上浮 + 缩放 160ms） |
+| 动效 | 遮罩 `modal-overlay-enter`（淡入 120ms），面板 `modal-content-enter`（上浮 + 缩放 160ms）；关闭时残影淡出、面板微缩到 0.98（100ms），一个弹窗直接换成另一个时遮罩保持不动 |
 
 **适用：** `ConfirmDialog`、`PromptDialog`、`RunConfigEditor` 及今后所有居中弹窗。
 
@@ -715,7 +715,7 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 
 ### Toast
 
-- 从底部滑入，160ms 动画（`.toast-enter`）
+- 从底部滑入，160ms 动画（`.toast-enter`）；关闭或到时消失时淡出并右移 8px（100ms），其余通知立即补位
 - 类型：`info` / `success` / `error`
 - 普通通知 4 秒、详情 6 秒、错误 8 秒、带操作通知 12 秒。悬停或键盘焦点进入时同时暂停真实计时与进度条，离开后按剩余时间继续；通知使用状态播报，错误保留错误语义。
 
@@ -728,17 +728,29 @@ Server 安装、更新和打开远程项目共用右下角任务卡。单任务�
 
 ### 动效一览
 
+动效只说明浮层从哪来、到哪去，不做装饰。桌面端操作密集，时长约为手机端（`mobile/android/design.md`）的三分之一，不用弹簧回弹；只动 `opacity` / `transform`，侧栏、面板折叠与拖拽调宽、编辑器标签、编辑器与终端内容不加动画。悬停只变色、不位移；按下只用 `.btn-interactive` 的轻微缩放。参数集中在 `src/styles/animations.css` 的 `:root`：
+
+| 变量 | 值 | 用途 |
+|----|----|----|
+| `--motion-fast` | 120ms | 菜单、遮罩、Tooltip 入场，折叠箭头旋转 |
+| `--motion-enter` | 160ms | 对话框面板、Toast 入场 |
+| `--motion-exit` | 100ms | 对话框、菜单、Toast 退出（`exitMotion.ts` 读取） |
+| `--ease-out` | `cubic-bezier(0.16, 1, 0.3, 1)` | 入场：快速出发、平稳落定 |
+| `--ease-exit` | `cubic-bezier(0.4, 0, 1, 1)` | 退出：加速离场 |
+
 | 类 | 用途 | 时长 |
 |----|------|------|
-| `.toast-enter` | Toast 滑入 | 160ms |
-| `.modal-overlay-enter` | 对话框遮罩淡入 | 140ms |
+| `.toast-enter` | Toast、传输卡片滑入 | 160ms |
+| `.modal-overlay-enter` | 对话框遮罩淡入 | 120ms |
 | `.modal-content-enter` | 对话框面板上浮 + 缩放 | 160ms |
 | `.menu-enter` | 右键/下拉菜单淡入 + 轻微缩放 | 120ms |
 | `.tooltip-enter` | Tooltip 淡入（配合默认 600ms 悬停延迟） | 120ms |
 | `.dirty-pulse` | 运行中终端圆点呼吸；未保存文件使用静态圆点 | 2.4s 循环 |
 | `html.theme-transition` | 主题切换时由 `applyTheme` 临时挂载 260ms，全局颜色 200ms 过渡 | 200ms |
 
-减少动画偏好同时覆盖 CSS 过渡与 JS 主动平滑滚动；减少动画时隐藏通知倒计时动效，但保留真实生命周期和可读内容。
+**退出与交接（`src/lib/exitMotion.ts`）：** 浮层由 React 直接卸载，组件开关逻辑与关闭时机不变；浮层根节点使用 `useExitMotionRef(kind, ref)`，卸载前克隆一份不可交互、对读屏隐藏、去掉 id/role 的残影留在原处播放退出：对话框（`ModalOverlay`，自动覆盖所有弹窗）淡出且面板微缩；菜单只淡出；Toast 与传输卡片固定在原位淡出右移。新浮层出现时清掉未播完的残影，只播下一层的入场：菜单点开对话框时菜单直接让位；一个对话框直接换成另一个时遮罩不重新淡入（`data-modal-handoff`）。新增菜单或浮层应复用这个 ref，不要自行延迟卸载。Tooltip 离开时立即消失。
+
+**减少动效：** 系统「减少动画」（`prefers-reduced-motion`）或应用内「设置 → 外观 → 界面动效 → 减少动效」任一开启即全部减少。应用内偏好与颜色主题一样存于本机（`qingcode:motion`），`main.tsx` 首帧前写入 `html[data-motion="reduce"]`，多窗口通过 `storage` 事件同步；应用内只能额外减少，不能在系统已减少时强制开启。减少时 CSS 动画与过渡、JS 平滑滚动（`preferredScrollBehavior`）和退出残影都关闭，通知倒计时动效隐藏，但保留真实生命周期和可读内容。
 
 ### 滚动条
 

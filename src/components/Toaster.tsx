@@ -1,5 +1,6 @@
 import { toastDuration } from '../lib/toastTimers'
 import { useI18n } from '../lib/i18n'
+import { useExitMotionRef } from '../lib/exitMotion'
 import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
 import { useProjectStore, type Toast } from '../store/projectStore'
 import { ProjectSourceBadge } from './ProjectName'
@@ -12,6 +13,8 @@ export default function Toaster() {
   const resume = useProjectStore(s => s.resumeToast)
   const toasts = useProjectStore(s => s.toasts)
   const dismiss = useProjectStore(s => s.dismissToast)
+  // 关闭或到时消失时淡出并右移，其余通知立即补位（见 exitMotion.ts）。
+  const toastExitRef = useExitMotionRef<HTMLDivElement>('toast')
 
   return (
     <div data-floating-task-stack className="fixed bottom-8 right-3 z-[150] flex max-h-[calc(100dvh-4rem)] w-[min(428px,calc(100vw-1.5rem))] flex-col gap-2 overflow-y-auto overscroll-contain p-1 empty:hidden [&>*]:shrink-0">
@@ -39,6 +42,7 @@ export default function Toaster() {
         return (
           <div
             key={t.id}
+            ref={toastExitRef}
             onMouseEnter={() => pause(t.id, 'hover')}
             onMouseLeave={() => resume(t.id, 'hover')}
             onFocusCapture={() => pause(t.id, 'focus')}

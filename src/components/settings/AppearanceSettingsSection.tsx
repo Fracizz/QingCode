@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useI18n } from '../../lib/i18n'
 import { isTauri, safeInvoke } from '../../lib/tauri'
@@ -8,6 +9,13 @@ import {
   type FontSettings,
 } from '../../lib/fontSettings'
 import { DEFAULT_THEME, THEMES, type AppTheme } from '../../lib/themeSettings'
+import {
+  DEFAULT_MOTION_PREFERENCE,
+  MOTION_PREFERENCES,
+  loadMotionPreference,
+  saveMotionPreference,
+  type MotionPreference,
+} from '../../lib/motionPreferences'
 import { useProjectStore } from '../../store/projectStore'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
@@ -23,7 +31,7 @@ type Props = {
   onFontChange: FontSettingUpdater
 }
 
-/** 外观与语言分区：颜色主题、界面字号 / 字体、显示语言、自定义语言包。 */
+/** 外观与语言分区：颜色主题、界面动效、界面字号 / 字体、显示语言、自定义语言包。 */
 export default function AppearanceSettingsSection({
   match,
   workspaceLocked,
@@ -34,6 +42,8 @@ export default function AppearanceSettingsSection({
 }: Props) {
   const { t, language, setLanguage, localeOptions, reloadUserLocales } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
+  // 与颜色主题一样存在本机（motionPreferences.ts），不进 default-settings.json。
+  const [motion, setMotion] = useState<MotionPreference>(loadMotionPreference)
 
   return (
     <>
@@ -51,6 +61,30 @@ export default function AppearanceSettingsSection({
             aria-label={t('颜色主题')}
             onChange={next => onThemeChange(next as AppTheme)}
             options={THEMES.map(option => ({
+              value: option.value,
+              label: t(option.label),
+            }))}
+          />
+        </SettingItem>
+      )}
+      {match('界面动效', '动效', '动画', '外观') && (
+        <SettingItem
+          title={t('界面动效')}
+          description={t('选择“减少动效”时关闭弹窗、菜单和通知的进出动画，并停用平滑滚动。系统已开启“减少动画”时始终减少。')}
+          modified={motion !== DEFAULT_MOTION_PREFERENCE}
+          locked={workspaceLocked}
+          lockHint={t('此设置仅在用户作用域中可用')}
+        >
+          <SettingSelect
+            value={motion}
+            disabled={workspaceLocked}
+            aria-label={t('界面动效')}
+            onChange={next => {
+              const value = next as MotionPreference
+              setMotion(value)
+              saveMotionPreference(value)
+            }}
+            options={MOTION_PREFERENCES.map(option => ({
               value: option.value,
               label: t(option.label),
             }))}

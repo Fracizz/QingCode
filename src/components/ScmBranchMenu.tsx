@@ -25,6 +25,7 @@ import {
 import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 function BranchMenuLabel({
   name,
@@ -231,6 +232,8 @@ export default function ScmBranchMenu({
   onSwitch: (branch: string) => void
 }) {
   const { t } = useI18n()
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const menuExitRef = useExitMotionRef('menu', menuRef)
   const metrics = useInterfaceMetrics()
   const inputRef = useRef<HTMLInputElement>(null)
   const [filter, setFilter] = useState('')
@@ -304,7 +307,7 @@ export default function ScmBranchMenu({
 
   return (
     <div
-      ref={menuRef}
+      ref={menuExitRef}
       role="menu"
       className="menu-enter ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-md border border-border-strong bg-bg-elevated shadow-2xl shadow-black/45"
       style={style}

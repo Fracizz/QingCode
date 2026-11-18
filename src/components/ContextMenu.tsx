@@ -10,6 +10,7 @@ import {
   TIP_ARROW_W,
 } from './tipArrow'
 import { shortcutMatchesEvent } from '../lib/shortcuts'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 export interface ContextMenuItem {
   label: string
@@ -64,6 +65,8 @@ export default function ContextMenu({
     }
   }, [])
   const shellRef = useRef<HTMLDivElement>(null)
+  // 菜单关闭时淡出，点开弹窗时直接让位（见 exitMotion.ts）。
+  const shellExitRef = useExitMotionRef('menu', shellRef)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const arrowRef = useRef<SVGSVGElement>(null)
@@ -198,7 +201,7 @@ export default function ContextMenu({
 
   return createPortal(
     <div
-      ref={shellRef}
+      ref={shellExitRef}
       data-qingcode-context-menu
       className={`menu-enter ui-font-scaled fixed ${zIndex}`}
       style={{

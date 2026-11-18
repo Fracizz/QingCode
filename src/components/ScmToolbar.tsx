@@ -16,6 +16,7 @@ import { resolveGitSyncTimestamp } from '@/lib/git/syncTimes'
 import Tooltip from './Tooltip'
 import { CountBadge } from './CountBadge'
 import { useI18n } from '../lib/i18n'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 type ScmOperationKind = 'fetch' | 'pull' | 'push' | 'switch'
 
@@ -330,10 +331,11 @@ export type ScmPullMenuProps = {
 
 export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmPullMenuProps) {
   const { t } = useI18n()
+  const menuExitRef = useExitMotionRef('menu', menuRef)
   if (!open) return null
   return (
     <div
-      ref={menuRef}
+      ref={menuExitRef}
       role="menu"
       className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={style}
@@ -369,10 +371,11 @@ export type ScmPushMenuProps = {
 
 export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) {
   const { t } = useI18n()
+  const menuExitRef = useExitMotionRef('menu', menuRef)
   if (!open) return null
   return (
     <div
-      ref={menuRef}
+      ref={menuExitRef}
       role="menu"
       className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
@@ -400,10 +403,11 @@ export type ScmRemotesMenuProps = {
 
 export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemotesMenuProps) {
   const { t } = useI18n()
+  const menuExitRef = useExitMotionRef('menu', menuRef)
   if (!open) return null
   return (
     <div
-      ref={menuRef}
+      ref={menuExitRef}
       role="menu"
       className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] max-w-[32rem] min-w-[14rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
