@@ -55,7 +55,7 @@ import { createComposeStatus } from './composeStatus.js';
 import { createSessionDrawer } from './sessionDrawer.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { createHeroHeader } from './heroHeader.js';
-import { attachRipples, flyFrom, pageDirection, pressedTitle } from './motion.js';
+import { pageDirection, reducedMotion } from './motion.js';
 import { createTerminalSettings } from './terminalSettings.js';
 import { createShortcutBar } from './shortcutBar.js';
 import { customKeyInput } from './keyLayout.js';
@@ -269,7 +269,6 @@ get('new-session-dialog').addEventListener('cancel', event => {
   if (creatingSession) event.preventDefault();
 });
 setupSelectMenus();
-attachRipples();
 
 // 终端状态只在异常时浮出：正常会话不占视线；浮层不参与布局，显隐不会让终端重新计算行列。
 function syncTerminalStateRow() {
@@ -368,6 +367,9 @@ const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () =
 const themeSelect = get('app-theme');
 themeSelect.value = window.qingTheme.preference;
 themeSelect.addEventListener('change', () => window.qingTheme.save(themeSelect.value));
+const motionSelect = get('app-motion');
+motionSelect.value = window.qingMotion.preference;
+motionSelect.addEventListener('change', () => window.qingMotion.save(motionSelect.value));
 document.addEventListener('qingcode:mobile:theme-changed', () => {
   const theme = terminalTheme(document.documentElement.dataset.theme);
   if (term) term.options.theme = theme;
@@ -905,7 +907,7 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
       const alreadyAtTop = pages[next].scrollTop <= 0;
       pages[next].scrollTo({
         top: 0,
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+        behavior: reducedMotion() ? 'instant' : 'smooth',
       });
       showToast(document.body, alreadyAtTop ? t('已在顶部') : t('已回到顶部'));
       void rpc('haptic').catch(() => {});
@@ -1891,11 +1893,8 @@ async function openProject(item, resumeOnly = false, target = null) {
   get('terminal-name').textContent = item.name;
   // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
   get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
-  // 从工作台点按进入：标题从那一行飞到顶栏；必须在工作台隐藏前取样。
-  const origin = switching ? null : pressedTitle();
   get('dashboard').hidden = true;
   terminalScreen.hidden = false;
-  flyFrom(origin, get('terminal-name'));
   syncSessionDock();
   void syncTerminalFullscreen();
   awaitNewFrame(t('正在连接终端…'));

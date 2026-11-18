@@ -425,7 +425,6 @@
   <dialog id="settings-dialog" class="workspace-dialog settings-dialog" aria-labelledby="settings-title">
     <header class="workspace-head" tabindex="-1"><button type="button" class="icon-button" data-close="settings-dialog" aria-label="返回"><svg><use href="#i-back"/></svg></button><h2 id="settings-title">设置</h2></header>
     <div class="settings-body">
-      <p class="settings-intro">只保存在这台手机上，对所有连接和终端生效。</p>
       <h3 class="settings-group-title">通用</h3>
       <div class="settings-group">
         <section class="language-setting" aria-labelledby="language-title">
@@ -444,6 +443,13 @@
             <option value="olive">护眼绿</option>
             <option value="light">浅色</option>
             <option value="auto">跟随系统</option>
+          </select>
+        </div>
+        <div class="setting-row" data-tappable>
+          <div class="setting-text"><label for="app-motion">界面动效</label><p id="app-motion-hint">减少后关闭页面切换、分区入场和弹层滑入；系统开启「移除动画」时始终减少</p></div>
+          <select id="app-motion" data-control="value" aria-describedby="app-motion-hint">
+            <option value="auto" selected>跟随系统</option>
+            <option value="reduce">减少动效</option>
           </select>
         </div>
         <section id="update-section" class="update-setting" aria-labelledby="update-title">

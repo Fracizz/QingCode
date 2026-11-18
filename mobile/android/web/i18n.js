@@ -170,6 +170,9 @@ export const EN = Object.freeze({
   '语言 / Language': 'Language',
   '主题': 'Theme',
   '与电脑端同名主题配色一致': 'Matches the desktop theme of the same name',
+  '界面动效': 'Motion',
+  '减少后关闭页面切换、分区入场和弹层滑入；系统开启「移除动画」时始终减少': 'Turns off page transitions, section entrances and sliding panels; always reduced when the system removes animations',
+  '减少动效': 'Reduced',
   '深色': 'Dark',
   '石墨灰': 'Graphite',
   '护眼绿': 'Eye Care Green',
@@ -182,7 +185,6 @@ export const EN = Object.freeze({
   // —— 设置页 ——
   '设置': 'Settings',
   '打开设置': 'Open settings',
-  '只保存在这台手机上，对所有连接和终端生效。': 'Saved on this phone only and applied to every connection and terminal.',
   '通用': 'General',
   '发送与图片': 'Sending and images',
   '提醒与渲染': 'Alerts and rendering',

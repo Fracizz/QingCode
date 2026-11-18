@@ -1,6 +1,6 @@
 // 安卓界面动效 Web 验收：弹层退出、按压回弹、页面与浮层入场、虚拟鼠标入场、发送回执、
-// 延迟探测闪烁、会话行收起、页面按导航方向滑入与分区依次上浮、导航指示块展开、列表行涟漪、
-// 进入终端时标题飞入，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
+// 延迟探测闪烁、会话行收起、页面按导航方向滑入与分区依次上浮、导航指示块展开、列表行柔和按下态、
+// 进入终端时标题原位上浮、全屏工作页关闭不变形、应用内减少动效，以及减少动画时全部关闭；顺带检查会话行图标与标题对齐。
 // 使用内存桥，动画是否流畅仍需真机确认。
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -116,42 +116,21 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.notEqual(pill.other.transform, 'none')
     })
 
-    await step('a touched list row ripples from the finger', async () => {
-      const ripple = await page.evaluate(() => {
-        const row = document.querySelector('#project-list .project-open')
-        const rect = row.getBoundingClientRect()
-        const init = { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: rect.left + 30, clientY: rect.top + 12 }
-        row.dispatchEvent(new PointerEvent('pointerdown', init))
-        // 立即取消：行上挂着左滑 / 长按手势，只按不抬会让下一次点按变成「收起」。
-        row.dispatchEvent(new PointerEvent('pointercancel', init))
-        return { rippling: row.classList.contains('rippling'), x: row.style.getPropertyValue('--ripple-x'), y: row.style.getPropertyValue('--ripple-y'), image: getComputedStyle(row).backgroundImage }
-      })
-      assert.equal(ripple.rippling, true)
-      assert.deepEqual([ripple.x, ripple.y], ['30px', '12px'])
-      assert.ok(ripple.image.startsWith('radial-gradient'), ripple.image)
-      await page.waitForFunction(() => window.__started.some(item => item.name === 'ripple'))
-      await page.waitForFunction(() => !document.querySelector('#project-list .project-open').classList.contains('rippling'), undefined, { timeout: 5000 })
-      await started()
-    })
-
-    // 记录 Web Animations：标题飞入不是 CSS 动画，不会派发 animationstart。
-    await page.evaluate(() => {
-      window.__flights = []
-      const animate = Element.prototype.animate
-      Element.prototype.animate = function (keyframes, options) {
-        if (this.id === 'terminal-name') window.__flights.push({ from: keyframes[0].transform, zIndex: this.style.zIndex })
-        return animate.call(this, keyframes, options)
-      }
-    })
     await page.click('#project-list > :first-child .project-row:first-child .row')
-    await step('opening a project flies its title up into the terminal header', async () => {
-      await page.waitForFunction(() => window.__flights.length > 0, undefined, { timeout: 5000 }).catch(() => {})
-      const flights = await page.evaluate(() => window.__flights)
-      assert.equal(flights.length, 1, JSON.stringify(flights))
-      assert.match(flights[0].from, /^translate\(-?\d+(\.\d+)?px, \d+(\.\d+)?px\) scale\(/)
-      // 飞行途中抬高层级，结束后清除内联样式。
-      assert.equal(flights[0].zIndex, '10')
-      await page.waitForFunction(() => !document.querySelector('#terminal-name').getAnimations().length && !document.querySelector('#terminal-name').style.zIndex)
+    await step('opening a project settles the header title in place, without flying across the screen', async () => {
+      await page.waitForFunction(() => window.__started.some(item => item.name === 'title-settle'))
+      // 只读不清：下一步还要等终端页的淡入事件。
+      const settles = await page.evaluate(() => window.__started.filter(item => item.name === 'title-settle'))
+      assert.equal(settles.length, 1)
+      assert.equal(settles[0].className, 'terminal-heading')
+      // 起点只在原位下方 6px，不缩放；结束后不残留 transform。
+      const from = await page.evaluate(() => {
+        const animation = document.querySelector('.terminal-heading').getAnimations().find(item => item.animationName === 'title-settle')
+        return animation ? animation.effect.getKeyframes()[0].transform : 'finished'
+      })
+      assert.ok(from === 'finished' || from === 'translateY(6px)', from)
+      await page.waitForFunction(() => !document.querySelector('.terminal-heading').getAnimations().length)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.terminal-heading')).transform), 'none')
     })
     await page.evaluate(() => window.__mobileFixture.startTerminalIfEmpty())
     await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
@@ -186,11 +165,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       const state = await page.evaluate(async () => {
         const dialog = document.querySelector('#terminal-menu-dialog')
         dialog.showModal()
-        await new Promise(done => setTimeout(done, 220))
+        await new Promise(done => setTimeout(done, 480))
         dialog.close('cancel')
         await new Promise(done => setTimeout(done, 40))
         dialog.showModal()
-        await new Promise(done => setTimeout(done, 320))
+        await new Promise(done => setTimeout(done, 560))
         const style = getComputedStyle(dialog)
         return { open: dialog.open, opacity: style.opacity, transform: style.transform, display: style.display }
       })
@@ -303,10 +282,20 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#session-options > *')].map(row => row.dataset.id)), order.filter(id => id !== target))
     })
 
-    await step('a pressed list row shrinks only slightly', async () => {
+    await step('a pressed list row only tints softly, without shrinking or a ripple', async () => {
       // 抽屉刷新时复用行节点；项目列表会整表重建，强制的伪类会落在旧节点上。
-      const scale = await press('#session-options .session-option:first-child .row', scaleOf)
-      assert.ok(Math.abs(scale - .99) < .001, `row scale ${scale}`)
+      // 当前会话按设计保留自身底色，取一行非当前会话。
+      const selector = '#session-options .session-option:not([data-current="true"]) .row'
+      const state = await press(selector, target => {
+        const element = document.querySelector(target)
+        const style = getComputedStyle(element)
+        return { transform: style.transform, background: style.backgroundColor, image: style.backgroundImage, press: getComputedStyle(document.documentElement).getPropertyValue('--press').trim() }
+      })
+      assert.equal(state.transform, 'none')
+      assert.equal(state.image, 'none')
+      // 状态层是 5% 白（深色主题），不是整块 --raised。
+      assert.equal(state.background, 'rgba(255, 255, 255, 0.05)', JSON.stringify(state))
+      assert.equal(state.press, '#ffffff0d')
     })
 
     await step('the running spinner and the pin centre on the first title line', async () => {
@@ -336,6 +325,46 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
     })
 
+    await step('a full-screen page stays full screen while it leaves, with no dark backdrop', async () => {
+      const state = await page.evaluate(async () => {
+        const dialog = document.querySelector('#settings-dialog')
+        dialog.showModal()
+        await new Promise(done => setTimeout(done, 480))
+        dialog.close('cancel')
+        // 退出过渡刚开始：open 已移除但仍在显示，几何与底色必须和打开时一致。
+        const style = getComputedStyle(dialog)
+        const rect = dialog.getBoundingClientRect()
+        return { open: dialog.open, display: style.display, width: rect.width, height: rect.height, radius: style.borderRadius, background: style.backgroundColor, paper: getComputedStyle(document.body).backgroundColor, backdrop: getComputedStyle(dialog, '::backdrop').backgroundColor, properties: dialog.getAnimations().map(animation => animation.transitionProperty) }
+      })
+      assert.equal(state.open, false)
+      assert.notEqual(state.display, 'none')
+      assert.equal(state.width, 390)
+      assert.equal(state.height, 844)
+      assert.equal(state.radius, '0px')
+      assert.equal(state.background, state.paper)
+      assert.equal(state.backdrop, 'rgba(0, 0, 0, 0)')
+      assert.ok(state.properties.includes('transform') && state.properties.includes('opacity'), JSON.stringify(state))
+      await gone('settings-dialog')
+    })
+
+    await step('the in-app "reduce motion" setting turns motion off without the system switch', async () => {
+      await page.evaluate(() => { document.querySelector('#app-motion').value = 'reduce'; document.querySelector('#app-motion').dispatchEvent(new Event('change')) })
+      assert.equal(await page.evaluate(() => [document.documentElement.dataset.motion, localStorage.getItem('qingcode:mobile:motion')].join()), 'reduce,reduce')
+      await started()
+      const state = await page.evaluate(() => {
+        const dialog = document.querySelector('#settings-dialog')
+        dialog.showModal()
+        const opened = dialog.getAnimations().length
+        dialog.close('cancel')
+        return { opened, closing: getComputedStyle(dialog).display }
+      })
+      assert.deepEqual(state, { opened: 0, closing: 'none' })
+      await page.waitForTimeout(400)
+      assert.deepEqual((await started()).map(item => item.name), [])
+      await page.evaluate(() => { document.querySelector('#app-motion').value = 'auto'; document.querySelector('#app-motion').dispatchEvent(new Event('change')) })
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.motion ?? 'unset'), 'unset')
+    })
+
     await step('reduced motion turns all of it off', async () => {
       await page.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
       await started()
@@ -347,17 +376,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(display, 'none')
       const scale = await press('#terminal-menu', scaleOf)
       assert.equal(scale, 1)
-      // 减少动画时点按不加涟漪层，工作台切换也不播放入场、指示块和图标弹跳。
-      const rippling = await page.evaluate(() => {
-        const row = document.createElement('div')
-        row.className = 'row'
-        document.body.append(row)
-        row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: 1, clientY: 1 }))
-        const result = row.classList.contains('rippling')
-        row.remove()
-        return result
-      })
-      assert.equal(rippling, false)
+      // 减少动画时工作台切换不播放入场、指示块和图标弹跳。
       await page.evaluate(() => window.qingBack())
       await page.waitForFunction(() => !document.querySelector('#dashboard').hidden)
       await page.click('#dashboard-nav [data-page="connection"]')

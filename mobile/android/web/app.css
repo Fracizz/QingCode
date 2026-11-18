@@ -59,13 +59,14 @@
   --mono: 'QingCode Symbols', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', 'Roboto Mono', 'Noto Sans Mono', 'Droid Sans Mono', monospace;
   --ease: cubic-bezier(.2, 0, 0, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
-  --motion-enter: 160ms;
-  --motion-exit: 140ms;
+  /* 整体节奏偏从容：手机上切换很快，太短的过渡一闪而过看不出关系；退出仍比入场短，不拖慢操作。 */
+  --motion-enter: 220ms;
+  --motion-exit: 180ms;
   /* 动效刻度（见 ../design.md「动效」）：短 = 状态反馈，中 = 小元素进出，长 = 页面、分区、抽屉与底部弹层入场，特长 = 带弹簧的图标与指示块。 */
-  --motion-short: 120ms;
-  --motion-medium: 200ms;
-  --motion-long: 280ms;
-  --motion-xlong: 320ms;
+  --motion-short: 150ms;
+  --motion-medium: 260ms;
+  --motion-long: 380ms;
+  --motion-xlong: 460ms;
   /* 强调减速：大位移（底部弹层、侧栏、页面）快速出发、缓慢落定，不回弹，贴屏的边不会露缝。 */
   --ease-emphasized: cubic-bezier(.05, .7, .1, 1);
   /* 轻弹簧：只用于小元素（导航指示块、图标、浮标、对话框），过冲约 2%。旧内核不认 linear() 时退回近似的贝塞尔曲线。 */
@@ -79,7 +80,8 @@
   /* 快捷键键帽：顶部一线高光、底部一线暗边，按下下沉 1px。 */
   --key-top: #ffffff12;
   --key-bottom: #00000073;
-  --ripple: #ffffff1f;
+  /* 列表行按下的状态层：只叠一层很淡的文字色，不缩放、不扩散。 */
+  --press: #ffffff0d;
   --corner-inset: 0px;
   --corner-bottom-inset: 0px;
   /* Android 11+ 的 WebView 画到状态栏下面（MainActivity 传入 --status-top），各页顶栏自己把背景延伸到状态栏。 */
@@ -181,7 +183,7 @@
   --elev-3: 0 2px 6px #11182714, 0 16px 40px #11182724;
   --key-top: #ffffffcc;
   --key-bottom: #1118271f;
-  --ripple: #1118271a;
+  --press: #1118270a;
 }
 @supports (transition-timing-function: linear(0, 1)) {
   :root { --ease-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1); }
@@ -225,10 +227,13 @@ button {
 button:disabled { opacity: .45; cursor: default; }
 /* Material 状态层：按下时叠加一层浅色，而不是整块换色。 */
 button:active:not(:disabled), button:focus-visible { background-color: var(--raised); }
-/* 按压回弹；拖动手柄和虚拟鼠标的按键不走这里。:where 不抬高优先级，后面的专属规则仍可覆盖。 */
-button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-nav button)):active:not(:disabled) { transform: scale(.97); }
-/* 整行列表很宽，同样比例会缩得太明显。 */
-:is(.row, #submission-list button, .terminal-actions button):active:not(:disabled) { transform: scale(.99); }
+/* 按压回弹：只用于小按钮；拖动手柄、虚拟鼠标按键、导航和整行列表项（改用柔和状态层，见下）不缩放。:where 不抬高优先级，后面的专属规则仍可覆盖。 */
+button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-nav button, .row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button, .resume-card)):active:not(:disabled) { transform: scale(.97); }
+/* 整行可点的列表项（会话、项目、连接、设置行、选项）：按下只柔和地叠一层淡色，不缩放。
+   按下 150ms 淡入、松手 260ms 淡出（transition 写在哪个状态上，就决定进入该状态的时长）；选中项换底色也随之淡入，不瞬间跳变。
+   已选中 / 当前项按下时保留自身底色，不被状态层盖掉。 */
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button) { transition: background-color 260ms var(--ease), color 260ms var(--ease); }
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button):not([aria-checked="true"], [aria-current="true"]):active:not(:disabled) { background-color: var(--press); transition-duration: 150ms; }
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -534,7 +539,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
    旧内核不认 color-mix 时整条渐变声明被丢弃，退回上面的纯色 --surface。 */
 .resume-card { position: relative; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface) 62%); box-shadow: var(--elev-2); }
 .resume-card::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px var(--edge); box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, var(--edge)); pointer-events: none; }
-.resume-card:active:not(:disabled) { background: var(--accent-surface); transform: scale(.99); }
+.resume-card::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--press); opacity: 0; transition: opacity 260ms var(--ease); pointer-events: none; }
+/* 主卡片按下：保留渐变底，只淡入同一层状态色，不换底、不缩放。 */
+.resume-card:active:not(:disabled) { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface) 62%); }
+.resume-card:active:not(:disabled)::before { opacity: 1; transition-duration: 150ms; }
 .resume-card .tile { width: 44px; height: 44px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 16px -6px var(--accent); }
 .resume-card .row-text strong { font-size: 16px; font-weight: 600; }
 .resume-card .row-text small:first-child { color: var(--accent); font-weight: 500; }
@@ -954,7 +962,7 @@ dialog {
   scroll-padding-bottom: 76px;
   box-shadow: 0 16px 64px var(--dialog-shadow);
 }
-dialog[open] { animation: dialog-in 260ms var(--ease-spring); }
+dialog[open] { animation: dialog-in 340ms var(--ease-spring); }
 dialog::backdrop { background: #000000b8; }
 :root[data-theme="light"] dialog::backdrop { background: #14192338; }
 dialog h2 { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 6px; }
@@ -1233,8 +1241,8 @@ dialog.session-drawer[data-docked="true"] [data-close="session-drawer"] { displa
    弹层退出用纯 CSS 过渡，不延迟 close()，返回键和连点都无需特殊处理；旧 WebView 不认 allow-discrete 时整条忽略，退化为立即消失。 */
 dialog { transition: opacity var(--motion-exit) var(--ease-exit), transform var(--motion-exit) var(--ease-exit), display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; }
 /* 旧版内核的 ::backdrop 不继承 :root 变量，这里写字面值。 */
-dialog::backdrop { transition: background-color 140ms linear, display 140ms allow-discrete, overlay 140ms allow-discrete; }
-dialog[open]::backdrop { animation: backdrop-in 180ms linear; }
+dialog::backdrop { transition: background-color 180ms linear, display 180ms allow-discrete, overlay 180ms allow-discrete; }
+dialog[open]::backdrop { animation: backdrop-in 240ms linear; }
 /* 退出途中仍在顶层显示，不能挡住下面的点击。 */
 dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
 dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
@@ -1242,32 +1250,21 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
 /* 从隐藏变为显示时自动播放，同页刷新不会重播；终端页只淡入，避免位移影响行列测量。 */
 .dashboard-page:not([hidden]) { animation: page-in var(--motion-long) var(--ease-emphasized); }
-.dashboard[data-direction="forward"] { --page-shift: 20px; }
-.dashboard[data-direction="back"] { --page-shift: -20px; }
-/* 页面内的各分区（大标题、主卡片、会话分组、搜索…）依次上浮，前 6 块各错开 30ms，其余随最后一块；
+.dashboard[data-direction="forward"] { --page-shift: 28px; }
+.dashboard[data-direction="back"] { --page-shift: -28px; }
+/* 页面内的各分区（大标题、主卡片、会话分组、搜索…）依次上浮，前 6 块各错开 50ms，其余随最后一块；
    只在分区从隐藏变为显示时播放，列表刷新复用分区节点，不会重播。只用 backwards 填充，结束后不残留 transform。 */
 .dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: rise-in var(--motion-long) var(--ease-emphasized) backwards; }
-.dashboard-page:not([hidden]) > :nth-child(2) { animation-delay: 30ms; }
-.dashboard-page:not([hidden]) > :nth-child(3) { animation-delay: 60ms; }
-.dashboard-page:not([hidden]) > :nth-child(4) { animation-delay: 90ms; }
-.dashboard-page:not([hidden]) > :nth-child(5) { animation-delay: 120ms; }
-.dashboard-page:not([hidden]) > :nth-child(n+6) { animation-delay: 150ms; }
-@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
-/* 列表行涟漪（motion.js 写入触点坐标并加 .rippling）：从手指处扩散的一圈浅色状态层，叠在行底色上，不增加子节点。
-   依赖 @property 动画半径；不支持的内核没有涟漪，仍保留按下时的底色变化。 */
-@property --ripple-radius { syntax: '<length>'; inherits: false; initial-value: 0px; }
-@property --ripple-alpha { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
-.rippling {
-  /* !important：部分行按下时用 background 简写换底色，会把涟漪层一起清掉。 */
-  background-image: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), color-mix(in srgb, var(--ripple) var(--ripple-alpha), transparent) var(--ripple-radius), transparent calc(var(--ripple-radius) + 1px)) !important;
-  animation: ripple 520ms var(--ease) forwards;
-}
-@keyframes ripple {
-  0% { --ripple-radius: 0px; --ripple-alpha: 100%; }
-  55% { --ripple-alpha: 100%; }
-  100% { --ripple-radius: var(--ripple-size, 480px); --ripple-alpha: 0%; }
-}
+.dashboard-page:not([hidden]) > :nth-child(2) { animation-delay: 50ms; }
+.dashboard-page:not([hidden]) > :nth-child(3) { animation-delay: 100ms; }
+.dashboard-page:not([hidden]) > :nth-child(4) { animation-delay: 150ms; }
+.dashboard-page:not([hidden]) > :nth-child(5) { animation-delay: 200ms; }
+.dashboard-page:not([hidden]) > :nth-child(n+6) { animation-delay: 250ms; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(14px); } }
 #terminal-screen:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
+/* 进入终端：顶栏标题与副行在原位从下方 6px 淡入上浮，不跨屏飞行、不缩放；切换项目时终端页一直显示，不重播。 */
+#terminal-screen:not([hidden]) .terminal-heading { animation: title-settle var(--motion-long) var(--ease-emphasized) backwards; }
+@keyframes title-settle { from { opacity: 0; transform: translateY(6px); } }
 #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]) { animation: float-in var(--motion-enter) var(--ease); }
 #font-toast:not([hidden]) { animation: toast-in var(--motion-enter) var(--ease); }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
@@ -1280,12 +1277,16 @@ dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); }
 }
 @media (prefers-reduced-motion: reduce) {
   button, .pull-badge, .pull-ring circle, .nav-icon, .session-face, .project-face, .switch::before, .switch::after, .switch-check, .switch-check::after, .project-group-chevron, .session-group-chevron { transition: none; }
-  dialog[open], dialog.sheet[open], dialog.session-drawer[open], [data-state="checking"] .dot { animation: none; }
+  dialog[open], dialog.sheet[open], dialog.session-drawer[open], dialog.workspace-dialog[open], #terminal-screen:not([hidden]) .terminal-heading, [data-state="checking"] .dot { animation: none; }
   .session-spinner, .pull-indicator[data-state="refreshing"] .pull-ring { animation: none; }
   .nav-icon::before { transition: none; }
-  #dashboard-nav [aria-current="page"] .nav-icon svg, .dashboard-page:not([hidden]) > :not(.pull-indicator), .rippling { animation: none; }
-  .rippling { background-image: none !important; }
+  #dashboard-nav [aria-current="page"] .nav-icon svg, .dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: none; }
 }
+
+/* 应用内「设置 → 界面动效 → 减少动效」（themeBoot.js 写入 html[data-motion="reduce"]）：一次关闭全部过渡与动画。
+   系统「移除动画」仍由上面各处 prefers-reduced-motion 规则处理，两者任一开启即减少。 */
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after, :root[data-motion="reduce"] dialog::backdrop { animation: none !important; transition: none !important; }
+:root[data-motion="reduce"] button:where(:not(.terminal-selection-handle, .virtual-mouse-button)):active:not(:disabled) { transform: none; }
 
 /* 新建会话：与其他弹层一致的分组列表。 */
 .session-shortcuts { margin: 12px 0; background: var(--paper); }
@@ -1367,7 +1368,15 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .terminal-actions button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 14px; border-radius: 0; font-size: 14px; text-align: left; }
 .terminal-actions svg { width: 18px; height: 18px; color: var(--muted); }
 .terminal-actions .danger svg { color: inherit; }
-dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: max(4px, var(--safe-top)) max(12px, var(--safe-right)) max(12px, var(--safe-bottom)) max(12px, var(--safe-left)); border: 0; border-radius: 0; overflow: hidden; background: var(--paper); }
+/* 全屏工作页（设置、阅读输出、提交与草稿、编辑指令、文件）：铺满样式不能只写在 [open] 上——
+   close() 先移除 open，退出过渡期间元素仍在显示，若样式随之失效会缩回居中卡片并露出黑色遮罩，看起来就是一闪。
+   display 仍只在 [open] 时设置（退出期间由 allow-discrete 过渡保持），其余布局常驻。 */
+dialog.workspace-dialog { flex-direction: column; gap: 8px; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: max(4px, var(--safe-top)) max(12px, var(--safe-right)) max(12px, var(--safe-bottom)) max(12px, var(--safe-left)); border: 0; border-radius: 0; overflow: hidden; background: var(--paper); box-shadow: none; }
+dialog.workspace-dialog[open] { display: flex; animation: workspace-in var(--motion-long) var(--ease-emphasized); }
+/* 工作页像推入的新页面：从右侧轻推进来，返回时向右淡出，露出原样不动的工作台；铺满屏幕，不需要遮罩。 */
+dialog.workspace-dialog:not([open]) { opacity: 0; transform: translateX(32px); }
+dialog.workspace-dialog::backdrop { background: transparent; }
+@keyframes workspace-in { from { opacity: 0; transform: translateX(32px); } }
 .workspace-head { flex: none; display: flex; align-items: center; gap: 4px; min-height: 48px; margin-left: -8px; }
 .workspace-head h2 { margin: 0; font-size: 18px; }
 .workspace-dialog > p { flex: none; margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -1401,7 +1410,6 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
 .session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
 /* 设置页：全屏滚动，同组设置共用一个容器；宽屏时内容限宽居中。 */
 .settings-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 max(0px, calc((100% - 640px) / 2)) 8px; }
-.settings-intro { margin: 0 4px; font-size: 12px; }
 .settings-group-title { margin: 16px 4px 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
 .language-setting { padding: 12px 14px; }
 .language-setting strong { font-size: 14px; }
