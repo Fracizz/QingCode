@@ -100,6 +100,8 @@ pub struct DaemonOptions {
     pub max_ptys: usize,
     pub scrollback_bytes: usize,
     pub pty_buffer_bytes: usize,
+    /// 启动 PTY 时先从宿主的继承环境移除这些变量，再应用会话配置。
+    pub pty_inherited_env_exclusions: &'static [&'static str],
     pub idle_exit: Duration,
     pub detached_ttl: Duration,
 }
@@ -111,6 +113,7 @@ impl Default for DaemonOptions {
             max_ptys: MAX_PTYS,
             scrollback_bytes: 2 * 1024 * 1024,
             pty_buffer_bytes: PTY_BUFFER_BYTES,
+            pty_inherited_env_exclusions: &[],
             idle_exit: IDLE_EXIT,
             detached_ttl: DETACHED_TTL,
         }
@@ -451,11 +454,10 @@ async fn serve(
     let log = Arc::new(log);
     let _ = PANIC_LOG.set(Arc::clone(&log));
     let (pty_tx, pty_rx) = mpsc::channel::<PtyEvent>(PTY_EVENT_QUEUE_DEPTH);
-    let pty = Arc::new(PtyHost::new(
-        options.max_ptys,
-        options.pty_buffer_bytes,
-        pty_tx,
-    ));
+    let pty = Arc::new(
+        PtyHost::new(options.max_ptys, options.pty_buffer_bytes, pty_tx)
+            .with_inherited_env_exclusions(options.pty_inherited_env_exclusions),
+    );
     let daemon = Arc::new(Daemon {
         pty,
         token,
