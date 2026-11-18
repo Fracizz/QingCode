@@ -394,6 +394,47 @@ async fn host_fingerprint_probe_times_out_on_silent_tcp_server_and_closes_socket
     server.await.unwrap();
 }
 
+#[tokio::test]
+async fn ssh_disconnect_during_handshake_identifies_the_endpoint() {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut config = sample_config(None);
+    config.host = address.ip().to_string();
+    config.port = address.port();
+
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            super::open_transport(&config, None, super::ConnectionPurpose::Main),
+            async {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                stream.write_all(b"SSH-2.0-QingCodeTest\r\n").await.unwrap();
+                // Unencrypted SSH_MSG_DISCONNECT (ByApplication, empty description and language).
+                stream
+                    .write_all(&[
+                        0, 0, 0, 20, 6, 1, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    ])
+                    .await
+                    .unwrap();
+                stream.shutdown().await.unwrap();
+                stream.read_to_end(&mut Vec::new()).await.unwrap();
+            },
+        )
+    })
+    .await
+    .expect("SSH handshake did not end after the server disconnected");
+    let error = result
+        .err()
+        .expect("a closed transport must fail to connect");
+    assert!(error.contains("SSH 握手期间连接已断开"), "{error}");
+    assert!(error.contains(&address.to_string()), "{error}");
+    assert!(error.contains("远端主动断开（ByApplication）"), "{error}");
+}
+
 #[test]
 fn connection_mode_deserializes_lowercase_and_defaults_to_none() {
     let with_mode: super::SshConnectionConfig = serde_json::from_value(serde_json::json!({

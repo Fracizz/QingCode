@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FONT_MAX, FONT_MIN, attachPinchZoom, clampFontSize, pinchFontSize } from '../../mobile/android/web/pinchZoom.js'
+import { FONT_MAX, attachPinchZoom, clampFontSize, pinchFontSize } from '../../mobile/android/web/pinchZoom.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren() })
@@ -30,14 +30,15 @@ function fixture(size = 13, enabled = () => true) {
 }
 
 describe('Android terminal pinch zoom', () => {
-  it('scales the font size with finger spread and clamps to 11–20px', () => {
+  it('scales the font size with finger spread and clamps to 8–20px', () => {
     expect(pinchFontSize(13, 100, 100)).toBe(13)
     expect(pinchFontSize(13, 100, 150)).toBe(20)
     expect(pinchFontSize(14, 100, 115)).toBe(16)
-    expect(pinchFontSize(13, 100, 40)).toBe(FONT_MIN)
+    expect(pinchFontSize(13, 100, 40)).toBe(8)
     expect(pinchFontSize(13, 0, 40)).toBe(13)
     expect(clampFontSize(99)).toBe(FONT_MAX)
-    expect(clampFontSize(10.6)).toBe(FONT_MIN)
+    expect(clampFontSize(6)).toBe(8)
+    expect(clampFontSize(8.7)).toBe(9)
   })
 
   it('previews each new size during the gesture and commits on release', () => {

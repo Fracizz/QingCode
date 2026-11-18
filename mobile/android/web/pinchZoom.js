@@ -1,7 +1,7 @@
-// 终端双指缩放调整字号：按两指距离比例换算字号，限定在 11–20px；
+// 终端双指缩放调整字号：按两指距离比例换算字号，限定在 8–20px；
 // 整个双指手势不传给终端滚动或程序。Vitest：src/lib/mobileAndroidPinchZoom.test.ts。
 
-export const FONT_MIN = 11;
+export const FONT_MIN = 8;
 export const FONT_MAX = 20;
 /** 两指距离至少变化这么多像素才开始缩放，避免双指轻触时字号抖动。 */
 export const PINCH_SLOP = 12;

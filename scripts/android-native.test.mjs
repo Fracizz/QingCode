@@ -19,7 +19,7 @@ test('native queues isolate uploads, bound work, cancel expired inputs and ignor
       join(root, 'mobile/android/FileDownloadPolicy.java'), join(root, 'mobile/tests/FileDownloadPolicyTest.java')], { timeout: 30_000, windowsHide: true })
     const result = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.NativeRequestsTest'],
       { encoding: 'utf8', timeout: 20_000, windowsHide: true })
-    assert.match(result, /7 native scheduler regressions passed/)
+    assert.match(result, /8 native scheduler regressions passed/)
     execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.OutputFrameWindowTest'],
       { timeout: 20_000, windowsHide: true })
     const update = execFileSync(executable('java'), ['-cp', output, 'com.qingcode.companion.UpdatePolicyTest'],

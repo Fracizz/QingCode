@@ -52,6 +52,22 @@ public final class NativeRequestsTest {
         }
     }
 
+    static void slowTerminalCreationDoesNotBlockTheSessionListOrAttach() throws Exception {
+        try (NativeRequests queue = new NativeRequests()) {
+            CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+            CompletableFuture<String> create = new CompletableFuture<>(), list = new CompletableFuture<>(), attach = new CompletableFuture<>();
+            queue.submit(1, "create", 10_000, () -> { started.countDown(); await(release); return "created"; }, reply(create));
+            await(started);
+            queue.submit(2, "sessions", 2_000, () -> "listed", reply(list));
+            queue.submit(3, "attach", 2_000, () -> "attached", reply(attach));
+            check("listed".equals(list.get(2, TimeUnit.SECONDS)), "terminal creation blocked session listing");
+            check("attached".equals(attach.get(2, TimeUnit.SECONDS)), "terminal creation blocked session attach");
+            check(!create.isDone(), "creation did not stay in flight");
+            release.countDown();
+            create.get(2, TimeUnit.SECONDS);
+        }
+    }
+
     static void agentPollAndImageDoNotBlockInterrupt() throws Exception {
         try (NativeRequests queue = new NativeRequests()) {
             CountDownLatch started = new CountDownLatch(2), release = new CountDownLatch(1);
@@ -144,12 +160,13 @@ public final class NativeRequestsTest {
 
     public static void main(String[] args) throws Exception {
         uploadDoesNotBlockControlOrOutput();
+        slowTerminalCreationDoesNotBlockTheSessionListOrAttach();
         expiredQueuedInputNeverExecutesAndOrderIsPreserved();
         cancellationAbortsTransportAndSuppressesLateSuccess();
         transferBacklogIsBounded();
         blockedDisconnectDoesNotStallOtherDeadlines();
         agentPollAndImageDoNotBlockInterrupt();
         fileSearchDoesNotBlockTerminalOrLatency();
-        System.out.println("7 native scheduler regressions passed");
+        System.out.println("8 native scheduler regressions passed");
     }
 }

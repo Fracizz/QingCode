@@ -35,8 +35,8 @@ const REFRESH_INTERVAL = 1500;
 const DOCKED_REFRESH_INTERVAL = 3000;
 
 /**
- * state：读取 app 状态的 getter（profile、project、sessions、selected、busy、locked、viewEpoch、foreground、
- * projects、history、lastSession、allSupported），busy 拦截操作；locked 决定按钮是否显示为禁用，关闭单个会话时为假，列表不变暗。
+ * state：读取 app 状态的 getter（profile、project、sessions、selected、busy、viewEpoch、foreground、
+ * projects、history、lastSession、allSupported），busy 在等待会话操作时禁用相关按钮。
  * allSupported() 返回电脑端是否支持一次列出全部会话（Promise<boolean>）。
  * setSessions(list) 写回会话列表；selectSession / endSession 由 app 执行；
  * openOverviewSession / endOverviewSessions 处理纵览中（可能属于其他项目）的会话，后者接收会话数组并负责确认。
@@ -104,6 +104,8 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
 
   /** 打开项目：加入侧栏；折叠着就展开，否则当前会话藏在组里看不到。 */
   function enterProject(id) {
+    message('session-error', '');
+    message('session-refresh-error', '');
     joinProjects([id]);
     const collapsed = collapsedProjects();
     if (collapsed.includes(id)) writeProjectIds('session-groups-collapsed:', collapsed.filter(item => item !== id));
@@ -136,7 +138,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       current: () => state.project()?.id ?? null,
       selected: state.selected,
       lastSession: state.lastSession,
-      busy: state.locked,
+      busy: state.busy,
     },
     groupTools: {
       order: sidebarProjects,
@@ -204,7 +206,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const sessions = state.sessions();
     const selected = state.selected();
     tracker.attention.delete(selected);
-    const busy = state.locked();
+    const busy = state.busy();
     const project = state.project();
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
@@ -214,6 +216,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
     const options = get('session-options');
+    get('session-progress').hidden = !busy;
     // 正在收起的行不参与本轮排序，让动画播完；否则下一次渲染会把它直接切掉。
     const staying = child => !child.dataset.leaving;
     const existingRows = new Map([...options.children].filter(staying).map(row => [row.dataset.id, row]));
@@ -316,6 +319,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     drawerEpoch += 1;
     clearTimeout(refreshTimer);
     message('session-error', '');
+    message('session-refresh-error', '');
     overview.setError('');
     render();
     void refresh();
@@ -420,7 +424,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       const list = wide ? projectSessionsFromOverview(response, projectId) : response;
       setSessions(mergeSessionList(list, state.sessions()));
       prunePins(state.sessions());
-      message('session-error', '');
+      message('session-refresh-error', '');
       updateSessionAttention(tracker, wide ? response : list, state.selected());
       if (wide) overview.setList(response, address);
       if (all) {
@@ -429,7 +433,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       }
       render();
     } catch (error) {
-      if (epoch === state.viewEpoch() && currentDrawer === drawerEpoch && drawer.open) message('session-error', error.message);
+      if (epoch === state.viewEpoch() && currentDrawer === drawerEpoch && drawer.open) message('session-refresh-error', error.message);
     } finally {
       refreshing = false;
       if (drawer.open && !document.hidden && state.foreground()) refreshTimer = setTimeout(refresh, interval());

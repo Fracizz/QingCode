@@ -94,8 +94,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       // 列表刷新后电脑端又删除了该配置：创建请求由电脑端拒绝。
       await page.evaluate(() => { window.__mobileFixture.state.terminalProfiles = [{ id: 'default', name: '普通终端', trusted: true }] })
       await page.click('#new-session-dialog [data-profile="build"]', { label: 'start removed profile' })
-      await page.waitForFunction(() => document.querySelector('#terminal-status').textContent.includes('不存在'))
+      await page.waitForFunction(() => document.querySelector('#new-session-dialog').open
+        && document.querySelector('#terminal-profiles-error').textContent.includes('不存在'))
       assert.equal(await sessionCount(), 3)
+      await page.click('#new-session-dialog [data-close]')
     })
     await step('older desktops without profile support keep a plain terminal option', async () => {
       await page.evaluate(() => { window.__mobileFixture.state.terminalProfiles = null })

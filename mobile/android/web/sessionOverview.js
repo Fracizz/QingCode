@@ -28,9 +28,9 @@ import { t } from './i18n.js';
  * groupTools（侧栏）：项目固定顺序与组头操作，含 order()、collapsed(id)、toggle(id)、attention(sessionId)、
  * add(project)、menu(project)、reorder(visibleIds, from, to)、sessionOrder(projectId)、reorderSessions(projectId, visibleIds, from, to)、
  * pins(projectId)、sessionMenu(session)（行内 ⋯ 与长按打开的会话操作）；
- * 首页不传，保持按最近打开排序、组头只显示信息，长按露出关闭。
+ * projectActions（首页）：open(project)、add(project) 对应组头进入项目和新建终端，保持按最近打开排序。
  */
-export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {}, groupTools = null }) {
+export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {}, groupTools = null, projectActions = null }) {
   let items = [];
   let address = null;
   let filter = 'all';
@@ -227,7 +227,10 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       renderGroup(node, group, busy, narrowed);
       if (groupsNode.children[position] !== node) groupsNode.insertBefore(node, groupsNode.children[position] ?? null);
     });
-    for (const node of existing.values()) node.remove();
+    for (const [id, node] of existing) {
+      renderedGroups.delete(id);
+      node.remove();
+    }
     onChange();
   }
 
@@ -263,6 +266,14 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       const actions = button('icon-button session-group-more', () => groupTools.menu(renderedGroups.get(projectId).project));
       actions.append(icon('more'));
       head.append(toggle, add, actions);
+    } else if (projectActions) {
+      head.classList.add('session-group-head-home');
+      const enter = button('session-group-open', () => projectActions.open(renderedGroups.get(projectId).project));
+      enter.append(...summary, icon('chevron', 'session-group-enter-icon'));
+      const add = button('icon-button session-group-add', () => projectActions.add(renderedGroups.get(projectId).project));
+      add.setAttribute('aria-haspopup', 'dialog');
+      add.append(icon('plus'));
+      head.append(enter, add);
     } else {
       head.append(...summary);
     }
@@ -287,6 +298,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   }
 
   function renderGroup(node, group, busy, narrowed) {
+    renderedGroups.set(group.project.id, group);
     const current = group.project.id === state.current();
     const title = group.project.name ?? group.project.id;
     node.dataset.currentProject = String(current);
@@ -298,6 +310,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     node.setAttribute('aria-label', title);
     const rows = node.querySelector('.session-group-rows');
     if (groupTools) renderGroupTools(node, rows, group, busy, narrowed, title);
+    else if (projectActions) renderProjectActions(node, group, busy, title);
     const existing = new Map([...rows.children].map(row => [row.dataset.id, row]));
     const last = state.lastSession(group.project.id);
     const pinnedIds = new Set(groupTools?.pins(group.project.id) ?? []);
@@ -313,9 +326,20 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     for (const row of existing.values()) row.remove();
   }
 
+  function renderProjectActions(node, group, busy, title) {
+    const unavailable = selecting || group.missing;
+    const enter = node.querySelector('.session-group-open');
+    enter.disabled = busy || unavailable;
+    enter.setAttribute('aria-label', t('进入项目 {name}', { name: title }));
+    enter.querySelector('.session-group-enter-icon').toggleAttribute('hidden', unavailable);
+    const add = node.querySelector('.session-group-add');
+    add.hidden = unavailable;
+    add.disabled = busy;
+    add.setAttribute('aria-label', t('在 {name} 新建终端', { name: title }));
+  }
+
   function renderGroupTools(node, rows, group, busy, narrowed, title) {
     const id = group.project.id;
-    renderedGroups.set(id, group);
     const collapsible = group.sessions.length > 0 && !narrowed;
     const collapsed = collapsible && groupTools.collapsed(id);
     node.dataset.empty = String(!group.sessions.length);

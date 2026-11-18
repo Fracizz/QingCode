@@ -365,10 +365,12 @@
         <button id="drawer-project-more" class="icon-button" type="button"><svg><use href="#i-more"/></svg></button>
       </div>
     </div>
+    <p id="session-progress" class="hint" role="status" hidden>正在处理会话操作…</p>
     <div id="session-options" class="rows" aria-label="项目会话"></div>
     <!-- 「全部」范围的会话纵览，由 sessionOverview.js 渲染（与工作台首页共用）。 -->
     <div id="session-overview" hidden></div>
     <p id="session-error" class="error" role="alert" hidden></p>
+    <p id="session-refresh-error" class="error" role="alert" hidden></p>
     <p id="session-name-hint" class="hint" hidden>更新电脑端后可重命名会话。</p>
     <div class="drawer-actions">
       <button id="back" class="secondary" type="button">返回工作台</button>
@@ -539,6 +541,7 @@
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 tabindex="-1" id="new-session-title">新建会话</h2><p id="new-session-context"></p>
     <div id="terminal-profiles" class="rows session-shortcuts" aria-label="终端配置"></div>
+    <p id="terminal-profiles-progress" class="hint" role="status" hidden>正在新建终端…</p>
     <p id="terminal-profiles-error" class="error" role="alert" hidden></p>
     <p class="hint">选项来自电脑端「设置 → 终端 → 终端配置」，在所选项目环境中执行。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="new-session-dialog">取消</button></div>

@@ -27,7 +27,20 @@ pub(super) async fn open_transport(
         .ok()
         .and_then(|value| value.clone())
         .unwrap_or_default();
-    let handle = result.map_err(|error| format!("SSH 连接失败：{error}"))?;
+    let handle = result.map_err(|error| match error {
+        russh::Error::Disconnect => {
+            let reason = disconnect_reason
+                .lock()
+                .ok()
+                .and_then(|value| value.clone());
+            let context = format!("SSH 握手期间连接已断开（{}:{}）", config.host, config.port);
+            match reason {
+                Some(reason) => format!("{context}：{reason}"),
+                None => format!("{context}，请检查远端 SSH 服务和网络后重试"),
+            }
+        }
+        _ => format!("SSH 连接失败：{error}"),
+    })?;
     if fingerprint.is_empty() {
         return Err("SSH 服务端未提供主机密钥".to_string());
     }

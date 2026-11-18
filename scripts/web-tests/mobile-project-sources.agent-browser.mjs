@@ -13,8 +13,10 @@ const check = (name, expression) => {
   run('wait', '--fn', expression)
   results.push({ name, passed: true })
 }
+const settled = id => `document.getElementById('${id}').open && !document.getElementById('${id}').getAnimations().some(animation => animation.playState === 'running')`
 const hittable = selector => `(() => {
   const element = document.querySelector(${JSON.stringify(selector)});
+  if (!element) return false;
   const { x, y, width, height } = element.getBoundingClientRect();
   return element.contains(document.elementFromPoint(x + width / 2, y + height / 2));
 })()`
@@ -33,7 +35,7 @@ try {
     { id: 'legacy', name: 'api-server', kind: 'ssh', host: 'build.example', path: 'ssh://old/srv/api' },
     { id: 'native-wsl', name: 'local-linux', kind: 'wsl', host: 'Ubuntu', path: 'wsl://Ubuntu/home/code/app' },
     { id: 'local', name: 'QingCode', kind: 'local', host: 'Windows', path: 'D:/code/QingCode', lastOpenedAt: 1 }
-  ]; window.__mobileFixture.addSession({ project: 'win-remote' });
+  ]; window.__winSession = window.__mobileFixture.addSession({ project: 'win-remote' });
   window.qingLink(window.__mobileFixture.link('192.168.1.8', 48764))`)
   check('pairing link opens', `document.getElementById('pair-dialog').open`)
   run('fill', '#pair-code', 'A8z2D3')
@@ -124,6 +126,45 @@ try {
   })()`)
   run('wait', '100')
   run('screenshot', resolve(directory, 'long-source-narrow.png'))
+
+  const winGroup = '#home-session-overview .session-group[data-project="win-remote"]'
+  const removed = '#home-session-overview .session-group[data-project="removed"]'
+  const ready = `document.querySelector('#terminal-status').textContent === '会话中'`
+  run('eval', `const fixture = window.__mobileFixture;
+    fixture.addSession({ project: 'removed', projectInfo: { id: 'removed', name: '已移除的测试项目', kind: 'local' } });
+    window.__homeCreates = fixture.state.creates.length`)
+  run('click', '#dashboard-nav [data-page="home"]')
+  check('home project name and add button fit at 320px', `(() => {
+    const group = document.querySelector('${winGroup}');
+    if (!group || document.querySelector('#home-sessions').hidden) return false;
+    const enter = group.querySelector('.session-group-open').getBoundingClientRect();
+    const add = group.querySelector('.session-group-add').getBoundingClientRect();
+    return enter.height >= 44 && add.width >= 44 && add.height >= 44 && enter.right <= add.left && add.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth;
+  })()`)
+  check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-add').hidden`)
+  run('screenshot', resolve(directory, 'home-project-actions-320.png'))
+  run('click', '#home-sessions .overview-manage')
+  check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-add').hidden`)
+  run('click', '#home-sessions .overview-manage')
+  run('click', `${winGroup} .session-group-open`)
+  check('the header opens the existing session in the matching project', `${ready} && document.querySelector('#terminal-host').textContent === 'django · WinDev' && localStorage.getItem('qingcode:mobile:session:192.168.1.8:48764:win-remote') === window.__winSession && window.__mobileFixture.state.creates.length === window.__homeCreates`)
+
+  run('click', '#terminal-menu')
+  run('wait', '--fn', `${settled('terminal-menu-dialog')} && ${hittable('#manage-sessions')}`)
+  run('click', '#manage-sessions')
+  run('wait', '--fn', `document.querySelector('#session-dialog').open`)
+  run('eval', `for (let i = 0; i < 8; i++) document.querySelector('#font-smaller').click()`)
+  check('the terminal applies and saves 8px and cannot shrink further', `window.__mobileFixture.terminalFontSize() === 8 && localStorage.getItem('qingcode:mobile:font-size') === '8' && document.querySelector('#font-smaller').disabled`)
+  run('eval', 'window.qingBack(); window.qingBack()')
+  run('click', `${winGroup} .session-group-add`)
+  check('home plus opens terminal profiles for its own project', `document.querySelector('#new-session-dialog').open && document.querySelector('#new-session-context').textContent === 'django · 远端 · WinDev' && window.__mobileFixture.state.creates.length === window.__homeCreates`)
+  run('eval', 'window.qingBack()')
+  check('cancel returns to the home list with the original sessions', `!document.querySelector('#new-session-dialog').open && !document.querySelector('#home-screen').hidden && window.__mobileFixture.state.creates.length === window.__homeCreates`)
+  run('click', `${winGroup} .session-group-add`)
+  const claudeProfile = '#terminal-profiles [data-profile="claude"]'
+  run('wait', '--fn', `${settled('new-session-dialog')} && ${hittable(claudeProfile)}`)
+  run('click', claudeProfile)
+  check('the selected profile creates one terminal in the target project and keeps the saved font', `${ready} && window.__mobileFixture.state.creates.length === window.__homeCreates + 1 && window.__mobileFixture.state.creates.at(-1).project === 'win-remote' && window.__mobileFixture.state.creates.at(-1).terminalProfile === 'claude' && window.__mobileFixture.terminalFontSize() === 8`)
 } catch (error) {
   results.push({ passed: false, error: String(error) })
   process.exitCode = 1

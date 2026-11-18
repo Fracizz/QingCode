@@ -21,6 +21,8 @@ final class NativeRequests implements AutoCloseable {
 
     private static final ThreadLocal<Context> CURRENT = new ThreadLocal<>();
     private final ThreadPoolExecutor control = lane(64);
+    // SSH startup can wait for the remote host or desktop confirmation.
+    private final ThreadPoolExecutor terminalStarts = lane(2);
     private final ThreadPoolExecutor transfer = lane(2);
     private final ThreadPoolExecutor output = lane(4);
     private final ThreadPoolExecutor agentReads = lane(8);
@@ -82,6 +84,7 @@ final class NativeRequests implements AutoCloseable {
             || "agent_catalog".equals(operation) || "agent_defaults".equals(operation)
             || "agent_threads".equals(operation) || "agent_history".equals(operation);
         ThreadPoolExecutor executor = "poll".equals(operation) ? output
+            : "create".equals(operation) ? terminalStarts
             : agentRead ? agentReads
             : operation.startsWith("file_") ? fileReads
             : "latency".equals(operation) ? latency
@@ -108,7 +111,8 @@ final class NativeRequests implements AutoCloseable {
     @Override public void close() {
         closed = true;
         for (Job<?> job : jobs.values()) job.cancel("应用已关闭。");
-        control.shutdownNow(); transfer.shutdownNow(); output.shutdownNow(); agentReads.shutdownNow(); fileReads.shutdownNow(); latency.shutdownNow();
+        control.shutdownNow(); terminalStarts.shutdownNow(); transfer.shutdownNow(); output.shutdownNow();
+        agentReads.shutdownNow(); fileReads.shutdownNow(); latency.shutdownNow();
         cancellation.shutdown();
         clock.shutdownNow();
     }

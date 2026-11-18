@@ -1,5 +1,15 @@
 import { t } from './i18n.js';
 
+export function isRemoteSshDisconnect(error) {
+  return error.message === 'SSH 连接失败：Disconnected' || error.message?.startsWith('SSH 握手期间连接已断开（');
+}
+
+export function terminalErrorMessage(error) {
+  return isRemoteSshDisconnect(error)
+    ? t('电脑到远端的 SSH 连接在握手时断开，请在电脑端检查 SSH 连接后重试。')
+    : t(error.message);
+}
+
 /** Show the actual failure while reconnecting; a changed identity needs user action. */
 export function connectionFailure(error) {
   const identity = error.code === 'identity' || error.message === 'Windows 身份校验失败，请重新核对证书指纹。';
