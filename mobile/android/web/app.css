@@ -1277,10 +1277,12 @@ dialog.workspace-dialog[open] { display: flex; flex-direction: column; gap: 8px;
   .virtual-mouse .virtual-mouse-button:active, .virtual-mouse.holding .virtual-mouse-button[data-button="0"] { transform: none; }
 }
 
-/* 项目文件入口与原项目行并列，滑动复制仍移动整个前景。 */
+/* 项目行和两个快捷入口随滑动一起露出复制按钮。 */
 .project-face { display: flex; align-items: stretch; }
-.project-face > .row { flex: 1; min-width: 0; }
-.project-files { flex: none; width: 44px; min-height: 44px; margin-right: 4px; align-self: center; color: var(--muted); }
+.project-face > .row { flex: 1; min-width: 0; padding-inline-end: 4px; }
+.project-face > .icon-button { min-height: 44px; align-self: center; }
+.project-new-terminal { color: var(--accent); }
+.project-files { margin-inline-end: 4px; color: var(--muted); }
 #files-dialog[open] { background: var(--paper); opacity: 1; transform: none; animation: none; transition: none; }
 /* 标题下的副标题显示「电脑 / 项目」，省去单独一行。 */
 .files-heading { flex: 1; min-width: 0; }

@@ -309,6 +309,7 @@ const dashboard = createDashboardView({
   openPair: (...args) => pairing.openPair(...args),
   openHost: item => pairing.openHost(item),
   openProject,
+  openNewSession: openNewSessionDialog,
   openFiles: item => files.open(item),
   pending: () => ({
     list: homeOverview.list(),
@@ -1948,16 +1949,18 @@ function renderTerminalProfiles(choices, state = '') {
   message('terminal-profiles-error', state === 'error' ? t(t('无法读取电脑端终端配置，已仅显示普通终端。')) : '');
 }
 
-/** target 是侧栏里的其他项目；不传时在当前项目新建。 */
+/** 项目列表和会话侧栏可指定目标项目；终端顶栏默认使用当前项目。 */
 async function openNewSessionDialog(target = null) {
-  newSessionProject = target && target.id !== project?.id ? target : null;
+  const dialog = get('new-session-dialog');
+  if (busy || dialog.open) return;
+  newSessionProject = target && (terminalScreen.hidden || target.id !== project?.id) ? target : null;
   const destination = newSessionProject ?? project;
   get('new-session-context').textContent = destination ? destination.name + ' · ' + projectSourceLabel({ ...destination, host: '' }) : '';
   message('terminal-profiles-error', '');
   const address = profile?.id;
   const cached = terminalProfiles.get(address);
   renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
-  get('new-session-dialog').showModal();
+  dialog.showModal();
   const request = ++terminalProfilesRequest;
   try {
     const capabilities = await desktopProtocol.capabilities(profile);
@@ -2299,11 +2302,11 @@ get('show-sessions').addEventListener('click', () => toggleSessions());
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
 get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
-// 空状态、右上角「＋」、会话抽屉与项目组头共用「新建会话」弹层，可先选普通终端或电脑端终端配置。
+// 项目列表、空状态、终端顶栏和会话抽屉共用配置弹层。
 let newSessionProject = null;
 get('terminal-empty-new').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
 
-/** 在侧栏的其他项目上新建：先在电脑端创建再切过去，不经过空项目页。失败时留在弹层里提示。 */
+/** 从项目列表或其他项目创建后直接进入新会话；创建失败时留在弹层里提示。 */
 async function newSessionInProject(target, terminalProfile) {
   busy = true;
   quietBusy = true;
@@ -2317,8 +2320,11 @@ async function newSessionInProject(target, terminalProfile) {
     busy = false;
     await openProject(target, false, session);
   } catch (error) {
-    if (error.revoked) handleTerminalError(error);
-    else message('terminal-profiles-error', error.message);
+    if (epoch !== viewEpoch) return;
+    if (error.revoked) {
+      get('new-session-dialog').close();
+      handleTerminalError(error);
+    } else message('terminal-profiles-error', error.message);
   } finally {
     busy = false;
     quietBusy = false;

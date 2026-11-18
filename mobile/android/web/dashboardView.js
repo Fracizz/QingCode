@@ -21,10 +21,10 @@ function loadCollapsedGroups() {
 /**
  * state：profile、profiles、projects、loaded 的 getter 与 hostState(item)；resumeSession() 为「继续终端」对应的会话，
  * sessionCount(projectId) 为该项目未结束的会话数，latency() 为当前电脑的延迟文字；
- * lastProject() / projectHistory() 读手机记录；activate / openPair / openHost / openProject / copyProjectPath 为点击动作。
+ * lastProject() / projectHistory() 读手机记录；openProject 和 openNewSession 分别接回会话和打开新建终端选项。
  * pending() 返回 { list, attention, visible }：首页会话列表、「有新结果」标记与是否可显示；openSession(session) 接入会话。
  */
-export function createDashboardView({ state, lastProject, projectHistory, syncLatency, activate, openPair, openHost, openProject, openFiles, copyProjectPath, pending, openSession }) {
+export function createDashboardView({ state, lastProject, projectHistory, syncLatency, activate, openPair, openHost, openProject, openNewSession, openFiles, copyProjectPath, pending, openSession }) {
   const collapsedGroups = loadCollapsedGroups();
   let pendingExpanded = false;
 
@@ -201,7 +201,6 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
       badge.textContent = t('{n} 个会话', { n: sessions });
       row.append(badge);
     }
-    row.append(icon('chevron', 'arrow'));
     // 左滑露出「复制」，长按同样展开；行本身的点按仍是打开项目。
     const wrapper = document.createElement('div');
     wrapper.className = 'project-row';
@@ -215,10 +214,14 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     copy.append(icon('copy'), copyLabel);
     const face = document.createElement('div');
     face.className = 'project-face';
+    const add = button('icon-button project-new-terminal', () => { void openNewSession(item); });
+    add.setAttribute('aria-label', t('在 {name} 新建终端', { name: item.name }));
+    add.setAttribute('aria-haspopup', 'dialog');
+    add.append(icon('plus'));
     const files = button('icon-button project-files', () => { void openFiles?.(item); });
     files.setAttribute('aria-label', t('浏览 {name} 的文件', { name: item.name }));
     files.append(icon('folder'));
-    face.append(row, files);
+    face.append(row, add, files);
     wrapper.append(copy, face);
     const swipe = attachSwipeReveal(wrapper, face);
     attachLongPress(row, swipe.open);
