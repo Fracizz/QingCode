@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'">
   <title>QingCode</title>
   <link rel="preload" href="qingcode-symbols.woff2" as="font" type="font/woff2" crossorigin="anonymous">
@@ -446,7 +446,11 @@
         <div class="setting-row" data-tappable>
           <div class="setting-text"><label for="app-theme">主题</label><p id="app-theme-hint">与电脑端同名主题配色一致</p></div>
           <select id="app-theme" data-control="value" aria-describedby="app-theme-hint">
-            <option value="dark" selected>深色</option><option value="graphite">石墨灰</option>
+            <option value="dark" selected>深色</option>
+            <option value="ink">石墨灰</option>
+            <option value="olive">护眼绿</option>
+            <option value="auto">跟随系统</option>
+            <option value="light">浅色</option>
           </select>
         </div>
         <section id="update-section" class="update-setting" aria-labelledby="update-title">

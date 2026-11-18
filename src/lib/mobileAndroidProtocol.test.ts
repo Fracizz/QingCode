@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
@@ -59,11 +61,10 @@ import {
   viewerFontSize,
   VIEWER_FONT_MAX,
   VIEWER_FONT_MIN,
-  APP_THEMES,
-  parseAppTheme,
-  TERMINAL_THEME,
+  terminalTheme,
 } from '../../mobile/android/web/protocol.js'
-import { DARK_THEME } from './terminal/terminalThemes'
+import { DARK_THEME, FOREST_THEME, INK_THEME, LIGHT_THEME } from './terminal/terminalThemes'
+import { THEMES } from './themeSettings'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
 
@@ -835,16 +836,84 @@ describe('session created time and running order', () => {
 })
 
 describe('Android themes', () => {
-  it('parses saved themes and falls back to dark', () => {
-    expect(APP_THEMES).toEqual(['dark', 'graphite'])
-    expect(parseAppTheme('graphite')).toBe('graphite')
-    expect(parseAppTheme('dark')).toBe('dark')
-    for (const raw of [null, '', 'olive', 'light', 'ink']) expect(parseAppTheme(raw)).toBe('dark')
+  const script = readFileSync(new URL('../../mobile/android/web/themeBoot.js', import.meta.url), 'utf8')
+  const html = readFileSync(new URL('../../mobile/android/web/index.html', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../../mobile/android/web/app.css', import.meta.url), 'utf8')
+  const storageKey = 'qingcode:mobile:theme'
+
+  function boot(stored: string | null, native?: { systemPrefersDark(): boolean; setAppearance(theme: string): void }) {
+    const values = new Map(stored === null ? [] : [[storageKey, stored]])
+    const dataset: { theme?: string } = {}
+    let change = () => {}
+    const system = { matches: true, addEventListener: (_event: string, listener: () => void) => { change = listener } }
+    const window = { matchMedia: () => system, QingCodeNative: native } as {
+      qingTheme?: { preference: string; refresh(): void; save(theme: string): void }
+    }
+    runInNewContext(script, {
+      window, Event,
+      document: { documentElement: { dataset }, dispatchEvent: () => {} },
+      localStorage: { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) },
+    })
+    return {
+      dataset,
+      theme: window.qingTheme!,
+      saved: () => values.get(storageKey),
+      setBrowserDark(dark: boolean) { system.matches = dark; change() },
+    }
+  }
+
+  it('offers the desktop modes, restores saved choices before paint and migrates graphite', () => {
+    const options = html.match(/<select id="app-theme"[^>]*>([\s\S]*?)<\/select>/)?.[1] ?? ''
+    const desktopThemes = THEMES.map(theme => theme.value)
+    expect([...options.matchAll(/value="([^"]+)"/g)].map(match => match[1])).toEqual(desktopThemes)
+    for (const option of desktopThemes) {
+      const app = boot(option)
+      expect(app.theme.preference).toBe(option)
+      expect(app.dataset.theme).toBe(option === 'auto' ? 'dark' : option)
+    }
+    const old = boot('graphite')
+    expect(old.theme.preference).toBe('ink')
+    expect(old.dataset.theme).toBe('ink')
+    expect(old.saved()).toBe('ink')
+    for (const unknown of [null, '', 'custom']) expect(boot(unknown).dataset.theme).toBe('dark')
   })
 
-  it('keeps the terminal palette in sync with the desktop dark / graphite terminal', () => {
-    for (const [key, value] of Object.entries(TERMINAL_THEME)) {
-      expect(value, key).toBe((DARK_THEME as Record<string, string>)[key])
+  it('tracks the native system scheme only in auto mode and preserves the saved preference', () => {
+    let dark = false
+    const applied: string[] = []
+    const app = boot('auto', {
+      systemPrefersDark: () => dark,
+      setAppearance: theme => applied.push(theme),
+    })
+    expect(app.dataset.theme).toBe('light')
+    dark = true
+    app.theme.refresh()
+    expect(app.dataset.theme).toBe('dark')
+    expect(app.saved()).toBe('auto')
+    app.theme.save('olive')
+    dark = false
+    app.theme.refresh()
+    expect(app.dataset.theme).toBe('olive')
+    expect(app.saved()).toBe('olive')
+    expect(applied).toEqual(['light', 'dark', 'olive'])
+  })
+
+  it('responds to browser system scheme changes when there is no native theme bridge', () => {
+    const app = boot('auto')
+    app.setBrowserDark(false)
+    expect(app.dataset.theme).toBe('light')
+    app.setBrowserDark(true)
+    expect(app.dataset.theme).toBe('dark')
+  })
+
+  it('uses each desktop terminal palette and matches its surrounding Android background', () => {
+    const palette = { dark: DARK_THEME, ink: INK_THEME, olive: FOREST_THEME, light: LIGHT_THEME }
+    const defaultColors = css.match(/:root\s*\{([^}]+)\}/)?.[1]
+    for (const [theme, colors] of Object.entries(palette)) {
+      expect(terminalTheme(theme)).toEqual(colors)
+      const override = css.match(new RegExp(`:root\\[data-theme="${theme}"\\]\\s*\\{([^}]+)\\}`))?.[1]
+      const consoleBackground = (override?.match(/--console: ([^;]+)/) ?? defaultColors?.match(/--console: ([^;]+)/))?.[1]
+      expect(consoleBackground).toBe(colors.background)
     }
   })
 })

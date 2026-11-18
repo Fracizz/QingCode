@@ -415,10 +415,14 @@ export function recentProjects(projects, history) {
 }
 
 /** 保留连接名称和实际主机；连接名为 WSL 的 SSH 项目仍使用远端通道。 */
-export function projectSourceLabel(project) {
+export function projectSourceParts(project) {
   const kind = { local: t('本机'), wsl: 'WSL', ssh: t('远端') }[project.kind] || t('项目');
   const parts = project.kind === 'local' ? [kind] : [kind, project.connectionName, project.host];
-  return [...new Set(parts.filter(Boolean))].join(' · ');
+  return [...new Set(parts.filter(Boolean))];
+}
+
+export function projectSourceLabel(project) {
+  return projectSourceParts(project).join(' · ');
 }
 
 /**
@@ -740,25 +744,16 @@ export function sessionIdleInfo(item, now = Date.now()) {
   return { text: idleHead(Number.isFinite(item.lastActiveAt) ? now - item.lastActiveAt : null), expiring: false };
 }
 
-// —— 主题 ——
-// 手机端主题与电脑端同名主题对应：dark = 深色（默认），graphite = 石墨灰。只保存在手机上。
-export const APP_THEMES = ['dark', 'graphite'];
-
-/** 读取保存的主题值；未知或缺省时回落到深色。 */
-export function parseAppTheme(raw) {
-  return APP_THEMES.includes(raw) ? raw : 'dark';
-}
-
-/**
- * 终端配色：与电脑端深色 / 石墨灰共用的柔和配色（src/lib/terminal/terminalThemes.ts 的 DARK_THEME）。
- * 正文约 10:1、不用纯白，ANSI 色饱和度约 30–50%，选区为中性灰；两主题终端底色均为 #181818。
- */
-export const TERMINAL_THEME = {
+// 终端配色与 src/lib/terminal/terminalThemes.ts 一致。深色和石墨灰共用一套。
+const DARK_THEME = {
   background: '#181818',
   foreground: '#c4c4c4',
   cursor: '#aeafad',
   cursorAccent: '#181818',
   selectionBackground: '#3a3d42',
+  scrollbarSliderBackground: 'rgba(196, 196, 196, 0.24)',
+  scrollbarSliderHoverBackground: 'rgba(196, 196, 196, 0.4)',
+  scrollbarSliderActiveBackground: 'rgba(196, 196, 196, 0.55)',
   black: '#000000',
   red: '#d9958a',
   green: '#9cc796',
@@ -776,6 +771,66 @@ export const TERMINAL_THEME = {
   brightCyan: '#a3d0d4',
   brightWhite: '#dcdcdc',
 };
+
+const LIGHT_THEME = {
+  background: '#ffffff',
+  foreground: '#2b2b2b',
+  cursor: '#2b2b2b',
+  cursorAccent: '#ffffff',
+  selectionBackground: '#c9d9ea',
+  scrollbarSliderBackground: 'rgba(43, 43, 43, 0.22)',
+  scrollbarSliderHoverBackground: 'rgba(43, 43, 43, 0.38)',
+  scrollbarSliderActiveBackground: 'rgba(43, 43, 43, 0.5)',
+  black: '#262626',
+  red: '#b5463e',
+  green: '#2f7a34',
+  yellow: '#87661c',
+  blue: '#2a62a3',
+  magenta: '#8c3b8c',
+  cyan: '#1f7480',
+  white: '#2b2b2b',
+  brightBlack: '#5a5a5a',
+  brightRed: '#9a3832',
+  brightGreen: '#26652b',
+  brightYellow: '#6d5216',
+  brightBlue: '#204f86',
+  brightMagenta: '#733177',
+  brightCyan: '#195e68',
+  brightWhite: '#262626',
+};
+
+const OLIVE_THEME = {
+  background: '#1c241f',
+  foreground: '#b5c2b8',
+  cursor: '#d9b878',
+  cursorAccent: '#1c241f',
+  selectionBackground: '#34503f',
+  scrollbarSliderBackground: '#b5c2b847',
+  scrollbarSliderHoverBackground: '#b5c2b873',
+  scrollbarSliderActiveBackground: '#b5c2b899',
+  black: '#171e1a',
+  red: '#d68f8f',
+  green: '#a9c79a',
+  yellow: '#d6bf8a',
+  blue: '#8fb3d6',
+  magenta: '#bfa0d0',
+  cyan: '#8cc2bd',
+  white: '#cbd5cd',
+  brightBlack: '#91a99a',
+  brightRed: '#dea6a6',
+  brightGreen: '#bbd6ad',
+  brightYellow: '#ddcda2',
+  brightBlue: '#a6c4e2',
+  brightMagenta: '#cfb5dc',
+  brightCyan: '#a2d2cd',
+  brightWhite: '#d9e1da',
+};
+
+export function terminalTheme(resolved) {
+  if (resolved === 'light') return LIGHT_THEME;
+  if (resolved === 'olive') return OLIVE_THEME;
+  return DARK_THEME;
+}
 
 /**
  * 多端共享时这台手机是否跟随其他端的尺寸：电脑端支持多写者（带 `sizeOwnerHere`）且尺寸方不是本机。

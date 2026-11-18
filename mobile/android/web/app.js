@@ -15,7 +15,6 @@ import {
   mergeSessionName,
   nextModifierState,
   outputBatches,
-  parseAppTheme,
   parsePairingLink,
   projectLocation,
   projectPlaceLabel,
@@ -26,7 +25,7 @@ import {
   summarizeSessionBatch,
   terminalGridSize,
   terminalProfileChoices,
-  TERMINAL_THEME,
+  terminalTheme,
   viewerFontSize,
   kickedNotice,
   updateSessionAttention,
@@ -354,18 +353,14 @@ pairing = createPairingFlow({
 
 const reader = createOutputReader({ rpc, terminal: () => term, historyOpen: () => !!terminalHistory?.isOpen() });
 
-// 主题：只保存在手机上；themeBoot.js 已在首帧前套用，这里负责设置项与切换。
-const themeKey = prefix + 'theme';
-function applyAppTheme(value) {
-  const theme = parseAppTheme(value);
-  if (theme === 'dark') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  return theme;
-}
-get('app-theme').value = applyAppTheme(localStorage.getItem(themeKey));
-get('app-theme').addEventListener('change', () => {
-  const theme = applyAppTheme(get('app-theme').value);
-  localStorage.setItem(themeKey, theme);
+const themeSelect = get('app-theme');
+themeSelect.value = window.qingTheme.preference;
+themeSelect.addEventListener('change', () => window.qingTheme.save(themeSelect.value));
+document.addEventListener('qingcode:mobile:theme-changed', () => {
+  const theme = terminalTheme(document.documentElement.dataset.theme);
+  if (term) term.options.theme = theme;
+  if (heldFrame) heldFrame.term.options.theme = theme;
+  terminalHistory?.syncTheme();
 });
 
 const settings = createTerminalSettings({
@@ -455,6 +450,7 @@ const homeOverview = createSessionOverview({
     renderHomeSessions();
     dashboard.renderResume();
     dashboard.renderConnectionStats();
+    dashboard.renderRecentProjectSessionCounts();
     if (page === 'project') dashboard.renderProjects();
   },
 });
@@ -1302,8 +1298,7 @@ function makeTerminal() {
     fontFamily: "'QingCode Symbols', 'QingCode CJK', monospace",
     scrollback: 10000,
     cursorBlink: true,
-    // 与电脑端深色 / 石墨灰终端共用同一套柔和配色（见 protocol.js）。
-    theme: TERMINAL_THEME,
+    theme: terminalTheme(document.documentElement.dataset.theme),
   });
   fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);

@@ -1,5 +1,12 @@
-import { createCellMeter, renderHistoryPage, renderScreen } from './historyRender.js';
+import { createCellMeter, HISTORY_ANSI_COLORS, renderHistoryPage, renderScreen } from './historyRender.js';
 import { t } from './i18n.js';
+
+// 已加载的行用变量引用 ANSI 色，系统切换主题时可以原地换色并保留滚动位置与选区。
+const historyPalette = {
+  foreground: 'var(--history-fg)',
+  background: 'var(--history-bg)',
+  ...Object.fromEntries(HISTORY_ANSI_COLORS.map(key => [key, `var(--history-ansi-${key})`])),
+};
 
 /**
  * 手机本地滚动记录（可见区上方）相当于电脑端历史的多少行：电脑端把自动换行拼回一个逻辑行，
@@ -56,6 +63,12 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
 
   /** 字形测量器与终端同字体；每页新建，字体切换或加载完成后自动生效。 */
   const meter = () => createCellMeter(panel.ownerDocument, term.options.fontFamily);
+
+  function syncTheme() {
+    const theme = term.options.theme ?? {};
+    applyTerminalColors(panel, theme);
+    for (const key of HISTORY_ANSI_COLORS) panel.style.setProperty(`--history-ansi-${key}`, theme[key] ?? '');
+  }
 
   function rememberAnchor() {
     if (panel.hidden) { anchor = null; return; }
@@ -134,7 +147,7 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
       if (!active || attempt !== generation) return;
       const height = scroll.scrollHeight;
       const top = scroll.scrollTop;
-      content.prepend(renderHistoryPage(content.ownerDocument, page.lines, term.options.theme ?? {}, meter()));
+      content.prepend(renderHistoryPage(content.ownerDocument, page.lines, historyPalette, meter()));
       cursor = page.before;
       more = page.more === true;
       moreButton.hidden = !more;
@@ -162,11 +175,11 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
     generation += 1;
     startCursor = Math.max(0, latest - localLogicalDepth(term.buffer.active));
     // 先带颜色复制可见行：第一次滑动不会出现空白或加载画面的跳变。
-    content.replaceChildren(renderScreen(content.ownerDocument, term, meter()));
+    content.replaceChildren(renderScreen(content.ownerDocument, term, meter(), historyPalette));
     const font = fontSize();
     content.style.fontSize = font + 'px';
     content.style.fontFamily = term.options.fontFamily;
-    applyTerminalColors(panel, term.options.theme);
+    syncTheme();
     // 行高取终端实际行高，并按历史字号与终端字号之比换算（旁观时两者可能不同）。
     const screenHeight = term.element.querySelector('.xterm-screen').getBoundingClientRect().height;
     const rowHeight = (screenHeight / term.rows) * (font / term.options.fontSize) + 'px';
@@ -251,6 +264,7 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
   term.element.addEventListener('wheel', onWheel, { capture: true, passive: false });
   return {
     close,
+    syncTheme,
     isOpen: () => !panel.hidden,
     update(before, hasHistory) { latest = before ?? 0; available = hasHistory === true; },
     dispose() {

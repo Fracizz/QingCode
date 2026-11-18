@@ -6,12 +6,12 @@ import { t } from './i18n.js';
 /** 旧版电脑端为全屏程序采样画面插入的标记行；新版不再采样，保留解析以兼容旧电脑端。 */
 export const TUI_FRAME_MARKER = '── 全屏画面历史 ──';
 
-const BASE16 = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+export const HISTORY_ANSI_COLORS = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
   'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'];
 
 /** xterm 256 色调色板索引转 CSS 颜色；0-15 取主题色。 */
 export function paletteColor(index, theme = {}) {
-  if (index < 16) return theme[BASE16[index]] ?? null;
+  if (index < 16) return theme[HISTORY_ANSI_COLORS[index]] ?? null;
   if (index < 232) {
     const value = index - 16;
     const step = n => (n === 0 ? 0 : 55 + n * 40);
@@ -397,10 +397,9 @@ export function renderHistoryPage(doc, lines, theme = {}, meter = null) {
 }
 
 /** 手机可见行带颜色复制，作为只读面板的起点；与上方电脑端历史连续衔接，不加分隔条。 */
-export function renderScreen(doc, term, meter = null) {
+export function renderScreen(doc, term, meter = null, theme = term.options.theme ?? {}) {
   const fragment = doc.createDocumentFragment();
   const buffer = term.buffer.active;
-  const theme = term.options.theme ?? {};
   for (let index = 0; index < term.rows; index += 1) {
     const line = buffer.getLine(buffer.viewportY + index);
     // 下一行是自动换行的延续时拼成一个逻辑行，交给手机按自身宽度排版。

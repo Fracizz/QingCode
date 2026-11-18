@@ -1,6 +1,6 @@
 // 工作台三页的渲染：连接列表、首页（当前电脑与最近项目）、项目列表。只读取状态，不发请求。
-import { groupProjectsByHost, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, recentProjects, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
-import { get, icon, rowText, tile, button, avatar } from './dom.js';
+import { groupProjectsByHost, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, projectSourceParts, recentProjects, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
+import { get, icon, rowText, button, avatar } from './dom.js';
 import { attachLongPress, attachSwipeReveal } from './gestures.js';
 import { dateLocale, t } from './i18n.js';
 import { runningStatusEnabled } from './sessionPrefs.js';
@@ -105,7 +105,7 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     if (canResume) renderResume();
     const recentList = recentProjects(projects, projectHistory());
     get('home-projects').hidden = hostState !== 'online' || !projects.length;
-    get('home-project-list').replaceChildren(...recentList.map(projectRow));
+    get('home-project-list').replaceChildren(...recentList.map(item => projectRow(item)));
     get('home-recent-empty').hidden = recentList.length > 0;
     const homeStates = {
       checking: [t('正在连接电脑'), t('正在读取已信任的项目。'), t('查看连接')],
@@ -179,27 +179,59 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     stats.textContent = [t('电脑 {value}', { value: state.latency() }), t('{n} 个项目', { n: state.projects().length }), t('{n} 个会话', { n: sessions })].join(' · ');
   }
 
+  function updateProjectSessionCount(badge, projectId) {
+    const count = state.sessionCount(projectId);
+    const label = count ? t('{n} 个会话', { n: count }) : '';
+    if (badge.textContent !== label) badge.textContent = label;
+    badge.hidden = !count;
+  }
+
+  function renderRecentProjectSessionCounts() {
+    for (const badge of get('home-project-list').querySelectorAll('.project-session-count')) {
+      updateProjectSessionCount(badge, badge.dataset.projectId);
+    }
+  }
+
   /** grouped：所在主机已由分组标题说明，来源只留给读屏。 */
   function projectRow(item, { grouped = false } = {}) {
-    const row = button('row', () => { void openProject(item); });
-    const text = rowText(item.name, projectSourceLabel(item));
-    text.lastElementChild.className = grouped ? 'project-source sr-only' : 'project-source';
-    const location = document.createElement('small');
-    location.className = 'project-path';
-    location.textContent = projectLocation(item);
-    text.append(location);
-    row.dataset.kind = item.kind;
-    if (grouped) {
-      row.dataset.grouped = 'true';
-      row.setAttribute('aria-label', [item.name, projectSourceLabel(item), location.textContent].join(' '));
-    } else row.append(tile(item.kind === 'ssh' ? 'host' : 'folder'));
-    row.append(text);
-    const sessions = state.sessionCount(item.id);
-    if (sessions) {
-      const badge = document.createElement('span');
-      badge.className = 'row-badge';
-      badge.textContent = t('{n} 个会话', { n: sessions });
-      row.append(badge);
+    const row = button('row project-open', () => { void openProject(item); });
+    const heading = document.createElement('span');
+    heading.className = 'project-heading';
+    const name = document.createElement('strong');
+    name.textContent = item.name;
+    heading.append(name);
+
+    const source = document.createElement('small');
+    source.className = grouped ? 'project-source sr-only' : 'project-source';
+    source.dataset.kind = item.kind;
+    const parts = projectSourceParts(item);
+    if (grouped) source.textContent = parts.join(' · ');
+    else parts.forEach((part, index) => {
+      const segment = document.createElement('span');
+      if (index) source.append(' ');
+      segment.textContent = index ? '· ' + part : part;
+      source.append(segment);
+    });
+    const meta = document.createElement('span');
+    meta.className = 'project-meta';
+    if (!grouped) meta.append(source);
+    const badge = document.createElement('span');
+    badge.className = 'project-session-count';
+    badge.dataset.projectId = item.id;
+    updateProjectSessionCount(badge, item.id);
+    (grouped ? heading : meta).append(badge);
+    row.append(heading, grouped ? source : meta);
+
+    const path = projectLocation(item);
+    if (path) {
+      const location = document.createElement('small');
+      location.className = 'project-path';
+      for (const part of path.match(/[^/\\]*[/\\]+|[^/\\]+/g)) {
+        const segment = document.createElement('span');
+        segment.textContent = part;
+        location.append(segment);
+      }
+      row.append(location);
     }
     // 左滑露出「复制」，长按同样展开；行本身的点按仍是打开项目。
     const wrapper = document.createElement('div');
@@ -221,7 +253,10 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     const files = button('icon-button project-files', () => { void openFiles?.(item); });
     files.setAttribute('aria-label', t('浏览 {name} 的文件', { name: item.name }));
     files.append(icon('folder'));
-    face.append(row, add, files);
+    const actions = document.createElement('span');
+    actions.className = 'project-actions';
+    actions.append(add, files);
+    face.append(row, actions);
     wrapper.append(copy, face);
     const swipe = attachSwipeReveal(wrapper, face);
     attachLongPress(row, swipe.open);
@@ -309,5 +344,5 @@ export function createDashboardView({ state, lastProject, projectHistory, syncLa
     renderPending();
   });
 
-  return { renderConnections, renderHome, renderProjects, renderAll, renderResume, renderConnectionStats, renderPending };
+  return { renderConnections, renderHome, renderProjects, renderAll, renderResume, renderConnectionStats, renderPending, renderRecentProjectSessionCounts };
 }

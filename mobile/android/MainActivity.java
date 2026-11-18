@@ -126,6 +126,7 @@ public final class MainActivity extends Activity {
     private boolean pageReady;
     private boolean foreground;
     private boolean immersive;
+    private boolean lightAppearance;
     private float cornerBottomInset;
     /** 状态栏（含顶部挖孔）高度，单位 dp；页面用它把顶栏背景延伸到状态栏。 */
     private float statusTopInset;
@@ -157,9 +158,9 @@ public final class MainActivity extends Activity {
         watcher = SessionWatcher.get(this);
 
         FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(0xff111419);
+        frame.setBackgroundColor(0xff181818);
         view = new WebView(this);
-        view.setBackgroundColor(0xff111419);
+        view.setBackgroundColor(0xff181818);
         frame.addView(view, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -244,6 +245,7 @@ public final class MainActivity extends Activity {
                 notifyForeground();
                 notifyOrientation();
                 applyCornerInset();
+                refreshAppearance();
             }
 
             @Override public WebResourceResponse shouldInterceptRequest(WebView webView, WebResourceRequest request) {
@@ -317,7 +319,27 @@ public final class MainActivity extends Activity {
                     | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 : View.SYSTEM_UI_FLAG_VISIBLE);
         }
+        applySystemBarAppearance();
         getWindow().getDecorView().requestApplyInsets();
+    }
+
+    private void applySystemBarAppearance() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                int bars = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                controller.setSystemBarsAppearance(lightAppearance ? bars : 0, bars);
+            }
+        } else {
+            View decor = getWindow().getDecorView();
+            int bars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            decor.setSystemUiVisibility((decor.getSystemUiVisibility() & ~bars) | (lightAppearance ? bars : 0));
+        }
+    }
+
+    private void refreshAppearance() {
+        if (pageReady && view != null) view.evaluateJavascript("window.qingTheme?.refresh()", null);
     }
 
     @Override public void onWindowFocusChanged(boolean focused) {
@@ -329,6 +351,7 @@ public final class MainActivity extends Activity {
         super.onConfigurationChanged(configuration);
         applyFullscreen();
         notifyOrientation();
+        refreshAppearance();
     }
 
     private void notifyOrientation() {
@@ -603,6 +626,25 @@ public final class MainActivity extends Activity {
 
     public final class Bridge {
         @JavascriptInterface public void cancel(int id) { requests.cancel(id); streams.cancel(id); }
+
+        @JavascriptInterface public boolean systemPrefersDark() {
+            return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        }
+
+        @JavascriptInterface public void setAppearance(String theme) {
+            runOnUiThread(() -> {
+                if (view == null) return;
+                lightAppearance = "light".equals(theme);
+                int background = lightAppearance ? 0xffffffff : "olive".equals(theme) ? 0xff1c241f : 0xff181818;
+                view.setBackgroundColor(background);
+                ((View) view.getParent()).setBackgroundColor(background);
+                // Android 11+ 的状态栏由网页顶栏绘制，旧版本用原生窗口背景色。
+                getWindow().setStatusBarColor(Build.VERSION.SDK_INT >= 30 ? 0x00000000 : background);
+                getWindow().setNavigationBarColor(background);
+                applySystemBarAppearance();
+            });
+        }
 
         /** 终端输出推送（poll_stream）：帧经 qingStream 回调，结束经 qingStreamEnd，取消用 cancel。 */
         @JavascriptInterface public void stream(int id, String payload) {

@@ -95,13 +95,6 @@ export function rowText(title, subtitle) {
   return text;
 }
 
-export function tile(name) {
-  const element = document.createElement('span');
-  element.className = 'tile';
-  element.append(icon(name));
-  return element;
-}
-
 export function button(className, action) {
   const element = document.createElement('button');
   element.type = 'button';

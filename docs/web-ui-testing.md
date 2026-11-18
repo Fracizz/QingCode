@@ -58,8 +58,8 @@ Codex / OpenCode 全屏只读历史：Windows/macOS 运行 `ego-browser nodejs -
 Android 终端长按选字运行 `node scripts/web-tests/mobile-selection.agent-browser.mjs`，复用真实 xterm、触摸手势与页面。覆盖中文宽字符长按、双端手柄跨行拖动、全选、手机剪贴板桥、失败重试、鼠标上报 TUI 不发输入、返回取消、旋转清理及会话切换；截图与结果在 `.dev/web-tests/mobile-selection/`。剪贴板写入由内存桥模拟，Android 原生剪贴板和真实触屏手感仍需真机验收。
 
 Android 项目来源场景使用 `/mobile-android/`，运行 `node scripts/web-tests/mobile-project-sources.agent-browser.mjs`。
-验证同名项目的连接名称与 IP 分行显示、WSL / 地址搜索、旧版电脑端兼容、首页与终端来源一致、
-取消环境分类后的统一列表、WSL 路径查询，以及 320px 窄屏的长连接名换行；截图与结果位于 `.dev/web-tests/mobile-project-sources/`。
+验证同名项目的来源区分、主机分组、WSL / 地址 / 路径搜索，以及 320px 窄屏的长连接名和完整路径换行。
+同时验证首页会话数、新建终端、文件浏览和长按复制完整路径；截图与结果位于 `.dev/web-tests/mobile-project-sources/`。
 
 Android 扫码识别使用 `node scripts/web-tests/mobile-scanner.agent-browser.mjs`（先启动 `pnpm test:web`）。
 复用 `/mobile-android/` 的真实页面、jsQR 与扫码模块，通过 Canvas MediaStream 提供 1920×1080 模拟相机画面，
