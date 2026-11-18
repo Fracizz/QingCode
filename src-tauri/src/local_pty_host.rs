@@ -93,6 +93,7 @@ pub fn try_run_host() -> Option<i32> {
     let state_dir = parse_host_args(&argv)?;
     let options = DaemonOptions {
         state_dir: Some(state_dir),
+        pty_inherited_env_exclusions: crate::terminal::AGENT_INJECTED_ENV,
         ..Default::default()
     };
     Some(match qingcode_server::daemon::run(options) {

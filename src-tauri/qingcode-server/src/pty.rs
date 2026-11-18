@@ -490,6 +490,7 @@ pub struct PtyHost {
     inner: Arc<Mutex<HostInner>>,
     max_ptys: usize,
     total_buffer_bytes: usize,
+    inherited_env_exclusions: &'static [&'static str],
     event_sink: Sender<PtyEvent>,
     id_counter: AtomicU64,
     created_counter: AtomicU64,
@@ -515,10 +516,16 @@ impl PtyHost {
             })),
             max_ptys,
             total_buffer_bytes,
+            inherited_env_exclusions: &[],
             event_sink,
             id_counter: AtomicU64::new(0),
             created_counter: AtomicU64::new(0),
         }
+    }
+
+    pub fn with_inherited_env_exclusions(mut self, names: &'static [&'static str]) -> Self {
+        self.inherited_env_exclusions = names;
+        self
     }
 
     /// 创建终端。整个「限额检查 + openpty + spawn」在同一把锁内完成，
@@ -557,6 +564,9 @@ impl PtyHost {
         cmd.args(&opts.args);
         // pty_working_directory 已还原盘符/UNC；这里再兜底剥一次，两者幂等。
         cmd.cwd(shell_working_directory(&cwd).as_ref());
+        for &key in self.inherited_env_exclusions {
+            cmd.env_remove(key);
+        }
         for (key, value) in &opts.env {
             cmd.env(key, value);
         }
@@ -2432,6 +2442,64 @@ mod tests {
                 scrollback_bytes: 64 * 1024,
                 client_id: "client-a".to_string(),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn pty_inherited_env_exclusions_apply_before_session_env() {
+        const CHILD: &str = "QINGCODE_TEST_PTY_ENV_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // 注入独立测试进程的环境，避免影响并行测试。
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "pty::tests::pty_inherited_env_exclusions_apply_before_session_env",
+                ])
+                .env(CHILD, "1")
+                .env("CI", "inherited-ci")
+                .env("NO_COLOR", "inherited-no-color")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        const EXCLUDED: &[&str] = &["CI", "NO_COLOR"];
+        for (exclude, no_color, expected) in [
+            (&[][..], None, "pty-env:inherited-ci:inherited-no-color:end"),
+            (EXCLUDED, None, "pty-env:::end"),
+            (EXCLUDED, Some("profile"), "pty-env::profile:end"),
+        ] {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+            let host = PtyHost::new(1, 64 * 1024, tx).with_inherited_env_exclusions(exclude);
+            let mut options = interactive_options();
+            #[cfg(unix)]
+            options.args.extend(
+                [
+                    "-c",
+                    r#"printf 'pty-env:%s:%s:end\n' "${CI-}" "${NO_COLOR-}""#,
+                ]
+                .map(String::from),
+            );
+            #[cfg(windows)]
+            options.args.extend(
+                [
+                    "-Command",
+                    "'pty-env:{0}:{1}:end' -f $env:CI, $env:NO_COLOR",
+                ]
+                .map(String::from),
+            );
+            if let Some(value) = no_color {
+                options.env.insert("NO_COLOR".into(), value.into());
+            }
+            let pty = host.create(options).unwrap();
+            wait_for_text(&mut rx, &pty.id, expected).await;
+            assert_eq!(wait_for_exit(&mut rx, &pty.id).await, Some(0));
         }
     }
 

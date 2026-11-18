@@ -60,7 +60,6 @@ fn inherited_env_is_scrubbed_and_color_capability_declared() {
     assert_eq!(value("COLORTERM"), Some("truecolor"));
 }
 
-#[cfg(windows)]
 #[test]
 fn run_config_env_can_still_set_agent_style_variables() {
     // 用户在运行配置里显式写的 NO_COLOR 是本意，叠加在清理之后。

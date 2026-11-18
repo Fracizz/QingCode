@@ -1115,7 +1115,7 @@ fn hosted_env_allowed(key: &str) -> bool {
 /// 如果原样传给新终端，`NO_COLOR` / `CI` 会让 Claude Code 等 TUI 关闭全部颜色，`CI`
 /// 还会让 pnpm 等工具进入 CI 模式，Claude Code 的会话标记则会被误认为嵌套会话。
 /// 只按名称精确剔除，不按前缀剔除，以免误删用户的全局配置（如 `CLAUDE_CODE_GIT_BASH_PATH`）。
-const AGENT_INJECTED_ENV: &[&str] = &[
+pub(crate) const AGENT_INJECTED_ENV: &[&str] = &[
     "CI",
     "NO_COLOR",
     "CLAUDECODE",
