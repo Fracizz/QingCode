@@ -48,7 +48,7 @@ export default function ProjectIdleEditor() {
 
   return (
     <div
-      className="project-idle-editor ui-font-scaled min-h-0 flex-1 flex flex-col items-center overflow-auto bg-bg px-6 py-6 text-fg-dim select-none"
+      className="project-idle-editor view-fade ui-font-scaled min-h-0 flex-1 flex flex-col items-center overflow-auto bg-bg px-6 py-6 text-fg-dim select-none"
       data-testid="project-idle-editor"
     >
       {/* 上下留白比例 2:3，视觉重心略偏上 */}

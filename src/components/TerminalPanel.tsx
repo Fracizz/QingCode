@@ -35,6 +35,8 @@ const DUAL_RATIO_MIN = 0.1
 const DUAL_RATIO_MAX = 0.9
 /** Fixed sash width between terminal panes (no negative margin overlap). */
 const DUAL_RESIZER_PX = 8
+/** 终端面板开合只淡入淡出：宽 / 高直接到位，避免逐帧重排和 xterm 反复测量（DESIGN.md「动效一览」）。 */
+const DOCK_FADE = 'transition-opacity duration-[var(--motion-enter)] ease-out'
 
 type QuadRatios = { col: number; row: number }
 
@@ -627,7 +629,7 @@ export default function TerminalPanel({
         className={`flex h-full min-h-0 overflow-hidden ${
           sideWidthEqual ? 'min-w-0 w-full' : 'flex-shrink-0'
         } ${
-          skipDockTransition ? '' : 'transition-[width,opacity] duration-200 ease-out'
+          skipDockTransition ? '' : DOCK_FADE
         } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         style={{
           width: terminalOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
@@ -658,7 +660,7 @@ export default function TerminalPanel({
       data-terminal-dock="bottom"
       data-terminal-position="bottom"
       className={`flex flex-col flex-shrink-0 min-h-0 overflow-hidden ${
-        skipDockTransition ? '' : 'transition-[height,opacity] duration-200 ease-out'
+        skipDockTransition ? '' : DOCK_FADE
       } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none h-0'}`}
       style={{ height: terminalOpen ? terminalHeight : 0 }}
     >

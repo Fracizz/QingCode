@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 /**
- * 电脑端浮层动效（DESIGN.md「动效一览」）：弹窗 / 菜单 / 通知的退出残影、层间交接、去掉悬停上浮和应用内减少动效。
+ * 电脑端动效（DESIGN.md「动效一览」）：弹窗 / 菜单 / 通知的退出残影、层间交接、侧栏原地换页入场、终端浮条进出、去掉悬停上浮和应用内减少动效。
  * 先启动 `pnpm test:web`；动画时间依赖页面不被节流，建议用 headless-task-space.mjs 运行。
  */
 export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifactDir } = {}) {
@@ -199,6 +199,77 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await waitGhostsGone()
     })
 
+    await step('侧栏换页：新面板淡入右移入场，旧面板不留残影，播完不残留 transform', async () => {
+      await page.click('[data-testid="view-explorer"]')
+      await settle()
+      const state = await page.evaluate(async () => {
+        document.querySelector('[data-testid="view-search"]').click()
+        await new Promise(r => setTimeout(r, 10))
+        const view = document.querySelector('[data-testid="sidebar-view"]')
+        const snapshot = {
+          view: view.dataset.view,
+          views: document.querySelectorAll('[data-testid="sidebar-view"]').length,
+          ghosts: document.querySelectorAll('[data-exit-ghost]').length,
+          animation: getComputedStyle(view).animationName,
+        }
+        let midOpacity = null
+        let shifted = false
+        const start = performance.now()
+        while (performance.now() - start < 400) {
+          await new Promise(r => requestAnimationFrame(r))
+          const style = getComputedStyle(view)
+          const opacity = Number(style.opacity)
+          if (opacity > 0.05 && opacity < 0.95) midOpacity = opacity
+          if (style.transform !== 'none') shifted = true
+        }
+        return { ...snapshot, midOpacity, shifted, endTransform: getComputedStyle(view).transform, endOpacity: getComputedStyle(view).opacity }
+      })
+      console.log('sidebar view enter', state)
+      assert.equal(state.view, 'search')
+      assert.equal(state.views, 1, '旧面板立即卸载')
+      assert.equal(state.ghosts, 0, '换页不做退出残影')
+      assert.equal(state.animation, 'view-in')
+      assert.ok(state.midOpacity !== null, '入场途中出现半透明帧')
+      assert.equal(state.shifted, true, '入场有位移')
+      assert.equal(state.endTransform, 'none', '播完不残留 transform')
+      assert.equal(state.endOpacity, '1')
+      await shot('sidebar-view-enter')
+    })
+
+    for (const [name, open, close, selector] of [
+      ['终端搜索条', 'toggle-search', 'toggle-search', '.terminal-search-bar'],
+      ['终端连接提示', 'show-notice', 'clear-notice', '[data-testid="terminal-connection-notice"]'],
+    ]) {
+      await step(`${name}：下落淡入，关闭时残影留在终端容器内上移淡出`, async () => {
+        await page.click(`[data-testid="${open}"]`)
+        await page.waitForSelector(selector)
+        const enter = await page.evaluate(sel => getComputedStyle(document.querySelector(sel)).animationName, selector)
+        await settle()
+        await shot(`float-${open}`)
+        const state = await page.evaluate(async ([sel, closeId]) => {
+          const before = document.querySelector(sel).getBoundingClientRect()
+          document.querySelector(`[data-testid="${closeId}"]`).click()
+          await new Promise(r => setTimeout(r, 10))
+          const ghost = document.querySelector('[data-exit-ghost]')
+          const box = ghost?.getBoundingClientRect()
+          await new Promise(r => setTimeout(r, 50))
+          const moved = ghost ? ghost.getBoundingClientRect().top - before.top : null
+          return {
+            ghosts: document.querySelectorAll('[data-exit-ghost]').length,
+            real: [...document.querySelectorAll(sel)].filter(el => !el.closest('[data-exit-ghost]')).length,
+            inHost: ghost?.parentElement === document.querySelector('[data-testid="terminal-host"]'),
+            sameSpot: box ? Math.abs(box.left - before.left) < 1 && Math.abs(box.width - before.width) < 1 : false,
+            testIds: ghost?.querySelectorAll('[data-testid]').length ?? -1,
+            movedUp: moved !== null && moved < 0 && moved >= -4,
+          }
+        }, [selector, close])
+        console.log(`${name} exit`, { enter, ...state })
+        assert.equal(enter, 'float-in')
+        assert.deepEqual(state, { ghosts: 1, real: 0, inHost: true, sameSpot: true, testIds: 0, movedUp: true })
+        await waitGhostsGone()
+      })
+    }
+
     await step('确认框按钮悬停不再上浮', async () => {
       await page.click('[data-testid="open-confirm"]')
       await page.waitForSelector('[role="dialog"], [role="alertdialog"]')
@@ -244,6 +315,19 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       console.log('reduced', state)
       assert.equal(state.ghosts, 0)
       assert.ok(parseFloat(state.duration) < 0.001, `入场动画被压到近乎 0：${state.duration}`)
+      const reducedPage = await page.evaluate(async () => {
+        document.querySelector('[data-testid="view-search"]').click()
+        await new Promise(r => setTimeout(r, 10))
+        const viewDuration = getComputedStyle(document.querySelector('[data-testid="sidebar-view"]')).animationDuration
+        document.querySelector('[data-testid="toggle-search"]').click()
+        await new Promise(r => setTimeout(r, 30))
+        document.querySelector('[data-testid="toggle-search"]').click()
+        await new Promise(r => setTimeout(r, 10))
+        return { viewDuration, ghosts: document.querySelectorAll('[data-exit-ghost]').length }
+      })
+      console.log('reduced page switch', reducedPage)
+      assert.ok(parseFloat(reducedPage.viewDuration) < 0.001, `换页入场被压到近乎 0：${reducedPage.viewDuration}`)
+      assert.equal(reducedPage.ghosts, 0, '减少动效时浮条不留残影')
       await shot('settings-reduced')
     })
 

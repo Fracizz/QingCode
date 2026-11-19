@@ -12,6 +12,7 @@ import { useTerminalControlStore } from '@/store/terminalControlStore'
 import { describeTerminalControl, terminalControlChip, type TerminalControlTone } from '@/lib/terminalControlText'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
+import { useExitMotionRef } from '@/lib/exitMotion'
 
 type Tone = TerminalControlTone
 
@@ -36,6 +37,8 @@ export default function TerminalControlNotice({ terminalId, offsetForSearch = fa
   const [busy, setBusy] = useState(false)
   // 菜单打开时按下角标：菜单先因外部点击收起，随后的 click 不应再把它打开。
   const closingRef = useRef(false)
+  // 共享结束时角标留下残影上移淡出（exitMotion 'float'）。
+  const exitRef = useExitMotionRef<HTMLDivElement>('float')
   if (!control) return null
   const run = async (action: () => Promise<void>) => {
     if (busy) return
@@ -96,7 +99,7 @@ export default function TerminalControlNotice({ terminalId, offsetForSearch = fa
   }
   return (
     <>
-      <div className={`absolute right-3 z-10 ${offsetForSearch ? 'top-12' : 'top-2'}`}>
+      <div ref={exitRef} className={`float-enter absolute right-3 z-10 ${offsetForSearch ? 'top-12' : 'top-2'}`}>
         <Tooltip label={describeTerminalControl(control, t)} side="bottom">
           <button
             type="button"

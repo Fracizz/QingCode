@@ -433,7 +433,7 @@ function App() {
           </div>
 
           {sidebarSlotVisible && view === 'explorer' && (
-            <div className="workspace-grid-sidebar">
+            <div className="workspace-grid-sidebar view-enter">
               <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
                 <Sidebar />
               </ResizableSidebar>
@@ -441,7 +441,7 @@ function App() {
           )}
 
           {sidebarSlotVisible && view === 'search' && (
-            <div className="workspace-grid-sidebar">
+            <div className="workspace-grid-sidebar view-enter">
               <ResizableSidebar
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
@@ -455,7 +455,7 @@ function App() {
           )}
 
           {sidebarSlotVisible && view === 'run' && (
-            <div className="workspace-grid-sidebar">
+            <div className="workspace-grid-sidebar view-enter">
               <ResizableSidebar
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
@@ -469,7 +469,7 @@ function App() {
           )}
 
           {sidebarSlotVisible && view === 'terminals' && (
-            <div className="workspace-grid-sidebar">
+            <div className="workspace-grid-sidebar view-enter">
               <ResizableSidebar
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
@@ -481,7 +481,7 @@ function App() {
           )}
 
           {sidebarSlotVisible && pageViewInSidebar && (
-            <div className="workspace-grid-sidebar">
+            <div key={view} className="workspace-grid-sidebar view-enter">
               <ResizableSidebar
                 width={workbenchPageWidth}
                 onWidthChange={setWorkbenchPageWidth}
@@ -531,16 +531,22 @@ function App() {
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
             data-editor-column
           >
+            {/* 整页切换（设置 / 源代码管理 / 编辑器）：各分支用带 key 的外层，切换时重新挂载以播放入场。
+                编辑器分支的 key 不随文件变化，切换标签不会重播。 */}
             {view === 'settings' && !terminalWorkbench ? (
-              <Suspense fallback={<LazyFallback />}>
-                <SettingsEditor />
-              </Suspense>
+              <div key="settings" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <Suspense fallback={<LazyFallback />}>
+                  <SettingsEditor />
+                </Suspense>
+              </div>
             ) : view === 'sourceControl' && !terminalWorkbench ? (
-              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                <SourceControlPanel />
-              </Suspense>
+              <div key="sourceControl" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                  <SourceControlPanel />
+                </Suspense>
+              </div>
             ) : (
-              <>
+              <div key="editor" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <EditorTabs />
                 <EditorBreadcrumbs />
                 {projectRestricted && currentProject && (
@@ -571,7 +577,7 @@ function App() {
                 ) : (
                   <div className="min-h-0 flex-1 bg-bg" />
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>

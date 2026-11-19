@@ -4,7 +4,8 @@
 import { useCallback, type RefCallback, type RefObject } from 'react'
 import { motionReduced } from './motionPreferences'
 
-export type ExitKind = 'modal' | 'menu' | 'toast'
+/** float：编辑区 / 终端里绝对定位的浮条与角标，残影留在原父节点内，不参与弹窗与菜单的交接。 */
+export type ExitKind = 'modal' | 'menu' | 'toast' | 'float'
 
 interface Ghost {
   kind: ExitKind
@@ -61,15 +62,16 @@ function restoreScroll(clone: HTMLElement) {
   }
 }
 
-/** 残影不可聚焦、不可点击、对读屏隐藏；去掉 id / role 及根节点的 data 标记，避免被查询或快捷键逻辑当成真实浮层。 */
+/** 残影不可聚焦、不可点击、对读屏隐藏；去掉 id / role / data-testid 及根节点的 data 标记，避免被查询或快捷键逻辑当成真实浮层。 */
 function sanitize(clone: HTMLElement) {
   for (const name of clone.getAttributeNames()) {
     if (name.startsWith('data-') && name !== 'data-exit-scroll') clone.removeAttribute(name)
   }
-  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], [role], [data-modal-autofocus]')]) {
+  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], [role], [data-modal-autofocus], [data-testid]')]) {
     el.removeAttribute('id')
     el.removeAttribute('role')
     el.removeAttribute('data-modal-autofocus')
+    el.removeAttribute('data-testid')
   }
   clone.setAttribute('inert', '')
   clone.setAttribute('aria-hidden', 'true')
@@ -87,7 +89,7 @@ function removeGhost(ghost: Ghost) {
 }
 
 /**
- * 在 element 被移除前留下残影并播放退出：弹窗淡出、面板微缩到 0.98；菜单只淡出；通知淡出并右移 8px。
+ * 在 element 被移除前留下残影并播放退出：弹窗淡出、面板微缩到 0.98；菜单只淡出；通知淡出并右移 8px；浮条淡出并上移 4px。
  * 减少动效、窗口在后台或环境不支持 Web Animations（如 jsdom）时什么都不做。
  */
 export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
@@ -114,7 +116,7 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
     })
     document.body.appendChild(clone)
   } else {
-    // 弹窗与菜单本身是 fixed 定位，放在原节点后面即可保持位置和继承的样式。
+    // 弹窗与菜单本身是 fixed 定位，浮条在终端 / 编辑区容器内绝对定位：放在原节点后面即可保持位置和继承的样式。
     element.after(clone)
   }
   restoreScroll(clone)
@@ -126,6 +128,11 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
     animations.push(clone.animate([
       { opacity: 1, transform: 'translateX(0)' },
       { opacity: 0, transform: 'translateX(8px)' },
+    ], timing))
+  } else if (kind === 'float') {
+    animations.push(clone.animate([
+      { opacity: 1, transform: 'translateY(0)' },
+      { opacity: 0, transform: 'translateY(-4px)' },
     ], timing))
   } else {
     animations.push(clone.animate([{ opacity: 1 }, { opacity: 0 }], timing))
@@ -143,10 +150,10 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
  * 被替换的是弹窗时给新弹窗打 data-modal-handoff，遮罩不重新淡入，保持连续。
  */
 export function handoffExitGhosts(kind: ExitKind, entering: HTMLElement) {
-  if (kind === 'toast') return
+  if (kind === 'toast' || kind === 'float') return
   let replacedModal = false
   for (const ghost of [...ghosts]) {
-    if (ghost.kind === 'toast' || (kind === 'menu' && ghost.kind !== 'menu')) continue
+    if (ghost.kind === 'toast' || ghost.kind === 'float' || (kind === 'menu' && ghost.kind !== 'menu')) continue
     if (ghost.kind === 'modal') replacedModal = true
     removeGhost(ghost)
   }

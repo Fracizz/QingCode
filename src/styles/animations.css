@@ -84,6 +84,37 @@
   }
 }
 
+/* 原地换页（侧栏面板、编辑区整页）：只播入场，不做退出——新内容盖在原位已说明切到了哪。
+   从活动栏一侧轻移进入；backwards 填充，播完不残留 transform，避免成为 sticky / fixed 子元素的定位容器。 */
+.view-enter {
+  animation: view-in var(--motion-enter) var(--ease-out) backwards;
+}
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+/* 同一面板内的标签页、空白页：只淡入，不位移。 */
+.view-fade {
+  animation: view-fade-in var(--motion-fast) var(--ease-out) backwards;
+}
+@keyframes view-fade-in {
+  from { opacity: 0; }
+}
+
+/* 编辑区 / 终端内的浮条与角标（终端搜索条、连接提示、多端共享角标）：轻微下落淡入；退出由 exitMotion 'float' 残影上移淡出。 */
+.float-enter {
+  animation: float-in var(--motion-fast) var(--ease-out) backwards;
+}
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
 /* 退出残影（exitMotion.ts）：克隆体只播 Web Animations 的退出，不能重播入场或残留过渡。 */
 [data-exit-ghost],
 [data-exit-ghost] * {

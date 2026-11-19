@@ -5,6 +5,9 @@ import ContextMenu from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Toaster from '../components/Toaster'
 import AppearanceSettingsSection from '../components/settings/AppearanceSettingsSection'
+import TerminalSearchBar from '../components/TerminalSearchBar'
+import TerminalConnectionNotice from '../components/TerminalConnectionNotice'
+import { clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '../lib/terminal/terminalOverlayNotice'
 import { DEFAULT_FONT_SETTINGS } from '../lib/fontSettings'
 import { applyMotionPreference, loadMotionPreference } from '../lib/motionPreferences'
 import { useProjectStore } from '../store/projectStore'
@@ -38,6 +41,45 @@ function DraftDialog({ title, onClose, onReplace }: { title: string; onClose: ()
   )
 }
 
+const NOTICE_TERMINAL = 'motion-fixture'
+
+/** 与 App.tsx 一致：侧栏每个面板一个带 key 的 .view-enter 外层；终端浮条用真实组件。 */
+function PageSwitchFixture() {
+  const [view, setView] = useState<'explorer' | 'search'>('explorer')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  return (
+    <section className="mb-5 flex h-[180px] max-w-[720px] overflow-hidden rounded border border-border">
+      <div className="flex w-12 flex-col items-center gap-1 border-r border-divider bg-bg-activity py-2">
+        <button type="button" data-testid="view-explorer" aria-pressed={view === 'explorer'} onClick={() => setView('explorer')}>资</button>
+        <button type="button" data-testid="view-search" aria-pressed={view === 'search'} onClick={() => setView('search')}>搜</button>
+      </div>
+      <div key={view} data-testid="sidebar-view" data-view={view} className="workspace-grid-sidebar view-enter w-[200px] border-r border-divider bg-bg-sidebar p-2">
+        {view === 'explorer' ? '资源管理器' : '搜索'}
+      </div>
+      <div className="relative min-w-0 flex-1 bg-bg-deep p-2" data-testid="terminal-host">
+        <div className="flex gap-2">
+          <button type="button" data-testid="toggle-search" onClick={() => setSearchOpen(v => !v)}>终端搜索</button>
+          <button type="button" data-testid="show-notice" onClick={() => publishTerminalOverlayNotice(NOTICE_TERMINAL, '连接已恢复', { sticky: true })}>连接提示</button>
+          <button type="button" data-testid="clear-notice" onClick={() => clearTerminalOverlayNotice(NOTICE_TERMINAL)}>清除提示</button>
+        </div>
+        {searchOpen && (
+          <TerminalSearchBar
+            query={query}
+            onQueryChange={setQuery}
+            onFindNext={() => {}}
+            onFindPrevious={() => {}}
+            onClose={() => setSearchOpen(false)}
+            matchIndex={0}
+            matchTotal={0}
+          />
+        )}
+        <TerminalConnectionNotice terminalId={NOTICE_TERMINAL} offsetForSearch={searchOpen} />
+      </div>
+    </section>
+  )
+}
+
 function Page() {
   const [layer, setLayer] = useState<Layer>('none')
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -59,6 +101,7 @@ function Page() {
           useProjectStore.setState(s => ({ toasts: [...s.toasts, { id: crypto.randomUUID(), kind: 'info', text: `已保存 ${s.toasts.length + 1} 个文件` }] }))
         }}>推送通知</button>
       </div>
+      <PageSwitchFixture />
       <section className="max-w-[720px]">
         <AppearanceSettingsSection
           match={() => true}

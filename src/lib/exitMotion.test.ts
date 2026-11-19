@@ -112,6 +112,27 @@ describe('leaveExitGhost', () => {
     expect(ghost.style.width).toBe('300px')
     expect(ghost.style.zIndex).toBe('150')
   })
+  it('keeps a float ghost inside its container, drifts it up and strips nested test ids', () => {
+    const host = document.createElement('div')
+    host.style.position = 'relative'
+    const bar = document.createElement('form')
+    bar.className = 'terminal-search-bar float-enter'
+    bar.innerHTML = '<button data-testid="terminal-control-notice">x</button>'
+    host.appendChild(bar)
+    document.body.appendChild(host)
+    leaveExitGhost(bar, 'float')
+    bar.remove()
+
+    const [ghost] = ghosts()
+    expect(ghost.parentElement).toBe(host)
+    expect(ghost.querySelector('[data-testid]')).toBeNull()
+    expect(animations).toHaveLength(1)
+    const [keyframes] = (Element.prototype.animate as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(keyframes).toEqual([
+      { opacity: 1, transform: 'translateY(0)' },
+      { opacity: 0, transform: 'translateY(-4px)' },
+    ])
+  })
 })
 
 describe('handoffExitGhosts', () => {
@@ -131,6 +152,19 @@ describe('handoffExitGhosts', () => {
     handoffExitGhosts('menu', entering)
     expect(ghosts()).toHaveLength(1)
     expect(entering.hasAttribute('data-modal-handoff')).toBe(false)
+  })
+
+  it('floats neither clear nor get cleared by modal and menu handoffs', () => {
+    const host = document.createElement('div')
+    const bar = document.createElement('div')
+    host.appendChild(bar)
+    document.body.appendChild(host)
+    leaveExitGhost(bar, 'float')
+    leaveExitGhost(modal(), 'menu')
+    handoffExitGhosts('float', document.createElement('div'))
+    expect(ghosts()).toHaveLength(2)
+    handoffExitGhosts('modal', document.createElement('div'))
+    expect(ghosts()).toHaveLength(1)
   })
 
   it('a dialog opened from a menu still fades its backdrop in', () => {

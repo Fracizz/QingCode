@@ -81,7 +81,7 @@ export default function EmptyEditor() {
       ]
 
   return (
-    <div className="empty-editor ui-font-scaled relative min-h-0 flex-1 flex flex-col items-center overflow-auto text-fg-dim bg-bg gap-6 px-6 py-6 select-none modal-overlay-enter">
+    <div className="empty-editor ui-font-scaled relative min-h-0 flex-1 flex flex-col items-center overflow-auto text-fg-dim bg-bg gap-6 px-6 py-6 select-none view-fade">
       {/* Decorative background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-brand/[0.04] blur-3xl" />

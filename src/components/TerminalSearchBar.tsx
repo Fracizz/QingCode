@@ -2,6 +2,7 @@ import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { translate } from '../lib/i18n'
 import Tooltip from './Tooltip'
+import { useExitMotionRef } from '../lib/exitMotion'
 
 export interface TerminalSearchBarProps {
   query: string
@@ -32,6 +33,8 @@ export default function TerminalSearchBar({
   matchTotal,
 }: TerminalSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null)
+  // 关闭时留下残影上移淡出（exitMotion 'float'），真实搜索条立即卸载。
+  const exitRef = useExitMotionRef<HTMLFormElement>('float')
   const label = matchLabel(query, matchIndex, matchTotal)
 
   useEffect(() => {
@@ -59,7 +62,8 @@ export default function TerminalSearchBar({
 
   return (
     <form
-      className="terminal-search-bar ui-font-scaled"
+      ref={exitRef}
+      className="terminal-search-bar float-enter ui-font-scaled"
       onSubmit={onSubmit}
       onMouseDown={event => event.stopPropagation()}
     >

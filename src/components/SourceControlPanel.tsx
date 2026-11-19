@@ -2218,8 +2218,9 @@ export default function SourceControlPanel() {
   } else if (status) {
     const branch = status.branch ?? t('游离 HEAD')
     const writeDisabled = Boolean(operation) || loading
+    // 「变更 / 历史」两页根节点同为 div，靠 key 区分才会重新挂载并播放淡入。
     const changesPane = (
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div key="changes" className="view-fade flex min-h-0 flex-1 overflow-hidden">
         <ScmResizableColumn
           width={scmLeftWidth}
           minWidth={SCM_LEFT_MIN}
@@ -2474,7 +2475,7 @@ export default function SourceControlPanel() {
     ) : null
 
     const historyPane = (
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div key="history" className="view-fade flex min-h-0 flex-1 overflow-hidden">
         {/* ~3/5: commit list by default; clicking a file covers this with the diff. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg">
           {showingCommitDiff ? (
