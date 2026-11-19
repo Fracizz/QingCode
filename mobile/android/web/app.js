@@ -2067,6 +2067,8 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
   get('session-dialog').close();
   // 侧栏以模态方式开着时，关闭后先让退出动画起步，再做重建终端这类重活，否则动画要等它们做完才开始。
   const drawerLeaving = !keepDrawer && get('session-drawer').open && !drawer.isDocked();
+  // 切到别的终端时面板直接消失、只淡出遮罩，避免半透明面板叠在重建中的终端上留下残影。
+  if (drawerLeaving && (selected !== session.id || retryTerminal)) get('session-drawer').dataset.handoff = 'true';
   if (!keepDrawer) drawer.close();
   if (selected === session.id && !retryTerminal) {
     if (take && takenSession && !viewerGrid) retakeSession();

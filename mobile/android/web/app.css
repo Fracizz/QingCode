@@ -996,12 +996,12 @@ dialog.session-drawer {
   border-width: 0 1px 0 0;
   border-radius: 0 var(--group-radius) var(--group-radius) 0;
 }
-/* 手机抽屉：面板全程不透明，从屏外整块滑入、强调减速停稳，只有遮罩淡入。
-   不做透明度渐变：半透明面板叠在终端上会文字重影，切换会话时终端同步重建更像拖影。
-   常驻合成层，滑动途中不重绘大阴影，主线程忙于重建终端时位移仍由合成器推进。 */
-dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-in 300ms var(--ease-emphasized); }
-dialog.session-drawer:not([data-docked="true"]) { will-change: transform; }
-@keyframes drawer-in { from { transform: translateX(-100%); } }
+/* 手机抽屉：淡入并从左侧 12px 缓入到位，透明度 140ms 先走完，尽快变实。
+   常驻合成层，避免淡入淡出途中每帧重绘大阴影。 */
+dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-fade 140ms ease-out, drawer-in 240ms ease-out; }
+dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transform; }
+@keyframes drawer-fade { from { opacity: 0; } }
+@keyframes drawer-in { from { transform: translateX(-12px); } }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .drawer-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
 #session-count { color: var(--muted); font-size: 13px; font-weight: 500; }
@@ -1257,8 +1257,9 @@ dialog[open]::backdrop { animation: backdrop-in 240ms linear; }
 /* 退出途中仍在顶层显示，不能挡住下面的点击。 */
 dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
 dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
-/* 收回：保持不透明，整块加速滑出屏外，遮罩同时淡出；没有半透明阶段，不会叠字留残影。 */
-dialog.session-drawer:not([open]) { opacity: 1; transform: translateX(-100%); transition-duration: 220ms; transition-timing-function: cubic-bezier(.3, 0, .8, .15); }
+/* 收回：原地淡出不位移，ease-out 让透明度在前几帧就降下去，缩短面板与终端叠字的时间，遮罩随后淡出。
+   点会话切换时 app.js 写 data-handoff，面板直接消失（见下条），不和正在重建的终端交叠成拖影。 */
+dialog.session-drawer:not([open]) { transform: none; transition-duration: 120ms, 0s, 180ms, 180ms; transition-timing-function: ease-out; }
 dialog.session-drawer[data-docked="true"]:not([open]) { opacity: 1; transform: translateX(-100%); transition-duration: var(--motion-exit); }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
 /* 终端操作菜单交给子页或另一个弹层时（app.js 写 data-handoff）：面板本身立即消失，只让遮罩照常淡出，与下一层的入场交叠而不是一下一上两段位移。 */

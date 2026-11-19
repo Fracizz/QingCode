@@ -391,6 +391,8 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     render();
     // 必须同步打开：常驻切换时 close 事件异步派发，靠此时侧栏已重新打开来保留刷新。
     if (!drawer.open) {
+      // 上次切换会话时写的「直接消失」只作用于那一次收回。
+      delete drawer.dataset.handoff;
       if (docked) drawer.show();
       else drawer.showModal();
     }
