@@ -995,10 +995,14 @@ dialog.session-drawer {
   padding: max(12px, var(--safe-top)) 12px max(12px, var(--safe-bottom)) max(12px, var(--safe-left));
   border-width: 0 1px 0 0;
   border-radius: 0 var(--group-radius) var(--group-radius) 0;
+  /* 排列方向与间距放在基础规则：退出过渡期间 [open] 已移除而 display 仍保留 flex，
+     若写在 [open] 里会瞬间退回横向排列，标题、分段控件和列表横着挤成一排，淡出时像一帧错位残影。 */
+  flex-direction: column;
+  gap: 10px;
 }
 /* 手机抽屉：淡入并从左侧 12px 缓入到位，透明度 140ms 先走完，尽快变实。
    常驻合成层，避免淡入淡出途中每帧重绘大阴影。 */
-dialog.session-drawer[open] { display: flex; flex-direction: column; gap: 10px; animation: drawer-fade 140ms ease-out, drawer-in 240ms ease-out; }
+dialog.session-drawer[open] { display: flex; animation: drawer-fade 140ms ease-out, drawer-in 240ms ease-out; }
 dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transform; }
 @keyframes drawer-fade { from { opacity: 0; } }
 @keyframes drawer-in { from { transform: translateX(-12px); } }
@@ -1150,7 +1154,7 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 #end-all-sessions { grid-column: 1 / -1; }
 .drawer-actions button { padding-inline: 8px; font-size: 13px; }
 @media (max-height: 450px) {
-  dialog.session-drawer[open] { gap: 6px; }
+  dialog.session-drawer { gap: 6px; }
   .drawer-actions { padding-top: 8px; }
   /* 矮屏（横屏手机）：搜索、筛选与分组一起滚动，列表不被挤成一行。 */
   #session-overview:not([hidden]) { overflow-y: auto; gap: 6px; }
@@ -1390,7 +1394,9 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .setting-choices strong { font-size: 14px; font-weight: 600; }
 .setting-choices small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .terminal-actions { margin-top: 12px; background: var(--paper); }
-#terminal-menu-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+/* 方向写在基础规则，退出过渡中 display 仍为 flex 时不退回横排。 */
+#terminal-menu-dialog { flex-direction: column; overflow: hidden; }
+#terminal-menu-dialog[open] { display: flex; }
 #terminal-menu-dialog > :not(.terminal-menu-groups) { flex: none; }
 /* 按用途分组（输入 / 查看 / 设置），组间留白代替分隔线；矮屏时分组区域整体滚动。 */
 .terminal-menu-groups { display: grid; align-content: start; gap: 10px; min-height: 0; margin-top: 12px; overflow-y: auto; overscroll-behavior: contain; }
@@ -1438,7 +1444,8 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 @media (max-height: 360px) {
   .workspace-dialog > p { display: none; }
   .workspace-dialog textarea { min-height: 40px; }
-  #reader-dialog[open] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: 44px 44px minmax(40px, 1fr); gap: 6px; }
+  #reader-dialog { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: 44px 44px minmax(40px, 1fr); gap: 6px; }
+  #reader-dialog[open] { display: grid; }
   #reader-dialog .reader-controls { flex-wrap: nowrap; }
   #reader-dialog .reader-controls label { display: none; }
   #reader-scroll { grid-column: 1 / -1; height: 100%; }
