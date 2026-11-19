@@ -16,6 +16,7 @@ import {
   newCustomKeyId,
   normalizeCustomKey,
   parseShortcutBarState,
+  removeAllBuiltinKeys,
   removeBuiltinKey,
   removeCustomKey,
   reorderShortcutKey,
@@ -224,5 +225,17 @@ describe('reorderShortcutKey', () => {
     const layout = defaultShortcutLayout()
     expect(reorderShortcutKey(layout, 'esc', 'esc', 'after')).toBe(layout)
     expect(reorderShortcutKey(layout, 'missing', 'esc', 'after')).toBe(layout)
+  })
+})
+
+describe('removeAllBuiltinKeys', () => {
+  it('keeps only custom keys and lets every built-in be added back', () => {
+    const withCustom = saveCustomKey(defaultShortcutBarState(), custom('a'))
+    const state = removeAllBuiltinKeys(withCustom)
+    expect(state.order).toEqual(['custom:a'])
+    expect(state.removed).toHaveLength(TERMINAL_SHORTCUT_KEYS.length)
+    const loaded = parseShortcutBarState(serializeShortcutBarState(state))
+    expect(loaded.order).toEqual(['custom:a'])
+    expect(restoreBuiltinKey(loaded, 'esc').order).toEqual(['esc', 'custom:a'])
   })
 })

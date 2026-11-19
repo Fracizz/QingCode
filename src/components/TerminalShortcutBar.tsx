@@ -22,7 +22,6 @@ import {
   type TerminalShortcutBuiltinKey,
 } from '../lib/terminal/terminalShortcutBar'
 import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
-import { useUIStore } from '../store/uiStore'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 
@@ -192,7 +191,7 @@ export default function TerminalShortcutBar({ disabled, onBuiltinKey, onCustomKe
       {
         label: t('配置快捷键栏…'),
         separatorBefore: items.length > 0,
-        action: () => useUIStore.getState().requestSettings('快捷键栏'),
+        action: () => useTerminalShortcutBarStore.getState().openManager(),
       },
       { label: t('收起快捷键栏'), action: () => setCollapsed(true) },
     )

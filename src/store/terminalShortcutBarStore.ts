@@ -5,6 +5,7 @@ import {
   isDefaultShortcutLayout,
   moveShortcutKey,
   parseShortcutBarState,
+  removeAllBuiltinKeys,
   reorderShortcutKey,
   removeBuiltinKey,
   removeCustomKey,
@@ -43,6 +44,11 @@ function pick(state: TerminalShortcutBarState): TerminalShortcutBarState {
 }
 
 type Store = TerminalShortcutBarState & {
+  /** 管理弹窗是否打开（不持久化）。 */
+  managerOpen: boolean
+  openManager: () => void
+  closeManager: () => void
+  removeAllBuiltinKeys: () => void
   setCollapsed: (collapsed: boolean) => void
   toggleCollapsed: () => void
   toggleHidden: (key: string) => void
@@ -66,6 +72,10 @@ export const useTerminalShortcutBarStore = create<Store>((set, get) => {
   }
   return {
     ...load(),
+    managerOpen: false,
+    openManager: () => set({ managerOpen: true }),
+    closeManager: () => set({ managerOpen: false }),
+    removeAllBuiltinKeys: () => update(removeAllBuiltinKeys(pick(get()))),
     setCollapsed: collapsed => update({ ...pick(get()), collapsed }),
     toggleCollapsed: () => update({ ...pick(get()), collapsed: !get().collapsed }),
     toggleHidden: key => update(toggleShortcutKeyHidden(pick(get()), key)),

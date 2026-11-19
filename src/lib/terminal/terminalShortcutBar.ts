@@ -216,6 +216,16 @@ export function removeBuiltinKey<T extends TerminalShortcutBarState>(state: T, k
   }
 }
 
+/** 删除全部内置键：栏里只剩自定义键。 */
+export function removeAllBuiltinKeys<T extends TerminalShortcutBarState>(state: T): T {
+  return {
+    ...state,
+    order: state.order.filter(key => !BUILTIN.has(key)),
+    hidden: state.hidden.filter(key => !BUILTIN.has(key)),
+    removed: TERMINAL_SHORTCUT_KEYS.map(item => item.key),
+  }
+}
+
 /** 加回已删除的内置键：放回默认位置附近并显示在栏中。 */
 export function restoreBuiltinKey<T extends TerminalShortcutBarState>(state: T, key: string): T {
   if (!state.removed.includes(key)) return state

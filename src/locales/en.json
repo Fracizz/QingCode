@@ -2146,6 +2146,13 @@
     "编辑自定义键": "Edit custom key",
     "删除（可在下方加回）": "Delete (can be added back below)",
     "已删除的内置键：": "Removed built-in keys:",
-    "加回 {name}": "Add back {name}"
+    "加回 {name}": "Add back {name}",
+    "管理快捷键栏": "Manage Shortcut Bar",
+    "管理快捷键栏…": "Manage shortcut bar…",
+    "删除全部内置键": "Delete all built-in keys",
+    "删除全部 {n} 个内置键？": "Delete all {n} built-in keys?",
+    "自定义键保留；删除后可单独加回，或点「恢复默认」。": "Custom keys are kept. You can add keys back one by one or use \"Restore defaults\".",
+    "快捷键栏是空的。可以添加自定义键，或从下方加回内置键。": "The shortcut bar is empty. Add a custom key, or add built-in keys back below.",
+    "终端底部的一排按钮，点击直接发送到所在终端；当前 {n} 个键。可排序、隐藏、删除，或添加发送文本的自定义键。": "A row of buttons at the bottom of terminals that send keys to that terminal; {n} keys now. Reorder, hide, or delete them, or add custom keys that send text."
   }
 }

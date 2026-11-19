@@ -14,6 +14,7 @@ import PromptDialog from './components/PromptDialog'
 import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
 import SshReconnectDialog from './components/SshReconnectDialog'
+import TerminalShortcutBarManager from './components/TerminalShortcutBarManager'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
@@ -585,6 +586,7 @@ function App() {
       <ExplorerConflictDialog />
       <PropertiesDialog />
       <SshReconnectDialog />
+      <TerminalShortcutBarManager />
       <CommandPalette />
       <SymbolPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}

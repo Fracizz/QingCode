@@ -543,7 +543,7 @@ export function buildCommands(): AppCommand[] {
       id: 'terminal.configureShortcutBar',
       title: '配置终端快捷键栏',
       keywords: 'terminal shortcut bar keys custom settings',
-      run: () => requestSettings('快捷键栏'),
+      run: () => useTerminalShortcutBarStore.getState().openManager(),
     },
     {
       id: 'terminal.copyScreen',
