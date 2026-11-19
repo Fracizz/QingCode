@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="./docs/screenshots/zh-06-four-terminals.png"><img src="./docs/screenshots/zh-06-four-terminals.png" width="100%" alt="QingCode with four AI CLI terminals running side by side" /></a>
+  <a href="./docs/screenshots/en-06-four-terminals.png"><img src="./docs/screenshots/en-06-four-terminals.png" width="100%" alt="QingCode with four AI CLI terminals running side by side" /></a>
 </p>
 
 - **Every project, one window** — pin local, WSL and SSH projects to the title bar; switching keeps unsaved edits and running terminals.
@@ -61,49 +61,49 @@ For type inference, refactoring, or breakpoint debugging, pair it with IDEA, VS 
 
 ## Screenshots
 
-These screenshots show the Simplified Chinese UI; English is also available in Settings. Click an image to view it at full resolution. Desktop captures are original PNGs and phone captures are original JPEGs; IP addresses in the phone captures are redacted. Version numbers reflect the build used when the screenshots were taken.
+These screenshots show the English UI (Simplified Chinese is the default and can be switched in Settings). Click an image to view it at full resolution. Desktop captures come from the real app at 3840×2076; phone captures come from the Android web assets at 1236×2745 with sample data. Version numbers reflect the build used when the screenshots were taken.
 
 ### Welcome screen and project entry points
 
 Open projects, terminals, or Settings from the welcome screen; the title bar keeps workspaces and project switching together.
 
-[![Welcome screen and project entry points](./docs/screenshots/zh-01-welcome.png)](./docs/screenshots/zh-01-welcome.png)
+[![Welcome screen and project entry points](./docs/screenshots/en-01-welcome.png)](./docs/screenshots/en-01-welcome.png)
 
 ### Search
 
 Search directories, file names, and contents within a selected scope, with grouped results and case, fuzzy, suffix, and file-type filters.
 
-[![Directory, file-name, and content search](./docs/screenshots/zh-02-search.png)](./docs/screenshots/zh-02-search.png)
+[![Directory, file-name, and content search](./docs/screenshots/en-02-search.png)](./docs/screenshots/en-02-search.png)
 
 ### Source Control
 
 Browse commit history, references, and changed files in a full-page workspace; check remote updates, pull, and push from the toolbar.
 
-[![Git history and changed files](./docs/screenshots/zh-03-source-control.png)](./docs/screenshots/zh-03-source-control.png)
+[![Git history and changed files](./docs/screenshots/en-03-source-control.png)](./docs/screenshots/en-03-source-control.png)
 
 ### Run configurations and Markdown preview
 
 Manage run configurations on the left and keep task terminals below; switch Markdown between editing, split preview, and preview only.
 
-[![Run configurations, Markdown preview, and task terminal](./docs/screenshots/zh-04-run-config-markdown.png)](./docs/screenshots/zh-04-run-config-markdown.png)
+[![Run configurations, Markdown preview, and task terminal](./docs/screenshots/en-04-run-config-markdown.png)](./docs/screenshots/en-04-run-config-markdown.png)
 
 ### Settings
 
 Manage user and workspace preferences separately, including themes, fonts, and terminal environments; import/export configuration or restore defaults.
 
-[![User and workspace settings with configuration transfer](./docs/screenshots/zh-05-settings.png)](./docs/screenshots/zh-05-settings.png)
+[![User and workspace settings with configuration transfer](./docs/screenshots/en-05-settings.png)](./docs/screenshots/en-05-settings.png)
 
 ### Four-terminal layout
 
 Arrange terminals in a 2×2 grid alongside Settings or the editor to monitor several services and AI CLIs at once.
 
-[![Settings alongside four terminal panes](./docs/screenshots/zh-06-four-terminals.png)](./docs/screenshots/zh-06-four-terminals.png)
+[![Settings alongside four terminal panes](./docs/screenshots/en-06-four-terminals.png)](./docs/screenshots/en-06-four-terminals.png)
 
 ### Manage projects
 
 Search projects by name or path, filter and sort by visibility, and add, hide, or remove project records in one place.
 
-[![Project search, filters, and management](./docs/screenshots/zh-07-manage-projects.png)](./docs/screenshots/zh-07-manage-projects.png)
+[![Project search, filters, and management](./docs/screenshots/en-07-manage-projects.png)](./docs/screenshots/en-07-manage-projects.png)
 
 ### Android app
 
@@ -112,21 +112,21 @@ From pairing with a computer and finding a project to rejoining a terminal sessi
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-01-connections.jpg"><img src="./docs/screenshots/zh-mobile-01-connections.jpg" width="280" alt="Android connections screen"></a><br>
-      <sub>Connections: pair by QR code and switch between saved computers</sub>
+      <a href="./docs/screenshots/en-mobile-01-home.png"><img src="./docs/screenshots/en-mobile-01-home.png" width="280" alt="Android home with all sessions"></a><br>
+      <sub>Home: see every session across projects on the paired computer</sub>
     </td>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-02-projects.jpg"><img src="./docs/screenshots/zh-mobile-02-projects.jpg" width="280" alt="Android project list"></a><br>
+      <a href="./docs/screenshots/en-mobile-02-projects.png"><img src="./docs/screenshots/en-mobile-02-projects.png" width="280" alt="Android project list"></a><br>
       <sub>Projects: search trusted local, WSL, and remote projects on the desktop</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-03-terminal.jpg"><img src="./docs/screenshots/zh-mobile-03-terminal.jpg" width="280" alt="Android terminal screen"></a><br>
+      <a href="./docs/screenshots/en-mobile-03-terminal.png"><img src="./docs/screenshots/en-mobile-03-terminal.png" width="280" alt="Android terminal screen"></a><br>
       <sub>Terminal: rejoin the same AI CLI session and keep typing or reading output</sub>
     </td>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-04-sessions.jpg"><img src="./docs/screenshots/zh-mobile-04-sessions.jpg" width="280" alt="Android terminal sessions drawer"></a><br>
+      <a href="./docs/screenshots/en-mobile-04-sessions.png"><img src="./docs/screenshots/en-mobile-04-sessions.png" width="280" alt="Android terminal sessions drawer"></a><br>
       <sub>Sessions: switch, rename, or close phone terminals from the drawer</sub>
     </td>
   </tr>

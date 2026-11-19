@@ -61,7 +61,7 @@
 
 ## 界面预览
 
-以下为中文界面实拍，点击图片可查看原图；桌面截图为原始 PNG，手机截图为原始 JPEG。截图中的版本号为拍摄时版本，手机截图中的网络地址已打码。
+以下为中文界面截图（英文界面见 [README.en.md](./README.en.md)），点击图片可查看原图。桌面截图取自真实应用，分辨率 3840×2076；手机截图取自 Android 页面资源与示例数据，分辨率 1236×2745。截图中的版本号为拍摄时版本。
 
 ### 欢迎页与项目入口
 
@@ -112,21 +112,21 @@
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-01-connections.jpg"><img src="./docs/screenshots/zh-mobile-01-connections.jpg" width="280" alt="手机版连接页"></a><br>
-      <sub>连接：扫码配对并切换已保存的电脑</sub>
+      <a href="./docs/screenshots/zh-mobile-01-home.png"><img src="./docs/screenshots/zh-mobile-01-home.png" width="280" alt="手机版首页全部会话"></a><br>
+      <sub>首页：按项目查看电脑上的全部会话</sub>
     </td>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-02-projects.jpg"><img src="./docs/screenshots/zh-mobile-02-projects.jpg" width="280" alt="手机版项目列表"></a><br>
+      <a href="./docs/screenshots/zh-mobile-02-projects.png"><img src="./docs/screenshots/zh-mobile-02-projects.png" width="280" alt="手机版项目列表"></a><br>
       <sub>项目：搜索电脑上已信任的本机、WSL 与远端项目</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-03-terminal.jpg"><img src="./docs/screenshots/zh-mobile-03-terminal.jpg" width="280" alt="手机版终端页面"></a><br>
+      <a href="./docs/screenshots/zh-mobile-03-terminal.png"><img src="./docs/screenshots/zh-mobile-03-terminal.png" width="280" alt="手机版终端页面"></a><br>
       <sub>终端：接回同一 AI CLI 会话，继续输入或查看输出</sub>
     </td>
     <td width="50%" align="center">
-      <a href="./docs/screenshots/zh-mobile-04-sessions.jpg"><img src="./docs/screenshots/zh-mobile-04-sessions.jpg" width="280" alt="手机版终端会话侧栏"></a><br>
+      <a href="./docs/screenshots/zh-mobile-04-sessions.png"><img src="./docs/screenshots/zh-mobile-04-sessions.png" width="280" alt="手机版终端会话侧栏"></a><br>
       <sub>会话：在侧栏切换、重命名或结束手机终端</sub>
     </td>
   </tr>
