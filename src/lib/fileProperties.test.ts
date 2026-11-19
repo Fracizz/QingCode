@@ -1,5 +1,21 @@
-import { describe, expect, it } from 'vitest'
-import { formatEntryCount, formatFileTime, getPropertiesLocation } from './fileProperties'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const invoke = vi.hoisted(() => vi.fn())
+vi.mock('./tauri', () => ({
+  safeInvoke: invoke,
+  isSshResource: (path: string) => path.startsWith('ssh://'),
+}))
+
+import {
+  formatEntryCount,
+  formatFileTime,
+  getPropertiesLocation,
+  loadFileProperties,
+} from './fileProperties'
+
+beforeEach(() => {
+  invoke.mockReset()
+})
 
 describe('getPropertiesLocation', () => {
   it('returns parent directory for a file path', () => {
@@ -16,6 +32,26 @@ describe('getPropertiesLocation', () => {
     expect(
       getPropertiesLocation('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode/src/a.ts'),
     ).toBe('D:/code/qingcode/src')
+  })
+})
+
+describe('loadFileProperties', () => {
+  it('reads remote size and mtime without asking for a creation time', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'file_stat') return { size: 42, is_dir: false }
+      if (command === 'file_mtime') return 1_700_000_000_000
+      throw new Error(`unexpected ${command}`)
+    })
+    const path = 'ssh://conn/home/user/project/a.tar.gz'
+    const properties = await loadFileProperties(path, 'a.tar.gz', false)
+    expect(properties).toMatchObject({
+      kind: 'file',
+      size: 42,
+      createdMs: null,
+      modifiedMs: 1_700_000_000_000,
+      location: '/home/user/project',
+    })
+    expect(invoke.mock.calls.map(call => call[1])).not.toContain('file_ctime')
   })
 })
 

@@ -1,5 +1,5 @@
 import { clipboardAbsolutePath, parentPath } from '../utils/fileReferences'
-import { safeInvoke } from './tauri'
+import { isSshResource, safeInvoke } from './tauri'
 import { getFileStat } from './fileIpc'
 
 export type FolderEntryCounts = {
@@ -30,7 +30,10 @@ export async function loadFileProperties(
 ): Promise<FileProperties> {
   const [stat, createdMs, modifiedMs] = await Promise.all([
     getFileStat({ path }),
-    safeInvoke<number | null>('读取创建时间', 'file_ctime', { path }).catch(() => null),
+    // SFTP 不提供创建时间，远程资源直接显示“—”，避免把 ssh:// 交给本机文件系统。
+    isSshResource(path)
+      ? Promise.resolve(null)
+      : safeInvoke<number | null>('读取创建时间', 'file_ctime', { path }).catch(() => null),
     safeInvoke<number | null>('读取修改时间', 'file_mtime', { path }).catch(() => null),
   ])
   const kind = stat.is_dir || isDir ? 'folder' : 'file'

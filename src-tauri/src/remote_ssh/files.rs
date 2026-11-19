@@ -732,27 +732,31 @@ pub async fn ssh_delete_path(path: String, manager: State<'_, SshManager>) -> Re
     remove_remote_tree(&sftp, parsed.path).await
 }
 
-#[tauri::command]
-pub async fn ssh_directory_delete_stats(
-    path: String,
-    manager: State<'_, SshManager>,
-) -> Result<crate::commands::cmd_fs::DirectoryDeleteStats, String> {
-    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
-    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+/// 远程目录递归统计（不跟随目录符号链接）；每层目录都校验仍在项目根内。
+#[derive(Default)]
+struct RemoteTreeCounts {
+    file_count: u64,
+    folder_count: u64,
+    total_size: u64,
+}
+
+async fn walk_remote_directory(
+    sftp: &SftpSession,
+    dir_path: String,
+    root: &RegisteredRoot,
+) -> Result<RemoteTreeCounts, String> {
     let metadata = sftp
-        .metadata(parsed.path.clone())
+        .metadata(dir_path.clone())
         .await
         .map_err(|error| format!("读取远程路径失败：{error}"))?;
     if !metadata.is_dir() {
         return Err("路径不是文件夹".to_string());
     }
 
-    let mut file_count = 0u64;
-    let mut total_size = 0u64;
-    let mut queue = vec![parsed.path];
-
+    let mut counts = RemoteTreeCounts::default();
+    let mut queue = vec![dir_path];
     while let Some(dir) = queue.pop() {
-        ensure_existing_path_within(&sftp, &dir, &root).await?;
+        ensure_existing_path_within(sftp, &dir, root).await?;
         let entries = match sftp.read_dir(dir).await {
             Ok(e) => e,
             Err(_) => continue,
@@ -760,18 +764,46 @@ pub async fn ssh_directory_delete_stats(
         for entry in entries {
             let meta = entry.metadata();
             if meta.is_dir() && !meta.is_symlink() {
+                counts.folder_count += 1;
                 queue.push(entry.path().to_string());
             } else {
-                file_count += 1;
-                total_size = total_size.saturating_add(meta.len());
+                counts.file_count += 1;
+                counts.total_size = counts.total_size.saturating_add(meta.len());
             }
         }
     }
+    Ok(counts)
+}
 
+#[tauri::command]
+pub async fn ssh_directory_delete_stats(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<crate::commands::cmd_fs::DirectoryDeleteStats, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let counts = walk_remote_directory(&sftp, parsed.path, &root).await?;
     Ok(crate::commands::cmd_fs::DirectoryDeleteStats {
         path,
-        file_count,
-        total_size,
+        file_count: counts.file_count,
+        total_size: counts.total_size,
+    })
+}
+
+/// 属性面板：远程文件夹的文件数、文件夹数与总大小（含所有子文件夹）。
+#[tauri::command]
+pub async fn ssh_directory_entry_counts(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<crate::commands::cmd_fs::DirectoryEntryCounts, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let counts = walk_remote_directory(&sftp, parsed.path, &root).await?;
+    Ok(crate::commands::cmd_fs::DirectoryEntryCounts {
+        path,
+        file_count: counts.file_count,
+        folder_count: counts.folder_count,
+        total_size: counts.total_size,
     })
 }
 

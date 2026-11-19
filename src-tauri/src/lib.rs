@@ -1062,6 +1062,7 @@ pub fn run() {
             remote_ssh::ssh_copy_path_into,
             remote_ssh::ssh_delete_path,
             remote_ssh::ssh_directory_delete_stats,
+            remote_ssh::ssh_directory_entry_counts,
             remote_ssh::ssh_transfer_paths,
             remote_ssh::cancel_ssh_transfer,
             remote_ssh::ssh_search_files_detailed,

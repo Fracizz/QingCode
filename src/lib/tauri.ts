@@ -21,6 +21,7 @@ const SSH_COMMANDS: Partial<Record<string, string>> = {
   delete_path: 'ssh_delete_path',
   cleanup_terminal_paste: 'ssh_cleanup_terminal_paste',
   directory_delete_stats: 'ssh_directory_delete_stats',
+  directory_entry_counts: 'ssh_directory_entry_counts',
   check_symlink_write: 'ssh_check_symlink_write',
   list_file_extensions: 'ssh_list_file_extensions',
   search_files: 'ssh_search_files',

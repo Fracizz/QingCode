@@ -1588,7 +1588,6 @@ export default function Sidebar() {
         label: t('显示属性'),
         icon: <Info size={14} />,
         separatorBefore: true,
-        disabled: isSshResource(node.path),
         action: () => showEntryProperties(node.path, node.name, node.is_dir),
       },
       {
