@@ -761,6 +761,41 @@ export default function Editor() {
     }
   }
 
+  /** 文件级菜单项（复制路径、定位等），编辑区与 Markdown 预览区共用。 */
+  const fileMenuItems = (path: string): ContextMenuItem[] => [
+    {
+      label: t('复制路径'),
+      icon: <Copy size={14} />,
+      shortcut: 'Ctrl+Shift+C',
+      separatorBefore: true,
+      action: () => void copyPathAction(path),
+    },
+    {
+      label: t('复制相对路径'),
+      icon: <Copy size={14} />,
+      shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+      action: () => void copyRelativePathAction(path),
+    },
+    {
+      label: t('复制为文件引用'),
+      icon: <AtSign size={14} />,
+      shortcut: 'Alt+C',
+      action: () => copyAsReference(path),
+    },
+    {
+      label: t('在资源管理器中定位'),
+      icon: <LocateFixed size={14} />,
+      separatorBefore: true,
+      action: () => revealInSidebar(path),
+    },
+    {
+      label: t('在文件管理器中显示'),
+      icon: <ExternalLink size={14} />,
+      disabled: isSshResource(path),
+      action: () => revealPath(path),
+    },
+  ]
+
   const menuItems = (path: string): ContextMenuItem[] => {
     const view = viewRef.current
     const canEditSelection = !!view && hasNonEmptySelection(view)
@@ -860,37 +895,7 @@ export default function Editor() {
           if (activeTabId) void formatDocument(activeTabId)
         },
       },
-      {
-        label: t('复制路径'),
-        icon: <Copy size={14} />,
-        shortcut: 'Ctrl+Shift+C',
-        separatorBefore: true,
-        action: () => void copyPathAction(path),
-      },
-      {
-        label: t('复制相对路径'),
-        icon: <Copy size={14} />,
-        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
-        action: () => void copyRelativePathAction(path),
-      },
-      {
-        label: t('复制为文件引用'),
-        icon: <AtSign size={14} />,
-        shortcut: 'Alt+C',
-        action: () => copyAsReference(path),
-      },
-      {
-        label: t('在资源管理器中定位'),
-        icon: <LocateFixed size={14} />,
-        separatorBefore: true,
-        action: () => revealInSidebar(path),
-      },
-      {
-        label: t('在文件管理器中显示'),
-        icon: <ExternalLink size={14} />,
-        disabled: isSshResource(path),
-        action: () => revealPath(path),
-      },
+      ...fileMenuItems(path),
       ...(markdownTab
         ? [
             {
@@ -920,6 +925,85 @@ export default function Editor() {
       x: event.clientX,
       y: event.clientY,
       items: menuItems(activeTab.path),
+    })
+  }
+
+  /** Markdown 预览区右键菜单：复制选中文本 / 全选 / 链接地址 / 视图切换 / 文件操作。 */
+  const previewMenuItems = (path: string, target: Element | null): ContextMenuItem[] => {
+    const previewEl = previewScrollRef.current
+    const selection = window.getSelection()
+    const selectionInPreview =
+      !!previewEl &&
+      !!selection &&
+      !selection.isCollapsed &&
+      selection.rangeCount > 0 &&
+      previewEl.contains(selection.getRangeAt(0).commonAncestorContainer)
+    // 打开菜单时先取出选中文本，避免菜单聚焦后选区变化
+    const selected = selectionInPreview ? selection.toString() : ''
+    const link = target?.closest?.('a[href]')
+    const linkHref = link?.getAttribute('href') ?? ''
+    const copyText = async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch (error) {
+        useProjectStore.getState().pushToast('error', t('复制失败: {error}', { error: String(error) }))
+      }
+    }
+
+    return [
+      {
+        label: t('复制'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+C',
+        disabled: !selected,
+        action: () => copyText(selected),
+      },
+      {
+        label: t('全选'),
+        icon: <SquareMousePointer size={14} />,
+        shortcut: 'Ctrl+A',
+        disabled: !previewEl,
+        action: () => {
+          const el = previewScrollRef.current
+          if (el) window.getSelection()?.selectAllChildren(el)
+        },
+      },
+      ...(linkHref && !linkHref.startsWith('#')
+        ? [
+            {
+              label: t('复制链接地址'),
+              icon: <Copy size={14} />,
+              action: () => copyText(linkHref),
+            } satisfies ContextMenuItem,
+          ]
+        : []),
+      {
+        label: t('编辑'),
+        checked: mdPreviewMode === 'off',
+        separatorBefore: true,
+        action: () => setMdPreviewMode('off'),
+      },
+      {
+        label: t('并排预览'),
+        checked: mdPreviewMode === 'side',
+        action: () => setMdPreviewMode('side'),
+      },
+      {
+        label: t('预览'),
+        checked: mdPreviewMode === 'preview',
+        action: () => setMdPreviewMode('preview'),
+      },
+      ...fileMenuItems(path),
+    ]
+  }
+
+  const openPreviewContextMenu = (event: ReactMouseEvent) => {
+    if (!shouldShowAppContextMenu(event)) return
+    if (!activeTab) return
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: previewMenuItems(activeTab.path, event.target as Element | null),
     })
   }
 
@@ -1053,6 +1137,7 @@ export default function Editor() {
               className={`min-w-0 flex-1 overflow-hidden border-border ${
                 showSourcePane ? 'border-l' : ''
               }`}
+              onContextMenu={openPreviewContextMenu}
             >
               <MarkdownPreview
                 ref={previewScrollRef}
