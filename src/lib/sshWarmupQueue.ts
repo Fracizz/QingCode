@@ -10,6 +10,7 @@ export const SSH_WARMUP_CONCURRENCY = 4
 export const SSH_WARMUP_CONNECTION_CONCURRENCY = 3
 export const SSH_WARMUP_TREE_LIMIT = 256
 export const SSH_WARMUP_TOTAL_TREE_LIMIT = 2048
+/** 前台打开结束后让出的时间；启动时首轮不等待，见 `schedule`。 */
 export const SSH_WARMUP_DELAY_MS = 1500
 /** 失败后的自动重试间隔；用完后等待点击或服务更新完成。 */
 export const SSH_WARMUP_RETRY_DELAYS_MS = [10_000, 30_000]
@@ -97,6 +98,8 @@ export class SshWarmupQueue<T> {
   private timer?: ReturnType<typeof setTimeout>
   private retryTimer?: ReturnType<typeof setTimeout>
   private disposed = false
+  /** 首轮在启动时立即开始：此时没有前台打开要让路，固定延迟只会推迟远程连接就绪。 */
+  private startupPending = true
   private activePath?: string
 
   constructor(
@@ -171,7 +174,7 @@ export class SshWarmupQueue<T> {
       const remaining = (this.foreground.get(key) ?? 1) - 1
       if (remaining > 0) this.foreground.set(key, remaining)
       else this.foreground.delete(key)
-      this.schedule()
+      this.schedule(true)
     }
   }
 
@@ -323,15 +326,18 @@ export class SshWarmupQueue<T> {
     }
   }
 
-  private schedule() {
+  /** `afterForeground`：前台打开刚结束，即使仍是启动首轮也先让路。 */
+  private schedule(afterForeground = false) {
     if (this.disposed || this.paused || this.timer || !this.nextQueued()) return
+    const delay = this.startupPending && !afterForeground ? 0 : SSH_WARMUP_DELAY_MS
+    this.startupPending = false
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.drain()
-    }, SSH_WARMUP_DELAY_MS)
+    }, delay)
   }
 
-  /** 延迟只用于启动和前台结束后的让路；任务结束后空出的名额立即接续。 */
+  /** 延迟只用于前台结束后的让路；启动首轮和任务结束后空出的名额立即接续。 */
   private drain() {
     if (this.disposed || this.paused) return
     for (let entry = this.nextQueued(); entry; entry = this.nextQueued()) void this.runEntry(entry)

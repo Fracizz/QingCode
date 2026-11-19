@@ -170,6 +170,34 @@ describe('bounded SSH background preparation', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
+  it('starts the first round at startup without the yield delay', async () => {
+    const { queue, run } = harness(vi.fn(() => new Promise<number[]>(() => {})))
+    queue.update([target(1, 'windev')])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not delay other connections while a restored remote project opens at startup', async () => {
+    const { queue, run } = harness(vi.fn(() => new Promise<number[]>(() => {})))
+    queue.beginForeground('wsl')
+    queue.update([target(1, 'wsl'), target(2, 'windev')])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run.mock.calls.map(([item]) => item.connectionId)).toEqual(['windev'])
+  })
+
+  it('still yields the delay after a foreground open ends', async () => {
+    const { queue, run } = harness(vi.fn(() => new Promise<number[]>(() => {})))
+    const end = queue.beginForeground('windev')
+    queue.update([target(1, 'windev')])
+    await vi.advanceTimersByTimeAsync(100_000)
+    expect(run).not.toHaveBeenCalled()
+    end()
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS - 1)
+    expect(run).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps preparing other connections while one connection opens in the foreground', async () => {
     const { queue, run } = harness(vi.fn(() => new Promise<number[]>(() => {})))
     const end = queue.beginForeground('wsl')

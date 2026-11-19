@@ -952,7 +952,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       if (superseded() || activeProjectSwitches.has(project.id)) return false
     }
     const runSwitch = async (): Promise<boolean> => {
-      const endForeground = beginSshForeground(isSshProject(project) ? openingKey : undefined)
+      // 只让同一连接的后台准备让路。本机项目与远程连接不共享会话或服务，
+      // 启动恢复本机项目时不应推迟远程项目连接（否则首个远程终端赶不上预热）。
+      const endForeground = isSshProject(project) ? beginSshForeground(openingKey) : () => {}
       let sshConnectionAttempted = false
       let sshWorkspaceConnected = false
       try {

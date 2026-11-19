@@ -225,6 +225,44 @@ async fn read_gateway_files(
     Some(info)
 }
 
+/// 网关已在运行且版本合用时把连接登记为隧道直连；描述读不到或网关不可用返回 `false`。
+/// 只经 SFTP 读描述、经隧道做健康检查，不执行任何远端命令。调用方须已 `adopt` 会话。
+async fn switch_if_running(manager: &SshManager, connection_id: &str) -> Result<bool, String> {
+    let Some(info) = read_gateway_files(manager, connection_id).await else {
+        return Ok(false);
+    };
+    let config = tunnel_config(connection_id, &info)?;
+    match direct::test(&config).await {
+        Ok(health) if direct::require_usable_gateway(&config, &health).is_ok() => {
+            switch_to_tunnel(manager, connection_id, config)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// 登记项目根之前的快速接入（见 `ssh_connect`）：只接入运行中的网关，返回是否已改经隧道。
+/// 网关缺席、版本不合用或任何一步失败都返回 `false`，由调用方照常走 SSH 路径，
+/// 之后的服务准备仍按 [`activate`] 完整流程暂存或启动网关。
+pub(super) async fn activate_running(manager: &SshManager, connection_id: &str) -> bool {
+    let Ok(gate) = manager.server_gate(&format!("tunnel|{connection_id}")) else {
+        return false;
+    };
+    let _guard = gate.lock().await;
+    if manager.direct_config(connection_id).is_some() {
+        return true;
+    }
+    let Ok(session) = manager.live_session(connection_id).await else {
+        return false;
+    };
+    if adopt(connection_id, session).is_err() {
+        return false;
+    }
+    switch_if_running(manager, connection_id)
+        .await
+        .unwrap_or(false)
+}
+
 /// 首次启动的网关只监听回环地址：经 SSH 隧道访问，不需要防火墙放行。
 fn loopback_gateway() -> qingcode_server::direct::DirectInfo {
     qingcode_server::direct::DirectInfo {
@@ -258,13 +296,8 @@ pub(super) async fn activate(
     adopt(&id, session)?;
     // 快速路径：网关已在运行且版本合用时直接接入，不必暂存程序（Windows 上
     // 校验程序摘要要十几秒）。描述读不到或网关不可用再走完整准备。
-    if let Some(info) = read_gateway_files(manager, &id).await {
-        let config = tunnel_config(&id, &info)?;
-        if let Ok(health) = direct::test(&config).await {
-            if direct::require_usable_gateway(&config, &health).is_ok() {
-                return switch_to_tunnel(manager, &id, config);
-            }
-        }
+    if switch_if_running(manager, &id).await? {
+        return Ok(());
     }
     server_status::note_server_activity(
         manager,

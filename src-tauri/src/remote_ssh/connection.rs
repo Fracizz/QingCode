@@ -196,9 +196,13 @@ pub async fn ssh_connect(
             &root_uri,
             trusted,
             defer_service.unwrap_or(false),
+            ConnectTiming::new(),
+            "direct",
+            true,
         )
         .await;
     }
+    let mut timing = ConnectTiming::new();
     let expected = config
         .host_key_fingerprint
         .clone()
@@ -225,7 +229,10 @@ pub async fn ssh_connect(
         // 会话还不存在，接下来才做握手认证。成功后会被 probing / readyDirect 盖掉。
         server_status::publish_authenticating(&app, &manager, &config.id, &root_uri);
         match store_authenticated_session(&manager, config.clone()).await {
-            Ok((_connected, fingerprint)) => fingerprint,
+            Ok((_connected, fingerprint)) => {
+                timing.lap("authMs");
+                fingerprint
+            }
             Err(error) => {
                 server_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
                 return Err(error);
@@ -240,10 +247,32 @@ pub async fn ssh_connect(
         }
         error
     };
+    // Server 模式的 Windows 项目：网关已在运行时先改经 SSH 隧道接入，由网关按真实路径
+    // 校验项目根，省掉在远端冷启动 PowerShell 做 Junction 校验（真机约 2 秒）。
+    // 这里只接入已运行且版本合用的网关，不暂存程序、不启动网关；不可用时照常走 SSH 校验。
+    if tunnel_first_eligible(mode, trusted, &parsed_root.path)
+        && tunnel::activate_running(&manager, &config.id).await
+    {
+        timing.lap("tunnelMs");
+        return direct_settings::connect_root(
+            &manager,
+            &app,
+            &config,
+            &root_uri,
+            trusted,
+            defer_service.unwrap_or(false),
+            timing,
+            "tunnel",
+            fresh_auth,
+        )
+        .await
+        .map_err(abandon_fresh_auth);
+    }
     let sftp = manager
         .open_sftp(&config.id)
         .await
         .map_err(abandon_fresh_auth)?;
+    timing.lap("sftpMs");
     let canonical_root = sftp
         .canonicalize(parsed_root.path)
         .await
@@ -258,6 +287,7 @@ pub async fn ssh_connect(
     if !metadata.is_dir() {
         return Err(abandon_fresh_auth("远程项目路径不是目录".to_string()));
     }
+    timing.lap("rootMs");
     // 并发的另一次 ssh_connect 可能在上面的 await 期间把会话改成了别的模式；
     // 登记根之前再确认一次，保证同一会话下所有根的模式一致。
     if manager.connection_mode(&config.id) != Some(mode) {
@@ -302,10 +332,58 @@ pub async fn ssh_connect(
         );
         manager.replace_watch_supervisor(&key, handle);
     }
+    timing.record(&config.id, "ssh", fresh_auth);
     Ok(SshConnectResult {
         fingerprint,
         canonical_root,
     })
+}
+
+/// 登记项目根前是否先尝试接入运行中的网关：仅限已信任的 Server 模式 Windows 项目。
+/// 未信任的项目不借此提前切换整条连接；Linux 项目的 SFTP 校验本身不需要远端 shell。
+pub(super) fn tunnel_first_eligible(mode: RemoteMode, trusted: bool, root_path: &str) -> bool {
+    mode == RemoteMode::Server && trusted && windows_native_path(root_path).is_some()
+}
+
+/// `ssh.connect` 诊断：登记项目根各阶段耗时，排查重启后连接慢。只记阶段与毫秒，不记路径。
+pub(super) struct ConnectTiming {
+    started: std::time::Instant,
+    last: std::time::Instant,
+    laps: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ConnectTiming {
+    pub(super) fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            started: now,
+            last: now,
+            laps: serde_json::Map::new(),
+        }
+    }
+
+    pub(super) fn lap(&mut self, stage: &str) {
+        let now = std::time::Instant::now();
+        let ms = now.duration_since(self.last).as_millis() as u64;
+        self.laps.insert(stage.into(), ms.into());
+        self.last = now;
+    }
+
+    pub(super) fn record(mut self, connection_id: &str, transport: &str, fresh: bool) {
+        let total = self.started.elapsed().as_millis() as u64;
+        self.laps.insert("totalMs".into(), total.into());
+        self.laps.insert("transport".into(), transport.into());
+        self.laps.insert("fresh".into(), fresh.into());
+        if let Some(id) = qingcode_server::diagnostics::identifier(Some(connection_id)) {
+            self.laps.insert("connectionId".into(), id.into());
+        }
+        qingcode_server::diagnostics::record(
+            "ssh.connect",
+            serde_json::Value::Object(self.laps),
+            false,
+            false,
+        );
+    }
 }
 
 #[tauri::command]
