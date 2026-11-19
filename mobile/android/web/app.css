@@ -1223,8 +1223,9 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 @media (orientation: landscape) and (min-width: 600px) {
   #viewport { padding-top: 2px; }
 }
-/* 平板宽屏双栏：会话侧栏以非模态方式常驻终端左侧，终端让出同等宽度；左上角侧栏按钮负责展开 / 收起，侧栏内关闭按钮隐藏。 */
-:root { --dock-width: 300px; }
+/* 平板宽屏双栏：会话侧栏以非模态方式常驻终端左侧，终端让出同等宽度；左上角侧栏按钮负责展开 / 收起，侧栏内关闭按钮隐藏。
+   宽度随屏幕变化：小平板保持 300px，横屏大平板最多 380px，项目名和会话标题少截断。 */
+:root { --dock-width: clamp(300px, 28vw, 380px); }
 dialog.session-drawer[data-docked="true"] {
   position: fixed;
   z-index: 2;
@@ -1237,6 +1238,20 @@ dialog.session-drawer[data-docked="true"] [data-close="session-drawer"] { displa
 dialog.session-drawer[data-docked="true"][open] { animation: drawer-dock-in var(--motion-long) var(--ease-emphasized); }
 @keyframes drawer-dock-in { from { transform: translateX(-100%); } }
 :root[data-sessions-docked="true"] main { padding-left: var(--dock-width); }
+/* 常驻侧栏组头两行：项目名独占首行（最多两行），来源标签与数量放第二行；「+」「⋯」与首行对齐。 */
+.session-group-meta { display: contents; }
+dialog.session-drawer[data-docked="true"] .session-group-head-tools { align-items: flex-start; }
+dialog.session-drawer[data-docked="true"] .session-group-toggle { display: grid; grid-template-columns: 15px minmax(0, 1fr); align-items: center; gap: 2px 6px; padding-block: 9px 6px; line-height: 1.4; }
+dialog.session-drawer[data-docked="true"] .session-group-toggle .session-group-icon { align-self: start; margin-top: calc((1.4em - 15px) / 2); }
+dialog.session-drawer[data-docked="true"] .session-group-toggle strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+dialog.session-drawer[data-docked="true"] .session-group-meta { display: flex; grid-column: 2; align-items: center; gap: 6px; min-width: 0; }
+dialog.session-drawer[data-docked="true"] .session-group-meta .session-group-source { flex: 0 1 auto; }
+dialog.session-drawer[data-docked="true"] .session-group-meta .session-group-badge { margin: 0; }
+dialog.session-drawer[data-docked="true"] .session-group[data-empty="true"] .session-group-toggle { min-height: 0; padding-block: 8px 5px; line-height: 1.4; }
+/* 会话行：缩进收窄；状态行最多两行不截断；当前会话左侧加强调色竖条。 */
+dialog.session-drawer[data-docked="true"] #session-overview .session-group-rows { margin-left: 8px; }
+dialog.session-drawer[data-docked="true"] .session-option small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+dialog.session-drawer[data-docked="true"] .session-option[data-current="true"] .session-face::before { content: ''; position: absolute; z-index: 1; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--accent); }
 :root[data-sessions-docked="true"] #show-sessions { color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }

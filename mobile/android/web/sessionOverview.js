@@ -267,7 +267,11 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
       const badge = document.createElement('span');
       badge.className = 'session-group-badge';
       badge.append(count, icon('chevron-down', 'session-group-chevron'));
-      toggle.append(folder, name, source, attention, badge);
+      // 来源、提醒点和数量包一层：手机抽屉里 display: contents 保持单行，平板常驻侧栏里作为第二行，项目名独占首行。
+      const meta = document.createElement('span');
+      meta.className = 'session-group-meta';
+      meta.append(source, attention, badge);
+      toggle.append(folder, name, meta);
       const add = button('icon-button session-group-add', () => groupTools.add(renderedGroups.get(projectId).project));
       add.append(icon('plus'));
       const actions = button('icon-button session-group-more', () => groupTools.menu(renderedGroups.get(projectId).project));
