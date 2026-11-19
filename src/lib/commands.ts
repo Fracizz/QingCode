@@ -24,11 +24,13 @@ import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { saveVisibleProjectsAsWorkspace } from './namedWorkspaceActions'
 import {
   requestTerminalClear,
+  requestTerminalClearInput,
   requestTerminalCopyScreen,
   requestTerminalExport,
   requestTerminalSearch,
 } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
+import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
 import { activeEditorSelectionSeed } from './editorSelectionSeed'
 import { openFileFromDialog } from './openFileDialog'
 
@@ -517,6 +519,31 @@ export function buildCommands(): AppCommand[] {
         const id = useTerminalStore.getState().focusedTerminalId()
         requestTerminalClear(id ?? undefined)
       },
+    },
+    {
+      id: 'terminal.clearInput',
+      title: '清除终端输入',
+      keywords: 'terminal clear input prompt',
+      shortcutCommand: 'clearTerminalInput',
+      when: () => useTerminalStore.getState().terminals.length > 0,
+      run: () => {
+        useUIStore.getState().openTerminalPanel()
+        const id = useTerminalStore.getState().focusedTerminalId()
+        requestTerminalClearInput(id ?? undefined)
+      },
+    },
+    {
+      id: 'terminal.toggleShortcutBar',
+      title: '展开 / 收起终端快捷键栏',
+      keywords: 'terminal shortcut bar keys toggle collapse expand',
+      shortcutCommand: 'toggleTerminalShortcutBar',
+      run: () => useTerminalShortcutBarStore.getState().toggleCollapsed(),
+    },
+    {
+      id: 'terminal.configureShortcutBar',
+      title: '配置终端快捷键栏',
+      keywords: 'terminal shortcut bar keys custom settings',
+      run: () => requestSettings('快捷键栏'),
     },
     {
       id: 'terminal.copyScreen',

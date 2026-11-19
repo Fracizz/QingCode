@@ -173,9 +173,13 @@ impl Sharing {
     }
 
     /// 尺寸方离开且未锁定时，把尺寸交给仍在的一方：优先电脑，其次最近活跃的可写设备。
+    /// 尺寸方同时是独占方时不交还：独占期间终端默认保持独占端尺寸，手机切到后台或熄屏回来仍按手机尺寸显示。
     /// 返回 `Some(resize)` 表示尺寸方变了，`resize` 为需要应用的尺寸。
     pub(crate) fn hand_over_size(&mut self, now: Instant) -> Option<Option<(u16, u16)>> {
-        if self.size_locked || self.present(&self.size_owner, now) {
+        if self.size_locked
+            || self.exclusive.as_ref() == Some(&self.size_owner)
+            || self.present(&self.size_owner, now)
+        {
             return None;
         }
         let next = if self.desktop_present {
@@ -341,6 +345,25 @@ mod tests {
         sharing.desktop_present = true;
         let much_later = later + PRESENCE_TIMEOUT + Duration::from_secs(1);
         assert_eq!(sharing.hand_over_size(much_later), Some(None));
+        assert_eq!(sharing.size_owner, Controller::Desktop);
+    }
+
+    #[test]
+    fn exclusive_device_keeps_the_size_while_away() {
+        let start = Instant::now();
+        let mut sharing = Sharing::new(Controller::Desktop);
+        sharing.request_size(Controller::Desktop, 200, 50);
+        sharing.see_device("phone", None, start);
+        sharing.request_size(phone(), 40, 30);
+        sharing.size_owner = phone();
+        sharing.exclusive = Some(phone());
+        // 手机切到后台超过在线超时：仍保持手机尺寸，不交给电脑。
+        let later = start + PRESENCE_TIMEOUT + Duration::from_secs(1);
+        assert_eq!(sharing.hand_over_size(later), None);
+        assert_eq!(sharing.size_owner, phone());
+        // 解除独占后照常交还。
+        sharing.exclusive = None;
+        assert_eq!(sharing.hand_over_size(later), Some(Some((200, 50))));
         assert_eq!(sharing.size_owner, Controller::Desktop);
     }
 

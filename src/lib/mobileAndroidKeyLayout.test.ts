@@ -7,6 +7,7 @@ import {
   customKeyLabel,
   defaultKeyLayout,
   findCustomKey,
+  mergeCustomKeys,
   newCustomKeyId,
   normalizeCustomKey,
   removeCustomKey,
@@ -173,5 +174,32 @@ describe('Android shortcut bar layout', () => {
     expect(parsed.custom).toEqual([])
     expect(parsed.order).toEqual(builtins)
     expect(parsed.hidden).toEqual([])
+  })
+})
+
+describe('mergeCustomKeys', () => {
+  it('imports desktop keys, skips duplicates and invalid entries', () => {
+    const base = saveCustomKey(defaultKeyLayout(), { id: 'a', name: '', text: '/compact', enter: true })
+    const { layout, added } = mergeCustomKeys(base, [
+      { name: '压缩', text: '/compact', enter: true },
+      { name: '', text: '/compact', enter: false },
+      { name: 'Git', text: 'git status', enter: true },
+      { text: 'bad\nline' },
+      null,
+    ], (() => { let n = 0; return () => (n += 0.1) % 1 })())
+    expect(added).toBe(2)
+    expect(layout.custom.map(def => [def.text, def.enter])).toEqual([
+      ['/compact', true],
+      ['/compact', false],
+      ['git status', true],
+    ])
+    expect(layout.order.filter(key => key.startsWith('custom:'))).toHaveLength(3)
+  })
+
+  it('stops at the custom key limit and tolerates non-array input', () => {
+    let full = defaultKeyLayout()
+    for (let index = 0; index < CUSTOM_KEY_LIMIT; index++) full = saveCustomKey(full, { id: `k${index}`, text: `t${index}` })
+    expect(mergeCustomKeys(full, [{ text: 'new' }]).added).toBe(0)
+    expect(mergeCustomKeys(full, null as unknown as unknown[]).added).toBe(0)
   })
 })

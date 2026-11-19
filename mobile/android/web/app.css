@@ -763,7 +763,11 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-content .history-divider:first-child { margin-top: 0; }
 #viewport { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
 /* 切换终端时盖在新终端上的旧画面，只看不点。 */
-#viewport .terminal-held-frame { position: absolute; z-index: 1; pointer-events: none; }
+#viewport .terminal-held-frame { position: absolute; z-index: 1; pointer-events: none; transition: opacity 150ms var(--ease-exit); }
+/* 切换会话时的旧画面：等新画面超过 300ms 盖一层终端底色轻微变暗，提示正在接入；新画面到了淡出交接（app.js releaseTerminalFrame）。 */
+#viewport .terminal-held-frame::after { content: ""; position: absolute; inset: 0; z-index: 10; background: var(--console); opacity: 0; transition: opacity 260ms var(--ease); pointer-events: none; }
+#viewport .terminal-held-frame[data-frame="waiting"]::after { opacity: .45; }
+#viewport .terminal-held-frame[data-frame="leaving"] { opacity: 0; }
 #scroll-bottom { position: absolute; z-index: 3; right: 40px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border-radius: var(--control-radius); font-size: 12px; background: var(--raised); box-shadow: 0 6px 20px #0008; }
 #scroll-bottom svg { width: 16px; height: 16px; }
 /* 自绘的加粗触摸滚动条：替代 xterm 与历史面板的细滚动条；透明的宽轨道便于手指抓取。 */
@@ -1296,6 +1300,7 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
   .session-spinner, .pull-indicator[data-state="refreshing"] .pull-ring { animation: none; }
   .nav-icon::before { transition: none; }
   #scroll-bottom, .mouse-mode-pill, #font-toast, .sort-toast { transition: none; }
+  #viewport .terminal-held-frame, #viewport .terminal-held-frame::after { transition: none; }
   #dashboard-nav [aria-current="page"] .nav-icon svg, .dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: none; }
 }
 

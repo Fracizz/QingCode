@@ -130,6 +130,24 @@ export function saveCustomKey(layout, raw) {
   return { ...layout, custom: [...layout.custom, def], order: [...layout.order, CUSTOM_PREFIX + def.id] };
 }
 
+/**
+ * 导入电脑端的自定义键：文本与「发送后回车」都相同视为同一个键，跳过；超过上限时停止。
+ * 返回合并后的布局与实际新增数量。新键排到最后并显示在栏中。
+ */
+export function mergeCustomKeys(layout, incoming, random = Math.random) {
+  let next = layout;
+  let added = 0;
+  for (const raw of Array.isArray(incoming) ? incoming : []) {
+    const candidate = normalizeCustomKey({ ...(raw && typeof raw === 'object' ? raw : {}), id: 'import' });
+    if (!candidate) continue;
+    if (next.custom.some(def => def.text === candidate.text && def.enter === candidate.enter)) continue;
+    if (next.custom.length >= CUSTOM_KEY_LIMIT) break;
+    next = saveCustomKey(next, { ...candidate, id: newCustomKeyId(next, random) });
+    added++;
+  }
+  return { layout: next, added };
+}
+
 export function removeCustomKey(layout, id) {
   const key = CUSTOM_PREFIX + id;
   if (!layout.custom.some(def => def.id === id)) return layout;

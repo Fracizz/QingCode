@@ -77,6 +77,16 @@ export const SHORTCUT_COMMANDS: { id: ShortcutCommand; label: string; descriptio
     label: '终端: 清空',
     description: '清空当前终端缓冲区（需焦点在终端内）。',
   },
+  {
+    id: 'clearTerminalInput',
+    label: '终端: 清除输入',
+    description: '清除提示符或 AI CLI 输入框中尚未提交的内容（需焦点在终端内）。',
+  },
+  {
+    id: 'toggleTerminalShortcutBar',
+    label: '终端: 展开 / 收起快捷键栏',
+    description: '展开或收起所有终端底部的快捷键栏。',
+  },
 ]
 
 /** Editor-bound shortcuts shown as read-only (not remappable here). */

@@ -82,6 +82,8 @@ pub(super) enum Operation {
     Attention,
     /// 电脑端「终端配置」列表（只含 id / 名称 / 是否已信任，不含命令）。
     TerminalProfiles,
+    /// 电脑端终端快捷键栏的自定义键（名称 / 文本 / 是否回车），供手机导入；只读。
+    ShortcutKeys,
     Create {
         project: String,
         cols: u16,
@@ -156,7 +158,7 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["project_files", "terminal_profiles", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream"],
+            "features": ["project_files", "terminal_profiles", "shortcut_keys", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream"],
             "sessionScope": "shared",
         })),
         Operation::Projects => desktop(app, None).await,
@@ -269,6 +271,7 @@ pub(super) async fn operate(
                 .collect::<Vec<_>>()))
         }
         Operation::TerminalProfiles => desktop_query(app, json!({ "profiles": true })).await,
+        Operation::ShortcutKeys => desktop_query(app, json!({ "shortcutKeys": true })).await,
         Operation::Create {
             project,
             cols,

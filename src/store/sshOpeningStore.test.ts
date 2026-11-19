@@ -16,7 +16,7 @@ describe('SSH opening deadline', () => {
     const opening = runSshOpening(project, async (_signal, report) => {
       reportLate = () => report('files')
       return new Promise(() => {})
-    }, 100)
+    }, { timeoutMs: 100 })
     const rejected = expect(opening).rejects.toBeInstanceOf(SshPreparationError)
     await vi.advanceTimersByTimeAsync(100)
     await rejected
@@ -24,5 +24,12 @@ describe('SSH opening deadline', () => {
     reportLate()
     expect(latestSshOpening()?.stage).toBe('connecting')
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('starts in background when requested, but still surfaces errors', async () => {
+    const opening = runSshOpening(project, async () => { throw new SshPreparationError('daemon failed') }, { background: true })
+    expect(latestSshOpening()?.background).toBe(true)
+    await opening.catch(() => {})
+    expect(latestSshOpening()?.error).toBe('daemon failed')
   })
 })

@@ -26,7 +26,7 @@ import {
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
-import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove } from './dom.js';
+import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove, setText } from './dom.js';
 import { t } from './i18n.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 
@@ -210,10 +210,10 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const project = state.project();
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
-    get('terminal-name').textContent = current ? sessionName(current) : project?.name ?? t('终端');
+    setText(get('terminal-name'), current ? sessionName(current) : project?.name ?? t('终端'));
     // 顶栏副行空间有限：只留项目名和连接名（如 qingcode · WinDev），完整来源在会话侧栏里。
-    get('terminal-host').textContent = project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '';
-    get('session-context').textContent = project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '';
+    setText(get('terminal-host'), project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '');
+    setText(get('session-context'), project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '');
     get('session-name-hint').hidden = sessions.every(item => Number.isFinite(item.nameRevision));
     const options = get('session-options');
     get('session-progress').hidden = !busy;
@@ -224,14 +224,14 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const gone = [...existingRows.values()].filter(row => !liveIds.has(row.dataset.id));
     // 同一列表少了几行才收起；切项目或全部结束是整表替换，直接移除。
     const collapse = drawer.open && existingRows.size > gone.length;
-    get('session-count').textContent = String(sessions.length);
+    setText(get('session-count'), String(sessions.length));
     get('end-all-sessions').disabled = busy || !sessions.length;
     get('drawer-new-session').disabled = busy;
     get('drawer-project-more').disabled = busy;
     const projectTitle = project ? project.name ?? project.id : '';
-    get('drawer-project-name').textContent = projectTitle;
+    setText(get('drawer-project-name'), projectTitle);
     fillProjectSource(get('drawer-project-source'), project, project ? projectPlaceLabel({ ...project, host: '' }) : '');
-    get('drawer-project-count').textContent = String(sessions.length);
+    setText(get('drawer-project-count'), String(sessions.length));
     get('drawer-project-more').setAttribute('aria-label', t('{name} 的项目操作', { name: projectTitle }));
     // 接入方和创建设备只有列出全部会话时才有，「本项目」从纵览补齐。
     const detail = new Map(overview.list().map(item => [item.id, item]));
@@ -254,20 +254,20 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       const option = row.querySelector('.row');
       option.disabled = busy;
       option.setAttribute('aria-label', t('切换到 {name}', { name: label }));
-      row.querySelector('.session-label').textContent = label;
-      row.querySelector('small').textContent = sessionStatusLine({ ...detail.get(session.id), ...session }, {
+      setText(row.querySelector('.session-label'), label);
+      setText(row.querySelector('small'), sessionStatusLine({ ...detail.get(session.id), ...session }, {
         fallback: index + 1, running, active: session.id === selected, last: session.id === lastSession, pinned: pinned.has(session.id), fresh,
-      });
+      }));
       // 快到自动结束时单独一行提醒。
       const idleInfo = sessionIdleInfo(session);
       const idle = row.querySelector('.session-idle');
-      idle.textContent = idleInfo.expiring ? idleInfo.text : '';
+      setText(idle, idleInfo.expiring ? idleInfo.text : '');
       idle.hidden = !idle.textContent;
       row.querySelector('.session-more').setAttribute('aria-label', t('{name} 的更多操作', { name: label }));
       row.querySelector('.session-more').disabled = busy;
       const close = row.querySelector('.session-close');
       close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
-      close.querySelector('span').textContent = t(session.exit ? '移除' : '关闭');
+      setText(close.querySelector('span'), t(session.exit ? '移除' : '关闭'));
       close.disabled = busy;
       if (session.id === selected) option.setAttribute('aria-current', 'true');
       else option.removeAttribute('aria-current');
@@ -395,15 +395,29 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       else drawer.showModal();
     }
     get('show-sessions').setAttribute('aria-expanded', 'true');
-    // 能力按连接缓存，只有首次打开需要等待；确认后再按「全部」范围重绘。
+    // 打开时就用已有列表定位到当前会话，滑入的就是最终位置；网络结果回来后不再滚动，避免停稳后又跳一下。
+    const positioned = revealCurrent();
+    // 能力按连接缓存，只有首次打开需要等待；只有结果变了才按「全部」范围重绘，不在滑入开头多做一次整表渲染。
     const currentDrawer = drawerEpoch;
+    const known = allAvailable;
     await checkAvailability();
     if (currentDrawer !== drawerEpoch || !drawer.open) return;
-    render();
+    if (allAvailable !== known) render();
     await refresh();
-    // 分组不再把当前项目置顶，打开时滚到当前会话。
-    // 两个列表都渲染着，只在看得见的那个里找。
-    if (currentDrawer === drawerEpoch && drawer.open) get(allMode() ? 'session-overview' : 'session-options').querySelector('.row[aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
+    // 首次打开没有缓存列表时，列表到了再定位一次。
+    if (!positioned && currentDrawer === drawerEpoch && drawer.open) revealCurrent();
+  }
+
+  /** 分组不再把当前项目置顶，滚到当前会话；两个列表都渲染着，只在看得见的那个里找。 */
+  function revealCurrent() {
+    const row = get(allMode() ? 'session-overview' : 'session-options').querySelector('.row[aria-current="true"]');
+    row?.scrollIntoView({ block: 'nearest' });
+    return !!row;
+  }
+
+  /** 侧栏还在滑入时等它停稳：列表结果在滑动途中重排会让侧栏图层重新绘制，低端机上明显顿一下。 */
+  function settled() {
+    return Promise.all(drawer.getAnimations().map(animation => animation.finished.catch(() => {})));
   }
 
   async function refresh() {
@@ -420,6 +434,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       // 电脑端支持时一次取回所有项目的会话，当前项目的列表从中截取：「本项目」也需要其中的使用方和创建设备。
       const wide = allAvailable === true && availabilityAddress === address;
       const response = await remote('sessions', wide ? { desktop: true } : { project: projectId });
+      await settled();
       if (epoch !== state.viewEpoch() || currentDrawer !== drawerEpoch || !drawer.open) return;
       const list = wide ? projectSessionsFromOverview(response, projectId) : response;
       setSessions(mergeSessionList(list, state.sessions()));

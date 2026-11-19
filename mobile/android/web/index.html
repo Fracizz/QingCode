@@ -627,6 +627,8 @@
     <p class="hint">勾选的键显示在终端底部，长按一行可拖动排序，取消勾选的键移到「更多」。</p>
     <div id="key-layout-list" class="key-layout-list" aria-label="快捷键顺序与显示"></div>
     <button id="key-layout-add" type="button" class="text-button key-layout-add"><svg><use href="#i-plus"/></svg>添加自定义键</button>
+    <button id="key-layout-import" type="button" class="text-button key-layout-add" hidden><svg><use href="#i-down"/></svg>从电脑导入自定义键</button>
+    <p id="key-layout-import-status" class="hint" role="status" hidden></p>
     <div class="dialog-actions"><button id="key-layout-reset" type="button" class="secondary">恢复默认</button><button type="button" class="primary" data-close="key-layout-dialog">完成</button></div>
   </dialog>
   <dialog id="custom-key-dialog" aria-labelledby="custom-key-title">

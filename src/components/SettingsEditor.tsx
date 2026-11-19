@@ -159,7 +159,8 @@ export default function SettingsEditor() {
   useEffect(() => {
     if (settingsFocusSignal === 0 || settingsFocusSignal <= appliedSettingsFocusSignal) return
     appliedSettingsFocusSignal = settingsFocusSignal
-    const targetCategory = settingsFocusQuery === '终端配置' ? 'terminal' : 'editor'
+    const targetCategory =
+      settingsFocusQuery === '终端配置' || settingsFocusQuery === '快捷键栏' ? 'terminal' : 'editor'
     queueMicrotask(() => {
       setScope('user')
       if (settingsFocusQuery) {
@@ -170,7 +171,9 @@ export default function SettingsEditor() {
     requestAnimationFrame(() => {
       const target = settingsFocusQuery === '终端配置'
         ? terminalProfilesRef.current
-        : sectionRefs.current[targetCategory]
+        : settingsFocusQuery === '快捷键栏'
+          ? document.querySelector<HTMLElement>('[data-settings-anchor="terminal-shortcut-bar"]')
+          : sectionRefs.current[targetCategory]
       target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       searchRef.current?.focus()
     })

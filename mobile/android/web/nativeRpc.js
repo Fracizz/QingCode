@@ -93,7 +93,7 @@ export function createNativeRpc(native, { timers = globalThis } = {}) {
         requests.delete(id);
         cleanup();
         try { native.cancel?.(id); } catch { /* old bridges may not expose cancellation */ }
-        const read = ['profiles', 'probe', 'projects', 'capabilities', 'sessions', 'poll', 'history', 'attention', 'terminal_profiles', 'file_list', 'file_search', 'file_stat', 'latency'].includes(op);
+        const read = ['profiles', 'probe', 'projects', 'capabilities', 'sessions', 'poll', 'history', 'attention', 'terminal_profiles', 'shortcut_keys', 'file_list', 'file_search', 'file_stat', 'latency'].includes(op);
         const error = new Error(read ? t('读取超时，请检查网络或电脑端连接。') : t('请求超时，操作结果未知，请核对电脑端；不会自动重发。'));
         error.code = 'timeout';
         reject(error);

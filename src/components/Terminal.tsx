@@ -64,6 +64,7 @@ import {
 } from '@/lib/terminal/terminalCursorSettings'
 import {
   TERMINAL_CLEAR_EVENT,
+  TERMINAL_CLEAR_INPUT_EVENT,
   TERMINAL_COPY_SCREEN_EVENT,
   TERMINAL_EXPORT_EVENT,
   TERMINAL_RESET_EVENT,
@@ -152,6 +153,17 @@ import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
 import TerminalComposer from './TerminalComposer'
+import TerminalShortcutBar, { TerminalShortcutBarExpand } from './TerminalShortcutBar'
+import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
+import {
+  CUSTOM_KEY_ENTER_DELAY_MS,
+  builtinKeySequence,
+  customKeyForShortcut,
+  customKeyInput,
+  type TerminalCustomKey,
+  type TerminalShortcutBuiltinKey,
+} from '@/lib/terminal/terminalShortcutBar'
+import { shortcutFromKeyboardEvent } from '@/lib/shortcuts'
 import { useTerminalDraftStore } from '../store/terminalDraftStore'
 import '@xterm/xterm/css/xterm.css'
 
@@ -253,6 +265,10 @@ export default function TerminalView({
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
   const control = useTerminalControlStore(s => s.controls[terminalId])
+  const shortcutBarCollapsed = useTerminalShortcutBarStore(s => s.collapsed)
+  /** 渲染用的可写状态：terminal / control 变化会触发重渲染，与 isTerminalWritable 判定一致。 */
+  const shortcutBarWritable =
+    terminal?.status === 'running' && !ptySpawnPending && !isTerminalInputBlocked(terminalId)
   const wasControlledRef = useRef(false)
   /** 跟随其他设备网格期间最近一次报给后端的电脑窗口行列。 */
   const reportedNaturalGridRef = useRef<TerminalGridSize | null>(null)
@@ -399,6 +415,40 @@ export default function TerminalView({
     term.clearSelection()
     term.focus()
   }, [isTerminalWritable, terminalId, writeToTerminal])
+
+  /** 快捷键栏内置键：编辑 / 控制键直接写 PTY，不经过 bracketed paste。 */
+  const sendShortcutKey = useCallback((key: TerminalShortcutBuiltinKey) => {
+    const term = xtermRef.current
+    if (!term || !isTerminalWritable()) return
+    if (key === 'clear-input') {
+      clearInput()
+      return
+    }
+    const sequence = builtinKeySequence(key, { applicationCursor: term.modes.applicationCursorKeysMode })
+    if (!sequence) return
+    void writeToTerminal(terminalId, sequence)
+    term.scrollToBottom()
+  }, [clearInput, isTerminalWritable, terminalId, writeToTerminal])
+
+  /** 自定义键：先写文本，需要时隔一会儿再写回车（TUI 会把紧跟的回车当成粘贴的一部分）。 */
+  const sendCustomKey = useCallback((def: TerminalCustomKey) => {
+    const term = xtermRef.current
+    if (!term || !isTerminalWritable()) return
+    const session = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+    const { data, enter } = customKeyInput(def)
+    void writeToTerminal(terminalId, data)
+    term.scrollToBottom()
+    if (!enter) return
+    window.setTimeout(() => {
+      const current = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+      if (!session || !isSameTerminalSession(session, current) || !isTerminalWritable()) return
+      void writeToTerminal(terminalId, enter)
+    }, CUSTOM_KEY_ENTER_DELAY_MS)
+  }, [isTerminalWritable, terminalId, writeToTerminal])
+  const sendCustomKeyRef = useRef(sendCustomKey)
+  useEffect(() => {
+    sendCustomKeyRef.current = sendCustomKey
+  }, [sendCustomKey])
 
   const resetSearchMatch = useCallback(() => {
     setSearchMatchIndex(-1)
@@ -971,6 +1021,19 @@ export default function TerminalView({
 
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true
+      // 快捷键栏自定义键的终端内快捷键（设置中已排除与应用 / 终端保留组合冲突）。
+      if (!event.isComposing) {
+        const custom = customKeyForShortcut(
+          useTerminalShortcutBarStore.getState(),
+          shortcutFromKeyboardEvent(event),
+        )
+        if (custom) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (!event.repeat) sendCustomKeyRef.current(custom)
+          return false
+        }
+      }
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
       if (mod && !event.altKey && !event.shiftKey && key === 'f') {
@@ -1518,19 +1581,24 @@ export default function TerminalView({
     const onExport = (event: Event) => {
       if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) exportBuffer()
     }
+    const onClearInput = (event: Event) => {
+      if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) clearInput()
+    }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
     window.addEventListener(TERMINAL_RESET_EVENT, onReset)
     window.addEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
     window.addEventListener(TERMINAL_EXPORT_EVENT, onExport)
+    window.addEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
       window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
       window.removeEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
       window.removeEventListener(TERMINAL_EXPORT_EVENT, onExport)
+      window.removeEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     }
-  }, [clearBuffer, copyScreen, exportBuffer, openSearch, resetTerminalView, terminalId])
+  }, [clearBuffer, clearInput, copyScreen, exportBuffer, openSearch, resetTerminalView, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {
@@ -1738,7 +1806,15 @@ export default function TerminalView({
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
         <TerminalControlNotice terminalId={terminalId} offsetForSearch={searchOpen} />
         <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} belowControl={!!control} />
+        {shortcutBarCollapsed && <TerminalShortcutBarExpand />}
       </div>
+      {!shortcutBarCollapsed && (
+        <TerminalShortcutBar
+          disabled={!shortcutBarWritable}
+          onBuiltinKey={sendShortcutKey}
+          onCustomKey={sendCustomKey}
+        />
+      )}
       {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && !isMobileTerminalId(terminalId) && (
         <TerminalExitNotice
           exitCode={terminal.exitCode}

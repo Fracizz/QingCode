@@ -5,6 +5,7 @@ export const TERMINAL_SEARCH_EVENT = 'qingcode:terminal-search'
 export const TERMINAL_RESET_EVENT = 'qingcode:terminal-reset'
 export const TERMINAL_COPY_SCREEN_EVENT = 'qingcode:terminal-copy-screen'
 export const TERMINAL_EXPORT_EVENT = 'qingcode:terminal-export'
+export const TERMINAL_CLEAR_INPUT_EVENT = 'qingcode:terminal-clear-input'
 
 export type TerminalViewBridgeDetail = {
   /** When set, only that terminal reacts; otherwise the active view reacts. */
@@ -22,6 +23,15 @@ export function requestTerminalClear(terminalId?: string) {
 export function requestTerminalSearch(terminalId?: string) {
   window.dispatchEvent(
     new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_SEARCH_EVENT, {
+      detail: { terminalId },
+    }),
+  )
+}
+
+/** 清除当前终端提示符 / AI CLI 输入框里尚未提交的内容（见 terminalClearInput.ts）。 */
+export function requestTerminalClearInput(terminalId?: string) {
+  window.dispatchEvent(
+    new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_CLEAR_INPUT_EVENT, {
       detail: { terminalId },
     }),
   )

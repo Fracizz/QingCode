@@ -28,6 +28,8 @@ import {
   type TerminalProfileSettings,
 } from './terminal/terminalProfiles'
 import { useShortcutStore } from '../store/shortcutStore'
+import { currentShortcutBarState, useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
+import type { TerminalShortcutBarState } from './terminal/terminalShortcutBar'
 import { DEFAULT_SHORTCUTS, type ShortcutCommand } from './shortcuts'
 import { DEFAULT_LANGUAGE, useLocaleStore } from './i18n'
 import { useEditorStore } from '../store/editorStore'
@@ -47,6 +49,8 @@ interface UserPreferences {
   fonts?: FontSettings
   terminal?: TerminalProfileSettings
   shortcuts?: Partial<Record<ShortcutCommand, string>>
+  /** 终端快捷键栏布局、自定义键与折叠状态。 */
+  terminalShortcutBar?: TerminalShortcutBarState
   language?: string
 }
 
@@ -147,6 +151,16 @@ export function parseSettingsTransfer(text: string, scope: SettingsScope): Setti
         )
       )
         throw new Error('终端配置无效')
+    }
+    if (preferences.terminalShortcutBar !== undefined) {
+      const bar = preferences.terminalShortcutBar
+      if (
+        !record(bar) ||
+        !Array.isArray(bar.order) ||
+        (bar.hidden !== undefined && !Array.isArray(bar.hidden)) ||
+        (bar.custom !== undefined && !Array.isArray(bar.custom))
+      )
+        throw new Error('终端快捷键栏配置无效')
     }
   }
   const normalized = scope === 'project' ? stripGlobalOnlyKeys(settings as SettingsFile) : settings
@@ -286,6 +300,7 @@ export async function exportSettings(
       fonts: loadFontSettings(),
       terminal: loadTerminalProfileSettings(),
       shortcuts: useShortcutStore.getState().shortcuts,
+      terminalShortcutBar: currentShortcutBarState(),
       language: useLocaleStore.getState().language,
     }
   }
@@ -329,6 +344,7 @@ export async function resetSettings(
       defaultProfileId: null,
     })
     useShortcutStore.getState().resetShortcuts()
+    useTerminalShortcutBarStore.getState().replace(null)
     useLocaleStore.getState().setLanguage(DEFAULT_LANGUAGE)
   }
   await finishSettingsChange(scope, path, content)
@@ -377,6 +393,8 @@ export async function importSettings(
     if (preferences.shortcuts)
       for (const [key, value] of Object.entries(preferences.shortcuts))
         useShortcutStore.getState().setShortcut(key as ShortcutCommand, value)
+    if (preferences.terminalShortcutBar)
+      useTerminalShortcutBarStore.getState().replace(preferences.terminalShortcutBar)
     if (preferences.language) useLocaleStore.getState().setLanguage(preferences.language)
   }
   const skippedProjects = importedProjects ? await importSettingsProjects(importedProjects) : []

@@ -159,8 +159,11 @@ interface ProjectState {
   reorderVisibleProjects: (fromIndex: number, toIndex: number) => Promise<void>
   relocateProject: (id: string, path: string) => Promise<boolean>
   renameProject: (id: string, name: string) => Promise<void>
-  /** @returns false if the user cancelled dirty-tab confirmation or activation failed */
-  switchProject: (project: Project) => Promise<boolean>
+  /**
+   * @param options.background 远程项目的打开进度卡直接转入后台（启动恢复用），失败时仍弹错误框。
+   * @returns false if the user cancelled dirty-tab confirmation or activation failed
+   */
+  switchProject: (project: Project, options?: { background?: boolean }) => Promise<boolean>
   addRecentFile: (path: string) => Promise<void>
   loadFileTree: () => Promise<void>
   expandDir: (path: string) => Promise<void>
@@ -211,7 +214,7 @@ interface ProjectSwitch {
 const activeProjectSwitches = new Map<string, ProjectSwitch>()
 let projectSwitchGeneration = 0
 
-function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
+function prepareRemoteProject(project: Project, previousTree?: FileNode[], background = false) {
   return runSshOpening(project, async (signal, report) => {
     const before = peekSshWarmup(project.path)
     const diagnostic: SshOpenDiagnostic = {
@@ -279,7 +282,7 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
       if (signal.aborted) diagnostic.outcome = 'cancelled'
       recordSshOpenDiagnostic(diagnostic)
     }
-  })
+  }, { background })
 }
 
 /**
@@ -435,7 +438,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const candidate = pickRestoreCandidate(projects, ephemeralProjects)
         // Startup files must be opened only after the initial editor session is active;
         // otherwise activateProjectSession replaces the just-opened standalone tab.
-        if (candidate) await get().switchProject(candidate)
+        // 启动恢复的远程项目在后台连接，不弹进度卡；失败时仍弹错误框。
+        if (candidate) await get().switchProject(candidate, { background: true })
       }
 
       void (async () => {
@@ -933,7 +937,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  switchProject: async (project: Project) => {
+  switchProject: async (project: Project, options) => {
     const inflight = activeProjectSwitches.get(project.id)
     if (inflight) {
       // 同一项目再次点击：不重复连接，让进行中的流程重新成为目标。
@@ -1010,7 +1014,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (superseded()) return false
 
         sshConnectionAttempted = true
-        const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
+        const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree, options?.background) : null
         sshWorkspaceConnected = true
 
         // Ephemeral/empty projects use a scratch temp directory; do not block

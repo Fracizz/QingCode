@@ -601,7 +601,17 @@ function tabletLayout() {
 }
 window.addEventListener('resize', syncSessionDock);
 
-const shortcutBar = createShortcutBar({ prefix, onChange: () => updateComposerActions() });
+const shortcutBar = createShortcutBar({
+  prefix,
+  onChange: () => updateComposerActions(),
+  canImport: () => Boolean(profile),
+  // 从电脑端「设置 → 终端 → 快捷键栏」导入自定义键；旧版电脑端不认识该请求时返回 null。
+  importKeys: async () => {
+    const capabilities = await desktopProtocol.capabilities(profile);
+    if (!capabilities?.features.includes('shortcut_keys')) return null;
+    return remote('shortcut_keys', {});
+  },
+});
 
 const sessionWatch = createSessionWatch({
   rpc,
@@ -1252,6 +1262,7 @@ const FRAME_SWAP_DELAY = 34;
 function releaseTerminalFrame({ immediate = false } = {}) {
   clearTimeout(frameStatusTimer);
   clearTimeout(frameReleaseTimer);
+  clearTimeout(frameDimTimer);
   const frame = heldFrame;
   if (!frame) return;
   heldFrame = null;
@@ -1259,8 +1270,28 @@ function releaseTerminalFrame({ immediate = false } = {}) {
     frame.renderer?.dispose();
     frame.term.dispose();
   };
-  if (immediate) dispose();
-  else setTimeout(dispose, FRAME_SWAP_DELAY);
+  if (immediate) { dispose(); return; }
+  // 新画面已在下面画好：旧画面淡出交接，而不是一帧硬切（见 app.css .terminal-held-frame）。
+  if (reducedMotion()) { setTimeout(dispose, FRAME_SWAP_DELAY); return; }
+  frame.term.element?.setAttribute('data-frame', 'leaving');
+  setTimeout(dispose, FRAME_FADE_MS);
+}
+
+/** 旧画面淡出的时长，与 app.css .terminal-held-frame[data-frame="leaving"] 一致，多留一帧再释放。 */
+const FRAME_FADE_MS = 170;
+/** 等新画面超过这个时长，旧画面轻微变暗，提示正在接入。 */
+const FRAME_DIM_DELAY = 300;
+let frameDimTimer;
+
+/** 下一次渲染之后再继续：让刚开始的过渡先提交一帧。 */
+function nextFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+/** 浏览器空闲时执行；不支持 requestIdleCallback 的内核退回短延时。 */
+function whenIdle(work) {
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => work(), { timeout: 600 });
+  else setTimeout(work, 200);
 }
 
 /** 旧画面还在时先不改状态行和按钮，短暂切换看不出中间态；没有旧画面（从工作台进入）立即显示状态。 */
@@ -1271,6 +1302,9 @@ function awaitNewFrame(text) {
   }
   clearTimeout(frameStatusTimer);
   clearTimeout(frameReleaseTimer);
+  clearTimeout(frameDimTimer);
+  const frame = heldFrame;
+  frameDimTimer = setTimeout(() => { if (heldFrame === frame) frame.term.element?.setAttribute('data-frame', 'waiting'); }, FRAME_DIM_DELAY);
   frameStatusTimer = setTimeout(() => terminalState(text, 'idle', null, { holdFrame: true }), FRAME_STATUS_DELAY);
   frameReleaseTimer = setTimeout(releaseTerminalFrame, FRAME_HOLD_LIMIT);
 }
@@ -2026,6 +2060,8 @@ async function openNewSessionDialog(target = null) {
 async function selectSession(session, { keepDrawer = false, take = false } = {}) {
   get('terminal-empty').hidden = true;
   get('session-dialog').close();
+  // 侧栏以模态方式开着时，关闭后先让退出动画起步，再做重建终端这类重活，否则动画要等它们做完才开始。
+  const drawerLeaving = !keepDrawer && get('session-drawer').open && !drawer.isDocked();
   if (!keepDrawer) drawer.close();
   if (selected === session.id && !retryTerminal) {
     if (take && takenSession && !viewerGrid) retakeSession();
@@ -2044,8 +2080,10 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
       JSON.stringify(rememberProject(projectHistory(), project.id)));
   } catch { /* Terminal access remains available when history cannot be saved. */ }
   localStorage.setItem(prefix + 'open', profile.id);
-  dashboard.renderHome();
+  // 首页此时被终端盖着，空闲时再更新。
+  whenIdle(() => dashboard.renderHome());
   awaitNewFrame(t('正在接入终端…'));
+  if (drawerLeaving) await nextFrame();
   await loadTerminalFont();
   if (epoch !== viewEpoch) return;
   makeTerminal();

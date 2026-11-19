@@ -6,7 +6,12 @@ import {
 } from '../lib/copyFileActions'
 import { formatDocument } from '../lib/formatDocument'
 import { buildCommands } from '../lib/commands'
-import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
+import {
+  requestTerminalClear,
+  requestTerminalClearInput,
+  requestTerminalSearch,
+} from '@/lib/terminal/terminalViewBridge'
+import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
   isShortcutInputTarget,
@@ -153,6 +158,15 @@ export function useAppKeyboardShortcuts({
       ) {
         event.preventDefault()
         requestTerminalClear()
+      } else if (
+        shortcutMatchesEvent(shortcuts.clearTerminalInput, event) &&
+        isTerminalKeyTarget(event.target)
+      ) {
+        event.preventDefault()
+        requestTerminalClearInput()
+      } else if (shortcutMatchesEvent(shortcuts.toggleTerminalShortcutBar, event)) {
+        event.preventDefault()
+        useTerminalShortcutBarStore.getState().toggleCollapsed()
       } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
         // Handle in capture phase so format works even when CodeMirror has focus.
         // (Previously skipped .cm-editor and relied on CM keymap, which often missed

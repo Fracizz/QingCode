@@ -101,14 +101,14 @@ export async function runSshOpening<T>(
     signal: AbortSignal,
     report: (stage: SshOpeningStage, server?: SshServerState) => void
   ) => Promise<T>,
-  timeoutMs = 180_000
+  { timeoutMs = 180_000, background = false }: { timeoutMs?: number; background?: boolean } = {}
 ): Promise<T> {
   const key = sshOpeningKey(project)
   cancelSshOpening(key)
   const controller = new AbortController()
   const { signal } = controller
   const attempt: SshOpeningAttempt = {
-    id: ++openingSequence, key, startedAt: Date.now(), project, stage: 'connecting', server: null, error: null, controller, reusingServer: false, background: false,
+    id: ++openingSequence, key, startedAt: Date.now(), project, stage: 'connecting', server: null, error: null, controller, reusingServer: false, background,
   }
   useSshOpeningStore.setState(state => ({ attempts: { ...state.attempts, [key]: attempt } }))
   const isCurrent = () => useSshOpeningStore.getState().attempts[key]?.controller === controller

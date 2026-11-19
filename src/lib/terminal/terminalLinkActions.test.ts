@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { matchTerminalFileHits, terminalFileSearchName } from './terminalFileLinks'
 import { openTerminalFile } from './terminalLinkActions'
 import { getFileStat } from '../fileIpc'
@@ -6,10 +6,11 @@ import { searchFiles } from '../searchFiles'
 import { authorizeExistingFile } from '../pathAllowlist'
 import { confirmDialog } from '../../store/confirmStore'
 
-const { openFile, openPalette, pushToast } = vi.hoisted(() => ({
+const { openFile, openPalette, pushToast, workspace } = vi.hoisted(() => ({
   openFile: vi.fn(),
   openPalette: vi.fn(),
   pushToast: vi.fn(),
+  workspace: { root: 'D:\\code\\app' },
 }))
 
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
@@ -35,14 +36,14 @@ vi.mock('../../store/commandPaletteStore', () => ({ useCommandPaletteStore: { ge
 vi.mock('../../store/projectStore', () => ({
   useProjectStore: {
     getState: () => ({
-      projects: [{ id: 'p1', name: 'app', path: 'D:\\code\\app' }],
+      projects: [{ id: 'p1', name: 'app', path: workspace.root }],
       currentProject: null,
       pushToast,
     }),
   },
 }))
 vi.mock('../../store/terminalStore', () => ({
-  useTerminalStore: { getState: () => ({ terminals: [{ id: 't1', projectId: 'p1', cwd: 'D:\\code\\app' }] }) },
+  useTerminalStore: { getState: () => ({ terminals: [{ id: 't1', projectId: 'p1', cwd: workspace.root }] }) },
 }))
 
 const hit = (relative: string, is_dir = false) => ({
@@ -184,5 +185,32 @@ describe('openTerminalFile outside the project', () => {
     expect(confirmDialog).toHaveBeenCalledOnce()
     expect(authorizeExistingFile).not.toHaveBeenCalled()
     expect(openFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('openTerminalFile in an SSH project', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    workspace.root = 'ssh://conn-1/D:/code/app'
+    vi.mocked(getFileStat).mockRejectedValue(new Error('missing'))
+  })
+  afterEach(() => {
+    workspace.root = 'D:\\code\\app'
+  })
+
+  it('explains that remote files outside the project root cannot be opened', async () => {
+    await openTerminalFile('t1', { path: 'C:\\Users\\Administrator\\.claude\\settings.json' })
+    expect(authorizeExistingFile).not.toHaveBeenCalled()
+    expect(searchFiles).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalledWith(
+      'error',
+      '只能打开远程项目根目录内的文件：C:\\Users\\Administrator\\.claude\\settings.json',
+    )
+  })
+
+  it('still reports a missing file inside the remote project root', async () => {
+    await openTerminalFile('t1', { path: 'D:\\code\\app\\gone.py' })
+    expect(getFileStat).toHaveBeenCalledWith({ path: 'ssh://conn-1/D:/code/app/gone.py' })
+    expect(pushToast).toHaveBeenCalledWith('error', '未找到文件：D:\\code\\app\\gone.py')
   })
 })

@@ -47,6 +47,11 @@ export function showToast(host, text, duration = 1600) {
 }
 
 /** 写入提示文字；空字符串时隐藏元素。 */
+/** 文字没变就不写：列表定时刷新时整行重写会触发重排和重绘，侧栏滑动途中尤其明显。 */
+export function setText(node, value) {
+  if (node.textContent !== value) node.textContent = value;
+}
+
 export function message(id, value) {
   const target = get(id);
   target.textContent = value ? t(value) : value;

@@ -10,6 +10,7 @@ import {
   isCustomKey,
   isDefaultKeyLayout,
   keyInfo,
+  mergeCustomKeys,
   dragTargetIndex,
   moveKey,
   moveKeyTo,
@@ -26,7 +27,11 @@ import { get, button, icon, confirmAction } from './dom.js';
 import { attachDragSort } from './gestures.js';
 import { t } from './i18n.js';
 
-export function createShortcutBar({ prefix, onChange }) {
+/**
+ * importKeys：可选，返回当前电脑端的自定义键（[{ name, text, enter }]）；未连接电脑时 canImport 为 false。
+ * 电脑端版本过旧不支持时 importKeys 返回 null。
+ */
+export function createShortcutBar({ prefix, onChange, canImport = () => false, importKeys = null }) {
   const storageKey = prefix + 'key-layout';
   const bar = get('special-keys');
   const more = get('more-keys');
@@ -203,9 +208,39 @@ export function createShortcutBar({ prefix, onChange }) {
     save(removeCustomKey(layout, def.id));
   });
 
+  function importStatus(text) {
+    const status = get('key-layout-import-status');
+    status.textContent = text;
+    status.hidden = !text;
+  }
+
   get('open-key-layout').addEventListener('click', () => {
     renderEditor();
+    get('key-layout-import').hidden = !importKeys || !canImport();
+    importStatus('');
     get('key-layout-dialog').showModal();
+  });
+  get('key-layout-import').addEventListener('click', async () => {
+    const trigger = get('key-layout-import');
+    if (!importKeys || trigger.disabled) return;
+    trigger.disabled = true;
+    importStatus(t('正在读取电脑端自定义键…'));
+    try {
+      const keys = await importKeys();
+      if (keys === null) {
+        importStatus(t('电脑端版本过旧，请先升级 QingCode。'));
+        return;
+      }
+      const { layout: next, added } = mergeCustomKeys(layout, keys);
+      if (added) save(next);
+      importStatus(added
+        ? t('已导入 {n} 个自定义键。', { n: added })
+        : keys.length ? t('电脑端的自定义键都已存在。') : t('电脑端还没有自定义键。'));
+    } catch (error) {
+      importStatus(t(error?.message || '导入失败'));
+    } finally {
+      trigger.disabled = false;
+    }
   });
   get('key-layout-add').addEventListener('click', () => openCustomKey(null));
   get('key-layout-reset').addEventListener('click', () => save(defaultKeyLayout(layout.custom)));

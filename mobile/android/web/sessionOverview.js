@@ -12,7 +12,7 @@ import {
   sessionRunning,
   sessionStatusLine,
 } from './protocol.js';
-import { fillProjectSource, icon, rowText, button } from './dom.js';
+import { fillProjectSource, icon, rowText, button, setText } from './dom.js';
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -202,30 +202,30 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     filterToggle.dataset.active = String(filter !== 'all');
     sort.relabel();
     // 静态文案也在每次渲染时取当前语言，切换语言后重绘即生效。
-    hintText.textContent = t('搜索会话');
+    setText(hintText, t('搜索会话'));
     input.setAttribute('aria-label', t('搜索会话、项目或设备'));
     filters.setAttribute('aria-label', t('会话状态'));
-    manage.textContent = selecting ? t('完成') : t('管理');
+    setText(manage, selecting ? t('完成') : t('管理'));
     manage.disabled = !all.length && !selecting;
     manage.setAttribute('aria-pressed', String(selecting));
     for (const option of filters.children) {
       option.setAttribute('aria-pressed', String(option.dataset.filter === filter));
-      option.textContent = { live: t('未结束'), exited: t('已结束') }[option.dataset.filter] + ' ' + counts[option.dataset.filter];
+      setText(option, { live: t('未结束'), exited: t('已结束') }[option.dataset.filter] + ' ' + counts[option.dataset.filter]);
     }
     bar.hidden = !selecting;
     const matching = grouped.flatMap(group => group.sessions).filter(batchable);
-    picked.textContent = t('已选 {n}', { n: selection.size });
+    setText(picked, t('已选 {n}', { n: selection.size }));
     const allPicked = matching.length > 0 && matching.every(item => selection.has(item.id));
-    selectAll.textContent = allPicked ? t('取消全选') : t('全选 {n}', { n: matching.length });
+    setText(selectAll, allPicked ? t('取消全选') : t('全选 {n}', { n: matching.length }));
     selectAll.disabled = busy || !matching.length;
-    selectEnded.textContent = t('选已结束');
+    setText(selectEnded, t('选已结束'));
     selectEnded.disabled = busy || !matching.some(item => item.exit);
-    endPicked.textContent = t('关闭所选');
+    setText(endPicked, t('关闭所选'));
     endPicked.disabled = busy || !selection.size;
     empty.hidden = groups.length > 0;
-    empty.textContent = all.length ? t('没有符合条件的会话') : t('这台电脑上还没有手机会话');
+    setText(empty, all.length ? t('没有符合条件的会话') : t('这台电脑上还没有手机会话'));
     more.hidden = !hidden && !(expanded && !narrowed && grouped.reduce((sum, group) => sum + group.sessions.length, 0) > limit);
-    more.textContent = hidden ? t('展开全部（还有 {n} 个）', { n: hidden }) : t('收起');
+    setText(more, hidden ? t('展开全部（还有 {n} 个）', { n: hidden }) : t('收起'));
     const existing = new Map([...groupsNode.children].map(node => [node.dataset.project, node]));
     groups.forEach((group, position) => {
       let node = existing.get(group.project.id);
@@ -317,11 +317,11 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const current = group.project.id === state.current();
     const title = group.project.name ?? group.project.id;
     node.dataset.currentProject = String(current);
-    node.querySelector('strong').textContent = title;
+    setText(node.querySelector('strong'), title);
     // 组头只留连接名，地址在项目页和搜索中可见。
     fillProjectSource(node.querySelector('.session-group-source'), group.project, projectPlaceLabel({ ...group.project, host: '' }),
       [current ? t('当前项目') : '', group.missing ? t('电脑端已移除') : '']);
-    node.querySelector('.session-group-count').textContent = String(group.total ?? group.sessions.length);
+    setText(node.querySelector('.session-group-count'), String(group.total ?? group.sessions.length));
     node.setAttribute('aria-label', title);
     const rows = node.querySelector('.session-group-rows');
     if (groupTools) renderGroupTools(node, rows, group, busy, narrowed, title);
@@ -455,16 +455,16 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     }
     if (active) option.setAttribute('aria-current', 'true');
     else option.removeAttribute('aria-current');
-    row.querySelector('.session-label').textContent = label;
-    row.querySelector('small').textContent = sessionStatusLine(session, { running, active, last, pinned, fresh });
+    setText(row.querySelector('.session-label'), label);
+    setText(row.querySelector('small'), sessionStatusLine(session, { running, active, last, pinned, fresh }));
     // 快到自动结束时单独一行提醒。
     const idleInfo = sessionIdleInfo(session);
     const idle = row.querySelector('.session-idle');
-    idle.textContent = idleInfo.expiring ? idleInfo.text : '';
+    setText(idle, idleInfo.expiring ? idleInfo.text : '');
     idle.hidden = !idle.textContent;
     const close = row.querySelector('.session-close');
     close.setAttribute('aria-label', t(session.exit ? '移除 {name}' : '关闭 {name}', { name: label }));
-    close.querySelector('span').textContent = t(session.exit ? '移除' : '关闭');
+    setText(close.querySelector('span'), t(session.exit ? '移除' : '关闭'));
     close.disabled = busy;
     const more = row.querySelector('.session-more');
     if (more) {

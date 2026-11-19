@@ -1258,9 +1258,9 @@ public final class MainActivity extends Activity {
             case "input": case "resize": case "end": case "image": case "rename_session":
             // 多端共享：独占、按本机尺寸、锁定尺寸。漏掉时网页按钮会被这里拒成「未知操作」。
             case "exclusive": case "take_size": case "lock_size":
-            case "terminal_profiles": case "capabilities":
+            case "terminal_profiles": case "shortcut_keys": case "capabilities":
             case "file_list": case "file_search": case "file_stat": case "file_chunk":
-                if (!"capabilities".equals(op) && !"terminal_profiles".equals(op) && !op.startsWith("file_")) watcher.touch(current);
+                if (!"capabilities".equals(op) && !"terminal_profiles".equals(op) && !"shortcut_keys".equals(op) && !op.startsWith("file_")) watcher.touch(current);
                 if ("input".equals(op)) watcher.noteInput();
                 return current.call(request);
             default:
@@ -1387,7 +1387,7 @@ public final class MainActivity extends Activity {
         private static boolean idempotent(String op) {
             switch (op) {
                 case "projects": case "sessions": case "poll": case "history": case "resize":
-                case "terminal_profiles": case "capabilities": case "attention": return true;
+                case "terminal_profiles": case "shortcut_keys": case "capabilities": case "attention": return true;
                 default: return false;
             }
         }

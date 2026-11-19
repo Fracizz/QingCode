@@ -128,8 +128,13 @@ export async function openTerminalFile(
   }
   if (signal.aborted) return
 
-  const notFound = () => pushToast('error', translate('未找到文件：{path}', { path: target.path }))
   const query = project ? terminalFileSearchName(target.path) : null
+  // SSH 项目只解析根目录内的路径：根外绝对路径（或远端路径变量）没有候选，文件可能存在，不能报"未找到"。
+  if (root.startsWith('ssh://') && !candidates.length && !query) {
+    pushToast('error', translate('只能打开远程项目根目录内的文件：{path}', { path: target.path }))
+    return
+  }
+  const notFound = () => pushToast('error', translate('未找到文件：{path}', { path: target.path }))
   if (!project || !query) {
     notFound()
     return

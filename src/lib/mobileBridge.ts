@@ -12,6 +12,7 @@ import { isProjectTrusted, pushTrustedRootsToNative } from './workspaceTrust'
 import { uploadLocalFilesForSshTerminal } from './sshTerminalPaste'
 import { getTerminalProfile, loadTerminalProfileSettings } from './terminal/terminalProfiles'
 import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
+import { currentShortcutBarState } from '@/store/terminalShortcutBarStore'
 import { normalizeTerminalShell } from './terminal/terminalShell'
 import { captureTerminalForMirror, useTerminalStore } from '@/store/terminalStore'
 import { applyTerminalControlPayload, type TerminalControlPayload } from '@/store/terminalControlStore'
@@ -29,6 +30,8 @@ interface Request {
   attachment?: string | null
   /** 列出终端配置（不含命令）。 */
   profiles?: boolean
+  /** 列出快捷键栏的自定义键，供手机导入。 */
+  shortcutKeys?: boolean
   /** 按 id 解析一个终端配置，供手机新建会话。 */
   profile?: string
   /** 列出可供手机接入的电脑终端。 */
@@ -154,6 +157,11 @@ export function mobileTerminalProfiles() {
   }))
 }
 
+/** 手机导入用：只给名称、文本与回车设置；终端内快捷键是电脑键盘专用，不下发。 */
+export function mobileShortcutKeys() {
+  return currentShortcutBarState().custom.map(({ name, text, enter }) => ({ name, text, enter }))
+}
+
 export function mobileTerminalProfile(id: string) {
   if (!loadTerminalProfileSettings().profiles.some(profile => profile.id === id)) {
     throw new Error('终端配置不存在或已删除，请刷新后重试。')
@@ -183,7 +191,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
 }
 
 async function respond({
-  project: projectId = null, attachment, profiles, profile, desktopTerminals, mirrorStart, seed, endTerminal,
+  project: projectId = null, attachment, profiles, shortcutKeys, profile, desktopTerminals, mirrorStart, seed, endTerminal,
   connectRemoteProjects: connectRemote, fileAccess, fileRules,
 }: Request) {
   if (connectRemote) {
@@ -199,6 +207,7 @@ async function respond({
     return null
   }
   if (profiles) return mobileTerminalProfiles()
+  if (shortcutKeys) return mobileShortcutKeys()
   if (profile !== undefined) return mobileTerminalProfile(profile)
   // The main window can lag behind projects added/removed in another window or
   // through the CLI. Mobile refresh and terminal creation both need saved state.

@@ -282,6 +282,49 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#session-options > *')].map(row => row.dataset.id)), order.filter(id => id !== target))
     })
 
+    await step('the drawer applies a slow session list only after it settles, and a session switch cross-fades the terminal', async () => {
+      await page.evaluate(() => document.querySelector('#session-drawer').close())
+      await gone('session-drawer')
+      // 列表结果在滑入途中（120ms）到达，且标题确实变了：应等滑入结束再写进列表。
+      const other = await page.evaluate(() => document.querySelector('#session-options .session-option:not([data-current="true"])').dataset.id)
+      await page.evaluate(id => {
+        window.__mobileFixture.state.sessionDelay = 120
+        window.__mobileFixture.setTitle(id, 'Slow list title')
+        const drawer = document.querySelector('#session-drawer')
+        window.__drawerTimes = { changed: null, settled: null }
+        const label = () => document.querySelector(`#session-options [data-id="${id}"] .session-label`)
+        window.__drawerObserver = new MutationObserver(() => {
+          if (window.__drawerTimes.changed === null && label()?.textContent.includes('Slow list title')) window.__drawerTimes.changed = performance.now()
+        })
+        window.__drawerObserver.observe(document.querySelector('#session-options'), { subtree: true, childList: true, characterData: true })
+        document.querySelector('#show-sessions').click()
+        const slide = drawer.getAnimations()[0]
+        if (slide) slide.finished.then(() => { window.__drawerTimes.settled = performance.now() })
+        else window.__drawerTimes.settled = performance.now()
+      }, other)
+      await page.waitForFunction(() => window.__drawerTimes.changed !== null && window.__drawerTimes.settled !== null)
+      const times = await page.evaluate(() => { window.__drawerObserver.disconnect(); window.__mobileFixture.state.sessionDelay = 0; return window.__drawerTimes })
+      assert.ok(times.changed >= times.settled - 1, JSON.stringify(times))
+      // 点另一个会话：旧画面先留着，新画面到了淡出交接，而不是一帧硬切。
+      await page.evaluate(() => {
+        window.__heldFrames = []
+        window.__frameObserver = new MutationObserver(() => {
+          for (const frame of document.querySelectorAll('#viewport .terminal-held-frame[data-frame]')) {
+            if (!window.__heldFrames.includes(frame.dataset.frame)) window.__heldFrames.push(frame.dataset.frame)
+          }
+        })
+        window.__frameObserver.observe(document.querySelector('#viewport'), { subtree: true, attributes: true, attributeFilter: ['data-frame'] })
+      })
+      await page.evaluate(id => document.querySelector(`#session-options [data-id="${id}"] .row`).click(), other)
+      await page.waitForFunction(() => window.__heldFrames.includes('leaving'))
+      await page.waitForFunction(() => !document.querySelector('#viewport .terminal-held-frame'))
+      await page.evaluate(() => window.__frameObserver.disconnect())
+      await page.waitForFunction(() => document.querySelector('#terminal-status').textContent === '会话中')
+      // 后续步骤沿用打开的侧栏。
+      await page.click('#show-sessions')
+      await page.waitForFunction(() => document.querySelector('#session-drawer').open && !document.querySelector('#session-drawer').getAnimations().length)
+    })
+
     await step('a pressed list row only tints softly, without shrinking or a ripple', async () => {
       // 抽屉刷新时复用行节点；项目列表会整表重建，强制的伪类会落在旧节点上。
       // 当前会话按设计保留自身底色，取一行非当前会话。

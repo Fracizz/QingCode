@@ -7,6 +7,7 @@
 @import "./styles/markdown.css";
 @import "./styles/xterm.css";
 @import "./styles/terminal-search.css";
+@import "./styles/terminal-shortcut-bar.css";
 @import "./styles/animations.css";
 @import "./styles/panel-resizer.css";
 @import "./styles/settings.css";

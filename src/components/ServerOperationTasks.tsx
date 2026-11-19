@@ -56,7 +56,10 @@ export default function ServerOperationTasks() {
     const operation = serverOperationForProject(tasks, attempt.project)
     if (operation) shownByOpening.add(operation)
     if (!attempt.error && (attempt.background || attempt.startedAt + 300 > cutoff)) continue
-    const status = attempt.error ? '需要处理' : operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'
+    // 只有真的在安装服务时才显示“安装中”；普通连接/恢复打开显示“正在打开远程项目”。
+    const installing = operation?.kind === 'install' || attempt.server?.phase === 'installing'
+    const status = attempt.error ? '需要处理' : operation?.kind === 'update' ? '更新中'
+      : installing && !attempt.reusingServer ? '安装中' : '正在打开远程项目'
     const background = () => {
       if (operation && !operation.finishedAt) setServerOperationBackground(operation.rootUri, true)
       setSshOpeningBackground(attempt.key, true)

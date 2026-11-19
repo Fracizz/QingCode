@@ -14,6 +14,8 @@ export type ShortcutCommand =
   | 'renameInExplorer'
   | 'findInTerminal'
   | 'clearTerminal'
+  | 'clearTerminalInput'
+  | 'toggleTerminalShortcutBar'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
@@ -36,6 +38,10 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   /** Only applied when focus is inside the terminal (.xterm). */
   findInTerminal: 'Ctrl+F',
   clearTerminal: 'Ctrl+Shift+K',
+  /** Unbound by default; terminal-focused only. */
+  clearTerminalInput: '',
+  /** Unbound by default. */
+  toggleTerminalShortcutBar: '',
 }
 
 export function isShortcutBound(shortcut: string): boolean {

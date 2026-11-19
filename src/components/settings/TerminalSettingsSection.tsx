@@ -21,6 +21,7 @@ import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
 import { SettingItem } from '../SettingsLayout'
 import TerminalProfilesInline from '../TerminalProfilesInline'
+import TerminalShortcutBarSettings from '../TerminalShortcutBarSettings'
 import type { TerminalIntegrationSettingsState } from './useSettingsSectionState'
 import type { FontSettingUpdater, SettingsMatch } from './types'
 
@@ -37,7 +38,7 @@ type Props = {
   settings: TerminalIntegrationSettingsState
 }
 
-/** 终端分区：字体、默认 Shell、终端配置、粘贴 / 接回 / 换行 / 运行状态开关、远程粘贴清理。 */
+/** 终端分区：字体、默认 Shell、终端配置、快捷键栏、粘贴 / 接回 / 换行 / 运行状态开关、远程粘贴清理。 */
 export default function TerminalSettingsSection({
   match,
   workspaceLocked,
@@ -145,6 +146,11 @@ export default function TerminalSettingsSection({
       {!workspaceLocked && match('终端配置', '默认启动配置') && (
         <div ref={profilesRef} className="scroll-mt-4">
           <TerminalProfilesInline settings={terminal} onChange={onTerminalChange} />
+        </div>
+      )}
+      {!workspaceLocked && match('快捷键栏', '自定义键', '快捷键', 'shortcut bar') && (
+        <div className="scroll-mt-4">
+          <TerminalShortcutBarSettings />
         </div>
       )}
       {match('SSH', '粘贴', '上传', 'sshUploadOnPaste') && (
