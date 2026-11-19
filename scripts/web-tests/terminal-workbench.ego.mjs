@@ -121,22 +121,40 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       assert.equal(visible, 1)
     })
 
-    await step('从列表进入另一个终端：换进来的终端轻移淡入，播完不残留 transform', async () => {
+    await step('从列表进入另一个终端：新终端在上层淡入、旧终端留在下层直到淡入结束，播完旧终端隐藏', async () => {
       await page.waitForTimeout(400)
       const motion = await page.evaluate(async () => {
+        const outgoing = document.querySelector('[data-terminal-panel] [data-terminal-pane-body="primary"]')
         document.querySelectorAll('[data-terminal-session-list] [role="tab"]')[1].click()
         await new Promise(r => requestAnimationFrame(r))
-        const body = document.querySelector('[data-terminal-panel] [data-terminal-pane-body="primary"]')
-        const keyframes = body.getAnimations().map(a => a.effect.getKeyframes().map(k => [k.opacity, k.transform]))
+        const incoming = document.querySelector('[data-terminal-panel] [data-terminal-pane-body="primary"]')
+        const frames = el => el.getAnimations().map(a => a.effect.getKeyframes().map(k => [k.opacity ?? null, k.visibility ?? null]))
+        const during = {
+          swapped: incoming !== outgoing,
+          incoming: frames(incoming),
+          outgoing: frames(outgoing),
+          outgoingVisible: getComputedStyle(outgoing).visibility,
+          incomingOnTop: Number(getComputedStyle(incoming).zIndex) > Number(getComputedStyle(outgoing).zIndex),
+        }
         // 动画时间轴在无头 / 模拟视口下可能不推进，等过兜底时长再看终态。
         await new Promise(r => setTimeout(r, 700))
-        const style = getComputedStyle(body)
-        return { keyframes, endOpacity: style.opacity, endTransform: style.transform, remaining: body.getAnimations().length }
+        return {
+          ...during,
+          endOpacity: getComputedStyle(incoming).opacity,
+          endTransform: getComputedStyle(incoming).transform,
+          endOutgoingVisibility: getComputedStyle(outgoing).visibility,
+          remaining: incoming.getAnimations().length + outgoing.getAnimations().length,
+        }
       })
-      console.log('terminal enter', JSON.stringify(motion))
-      assert.deepEqual(motion.keyframes, [[['0', 'translateX(-8px)'], ['1', 'translateX(0px)']]], '换进来的终端播放轻移淡入')
+      console.log('terminal crossfade', JSON.stringify(motion))
+      assert.equal(motion.swapped, true)
+      assert.deepEqual(motion.incoming, [[['0', null], ['1', null]]], '新终端只做透明度淡入')
+      assert.deepEqual(motion.outgoing, [[[null, 'visible'], [null, 'visible']]], '旧终端动画期间保持可见')
+      assert.equal(motion.outgoingVisible, 'visible')
+      assert.equal(motion.incomingOnTop, true, '新终端在上层')
       assert.equal(motion.endOpacity, '1', '播完完全不透明（含兜底）')
-      assert.equal(motion.endTransform, 'none', '不残留 transform')
+      assert.equal(motion.endTransform, 'none')
+      assert.equal(motion.endOutgoingVisibility, 'hidden', '播完旧终端恢复隐藏')
       assert.equal(motion.remaining, 0)
     })
 

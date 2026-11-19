@@ -27,7 +27,7 @@ import {
   terminalWidthResizerHint,
 } from '../lib/panelLayout'
 import { beginPanelResize, isPanelResizing, settlePanelResize } from '../lib/panelResize'
-import { enterLayoutRegion } from '../lib/layoutMotion'
+import { crossfadeRegion } from '../lib/layoutMotion'
 import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
 const DUAL_RATIO_KEY = 'qingcode:dual-terminal-ratio'
@@ -186,7 +186,8 @@ export default function TerminalPanel({
     }
   }
 
-  // 从终端列表、标签或快捷键换到另一个终端时，换进来的窗格轻移淡入（同侧栏换页）。
+  // 从终端列表、标签或快捷键换到另一个终端时交叉淡化：单终端下旧终端留在下层直到新终端淡入完成；
+  // 双 / 田字窗格的旧终端节点已被移走，只淡入新内容。
   // 首次挂载、切换单 / 双 / 田字布局新出现的窗格、只移动焦点不换内容时都不播。
   const paneTerminalsRef = useRef<Record<TerminalFocusPane, string | null> | null>(null)
   useLayoutEffect(() => {
@@ -203,7 +204,11 @@ export default function TerminalPanel({
       const before = previous[pane]
       const after = next[pane]
       if (!before || !after || before === after) continue
-      enterLayoutRegion(terminalPanelRef.current?.querySelector(`[data-terminal-pane-body="${pane}"]`))
+      const panel = terminalPanelRef.current
+      crossfadeRegion(
+        panel?.querySelector(`[data-terminal-pane-body="${pane}"]`),
+        multiPane ? null : panel?.querySelector(`[data-terminal-view="${CSS.escape(before)}"]`),
+      )
     }
   }, [activeTerminalId, secondaryTerminalId, blTerminalId, brTerminalId, multiPane, quadMode, terminalOpen, terminalPanelRef])
 
@@ -500,6 +505,7 @@ export default function TerminalPanel({
         data-terminal-active={isFocused ? 'true' : undefined}
         data-terminal-pane={pane ?? undefined}
         data-terminal-pane-body={isFocused ? 'primary' : undefined}
+        data-terminal-view={term.id}
         className={`absolute inset-0 min-w-0 ${
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}

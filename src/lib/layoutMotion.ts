@@ -33,17 +33,21 @@ export function guardAnimation(animation: Animation, duration: number) {
   }, duration + 300)
 }
 
-/** 换进来的大区域（如从终端列表切到另一个终端）：从活动栏一侧轻移 8px 淡入，与侧栏换页 .view-enter 一致；不留 transform。 */
-export function enterLayoutRegion(element: Element | null | undefined) {
-  if (!canAnimateLayout(element)) return
+/**
+ * 原地换内容的交叉淡化（如切换终端）：新内容在上层从透明淡入，旧内容在下层保持完全显示直到淡入结束，
+ * 合成亮度始终不掉，没有「旧的先消失、露出空底再出新的」那一下；不位移，避免整屏文字滑动显得生硬。
+ * outgoing 已被样式隐藏（visibility: hidden）时，动画期间临时保持可见。
+ */
+export function crossfadeRegion(incoming: Element | null | undefined, outgoing?: Element | null) {
+  if (!canAnimateLayout(incoming)) return
   const duration = cssDuration('--motion-view', 260)
-  guardAnimation(element.animate(
-    [
-      { opacity: 0, transform: 'translateX(-8px)' },
-      { opacity: 1, transform: 'translateX(0)' },
-    ],
-    { duration, easing: EASE_SOFT },
-  ), duration)
+  guardAnimation(incoming.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: EASE_SOFT }), duration)
+  if (outgoing instanceof HTMLElement && outgoing !== incoming) {
+    guardAnimation(
+      outgoing.animate([{ visibility: 'visible' }, { visibility: 'visible' }], { duration }),
+      duration,
+    )
+  }
 }
 
 /** 面板布局切换（经典 / 侧边终端 / 终端工作台）后，让换了位置的区域整体淡入，只变透明度不位移。 */
