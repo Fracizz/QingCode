@@ -604,7 +604,19 @@ export function avatarFor(name) {
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F' };
 const TILDE_KEYS = { pgup: '5~', pgdn: '6~' };
 
-export function keySequence(key, { applicationCursor = false, inputLine = '' } = {}) {
+/** 多行清除每轮：Ctrl+E Ctrl+U 清当前行，Backspace 并入上一行，Delete 并入下一行。 */
+const CLEAR_MULTILINE_STEP = '\x05\x15\x7f\x1b[3~';
+/** 轮次上下限：至少覆盖常见输入框高度（输入框不会比屏幕高），上限避免一次写入过多按键。 */
+const CLEAR_MULTILINE_ROUNDS = [24, 200];
+
+/** AI CLI（开启 bracketed paste）输入框可多行，Ctrl+U 只删当前行：按行数逐行收拢，末尾再清一次。 */
+export function multilineClearSequence(rows = 0) {
+  const [min, max] = CLEAR_MULTILINE_ROUNDS;
+  const rounds = Math.min(max, Math.max(min, Math.floor(rows) || 0));
+  return CLEAR_MULTILINE_STEP.repeat(rounds) + '\x05\x15';
+}
+
+export function keySequence(key, { applicationCursor = false, inputLine = '', bracketedPaste = false, rows = 0 } = {}) {
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';
   if (key === 'shift-tab') return '\x1b[Z';
@@ -615,8 +627,11 @@ export function keySequence(key, { applicationCursor = false, inputLine = '' } =
   if (key === 'delete-line-start') return '\x15';
   // Windows PSReadLine 默认不绑定 Ctrl+E / Ctrl+U。只在当前输入行明确是
   // PowerShell 提示符时使用其 Ctrl+Home / Ctrl+End，不能按项目来源猜前台程序。
-  if (key === 'clear-input') return /^PS (?:[a-z]:[\\/]|\\\\)[^\r\n]*>/i.test(inputLine)
-    ? '\x1b[1;5H\x1b[1;5F' : '\x05\x15';
+  // AI CLI 多行输入框与 bash 5.1+ 提示符会开启 bracketed paste，多出的轮次在空行上都是空操作。
+  if (key === 'clear-input') {
+    if (/^PS (?:[a-z]:[\\/]|\\\\)[^\r\n]*>/i.test(inputLine)) return '\x1b[1;5H\x1b[1;5F';
+    return bracketedPaste ? multilineClearSequence(rows) : '\x05\x15';
+  }
   if (key === 'newline') return '\n';
   if (key in TILDE_KEYS) return '\x1b[' + TILDE_KEYS[key];
   if (key in ARROWS) return (applicationCursor ? '\x1bO' : '\x1b[') + ARROWS[key];

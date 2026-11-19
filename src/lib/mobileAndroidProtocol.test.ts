@@ -20,6 +20,7 @@ import {
   groupSessionOverview,
   limitSessionGroups,
   keySequence,
+  multilineClearSequence,
   matchesProject,
   nextModifierState,
   orderSessions,
@@ -422,6 +423,15 @@ describe('Android terminal protocol', () => {
     for (const inputLine of ['$ command', 'PS /home/user> command', 'text with PS D:\\Code> inside', '╭─ Codex']) {
       expect(keySequence('clear-input', { inputLine })).toBe('\x05\x15')
     }
+  })
+
+  it('clears a multi-line AI CLI input row by row when bracketed paste is on', () => {
+    const step = '\x05\x15\x7f\x1b[3~'
+    expect(keySequence('clear-input', { bracketedPaste: true })).toBe(step.repeat(24) + '\x05\x15')
+    expect(keySequence('clear-input', { bracketedPaste: true, rows: 40 })).toBe(step.repeat(40) + '\x05\x15')
+    expect(multilineClearSequence(10_000)).toBe(step.repeat(200) + '\x05\x15')
+    // PowerShell 提示符仍用 PSReadLine 的整段删除，不受 bracketed paste 影响。
+    expect(keySequence('clear-input', { bracketedPaste: true, inputLine: 'PS D:\\Code> a' })).toBe('\x1b[1;5H\x1b[1;5F')
   })
 
   it('moves per-connection records when the address changes', () => {

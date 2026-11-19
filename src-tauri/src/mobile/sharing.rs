@@ -368,6 +368,22 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_desktop_keeps_the_size_after_closing_the_view() {
+        // 手机开的终端在电脑上查看并独占，关掉查看标签后仍按电脑尺寸，不交给在线的手机。
+        let now = Instant::now();
+        let mut sharing = Sharing::new(phone());
+        sharing.see_device("phone", None, now);
+        sharing.request_size(phone(), 40, 30);
+        sharing.request_size(Controller::Desktop, 200, 50);
+        sharing.desktop_present = true;
+        sharing.size_owner = Controller::Desktop;
+        sharing.exclusive = Some(Controller::Desktop);
+        sharing.desktop_present = false;
+        assert_eq!(sharing.hand_over_size(now), None);
+        assert_eq!(sharing.size_owner, Controller::Desktop);
+    }
+
+    #[test]
     fn kicking_devices_releases_their_exclusive_and_size() {
         let now = Instant::now();
         let mut sharing = Sharing::new(Controller::Desktop);

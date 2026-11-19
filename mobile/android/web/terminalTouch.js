@@ -18,6 +18,21 @@ export function wheelTicks(state, deltaPx, cellHeight, speed = 0) {
   return Math.max(-MAX_WHEEL_TICKS_PER_FRAME, Math.min(MAX_WHEEL_TICKS_PER_FRAME, ticks));
 }
 
+/** 本地记录滚动的增益：与 xterm 自身把像素滚轮换算成 1.25 倍滚动距离的手感保持一致。 */
+export const LOCAL_SCROLL_GAIN = 1.25;
+
+/**
+ * 把像素位移累计成整行本地滚动，零头留到下一帧（含惯性），不会被输出打断丢失。
+ * 返回本次应滚动的行数，负数表示向上。
+ */
+export function localScrollLines(state, deltaPx, cellHeight) {
+  if (!(cellHeight > 0) || !deltaPx) return 0;
+  state.remainder += deltaPx * LOCAL_SCROLL_GAIN / cellHeight;
+  const lines = Math.trunc(state.remainder);
+  state.remainder -= lines;
+  return lines;
+}
+
 /**
  * 派发 |ticks| 个按行（DOM_DELTA_LINE）的滚轮事件：xterm 每个事件向程序报告一格，
  * 编码（SGR / 默认）仍由 xterm 按程序请求的模式生成。ticks 为负表示向上。
@@ -63,8 +78,15 @@ export function dispatchVirtualClick(screen, point, button = 0) {
   dispatchVirtualMouse(screen, 'mouseup', point, { button, buttons: 0 });
 }
 
-/** Coalesce finger motion per frame, then coast without sending TUI keys after release. */
-export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, onProgramWheel } = {}) {
+/**
+ * Coalesce finger motion per frame, then coast without sending TUI keys after release.
+ *
+ * lineHeight / scrollLines：普通终端滚本地记录时，由这里按整行调用 scrollLines，不交给 xterm 的像素滚轮。
+ * xterm 6 的视口在有输出换行时会把滚动位置对齐回整行（缓冲已满或刚离开底部时尤甚），
+ * 手指每帧几像素的位移会被反复抹掉，输出中上滑就显得卡顿、发硬；整行滚动不受影响。
+ * 滚轮事件仍会派发，历史面板（到顶接电脑端历史、面板内惯性）照常在捕获阶段先处理。
+ */
+export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, onProgramWheel, lineHeight, scrollLines } = {}) {
   const screen = element.querySelector('.xterm-screen');
   if (!screen) return () => {};
   const view = element.ownerDocument.defaultView;
@@ -77,6 +99,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   let point = { x: 0, y: 0 };
   let gestureId = 0;
   const wheelState = { remainder: 0 };
+  const lineState = { remainder: 0 };
 
   function dispatch(deltaY, momentum = false) {
     if (!deltaY) return;
@@ -97,9 +120,20 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     Object.defineProperties(wheel, {
       wheelDeltaY: { value: undefined }, wheelDeltaX: { value: undefined },
       qingTouch: { value: true }, qingMomentum: { value: momentum },
-      qingGesture: { value: gestureId },
+      qingGesture: { value: gestureId }, qingPixels: { value: true },
     });
     screen.dispatchEvent(wheel);
+  }
+
+  // 注册在历史面板的捕获监听之后：面板没有拦下的像素滚轮，在这里换成整行本地滚动，不再传给 xterm。
+  function localWheel(event) {
+    if (!event.qingPixels || !scrollLines) return;
+    const cell = lineHeight?.() || 0;
+    if (!(cell > 0)) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+    const lines = localScrollLines(lineState, event.deltaY, cell);
+    if (lines) scrollLines(lines);
   }
 
   function cancel() {
@@ -109,7 +143,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     if (coast !== null) view.cancelAnimationFrame(coast);
     frame = coast = null;
     pending = velocity = 0;
-    wheelState.remainder = 0;
+    wheelState.remainder = lineState.remainder = 0;
     gesture = null;
   }
 
@@ -189,6 +223,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   }
 
   function visibility() { if (element.ownerDocument.hidden) cancel(); }
+  element.addEventListener('wheel', localWheel, { capture: true, passive: false });
   element.addEventListener('touchstart', start, { passive: true });
   element.addEventListener('touchmove', move, { passive: false });
   element.addEventListener('touchend', end);
@@ -197,6 +232,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   view.addEventListener('blur', cancel);
   const dispose = () => {
     cancel();
+    element.removeEventListener('wheel', localWheel, { capture: true });
     element.removeEventListener('touchstart', start);
     element.removeEventListener('touchmove', move);
     element.removeEventListener('touchend', end);

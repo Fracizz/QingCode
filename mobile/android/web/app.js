@@ -1434,6 +1434,10 @@ function makeTerminal() {
     // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
     programWheel: () => programMouse() ? cellHeight() : 0,
     onProgramWheel: () => terminalJog?.reveal(),
+    // 普通终端滚本地记录：按整行滚动，输出中上滑不会被 xterm 视口的整行对齐吃掉位移。
+    lineHeight: () => !terminalHistory?.isOpen() && term?.buffer.active.type === 'normal'
+      && term.modes.mouseTrackingMode === 'none' ? cellHeight() : 0,
+    scrollLines: lines => term?.scrollLines(lines),
   });
   terminalLinks = attachTerminalLinks(term, { onActivate: openTerminalLink });
   disposeTouchGuard = attachTouchMouseGuard(get('viewport'), {
@@ -2788,7 +2792,11 @@ function pressKey(keyButton) {
       line = buffer.getLine(--row);
       inputLine = (line?.translateToString(true) ?? '') + inputLine;
     }
-    sendInput(keySequence(key, { inputLine: buffer?.type === 'alternate' ? '' : inputLine }), { raw: true });
+    sendInput(keySequence(key, {
+      inputLine: buffer?.type === 'alternate' ? '' : inputLine,
+      bracketedPaste: !!term?.modes.bracketedPasteMode,
+      rows: term?.rows,
+    }), { raw: true });
   } else if (key === 'slash') {
     dispatchComposer('slash');
   } else if (key === 'reference') {

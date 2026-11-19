@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchVirtualMouse } from '../../mobile/android/web/terminalTouch.js'
+import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchVirtualMouse, localScrollLines } from '../../mobile/android/web/terminalTouch.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
 
-function fixture(canInertia = () => true, onLongPress?: (point: { x: number; y: number }) => void) {
+type LocalScroll = { lineHeight: () => number; scrollLines: (lines: number) => void }
+
+function fixture(canInertia = () => true, onLongPress?: (point: { x: number; y: number }) => void, local?: LocalScroll) {
   let clock = 0
   let nextFrame = 0
   const frames = new Map<number, FrameRequestCallback>()
@@ -25,7 +27,7 @@ function fixture(canInertia = () => true, onLongPress?: (point: { x: number; y: 
   const wheel = vi.fn()
   // Verify bubbling as well: xterm's scrollback and program mouse handlers run on ancestors.
   element.addEventListener('wheel', wheel)
-  disposers.push(attachTerminalTouchScroll(element, { canInertia, onLongPress }))
+  disposers.push(attachTerminalTouchScroll(element, { canInertia, onLongPress, ...local }))
   const touch = (type: string, points: Array<[number, number, number?]>, target = screen) => {
     const event = new Event(type, { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'touches', {
@@ -174,6 +176,55 @@ describe('Android terminal touch scrolling', () => {
     touch('touchstart', [[10, 100]])
     touch('touchmove', [[10, 50]])
     expect(wheel).not.toHaveBeenCalled()
+  })
+})
+
+describe('Android terminal local scrollback lines', () => {
+  it('accumulates sub-line finger motion instead of dropping it', () => {
+    const state = { remainder: 0 }
+    // 20px 行高、1.25 倍增益：每帧 4px 约 0.25 行，第 4 帧才滚满一行。
+    expect([4, 4, 4, 4].map(delta => localScrollLines(state, delta, 20))).toEqual([0, 0, 0, 1])
+    expect(localScrollLines(state, -40, 20)).toBe(-2)
+    expect(localScrollLines(state, 10, 0)).toBe(0)
+  })
+
+  it('scrolls whole lines locally and keeps the wheel away from xterm', () => {
+    const scrollLines = vi.fn()
+    let height = 20
+    const { wheel, touch, advance } = fixture(() => true, undefined, { lineHeight: () => height, scrollLines })
+    touch('touchstart', [[20, 200]])
+    touch('touchmove', [[20, 190]])
+    advance()
+    touch('touchmove', [[20, 186]])
+    advance()
+    touch('touchmove', [[20, 160]])
+    advance()
+    // 10px、14px 都不足一行，不滚；累计 40px × 1.25 / 20 = 2.5 行，滚 2 行，零头留着。
+    expect(scrollLines.mock.calls.map(([lines]) => lines)).toEqual([2])
+    expect(wheel).not.toHaveBeenCalled()
+    // 程序开了鼠标或历史面板打开时 lineHeight 为 0：滚轮照常交给 xterm 与历史面板。
+    height = 0
+    touch('touchmove', [[20, 150]])
+    advance()
+    expect(wheel).toHaveBeenCalledTimes(1)
+    expect(scrollLines).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an earlier capture listener (history panel) claim the wheel first', () => {
+    const scrollLines = vi.fn()
+    const element = document.createElement('div')
+    element.innerHTML = '<div class="xterm-screen"></div>'
+    document.body.append(element)
+    element.addEventListener('wheel', event => event.stopImmediatePropagation(), { capture: true })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callback(0); return 1 })
+    disposers.push(attachTerminalTouchScroll(element, { lineHeight: () => 20, scrollLines }))
+    const screen = element.querySelector('.xterm-screen')!
+    for (const y of [200, 150]) {
+      const event = new Event(y === 200 ? 'touchstart' : 'touchmove', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: [{ clientX: 10, clientY: y, identifier: 1 }] })
+      screen.dispatchEvent(event)
+    }
+    expect(scrollLines).not.toHaveBeenCalled()
   })
 })
 

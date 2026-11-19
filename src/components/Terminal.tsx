@@ -264,11 +264,18 @@ export default function TerminalView({
   const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
-  const control = useTerminalControlStore(s => s.controls[terminalId])
+  // 共享状态只订阅用得到的基本值：在线名单、「正在输入」等变化不重渲染整个终端，
+  // 也不重跑跟随网格的测量（强制布局）和字号校准。
+  const hasControl = useTerminalControlStore(s => !!s.controls[terminalId])
+  const controlBlockedBy = useTerminalControlStore(s => s.controls[terminalId]?.blockedBy ?? null)
+  const followGridKey = useTerminalControlStore(s => {
+    const control = s.controls[terminalId]
+    return control && !control.sizeOwnerIsDesktop ? `${control.cols}x${control.rows}` : null
+  })
   const shortcutBarCollapsed = useTerminalShortcutBarStore(s => s.collapsed)
-  /** 渲染用的可写状态：terminal / control 变化会触发重渲染，与 isTerminalWritable 判定一致。 */
+  /** 渲染用的可写状态：terminal / 独占方变化会触发重渲染，与 isTerminalWritable 判定一致。 */
   const shortcutBarWritable =
-    terminal?.status === 'running' && !ptySpawnPending && !isTerminalInputBlocked(terminalId)
+    terminal?.status === 'running' && !ptySpawnPending && !controlBlockedBy
   const wasControlledRef = useRef(false)
   /** 跟随其他设备网格期间最近一次报给后端的电脑窗口行列。 */
   const reportedNaturalGridRef = useRef<TerminalGridSize | null>(null)
@@ -1148,9 +1155,25 @@ export default function TerminalView({
     // 把滚轮转成发给程序的输入，只读时被丢弃，电脑端就完全无法上翻。这里改为直接滚动本地历史；
     // 全屏程序的备用屏幕没有本地历史，滚轮又不能替对方操作程序，只提示一次。
     const readOnlyWheel = createReadOnlyTerminalWheel()
+    // 只读滚动也做短暂缓动（与 smoothScrollDuration 相近）：跟随手机网格时字号常被放大，
+    // 一格滚轮直接跳好几大行会显得卡顿。待滚行数按帧递减，反向滚动时丢弃旧方向的余量。
+    let pendingWheelLines = 0
+    let wheelFrame = 0
+    const stepReadOnlyWheel = () => {
+      wheelFrame = 0
+      if (!pendingWheelLines) return
+      const step = pendingWheelLines > 0
+        ? Math.max(1, Math.round(pendingWheelLines * 0.35))
+        : Math.min(-1, Math.round(pendingWheelLines * 0.35))
+      pendingWheelLines -= step
+      term.scrollLines(step)
+      if (pendingWheelLines) wheelFrame = window.requestAnimationFrame(stepReadOnlyWheel)
+    }
     const onReadOnlyWheel = (event: WheelEvent) => {
       const blockedBy = terminalControl(terminalId)?.blockedBy
       if (event.ctrlKey || event.metaKey || !blockedBy) return
+      // 普通屏幕且程序没开鼠标上报时滚轮本来就是本地滚动，交给 xterm 自己的平滑滚动。
+      if (term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none') return
       event.preventDefault()
       event.stopPropagation()
       if (term.buffer.active.type !== 'normal') {
@@ -1162,15 +1185,17 @@ export default function TerminalView({
           .pushToast('info', translate('全屏程序的历史请在 {name} 上滚动，或接回后查看；关闭该程序的全屏模式后电脑也能直接翻看', { name }))
         return
       }
-      const screen = term.element?.querySelector('.xterm-screen')
-      const height = screen?.getBoundingClientRect().height ?? 0
+      // 字格取渲染服务已算好的尺寸，不在每次滚轮时强制布局。
       const lines = readOnlyWheel(event, {
-        cellHeight: height / term.rows,
+        cellHeight: readTerminalCell(term)?.height ?? 0,
         rows: term.rows,
         sensitivity: term.options.scrollSensitivity,
         fastSensitivity: term.options.fastScrollSensitivity,
       })
-      if (lines) term.scrollLines(lines)
+      if (!lines) return
+      if (pendingWheelLines * lines < 0) pendingWheelLines = 0
+      pendingWheelLines += lines
+      if (!wheelFrame) wheelFrame = window.requestAnimationFrame(stepReadOnlyWheel)
     }
     container.addEventListener('wheel', onReadOnlyWheel, { capture: true, passive: false })
 
@@ -1489,6 +1514,7 @@ export default function TerminalView({
       disposeOscHandlers()
       container.removeEventListener('wheel', onZoomWheel, { capture: true })
       container.removeEventListener('wheel', onReadOnlyWheel, { capture: true })
+      if (wheelFrame) window.cancelAnimationFrame(wheelFrame)
       followBottomRender.dispose()
       followBottomUntilRef.current = 0
       container.removeEventListener('wheel', stopFollowBottom, { capture: true })
@@ -1744,9 +1770,9 @@ export default function TerminalView({
     const term = xtermRef.current
     if (!term) return
     // 只有被设备独占时电脑才只读；其余情况电脑和手机都能输入。
-    term.options.disableStdin = !!control?.blockedBy
-    if (!control?.blockedBy) altScrollNoticeRef.current = false
-    const follow = control && !control.sizeOwnerIsDesktop ? control : undefined
+    term.options.disableStdin = !!controlBlockedBy
+    if (!controlBlockedBy) altScrollNoticeRef.current = false
+    const follow = followGridKey ? terminalFollowsRemoteGrid(terminalId) : undefined
     if (follow) {
       wasControlledRef.current = true
       // 先在设置字号下量出电脑自己的行列，再按对方网格调字号铺满窗口。
@@ -1761,7 +1787,7 @@ export default function TerminalView({
       // 恢复电脑自己的网格；onResize 会把尺寸发给 PTY，程序随之重绘。
       resizeGridFromContainer()
     }
-  }, [control, fitFollowFont, readProposedGridSize, reportNaturalGrid, resizeGridFromContainer, restoreBaseFont])
+  }, [controlBlockedBy, fitFollowFont, followGridKey, readProposedGridSize, reportNaturalGrid, resizeGridFromContainer, restoreBaseFont, terminalId])
 
   return (
     <div
@@ -1805,7 +1831,7 @@ export default function TerminalView({
         ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
         <TerminalControlNotice terminalId={terminalId} offsetForSearch={searchOpen} />
-        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} belowControl={!!control} />
+        <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} belowControl={hasControl} />
         {shortcutBarCollapsed && <TerminalShortcutBarExpand />}
       </div>
       {!shortcutBarCollapsed && (
