@@ -267,6 +267,9 @@ describe('TerminalSessionList', () => {
       expect(host('local').querySelector('[data-terminal-project-group="p3"]')).not.toBeNull()
       expect(host('ssh:conn-1').querySelector('[data-terminal-project-group="s1"]')).not.toBeNull()
       expect(group('s1').querySelector('[data-terminal-project-source]')).toBeNull()
+      // 主机下的项目整体缩进一级，体现层级。
+      expect(group('s1').parentElement).toHaveAttribute('data-terminal-host-children', 'ssh:conn-1')
+      expect(group('s1').parentElement).toHaveClass('pl-[18px]')
       expect(localStorage.getItem('qingcode:terminal-list-group-by')).toBe('host')
       unmount()
       render(<TerminalSessionList />)

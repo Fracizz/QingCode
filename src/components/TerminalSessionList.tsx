@@ -1024,7 +1024,12 @@ export default function TerminalSessionList() {
             {section.terminalCount}
           </span>
         </button>
-        {expanded && section.groups.map(renderGroup)}
+        {/* 主机下的项目和终端整体缩进，项目图标与主机图标同列，体现「主机 › 项目」层级；项目与终端之间仍沿用按项目分组时的对齐。 */}
+        {expanded && (
+          <div data-terminal-host-children={section.key} className="flex flex-col gap-0.5 pl-[18px]">
+            {section.groups.map(renderGroup)}
+          </div>
+        )}
       </section>
     )
   }
