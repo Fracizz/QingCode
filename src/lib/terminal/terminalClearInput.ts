@@ -41,6 +41,29 @@ export function multilineClearInputSequence(rows = 0): string {
   return CLEAR_INPUT_MULTILINE_STEP.repeat(rounds) + CLEAR_INPUT_EMACS
 }
 
+/**
+ * 多行清除序列拆分写入时，两次写入之间的间隔（毫秒）。
+ * 实测 Windows ConPTY 下一次性写入 40 轮以上的整段序列，Claude Code 会整体失效（输入不变）；
+ * 每轮单独写入但不留间隔仍会被合并读取，同样失效；每轮间隔约 2ms 即可稳定生效。
+ */
+export const CLEAR_INPUT_CHUNK_DELAY_MS = 5
+
+/**
+ * 把清除序列拆成逐次写入的片段：多行序列按轮次拆开，只在完整按键边界切分；
+ * 单行序列（Ctrl+E Ctrl+U / Esc）原样一段。
+ */
+export function splitClearInputSequence(sequence: string): string[] {
+  if (!sequence.startsWith(CLEAR_INPUT_MULTILINE_STEP)) return [sequence]
+  const chunks: string[] = []
+  let rest = sequence
+  while (rest.startsWith(CLEAR_INPUT_MULTILINE_STEP)) {
+    chunks.push(CLEAR_INPUT_MULTILINE_STEP)
+    rest = rest.slice(CLEAR_INPUT_MULTILINE_STEP.length)
+  }
+  if (rest) chunks.push(rest)
+  return chunks
+}
+
 export function terminalClearInputSequence(context: TerminalClearInputContext): string {
   if (context.bracketedPaste) return multilineClearInputSequence(context.rows)
   switch (context.shell) {

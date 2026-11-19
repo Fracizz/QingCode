@@ -616,6 +616,18 @@ export function multilineClearSequence(rows = 0) {
   return CLEAR_MULTILINE_STEP.repeat(rounds) + '\x05\x15';
 }
 
+/** 把清除输入序列拆成逐次写入的片段：多行序列按轮次在完整按键边界切开，其它序列原样一段。 */
+export function splitClearSequence(sequence) {
+  const parts = [];
+  let rest = sequence;
+  while (rest.startsWith(CLEAR_MULTILINE_STEP)) {
+    parts.push(CLEAR_MULTILINE_STEP);
+    rest = rest.slice(CLEAR_MULTILINE_STEP.length);
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
 export function keySequence(key, { applicationCursor = false, inputLine = '', bracketedPaste = false, rows = 0 } = {}) {
   if (key === 'esc') return '\x1b';
   if (key === 'tab') return '\t';

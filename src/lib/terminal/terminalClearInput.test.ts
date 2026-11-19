@@ -4,6 +4,7 @@ import {
   CLEAR_INPUT_MULTILINE_STEP,
   CLEAR_INPUT_WINDOWS,
   multilineClearInputSequence,
+  splitClearInputSequence,
   terminalClearInputSequence,
 } from './terminalClearInput'
 
@@ -103,5 +104,21 @@ describe('terminalClearInputSequence', () => {
     expect(
       terminalClearInputSequence({ shell: undefined, windowsHost: false, bracketedPaste: false })
     ).toBe(CLEAR_INPUT_EMACS)
+  })
+})
+
+describe('splitClearInputSequence', () => {
+  it('多行序列按轮次拆开，拼回去与原序列一致', () => {
+    const sequence = multilineClearInputSequence(40)
+    const chunks = splitClearInputSequence(sequence)
+    expect(chunks).toHaveLength(41)
+    expect(chunks.slice(0, 40).every(chunk => chunk === CLEAR_INPUT_MULTILINE_STEP)).toBe(true)
+    expect(chunks[40]).toBe(CLEAR_INPUT_EMACS)
+    expect(chunks.join('')).toBe(sequence)
+  })
+
+  it('单行序列不拆分', () => {
+    expect(splitClearInputSequence(CLEAR_INPUT_EMACS)).toEqual([CLEAR_INPUT_EMACS])
+    expect(splitClearInputSequence(CLEAR_INPUT_WINDOWS)).toEqual([CLEAR_INPUT_WINDOWS])
   })
 })

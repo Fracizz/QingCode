@@ -51,7 +51,11 @@ import {
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { terminalTheme } from '@/lib/terminal/terminalThemes'
-import { terminalClearInputSequence } from '@/lib/terminal/terminalClearInput'
+import {
+  CLEAR_INPUT_CHUNK_DELAY_MS,
+  splitClearInputSequence,
+  terminalClearInputSequence,
+} from '@/lib/terminal/terminalClearInput'
 import { detectTerminalHostPlatform } from '@/lib/terminal/terminalShell'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -417,8 +421,16 @@ export default function TerminalView({
       bracketedPaste: term.modes.bracketedPasteMode,
       rows: term.rows,
     })
-    // Editing keys must reach the PTY directly, without bracketed-paste wrappers or Enter.
-    void writeToTerminal(terminalId, sequence)
+    // 编辑键直接写 PTY，不经 bracketed paste、不带回车；多行序列逐轮间隔写入，
+    // 避免 ConPTY 把整段合并读取后 Claude Code 等 AI CLI 整体忽略。
+    const chunks = splitClearInputSequence(sequence)
+    void (async () => {
+      for (let i = 0; i < chunks.length; i++) {
+        if (xtermRef.current !== term) return
+        if (i > 0) await new Promise(resolve => setTimeout(resolve, CLEAR_INPUT_CHUNK_DELAY_MS))
+        await writeToTerminal(terminalId, chunks[i])
+      }
+    })()
     term.clearSelection()
     term.focus()
   }, [isTerminalWritable, terminalId, writeToTerminal])

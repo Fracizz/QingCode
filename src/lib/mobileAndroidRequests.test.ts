@@ -123,6 +123,21 @@ describe('terminal input groups', () => {
     expect(received).toHaveBeenCalledExactlyOnceWith('received')
   })
 
+  it('enqueueKeys writes each key chunk separately with a gap, after flushing buffered text', async () => {
+    vi.useFakeTimers()
+    const write = vi.fn().mockResolvedValue(null)
+    const input = createTerminalInput({ write, isCurrent: () => true, onSuccess: vi.fn(), onError: vi.fn() })
+    const target = { id: 'a', address: 'pc', epoch: 1 }
+    input.enqueue('typed', target)
+    expect(input.enqueueKeys(['k1', 'k2', 'k3'], target, { gap: 5 })).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(write.mock.calls.map(call => call[1])).toEqual(['typed', 'k1'])
+    await vi.advanceTimersByTimeAsync(4)
+    expect(write.mock.calls.map(call => call[1])).toEqual(['typed', 'k1'])
+    await vi.advanceTimersByTimeAsync(6)
+    expect(write.mock.calls.map(call => call[1])).toEqual(['typed', 'k1', 'k2', 'k3'])
+  })
+
   it('does not send queued text or Enter after changing sessions', async () => {
     vi.useFakeTimers()
     let release!: () => void

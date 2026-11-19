@@ -21,6 +21,7 @@ import {
   limitSessionGroups,
   keySequence,
   multilineClearSequence,
+  splitClearSequence,
   matchesProject,
   nextModifierState,
   orderSessions,
@@ -931,5 +932,17 @@ describe('Android themes', () => {
       const consoleBackground = (override?.match(/--console: ([^;]+)/) ?? defaultColors?.match(/--console: ([^;]+)/))?.[1]
       expect(consoleBackground).toBe(colors.background)
     }
+  })
+})
+
+describe('splitClearSequence', () => {
+  it('多行清除序列按轮次拆开且可无损拼回，单行序列不拆', () => {
+    const sequence = multilineClearSequence(40)
+    const parts = splitClearSequence(sequence)
+    expect(parts).toHaveLength(41)
+    expect(parts.slice(0, 40).every(part => part === '\x05\x15\x7f\x1b[3~')).toBe(true)
+    expect(parts.join('')).toBe(sequence)
+    expect(splitClearSequence('\x05\x15')).toEqual(['\x05\x15'])
+    expect(splitClearSequence('\x1b[1;5H\x1b[1;5F')).toEqual(['\x1b[1;5H\x1b[1;5F'])
   })
 })

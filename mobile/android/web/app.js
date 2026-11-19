@@ -10,6 +10,7 @@ import {
   shareChip,
   followGridFor,
   keySequence,
+  splitClearSequence,
   mergeSessionActivity,
   mergeSessionList,
   mergeSessionName,
@@ -2396,6 +2397,16 @@ function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
   return true;
 }
 
+/** 按键片段逐次写入终端（不合并缓冲、不叠加修饰键），用于清除输入等长按键序列。 */
+function sendKeys(parts) {
+  if (!terminalReady) return false;
+  if (!terminalInput.enqueueKeys(parts, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease })) {
+    get('terminal-status').textContent = t('输入过长，请分段粘贴。');
+    return false;
+  }
+  return true;
+}
+
 get('back').addEventListener('click', () => returnToDashboard());
 get('show-sessions').addEventListener('click', () => toggleSessions());
 get('drawer-new-session').addEventListener('click', () => { if (!busy) { drawer.close(); openNewSessionDialog(); } });
@@ -2792,11 +2803,11 @@ function pressKey(keyButton) {
       line = buffer.getLine(--row);
       inputLine = (line?.translateToString(true) ?? '') + inputLine;
     }
-    sendInput(keySequence(key, {
+    sendKeys(splitClearSequence(keySequence(key, {
       inputLine: buffer?.type === 'alternate' ? '' : inputLine,
       bracketedPaste: !!term?.modes.bracketedPasteMode,
       rows: term?.rows,
-    }), { raw: true });
+    })));
   } else if (key === 'slash') {
     dispatchComposer('slash');
   } else if (key === 'reference') {
