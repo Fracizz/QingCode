@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
@@ -66,6 +67,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -75,6 +77,7 @@ import javax.net.ssl.X509TrustManager;
 
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
+    private static final String PAIRING_PREFERENCES = "pairing";
     private static final String PROFILE_PREFIX = "profile:";
     private static final int CAMERA_REQUEST = 1;
     private static final int NOTIFICATION_REQUEST = 2;
@@ -123,6 +126,7 @@ public final class MainActivity extends Activity {
     private JSONObject pendingSession;
     private SessionWatcher watcher;
     private final List<Integer> notificationReplies = new ArrayList<>();
+    private boolean notificationPermissionPending;
     private boolean pageReady;
     private boolean foreground;
     private boolean immersive;
@@ -137,8 +141,7 @@ public final class MainActivity extends Activity {
     private volatile Thread updateThread;
     private volatile boolean updateCancelled;
     private volatile File updateApk;
-    private volatile FileDownload fileDownload;
-    private static final ThreadLocal<FileDownload> ACTIVE_FILE_DOWNLOAD = new ThreadLocal<>();
+    private final Consumer<JSONObject> downloadObserver = this::notifyFileDownload;
 
     private static final class ImageSelection {
         final List<Uri> uris;
@@ -151,7 +154,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
-        preferences = getSharedPreferences("pairing", MODE_PRIVATE);
+        preferences = getSharedPreferences(PAIRING_PREFERENCES, MODE_PRIVATE);
         loadConnections();
         pendingLink = pairingLink(getIntent());
         pendingSession = sessionTarget(getIntent());
@@ -562,12 +565,9 @@ public final class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         if (code == NOTIFICATION_REQUEST) {
-            List<Integer> asked;
-            synchronized (notificationReplies) {
-                asked = new ArrayList<>(notificationReplies);
-                notificationReplies.clear();
-            }
-            for (int id : asked) replySafely(id, watcher.notificationsAllowed());
+            notificationPermissionPending = false;
+            for (int id : notificationReplies) replySafely(id, watcher.notificationsAllowed());
+            notificationReplies.clear();
             return;
         }
         if (code != CAMERA_REQUEST) return;
@@ -585,9 +585,17 @@ public final class MainActivity extends Activity {
             "window.qingVisibility&&window.qingVisibility(" + foreground + ")", null);
     }
 
+    private void notifyFileDownload(JSONObject event) {
+        if (view == null || !pageReady || !foreground) return;
+        try {
+            view.evaluateJavascript("window.qingFileDownload&&window.qingFileDownload(" + event + ")", null);
+        } catch (RuntimeException ignored) { /* The service retains the state if the WebView cannot accept it. */ }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
+        FileDownloadService.observe(downloadObserver);
         watcher.onForeground();
         if (view != null) view.onResume();
         notifyForeground();
@@ -595,6 +603,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onPause() {
         foreground = false;
+        FileDownloadService.unobserve(downloadObserver);
         watcher.onBackground();
         notifyForeground();
         if (view != null) view.onPause();
@@ -603,8 +612,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         imageSelections.clear();
-        FileDownload download = fileDownload;
-        if (download != null) download.cancel();
+        FileDownloadService.unobserve(downloadObserver);
         updateCancelled = true;
         requests.close();
         streams.close();
@@ -732,7 +740,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             if ("file_download".equals(op)) {
-                startFileDownload(id, request);
+                runOnUiThread(() -> startFileDownload(id, request));
                 return;
             }
             if ("file_download_location".equals(op)) {
@@ -740,10 +748,18 @@ public final class MainActivity extends Activity {
                 catch (IOException error) { reply(id, failure(error.getMessage())); }
                 return;
             }
+            if ("file_download_status".equals(op)) {
+                runOnUiThread(() -> {
+                    JSONObject status = FileDownloadService.status();
+                    replySafely(id, status == null ? JSONObject.NULL : status);
+                });
+                return;
+            }
             if ("file_download_cancel".equals(op)) {
-                FileDownload download = fileDownload;
-                if (download != null) download.cancel();
-                replySafely(id, true);
+                runOnUiThread(() -> {
+                    FileDownloadService.cancel(request.optString("id"));
+                    replySafely(id, true);
+                });
                 return;
             }
             if ("read_image".equals(op)) {
@@ -816,17 +832,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             if ("notification_permission".equals(op)) {
-                runOnUiThread(() -> {
-                    if (Build.VERSION.SDK_INT < 33
-                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-                        replySafely(id, watcher.notificationsAllowed());
-                        return;
-                    }
-                    synchronized (notificationReplies) {
-                        notificationReplies.add(id);
-                    }
-                    requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_REQUEST);
-                });
+                runOnUiThread(() -> requestNotificationPermission(id));
                 return;
             }
             if ("haptic".equals(op)) {
@@ -881,164 +887,35 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void startFileDownload(int id, JSONObject request) {
-        try {
-            Connection connection = connections.get(request.getString("profile"));
-            if (connection == null) throw new IOException("请先完成密码配对。");
-            FileDownload download = new FileDownload(connection, request.getString("project"),
-                request.getString("path"), request.optString("version", ""));
-            synchronized (this) {
-                if (fileDownload != null) throw new IOException("已有文件正在下载，请先完成或取消。");
-                fileDownload = download;
-            }
-            replySafely(id, new JSONObject().put("started", true));
-            download.emit("preparing", null);
-            download.startTransfer();
-        } catch (Exception error) {
-            reply(id, failure(error.getMessage() == null ? "无法开始下载。" : error.getMessage()));
+    private void requestNotificationPermission(Integer replyId) {
+        if (Build.VERSION.SDK_INT < 33
+            || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            if (replyId != null) replySafely(replyId, watcher.notificationsAllowed());
+            return;
         }
+        if (replyId != null) notificationReplies.add(replyId);
+        if (notificationPermissionPending) return;
+        notificationPermissionPending = true;
+        requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_REQUEST);
     }
 
-    private final class FileDownload {
-        final Connection connection;
-        final String project;
-        final String path;
-        final String requestedVersion;
-        volatile FileDownloadPolicy.Snapshot snapshot;
-        volatile boolean cancelled;
-        volatile boolean finished;
-        volatile Thread worker;
-        volatile DownloadStorage.Target target;
-        volatile long received;
-        private long lastProgressNanos;
-        private Runnable abort;
-
-        FileDownload(Connection connection, String project, String path, String version) throws IOException {
-            if (project.isEmpty() || path.isEmpty()) throw new IOException("请选择项目中的文件。");
-            this.connection = connection; this.project = project; this.path = path; requestedVersion = version;
+    private void startFileDownload(int id, JSONObject request) {
+        JSONObject started;
+        try {
+            if (!foreground || view == null) throw new IOException("系统无法启动后台下载，请返回应用后重试。");
+            Connection connection = connections.get(request.getString("profile"));
+            if (connection == null) throw new IOException("请先完成密码配对。");
+            started = FileDownloadService.start(this, connection, request);
+        } catch (Exception error) {
+            reply(id, failure(error.getMessage() == null ? "无法开始下载。" : error.getMessage()));
+            return;
         }
-
-        void checkActive() throws IOException {
-            if (cancelled || finished || Thread.currentThread().isInterrupted()) {
-                throw new java.io.InterruptedIOException("已取消下载。");
-            }
-            Connection paired = connections.get(connection.address());
-            if (paired == null || !paired.token.equals(connection.token)
-                || !paired.fingerprint.equals(connection.fingerprint)) {
-                throw new IOException("电脑连接已变化，请重新选择文件下载。");
-            }
-        }
-
-        void bindAbort(Runnable action) throws IOException {
-            synchronized (this) { abort = action; }
-            checkActive();
-        }
-
-        synchronized void clearAbort(Runnable action) { if (abort == action) abort = null; }
-
-        void cancel() {
-            final Runnable action;
-            synchronized (this) {
-                if (finished) return;
-                cancelled = true;
-                action = abort;
-                abort = null;
-                if (worker != null) worker.interrupt();
-            }
-            // Disconnect can block inside Android networking; keep the UI and bridge responsive.
-            if (action != null) new Thread(() -> { try { action.run(); } catch (RuntimeException ignored) { } },
-                "qingcode-file-cancel").start();
-        }
-
-        JSONObject call(JSONObject request) throws Exception {
-            checkActive();
-            JSONObject response = connection.call(request.put("project", project).put("path", path));
-            checkActive();
-            if (!response.optBoolean("ok")) throw new IOException(response.optString("error", "文件下载失败。"));
-            return response.getJSONObject("data");
-        }
-
-        FileDownloadPolicy.Snapshot stat() throws Exception {
-            JSONObject data = call(new JSONObject().put("op", "file_stat"));
-            return new FileDownloadPolicy.Snapshot(data.getString("name"), data.getString("version"), data.getLong("size"));
-        }
-
-        void startTransfer() {
-            worker = new Thread(() -> {
-                ACTIVE_FILE_DOWNLOAD.set(this);
-                try {
-                    checkActive();
-                    snapshot = stat();
-                    if (!requestedVersion.isEmpty() && !requestedVersion.equals(snapshot.version)) {
-                        throw new IOException("源文件已变化，请刷新后重新下载。");
-                    }
-                    checkActive();
-                    target = DownloadStorage.create(MainActivity.this, snapshot.name);
-                    checkActive();
-                    snapshot.requireSame(stat());
-                    try (OutputStream output = target.open()) {
-                        FileDownloadPolicy.copy(snapshot, new FileDownloadPolicy.Source() {
-                            @Override public void checkActive() throws IOException { FileDownload.this.checkActive(); }
-                            @Override public FileDownloadPolicy.Chunk read(long offset, int length) throws Exception {
-                                JSONObject data = call(new JSONObject().put("op", "file_chunk")
-                                    .put("version", snapshot.version).put("offset", offset).put("length", length));
-                                String encoded = data.getString("data");
-                                if (encoded.length() > 4 * ((FileDownloadPolicy.CHUNK_BYTES + 2) / 3)) {
-                                    throw new IOException("文件下载数据块过大。");
-                                }
-                                byte[] bytes = Base64.decode(encoded, Base64.NO_WRAP);
-                                return new FileDownloadPolicy.Chunk(bytes, data.getLong("offset"), data.getLong("nextOffset"),
-                                    data.getBoolean("eof"), data.getString("version"));
-                            }
-                            @Override public FileDownloadPolicy.Snapshot stat() throws Exception { return FileDownload.this.stat(); }
-                            @Override public void progress(long count, long total) {
-                                received = count;
-                                long now = System.nanoTime();
-                                if (count == 0 || count == total || now - lastProgressNanos >= 150_000_000L) {
-                                    lastProgressNanos = now;
-                                    emit("downloading", null);
-                                }
-                            }
-                        }, output);
-                    }
-                    checkActive();
-                    target.publish();
-                    finish("done", null);
-                } catch (Exception error) {
-                    finish(cancelled ? "canceled" : "error", cancelled ? null : error.getMessage());
-                } finally {
-                    ACTIVE_FILE_DOWNLOAD.remove();
-                }
-            }, "qingcode-file-download");
-            worker.start();
-        }
-
-        void finish(String state, String message) {
-            synchronized (this) {
-                if (finished) return;
-                if (cancelled) state = "canceled";
-                finished = true;
-            }
-            if (!"done".equals(state) && target != null && !target.discard()) {
-                message = (message == null ? "已取消下载。" : message) + " 无法移除未完成文件，请在保存位置删除。";
-            }
-            synchronized (MainActivity.this) { if (fileDownload == this) fileDownload = null; }
-            emit(state, message);
-        }
-
-        void emit(String state, String message) {
-            try {
-                JSONObject event = new JSONObject().put("state", state).put("profile", connection.address())
-                    .put("project", project).put("path", path).put("received", received)
-                    .put("total", snapshot == null ? -1 : snapshot.size)
-                    .put("name", target != null ? target.name : snapshot == null ? path : snapshot.name);
-                if (target != null) event.put("location", target.location);
-                if (message != null) event.put("message", message);
-                runOnUiThread(() -> {
-                    if (view != null && pageReady) view.evaluateJavascript(
-                        "window.qingFileDownload&&window.qingFileDownload(" + event + ")", null);
-                });
-            } catch (Exception ignored) { /* A closed page must not interrupt document cleanup. */ }
+        replySafely(id, started);
+        if (Build.VERSION.SDK_INT >= 33
+            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            && !preferences.getBoolean("askedDownloadNotifications", false)) {
+            preferences.edit().putBoolean("askedDownloadNotifications", true).apply();
+            requestNotificationPermission(null);
         }
     }
 
@@ -1278,6 +1155,17 @@ public final class MainActivity extends Activity {
         }
     }
 
+    static boolean isCurrentConnection(Context context, Connection connection) {
+        SharedPreferences profiles = context.getSharedPreferences(PAIRING_PREFERENCES, MODE_PRIVATE);
+        try {
+            JSONObject saved = new JSONObject(profiles.getString(PROFILE_PREFIX + connection.address(), ""));
+            return connection.token.equals(saved.optString("token"))
+                && connection.fingerprint.equals(saved.optString("pin"));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private void save(Connection connection) throws Exception {
         JSONObject saved = new JSONObject().put("name", connection.name)
             .put("pin", connection.fingerprint).put("token", connection.token);
@@ -1340,7 +1228,7 @@ public final class MainActivity extends Activity {
         if (current == null) return failure("请先完成密码配对。");
         if ("latency".equals(op)) {
             // A probe never enters the control/output queues or retries a stale socket.
-            return current.send("ping", "{\"op\":\"ping\"}".getBytes(StandardCharsets.UTF_8));
+            return current.send("ping", "{\"op\":\"ping\"}".getBytes(StandardCharsets.UTF_8), null);
         }
         if ("rename".equals(op)) {
             String name = request.getString("name").trim();
@@ -1513,15 +1401,19 @@ public final class MainActivity extends Activity {
         }
 
         JSONObject call(JSONObject request) throws Exception {
+            return call(request, null);
+        }
+
+        JSONObject call(JSONObject request, FileDownloadService.Transfer download) throws Exception {
             String op = request.optString("op");
             byte[] data = request.toString().getBytes(StandardCharsets.UTF_8);
             try {
-                return send(op, data);
+                return send(op, data, download);
             } catch (SocketTimeoutException | javax.net.ssl.SSLException error) {
                 throw error;
             } catch (IOException error) {
                 if (!idempotent(op)) throw error;
-                return send(op, data);
+                return send(op, data, download);
             }
         }
 
@@ -1546,11 +1438,10 @@ public final class MainActivity extends Activity {
             return http;
         }
 
-        private JSONObject send(String op, byte[] data) throws Exception {
+        private JSONObject send(String op, byte[] data, FileDownloadService.Transfer download) throws Exception {
             NativeRequests.Context pending = NativeRequests.current();
             if (pending != null) pending.checkActive();
-            FileDownload download = ACTIVE_FILE_DOWNLOAD.get();
-            if (download != null) download.checkActive();
+            if (download != null) download.checkOpen();
             HttpsURLConnection http = (HttpsURLConnection) endpoint.toURL().openConnection(java.net.Proxy.NO_PROXY);
             Runnable abort = http::disconnect;
             if (pending != null) pending.cancelWith(abort);
@@ -1569,6 +1460,7 @@ public final class MainActivity extends Activity {
                 http.setDoOutput(true);
                 final long began = android.os.SystemClock.elapsedRealtimeNanos();
                 if (pending != null) pending.checkActive();
+                if (download != null) download.checkOpen();
                 try (OutputStream stream = http.getOutputStream()) { stream.write(data); }
                 int status = http.getResponseCode();
                 // Reading the body to the end returns the socket to the keep-alive pool.
@@ -1577,7 +1469,7 @@ public final class MainActivity extends Activity {
                     ByteArrayOutputStream response = new ByteArrayOutputStream();
                     byte[] buffer = new byte[16384];
                     for (int size; (size = stream.read(buffer)) >= 0;) {
-                        if (download != null) download.checkActive();
+                        if (download != null) download.checkOpen();
                         if (response.size() + size > MAX_RESPONSE) {
                             http.disconnect();
                             throw new IOException("Windows 响应过大。");

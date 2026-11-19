@@ -634,8 +634,10 @@ window.qingUpdate = event => updates.receive(event);
 
 window.qingVisibility = visible => {
   foreground = visible === true;
-  if (foreground) drawer.wake();
-  else drawer.sleep();
+  if (foreground) {
+    drawer.wake();
+    void files.syncTransfer();
+  } else drawer.sleep();
   syncHomeSessions();
   if (!visible) saveDraft();
   connectionLatency.setForeground(visible === true);

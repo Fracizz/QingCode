@@ -19,6 +19,9 @@ const pending = <T,>() => {
 const host = { id: 'pc:48764', name: 'PC' }
 const project = { id: 'p1', name: '项目一' }
 const file = { name: 'readme.md', path: 'docs/readme.md', isDir: false, size: 12, modifiedAt: null }
+const preparing = { id: 'task-1', revision: 1, state: 'preparing', profile: host.id, hostName: host.name,
+  project: project.id, projectName: project.name, path: file.path, name: file.name, total: file.size, received: 0 }
+const receive = (event: object) => (window as unknown as { qingFileDownload: (value: object) => void }).qingFileDownload(event)
 
 beforeEach(() => {
   const memory = new Map<string, string>()
@@ -34,7 +37,12 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
-function setup(rpc = vi.fn(async (op: string) => op === 'file_download_location' ? 'Download/QingCode' : op === 'file_stat' ? { ...file, version: 'v1' } : { entries: [file], truncated: false })) {
+function setup(rpc = vi.fn(async (op: string) => {
+  if (op === 'file_download_location') return 'Download/QingCode'
+  if (op === 'file_download') return preparing
+  if (op === 'file_stat') return { ...file, version: 'v1' }
+  return { entries: [file], truncated: false }
+})) {
   const browser = createFileBrowser({ rpc, capabilities: async () => ({ features: ['project_files'] }), profile: () => host })
   return { browser, rpc }
 }
@@ -116,12 +124,15 @@ describe('Android project file browsing', () => {
     element('file-download').click()
     await flush()
     expect(rpc).toHaveBeenCalledWith('file_download', expect.objectContaining({ profile: host.id, project: project.id, path: file.path, version: 'v1' }))
-    const receive = (window as unknown as { qingFileDownload: (event: object) => void }).qingFileDownload
-    receive({ state: 'downloading', profile: host.id, project: project.id, path: file.path, received: 5, total: 12 })
+    receive({ ...preparing, revision: 2, state: 'downloading', received: 5 })
     expect(element('files-transfer-status').textContent).toBe('已下载 5 B / 12 B')
-    receive({ state: 'canceled', profile: host.id, project: project.id, path: file.path, message: '取消，但未完成文件清理失败' })
+    expect(element('files-background-tip').hidden).toBe(false)
+    element('files-download-cancel').click()
+    expect(rpc).toHaveBeenCalledWith('file_download_cancel', { id: preparing.id })
+    receive({ ...preparing, revision: 3, state: 'canceled', message: '取消，但未完成文件清理失败' })
     expect(element('files-transfer-status').textContent).toContain('清理失败')
-    receive({ state: 'done', profile: 'other', project: project.id, path: file.path })
+    expect(element('files-background-tip').hidden).toBe(true)
+    receive({ ...preparing, revision: 2, state: 'done' })
     expect(element('files-transfer-status').textContent).toContain('清理失败')
   })
 
@@ -134,14 +145,32 @@ describe('Android project file browsing', () => {
     await flush()
     expect(element('files-transfer-status').textContent).toBe('正在准备下载…')
     expect(element<HTMLButtonElement>('files-download-cancel').hidden).toBe(false)
-    const receive = (window as unknown as { qingFileDownload: (event: object) => void }).qingFileDownload
-    receive({ state: 'done', profile: host.id, project: project.id, path: file.path,
+    receive({ ...preparing, revision: 2, state: 'done',
       name: 'readme (1).md', location: 'Download/QingCode/readme (1).md', received: 12, total: 12 })
     expect(element('files-transfer-status').textContent).toBe('下载完成')
     expect(element('files-transfer-name').textContent).toContain('readme (1).md')
     expect(element('files-transfer-location').hidden).toBe(false)
     expect(element('files-transfer-location').textContent).toBe('保存位置：Download/QingCode/readme (1).md')
     expect(element<HTMLButtonElement>('files-download-cancel').hidden).toBe(true)
+  })
+
+  it('restores the native transfer after page recreation and ignores a stale status reply', async () => {
+    const downloading = { ...preparing, revision: 2, state: 'downloading', received: 5 }
+    const stale = pending<typeof downloading>()
+    const rpc = vi.fn()
+      .mockResolvedValueOnce(downloading)
+      .mockReturnValueOnce(stale.promise)
+    const { browser } = setup(rpc)
+    await browser.syncTransfer()
+    expect(rpc).toHaveBeenCalledWith('file_download_status')
+    expect(element('files-transfer-name').textContent).toBe('PC / 项目一 / readme.md')
+    expect(element('files-transfer-status').textContent).toBe('已下载 5 B / 12 B')
+    const resuming = browser.syncTransfer()
+    receive({ ...downloading, revision: 3, state: 'done', received: 12, location: 'Download/QingCode/readme.md' })
+    stale.complete(downloading)
+    await resuming
+    expect(element('files-transfer-status').textContent).toBe('下载完成')
+    expect(element('files-transfer-location').textContent).toContain('Download/QingCode/readme.md')
   })
 
   it('blocks mismatched file metadata and explains unsupported desktop versions', async () => {

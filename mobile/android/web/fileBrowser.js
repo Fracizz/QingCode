@@ -1,6 +1,6 @@
 // 项目文件列表、名称/路径查询与单文件下载；弹层覆盖终端，保持会话和草稿。
 import { button, confirmAction, get, icon, rowText } from './dom.js';
-import { dateLocale, t } from './i18n.js';
+import { dateLocale, locale, t } from './i18n.js';
 import { createFilePositions, createFileRequestScope, folderDirection, formatFileBytes, needsDownloadConfirmation, parentDirectory, readFileSort, relativeFilePath, sortFileEntries, writeFileSort } from './fileBrowserState.js';
 
 export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () => {} }) {
@@ -19,7 +19,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   let selected = null;
   let selectionEpoch = 0;
   let transfer = null;
-  let transferContext = '';
+  let starting = false;
   let sortOrder = readFileSort(localStorage);
 
   const searching = () => !!get('files-query').value.trim();
@@ -59,9 +59,10 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
 
   function renderTransfer() {
     get('files-transfer').hidden = !transfer;
+    get('file-download').disabled = !selected || starting || activeTransfer();
     if (!transfer) return;
     const name = transfer.name || t('文件');
-    get('files-transfer-name').textContent = [transferContext, name].filter(Boolean).join(' / ');
+    get('files-transfer-name').textContent = [transfer.hostName, transfer.projectName, name].filter(Boolean).join(' / ');
     const received = Number.isFinite(transfer.received) ? transfer.received : 0;
     const total = transfer.total;
     const progress = get('files-progress');
@@ -77,7 +78,18 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     get('files-transfer-location').hidden = !transfer.location;
     get('files-transfer-status').dataset.error = String(transfer.state === 'error');
     get('files-download-cancel').hidden = !activeTransfer();
-    get('file-download').disabled = !selected || activeTransfer();
+    get('files-background-tip').hidden = !activeTransfer();
+  }
+
+  function receiveTransfer(event) {
+    if (!Number.isSafeInteger(event?.revision) || (transfer && event.revision <= transfer.revision)) return;
+    transfer = event;
+    renderTransfer();
+  }
+
+  async function syncTransfer() {
+    try { receiveTransfer(await rpc('file_download_status')); }
+    catch { /* Keep the last status when the bridge is unavailable. */ }
   }
 
   function renderSort() {
@@ -249,7 +261,6 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
       get('file-detail-size').textContent = formatFileBytes(stat.size);
       get('file-detail-modified').textContent = Number.isFinite(stat.modifiedAt) ? new Date(stat.modifiedAt).toLocaleString(dateLocale()) : t('未知');
       renderTransfer();
-      get('file-download').disabled = activeTransfer();
     } catch (error) {
       if (epoch === selectionEpoch && detail.open) get('file-detail-error').textContent = t(error.message);
     } finally {
@@ -259,30 +270,32 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   }
 
   async function download() {
-    if (!selected || activeTransfer()) return;
+    if (!selected || starting || activeTransfer()) return;
     const file = selected;
     const target = context;
     const epoch = selectionEpoch;
     try {
       if (needsDownloadConfirmation(file.size)) {
         const text = Number.isFinite(file.size) && file.size >= 0
-          ? t('文件大小为 {size}，下载可能耗时较长。请保持应用在前台，并确保保存位置有足够空间。', { size: formatFileBytes(file.size) })
-          : t('文件大小未知。请保持应用在前台，并确保保存位置有足够空间。');
+          ? t('文件大小为 {size}，下载可能耗时较长。请确认手机有足够的存储空间。', { size: formatFileBytes(file.size) })
+          : t('文件大小未知。请确认手机有足够的存储空间。');
         if (!await confirmAction(t('下载提醒'), text, t('继续下载'))) return;
       }
-      if (!currentContext(target) || !detail.open || epoch !== selectionEpoch || activeTransfer()) return;
-      get('file-download').disabled = true;
-      transferContext = target.host.name + ' / ' + target.project.name;
-      transfer = { state: 'preparing', name: file.name, received: 0, total: file.size, profile: target.host.id, project: target.project.id, path: file.path };
+      if (!currentContext(target) || !detail.open || epoch !== selectionEpoch || starting || activeTransfer()) return;
+      starting = true;
+      get('file-detail-error').textContent = '';
       renderTransfer();
-      await rpc('file_download', { profile: target.host.id, project: target.project.id, path: file.path, version: file.version });
-      if (detail.open) detail.close();
+      receiveTransfer(await rpc('file_download', {
+        profile: target.host.id, project: target.project.id, projectName: target.project.name,
+        path: file.path, version: file.version, english: locale() === 'en',
+      }));
+      if (detail.open && epoch === selectionEpoch) detail.close();
     } catch (error) {
-      transfer = { state: 'error', name: file.name, message: error.message };
-      renderTransfer();
-      if (detail.open) get('file-detail-error').textContent = t(error.message);
+      if (detail.open && epoch === selectionEpoch) get('file-detail-error').textContent = t(error.message);
+      void syncTransfer();
     } finally {
-      get('file-download').disabled = !selected || activeTransfer();
+      starting = false;
+      renderTransfer();
     }
   }
 
@@ -346,16 +359,13 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   get('files-sort').addEventListener('click', toggleSort);
   get('file-download').addEventListener('click', download);
   get('files-download-cancel').addEventListener('click', async () => {
-    try { await rpc('file_download_cancel'); }
+    if (!activeTransfer()) return;
+    try { await rpc('file_download_cancel', { id: transfer.id }); }
     catch (error) { get('files-transfer-status').textContent = t(error.message); }
   });
   dialog.addEventListener('cancel', event => { event.preventDefault(); back(); });
   dialog.addEventListener('close', () => { savePosition(); clearTimeout(timer); invalidate(); setLoading(false); selectionEpoch += 1; if (detail.open) detail.close(); });
   detail.addEventListener('close', () => { selectionEpoch += 1; selected = null; detailAbort?.abort(); detailAbort = null; });
-  window.qingFileDownload = event => {
-    if (!event || (transfer && ['profile', 'project', 'path'].some(key => transfer[key] && event[key] && transfer[key] !== event[key]))) return;
-    transfer = { ...transfer, ...event };
-    renderTransfer();
-  };
-  return { open, back, isOpen: () => dialog.open, render: () => { if (dialog.open) { renderSort(); renderEntries(); renderTransfer(); } } };
+  window.qingFileDownload = receiveTransfer;
+  return { open, back, syncTransfer, isOpen: () => dialog.open, render: () => { if (dialog.open) { renderSort(); renderEntries(); renderTransfer(); } } };
 }
