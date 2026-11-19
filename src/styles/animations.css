@@ -5,10 +5,10 @@
   --motion-enter: 160ms;
   --motion-exit: 100ms;
   /* 换页与侧栏展开 / 收起：面积大，比浮层稍长，曲线更平缓，避免一开头就猛冲到位。 */
-  --motion-view: 200ms;
-  --motion-view-exit: 160ms;
+  --motion-view: 260ms;
+  --motion-view-exit: 200ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-soft: cubic-bezier(0.2, 0, 0, 1);
+  --ease-soft: cubic-bezier(0.3, 0, 0.2, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 

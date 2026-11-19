@@ -67,6 +67,8 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
 
   try {
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false })
+    // 测试机系统可能开着减少动画，固定为允许动画，才能验证切换终端的入场。
+    await page.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] })
     await page.goto(`http://127.0.0.1:38419/?testSession=terminal-workbench-${Date.now()}`)
     await page.evaluate(() => { localStorage.removeItem('qingcode:panel-layout'); localStorage.removeItem('qingcode:terminal-panel') })
     await page.reload()
@@ -117,6 +119,25 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       await waitFor(() => document.querySelector('[data-terminal-session-list] [role="tab"]')?.getAttribute('aria-selected') === 'true')
       const visible = await page.evaluate(() => document.querySelectorAll('[data-terminal-panel] [data-terminal-pane="primary"]:not(.invisible)').length)
       assert.equal(visible, 1)
+    })
+
+    await step('从列表进入另一个终端：换进来的终端轻移淡入，播完不残留 transform', async () => {
+      await page.waitForTimeout(400)
+      const motion = await page.evaluate(async () => {
+        document.querySelectorAll('[data-terminal-session-list] [role="tab"]')[1].click()
+        await new Promise(r => requestAnimationFrame(r))
+        const body = document.querySelector('[data-terminal-panel] [data-terminal-pane-body="primary"]')
+        const keyframes = body.getAnimations().map(a => a.effect.getKeyframes().map(k => [k.opacity, k.transform]))
+        // 动画时间轴在无头 / 模拟视口下可能不推进，等过兜底时长再看终态。
+        await new Promise(r => setTimeout(r, 700))
+        const style = getComputedStyle(body)
+        return { keyframes, endOpacity: style.opacity, endTransform: style.transform, remaining: body.getAnimations().length }
+      })
+      console.log('terminal enter', JSON.stringify(motion))
+      assert.deepEqual(motion.keyframes, [[['0', 'translateX(-8px)'], ['1', 'translateX(0px)']]], '换进来的终端播放轻移淡入')
+      assert.equal(motion.endOpacity, '1', '播完完全不透明（含兜底）')
+      assert.equal(motion.endTransform, 'none', '不残留 transform')
+      assert.equal(motion.remaining, 0)
     })
 
     await step('方向键沿列表移动选中项', async () => {
@@ -209,7 +230,7 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
     })
 
     await step('折叠其他项目后行隐藏，再展开恢复', async () => {
-      const toggle = '[data-terminal-project-group]:nth-of-type(2) button[aria-expanded]'
+      const toggle = '[data-terminal-project-group]:nth-of-type(2) button[aria-expanded][aria-label^="展开或收起"]'
       await page.click(toggle, { label: 'collapse project' })
       await waitFor(() => document.querySelectorAll('[data-terminal-project-group]:nth-of-type(2) [role="tab"]').length === 0)
       await page.click(toggle, { label: 'expand project' })

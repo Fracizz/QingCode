@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -25,7 +26,8 @@ import {
   terminalResizerHint,
   terminalWidthResizerHint,
 } from '../lib/panelLayout'
-import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
+import { beginPanelResize, isPanelResizing, settlePanelResize } from '../lib/panelResize'
+import { enterLayoutRegion } from '../lib/layoutMotion'
 import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
 const DUAL_RATIO_KEY = 'qingcode:dual-terminal-ratio'
@@ -183,6 +185,27 @@ export default function TerminalPanel({
         return brTerminalId
     }
   }
+
+  // 从终端列表、标签或快捷键换到另一个终端时，换进来的窗格轻移淡入（同侧栏换页）。
+  // 首次挂载、切换单 / 双 / 田字布局新出现的窗格、只移动焦点不换内容时都不播。
+  const paneTerminalsRef = useRef<Record<TerminalFocusPane, string | null> | null>(null)
+  useLayoutEffect(() => {
+    const next: Record<TerminalFocusPane, string | null> = {
+      primary: activeTerminalId,
+      secondary: multiPane ? secondaryTerminalId : null,
+      bl: quadMode ? blTerminalId : null,
+      br: quadMode ? brTerminalId : null,
+    }
+    const previous = paneTerminalsRef.current
+    paneTerminalsRef.current = next
+    if (!previous || !terminalOpen || isPanelResizing()) return
+    for (const pane of TERMINAL_FOCUS_PANES) {
+      const before = previous[pane]
+      const after = next[pane]
+      if (!before || !after || before === after) continue
+      enterLayoutRegion(terminalPanelRef.current?.querySelector(`[data-terminal-pane-body="${pane}"]`))
+    }
+  }, [activeTerminalId, secondaryTerminalId, blTerminalId, brTerminalId, multiPane, quadMode, terminalOpen, terminalPanelRef])
 
   useEffect(() => {
     if (!dualMode || !currentProject) return
@@ -458,7 +481,10 @@ export default function TerminalPanel({
           focused={focused}
           showPanelActions={options.showPanelActions}
         />
-        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-terminal">
+        <div
+          data-terminal-pane-body={pane}
+          className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-terminal"
+        >
           {renderPaneTerminal(pane)}
         </div>
       </div>
@@ -473,6 +499,7 @@ export default function TerminalPanel({
         key={term.id}
         data-terminal-active={isFocused ? 'true' : undefined}
         data-terminal-pane={pane ?? undefined}
+        data-terminal-pane-body={isFocused ? 'primary' : undefined}
         className={`absolute inset-0 min-w-0 ${
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}

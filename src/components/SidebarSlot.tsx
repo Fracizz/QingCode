@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
-import { canAnimateLayout, cssDuration, EASE_SOFT } from '../lib/layoutMotion'
+import { canAnimateLayout, cssDuration, EASE_SOFT, guardAnimation } from '../lib/layoutMotion'
 import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
 
 interface Props {
@@ -66,7 +66,7 @@ export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerm
       return
     }
 
-    const base = leaving ? cssDuration('--motion-view-exit', 160) : cssDuration('--motion-view', 200)
+    const base = leaving ? cssDuration('--motion-view-exit', 200) : cssDuration('--motion-view', 260)
     const duration = Math.max(60, base * (Math.abs(toWidth - fromWidth) / fullWidth))
     const timing: KeyframeAnimationOptions = { duration, easing: EASE_SOFT, fill: 'forwards' }
 
@@ -79,6 +79,7 @@ export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerm
 
     const animation = slot.animate([{ width: `${fromWidth}px` }, { width: `${toWidth}px` }], timing)
     slotAnimation.current = animation
+    guardAnimation(animation, duration)
     if (content && (leaving || fromOpacity < 1)) {
       contentAnimation.current = content.animate(
         [{ opacity: fromOpacity }, { opacity: leaving ? 0 : 1 }],
