@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { terminalContextMenuEntries } from './terminalContextMenu'
+import { appendComposerDraft, terminalContextMenuEntries } from './terminalContextMenu'
 
 const ids = (state: Parameters<typeof terminalContextMenuEntries>[0]) =>
   terminalContextMenuEntries(state).map(entry => (entry.separatorBefore ? `|${entry.id}` : entry.id))
 
 describe('terminalContextMenuEntries', () => {
-  it('有选区且在 AI CLI 中时显示复制/添加到对话/粘贴', () => {
+  it('有选区且在 AI CLI 中时显示复制/添加到对话/编辑长文本/粘贴', () => {
     expect(ids({ hasSelection: true, canQuote: true, writable: true })).toEqual([
       'copy',
       'quote',
+      'composer',
       'paste',
       '|find',
       '|export',
@@ -19,7 +20,7 @@ describe('terminalContextMenuEntries', () => {
 
   it('程序未开启 bracketed paste 时添加到对话灰显而不是消失', () => {
     const entries = terminalContextMenuEntries({ hasSelection: true, canQuote: false, writable: true })
-    expect(entries.map(entry => entry.id)).toEqual(['copy', 'quote', 'paste', 'find', 'export', 'clearInput', 'clear'])
+    expect(entries.map(entry => entry.id)).toEqual(['copy', 'quote', 'composer', 'paste', 'find', 'export', 'clearInput', 'clear'])
     expect(entries.find(entry => entry.id === 'quote')?.disabled).toBe(true)
     expect(
       terminalContextMenuEntries({ hasSelection: true, canQuote: true, writable: true }).find(
@@ -53,5 +54,12 @@ describe('terminalContextMenuEntries', () => {
       '|export',
       'clear',
     ])
+  })
+
+  it('选中文字追加进长文本草稿', () => {
+    expect(appendComposerDraft('', 'abc')).toBe('abc')
+    expect(appendComposerDraft('draft', '')).toBe('draft')
+    expect(appendComposerDraft('draft', 'abc')).toBe('draft\nabc')
+    expect(appendComposerDraft('draft\n', 'abc')).toBe('draft\nabc')
   })
 })

@@ -33,7 +33,7 @@ export function terminalContextMenuEntries(state: TerminalContextMenuState): Ter
   const { hasSelection, canQuote, writable } = state
   const groups: TerminalContextMenuItemId[][] = [
     hasSelection
-      ? ['copy', ...(writable ? (['quote', 'paste'] as const) : [])]
+      ? ['copy', ...(writable ? (['quote', 'composer', 'paste'] as const) : [])]
       : [...(writable ? ['paste' as const] : []), 'selectAll', ...(writable ? ['composer' as const] : [])],
     ['find'],
     ['export', ...(writable ? ['clearInput' as const] : []), 'clear'],
@@ -48,4 +48,11 @@ export function terminalContextMenuEntries(state: TerminalContextMenuState): Ter
     })
   }
   return entries
+}
+
+/** 把终端选中文字追加进长文本草稿：草稿为空直接用选区，否则另起一行。 */
+export function appendComposerDraft(draft: string, selection: string): string {
+  if (!selection) return draft
+  if (!draft) return selection
+  return draft.endsWith('\n') ? draft + selection : `${draft}\n${selection}`
 }

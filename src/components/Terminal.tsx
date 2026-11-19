@@ -125,6 +125,7 @@ import { isSshResource, isTauri } from '../lib/tauri'
 import { TERMINAL_DROP_ATTR } from '../lib/sshTerminalPaste'
 import { lockTerminalHostScroll } from '@/lib/terminal/terminalHostScrollLock'
 import {
+  appendComposerDraft,
   terminalContextMenuEntries,
   type TerminalContextMenuItemId,
 } from '@/lib/terminal/terminalContextMenu'
@@ -151,6 +152,7 @@ import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
 import TerminalComposer from './TerminalComposer'
+import { useTerminalDraftStore } from '../store/terminalDraftStore'
 import '@xterm/xterm/css/xterm.css'
 
 /** Highlight + count require decorations; colors must be #RRGGBB. */
@@ -390,6 +392,7 @@ export default function TerminalView({
         ? tab.runEnvironment.os === 'windows'
         : !isSshResource(tab.cwd) && detectTerminalHostPlatform() === 'win',
       bracketedPaste: term.modes.bracketedPasteMode,
+      rows: term.rows,
     })
     // Editing keys must reach the PTY directly, without bracketed-paste wrappers or Enter.
     void writeToTerminal(terminalId, sequence)
@@ -501,15 +504,26 @@ export default function TerminalView({
       composer: {
         label: translate('编辑长文本'),
         action: () => {
+          // 有选区时把选中文字带进草稿（追加到已有草稿后），便于改写后再填入。
+          if (selection) {
+            const drafts = useTerminalDraftStore.getState()
+            drafts.setDraft(terminalId, appendComposerDraft(drafts.drafts[terminalId] ?? '', selection))
+            xtermRef.current?.clearSelection()
+          }
           setComposerHidden(false)
           setComposerOpen(true)
-          // 已打开时（非模态，可能被终端抢走焦点）重新聚焦到面板输入框。
+          // 已打开时（非模态，可能被终端抢走焦点）重新聚焦到面板输入框，光标放到末尾。
           requestAnimationFrame(() => {
-            document
-              .querySelector<HTMLTextAreaElement>(
-                `[data-terminal-composer="${CSS.escape(terminalId)}"] textarea`
-              )
-              ?.focus()
+            const textarea = document.querySelector<HTMLTextAreaElement>(
+              `[data-terminal-composer="${CSS.escape(terminalId)}"] textarea`
+            )
+            if (!textarea) return
+            textarea.focus()
+            if (selection) {
+              const end = textarea.value.length
+              textarea.setSelectionRange(end, end)
+              textarea.scrollTop = textarea.scrollHeight
+            }
           })
         },
       },
