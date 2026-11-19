@@ -72,6 +72,39 @@ describe('ImageViewer', () => {
     expect(invoke).toHaveBeenCalledTimes(2)
   })
 
+  it('zooms with toolbar buttons and keyboard shortcuts', async () => {
+    invoke.mockResolvedValue(new ArrayBuffer(8))
+    render(<ImageViewer tab={imageTab()} />)
+
+    const bitmap = await waitFor(() => {
+      const el = screen.getByRole('img').querySelector('img')
+      expect(el).not.toBeNull()
+      return el as HTMLImageElement
+    })
+    // jsdom 不解码图片：手动给出尺寸并触发 load。
+    Object.defineProperty(bitmap, 'naturalWidth', { value: 400 })
+    Object.defineProperty(bitmap, 'naturalHeight', { value: 200 })
+    fireEvent.load(bitmap)
+
+    const percent = screen.getByTestId('image-zoom-percent')
+    fireEvent.click(screen.getByRole('button', { name: '原始大小 (1)' }))
+    expect(percent.textContent).toBe('100%')
+
+    fireEvent.click(screen.getByRole('button', { name: '放大 (+)' }))
+    expect(percent.textContent).toBe('125%')
+
+    const viewport = screen.getByRole('img')
+    fireEvent.keyDown(viewport, { key: '-' })
+    expect(percent.textContent).toBe('100%')
+    fireEvent.keyDown(viewport, { key: '-' })
+    expect(percent.textContent).toBe('75%')
+
+    fireEvent.keyDown(viewport, { key: 'r' })
+    expect(bitmap.style.transform).toContain('rotate(90deg)')
+    fireEvent.click(screen.getByRole('button', { name: '向左旋转 (Shift+R)' }))
+    expect(bitmap.style.transform).toContain('rotate(0deg)')
+  })
+
   it('rejects oversized images locally without invoking the backend', async () => {
     render(<ImageViewer tab={imageTab({ fileSize: IMAGE_MAX_BYTES + 1 })} />)
 
