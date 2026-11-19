@@ -1,12 +1,13 @@
 /* Panel resize sash (sidebar + terminal) */
-body.panel-resizing,
-body.panel-resizing * {
+/* data-panel-resize-quiet：侧栏展开 / 收起等程序动画，不换光标。 */
+body.panel-resizing:not([data-panel-resize-quiet]),
+body.panel-resizing:not([data-panel-resize-quiet]) * {
   cursor: ns-resize !important;
   user-select: none !important;
 }
 
-body.panel-resizing[data-panel-resize='vertical'],
-body.panel-resizing[data-panel-resize='vertical'] * {
+body.panel-resizing[data-panel-resize='vertical']:not([data-panel-resize-quiet]),
+body.panel-resizing[data-panel-resize='vertical']:not([data-panel-resize-quiet]) * {
   cursor: ew-resize !important;
 }
 

@@ -12,6 +12,8 @@ export interface PanelResizeBeginOptions {
    * comparatively expensive xterm canvas capture.
    */
   freezeTerminals?: boolean
+  /** 程序驱动的宽度动画（如侧栏展开 / 收起）传 false：不切换成拖动光标。 */
+  cursor?: boolean
 }
 
 export interface PanelResizeSettleDetail {
@@ -144,6 +146,8 @@ export function beginPanelResize(
   cancelPendingSettle()
   document.body.classList.add(RESIZING_CLASS)
   document.body.dataset.panelResize = orientation
+  if (options.cursor === false) document.body.dataset.panelResizeQuiet = ''
+  else delete document.body.dataset.panelResizeQuiet
   document.body.style.userSelect = 'none'
   if (options.freezeTerminals === false) releaseTerminalSurfaces()
   else captureTerminalSurfaces()
@@ -200,6 +204,7 @@ export function endPanelResize(_orientation: PanelResizeOrientation = 'horizonta
   releaseTerminalSurfaces()
   document.body.classList.remove(RESIZING_CLASS)
   delete document.body.dataset.panelResize
+  delete document.body.dataset.panelResizeQuiet
   document.body.style.userSelect = ''
   document.body.style.cursor = ''
   window.dispatchEvent(new CustomEvent(PANEL_RESIZE_END_EVENT))

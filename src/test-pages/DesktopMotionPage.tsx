@@ -7,6 +7,7 @@ import Toaster from '../components/Toaster'
 import AppearanceSettingsSection from '../components/settings/AppearanceSettingsSection'
 import TerminalSearchBar from '../components/TerminalSearchBar'
 import TerminalConnectionNotice from '../components/TerminalConnectionNotice'
+import SidebarSlot from '../components/SidebarSlot'
 import { clearTerminalOverlayNotice, publishTerminalOverlayNotice } from '../lib/terminal/terminalOverlayNotice'
 import { DEFAULT_FONT_SETTINGS } from '../lib/fontSettings'
 import { applyMotionPreference, loadMotionPreference } from '../lib/motionPreferences'
@@ -46,6 +47,19 @@ const NOTICE_TERMINAL = 'motion-fixture'
 /** 与 App.tsx 一致：侧栏每个面板一个带 key 的 .view-enter 外层；终端浮条用真实组件。 */
 function PageSwitchFixture() {
   const [view, setView] = useState<'explorer' | 'search'>('explorer')
+  // 与 App 一致：收起时 SidebarSlot 先播收拢，onExited 后才卸载；首屏不播展开。
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarMounted, setSidebarMounted] = useState(true)
+  const [animateOpen, setAnimateOpen] = useState(false)
+  const toggleSidebar = () => {
+    if (sidebarOpen) {
+      setSidebarOpen(false)
+      return
+    }
+    if (!sidebarMounted) setAnimateOpen(true)
+    setSidebarMounted(true)
+    setSidebarOpen(true)
+  }
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   return (
@@ -53,10 +67,20 @@ function PageSwitchFixture() {
       <div className="flex w-12 flex-col items-center gap-1 border-r border-divider bg-bg-activity py-2">
         <button type="button" data-testid="view-explorer" aria-pressed={view === 'explorer'} onClick={() => setView('explorer')}>资</button>
         <button type="button" data-testid="view-search" aria-pressed={view === 'search'} onClick={() => setView('search')}>搜</button>
+        <button type="button" data-testid="toggle-sidebar" aria-pressed={sidebarOpen} onClick={toggleSidebar}>栏</button>
       </div>
-      <div key={view} data-testid="sidebar-view" data-view={view} className="workspace-grid-sidebar view-enter w-[200px] border-r border-divider bg-bg-sidebar p-2">
-        {view === 'explorer' ? '资源管理器' : '搜索'}
-      </div>
+      {sidebarMounted && (
+        <SidebarSlot
+          leaving={!sidebarOpen}
+          onExited={() => setSidebarMounted(false)}
+          animateOpen={animateOpen}
+          freezeTerminals={false}
+        >
+          <div key={view} data-testid="sidebar-view" data-view={view} className="view-enter w-[200px] flex-shrink-0 border-r border-divider bg-bg-sidebar p-2">
+            {view === 'explorer' ? '资源管理器' : '搜索'}
+          </div>
+        </SidebarSlot>
+      )}
       <div className="relative min-w-0 flex-1 bg-bg-deep p-2" data-testid="terminal-host">
         <div className="flex gap-2">
           <button type="button" data-testid="toggle-search" onClick={() => setSearchOpen(v => !v)}>终端搜索</button>

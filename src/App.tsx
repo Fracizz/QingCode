@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, lazy, Suspense } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -24,7 +24,7 @@ import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
 import { useRunConfigStore } from './store/runConfigStore'
-import { useUIStore } from './store/uiStore'
+import { useUIStore, type View } from './store/uiStore'
 import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
@@ -39,6 +39,7 @@ import {
 import { isPinnedSettingsTab } from './utils/editorHelpers'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
+import SidebarSlot from './components/SidebarSlot'
 import { startSystemThemeListener } from './lib/themeSettings'
 import {
   clampSidebarWidth,
@@ -71,6 +72,7 @@ import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { useGitPushSync } from './features/gitPushSync/useGitPushSync'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
+import { fadeInLayoutRegions } from './lib/layoutMotion'
 import TerminalSessionList from './components/TerminalSessionList'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
 import {
@@ -235,6 +237,28 @@ function App() {
       view === 'run' ||
       view === 'terminals' ||
       pageViewInSidebar)
+  // 侧栏收起时先保留最后一个视图，SidebarSlot 播完收拢再卸载；首屏挂载不播展开。
+  // 整页（设置 / 源代码管理）从侧栏移到编辑区时直接卸载，避免同一页面短暂挂载两份。
+  const sidebarKind: View | null = sidebarSlotVisible ? view : null
+  const [sidebarTrack, setSidebarTrack] = useState(() => ({
+    kind: sidebarKind,
+    leaving: null as View | null,
+    animateOpen: false,
+  }))
+  if (sidebarTrack.kind !== sidebarKind) {
+    const previous = sidebarTrack.kind
+    const pageMovedToEditor =
+      (previous === 'settings' || previous === 'sourceControl') && view === previous
+    setSidebarTrack({
+      kind: sidebarKind,
+      leaving: sidebarKind === null && !pageMovedToEditor ? previous : null,
+      animateOpen: previous === null && sidebarTrack.leaving === null,
+    })
+  }
+  const renderedSidebar = sidebarKind ?? sidebarTrack.leaving
+  const finishSidebarExit = useCallback(() => {
+    setSidebarTrack(track => (track.kind === null ? { ...track, leaving: null } : track))
+  }, [])
   const editorBody = editorSurface({
     activeTabId,
     hasProject: currentProject !== null,
@@ -255,7 +279,9 @@ function App() {
     settlePanelResize(orientation)
     delete document.body.dataset.panelLayoutSwitch
     useUIStore.setState({ panelLayoutSwitching: false })
-  }, [panelLayoutSwitching, terminalPosition])
+    // 换了布局的终端区与编辑区整体淡入；侧栏视图若随之切换（如进入终端工作台），由侧栏自身的入场负责。
+    fadeInLayoutRegions([terminalPanelRef.current, document.querySelector('[data-editor-column]')])
+  }, [panelLayoutSwitching, terminalPosition, terminalPanelRef])
 
   useAppKeyboardShortcuts({
     shortcuts,
@@ -411,7 +437,7 @@ function App() {
         <div
           className="workspace-grid flex-1 min-h-0 overflow-hidden"
           data-panel-layout={panelLayout}
-          data-sidebar-slot={sidebarSlotVisible ? 'visible' : 'hidden'}
+          data-sidebar-slot={renderedSidebar ? 'visible' : 'hidden'}
           data-editor-slot={sideEditorSlotVisible ? 'visible' : 'collapsed'}
           data-terminal-dual={sideDualActive ? 'true' : undefined}
           data-terminal-quad={sideQuadActive ? 'true' : undefined}
@@ -432,72 +458,66 @@ function App() {
             />
           </div>
 
-          {sidebarSlotVisible && view === 'explorer' && (
-            <div className="workspace-grid-sidebar view-enter">
-              <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
-                <Sidebar />
-              </ResizableSidebar>
-            </div>
-          )}
-
-          {sidebarSlotVisible && view === 'search' && (
-            <div className="workspace-grid-sidebar view-enter">
-              <ResizableSidebar
-                width={sidebarWidth}
-                onWidthChange={setSidebarWidth}
-                className="ui-font-scaled"
-              >
-                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                  <SearchPanel />
-                </Suspense>
-              </ResizableSidebar>
-            </div>
-          )}
-
-          {sidebarSlotVisible && view === 'run' && (
-            <div className="workspace-grid-sidebar view-enter">
-              <ResizableSidebar
-                width={sidebarWidth}
-                onWidthChange={setSidebarWidth}
-                className="ui-font-scaled bg-bg-sidebar"
-              >
-                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                  <RunPanel />
-                </Suspense>
-              </ResizableSidebar>
-            </div>
-          )}
-
-          {sidebarSlotVisible && view === 'terminals' && (
-            <div className="workspace-grid-sidebar view-enter">
-              <ResizableSidebar
-                width={sidebarWidth}
-                onWidthChange={setSidebarWidth}
-                className="ui-font-scaled bg-bg-sidebar"
-              >
-                <TerminalSessionList />
-              </ResizableSidebar>
-            </div>
-          )}
-
-          {sidebarSlotVisible && pageViewInSidebar && (
-            <div key={view} className="workspace-grid-sidebar view-enter">
-              <ResizableSidebar
-                width={workbenchPageWidth}
-                onWidthChange={setWorkbenchPageWidth}
-                bounds={{
-                  min: WORKBENCH_PAGE_MIN_WIDTH,
-                  max: getWorkbenchPageMaxWidth(),
-                  defaultWidth: getDefaultWorkbenchPageWidth(),
-                  clamp: clampWorkbenchPageWidth,
-                }}
-                className="bg-bg-sidebar"
-              >
-                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                  {view === 'settings' ? <SettingsEditor /> : <SourceControlPanel />}
-                </Suspense>
-              </ResizableSidebar>
-            </div>
+          {renderedSidebar && (
+            <SidebarSlot
+              leaving={sidebarKind === null}
+              onExited={finishSidebarExit}
+              animateOpen={sidebarTrack.animateOpen}
+              freezeTerminals={terminalPosition === 'side' && terminalOpen}
+            >
+              {/* 侧栏内切换视图：带 key 的内层重新挂载以播放入场；展开 / 收起的宽度过渡由 SidebarSlot 负责。 */}
+              <div key={renderedSidebar} className="view-enter flex min-h-0 flex-shrink-0">
+                {renderedSidebar === 'explorer' ? (
+                  <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
+                    <Sidebar />
+                  </ResizableSidebar>
+                ) : renderedSidebar === 'search' ? (
+                  <ResizableSidebar
+                    width={sidebarWidth}
+                    onWidthChange={setSidebarWidth}
+                    className="ui-font-scaled"
+                  >
+                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                      <SearchPanel />
+                    </Suspense>
+                  </ResizableSidebar>
+                ) : renderedSidebar === 'run' ? (
+                  <ResizableSidebar
+                    width={sidebarWidth}
+                    onWidthChange={setSidebarWidth}
+                    className="ui-font-scaled bg-bg-sidebar"
+                  >
+                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                      <RunPanel />
+                    </Suspense>
+                  </ResizableSidebar>
+                ) : renderedSidebar === 'terminals' ? (
+                  <ResizableSidebar
+                    width={sidebarWidth}
+                    onWidthChange={setSidebarWidth}
+                    className="ui-font-scaled bg-bg-sidebar"
+                  >
+                    <TerminalSessionList />
+                  </ResizableSidebar>
+                ) : (
+                  <ResizableSidebar
+                    width={workbenchPageWidth}
+                    onWidthChange={setWorkbenchPageWidth}
+                    bounds={{
+                      min: WORKBENCH_PAGE_MIN_WIDTH,
+                      max: getWorkbenchPageMaxWidth(),
+                      defaultWidth: getDefaultWorkbenchPageWidth(),
+                      clamp: clampWorkbenchPageWidth,
+                    }}
+                    className="bg-bg-sidebar"
+                  >
+                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                      {renderedSidebar === 'settings' ? <SettingsEditor /> : <SourceControlPanel />}
+                    </Suspense>
+                  </ResizableSidebar>
+                )}
+              </div>
+            </SidebarSlot>
           )}
 
           <Suspense fallback={null}>

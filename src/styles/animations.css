@@ -4,7 +4,11 @@
   --motion-fast: 120ms;
   --motion-enter: 160ms;
   --motion-exit: 100ms;
+  /* 换页与侧栏展开 / 收起：面积大，比浮层稍长，曲线更平缓，避免一开头就猛冲到位。 */
+  --motion-view: 200ms;
+  --motion-view-exit: 160ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.2, 0, 0, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
@@ -85,14 +89,15 @@
 }
 
 /* 原地换页（侧栏面板、编辑区整页）：只播入场，不做退出——新内容盖在原位已说明切到了哪。
-   从活动栏一侧轻移进入；backwards 填充，播完不残留 transform，避免成为 sticky / fixed 子元素的定位容器。 */
+   从活动栏一侧轻移进入；backwards 填充，播完不残留 transform，避免成为 sticky / fixed 子元素的定位容器。
+   侧栏整体展开 / 收起的宽度过渡见 SidebarSlot.tsx。 */
 .view-enter {
-  animation: view-in var(--motion-enter) var(--ease-out) backwards;
+  animation: view-in var(--motion-view) var(--ease-soft) backwards;
 }
 @keyframes view-in {
   from {
     opacity: 0;
-    transform: translateX(-6px);
+    transform: translateX(-8px);
   }
 }
 

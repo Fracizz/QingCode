@@ -236,6 +236,56 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await shot('sidebar-view-enter')
     })
 
+    await step('侧栏收起 / 展开：宽度在 0 与侧栏宽度间平滑过渡，右侧区域跟随平移，播完卸载或恢复', async () => {
+      await settle()
+      // 在页面内逐帧采样槽宽与右侧区域位置；sampleMs 内记录全部帧。
+      const sample = async (sampleMs) => page.evaluate(async (ms) => {
+        const host = document.querySelector('[data-testid="terminal-host"]')
+        const slotOf = () => document.querySelector('[data-testid="sidebar-view"]')?.parentElement ?? null
+        document.querySelector('[data-testid="toggle-sidebar"]').click()
+        const widths = []
+        const hostLefts = []
+        let clipped = false
+        const start = performance.now()
+        while (performance.now() - start < ms) {
+          await new Promise(r => requestAnimationFrame(r))
+          const slot = slotOf()
+          widths.push(slot ? Math.round(slot.getBoundingClientRect().width) : null)
+          hostLefts.push(Math.round(host.getBoundingClientRect().left))
+          if (slot && slot.style.overflow === 'hidden' && slot.style.justifyContent === 'flex-end') clipped = true
+        }
+        const slot = slotOf()
+        return {
+          widths,
+          hostLefts,
+          clipped,
+          mounted: Boolean(slot),
+          endWidth: slot ? Math.round(slot.getBoundingClientRect().width) : null,
+          endOverflow: slot ? slot.style.overflow : null,
+          inert: slot ? slot.hasAttribute('inert') : null,
+        }
+      }, sampleMs)
+
+      const closing = await sample(400)
+      console.log('sidebar close', { ...closing, widths: closing.widths.join(',') })
+      const midClose = closing.widths.filter(w => w !== null && w > 5 && w < 195)
+      assert.ok(midClose.length >= 2, `收起途中出现多帧中间宽度：${closing.widths.join(',')}`)
+      assert.equal(closing.clipped, true, '收起时内容贴右裁切')
+      assert.equal(closing.mounted, false, '收拢播完后卸载')
+      assert.ok(new Set(closing.hostLefts).size >= 3, '右侧区域随宽度逐帧左移')
+      await shot('sidebar-closed')
+
+      const opening = await sample(400)
+      console.log('sidebar open', { ...opening, widths: opening.widths.join(',') })
+      const midOpen = opening.widths.filter(w => w !== null && w > 5 && w < 195)
+      assert.ok(midOpen.length >= 2, `展开途中出现多帧中间宽度：${opening.widths.join(',')}`)
+      assert.equal(opening.clipped, true, '展开时内容贴右裁切')
+      assert.equal(opening.endWidth, 200, '展开到侧栏宽度')
+      assert.equal(opening.endOverflow, '', '播完移除裁切')
+      assert.equal(opening.inert, false)
+      await shot('sidebar-reopened')
+    })
+
     for (const [name, open, close, selector] of [
       ['终端搜索条', 'toggle-search', 'toggle-search', '.terminal-search-bar'],
       ['终端连接提示', 'show-notice', 'clear-notice', '[data-testid="terminal-connection-notice"]'],
