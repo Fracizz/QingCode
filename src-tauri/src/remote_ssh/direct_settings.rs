@@ -97,9 +97,11 @@ pub(super) async fn connect_root(
     root_uri: &str,
     trusted: bool,
     deferred: bool,
+    mut timing: super::connection::ConnectTiming,
 ) -> Result<SshConnectResult, String> {
     let gate = manager.server_gate(&format!("direct-config|{}", config.id))?;
     let _guard = gate.lock().await;
+    timing.lap("gateMs");
     let parsed = parse_remote_uri(root_uri)?;
     if parsed.connection_id != config.id {
         return Err("项目与 Server 连接不匹配".into());
@@ -108,14 +110,21 @@ pub(super) async fn connect_root(
         .direct_config(&config.id)
         .ok_or("Server 配置不存在")?;
     direct::test(&direct).await?;
+    timing.lap("healthMs");
     manager
         .direct_failures
         .write()
         .map_err(|_| "Server 状态不可用")?
         .remove(&config.id);
-    let sftp = SftpSession::direct(direct.clone(), None, false);
+    // SSH 原路径会拒绝指向其他目录的 Windows junction。隧道上也把请求的
+    // 目录作为根交给网关核对，不能先解析链接再把链接目标登记为可信根。
+    let guard_root = direct
+        .tunnel
+        .as_ref()
+        .and_then(|_| windows_native_path(&parsed.path));
+    let sftp = SftpSession::direct(direct.clone(), guard_root.clone(), false);
     let canonical = sftp
-        .canonicalize(parsed.path)
+        .canonicalize(guard_root.unwrap_or(parsed.path))
         .await
         .map_err(|e| e.to_string())?;
     if !sftp
@@ -126,6 +135,7 @@ pub(super) async fn connect_root(
     {
         return Err("远程项目路径不是目录".into());
     }
+    timing.lap("rootMs");
     if manager.direct_config(&config.id).is_none_or(|current| {
         current.endpoint != direct.endpoint
             || current.certificate_fingerprint != direct.certificate_fingerprint
@@ -159,6 +169,14 @@ pub(super) async fn connect_root(
         manager.start_workspace_watch(app.clone(), &root);
     }
     server_status::publish_root_state(app, manager, &root);
+    timing.record(
+        &config.id,
+        if direct.tunnel.is_some() {
+            "tunnel"
+        } else {
+            "direct"
+        },
+    );
     Ok(SshConnectResult {
         fingerprint: config
             .host_key_fingerprint

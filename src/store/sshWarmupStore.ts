@@ -55,7 +55,7 @@ export function stopSshWarmupQueue(expected: SshWarmupQueue<FileNode[] | null>) 
   queue = undefined
 }
 
-/** 只暂停该连接的后台预热；不传（本机项目）则暂停全部。 */
+/** 暂停同一连接的后台准备；省略连接时暂停全部。本机项目不申请租约。 */
 export function beginSshForeground(connectionId?: string): () => void {
   const lease: ForegroundLease = { connectionId, release: queue?.beginForeground(connectionId) }
   foregroundLeases.add(lease)

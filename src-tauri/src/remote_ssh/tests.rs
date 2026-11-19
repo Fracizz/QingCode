@@ -1579,3 +1579,24 @@ fn relative_to_root_handles_root_and_children() {
     assert_eq!(remote_relative_to_root("/srv/app/src", "/srv/app"), "src");
     assert_eq!(remote_relative_to_root("/srv/app/", "/srv/app/"), "");
 }
+
+#[test]
+fn tunnel_first_only_for_trusted_server_mode_windows_roots() {
+    use super::connection::tunnel_first_eligible;
+    assert!(tunnel_first_eligible(
+        RemoteMode::Server,
+        true,
+        "/C:/work/app"
+    ));
+    assert!(!tunnel_first_eligible(
+        RemoteMode::Server,
+        false,
+        "/C:/work/app"
+    ));
+    assert!(!tunnel_first_eligible(
+        RemoteMode::Ssh,
+        true,
+        "/C:/work/app"
+    ));
+    assert!(!tunnel_first_eligible(RemoteMode::Server, true, "/srv/app"));
+}
