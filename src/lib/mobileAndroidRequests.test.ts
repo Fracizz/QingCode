@@ -138,6 +138,59 @@ describe('terminal input groups', () => {
     expect(write.mock.calls.map(call => call[1])).toEqual(['typed', 'k1', 'k2', 'k3'])
   })
 
+  it('keeps only the six latest wheel reports behind a slow write and immediately replaces their direction', async () => {
+    vi.useFakeTimers()
+    const write = vi.fn(() => new Promise<void>(resolve => setTimeout(resolve, 246)))
+    const input = createTerminalInput({ write, isCurrent: () => true, onSuccess: vi.fn(), onError: vi.fn() })
+    const target = { id: 'a', address: 'pc', epoch: 1 }
+    const up = (row: number) => `\x1b[<64;1;${row}M`
+    const down = '\x1b[<65;1;2M'
+    input.enqueueWheel(up(1), -1, target)
+    await vi.advanceTimersByTimeAsync(0)
+    for (let row = 2; row <= 20; row++) input.enqueueWheel(up(row), -1, target)
+    await vi.advanceTimersByTimeAsync(246)
+    const lastSix = [15, 16, 17, 18, 19, 20].map(up).join('')
+    expect(write.mock.calls).toEqual([[target, up(1)], [target, lastSix]])
+    input.enqueueWheel(up(21), -1, target)
+    input.enqueueWheel(down, 1, target)
+    await vi.runAllTimersAsync()
+    expect(write.mock.calls).toEqual([[target, up(1)], [target, lastSix], [target, down]])
+  })
+
+  it('keeps clicks, text with delayed Enter, and explicit key groups in order between scrolls', async () => {
+    vi.useFakeTimers()
+    const write = vi.fn(() => new Promise<void>(resolve => setTimeout(resolve, 246)))
+    const input = createTerminalInput({ write, isCurrent: () => true, onSuccess: vi.fn(), onError: vi.fn() })
+    const target = { id: 'a', address: 'pc', epoch: 1 }
+    const click = '\x1b[<0;1;2M'
+    input.enqueue('before', target)
+    input.enqueueWheel('up', -1, target)
+    input.enqueue(click, target)
+    input.enqueue('submit', target, { enter: '\r' })
+    input.enqueueWheel('down', 1, target)
+    input.enqueueKeys(['k1', 'k2'], target)
+    input.enqueueWheel('up', -1, target)
+    await vi.runAllTimersAsync()
+    expect(write.mock.calls.map(call => call[1])).toEqual(['before', 'up', click, 'submit', '\r', 'down', 'k1', 'k2', 'up'])
+  })
+
+  it('drops wheel reports queued for a revoked lease before writing on the new lease', async () => {
+    vi.useFakeTimers()
+    const write = vi.fn(() => new Promise<void>(resolve => setTimeout(resolve, 246)))
+    let lease = 1
+    const input = createTerminalInput({ write, isCurrent: (dest: { lease: number }) => dest.lease === lease,
+      onSuccess: vi.fn(), onError: vi.fn() })
+    const target = { id: 'a', address: 'pc', epoch: 1, lease }
+    input.enqueueWheel('first', -1, target)
+    await vi.advanceTimersByTimeAsync(0)
+    input.enqueueWheel('old', -1, target)
+    lease++
+    const next = { ...target, lease }
+    input.enqueueWheel('new', -1, next)
+    await vi.runAllTimersAsync()
+    expect(write.mock.calls).toEqual([[target, 'first'], [next, 'new']])
+  })
+
   it('does not send queued text or Enter after changing sessions', async () => {
     vi.useFakeTimers()
     let release!: () => void

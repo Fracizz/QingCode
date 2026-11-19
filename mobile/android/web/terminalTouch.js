@@ -86,7 +86,7 @@ export function dispatchVirtualClick(screen, point, button = 0) {
  * 手指每帧几像素的位移会被反复抹掉，输出中上滑就显得卡顿、发硬；整行滚动不受影响。
  * 滚轮事件仍会派发，历史面板（到顶接电脑端历史、面板内惯性）照常在捕获阶段先处理。
  */
-export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, onProgramWheel, lineHeight, scrollLines } = {}) {
+export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, dispatchWheel = dispatchLineWheel, onProgramWheel, lineHeight, scrollLines } = {}) {
   const screen = element.querySelector('.xterm-screen');
   if (!screen) return () => {};
   const view = element.ownerDocument.defaultView;
@@ -108,7 +108,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     if (cell > 0) {
       const ticks = wheelTicks(wheelState, deltaY, cell, velocity);
       if (ticks) {
-        dispatchLineWheel(screen, ticks, point, { momentum, gesture: gestureId });
+        dispatchWheel(screen, ticks, point, { momentum, gesture: gestureId });
         onProgramWheel?.(ticks);
       }
       return;

@@ -242,6 +242,7 @@ const files = createFileBrowser({
   rpc, profile: () => profile, capabilities: host => desktopProtocol.capabilities(host),
   beforeOpen: () => { cancelKeyRepeats(); compose.blur(); term?.blur(); drawer?.close(); },
 });
+let programWheelDirection = 0;
 const terminalInput = createTerminalInput({
   write: (target, data) => remote('input', { id: target.id, data }, target.address),
   isCurrent: target => target.epoch === viewEpoch && target.id === selected
@@ -1434,6 +1435,7 @@ function makeTerminal() {
     canInertia: () => terminalHistory?.isOpen() || !!term && term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none',
     // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
     programWheel: () => programMouse() ? cellHeight() : 0,
+    dispatchWheel: dispatchContinuousWheel,
     onProgramWheel: () => terminalJog?.reveal(),
     // 普通终端滚本地记录：按整行滚动，输出中上滑不会被 xterm 视口的整行对齐吃掉位移。
     lineHeight: () => !terminalHistory?.isOpen() && term?.buffer.active.type === 'normal'
@@ -1457,7 +1459,7 @@ function makeTerminal() {
   term.textarea.addEventListener('compositionend', () => { composing = false; updateComposerActions(); });
   fitTerminal();
   updateTerminalSize();
-  term.onData(data => { sendInput(data); });
+  term.onData(data => { sendInput(data, { wheelDirection: programWheelDirection }); });
   term.onResize(() => {
     terminalMouse?.refresh();
     updateTerminalSize();
@@ -1483,7 +1485,7 @@ function makeTerminal() {
   terminalJog = attachTerminalJog(get('viewport').parentElement, {
     scroll: ticks => sendProgramWheel(ticks),
     // 一页约等于三分之一屏的格数（程序一格通常滚 1–3 行）。
-    page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3))),
+    page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3)), dispatchLineWheel),
     onLongPress: toggleMouseMode,
   });
   const mouseKey = selected && draftKey(selected);
@@ -1669,12 +1671,23 @@ function cellHeight() {
   return screen && term.rows ? screen.getBoundingClientRect().height / term.rows : 0;
 }
 
+// xterm synchronously emits the encoded report during dispatch. Only continuous
+// touch/jog scrolling is replaceable; a page button sends every requested tick.
+function dispatchContinuousWheel(screen, ticks, point, extra) {
+  programWheelDirection = Math.sign(ticks);
+  try {
+    dispatchLineWheel(screen, ticks, point, extra);
+  } finally {
+    programWheelDirection = 0;
+  }
+}
+
 /** 变速滑块和翻页按钮：在终端画面偏左上处派发按行滚轮（opencode 等按指针所在面板滚动）。 */
-function sendProgramWheel(ticks) {
+function sendProgramWheel(ticks, dispatch = dispatchContinuousWheel) {
   const screen = term?.element?.querySelector('.xterm-screen');
   if (!screen || !ticks || !terminalReady || !programMouse()) return;
   const rect = screen.getBoundingClientRect();
-  dispatchLineWheel(screen, ticks, { x: rect.left + rect.width * .4, y: rect.top + rect.height * .4 });
+  dispatch(screen, ticks, { x: rect.left + rect.width * .4, y: rect.top + rect.height * .4 });
 }
 
 function keyboardOpen() {
@@ -2386,13 +2399,15 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
   }
 }
 
-function sendInput(value, { raw = false, enter = '', onComplete } = {}) {
+function sendInput(value, { raw = false, enter = '', onComplete, wheelDirection = 0 } = {}) {
   if (!terminalReady) return false;
+  const destination = { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease };
+  if (wheelDirection) return terminalInput.enqueueWheel(value, wheelDirection, destination);
   if (!raw && (modifiers.ctrl !== 'off' || modifiers.alt !== 'off')) {
     value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
     consumeModifiers();
   }
-  if (!terminalInput.enqueue(value, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease }, { enter, onComplete })) {
+  if (!terminalInput.enqueue(value, destination, { enter, onComplete })) {
     get('terminal-status').textContent = t('输入过长，请分段粘贴。');
     return false;
   }
