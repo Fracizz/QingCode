@@ -16,7 +16,10 @@ import {
   newCustomKeyId,
   normalizeCustomKey,
   parseShortcutBarState,
+  removeBuiltinKey,
   removeCustomKey,
+  reorderShortcutKey,
+  restoreBuiltinKey,
   saveCustomKey,
   serializeShortcutBarState,
   toggleShortcutKeyHidden,
@@ -180,5 +183,46 @@ describe('builtinKeySequence', () => {
     expect(builtinKeySequence('up', { applicationCursor: true })).toBe('\x1bOA')
     expect(builtinKeySequence('end')).toBe('\x1b[F')
     expect(builtinKeySequence('clear-input')).toBeNull()
+  })
+})
+
+describe('removing and restoring built-in keys', () => {
+  it('removes a built-in key and keeps it removed after a save/load round trip', () => {
+    const state = removeBuiltinKey(defaultShortcutBarState(), 'tab')
+    expect(state.order).not.toContain('tab')
+    expect(state.hidden).not.toContain('tab')
+    expect(state.removed).toEqual(['tab'])
+    const loaded = parseShortcutBarState(serializeShortcutBarState(state))
+    expect(loaded.order).not.toContain('tab')
+    expect(loaded.removed).toEqual(['tab'])
+    expect(isDefaultShortcutLayout(loaded)).toBe(false)
+  })
+
+  it('ignores custom or unknown keys', () => {
+    const state = defaultShortcutBarState()
+    expect(removeBuiltinKey(state, 'custom:a')).toBe(state)
+    expect(parseShortcutBarState({ order: ['esc'], removed: ['bogus', 3] }).removed).toEqual([])
+  })
+
+  it('restores a removed key near its default position and shows it', () => {
+    const removed = removeBuiltinKey(defaultShortcutBarState(), 'interrupt')
+    const restored = restoreBuiltinKey(removed, 'interrupt')
+    expect(restored.order.slice(0, 2)).toEqual(['esc', 'interrupt'])
+    expect(restored.removed).toEqual([])
+    expect(restored.hidden).not.toContain('interrupt')
+  })
+})
+
+describe('reorderShortcutKey', () => {
+  it('moves a key before or after the target', () => {
+    const layout = defaultShortcutLayout()
+    expect(reorderShortcutKey(layout, 'clear-input', 'esc', 'before').order.slice(0, 2)).toEqual(['clear-input', 'esc'])
+    expect(reorderShortcutKey(layout, 'esc', 'interrupt', 'after').order.slice(0, 2)).toEqual(['interrupt', 'esc'])
+  })
+
+  it('returns the layout unchanged for same or missing keys', () => {
+    const layout = defaultShortcutLayout()
+    expect(reorderShortcutKey(layout, 'esc', 'esc', 'after')).toBe(layout)
+    expect(reorderShortcutKey(layout, 'missing', 'esc', 'after')).toBe(layout)
   })
 })

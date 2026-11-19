@@ -158,6 +158,7 @@ export function parseSettingsTransfer(text: string, scope: SettingsScope): Setti
         !record(bar) ||
         !Array.isArray(bar.order) ||
         (bar.hidden !== undefined && !Array.isArray(bar.hidden)) ||
+        (bar.removed !== undefined && !Array.isArray(bar.removed)) ||
         (bar.custom !== undefined && !Array.isArray(bar.custom))
       )
         throw new Error('终端快捷键栏配置无效')

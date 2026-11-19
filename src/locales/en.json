@@ -2133,7 +2133,7 @@
     "在终端底部显示": "Show at the bottom of terminals",
     "恢复默认": "Restore defaults",
     "添加自定义键": "Add custom key",
-    "点击按钮直接发送到所在终端。取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。": "Click a key to send it to its terminal. Unchecked keys move into the \"⋯\" menu on the right of the bar; keys that do not fit also move there. Custom keys send a piece of text (such as /compact) and can be bound to a terminal-only shortcut.",
+    "点击按钮直接发送到所在终端。拖动行可调整顺序；取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。": "Click a key to send it to its terminal. Drag rows to reorder. Unchecked keys move into the \"⋯\" menu on the right of the bar; keys that do not fit also move there. Custom keys send a piece of text (such as /compact) and can be bound to a terminal-only shortcut.",
     "在快捷键栏显示 {name}": "Show {name} in the shortcut bar",
     "内置 · 在「⋯」中": "Built-in · in \"⋯\"",
     "编辑 {name}": "Edit {name}",
@@ -2142,6 +2142,10 @@
     "下移": "Move down",
     "上移 {name}": "Move {name} up",
     "下移 {name}": "Move {name} down",
-    "终端快捷键栏配置无效": "Invalid terminal shortcut bar settings"
+    "终端快捷键栏配置无效": "Invalid terminal shortcut bar settings",
+    "编辑自定义键": "Edit custom key",
+    "删除（可在下方加回）": "Delete (can be added back below)",
+    "已删除的内置键：": "Removed built-in keys:",
+    "加回 {name}": "Add back {name}"
   }
 }

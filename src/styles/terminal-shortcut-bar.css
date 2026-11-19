@@ -64,10 +64,13 @@
   user-select: none;
 }
 
+/* 自定义键：与内置键同样低调（跟随主题的弱前景），仅用淡淡的主题强调色边框区分，避免整排高亮刺眼。 */
 .terminal-shortcut-custom {
   display: inline-block;
   line-height: 18px;
-  color: var(--color-fg);
+  border-color: color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  color: var(--color-fg-muted);
 }
 
 button.terminal-shortcut-key:hover:not(:disabled) {

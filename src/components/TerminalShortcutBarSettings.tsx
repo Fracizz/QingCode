@@ -1,5 +1,5 @@
-import { useId, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { ArrowDown, ArrowUp, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { useId, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
 import {
   canonicalizeShortcut,
@@ -25,13 +25,15 @@ import {
 import { confirmDialog } from '../store/confirmStore'
 import { useShortcutStore } from '../store/shortcutStore'
 import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
+import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 
 type Draft = { id: string | null; name: string; text: string; enter: boolean; shortcut: string }
+type DropTarget = { key: string; position: 'before' | 'after' }
 
 const EMPTY_DRAFT: Draft = { id: null, name: '', text: '', enter: true, shortcut: '' }
 
-/** 设置 → 终端 → 快捷键栏：显示开关、排序、隐藏到「⋯」、自定义键（含终端内快捷键）。 */
+/** 设置 → 终端 → 快捷键栏：显示开关、拖拽 / 按钮排序、隐藏到「⋯」、删除 / 加回内置键、自定义键（弹窗编辑，含终端内快捷键）。 */
 export default function TerminalShortcutBarSettings() {
   const { t } = useI18n()
   const state = useTerminalShortcutBarStore()
@@ -39,7 +41,10 @@ export default function TerminalShortcutBarSettings() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [shortcutHint, setShortcutHint] = useState<string | null>(null)
-  const formId = useId()
+  const [dragged, setDragged] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+  const titleId = useId()
+  const shortcutInputRef = useRef<HTMLInputElement>(null)
   const layout = { order: state.order, hidden: state.hidden, custom: state.custom }
 
   const keyName = (key: string) => {
@@ -79,7 +84,35 @@ export default function TerminalShortcutBarSettings() {
       kind: 'danger',
     })) return
     state.removeCustomKey(def.id)
-    if (draft?.id === def.id) setDraft(null)
+  }
+
+  /** Esc：焦点在快捷键录入框时只退出录入，否则关闭弹窗。 */
+  const dismissDraft = () => {
+    const input = shortcutInputRef.current
+    if (input && document.activeElement === input) {
+      setShortcutHint(null)
+      input.blur()
+      return
+    }
+    setDraft(null)
+  }
+
+  const dropPosition = (event: ReactDragEvent<HTMLElement>): DropTarget['position'] => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  }
+
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>, key: string) => {
+    if (!dragged || dragged === key) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const position = dropPosition(event)
+    setDropTarget(current => (current?.key === key && current.position === position ? current : { key, position }))
+  }
+
+  const clearDrag = () => {
+    setDragged(null)
+    setDropTarget(null)
   }
 
   const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -126,66 +159,88 @@ export default function TerminalShortcutBarSettings() {
     setShortcutHint(null)
   }
 
+  const fieldLabel = 'flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted'
   const editor = draft && (
-    <form
-      id={formId}
-      className="terminal-profile-editor"
-      onSubmit={event => {
-        event.preventDefault()
-        saveDraft()
-      }}
-    >
-      <label className="flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted">
-        {t('发送的文本')}
-        <input
-          autoFocus
-          value={draft.text}
-          maxLength={CUSTOM_KEY_TEXT_LIMIT}
-          onChange={event => setDraft({ ...draft, text: event.target.value })}
-          placeholder={t('例如 /compact 或 git status')}
-          className="setting-control !min-w-0 !w-full !max-w-none font-mono"
-          spellCheck={false}
-        />
-      </label>
-      <label className="flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted">
-        {t('按钮名称（可选）')}
-        <input
-          value={draft.name}
-          maxLength={CUSTOM_KEY_NAME_LIMIT}
-          onChange={event => setDraft({ ...draft, name: event.target.value })}
-          placeholder={t('留空时显示发送的文本')}
-          className="setting-control !min-w-0 !w-full !max-w-none"
-        />
-      </label>
-      <label className="flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted">
-        {t('终端内快捷键（可选）')}
-        <input
-          readOnly
-          value={draft.shortcut}
-          onKeyDown={captureShortcut}
-          placeholder={t('点击后按组合键，Backspace 清空')}
-          className="setting-control !min-w-0 !w-full !max-w-none font-mono"
-        />
-        {shortcutHint && <span className="text-warn">{shortcutHint}</span>}
-      </label>
-      <label className="flex min-w-0 items-center gap-2 self-end text-ui-sm text-fg">
-        <input
-          type="checkbox"
-          checked={draft.enter}
-          onChange={event => setDraft({ ...draft, enter: event.target.checked })}
-        />
-        {t('发送后回车')}
-      </label>
-      {error && <p className="terminal-profile-command text-ui-sm text-danger">{error}</p>}
-      <div className="terminal-profile-command flex flex-wrap items-center justify-end gap-2">
-        <button type="button" className="terminal-profile-add" onClick={() => setDraft(null)}>
-          {t('取消')}
-        </button>
-        <button type="submit" className="terminal-profile-add !border-accent text-fg">
-          {draft.id ? t('保存') : t('添加')}
-        </button>
-      </div>
-    </form>
+    <ModalOverlay onDismiss={dismissDraft}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="modal-content-enter relative w-full max-w-[480px] rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        onSubmit={event => {
+          event.preventDefault()
+          saveDraft()
+        }}
+      >
+        <div className="flex flex-col gap-3.5 px-5 pt-5 pb-4">
+          <h2 id={titleId} className="text-ui-lg font-semibold text-fg">
+            {draft.id ? t('编辑自定义键') : t('添加自定义键')}
+          </h2>
+          <label className={fieldLabel}>
+            {t('发送的文本')}
+            <input
+              data-modal-autofocus
+              value={draft.text}
+              maxLength={CUSTOM_KEY_TEXT_LIMIT}
+              onChange={event => {
+                setDraft({ ...draft, text: event.target.value })
+                if (error) setError(null)
+              }}
+              placeholder={t('例如 /compact 或 git status')}
+              className={`modal-field-input font-mono ${error ? 'modal-field-input--invalid' : ''}`}
+              aria-invalid={error ? true : undefined}
+              spellCheck={false}
+            />
+            {error && <span className="text-danger">{error}</span>}
+          </label>
+          <label className={fieldLabel}>
+            {t('按钮名称（可选）')}
+            <input
+              value={draft.name}
+              maxLength={CUSTOM_KEY_NAME_LIMIT}
+              onChange={event => setDraft({ ...draft, name: event.target.value })}
+              placeholder={t('留空时显示发送的文本')}
+              className="modal-field-input"
+            />
+          </label>
+          <label className={fieldLabel}>
+            {t('终端内快捷键（可选）')}
+            <input
+              ref={shortcutInputRef}
+              readOnly
+              value={draft.shortcut}
+              onKeyDown={captureShortcut}
+              placeholder={t('点击后按组合键，Backspace 清空')}
+              className="modal-field-input font-mono"
+            />
+            {shortcutHint && <span className="text-warn">{shortcutHint}</span>}
+          </label>
+          <label className="flex items-center gap-2 text-ui-sm text-fg">
+            <input
+              type="checkbox"
+              checked={draft.enter}
+              onChange={event => setDraft({ ...draft, enter: event.target.checked })}
+            />
+            {t('发送后回车')}
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 rounded-b-lg border-t border-border bg-bg-deep/20 px-5 py-3.5">
+          <button
+            type="button"
+            className="rounded-md border border-border-strong bg-bg px-3.5 py-1.5 text-ui font-medium text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+            onClick={() => setDraft(null)}
+          >
+            {t('取消')}
+          </button>
+          <button
+            type="submit"
+            className="rounded-md bg-action px-3.5 py-1.5 text-ui font-medium text-on-action shadow-sm transition-all duration-150 hover:bg-action/90"
+          >
+            {draft.id ? t('保存') : t('添加')}
+          </button>
+        </div>
+      </form>
+    </ModalOverlay>
   )
 
   return (
@@ -222,11 +277,8 @@ export default function TerminalShortcutBarSettings() {
         </div>
       </div>
       <p className="mb-3 text-ui-sm leading-relaxed text-fg-muted">
-        {t('点击按钮直接发送到所在终端。取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。')}
+        {t('点击按钮直接发送到所在终端。拖动行可调整顺序；取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。')}
       </p>
-      {draft && !draft.id && (
-        <div className="mb-3 overflow-hidden rounded border border-border">{editor}</div>
-      )}
       <div className="overflow-hidden rounded border border-border">
         {state.order.map((key, index) => {
           const def = findCustomKey(layout, key)
@@ -234,8 +286,32 @@ export default function TerminalShortcutBarSettings() {
           const visible = !state.hidden.includes(key)
           const info = builtinKeyInfo(key)
           return (
-            <div key={key} data-shortcut-row={key} className="terminal-profile-row border-b border-border last:border-b-0">
+            <div
+              key={key}
+              data-shortcut-row={key}
+              draggable
+              className={`terminal-profile-row relative border-b border-border last:border-b-0 ${dragged === key ? 'opacity-40' : ''}`}
+              onDragStart={event => {
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', key)
+                setDragged(key)
+              }}
+              onDragOver={event => handleDragOver(event, key)}
+              onDrop={event => {
+                event.preventDefault()
+                if (dragged && dragged !== key) state.reorder(dragged, key, dropPosition(event))
+                clearDrag()
+              }}
+              onDragEnd={clearDrag}
+            >
+              {dropTarget?.key === key && dragged !== key && (
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded bg-accent ${dropTarget.position === 'before' ? 'top-0' : 'bottom-0'}`}
+                />
+              )}
               <div className="terminal-profile-summary">
+                <GripVertical size={13} aria-hidden className="ml-1 shrink-0 cursor-grab text-fg-dim active:cursor-grabbing" />
                 <label className="terminal-profile-toggle cursor-pointer">
                   <input
                     type="checkbox"
@@ -254,18 +330,23 @@ export default function TerminalShortcutBarSettings() {
                   </span>
                 </label>
                 <div className="terminal-profile-actions">
-                  {def && <>
+                  {def && (
                     <Tooltip label={t('编辑')} side="top">
-                      <button type="button" aria-label={t('编辑 {name}', { name })} className="terminal-profile-icon" onClick={() => openDraft(draft?.id === def.id ? null : def)}>
+                      <button type="button" aria-label={t('编辑 {name}', { name })} className="terminal-profile-icon" onClick={() => openDraft(def)}>
                         <Pencil size={13} />
                       </button>
                     </Tooltip>
-                    <Tooltip label={t('删除')} side="top">
-                      <button type="button" aria-label={t('删除 {name}', { name })} className="terminal-profile-icon hover:!text-danger" onClick={() => void removeKey(def)}>
-                        <Trash2 size={13} />
-                      </button>
-                    </Tooltip>
-                  </>}
+                  )}
+                  <Tooltip label={def ? t('删除') : t('删除（可在下方加回）')} side="top">
+                    <button
+                      type="button"
+                      aria-label={t('删除 {name}', { name })}
+                      className="terminal-profile-icon hover:!text-danger"
+                      onClick={() => (def ? void removeKey(def) : state.removeBuiltinKey(key))}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </Tooltip>
                   <Tooltip label={t('上移')} side="top">
                     <button type="button" aria-label={t('上移 {name}', { name })} className="terminal-profile-icon disabled:opacity-30" disabled={index === 0} onClick={() => state.move(key, -1)}>
                       <ArrowUp size={13} />
@@ -278,11 +359,32 @@ export default function TerminalShortcutBarSettings() {
                   </Tooltip>
                 </div>
               </div>
-              {def && draft?.id === def.id && editor}
             </div>
           )
         })}
       </div>
+      {state.removed.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-ui-sm text-fg-muted" data-shortcut-removed="">
+          <span>{t('已删除的内置键：')}</span>
+          {state.removed.map(key => {
+            const info = builtinKeyInfo(key)
+            const name = info ? t(info.name) : key
+            return (
+              <Tooltip key={key} label={t('加回 {name}', { name })} side="top">
+                <button
+                  type="button"
+                  aria-label={t('加回 {name}', { name })}
+                  className="terminal-profile-add"
+                  onClick={() => state.restoreBuiltinKey(key)}
+                >
+                  <Plus size={12} />{t(info?.label ?? key)}
+                </button>
+              </Tooltip>
+            )
+          })}
+        </div>
+      )}
+      {editor}
     </div>
   )
 }

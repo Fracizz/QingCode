@@ -5,7 +5,8 @@
  *   Tab、方向键等默认隐藏（移入「⋯」菜单），可在设置中打开。
  * - 自定义键：键名 + 发送的文本，可选发送后回车（隔 250ms 再发，避免 TUI 把回车当作粘贴的一部分），
  *   可选绑定一个仅在终端内生效的快捷键。
- * - 布局（顺序 / 隐藏 / 自定义键）与折叠状态保存在本机 localStorage，随「导出配置」一起导出。
+ * - 内置键可以删除（记入 removed，解析时不再按「新版本新增键」补回），可单独加回或「恢复默认」。
+ * - 布局（顺序 / 隐藏 / 已删除内置键 / 自定义键）与折叠状态保存在本机 localStorage，随「导出配置」一起导出。
  */
 import { canonicalizeShortcut, isShortcutBound } from '@/lib/shortcuts'
 
@@ -81,6 +82,8 @@ export interface TerminalShortcutLayout {
 }
 
 export interface TerminalShortcutBarState extends TerminalShortcutLayout {
+  /** 用户删除的内置键（不在 order 中）。 */
+  removed: string[]
   /** 全局折叠状态：所有终端格子一起收起 / 展开。 */
   collapsed: boolean
 }
@@ -149,7 +152,7 @@ export function defaultShortcutLayout(custom: TerminalCustomKey[] = []): Termina
 }
 
 export function defaultShortcutBarState(): TerminalShortcutBarState {
-  return { ...defaultShortcutLayout(), collapsed: false }
+  return { ...defaultShortcutLayout(), removed: [], collapsed: false }
 }
 
 /**
@@ -175,28 +178,62 @@ export function parseShortcutBarState(raw: unknown): TerminalShortcutBarState {
   const customKeys = new Set(custom.map(def => customKeyLayoutId(def.id)))
   const valid = (key: unknown): key is string =>
     typeof key === 'string' && (BUILTIN.has(key) || customKeys.has(key))
-  const order = [...new Set((value.order as unknown[]).filter(valid))]
+  const removed = Array.isArray(value.removed)
+    ? [...new Set(value.removed.filter((key): key is string => typeof key === 'string' && BUILTIN.has(key)))]
+    : []
+  const order = [...new Set((value.order as unknown[]).filter(valid))].filter(key => !removed.includes(key))
   const added: string[] = []
-  for (const [index, { key }] of TERMINAL_SHORTCUT_KEYS.entries()) {
-    if (order.includes(key)) continue
+  for (const { key } of TERMINAL_SHORTCUT_KEYS) {
+    if (order.includes(key) || removed.includes(key)) continue
     added.push(key)
-    // 新键插到默认顺序中前一个已存在键之后，保持用户已有的相对顺序。
-    const before = TERMINAL_SHORTCUT_KEYS.slice(0, index)
-      .map(item => item.key)
-      .reverse()
-      .find(previous => order.includes(previous))
-    order.splice(before ? order.indexOf(before) + 1 : 0, 0, key)
+    insertBuiltinKey(order, key)
   }
   for (const key of customKeys) if (!order.includes(key)) order.push(key)
-  const hidden = Array.isArray(value.hidden) ? [...new Set(value.hidden.filter(valid))] : [...DEFAULT_HIDDEN]
+  const hidden = (Array.isArray(value.hidden) ? [...new Set(value.hidden.filter(valid))] : [...DEFAULT_HIDDEN])
+    .filter(key => !removed.includes(key))
   for (const key of added) if (DEFAULT_HIDDEN.includes(key as TerminalShortcutBuiltinKey) && !hidden.includes(key)) hidden.push(key)
-  return { order, hidden, custom, collapsed: value.collapsed === true }
+  return { order, hidden, removed, custom, collapsed: value.collapsed === true }
+}
+
+/** 把内置键插到默认顺序中前一个已存在键之后，保持用户已有的相对顺序（原地修改 order）。 */
+function insertBuiltinKey(order: string[], key: string) {
+  const index = TERMINAL_SHORTCUT_KEYS.findIndex(item => item.key === key)
+  const before = TERMINAL_SHORTCUT_KEYS.slice(0, index)
+    .map(item => item.key)
+    .reverse()
+    .find(previous => order.includes(previous))
+  order.splice(before ? order.indexOf(before) + 1 : 0, 0, key)
+}
+
+/** 删除内置键：从栏和「⋯」中移除，记入 removed；非内置键或已删除时原样返回。 */
+export function removeBuiltinKey<T extends TerminalShortcutBarState>(state: T, key: string): T {
+  if (!BUILTIN.has(key) || state.removed.includes(key)) return state
+  return {
+    ...state,
+    order: state.order.filter(item => item !== key),
+    hidden: state.hidden.filter(item => item !== key),
+    removed: [...state.removed, key],
+  }
+}
+
+/** 加回已删除的内置键：放回默认位置附近并显示在栏中。 */
+export function restoreBuiltinKey<T extends TerminalShortcutBarState>(state: T, key: string): T {
+  if (!state.removed.includes(key)) return state
+  const order = [...state.order]
+  if (!order.includes(key)) insertBuiltinKey(order, key)
+  return {
+    ...state,
+    order,
+    hidden: state.hidden.filter(item => item !== key),
+    removed: state.removed.filter(item => item !== key),
+  }
 }
 
 export function serializeShortcutBarState(state: TerminalShortcutBarState): string {
   return JSON.stringify({
     order: state.order,
     hidden: state.hidden,
+    removed: state.removed,
     custom: state.custom,
     collapsed: state.collapsed,
   })
@@ -254,6 +291,20 @@ export function moveShortcutKey<T extends TerminalShortcutLayout>(layout: T, key
   if (from < 0 || to < 0 || to >= layout.order.length) return layout
   const order = [...layout.order]
   ;[order[from], order[to]] = [order[to], order[from]]
+  return { ...layout, order }
+}
+
+/** 拖拽排序：把 source 放到 target 之前或之后；任一不存在或相同时原样返回。 */
+export function reorderShortcutKey<T extends TerminalShortcutLayout>(
+  layout: T,
+  source: string,
+  target: string,
+  position: 'before' | 'after',
+): T {
+  if (source === target || !layout.order.includes(source) || !layout.order.includes(target)) return layout
+  const order = layout.order.filter(key => key !== source)
+  const index = order.indexOf(target) + (position === 'after' ? 1 : 0)
+  order.splice(index, 0, source)
   return { ...layout, order }
 }
 

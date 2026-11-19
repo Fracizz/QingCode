@@ -5,7 +5,10 @@ import {
   isDefaultShortcutLayout,
   moveShortcutKey,
   parseShortcutBarState,
+  reorderShortcutKey,
+  removeBuiltinKey,
   removeCustomKey,
+  restoreBuiltinKey,
   saveCustomKey,
   serializeShortcutBarState,
   toggleShortcutKeyHidden,
@@ -36,7 +39,7 @@ function persist(state: TerminalShortcutBarState) {
 }
 
 function pick(state: TerminalShortcutBarState): TerminalShortcutBarState {
-  return { order: state.order, hidden: state.hidden, custom: state.custom, collapsed: state.collapsed }
+  return { order: state.order, hidden: state.hidden, removed: state.removed, custom: state.custom, collapsed: state.collapsed }
 }
 
 type Store = TerminalShortcutBarState & {
@@ -44,9 +47,12 @@ type Store = TerminalShortcutBarState & {
   toggleCollapsed: () => void
   toggleHidden: (key: string) => void
   move: (key: string, delta: number) => void
+  reorder: (source: string, target: string, position: 'before' | 'after') => void
   saveCustomKey: (raw: unknown) => void
   removeCustomKey: (id: string) => void
-  /** 恢复内置键的默认顺序与可见性，保留自定义键。 */
+  removeBuiltinKey: (key: string) => void
+  restoreBuiltinKey: (key: string) => void
+  /** 恢复内置键的默认顺序与可见性（含已删除的内置键），保留自定义键。 */
   resetLayout: () => void
   /** 整体替换（导入配置 / 恢复默认 / 其他窗口同步）。 */
   replace: (raw: unknown) => void
@@ -64,9 +70,12 @@ export const useTerminalShortcutBarStore = create<Store>((set, get) => {
     toggleCollapsed: () => update({ ...pick(get()), collapsed: !get().collapsed }),
     toggleHidden: key => update(toggleShortcutKeyHidden(pick(get()), key)),
     move: (key, delta) => update(moveShortcutKey(pick(get()), key, delta)),
+    reorder: (source, target, position) => update(reorderShortcutKey(pick(get()), source, target, position)),
     saveCustomKey: raw => update(saveCustomKey(pick(get()), raw)),
     removeCustomKey: id => update(removeCustomKey(pick(get()), id)),
-    resetLayout: () => update({ ...defaultShortcutLayout(get().custom), collapsed: get().collapsed }),
+    removeBuiltinKey: key => update(removeBuiltinKey(pick(get()), key)),
+    restoreBuiltinKey: key => update(restoreBuiltinKey(pick(get()), key)),
+    resetLayout: () => update({ ...defaultShortcutLayout(get().custom), removed: [], collapsed: get().collapsed }),
     replace: raw => update(parseShortcutBarState(raw)),
   }
 })
