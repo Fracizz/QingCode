@@ -79,6 +79,18 @@ impl PathAllowlist {
         granted
     }
 
+    /// 只授权已存在的普通文件（跟随符号链接判断），目录一律不授权：
+    /// 终端里一次点击不能放开整棵目录树。返回是否已授权。
+    pub fn authorize_existing_file(&self, path: &str) -> Option<PathBuf> {
+        let buf = PathBuf::from(path);
+        if !is_grantable_path(&buf) || !fs::metadata(&buf).is_ok_and(|meta| meta.is_file()) {
+            return None;
+        }
+        self.authorize_paths(vec![path.to_string()])
+            .into_iter()
+            .next()
+    }
+
     pub fn ensure_allowed(&self, path: &str) -> Result<(), String> {
         let state = self
             .inner
@@ -372,6 +384,22 @@ pub fn authorize_paths(
             .map_err(|error| format!("无法授权本地资源 {}: {error}", display_path(&path)))?;
     }
     Ok(())
+}
+
+/// 终端 Ctrl+点击项目外的文件路径：文件存在且是普通文件时授权，返回是否授权成功。
+#[tauri::command]
+pub fn authorize_existing_file(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let Some(granted) = allowlist.authorize_existing_file(&path) else {
+        return Ok(false);
+    };
+    app.asset_protocol_scope()
+        .allow_file(&granted)
+        .map_err(|error| format!("无法授权本地资源 {}: {error}", display_path(&granted)))?;
+    Ok(true)
 }
 
 /// Build a test allowlist state (unit tests only).
@@ -694,5 +722,39 @@ mod tests {
         };
         let err = allowlist.ensure_allowed(probe).unwrap_err();
         assert!(err.contains("未经授权") || err.contains("不在"), "{err}");
+    }
+
+    #[test]
+    fn authorize_existing_file_grants_files_but_not_directories_or_missing_paths() {
+        let base = temp_base("auth-existing");
+        let dir = base.join("outside");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("report.html");
+        fs::write(&file, "ok").unwrap();
+        let sibling = dir.join("secret.txt");
+        fs::write(&sibling, "no").unwrap();
+        let allowlist = PathAllowlist::new();
+
+        assert!(allowlist
+            .authorize_existing_file(&dir.to_string_lossy())
+            .is_none());
+        assert!(allowlist
+            .authorize_existing_file(&dir.join("missing.txt").to_string_lossy())
+            .is_none());
+        assert!(allowlist.authorize_existing_file("relative.txt").is_none());
+        assert!(allowlist
+            .ensure_allowed(&sibling.to_string_lossy())
+            .is_err());
+
+        assert!(allowlist
+            .authorize_existing_file(&file.to_string_lossy())
+            .is_some());
+        assert!(allowlist.ensure_allowed(&file.to_string_lossy()).is_ok());
+        // 只授权这一个文件，同目录其它文件仍不可访问。
+        assert!(allowlist
+            .ensure_allowed(&sibling.to_string_lossy())
+            .is_err());
+
+        fs::remove_dir_all(base).unwrap();
     }
 }

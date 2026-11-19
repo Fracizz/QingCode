@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   findTerminalFileLinks,
+  isTerminalPathUnderRoot,
   parseTerminalHyperlink,
   terminalBufferFileLinks,
   terminalFileCandidates,
@@ -29,6 +30,11 @@ describe('findTerminalFileLinks', () => {
     ['app/[id]/(group)/page.tsx', 'app/[id]/(group)/page.tsx', undefined, undefined],
     ['read @src/a.ts#L5', 'src/a.ts', 5, undefined],
     ['+++ b/src/a.ts', 'b/src/a.ts', undefined, undefined],
+    ['完整文件在 %TEMP%\\emop_report_2026-11-13.html。', '%TEMP%\\emop_report_2026-11-13.html', undefined, undefined],
+    ['$env:LOCALAPPDATA\\app\\log.txt:3', '$env:LOCALAPPDATA\\app\\log.txt', 3, undefined],
+    ['${HOME}/notes/a.md', '${HOME}/notes/a.md', undefined, undefined],
+    ['see ~/.bashrc', '~/.bashrc', undefined, undefined],
+    ['Bash(S=/c/Users/me/bin/sshctl.exe; cd x)', '/c/Users/me/bin/sshctl.exe', undefined, undefined],
   ])('recognizes %s', (text, path, line, column) => {
     expect(found(text)).toEqual([{ path, line, column }])
   })
@@ -129,6 +135,57 @@ describe('terminalFileCandidates', () => {
 
   it('does not map POSIX paths onto a local Windows project', () => {
     expect(terminalFileCandidates('/usr/lib/a.py', { root: 'D:\\code\\app' })).toEqual([])
+  })
+
+  it.each([
+    ['/c/Users/me/bin/sshctl.exe', 'C:\\Users\\me\\bin\\sshctl.exe'],
+    ['/cygdrive/d/code/app/a.ts', 'D:\\code\\app\\a.ts'],
+    ['/mnt/e/logs/x.log', 'E:\\logs\\x.log'],
+  ])('maps Git Bash drive path %s onto a local Windows project', (raw, expected) => {
+    expect(terminalFileCandidates(raw, { root: 'D:\\code\\app' })).toEqual([expected])
+  })
+
+  it('keeps /mnt/c inside the WSL distribution for WSL projects', () => {
+    expect(
+      terminalFileCandidates('/mnt/c/a.ts', { root: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app' }),
+    ).toEqual(['\\\\wsl.localhost\\Ubuntu\\mnt\\c\\a.ts'])
+  })
+
+  const env = {
+    TEMP: 'C:\\Users\\me\\AppData\\Local\\Temp\\',
+    HOME: 'C:\\Users\\me',
+    LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+  }
+
+  it.each([
+    ['%TEMP%\\emop.html', 'C:\\Users\\me\\AppData\\Local\\Temp\\emop.html'],
+    ['%temp%\\emop.html', 'C:\\Users\\me\\AppData\\Local\\Temp\\emop.html'],
+    ['$env:LocalAppData\\app\\log.txt', 'C:\\Users\\me\\AppData\\Local\\app\\log.txt'],
+    ['~/.bashrc', 'C:\\Users\\me\\.bashrc'],
+    ['$HOME/a/../b.ts', 'C:\\Users\\me\\b.ts'],
+  ])('expands %s with local path variables', (raw, expected) => {
+    expect(terminalFileCandidates(raw, { root: 'D:\\code\\app', env })).toEqual([expected])
+  })
+
+  it('expands home on a local POSIX project', () => {
+    expect(terminalFileCandidates('~/w/a.ts', { root: '/home/me/w', env: { HOME: '/home/me' } })).toEqual([
+      '/home/me/w/a.ts',
+    ])
+  })
+
+  it('does not expand unknown variables or variables in remote projects', () => {
+    expect(terminalFileCandidates('%PROGRAMDATA%\\a.txt', { root: 'D:\\code\\app', env })).toEqual([])
+    expect(terminalFileCandidates('%TEMP%\\a.txt', { root: 'D:\\code\\app' })).toEqual([])
+    expect(terminalFileCandidates('~/a.ts', { root: 'ssh://conn/home/me', env: { HOME: '/home/me' } })).toEqual([])
+    expect(
+      terminalFileCandidates('~/a.ts', { root: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app', env }),
+    ).toEqual([])
+  })
+
+  it('tells whether a candidate is under the project root', () => {
+    expect(isTerminalPathUnderRoot('D:\\code\\app\\a.ts', 'D:\\code\\app')).toBe(true)
+    expect(isTerminalPathUnderRoot('D:\\code\\app\\..\\x.ts', 'D:\\code\\app')).toBe(false)
+    expect(isTerminalPathUnderRoot('C:\\Users\\me\\a.ts', 'D:\\code\\app')).toBe(false)
   })
 
   it('does not map Windows paths onto a local POSIX project', () => {

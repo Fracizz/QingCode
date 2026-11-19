@@ -939,6 +939,7 @@ pub fn run() {
             path_guard::sync_project_roots,
             path_guard::sync_trusted_roots,
             path_guard::authorize_paths,
+            path_guard::authorize_existing_file,
             git_status::get_git_head,
             git_status::get_git_workdir_status,
             git_status::git_show_head_file,

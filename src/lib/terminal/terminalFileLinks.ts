@@ -29,12 +29,19 @@ const MAX_LINE_CHARS = 8192
 const WORD = String.raw`[\p{L}\p{N}_.~@+$-]`
 // `[id]`、`(group)` 是 Next.js 等框架的目录名；逐字符交替，避免嵌套量词回溯。
 const SEGMENT = String.raw`(?:${WORD}|\[${WORD}*\]|\(${WORD}*\))+`
+/** 环境变量 / 家目录开头：`%TEMP%\`、`$env:TEMP\`、`${HOME}/`、`$HOME/`、`~/`。 */
+const VARIABLE_PREFIX = String.raw`(?:%([A-Za-z_]\w*)%|\$[Ee][Nn][Vv]:([A-Za-z_]\w*)|\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|(~))[\\/]`
+const VARIABLE_PREFIX_RE = new RegExp(String.raw`^${VARIABLE_PREFIX}`)
+const NON_CAPTURING_VARIABLE_PREFIX = VARIABLE_PREFIX.replace(/\((?!\?)/g, '(?:')
 const PATH_RE = new RegExp(
-  String.raw`(?:[A-Za-z]:[\\/]+|\.{1,2}[\\/]+|[\\/]+)?${SEGMENT}(?:[\\/]+${SEGMENT})*`,
+  String.raw`(?:${NON_CAPTURING_VARIABLE_PREFIX}[\\/]*|[A-Za-z]:[\\/]+|\.{1,2}[\\/]+|[\\/]+)?${SEGMENT}(?:[\\/]+${SEGMENT})*`,
   'gu',
 )
-/** 带空格的路径只认引号内以绝对路径或 ./ ../ 开头的，否则会把整句话当成路径。 */
-const QUOTED_PATH_RE = /(["'`])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])[^"'`\r\n]*)\1/g
+/** 带空格的路径只认引号内以绝对路径、变量或 ./ ../ 开头的，否则会把整句话当成路径。 */
+const QUOTED_PATH_RE = new RegExp(
+  String.raw`(["'\x60])((?:${NON_CAPTURING_VARIABLE_PREFIX}|[A-Za-z]:[\\/]|\.{0,2}[\\/])[^"'\x60\r\n]*)\1`,
+  'g',
+)
 const URL_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]+/gi
 
 const LOCATION_PATTERNS = [
@@ -215,11 +222,36 @@ function absoluteInProjectDomain(raw: string, root: PathParts): PathParts | null
     return { prefix: root.prefix, parts, sep: root.sep }
   }
   if (root.prefix) {
-    // 本机 Windows：`/usr/bin/x` 这样的路径来自 WSL 或 Git Bash，不做跨系统映射。
-    if (!isDrive && !isUnc) return null
-    return { ...splitPath(raw), sep: root.sep }
+    // 本机 Windows：`/c/x` 一定指本机盘符；`/usr/bin/x` 来自 WSL 或 Git Bash 内部，不做跨系统映射。
+    const drive = isDrive || isUnc ? raw : msysDrivePath(raw)
+    if (!drive) return null
+    return { ...splitPath(drive), sep: root.sep }
   }
   return isDrive || isUnc ? null : { prefix: '', parts, sep: '/' }
+}
+
+/** 本机 Windows 上 Git Bash / Cygwin / WSL 写法的盘符路径：`/c/x`、`/cygdrive/c/x`、`/mnt/c/x`。 */
+function msysDrivePath(raw: string): string | null {
+  const match = /^\/(?:cygdrive\/|mnt\/)?([A-Za-z])\/(.*)$/.exec(raw)
+  return match ? `${match[1]!.toUpperCase()}:\\${match[2]!}` : null
+}
+
+/** 拆出路径开头的环境变量；`~` 记作 HOME，变量名统一大写（Windows 不区分大小写）。 */
+export function terminalPathVariable(rawPath: string): { name: string; rest: string } | null {
+  const match = VARIABLE_PREFIX_RE.exec(rawPath)
+  if (!match) return null
+  const name = match.slice(1).find(Boolean)!
+  return { name: name === '~' ? 'HOME' : name.toUpperCase(), rest: rawPath.slice(match[0].length) }
+}
+
+/** 变量值只对本机终端有意义：SSH / WSL 里的同名变量指向另一台机器或另一个系统。 */
+function expandPathVariable(rawPath: string, root: PathParts, env: TerminalPathEnv | undefined) {
+  const variable = terminalPathVariable(rawPath)
+  if (!variable) return rawPath
+  if (root.prefix.startsWith('ssh://') || /^(?:wsl:|[\\/]{2}wsl)/i.test(root.prefix)) return null
+  const value = env?.[variable.name]
+  if (!value || !/^(?:[A-Za-z]:)?[\\/]/.test(value)) return null
+  return `${value.replace(/[\\/]+$/, '')}/${variable.rest}`
 }
 
 /** 处理 `.` 和 `..`；越过根目录返回 null。 */
@@ -247,12 +279,24 @@ function isUnderRoot(path: PathParts, root: PathParts) {
   })
 }
 
+/** 本机路径类环境变量（键为大写变量名），用于展开 `%TEMP%\a.html`、`~/a.ts`。 */
+export type TerminalPathEnv = Readonly<Record<string, string | undefined>>
+
+/** 候选路径是否在项目根目录内（项目外的本机文件需要单独授权）。 */
+export function isTerminalPathUnderRoot(path: string, root: string): boolean {
+  const target = splitPath(path)
+  const parts = collapseSegments(target.parts)
+  return !!parts && isUnderRoot({ ...target, parts }, splitPath(root))
+}
+
 /** 解析成候选的编辑器路径，按优先级排列。SSH 项目的结果都在项目根目录内。 */
 export function terminalFileCandidates(
-  rawPath: string,
-  context: { root: string; cwd?: string; projectName?: string },
+  originalPath: string,
+  context: { root: string; cwd?: string; projectName?: string; env?: TerminalPathEnv },
 ): string[] {
   const root = splitPath(context.root)
+  const rawPath = expandPathVariable(originalPath, root, context.env)
+  if (rawPath === null) return []
   const isSsh = root.prefix.startsWith('ssh://')
   const rawParts = rawPath.split(/[\\/]+/).filter(Boolean)
   const isAbsolute = /^(?:[A-Za-z]:)?[\\/]/.test(rawPath)
@@ -290,7 +334,7 @@ export function terminalFileCandidates(
 
 /** 项目内搜索用的文件名；绝对路径含义明确，指向的文件不存在就是不存在，不做搜索。 */
 export function terminalFileSearchName(rawPath: string): string | null {
-  if (/^(?:[A-Za-z]:)?[\\/]/.test(rawPath)) return null
+  if (/^(?:[A-Za-z]:)?[\\/]/.test(rawPath) || terminalPathVariable(rawPath)) return null
   const name = rawPath.split(/[\\/]+/).filter(Boolean).pop()
   return name && name !== '.' && name !== '..' ? name : null
 }

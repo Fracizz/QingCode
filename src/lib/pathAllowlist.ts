@@ -16,6 +16,15 @@ export async function authorizePaths(paths: string[]): Promise<void> {
   await safeInvoke('授权路径', 'authorize_paths', { paths })
 }
 
+/**
+ * 授权项目外的单个已存在普通文件（终端里 Ctrl+点击路径）。目录和不存在的路径不授权，
+ * 返回是否授权成功；没有后端时返回 false。
+ */
+export async function authorizeExistingFile(path: string): Promise<boolean> {
+  if (!hasBackend()) return false
+  return safeInvoke<boolean>('授权文件', 'authorize_existing_file', { path })
+}
+
 export async function syncRootsFromProjects(
   projects: Array<{ path: string }>,
 ): Promise<void> {

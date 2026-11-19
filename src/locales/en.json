@@ -1979,6 +1979,8 @@
     "打开外部链接？": "Open external link?",
     "终端程序提供的链接文字与实际地址不同，请确认后再打开。": "The link text provided by the terminal program differs from its actual address. Confirm before opening it.",
     "打开链接": "Open Link",
+    "打开项目外的文件？": "Open a file outside the project?",
+    "终端程序提供的链接指向当前项目之外的文件，请确认后再打开。": "The link provided by the terminal program points to a file outside the current project. Confirm before opening it.",
     "不支持打开此类链接：{url}": "This type of link cannot be opened: {url}",
     "终端 › 集成: 标签运行状态": "Terminal › Integrated: Tab Activity Status",
     "在终端标签上显示「运行中」呼吸点：程序标题在转圈，或持续输出约 1 秒以上时亮起，停止约 3 秒后熄灭。由输出事件驱动，不轮询进程；不出声的长命令（如静默编译）不会亮。": "Show a pulsing dot on terminal tabs while the program is working: it lights up when the title shows a spinner or output keeps flowing for about 1 second, and goes out about 3 seconds after it stops. Driven by output events without polling processes; silent long-running commands (such as quiet builds) do not light it.",

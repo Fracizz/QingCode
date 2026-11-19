@@ -3,6 +3,8 @@ import { matchTerminalFileHits, terminalFileSearchName } from './terminalFileLin
 import { openTerminalFile } from './terminalLinkActions'
 import { getFileStat } from '../fileIpc'
 import { searchFiles } from '../searchFiles'
+import { authorizeExistingFile } from '../pathAllowlist'
+import { confirmDialog } from '../../store/confirmStore'
 
 const { openFile, openPalette, pushToast } = vi.hoisted(() => ({
   openFile: vi.fn(),
@@ -13,6 +15,13 @@ const { openFile, openPalette, pushToast } = vi.hoisted(() => ({
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 vi.mock('../fileIpc', () => ({ getFileStat: vi.fn() }))
 vi.mock('../searchFiles', () => ({ searchFiles: vi.fn() }))
+vi.mock('../pathAllowlist', () => ({ authorizeExistingFile: vi.fn(async () => false) }))
+vi.mock('@tauri-apps/api/path', () => ({
+  homeDir: vi.fn(async () => 'C:\\Users\\me'),
+  tempDir: vi.fn(async () => 'C:\\Users\\me\\AppData\\Local\\Temp\\'),
+  dataDir: vi.fn(async () => 'C:\\Users\\me\\AppData\\Roaming'),
+  localDataDir: vi.fn(async () => 'C:\\Users\\me\\AppData\\Local'),
+}))
 vi.mock('../excludeSettings', () => ({
   loadExcludeSettingsForProject: vi.fn(async () => ({ searchExclude: [], useIgnoreFiles: true, followSymlinks: false })),
 }))
@@ -132,5 +141,48 @@ describe('openTerminalFile project search', () => {
     await earlier
     expect(openFile).toHaveBeenCalledOnce()
     expect(openFile).toHaveBeenCalledWith('D:\\code\\app\\src\\fast.py', undefined, undefined)
+  })
+})
+
+describe('openTerminalFile outside the project', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getFileStat).mockRejectedValue(new Error('not allowed'))
+    vi.mocked(authorizeExistingFile).mockResolvedValue(false)
+  })
+
+  it('expands %TEMP% and authorizes the existing file before opening it', async () => {
+    vi.mocked(authorizeExistingFile).mockResolvedValue(true)
+    await openTerminalFile('t1', { path: '%TEMP%\\emop_report.html' })
+    const expected = 'C:\\Users\\me\\AppData\\Local\\Temp\\emop_report.html'
+    expect(authorizeExistingFile).toHaveBeenCalledWith(expected)
+    expect(openFile).toHaveBeenCalledWith(expected, undefined, undefined)
+    expect(searchFiles).not.toHaveBeenCalled()
+  })
+
+  it('opens Git Bash drive paths as local Windows files', async () => {
+    vi.mocked(authorizeExistingFile).mockResolvedValue(true)
+    await openTerminalFile('t1', { path: '/c/Users/me/bin/sshctl.exe' })
+    expect(openFile).toHaveBeenCalledWith('C:\\Users\\me\\bin\\sshctl.exe', undefined, undefined)
+  })
+
+  it('never authorizes paths inside the project root', async () => {
+    found([])
+    await openTerminalFile('t1', { path: 'missing.py' })
+    expect(authorizeExistingFile).not.toHaveBeenCalled()
+  })
+
+  it('reports a missing outside file with the original spelling', async () => {
+    await openTerminalFile('t1', { path: '%TEMP%\\gone.html' })
+    expect(openFile).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalledWith('error', '未找到文件：%TEMP%\\gone.html')
+  })
+
+  it('asks before authorizing a hidden OSC 8 target outside the project', async () => {
+    vi.mocked(confirmDialog).mockResolvedValue(false)
+    await openTerminalFile('t1', { path: 'C:\\Users\\me\\a.txt' }, { confirmOutsideProject: true })
+    expect(confirmDialog).toHaveBeenCalledOnce()
+    expect(authorizeExistingFile).not.toHaveBeenCalled()
+    expect(openFile).not.toHaveBeenCalled()
   })
 })
