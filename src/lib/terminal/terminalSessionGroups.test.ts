@@ -6,6 +6,8 @@ import {
   groupTerminalSessionsByHost,
   parseTerminalListGroupBy,
   parseCollapsedProjects,
+  parseTerminalHostOrder,
+  terminalHostOrderAfterMove,
   terminalProjectMove,
   terminalProjectSourceParts,
   terminalProjectSources,
@@ -242,6 +244,35 @@ describe('groupTerminalSessionsByHost', () => {
     expect(groupTerminalSessionsByHost(groups, connections, translate, running).map(item => item.key)).toEqual([
       'ssh:c1', 'local', 'wsl:ubuntu',
     ])
+  })
+
+  it('follows the saved host order and leaves unlisted hosts after it in default order', () => {
+    const groups = [
+      { project: project('remote', { kind: 'ssh', path: 'ssh://c1/srv/a', connection_id: 'c1' }), terminals: [terminal('1', 'remote')] },
+      { project: project('wsl', { kind: 'wsl', path: '\\\\wsl.localhost\\Ubuntu\\home\\a' }), terminals: [] },
+      { project: project('local'), terminals: [] },
+    ]
+    const keys = (order: string[], running?: (item: TerminalTab) => boolean) =>
+      groupTerminalSessionsByHost(groups, connections, translate, running, order).map(item => item.key)
+    expect(keys(['wsl:ubuntu', 'local', 'ssh:c1'])).toEqual(['wsl:ubuntu', 'local', 'ssh:c1'])
+    expect(keys(['wsl:ubuntu', 'gone'])).toEqual(['wsl:ubuntu', 'local', 'ssh:c1'])
+    // 运行中优先仍然压过保存的顺序，只影响显示。
+    expect(keys(['wsl:ubuntu', 'local', 'ssh:c1'], item => item.id === '1')).toEqual(['ssh:c1', 'wsl:ubuntu', 'local'])
+  })
+
+  it('computes the host order after a drag', () => {
+    const hosts = ['local', 'ssh:a', 'ssh:b']
+    expect(terminalHostOrderAfterMove(hosts, 'ssh:b', 'local', 'before')).toEqual(['ssh:b', 'local', 'ssh:a'])
+    expect(terminalHostOrderAfterMove(hosts, 'local', 'ssh:b', 'after')).toEqual(['ssh:a', 'ssh:b', 'local'])
+    expect(terminalHostOrderAfterMove(hosts, 'local', 'ssh:a', 'before')).toBeNull()
+    expect(terminalHostOrderAfterMove(hosts, 'missing', 'ssh:a', 'before')).toBeNull()
+  })
+
+  it('parses the saved host order and ignores corrupt data', () => {
+    expect(parseTerminalHostOrder('["ssh:a","local",3]')).toEqual(['ssh:a', 'local'])
+    expect(parseTerminalHostOrder('{oops')).toEqual([])
+    expect(parseTerminalHostOrder('{"a":1}')).toEqual([])
+    expect(parseTerminalHostOrder(null)).toEqual([])
   })
 
   it('splits the source from the parent folder that tells same-name projects apart', () => {

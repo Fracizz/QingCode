@@ -7,6 +7,8 @@ import type { Project, SshConnection, TerminalTab } from '../../types'
 export const TERMINAL_LIST_COLLAPSED_KEY = 'qingcode:terminal-list-collapsed'
 export const TERMINAL_LIST_COLLAPSED_HOSTS_KEY = 'qingcode:terminal-list-collapsed-hosts'
 export const TERMINAL_LIST_GROUP_BY_KEY = 'qingcode:terminal-list-group-by'
+/** 「按主机分组」时用户拖出来的主机顺序（来源键列表），只保存在本机。 */
+export const TERMINAL_LIST_HOST_ORDER_KEY = 'qingcode:terminal-list-host-order'
 
 /** 列表分组方式：按项目平铺，或先按主机（本机 / WSL / SSH 连接）再按项目。 */
 export type TerminalListGroupBy = 'project' | 'host'
@@ -77,7 +79,8 @@ export interface TerminalHostSection {
 }
 
 /**
- * 「按主机分组」视图：本机排最前，其余主机按首次出现的项目顺序；主机内保持原项目顺序。
+ * 「按主机分组」视图：默认本机排最前，其余主机按首次出现的项目顺序；主机内保持原项目顺序。
+ * 传入 hostOrder（用户拖出来的顺序）时，其中列出的主机按该顺序排，没列出的（如新加的连接）排在后面并保持默认顺序。
  * 只重新编排已经筛选好的分组，不改变搜索、来源筛选和排序的结果。
  * 传入 running（「运行中优先」）时，有运行中终端的主机整体排到最前，彼此仍保持上述顺序。
  */
@@ -86,6 +89,7 @@ export function groupTerminalSessionsByHost(
   connections: ReadonlyArray<SshConnection>,
   translate: Translate,
   running?: (terminal: TerminalTab) => boolean,
+  hostOrder: readonly string[] = [],
 ): TerminalHostSection[] {
   const sections = new Map<string, TerminalHostSection>()
   for (const group of groups) {
@@ -105,7 +109,12 @@ export function groupTerminalSessionsByHost(
     section.terminalCount += group.terminals.length
   }
   const ordered = [...sections.values()]
-  const result = [...ordered.filter(item => item.kind === 'local'), ...ordered.filter(item => item.kind !== 'local')]
+  const byDefault = [...ordered.filter(item => item.kind === 'local'), ...ordered.filter(item => item.kind !== 'local')]
+  const rank = (section: TerminalHostSection) => {
+    const index = hostOrder.indexOf(section.key)
+    return index < 0 ? hostOrder.length : index
+  }
+  const result = byDefault.sort((a, b) => rank(a) - rank(b))
   if (!running) return result
   const hot = (section: TerminalHostSection) => Number(section.groups.some(group => group.terminals.some(running)))
   return result.sort((a, b) => hot(b) - hot(a))
@@ -206,6 +215,38 @@ export function terminalProjectMove(
     position === 'before' ? targetIndex : targetIndex + 1,
   )
   return toIndex === fromIndex ? null : { fromIndex, toIndex }
+}
+
+/**
+ * 主机拖到另一个主机前 / 后之后的完整顺序；hostKeys 是当前显示的全部主机（已按保存的顺序排好）。
+ * 位置没有变化时返回 null。
+ */
+export function terminalHostOrderAfterMove(
+  hostKeys: readonly string[],
+  sourceKey: string,
+  targetKey: string,
+  position: 'before' | 'after',
+): string[] | null {
+  const fromIndex = hostKeys.indexOf(sourceKey)
+  const targetIndex = hostKeys.indexOf(targetKey)
+  if (fromIndex < 0 || targetIndex < 0 || sourceKey === targetKey) return null
+  const toIndex = insertIndexToReorderTarget(fromIndex, position === 'before' ? targetIndex : targetIndex + 1)
+  if (toIndex === fromIndex) return null
+  const next = [...hostKeys]
+  next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, sourceKey)
+  return next
+}
+
+/** 读出保存的主机顺序；数据损坏时当作没有自定义顺序。 */
+export function parseTerminalHostOrder(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const value: unknown = JSON.parse(raw)
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 function projectSource(

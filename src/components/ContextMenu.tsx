@@ -265,7 +265,7 @@ export default function ContextMenu({
                 {item.shortcut ? (
                   <span className="ml-5 text-ui-xs text-fg-dim">{item.shortcut}</span>
                 ) : item.hint ? (
-                  <span className="ml-5 whitespace-nowrap text-ui-xs text-fg-dim">{item.hint}</span>
+                  <span className="ml-5 whitespace-nowrap text-ui-xs tabular-nums text-fg-dim">{item.hint}</span>
                 ) : null}
               </button>
             </div>

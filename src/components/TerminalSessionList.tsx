@@ -67,6 +67,9 @@ import {
   TERMINAL_LIST_COLLAPSED_HOSTS_KEY,
   TERMINAL_LIST_COLLAPSED_KEY,
   TERMINAL_LIST_GROUP_BY_KEY,
+  TERMINAL_LIST_HOST_ORDER_KEY,
+  parseTerminalHostOrder,
+  terminalHostOrderAfterMove,
   terminalProjectMove,
   terminalProjectScopeKey,
   terminalProjectSourceParts,
@@ -159,6 +162,22 @@ function saveCollapsedSet(key: string, collapsed: ReadonlySet<string>) {
   }
 }
 
+function loadHostOrder(): string[] {
+  try {
+    return parseTerminalHostOrder(localStorage.getItem(TERMINAL_LIST_HOST_ORDER_KEY))
+  } catch {
+    return []
+  }
+}
+
+function saveHostOrder(order: readonly string[]) {
+  try {
+    localStorage.setItem(TERMINAL_LIST_HOST_ORDER_KEY, JSON.stringify(order))
+  } catch {
+    // 主机顺序只是便利项，写不进去时本次会话仍然生效。
+  }
+}
+
 function loadGroupBy(): TerminalListGroupBy {
   try {
     return parseTerminalListGroupBy(localStorage.getItem(TERMINAL_LIST_GROUP_BY_KEY))
@@ -229,6 +248,7 @@ export default function TerminalSessionList() {
   const [collapsedProjects, setCollapsedProjects] = useState(() => loadCollapsedSet(TERMINAL_LIST_COLLAPSED_KEY))
   const [collapsedHosts, setCollapsedHosts] = useState(() => loadCollapsedSet(TERMINAL_LIST_COLLAPSED_HOSTS_KEY))
   const [groupBy, setGroupByState] = useState(loadGroupBy)
+  const [hostOrder, setHostOrder] = useState(loadHostOrder)
   const byHost = groupBy === 'host'
   const [seenProjectId, setSeenProjectId] = useState<string | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ x: number; y: number; projectId: string } | null>(null)
@@ -312,7 +332,11 @@ export default function TerminalSessionList() {
   })
   // 搜索和「运行中优先」下显示的不是保存的顺序，此时拖动的落点没有意义。
   const terminalOrderLocked = searching || runningFirst
-  const hostSections = byHost ? groupTerminalSessionsByHost(groups, sshConnections, translate, runningTerminal) : []
+  const hostSections = byHost
+    ? groupTerminalSessionsByHost(groups, sshConnections, translate, runningTerminal, hostOrder)
+    : []
+  // 主机拖动只在显示的是保存的顺序、且列出了全部主机时可用（与项目拖动的条件一致）。
+  const hostSortable = byHost && !manageMode && !searching && !scopeFiltering && !runningFirst && hostSections.length > 1
   // 搜索时展开命中的主机和分组，否则结果藏在折叠的分组里。
   const isHostExpanded = (hostKey: string) => searching || !collapsedHosts.has(hostKey)
   const isExpanded = (group: TerminalSessionGroup) =>
@@ -397,6 +421,27 @@ export default function TerminalSessionList() {
     onDrop: (sourceId, drop) => {
       const move = terminalProjectMove(projects, sourceId, drop.id, drop.position)
       if (move) void reorderVisibleProjects(move.fromIndex, move.toIndex)
+    },
+  })
+
+  const {
+    draggedId: draggedHostKey,
+    drop: hostDrop,
+    start: startHostDrag,
+  } = useVerticalPointerReorder({
+    targetSelector: '[data-terminal-host-section]',
+    targetIdOf: element => element.dataset.terminalHostSection,
+    ignoreSelector: 'input',
+    listRef,
+    canDrop: (sourceKey, drop) =>
+      terminalHostOrderAfterMove(hostSections.map(section => section.key), sourceKey, drop.id, drop.position) !== null,
+    onDrop: (sourceKey, drop) => {
+      const next = terminalHostOrderAfterMove(hostSections.map(section => section.key), sourceKey, drop.id, drop.position)
+      if (!next) return
+      // 保存时保留当前没显示的主机（如项目暂时移除），它们回来后仍在原来的相对位置附近。
+      const merged = [...next, ...hostOrder.filter(key => !next.includes(key))]
+      setHostOrder(merged)
+      saveHostOrder(merged)
     },
   })
 
@@ -936,14 +981,27 @@ export default function TerminalSessionList() {
         aria-label={label}
         data-terminal-host-section={section.key}
         // 主机之间用细分隔线和上边距分开，组内项目仍沿用 2px 的组间距。
-        className={`flex flex-col gap-0.5 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : ''}`}
+        className={`relative flex flex-col gap-0.5 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : ''} ${
+          draggedHostKey === section.key ? 'opacity-45' : ''
+        }`}
       >
+        {hostDrop?.id === section.key && (
+          <span
+            aria-hidden="true"
+            data-terminal-host-drop={hostDrop.position}
+            className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded bg-brand ${
+              hostDrop.position === 'before' ? '-top-px' : '-bottom-px'
+            }`}
+          />
+        )}
         <button
           type="button"
           aria-expanded={expanded}
           aria-label={translate('展开或收起主机「{name}」', { name: label })}
           aria-disabled={searching || undefined}
           data-terminal-host-header={section.key}
+          data-terminal-host-sortable={hostSortable ? 'true' : undefined}
+          onPointerDown={hostSortable ? event => startHostDrag(event, section.key) : undefined}
           className="flex h-6 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-xs text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
           onClick={() => {
             if (!searching) setHostCollapsed(section.key, expanded)
@@ -1196,7 +1254,9 @@ export default function TerminalSessionList() {
           className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
           onKeyDown={onListKeyDown}
         >
-          <TooltipSuppressionContext value={draggedProjectId !== null || draggedTerminalId !== null}>
+          <TooltipSuppressionContext
+            value={draggedProjectId !== null || draggedTerminalId !== null || draggedHostKey !== null}
+          >
             {byHost ? hostSections.map(renderHostSection) : groups.map(renderGroup)}
           </TooltipSuppressionContext>
           {(searching || scopeFiltering) && groups.length === 0 && (
@@ -1330,18 +1390,21 @@ export default function TerminalSessionList() {
           y={scopeMenu.y}
           items={[
             {
-              label: translate('全部 {n}', { n: totalTerminals }),
+              label: translate('全部'),
+              hint: String(totalTerminals),
               checked: activeScope === 'all',
               action: () => setScopeFilter('all'),
             },
             {
-              label: translate('本地 {n}', { n: localCount }),
+              label: translate('本地'),
+              hint: String(localCount),
               checked: activeScope === 'local',
               action: () => setScopeFilter('local'),
             },
             // 远程连接直接展开成并列项，不再套一层「全部远程」。
             ...remoteScopes.map(option => ({
-              label: `${option.label} ${option.count}`,
+              label: option.label,
+              hint: String(option.count),
               checked: activeScope === option.key,
               action: () => setScopeFilter(option.key),
             })),

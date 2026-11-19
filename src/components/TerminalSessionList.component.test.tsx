@@ -285,6 +285,43 @@ describe('TerminalSessionList', () => {
       expect(document.activeElement).toBe(row('st'))
     })
 
+    it('drags a host header to reorder hosts and remembers the order', () => {
+      localStorage.setItem('qingcode:terminal-list-group-by', 'host')
+      const { unmount } = render(<TerminalSessionList />)
+      layOut(host, { local: [0, 100], 'wsl:ubuntu': [110, 160], 'ssh:conn-1': [170, 220] })
+      const handle = host('ssh:conn-1').querySelector('[data-terminal-host-header]') as HTMLElement
+      dragFrom(handle, 5, 200)
+      expect(host('ssh:conn-1').className).toContain('opacity-45')
+      expect(host('local').querySelector('[data-terminal-host-drop="before"]')).not.toBeNull()
+      release()
+      const keys = () =>
+        [...document.querySelectorAll<HTMLElement>('[data-terminal-host-section]')].map(item => item.dataset.terminalHostSection)
+      expect(keys()).toEqual(['ssh:conn-1', 'local', 'wsl:ubuntu'])
+      // 拖动结束不应顺带收起主机。
+      expect(row('st')).not.toBeNull()
+      expect(JSON.parse(localStorage.getItem('qingcode:terminal-list-host-order') ?? '[]')).toEqual([
+        'ssh:conn-1', 'local', 'wsl:ubuntu',
+      ])
+      unmount()
+      render(<TerminalSessionList />)
+      expect(keys()).toEqual(['ssh:conn-1', 'local', 'wsl:ubuntu'])
+    })
+
+    it('turns off host dragging while searching', () => {
+      localStorage.setItem('qingcode:terminal-list-group-by', 'host')
+      render(<TerminalSessionList />)
+      fireEvent.change(screen.getByRole('textbox', { name: '搜索终端、项目或来源' }), { target: { value: 'shell' } })
+      expect(document.querySelector('[data-terminal-host-sortable]')).toBeNull()
+    })
+
+    it('shows source counts in a separate column of the filter menu', () => {
+      render(<TerminalSessionList />)
+      fireEvent.click(screen.getByRole('button', { name: '按来源筛选' }))
+      const local = screen.getByRole('menuitemcheckbox', { name: /^本地/ })
+      expect(within(local).getByText('本地')).toBeInTheDocument()
+      expect(within(local).getByText('1')).toHaveClass('tabular-nums')
+    })
+
     it('opens a collapsed host while searching', () => {
       localStorage.setItem('qingcode:terminal-list-group-by', 'host')
       localStorage.setItem('qingcode:terminal-list-collapsed-hosts', JSON.stringify(['ssh:conn-1']))
