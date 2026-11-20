@@ -523,3 +523,19 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
     daemon.abort();
     Ok(())
 }
+
+#[test]
+fn launch_scripts_never_carry_carriage_returns() {
+    // Windows 检出可能把脚本转成 CRLF；远端 dash 遇到 `\r` 会以 2 退出。
+    for (agent, powershell) in [
+        ("codex", false),
+        ("claude", false),
+        ("opencode", false),
+        ("codex", true),
+        ("opencode", true),
+    ] {
+        let script = launch_script(agent, powershell);
+        assert!(!script.contains('\r'), "{agent} powershell={powershell}");
+        assert!(!script.trim().is_empty());
+    }
+}

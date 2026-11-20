@@ -192,6 +192,19 @@ impl LocalCodexPool {
 /// 远端 daemon 版本过旧、不支持 `pty.claimCwdFile` 时的错误；预热循环据此暂停并提示升级。
 pub(super) const SERVER_OUTDATED: &str = "远端服务需要更新以交付 CLI 工作目录";
 
+/// CLI 启动脚本统一为 LF 换行。Windows 检出（core.autocrlf=true）会把脚本变成 CRLF
+/// 编进二进制；远端 dash 把 `\r` 当作参数的一部分（如 `unset NAME\r` 报
+/// bad variable name），特殊内建失败后以 2 退出，CLI 预热会在启动瞬间结束。
+pub(super) fn launch_script(agent: &str, powershell: bool) -> String {
+    let script = match (agent, powershell) {
+        ("opencode", true) => include_str!("start-opencode.ps1"),
+        ("opencode", false) => include_str!("start-opencode.sh"),
+        (_, true) => include_str!("start-codex.ps1"),
+        (_, false) => include_str!("start-agent.sh"),
+    };
+    script.replace("\r\n", "\n")
+}
+
 pub(super) fn supported(command: &str) -> bool {
     matches!(command, "codex" | "claude" | "opencode")
 }
@@ -621,12 +634,7 @@ pub(super) async fn prepare_at(
     env.insert("QINGCODE_PREWARM_AGENT".into(), agent.into());
     env.insert("QINGCODE_PREWARM_NONCE".into(), nonce.clone());
     env.extend(crate::terminal::terminal_identity_env(&entry.id).map(|(k, v)| (k.into(), v)));
-    let script = match (agent, powershell) {
-        ("opencode", true) => include_str!("start-opencode.ps1"),
-        ("opencode", false) => include_str!("start-opencode.sh"),
-        (_, true) => include_str!("start-codex.ps1"),
-        (_, false) => include_str!("start-agent.sh"),
-    };
+    let script = launch_script(agent, powershell);
     let args = if remote {
         crate::remote_ssh::terminal_cmds::persistent_profile_launch(
             cwd,
@@ -638,7 +646,7 @@ pub(super) async fn prepare_at(
         .args
     } else {
         let mut args = target.launch.args.clone();
-        args.extend(["-NoExit".into(), "-Command".into(), script.into()]);
+        args.extend(["-NoExit".into(), "-Command".into(), script]);
         args
     };
     let shell = if remote && !powershell {
