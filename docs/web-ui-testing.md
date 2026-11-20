@@ -334,6 +334,11 @@ AI 编程按键专项：运行 `node scripts/web-tests/mobile-ai-keys.agent-brow
 
 终端管理分页与批量关闭：同一服务的 `/web-tests/terminal-manager.html` 复用真实 `TerminalManager`、确认框与生产样式，65 个终端仅在内存中模拟，不结束真实进程。Windows/macOS 运行 `scripts/web-tests/terminal-manager.ego.mjs` 的 `run()`，覆盖 30 条分页、跨页全选、取消无副作用、部分失败保留选择及重试、筛选关闭不影响隐藏条目，以及英文浅色窄窗大字号布局；截图和 JSON 位于 `.dev/web-tests/terminal-manager/`。组件单测另行覆盖手机/远端部分失败、已接回远端终端防误杀和异步刷新乱序；这些模拟不能替代真实本机/WSL/SSH 进程验收。
 
+手机终端接回与电脑历史：同时启动 `pnpm test:web` 和 `pnpm dev:web-test`，执行
+`node scripts/web-tests/desktop-mobile-history.agent-browser.mjs`。复用生产终端、终端管理与内存 IPC，
+验证全部接回跳过已结束会话、按桌面实际网格调整尺寸、600 行历史分页和前插锚点、
+返回实时、备用屏交互，以及眼睛预览使用相同游标。结果和截图保存在 `.dev/web-tests/desktop-mobile-history/`。
+
 终端粘贴清理设置：启动 `pnpm test:web` 后运行
 `node scripts/web-tests/terminal-paste-cleanup.agent-browser.mjs`。
 页面 `/web-tests/terminal-paste-cleanup.html` 复用真实终端设置分区、设置读写 hook 和确认弹窗，

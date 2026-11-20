@@ -151,6 +151,7 @@ const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
 const QUICK_FAIL_THRESHOLD_MS = 2000
 
 const ptySpawnInFlight = new Set<string>()
+const mobileViewsOpening = new Set<string>()
 let terminalExitInProgress = false
 const terminalRestartsInFlight = new Set<string>()
 
@@ -550,12 +551,13 @@ interface TerminalState {
   findDetachedTerminals: (
     projectId: string,
   ) => Promise<{ connectionId: string; terminals: SshDetachedTerminal[] } | null>
-  /** 把指定远端终端接回为本项目标签，受每项目终端上限限制。 */
+  /** 把指定远端终端接回为本项目标签，返回成功数量。 */
   attachDetachedTerminals: (
     projectId: string,
     connectionId: string,
     terminals: SshDetachedTerminal[],
-  ) => Promise<void>
+    options?: { background?: boolean },
+  ) => Promise<number>
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
@@ -1145,26 +1147,30 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     projectId: string,
     connectionId: string,
     terminals: SshDetachedTerminal[],
+    { background = false } = {},
   ) => {
-    if (terminalExitInProgress || terminals.length === 0) return
+    if (terminalExitInProgress || terminals.length === 0) return 0
+    const currentTabs = get().terminals
+    const available = terminals.filter(terminal => !currentTabs.some(tab =>
+      tab.ptyId === terminal.ptyId && (!tab.connectionId || tab.connectionId === connectionId),
+    ))
+    if (available.length === 0) return 0
     const capacity = Math.max(
       0,
-      MAX_TERMINALS_PER_PROJECT - get().terminals.filter(t => t.projectId === projectId).length,
+      MAX_TERMINALS_PER_PROJECT - currentTabs.filter(t => t.projectId === projectId).length,
     )
-    const accepted = terminals.slice(0, capacity)
+    const accepted = available.slice(0, capacity)
     if (accepted.length === 0) {
-      useProjectStore
-        .getState()
-        .pushToast(
-          'info',
-          translate('每个项目最多可创建 {count} 个终端', {
-            count: MAX_TERMINALS_PER_PROJECT,
-          }),
-        )
-      return
+      if (!background) {
+        useProjectStore.getState().pushToast('info', translate('每个项目最多可创建 {count} 个终端', {
+          count: MAX_TERMINALS_PER_PROJECT,
+        }))
+      }
+      return 0
     }
 
     const pane = get().terminalFocusPane
+    const isCurrentProject = useProjectStore.getState().currentProject?.id === projectId
     const added: TerminalTab[] = []
     const names = [
       ...get().terminals.filter(tab => tab.projectId === projectId).map(tab => tab.name),
@@ -1193,11 +1199,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
       set(state => ({
         terminals: [...state.terminals, tab],
-        ...bindTerminalToPane(state, projectId, pane, id),
+        ...(background
+          ? bindTerminalInBackground(state, projectId, pane, id, isCurrentProject)
+          : bindTerminalToPane(state, projectId, pane, id)),
       }))
       added.push(tab)
     }
-    useUIStore.getState().openTerminalPanel()
+    if (!background) useUIStore.getState().openTerminalPanel()
     await Promise.all(
       added.map(tab => {
         const terminal = accepted.find(candidate => candidate.ptyId === tab.ptyId)
@@ -1208,12 +1216,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         )
       }),
     )
+    if (background) {
+      // 批量接回失败的临时标签不占住 PTY 身份，让远端列表刷新后仍能重试。
+      for (const tab of added) {
+        const failed = get().terminals.find(terminal => terminal.id === tab.id)
+        if (failed?.status !== 'exited' || !failed.restoreUnavailable) continue
+        set(state => {
+          const terminals = state.terminals.filter(terminal => terminal.id !== failed.id)
+          return { terminals, ...clearClosedFromPanes(state, projectId, pane, terminals) }
+        })
+        disconnectNoticeShown.delete(failed.id)
+        lastPtySize.delete(failed.id)
+        clearTerminalOutput(failed.id)
+      }
+    }
     const recovered = added.filter(tab =>
       get().terminals.some(
         terminal => terminal.id === tab.id && terminal.status === 'running',
       ),
     ).length
-    if (recovered > 0) {
+    if (!background && recovered > 0) {
       useProjectStore
         .getState()
         .pushToast(
@@ -1221,16 +1243,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           translate('已接回 {count} 个远端终端', { count: recovered }),
         )
     }
-    if (accepted.length < terminals.length) {
+    if (!background && accepted.length < available.length) {
       useProjectStore
         .getState()
         .pushToast(
           'info',
           translate('受终端数量上限限制，还有 {count} 个远端终端未接回', {
-            count: terminals.length - accepted.length,
+            count: available.length - accepted.length,
           }),
         )
     }
+    return recovered
   },
 
   syncDetachedTerminals: async (projectId: string) => {
@@ -1534,6 +1557,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   resizeTerminal: async (id: string, cols: number, rows: number) => {
+    const mobile = isMobileTerminalId(id)
+    if (mobile && (mobileViewsOpening.has(id)
+      || !get().terminals.some(tab => tab.id === id && tab.status !== 'exited'))) return
     const size = normalizePtySize(cols, rows)
     if (ptySpawnInFlight.has(id)) {
       deferPtySync(id, { size })
@@ -1548,17 +1574,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       await sendPtySizePaced(id, size)
     } catch (error) {
       // 没下发成功就退回上一次的尺寸，否则同尺寸的重试会被上面的去重吞掉。
-      // 没有上一次（PTY 还没起来）时保留：spawn 会直接按这个尺寸创建。
+      // 普通 PTY 还没启动时保留首个尺寸给 spawn；手机 PTY 已存在，允许重试首个尺寸。
       // 期间若有更新的尺寸写进来，以新的为准。
       const remembered = lastPtySize.get(id)
-      if (previous && remembered?.cols === size.cols && remembered.rows === size.rows) {
-        lastPtySize.set(id, previous)
+      if (remembered?.cols === size.cols && remembered.rows === size.rows) {
+        if (previous) lastPtySize.set(id, previous)
+        else if (mobile) lastPtySize.delete(id)
       }
       console.warn('resize_terminal failed:', error)
     }
   },
 
   redrawTerminal: async (id: string, cols: number, rows: number) => {
+    // 手机终端的首条尺寸请求用来适应电脑，不能用少一行的重绘尺寸。
+    if (isMobileTerminalId(id)) return false
     const tab = get().terminals.find(terminal => terminal.id === id)
     const size = normalizePtySize(cols, rows)
     if (tab && ptySpawnInFlight.has(id)) {
@@ -1956,7 +1985,6 @@ if (typeof window !== 'undefined') {
   })
 }
 
-/** 在电脑标签中打开手机终端，默认只读；已打开时直接返回原标签。 */
 /**
  * 把手机终端打开为电脑标签。`background` 时只加入标签，不抢占正在显示的终端，
  * 便于在终端管理里连续打开多个。
@@ -1985,6 +2013,7 @@ export async function openMobileSessionTab(session: {
   }
   // 先建标签再打开：首屏快照到达时要能找到它。
   const isCurrentProject = useProjectStore.getState().currentProject?.id === tab.projectId
+  mobileViewsOpening.add(tab.id)
   useTerminalStore.setState(current => ({
     terminals: [...current.terminals, tab],
     ...(options.background
@@ -1994,11 +2023,16 @@ export async function openMobileSessionTab(session: {
   try {
     // 共享状态（在线设备、尺寸方、独占）由 Rust 随打开发出的 terminal-control 事件带来。
     await openMobileView(session.id)
-    return tab
   } catch (error) {
     await useTerminalStore.getState().closeTerminal(session.id)
     throw error
+  } finally {
+    mobileViewsOpening.delete(tab.id)
   }
+  // 打开期间视图可能已 fit，后端登记完成后补发；无实测网格的后台标签等视图挂载。
+  const grid = terminalViewGrids.get(tab.id)
+  if (grid) void useTerminalStore.getState().resizeTerminal(tab.id, grid.cols, grid.rows)
+  return tab
 }
 
 /** 此刻显示在界面上的终端：当前项目里各窗格绑定的终端。 */

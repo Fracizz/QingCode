@@ -171,6 +171,53 @@ describe('TerminalManager', () => {
     expect(mocks.uiState.closeTerminalManager).toHaveBeenCalled()
   })
 
+  it('reattaches eligible phone terminals across pages of the current search and reports partial failure', async () => {
+    const phones = Array.from({ length: 34 }, (_, index) => ({
+      id: `mobile-${index + 1}`, number: index + 1,
+      name: index === 33 ? 'other' : `worker ${index + 1}`,
+      exit: index === 32 ? { exitCode: 0 } : null,
+      project: mocks.projectState.projects[index % 2],
+    }))
+    mocks.safeInvoke.mockImplementation(async (_label, command) => command === 'mobile_sessions' ? phones : null)
+    mocks.terminalState.terminals.push(tab('mobile-32', 'b', 'already open'))
+    mocks.openMobileSessionTab.mockImplementation(async session => {
+      if (session.id === 'mobile-31') throw new Error('phone session ended')
+      const opened = tab(session.id, session.project.id, session.name)
+      mocks.terminalState.terminals = [...mocks.terminalState.terminals, opened]
+      return opened
+    })
+
+    render(<TerminalManager />)
+    fireEvent.click(await screen.findByRole('tab', { name: '手机 34' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索名称、项目、设备或状态' }), { target: { value: 'worker' } })
+    expect(screen.getAllByRole('listitem')).toHaveLength(30)
+    fireEvent.click(screen.getByRole('button', { name: '全部接回' }))
+
+    await waitFor(() => expect(mocks.projectState.pushToast).toHaveBeenCalledWith(
+      'warn', '已接回 30 个终端，1 个未接回', 'phone session ended',
+    ))
+    expect(mocks.openMobileSessionTab).toHaveBeenCalledTimes(31)
+    expect(mocks.openMobileSessionTab.mock.calls.map(([session]) => session.id).sort()).toEqual(
+      phones.slice(0, 31).map(session => session.id).sort(),
+    )
+    expect(mocks.projectState.switchProject).not.toHaveBeenCalled()
+    expect(mocks.uiState.closeTerminalManager).not.toHaveBeenCalled()
+  })
+
+  it('reattaches detached remote terminals together in the background', async () => {
+    mocks.projectState.projects.push({ id: 'c', name: 'Remote', path: 'ssh://connection/srv/test' })
+    const terminals = ['pty-1', 'pty-2'].map(ptyId => ({ ptyId, cwd: 'ssh://connection/srv/test' }))
+    mocks.terminalState.findDetachedTerminals.mockResolvedValue({ connectionId: 'connection', terminals })
+    mocks.terminalState.attachDetachedTerminals.mockResolvedValue(2)
+    render(<TerminalManager />)
+    fireEvent.click(await screen.findByRole('tab', { name: '远端未接回 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '全部接回' }))
+    await waitFor(() => expect(mocks.projectState.pushToast).toHaveBeenCalledWith('success', '已接回 2 个终端'))
+    expect(mocks.terminalState.attachDetachedTerminals).toHaveBeenCalledOnce()
+    expect(mocks.terminalState.attachDetachedTerminals).toHaveBeenCalledWith('c', 'connection', terminals, { background: true })
+    expect(mocks.openMobileSessionTab).not.toHaveBeenCalled()
+  })
+
   it('selects project rows on this page while select-all covers every page', async () => {
     mocks.safeInvoke.mockResolvedValue([])
     mocks.terminalState.terminals = Array.from({ length: 65 }, (_, index) => tab(`t${index}`, 'a', `terminal ${index}`))
@@ -347,6 +394,48 @@ describe('TerminalManager', () => {
     selection.removeAllRanges()
     await notify()
     expect(pre.textContent).toBe('早先的输出\n新输出')
+  })
+
+  it('pages from the preview cursor, retries a failed page, and refreshes on returning to latest', async () => {
+    let output = 'live before browsing'
+    let failed = false
+    const original = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation(async (label: string, command: string, args: { before?: number }) => {
+      if (command === 'mobile_session_preview') return {
+        history: ['recent line'], screen: output, historyBefore: 400, historyMore: true,
+      }
+      if (command === 'mobile_session_history') {
+        if (args.before === 400) return { lines: ['older line'], before: 280, more: true }
+        if (!failed) {
+          failed = true
+          throw new Error('temporarily unavailable')
+        }
+        return { lines: ['earliest retained line'], before: 160, more: false, truncated: true }
+      }
+      return original(label, command, args)
+    })
+
+    render(<TerminalManager />)
+    fireEvent.click(await screen.findByLabelText('只读预览：claude'))
+    await screen.findByText(output)
+    expect(mocks.safeInvoke.mock.calls.some(([, command]) => command === 'mobile_session_history')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '查看历史' }))
+    fireEvent.click(screen.getByRole('button', { name: '加载更早输出' }))
+    await screen.findByText('older line')
+    output = 'new live output'
+    expect(screen.queryByText(output)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '加载更早输出' }))
+    await screen.findByRole('alert')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await screen.findByText('earliest retained line')
+    expect(screen.getByRole('region', { name: '终端历史' }).textContent).toContain(
+      'earliest retained line\nolder line\nrecent line\nlive before browsing',
+    )
+    expect(screen.getByText('更早输出已超出缓存')).toBeTruthy()
+    expect(mocks.safeInvoke.mock.calls.filter(([, command]) => command === 'mobile_session_history').map(call => call[2]))
+      .toEqual([400, 280, 280].map(before => ({ id: 'mobile-1', before })))
+    fireEvent.click(screen.getByRole('button', { name: '回到最新' }))
+    await screen.findByText(output)
   })
 
   it('retains failed detached terminals and ends them without attaching', async () => {

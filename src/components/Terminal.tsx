@@ -1,6 +1,7 @@
 import TerminalExitNotice from './TerminalExitNotice'
 import TerminalConnectionNotice from './TerminalConnectionNotice'
 import TerminalControlNotice from './TerminalControlNotice'
+import MobileTerminalHistory from './MobileTerminalHistory'
 import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
 import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
 import {
@@ -17,7 +18,7 @@ import {
   readTerminalCell,
   type TerminalCellSize,
 } from '@/lib/terminal/terminalFollowFit'
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -249,6 +250,26 @@ export default function TerminalView({
   /** 申请或刷新 WebGL 渲染（预算见 terminalWebglBudget）；挂载时由主 effect 赋值。 */
   const ensureWebglRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
+  const historyOpenRef = useRef(false)
+  const restoreHistoryFocus = useRef(false)
+  const [historyScrollUp, setHistoryScrollUp] = useState<number | null>(null)
+  const openMobileHistory = useCallback((scrollUp = 0) => {
+    if (historyOpenRef.current) return
+    historyOpenRef.current = true
+    setHistoryScrollUp(scrollUp)
+  }, [])
+  const closeMobileHistory = useCallback(() => {
+    historyOpenRef.current = false
+    restoreHistoryFocus.current = true
+    setHistoryScrollUp(null)
+  }, [])
+  useLayoutEffect(() => {
+    if (historyScrollUp !== null || !restoreHistoryFocus.current) return
+    // 历史面板卸载、xterm 容器解除 inert 后再接回键盘焦点。
+    restoreHistoryFocus.current = false
+    xtermRef.current?.scrollToBottom()
+    if (isActive) xtermRef.current?.focus()
+  }, [historyScrollUp, isActive])
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -597,6 +618,7 @@ export default function TerminalView({
         },
       },
       find: { label: translate('在终端中查找'), shortcut: 'Ctrl+F', action: openSearch },
+      history: { label: translate('查看历史'), action: () => openMobileHistory() },
       clearInput: { label: translate('清除终端输入'), action: clearInput },
       export: { label: translate('导出终端内容…'), action: exportBuffer },
       clear: { label: translate('清空终端'), shortcut: 'Ctrl+Shift+K', action: clearBuffer },
@@ -605,6 +627,7 @@ export default function TerminalView({
       hasSelection: !!selection,
       canQuote: !!quote && !!xtermRef.current?.modes.bracketedPasteMode,
       writable,
+      canReadHistory: isMobileTerminalId(terminalId),
     }).map(entry => {
       const item: ContextMenuItem = { ...items[entry.id], separatorBefore: entry.separatorBefore }
       if (entry.disabled) item.disabled = true
@@ -617,6 +640,7 @@ export default function TerminalView({
     copySelection,
     exportBuffer,
     isTerminalWritable,
+    openMobileHistory,
     openSearch,
     pasteFromClipboard,
     selectAll,
@@ -673,9 +697,12 @@ export default function TerminalView({
     const term = xtermRef.current
     // next 总是按容器算出的网格：登记给 store，恢复/兜底启动按它接回而不是默认 80x24。
     if (term) setTerminalViewGrid(terminalId, next)
+    const mobile = isMobileTerminalId(terminalId)
+    // 手机终端只上报电脑窗格实测网格，快照与其他设备引发的 xterm resize 不代表本机尺寸。
+    if (mobile) void resizeTerminal(terminalId, next.cols, next.rows)
     // 其他设备是尺寸方时网格跟随对方；电脑窗口的行列只报给后端记下，电脑打字成为尺寸方时再用。
     if (terminalFollowsRemoteGrid(terminalId)) {
-      reportNaturalGrid(next)
+      if (!mobile) reportNaturalGrid(next)
       // 窗口变了，按新窗口重新铺满对方的网格。
       return fitFollowFont()
     }
@@ -694,7 +721,7 @@ export default function TerminalView({
       followBottomUntilRef.current = Date.now() + TERMINAL_RESIZE_FOLLOW_BOTTOM_MS
     }
     return true
-  }, [fitFollowFont, reportNaturalGrid, terminalId])
+  }, [fitFollowFont, reportNaturalGrid, resizeTerminal, terminalId])
 
   const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
@@ -851,7 +878,7 @@ export default function TerminalView({
           if (!keepScrollOnFitRef.current) term.scrollToBottom()
           keepScrollOnFitRef.current = false
         }
-        if (focusAfter && isActiveRef.current) term.focus()
+        if (focusAfter && isActiveRef.current && !historyOpenRef.current) term.focus()
       } catch {}
     },
     [commitGridSize, flushPendingRedraw, readProposedGridSize, spawnPendingTerminal, terminalId]
@@ -1163,6 +1190,19 @@ export default function TerminalView({
     }
     container.addEventListener('wheel', onZoomWheel, { capture: true, passive: false })
 
+    const onHistoryWheel = (event: WheelEvent) => {
+      if (event.deltaY >= 0 || event.shiftKey || event.ctrlKey || event.metaKey
+        || term.buffer.active.type !== 'normal' || term.modes.mouseTrackingMode !== 'none') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      const unit = event.deltaMode === 1 ? (readTerminalCell(term)?.height ?? 16)
+        : event.deltaMode === 2 ? container.clientHeight : 1
+      openMobileHistory(Math.min(-event.deltaY * unit, container.clientHeight))
+    }
+    if (isMobileTerminalId(terminalId)) {
+      container.addEventListener('wheel', onHistoryWheel, { capture: true, passive: false })
+    }
+
     // 其他设备使用期间电脑只读：开了鼠标上报的程序（Claude Code、Codex、opencode）会让 xterm
     // 把滚轮转成发给程序的输入，只读时被丢弃，电脑端就完全无法上翻。这里改为直接滚动本地历史；
     // 全屏程序的备用屏幕没有本地历史，滚轮又不能替对方操作程序，只提示一次。
@@ -1277,6 +1317,7 @@ export default function TerminalView({
     })
 
     term.onResize(({ cols, rows }) => {
+      if (isMobileTerminalId(terminalId)) return
       // 跟随其他设备网格引起的变化不发给 PTY：终端尺寸由尺寸方决定。
       if (terminalFollowsRemoteGrid(terminalId)) return
       // 拖动时合并 ConPTY 整屏刷新；暂停或松手后再发送最新行列。
@@ -1481,7 +1522,7 @@ export default function TerminalView({
           term.scrollToBottom()
           requestedRender = true
         }
-        if (flags.focusAfter && isActiveRef.current) term.focus()
+        if (flags.focusAfter && isActiveRef.current && !historyOpenRef.current) term.focus()
         return requestedRender
       })
       const detail = (event as CustomEvent<PanelResizeSettleDetail>).detail
@@ -1525,6 +1566,7 @@ export default function TerminalView({
       writeFlow.dispose()
       disposeOscHandlers()
       container.removeEventListener('wheel', onZoomWheel, { capture: true })
+      container.removeEventListener('wheel', onHistoryWheel, { capture: true })
       container.removeEventListener('wheel', onReadOnlyWheel, { capture: true })
       if (wheelFrame) window.cancelAnimationFrame(wheelFrame)
       followBottomRender.dispose()
@@ -1563,6 +1605,7 @@ export default function TerminalView({
     flushPendingPtyResize,
     insertTerminalNewline,
     isTerminalWritable,
+    openMobileHistory,
     openSearch,
     pasteFromClipboard,
     resizeGridFromContainer,
@@ -1804,7 +1847,7 @@ export default function TerminalView({
   return (
     <div
       {...{ [TERMINAL_DROP_ATTR]: terminalId }}
-      className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border"
+      className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border"
       onMouseDown={() => {
         if (isActive) xtermRef.current?.focus()
       }}
@@ -1841,7 +1884,7 @@ export default function TerminalView({
             matchTotal={searchMatchTotal}
           />
         ) : null}
-        <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
+        <div ref={containerRef} inert={historyScrollUp !== null} className="h-full w-full min-h-0 min-w-0" />
         <TerminalControlNotice terminalId={terminalId} offsetForSearch={searchOpen} />
         <TerminalConnectionNotice terminalId={terminalId} offsetForSearch={searchOpen} belowControl={hasControl} />
         {shortcutBarCollapsed && <TerminalShortcutBarExpand />}
@@ -1864,6 +1907,21 @@ export default function TerminalView({
             catch (error) { useProjectStore.getState().pushToast('error', String(error)) }
           }}
         />
+      )}
+      {historyScrollUp !== null && (
+        <div className="absolute inset-0 z-20 flex min-h-0 flex-col"
+          onKeyDown={event => {
+            if (event.key !== 'Escape') return
+            event.stopPropagation()
+            closeMobileHistory()
+          }}>
+          <MobileTerminalHistory
+            id={terminalId}
+            scrollUp={historyScrollUp}
+            style={{ fontFamily: getResolvedTerminalFont(), fontSize: getResolvedTerminalFontSize() }}
+            onReturn={closeMobileHistory}
+          />
+        </div>
       )}
       {contextMenu && (
         <ContextMenu

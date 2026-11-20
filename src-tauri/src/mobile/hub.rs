@@ -443,6 +443,26 @@ impl Hub {
         session.sharing.size_owner == Controller::Desktop
     }
 
+    /// 手机终端在电脑打开后，第一次拿到电脑的实测网格时切换尺寸方。
+    pub(super) fn desktop_view_resize(&self, id: &str, cols: u16, rows: u16) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(session) = inner.sessions.get_mut(id) else {
+            return false;
+        };
+        let Some(view) = session.view.as_mut() else {
+            return false;
+        };
+        let sharing = &mut session.sharing;
+        if std::mem::take(&mut view.fit_desktop)
+            && !sharing.size_locked
+            && sharing.check_writable(&Controller::Desktop).is_ok()
+        {
+            sharing.size_owner = Controller::Desktop;
+        }
+        sharing.request_size(Controller::Desktop, cols, rows);
+        sharing.size_owner == Controller::Desktop && session.screen.size() != (cols, rows)
+    }
+
     /// 接入终端并登记在线。`take` 为 true 时抢下独占（旧版手机的「接管」）；
     /// `observe` 选择只读旁观或可输入，None 沿用之前的选择。
     #[cfg(test)]
@@ -863,6 +883,9 @@ impl Hub {
             .get(id)
             .filter(|session| session.ready)
             .ok_or("终端不存在。")?;
+        if session.exit.is_some() {
+            return Err("终端已结束。".into());
+        }
         let (cols, rows) = session.screen.size();
         let holder = session
             .sharing
@@ -881,6 +904,7 @@ impl Hub {
             session.view = Some(ViewBacklog {
                 bytes: Vec::new(),
                 snapshot: true,
+                fit_desktop: true,
             });
         }
         Ok(reply)
@@ -1024,6 +1048,16 @@ impl Hub {
             map.insert("exit".into(), json!(session.exit));
         }
         Ok(preview)
+    }
+
+    pub(super) fn session_history(&self, id: &str, before: u64) -> Result<Value, String> {
+        let inner = self.inner.lock().unwrap();
+        let session = inner
+            .sessions
+            .get(id)
+            .filter(|session| session.ready)
+            .ok_or("终端不存在。")?;
+        Ok(session.screen.history_page(before, false))
     }
 
     #[cfg(test)]

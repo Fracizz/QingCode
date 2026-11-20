@@ -11,6 +11,7 @@ export type TerminalContextMenuItemId =
   | 'composer'
   | 'clearInput'
   | 'find'
+  | 'history'
   | 'export'
   | 'clear'
 
@@ -21,6 +22,7 @@ export interface TerminalContextMenuState {
   canQuote: boolean
   /** 终端是否可写（只读/已退出时隐藏写入类操作）。 */
   writable: boolean
+  canReadHistory?: boolean
 }
 
 export interface TerminalContextMenuEntry {
@@ -30,12 +32,12 @@ export interface TerminalContextMenuEntry {
 }
 
 export function terminalContextMenuEntries(state: TerminalContextMenuState): TerminalContextMenuEntry[] {
-  const { hasSelection, canQuote, writable } = state
+  const { hasSelection, canQuote, writable, canReadHistory } = state
   const groups: TerminalContextMenuItemId[][] = [
     hasSelection
       ? ['copy', ...(writable ? (['quote', 'composer', 'paste'] as const) : [])]
       : [...(writable ? ['paste' as const] : []), 'selectAll', ...(writable ? ['composer' as const] : [])],
-    ['find'],
+    ['find', ...(canReadHistory ? ['history' as const] : [])],
     ['export', ...(writable ? ['clearInput' as const] : []), 'clear'],
   ]
   const entries: TerminalContextMenuEntry[] = []

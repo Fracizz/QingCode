@@ -381,11 +381,12 @@ impl HubState {
     }
 }
 
-/// 电脑只读查看手机终端时待发送的输出，按预览通知的节奏合并后发出。
+/// 手机终端在电脑打开时待发送的输出与首次尺寸同步状态。
 #[derive(Default)]
 struct ViewBacklog {
     bytes: Vec<u8>,
     snapshot: bool,
+    fit_desktop: bool,
 }
 
 struct DeviceEntry {

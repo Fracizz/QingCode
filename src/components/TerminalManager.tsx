@@ -20,6 +20,7 @@ import {
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import SegmentedControl from './SegmentedControl'
+import MobileTerminalHistory from './MobileTerminalHistory'
 import { useI18n } from '../lib/i18n'
 import { isTauri } from '../lib/tauri'
 import { isSshProject, isSshWorkspaceReady } from '../lib/sshWorkspace'
@@ -68,6 +69,7 @@ const PREVIEW_FALLBACK_REFRESH_MS = 5000
 /** 每页终端条数：终端很多时分页，避免一次渲染过长的列表。 */
 const PAGE_SIZE = 30
 const BATCH_KEY = 'batch'
+const ATTACH_BATCH_KEY = 'attach-batch'
 
 const DESKTOP_STATUS: Record<TerminalTab['status'], string> = {
   running: '运行中',
@@ -338,6 +340,8 @@ export default function TerminalManager() {
     [visibleEntries, selected],
   )
   const exitedVisible = useMemo(() => visibleEntries.filter(isTerminalOverviewEntryExited), [visibleEntries])
+  const attachable = visibleEntries.filter(entry => entry.source === 'remote'
+    || (entry.source === 'mobile' && !entry.session.exit && !openedMobileIds.has(entry.session.id)))
   const allSelected = visibleEntries.length > 0 && selectedEntries.length === visibleEntries.length
   const operationPending = busyKey !== null
   useEffect(() => {
@@ -477,6 +481,39 @@ export default function TerminalManager() {
         .attachDetachedTerminals(entry.projectId, entry.connectionId, [entry.terminal])
       await refreshRemote()
     })
+
+  const attachAll = () => run(ATTACH_BATCH_KEY, async () => {
+    const phones = attachable.filter(entry => entry.source === 'mobile')
+    const remoteByProject = new Map<string, Extract<TerminalOverviewEntry, { source: 'remote' }>[]>()
+    for (const entry of attachable) {
+      if (entry.source !== 'remote') continue
+      const group = remoteByProject.get(entry.projectId)
+      if (group) group.push(entry)
+      else remoteByProject.set(entry.projectId, [entry])
+    }
+    const results = await Promise.allSettled([
+      ...phones.map(async ({ session }) => {
+        await openMobileSessionTab(session, { background: true })
+        return 1
+      }),
+      ...Array.from(remoteByProject, ([projectId, group]) => useTerminalStore.getState().attachDetachedTerminals(
+        projectId, group[0].connectionId, group.map(entry => entry.terminal), { background: true },
+      )),
+    ])
+    const attached = results.reduce((total, result) => total + (result.status === 'fulfilled' ? result.value : 0), 0)
+    const failed = attachable.length - attached
+    const toast = useProjectStore.getState().pushToast
+    if (failed > 0) {
+      const error = results.find(result => result.status === 'rejected')
+      toast('warn', t('已接回 {ok} 个终端，{n} 个未接回', { ok: attached, n: failed }), error && errorText(error.reason))
+    } else {
+      toast('success', t('已接回 {n} 个终端', { n: attached }))
+    }
+    await Promise.all([
+      phones.length > 0 && refreshMobile(),
+      remoteByProject.size > 0 && refreshRemote(),
+    ])
+  })
 
   const endRemote = (entry: Extract<TerminalOverviewEntry, { source: 'remote' }>) =>
     run(entry.key, async () => {
@@ -783,7 +820,7 @@ export default function TerminalManager() {
               </button>
             </>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {paged.pageCount > 1 && (
               <nav className="flex items-center gap-0.5 text-fg-muted" aria-label={t('分页')}>
                 <Tooltip label={t('上一页')} side="top">
@@ -813,6 +850,17 @@ export default function TerminalManager() {
                 </Tooltip>
               </nav>
             )}
+            <Tooltip label={t('接回当前结果中的 {n} 个终端（含其他页）', { n: attachable.length })} side="top">
+              <button
+                type="button"
+                disabled={operationPending || attachable.length === 0}
+                onClick={() => void attachAll()}
+                className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-fg hover:bg-bg-hover disabled:opacity-40"
+              >
+                {busyKey === ATTACH_BATCH_KEY && <LoaderCircle size={13} className="motion-safe:animate-spin" />}
+                {t('全部接回')}
+              </button>
+            </Tooltip>
             <Tooltip
               label={
                 query || filter !== 'all'
@@ -977,11 +1025,13 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
   const { id } = session
   const { t } = useI18n()
   const [preview, setPreview] = useState<MobileSessionPreview | null>(null)
+  const [historyStart, setHistoryStart] = useState<'top' | 'bottom' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const scroller = useRef<HTMLPreElement>(null)
   const stickToBottom = useRef(true)
 
   useEffect(() => {
+    if (historyStart !== null) return
     let cancelled = false
     let stopListening: (() => void) | null = null
     const load = async () => {
@@ -1023,7 +1073,7 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
       document.removeEventListener('visibilitychange', refreshIfVisible)
       stopListening?.()
     }
-  }, [id])
+  }, [id, historyStart])
 
   const alternate = preview?.alternate ?? false
   useEffect(() => {
@@ -1034,7 +1084,7 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
   useEffect(() => {
     const element = scroller.current
     if (element && !alternate && stickToBottom.current) element.scrollTop = element.scrollHeight
-  }, [preview, alternate])
+  }, [preview, alternate, historyStart])
 
   const history = preview && !alternate ? preview.history : []
   let screen = preview?.screen ?? ''
@@ -1059,10 +1109,15 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
             <div className="truncate text-ui-sm text-fg-muted">
               {session.deviceName ?? t('设备已移除')}
               {preview && preview.cols > 0 && preview.rows > 0 && ` · ${preview.cols}×${preview.rows}`}
-              {preview?.alternate && ` · ${t('全屏程序只显示当前画面')}`}
-              {!preview?.alternate && preview?.truncated && ` · ${t('仅显示最近 200 行历史')}`}
+              {preview?.alternate && historyStart === null && ` · ${t('全屏程序只显示当前画面')}`}
             </div>
           </div>
+          {historyStart === null && preview?.historyMore && (
+            <button type="button" onClick={() => setHistoryStart('bottom')}
+              className="shrink-0 rounded px-2 py-0.5 text-ui-sm text-accent hover:bg-bg-hover">
+              {t('查看历史')}
+            </button>
+          )}
           <Tooltip label={t('关闭')} side="left">
             <button type="button" data-modal-autofocus aria-label={t('关闭')} onClick={onClose}
               className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg">
@@ -1070,19 +1125,38 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
             </button>
           </Tooltip>
         </header>
-        {error && <p role="alert" className="px-4 py-2 text-ui-sm text-danger">{t('预览失败：{error}', { error })}</p>}
-        <pre
-          ref={scroller}
-          tabIndex={0}
-          onScroll={event => {
-            const element = event.currentTarget
-            stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
-          }}
-          className="m-0 min-h-0 flex-1 select-text overflow-auto whitespace-pre bg-bg-deep px-4 py-3 font-mono text-[13px] leading-[1.45]"
-        >
-          {history.length > 0 && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{history.join('\n')}{'\n'}</span>}
-          {screen}
-        </pre>
+        {historyStart !== null && preview ? (
+          <MobileTerminalHistory
+            id={id}
+            initialPreview={preview}
+            startAtTop={historyStart === 'top'}
+            onReturn={() => {
+              stickToBottom.current = true
+              setHistoryStart(null)
+            }}
+          />
+        ) : (
+          <>
+            {error && <p role="alert" className="px-4 py-2 text-ui-sm text-danger">{t('预览失败：{error}', { error })}</p>}
+            <pre
+              ref={scroller}
+              tabIndex={0}
+              onScroll={event => {
+                const element = event.currentTarget
+                stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
+              }}
+              onWheel={event => {
+                if (event.deltaY >= 0 || event.ctrlKey || event.metaKey || event.currentTarget.scrollTop > 0 || !preview?.historyMore) return
+                event.preventDefault()
+                setHistoryStart('top')
+              }}
+              className="m-0 min-h-0 flex-1 select-text overflow-auto whitespace-pre bg-bg-deep px-4 py-3 font-mono text-[13px] leading-[1.45]"
+            >
+              {history.length > 0 && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{history.join('\n')}{'\n'}</span>}
+              {screen}
+            </pre>
+          </>
+        )}
       </section>
     </ModalOverlay>
   )

@@ -244,6 +244,16 @@ pub fn mobile_session_preview(id: String, state: State<'_, MobileState>) -> Resu
     state.hub.session_preview(&id)
 }
 
+/// 按预览返回的游标分页读取更早的普通屏历史，含仍保留输出的已结束会话。
+#[tauri::command]
+pub fn mobile_session_history(
+    id: String,
+    before: u64,
+    state: State<'_, MobileState>,
+) -> Result<Value, String> {
+    state.hub.session_history(&id, before)
+}
+
 #[tauri::command]
 pub fn mobile_rename_session(
     id: String,
@@ -468,7 +478,7 @@ pub async fn mobile_view_input(id: String, data: String, app: AppHandle) -> Resu
     write_input(&app, kind, id, data).await
 }
 
-/// 电脑查看标签的尺寸：电脑是尺寸方时才改终端，否则只记下。
+/// 电脑查看标签的实测尺寸：首次适应电脑窗格，之后按尺寸方更新。
 #[tauri::command]
 pub async fn mobile_view_resize(
     id: String,
@@ -480,8 +490,11 @@ pub async fn mobile_view_resize(
     let _control = state.lock_control(&id).await;
     let kind = state.hub.desktop_session_kind(&id)?;
     let (cols, rows) = size(cols, rows);
-    if desktop_resize(&state, &id, cols, rows) {
-        apply_resize(&app, kind, &id, cols, rows).await?;
-    }
-    Ok(())
+    let result = if state.hub.desktop_view_resize(&id, cols, rows) {
+        apply_resize(&app, kind, &id, cols, rows).await
+    } else {
+        Ok(())
+    };
+    emit_control_if_changed(&app, &id);
+    result
 }

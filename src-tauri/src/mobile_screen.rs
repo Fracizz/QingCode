@@ -308,22 +308,27 @@ impl MobileScreen {
     /// 逐行导出可见网格，保留自动折行。备用屏只展示当前画面，普通历史留待退出后使用。
     pub(super) fn preview(&self, lines: usize) -> Value {
         let history = self.parser.callbacks();
-        let skip = history.lines.len().saturating_sub(lines);
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
         let alternate = screen.alternate_screen();
-        let visible_history = if alternate {
-            Vec::new()
+        let skip = if alternate {
+            history.lines.len()
         } else {
-            history
-                .lines
-                .iter()
-                .skip(skip)
-                .map(|(_, text)| plain(text))
-                .collect()
+            history.lines.len().saturating_sub(lines)
         };
+        let visible_history: Vec<_> = history
+            .lines
+            .iter()
+            .skip(skip)
+            .map(|(_, text)| plain(text))
+            .collect();
+        // 排除已经随预览返回的行；画面和游标取自同一份快照。
+        let before = history.lines.get(skip).map_or(history.next, |(id, _)| *id);
         json!({
             "history": visible_history,
+            "historyBefore": before,
+            "historyMore": skip > 0,
+            "historyTruncated": history.truncated,
             "screen": screen.rows(0, cols.get()).collect::<Vec<_>>().join("\n"),
             "cols": cols.get(), "rows": rows.get(),
             "alternate": alternate,

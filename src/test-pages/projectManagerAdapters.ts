@@ -128,9 +128,16 @@ export const useTerminalStore = create(() => ({
 }))
 export const useTerminalManagerFixture = create(() => ({ failedIds: [] as string[] }))
 
-export async function openMobileSessionTab(session: { id: string }) {
+export async function openMobileSessionTab(session: { id: string; name: string; project: { id: string; path: string } }) {
   record('openMobileSessionTab', [session.id])
-  return useTerminalStore.getState().terminals.find(tab => tab.id === session.id)
+  const existing = useTerminalStore.getState().terminals.find(tab => tab.id === session.id)
+  if (existing) return existing
+  const tab: TerminalTab = {
+    id: session.id, name: session.name, projectId: session.project.id, cwd: session.project.path,
+    launchCommand: '', status: 'running', exitCode: null,
+  }
+  useTerminalStore.setState(state => ({ terminals: [...state.terminals, tab] }))
+  return tab
 }
 
 export function resetTerminalManagerFixture(count = 65) {

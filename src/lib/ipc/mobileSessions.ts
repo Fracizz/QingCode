@@ -29,12 +29,21 @@ export interface MobileSessionSummary {
 export interface MobileSessionPreview {
   name: string
   history: string[]
+  historyBefore: number | null
+  historyMore: boolean
+  historyTruncated: boolean
   screen: string
   cols: number
   rows: number
   alternate: boolean
-  truncated: boolean
   exit: MobileSessionSummary['exit']
+}
+
+export interface MobileSessionHistoryPage {
+  lines: string[]
+  before: number
+  more: boolean
+  truncated: boolean
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -98,13 +107,19 @@ export async function previewMobileSession(id: string): Promise<MobileSessionPre
   return {
     name: typeof value.name === 'string' ? value.name : '',
     history: Array.isArray(value.history) ? value.history.filter((line): line is string => typeof line === 'string') : [],
+    historyBefore: typeof value.historyBefore === 'number' ? value.historyBefore : null,
+    historyMore: value.historyMore === true,
+    historyTruncated: value.historyTruncated === true,
     screen: typeof value.screen === 'string' ? value.screen : '',
     cols: typeof value.cols === 'number' ? value.cols : 0,
     rows: typeof value.rows === 'number' ? value.rows : 0,
     alternate: value.alternate === true,
-    truncated: value.truncated === true,
     exit: parseExit(value.exit),
   }
+}
+
+export function readMobileSessionHistory(id: string, before: number): Promise<MobileSessionHistoryPage> {
+  return safeInvoke('读取终端历史', 'mobile_session_history', { id, before })
 }
 
 /** 监听某个手机终端的新输出。事件已由后端合并，只表示「有变化」，内容需再读取。 */

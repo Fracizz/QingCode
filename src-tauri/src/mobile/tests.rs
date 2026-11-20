@@ -820,6 +820,46 @@ fn the_desktop_types_into_a_viewed_phone_session_without_taking_over() {
 }
 
 #[test]
+fn opening_a_phone_view_fits_the_first_desktop_grid_and_then_follows_the_last_typist() {
+    let hub = handoff_hub();
+    ready_session(&hub, "mobile-a", "phone");
+    hub.claim("mobile-a", "phone", false, None).unwrap();
+    hub.open_view("mobile-a").unwrap();
+    assert!(hub.desktop_view_resize("mobile-a", 144, 42));
+    assert_eq!(
+        hub.device_resize("mobile-a", "phone", 45, 30).unwrap(),
+        None
+    );
+    assert!(hub.desktop_view_resize("mobile-a", 150, 48));
+    hub.device_input("mobile-a", "phone", "y").unwrap();
+    assert!(!hub.desktop_view_resize("mobile-a", 160, 50));
+    assert_eq!(
+        hub.desktop_input("mobile-a", "x").unwrap(),
+        InputDecision::Forward {
+            resize: Some((160, 50))
+        }
+    );
+}
+
+#[test]
+fn opening_a_phone_view_respects_size_lock_and_exclusive_control() {
+    let hub = handoff_hub();
+    ready_session(&hub, "mobile-a", "phone");
+    let phone = Controller::Device("phone".into());
+    hub.claim("mobile-a", "phone", false, None).unwrap();
+    hub.set_size_lock("mobile-a", &phone, true).unwrap();
+    hub.open_view("mobile-a").unwrap();
+    assert!(!hub.desktop_view_resize("mobile-a", 144, 42));
+    hub.set_size_lock("mobile-a", &phone, false).unwrap();
+    assert!(!hub.desktop_view_resize("mobile-a", 150, 48));
+    hub.set_exclusive("mobile-a", phone, true, false).unwrap();
+    hub.close_view("mobile-a");
+    hub.open_view("mobile-a").unwrap();
+    assert!(!hub.desktop_view_resize("mobile-a", 160, 50));
+    assert!(hub.desktop_input("mobile-a", "x").is_err());
+}
+
+#[test]
 fn saved_settings_default_desktop_terminals_off() {
     let mut value = serde_json::to_value(settings(Vec::new())).unwrap();
     value.as_object_mut().unwrap().remove("desktop_terminals");
@@ -891,6 +931,40 @@ fn desktop_preview_is_plain_text_of_history_and_screen() {
     assert_eq!(preview["alternate"], false);
     assert!(hub.rename_session("mobile-a", "构建").is_ok());
     assert_eq!(hub.session_preview("mobile-a").unwrap()["name"], "构建");
+}
+
+#[test]
+fn desktop_history_pages_continue_before_the_preview_while_output_advances() {
+    let hub = handoff_hub();
+    ready_session(&hub, "mobile-a", "phone");
+    hub.with_session("mobile-a", |session| {
+        session.screen.resize(40, 2);
+        for row in 0..602 {
+            session
+                .screen
+                .process(format!("line {row:03}\r\n").as_bytes());
+        }
+    });
+    let preview = hub.session_preview("mobile-a").unwrap();
+    assert_eq!(preview["historyMore"], true);
+    assert_eq!(preview["history"][0], "line 401");
+    let before = preview["historyBefore"].as_u64().unwrap();
+
+    hub.with_session("mobile-a", |session| {
+        session.screen.process(b"arrived later\r\n");
+    });
+    let page = hub.session_history("mobile-a", before).unwrap();
+    assert_eq!(page["lines"].as_array().unwrap().len(), 120);
+    assert_eq!(page["lines"][0], "line 281");
+    assert_eq!(page["lines"][119], "line 400");
+    assert_eq!(page["more"], true);
+    let older = hub
+        .session_history("mobile-a", page["before"].as_u64().unwrap())
+        .unwrap();
+    assert_eq!(older["lines"][119], "line 280");
+    let inner = hub.inner.lock().unwrap();
+    assert!(!inner.sessions["mobile-a"].sharing.desktop_present);
+    assert_eq!(inner.sessions["mobile-a"].screen.size(), (40, 2));
 }
 
 #[test]

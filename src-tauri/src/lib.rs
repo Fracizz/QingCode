@@ -892,6 +892,7 @@ pub fn run() {
             mobile::mobile_bridge_reply,
             mobile::mobile_sessions,
             mobile::mobile_session_preview,
+            mobile::mobile_session_history,
             mobile::mobile_rename_session,
             mobile::mobile_end_session,
             mobile::mobile_set_desktop_terminals,

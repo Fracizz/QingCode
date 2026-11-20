@@ -5,6 +5,7 @@ import TerminalManager from '../components/TerminalManager'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PromptDialog from '../components/PromptDialog'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
+import { mobileTerminalHistoryFixture } from './mobileTerminalHistoryFixture'
 import {
   resetTerminalManagerFixture,
   useTerminalManagerFixture,
@@ -37,7 +38,9 @@ export default function Page() {
 
 if (import.meta.env.MODE === 'web-test') {
   useLocaleStore.setState({ language: 'zh-CN' })
-  if (new URLSearchParams(location.search).has('mobile-preview')) {
+  const params = new URLSearchParams(location.search)
+  if (params.has('mobile-preview') || params.has('mobile-reattach') || params.has('mobile-history')) {
+    const history = mobileTerminalHistoryFixture()
     const session = {
       id: 'mobile-preview', number: 49, name: '重新发布 0.03', deviceName: 'OPPO PLJ110',
       project: { id: 'wsl-nem', name: 'NEM', path: '/srv/nem', kind: 'wsl', host: 'Windows' },
@@ -51,13 +54,22 @@ if (import.meta.env.MODE === 'web-test') {
     rows[7] = '，完成后将生成发布记录。'
     rows[29] = '就绪'
     Object.assign(window, { isTauri: true })
-    mockIPC(command => {
-      if (command === 'mobile_sessions') return [session]
+    mockIPC((command, args) => {
+      if (command === 'mobile_sessions') return params.has('mobile-reattach') ? [
+        session,
+        { ...session, id: 'mobile-50', number: 50, name: '后台构建' },
+        { ...session, id: 'mobile-51', number: 51, name: '任务已结束', exit: { exitCode: 0 } },
+      ] : [session]
       if (command === 'mobile_session_preview') {
+        if (params.has('mobile-history')) return history.preview()
         return { screen: rows.join('\n'), alternate: true, cols: 42, rows: 30, history: [] }
+      }
+      if (command === 'mobile_session_history' && params.has('mobile-history')) {
+        return history.read((args as { before: number }).before)
       }
       return null
     }, { shouldMockEvents: true })
+    Object.assign(window, { __mobileTerminalHistoryRequests: history.requests })
   }
   resetTerminalManagerFixture()
   Object.assign(window, {

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   killDetachedTerminal: vi.fn(async () => undefined),
   killTerminal: vi.fn(async () => undefined),
   listDetachedTerminals: vi.fn(),
+  openMobileView: vi.fn(),
   resizeTerminal: vi.fn(async () => undefined),
   spawnTerminalScript: vi.fn(),
   terminalSessionOpen: vi.fn(),
@@ -49,6 +50,11 @@ vi.mock('../lib/ipc/terminal', () => ({
   writeTerminal: (...args: unknown[]) => mocks.writeTerminal(...args),
 }))
 
+vi.mock('../lib/ipc/mobileSessions', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/ipc/mobileSessions')>(),
+  openMobileView: mocks.openMobileView,
+}))
+
 vi.mock('./projectStore', () => ({
   useProjectStore: {
     getState: () => ({
@@ -76,7 +82,7 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, setTerminalViewGrid, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { openMobileSessionTab, pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, setTerminalViewGrid, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
 import { rememberPreservedTerminalName } from '@/lib/terminal/detachedTerminalNames'
 import { buildWorkspaceSessionSnapshot, clearWorkspaceSession, parseWorkspaceSession, saveWorkspaceSession } from '@/lib/workspaceSessionPersist'
@@ -456,6 +462,29 @@ describe('terminal persistent connection events', () => {
     await unsized
     await vi.advanceTimersByTimeAsync(300)
     expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 100, 30]])
+  })
+
+  it('sends the measured desktop grid after the phone view is registered', async () => {
+    const id = 'mobile-fit-test'
+    let finishOpen!: () => void
+    mocks.openMobileView.mockImplementationOnce(() => new Promise<void>(resolve => { finishOpen = resolve }))
+    mocks.resizeTerminal.mockClear()
+    const store = useTerminalStore.getState()
+    const opening = openMobileSessionTab({ id, name: 'Phone', project: { id: 'p1', path: '/home/app' } }, { background: true })
+
+    setTerminalViewGrid(id, { cols: 145, rows: 43 })
+    await store.resizeTerminal(id, 145, 43)
+    expect(await store.redrawTerminal(id, 45, 30)).toBe(false)
+    expect(mocks.resizeTerminal).not.toHaveBeenCalled()
+
+    finishOpen()
+    await opening
+    expect(mocks.resizeTerminal.mock.calls).toEqual([[id, 145, 43]])
+    const resized = store.resizeTerminal(id, 150, 48)
+    await vi.advanceTimersByTimeAsync(300)
+    await resized
+    expect(mocks.resizeTerminal.mock.calls).toEqual([[id, 145, 43], [id, 150, 48]])
+    setTerminalViewGrid(id, null)
   })
 
   it('spaces PTY size changes and keeps only the latest size queued inside the gap', async () => {
@@ -856,6 +885,23 @@ describe('terminal persistent connection events', () => {
       ['pty-legacy-a', '远端终端'],
       ['pty-legacy-b', '远端终端 (2)'],
     ])
+  })
+
+  it('lets a background reattach retry a failed remote PTY without closing the process', async () => {
+    const project = { id: 'remote-retry', name: 'Remote', path: 'ssh://conn/home/app', kind: 'ssh', connection_id: 'conn' }
+    mocks.projectState.projects = [project]
+    const detached = [{ ptyId: 'pty-retry', connectionId: 'conn', cwd: project.path, cols: 80, rows: 24 }]
+    const store = useTerminalStore.getState()
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('temporarily offline'))
+    expect(await store.attachDetachedTerminals(project.id, 'conn', detached, { background: true })).toBe(0)
+    expect(useTerminalStore.getState().terminals.some(tab => tab.ptyId === 'pty-retry')).toBe(false)
+    expect(mocks.killDetachedTerminal).not.toHaveBeenCalled()
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
+
+    mocks.attachTerminal.mockResolvedValueOnce({ persistent: true, ptyId: 'pty-retry', connectionId: 'conn' })
+    expect(await store.attachDetachedTerminals(project.id, 'conn', detached, { background: true })).toBe(1)
+    expect(useTerminalStore.getState().terminals.find(tab => tab.ptyId === 'pty-retry')?.status).toBe('running')
+    expect(useTerminalStore.getState().activeTerminalId).toBe('t1')
   })
 
   it('ends an untouched default detached terminal even when replay would fail', async () => {
