@@ -25,7 +25,7 @@ const check = (name, expression) => {
 }
 const capture = name => run('screenshot', resolve(directory, `${name}.png`))
 const headings = `JSON.stringify([...document.querySelectorAll('.settings-content h2')].map(e=>e.textContent))`
-const categories = ['外观与语言', '编辑器与文件', '终端', '项目与会话', '远程连接', '移动连接', '工具与集成', '快捷键', '更新与关于']
+const categories = ['外观与语言', '编辑器与文件', '终端', '项目与会话', '远程连接', 'Git 多端同步', '移动连接', '工具与集成', '快捷键', '更新与关于']
 
 try {
   // Windows-only mobile UI is exercised on Linux; no native desktop identity.
@@ -51,7 +51,7 @@ try {
   click('信任并继续')
   click('设置')
   run('set', 'viewport', '1440', '1000')
-  check('nine categories and appearance as the default', `${headings}==='["外观与语言"]' && document.querySelectorAll('.settings-nav button').length===9`)
+  check('all categories and appearance as the default', `${headings}==='["外观与语言"]' && document.querySelectorAll('.settings-nav button').length===${categories.length}`)
   check('interface font belongs to appearance', `!!document.querySelector('[aria-label="界面字体"]') && !document.querySelector('[aria-label="编辑器: 小地图"]')`)
   capture('appearance')
   for (const name of categories) {
@@ -107,6 +107,56 @@ try {
   run('set', 'viewport', '1440', '1000')
   run('eval', `(async()=>{const {useUIStore}=await import('/src/store/uiStore.ts');useUIStore.getState().requestSettings('终端配置');return true})()`)
   check('terminal profile deep link still opens the matching controls', `${headings}==='["终端"]' && !!document.querySelector('[aria-label="终端配置"]')`)
+  const profilesDialog = `document.querySelector('[role="dialog"]:has([data-profile-id="default"])')`
+  const savedProfiles = `JSON.parse(localStorage.getItem('qingcode:terminal-profiles'))`
+  check('settings shows a management button without inline profile rows', `!document.querySelector('[data-profile-id]')`)
+  click('管理终端配置')
+  check('the profile manager is a modal', `${profilesDialog}?.getAttribute('aria-modal')==='true'`)
+  click('添加终端配置')
+  check('a new profile opens with its name focused', `document.activeElement.value==='新终端配置'`)
+  run('fill', '.terminal-profile-editor label > input', 'Profile fixture')
+  run('find', 'placeholder', '留空时仅启动 Shell', 'fill', 'example-command')
+  click('Shell')
+  run('wait', '[data-setting-select-menu]')
+  run('press', 'Escape')
+  check('Escape closes the Shell list and restores its focus inside the modal', `!!${profilesDialog} && !document.querySelector('[data-setting-select-menu]') && document.activeElement.getAttribute('aria-label')==='Shell'`)
+  click('Shell')
+  run('find', 'role', 'option', 'click', '--name', 'PowerShell 7', '--exact')
+  check('name, Shell and startup command are saved immediately', `${savedProfiles}.profiles.some(p=>p.name==='Profile fixture' && p.shell==='pwsh' && p.command==='example-command')`)
+  click('复制终端配置「Profile fixture」')
+  click('将「Profile fixture 副本」设为默认终端')
+  check('the duplicate keeps the Shell and startup command', `${savedProfiles}.profiles.some(p=>p.id===${savedProfiles}.defaultProfileId && p.name==='Profile fixture 副本' && p.shell==='pwsh' && p.command==='example-command')`)
+  run('set', 'viewport', '400', '520')
+  check('the profile modal scrolls within the narrow viewport', `(() => {
+    const dialog = ${profilesDialog};
+    const rect = dialog.getBoundingClientRect();
+    const body = dialog.querySelector('.terminal-profiles');
+    return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+      && body.scrollHeight > body.clientHeight && body.scrollWidth <= body.clientWidth;
+  })()`)
+  run('wait', '--fn', `!document.querySelector('.toast-item')`)
+  capture('terminal-profiles-modal-narrow')
+  click('删除终端配置「Profile fixture 副本」')
+  run('press', 'Escape')
+  check('cancelling a delete leaves the profile manager open', `!!${profilesDialog} && ${savedProfiles}.defaultProfileId!==null && !document.querySelector('[role="alertdialog"]')`)
+  click('删除终端配置「Profile fixture 副本」')
+  click('删除')
+  check('deleting the default switches back to the ordinary terminal', `${savedProfiles}.defaultProfileId===null && ${savedProfiles}.profiles.every(p=>p.name!=='Profile fixture 副本')`)
+  run('set', 'viewport', '1440', '1000')
+  run('press', 'Escape')
+  check('closing the manager restores the opener and updates the settings summary', `!${profilesDialog} && document.activeElement.textContent==='管理终端配置' && document.querySelector('[aria-label="终端配置"]').textContent.includes('已有 1 个自定义配置')`)
+  click('管理终端配置')
+  click('编辑终端配置「Profile fixture」')
+  check('the edited profile can be reopened with its saved values', `${profilesDialog}.querySelector('input[placeholder="留空时仅启动 Shell"]').value==='example-command'`)
+  run('wait', '--fn', `!${profilesDialog}.closest('[data-modal-overlay]').getAnimations({ subtree: true }).some(animation => animation.playState === 'running') && !document.querySelector('[data-exit-ghost]')`)
+  capture('terminal-profiles-modal')
+  click('关闭')
+  run('wait', '--fn', `!${profilesDialog} && document.activeElement.textContent==='管理终端配置' && !document.querySelector('[data-exit-ghost]')`)
+  click('选择终端配置')
+  run('find', 'role', 'menuitem', 'click', '--name', '管理终端配置', '--exact')
+  check('the terminal menu opens the same modal without changing the view', `!!${profilesDialog} && ${headings}==='["终端"]' && !document.querySelector('[role="menu"]')`)
+  run('press', 'Escape')
+  check('the modal returns focus to the terminal menu trigger', `document.activeElement.getAttribute('aria-label')==='选择终端配置'`)
   click('管理设置')
   check('JSON and template actions are in management', `document.querySelector('[role="menu"]').textContent.includes('打开设置 JSON') && document.querySelector('[role="menu"]').textContent.includes('写入默认模板并打开')`)
   run('find', 'role', 'menuitem', 'click', '--name', '打开设置 JSON', '--exact')

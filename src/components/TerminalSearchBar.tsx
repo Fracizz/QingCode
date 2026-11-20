@@ -33,7 +33,7 @@ export default function TerminalSearchBar({
   matchTotal,
 }: TerminalSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  // 关闭时留下残影上移淡出（exitMotion 'float'），真实搜索条立即卸载。
+  // 关闭时留下残影原位淡出，真实搜索条立即卸载。
   const exitRef = useExitMotionRef<HTMLFormElement>('float')
   const label = matchLabel(query, matchIndex, matchTotal)
 

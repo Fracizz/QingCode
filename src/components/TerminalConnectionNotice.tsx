@@ -19,7 +19,7 @@ export default function TerminalConnectionNotice({ terminalId, offsetForSearch =
   // 按终端 id 记录，切换终端时旧终端的提示自然失效，无需在 effect 里重置。
   const [state, setState] = useState<{ id: string; notice: TerminalOverlayNotice | null } | null>(null)
   const notice = state?.id === terminalId ? state.notice : null
-  // 提示到时或连接恢复后留下残影上移淡出（exitMotion 'float'）。
+  // 提示到时或连接恢复后留下残影原位淡出。
   const exitRef = useExitMotionRef<HTMLDivElement>('float')
 
   useEffect(() => subscribeTerminalOverlayNotice(terminalId, next => {

@@ -342,7 +342,7 @@ export default function SettingsEditor() {
         </nav>
 
         {/* Content */}
-        <div ref={contentRef} className="settings-content settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
+        <div ref={contentRef} className="view-fade settings-content settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
             {visibleCategories.length === 0 && <div role="status" className="py-8 text-ui text-fg-muted">
               <p>{t('没有匹配的设置：{query}', { query })}</p>

@@ -15,9 +15,14 @@ export interface ServerOperation {
 
 export const useServerOperationStore = create<{ tasks: Record<string, ServerOperation> }>(() => ({ tasks: {} }))
 
-export function beginServerOperation(rootUri: string, name: string, kind: ServerOperation['kind']) {
+export function beginServerOperation(
+  rootUri: string,
+  name: string,
+  kind: ServerOperation['kind'],
+  progress?: Pick<ServerOperation, 'step' | 'label' | 'startedAt' | 'background'>,
+) {
   useServerOperationStore.setState(s => ({ tasks: { ...s.tasks, [rootUri]: {
-    rootUri, name, kind, step: 1, label: '正在连接 SSH…', startedAt: Date.now(),
+    rootUri, name, kind, ...(progress ?? { step: 1, label: '正在连接 SSH…', startedAt: Date.now() }),
   } } }))
 }
 

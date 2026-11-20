@@ -37,14 +37,15 @@ mod watch;
 
 pub(crate) use daemon::{
     compare_server_versions, daemon_scan_entries, daemon_search_content_call,
-    daemon_warmup_entries, deferred_upgrade_impact, ensure_remote_daemon, forget_kept_daemon,
+    daemon_warmup_entries, deferred_upgrade_impact, ensure_remote_daemon,
     handle_daemon_transport_error, kept_daemon, shutdown_remote_daemon, DaemonSearchParams,
-    KeptDaemon, StaleDaemon,
+    GatewayDaemonCheck, KeptDaemon, StaleDaemon,
 };
 pub(crate) use deploy::{
-    ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,
-    ready_server_endpoint, require_serve_endpoint, require_server_endpoint, server_mode_error,
-    stage_direct_gateway, update_server_endpoint_with_app, SERVER_MODE_ERROR_PREFIX,
+    ensure_gateway_endpoint, ensure_server_endpoint_with_app, kick_server_discovery,
+    note_server_endpoint_lost, ready_server_endpoint, require_serve_endpoint,
+    require_server_endpoint, server_mode_error, stage_direct_gateway,
+    update_server_endpoint_with_app, SERVER_MODE_ERROR_PREFIX,
 };
 pub(crate) use download::resolve_offline_server_dir;
 pub(crate) use host_runtime::{invalidate_shared_daemon, shared_server_known, HostDaemonCache};

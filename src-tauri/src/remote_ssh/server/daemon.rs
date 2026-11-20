@@ -134,6 +134,12 @@ pub(crate) enum StaleDaemon {
     Replace,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum GatewayDaemonCheck<'a> {
+    Ensure,
+    Update(Option<&'a super::super::server_status::DeferredUpgrade>),
+}
+
 /// 比较两个 server 版本（semver 优先级，含预发布号，如 `0.1.17-beta.12`）。
 /// 无法解析时返回 `None`，调用方按「旧版本」处理，与引入比较前的行为一致。
 pub(crate) fn compare_server_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
@@ -1540,31 +1546,34 @@ pub(crate) async fn deferred_upgrade_impact(
         deadline,
     )
     .await?;
-    let result = async {
-        if compare_server_versions(&channel.server_version, SERVER_VERSION)
-            != Some(std::cmp::Ordering::Less)
-        {
-            return Err("远端服务无需强制更新，请刷新状态".into());
-        }
-        let listed = daemon_rpc(
-            &mut channel,
-            "pty.list",
-            &serde_json::json!({}),
-            Instant::now() + AGENT_PING_TIMEOUT,
-        )
-        .await?;
-        let count = count_live_ptys(&listed)
-            .filter(|n| *n > 0)
-            .ok_or("无法确认仍有运行中的终端，请刷新状态")?;
-        Ok(super::super::server_status::DeferredUpgrade {
-            running_version: channel.server_version.clone(),
-            target_version: SERVER_VERSION.into(),
-            live_terminals: count,
-        })
-    }
-    .await;
+    let result = read_deferred_upgrade_impact(&mut channel).await;
     channel.shutdown().await;
     result
+}
+
+async fn read_deferred_upgrade_impact(
+    channel: &mut DaemonChannel,
+) -> Result<super::super::server_status::DeferredUpgrade, String> {
+    if compare_server_versions(&channel.server_version, SERVER_VERSION)
+        != Some(std::cmp::Ordering::Less)
+    {
+        return Err("远端服务无需强制更新，请刷新状态".into());
+    }
+    let listed = daemon_rpc(
+        channel,
+        "pty.list",
+        &serde_json::json!({}),
+        Instant::now() + AGENT_PING_TIMEOUT,
+    )
+    .await?;
+    let count = count_live_ptys(&listed)
+        .filter(|n| *n > 0)
+        .ok_or("无法确认仍有运行中的终端，请刷新状态")?;
+    Ok(super::super::server_status::DeferredUpgrade {
+        running_version: channel.server_version.clone(),
+        target_version: SERVER_VERSION.into(),
+        live_terminals: count,
+    })
 }
 
 async fn probe_daemon_versioned(
@@ -1633,24 +1642,28 @@ async fn probe_daemon_versioned(
     })
 }
 
-/// 共享 daemon 的健康探测（隐式准备语义，即 [`StaleDaemon::DeferWhileBusy`]）。
+/// 共享 daemon 的健康探测。
 ///
 /// 版本不同的 daemon 按 [`SkewedDaemon::decision`] 判定：沿用则照常可用；远端更新
 /// 且不兼容则报错，不降级；需要淘汰（更旧且不兼容或已空闲）时：
 /// - SSH：返回错误，由调用方重新准备，淘汰旧实例并按新二进制拉起；
-/// - Server 端口直连：网关已是当前版本（健康检查保证），这里凭配对凭据请求旧 daemon
-///   退出，网关在下一次 HELLO 时用自身二进制重新拉起，再复验一次。
+/// - Server 网关：凭配对凭据请求旧 daemon 退出，再通过 HELLO 等待网关拉起替代实例。
 pub(super) async fn probe_shared_daemon(
     manager: &SshManager,
     connection_id: &str,
     access: &DaemonAccess,
+    check: GatewayDaemonCheck<'_>,
 ) -> Result<(), String> {
+    let stale = match check {
+        GatewayDaemonCheck::Ensure => StaleDaemon::DeferWhileBusy,
+        GatewayDaemonCheck::Update(_) => StaleDaemon::Replace,
+    };
     let probe = |deadline| probe_daemon_versioned(manager, connection_id, access, deadline);
     let settle = |outcome: ProbeOutcome| -> Result<Result<(), String>, SkewedDaemon> {
         match outcome {
             ProbeOutcome::Ready => Ok(Ok(())),
             ProbeOutcome::Unavailable(reason) => Ok(Err(reason)),
-            ProbeOutcome::Skewed(info) => match info.decision(StaleDaemon::DeferWhileBusy) {
+            ProbeOutcome::Skewed(info) => match info.decision(stale) {
                 SkewDecision::Keep => {
                     keep_daemon(access, info.kept);
                     Ok(Ok(()))
@@ -1660,27 +1673,80 @@ pub(super) async fn probe_shared_daemon(
             },
         }
     };
-    let info = match settle(probe(Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT).await) {
+    let probe_deadline = Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT;
+    let mut outcome = probe(probe_deadline).await;
+    if matches!(check, GatewayDaemonCheck::Update(_))
+        && matches!(&outcome, ProbeOutcome::Unavailable(reason) if reason.starts_with("daemon 连接已关闭"))
+    {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        outcome = probe(probe_deadline).await;
+    }
+    let info = match settle(outcome) {
         Ok(result) => return result,
         Err(info) => info,
     };
-    forget_kept_daemon(access);
     let reason = info.reason();
-    if manager.direct_config(connection_id).is_none()
-        || !shutdown_remote_daemon(manager, connection_id, access).await
-    {
+    if manager.direct_config(connection_id).is_none() {
+        forget_kept_daemon(access);
         return Err(reason);
     }
-    // 旧实例退出、IPC 端点释放有短暂空窗；网关拉起新 daemon 的等待上限为 10s，
-    // 复验握手时限已覆盖。只复验一次，避免与外部托管（如 systemd）的旧版本循环。
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    match settle(probe(Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT).await) {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(format!(
-            "已请求旧版服务退出（{reason}），新版服务尚未就绪：{error}"
-        )),
-        Err(info) => Err(info.reason()),
+    let mut channel = open_daemon_channel_with(
+        manager,
+        connection_id,
+        access,
+        HelloPolicy::LENIENT,
+        false,
+        Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+    )
+    .await?;
+    let shutdown = async {
+        // 另一个客户端可能已换掉旧进程。只对握手确认为原版本的通道发退出请求。
+        if channel.server_version != info.kept.running_version {
+            return Ok(());
+        }
+        if let GatewayDaemonCheck::Update(Some(confirmed)) = check {
+            confirmed.verify(&read_deferred_upgrade_impact(&mut channel).await?)?;
+        }
+        match daemon_rpc(
+            &mut channel,
+            "server.shutdown",
+            &serde_json::json!({}),
+            Instant::now() + AGENT_PING_TIMEOUT,
+        )
+        .await
+        {
+            Err(DaemonCallError::Remote(error)) => Err(error),
+            _ => Ok(()),
+        }
     }
+    .await;
+    channel.shutdown().await;
+    shutdown?;
+    forget_kept_daemon(access);
+    if matches!(check, GatewayDaemonCheck::Update(_)) {
+        super::host_runtime::invalidate_shared_daemon(manager, connection_id);
+    }
+
+    // 旧实例确认退出后仍要回收终端、释放 IPC。网关在此期间可能接到旧端点并收到 EOF。
+    // 只重试握手，避免循环请求退出，也避免把已经就绪的新进程结束掉。
+    let deadline = Instant::now() + AGENT_DAEMON_ENSURE_TIMEOUT;
+    let mut last_error = None;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        tokio::time::sleep(Duration::from_millis(300).min(remaining)).await;
+        match tokio::time::timeout_at(deadline.into(), probe(deadline)).await {
+            Ok(ProbeOutcome::Skewed(info)) if !info.kept.newer => {
+                last_error = Some(info.reason());
+            }
+            Ok(ProbeOutcome::Unavailable(error)) => last_error = Some(error),
+            Ok(outcome) => match settle(outcome) {
+                Ok(result) => return result,
+                Err(info) => return Err(info.reason()),
+            },
+            Err(_) => break,
+        }
+    }
+    let detail = last_error.as_deref().unwrap_or("daemon 探测超时");
+    Err(format!("新版远端服务尚未就绪（{reason}）：{detail}"))
 }
 
 /// 一次 exec 确保 daemon 在跑并取回 token（见 [`daemon_token_command`]）。

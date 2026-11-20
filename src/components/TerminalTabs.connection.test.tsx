@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     renameTerminal: vi.fn(),
     addTerminal: vi.fn(),
   }
-  return { state, requestSettings: vi.fn() }
+  return { state, openTerminalProfilesManager: vi.fn() }
 })
 
 vi.mock('../store/terminalStore', () => ({
@@ -54,13 +54,13 @@ vi.mock('../store/uiStore', () => ({
     selector: (state: {
       requestToggleTerminal: () => void
       panelLayout: 'bottomTerminal'
-      requestSettings: (query: string) => void
+      openTerminalProfilesManager: () => void
     }) => unknown,
   ) =>
     selector({
       requestToggleTerminal: vi.fn(),
       panelLayout: 'bottomTerminal',
-      requestSettings: mocks.requestSettings,
+      openTerminalProfilesManager: mocks.openTerminalProfilesManager,
     }),
 }))
 
@@ -167,7 +167,7 @@ describe('TerminalTabs', () => {
     fireEvent.click(screen.getByRole('button', { name: '选择终端配置' }))
     expect(screen.getByRole('menuitem', { name: '普通终端（默认）' })).toBeDisabled()
     fireEvent.click(screen.getByRole('menuitem', { name: '管理终端配置' }))
-    expect(mocks.requestSettings).toHaveBeenCalledWith('终端配置')
+    expect(mocks.openTerminalProfilesManager).toHaveBeenCalledOnce()
     expect(mocks.state.addTerminal).not.toHaveBeenCalled()
   })
 

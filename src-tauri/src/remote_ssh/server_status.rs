@@ -737,6 +737,7 @@ fn require_server_mode_connection(manager: &SshManager, connection_id: &str) -> 
 
 pub(crate) async fn ssh_server_update(
     root_uri: String,
+    confirmed_upgrade: Option<&DeferredUpgrade>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
@@ -744,7 +745,7 @@ pub(crate) async fn ssh_server_update(
     let parsed = parse_remote_uri(&root.uri)?;
     if gateway_transport(&manager, &parsed.connection_id) == Some(ServerTransport::Tunnel) {
         // 用户已确认更新影响：重建隧道并替换旧网关，旧版 daemon 一并替换。
-        super::tunnel::update(&manager, &root, &app).await?;
+        super::tunnel::update(&manager, &root, Some(&app), confirmed_upgrade).await?;
         return state_for_root(&manager, &root);
     }
     if manager.direct_config(&parsed.connection_id).is_some() {
@@ -752,6 +753,9 @@ pub(crate) async fn ssh_server_update(
     }
     manager.session(&parsed.connection_id)?;
     require_server_mode_connection(&manager, &parsed.connection_id)?;
+    if let Some(confirmed) = confirmed_upgrade {
+        confirmed.verify(&server::deferred_upgrade_impact(&manager, &root).await?)?;
+    }
     server::update_server_endpoint_with_app(&manager, &root, Some(&app)).await?;
     state_for_root(&manager, &root)
 }

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
+import { StrictMode } from 'react'
 import SidebarSlot from './SidebarSlot'
+import { endPanelResize, PANEL_RESIZE_BEGIN_EVENT, PANEL_RESIZE_SETTLE_EVENT } from '../lib/panelResize'
 
 interface FakeAnimation {
   keyframes: Keyframe[]
@@ -32,7 +34,6 @@ function Slot(props: {
   animateOpen: boolean
   onExited: () => void
   width?: number
-  widthMode?: 'sidebar' | 'page'
 }) {
   return (
     <SidebarSlot freezeTerminals={false} {...props} width={props.width ?? 260}>
@@ -61,7 +62,7 @@ describe('SidebarSlot', () => {
     expect(slot.style.justifyContent).toBe('')
   })
 
-  it('收起时宽度收拢到 0 并淡出内容，播完才通知卸载且保持裁切', () => {
+  it('收起时只过渡宽度，播完才通知卸载且保持裁切', () => {
     const calls = installFakeAnimate(260)
     const onExited = vi.fn()
     const { container, rerender } = render(<Slot leaving={false} animateOpen={false} onExited={onExited} />)
@@ -70,7 +71,6 @@ describe('SidebarSlot', () => {
     expect(slot.hasAttribute('inert')).toBe(true)
     expect(calls.map(c => c.animation.keyframes)).toEqual([
       [{ width: '260px' }, { width: '0px' }],
-      [{ opacity: 1 }, { opacity: 0 }],
     ])
     expect(onExited).not.toHaveBeenCalled()
     calls[0].animation.onfinish?.()
@@ -85,18 +85,47 @@ describe('SidebarSlot', () => {
     expect(onExited).toHaveBeenCalledTimes(1)
   })
 
-  it('工作台整页与窄栏共享左缘，连切时从当前宽度反向', () => {
-    const calls = installFakeAnimate(420)
+  it('StrictMode 重新挂载时保留快照，展开完成后才适配终端', async () => {
+    const calls = installFakeAnimate(0)
+    const begin = vi.fn()
+    const settle = vi.fn()
+    window.addEventListener(PANEL_RESIZE_BEGIN_EVENT, begin)
+    window.addEventListener(PANEL_RESIZE_SETTLE_EVENT, settle)
+    try {
+      render(
+        <StrictMode>
+          <SidebarSlot width={260} leaving={false} animateOpen freezeTerminals onExited={() => {}}>
+            <div>侧栏</div>
+          </SidebarSlot>
+        </StrictMode>,
+      )
+      await Promise.resolve()
+      expect(begin).toHaveBeenCalledOnce()
+      expect(settle).not.toHaveBeenCalled()
+      calls.at(-1)?.animation.onfinish?.()
+      await Promise.resolve()
+      expect(settle).toHaveBeenCalledOnce()
+    } finally {
+      window.removeEventListener(PANEL_RESIZE_BEGIN_EVENT, begin)
+      window.removeEventListener(PANEL_RESIZE_SETTLE_EVENT, settle)
+      endPanelResize('vertical')
+    }
+  })
+
+  it('同宽换页保持槽位，开合反向时从当前宽度继续', () => {
+    const calls = installFakeAnimate(104)
     const props = { leaving: false, animateOpen: false, onExited: vi.fn() }
-    const { container, rerender } = render(<Slot {...props} widthMode="sidebar" />)
-    rerender(<Slot {...props} widthMode="page" width={620} />)
-    expect(calls[0].animation.keyframes).toEqual([{ width: '260px' }, { width: '620px' }])
-    expect((container.firstElementChild as HTMLElement).style.justifyContent).toBe('flex-start')
-    rerender(<Slot {...props} widthMode="sidebar" />)
+    const { rerender } = render(<Slot {...props} />)
+    rerender(<Slot {...props} onExited={vi.fn()} />)
+    expect(calls).toHaveLength(0)
+    rerender(<Slot {...props} leaving />)
+    expect(calls[0].animation.keyframes).toEqual([{ width: '260px' }, { width: '0px' }])
+    rerender(<Slot {...props} />)
     expect(calls[0].animation.cancel).toHaveBeenCalledOnce()
-    expect(calls[1].animation.keyframes).toEqual([{ width: '420px' }, { width: '260px' }])
+    expect(calls[1].animation.keyframes).toEqual([{ width: '104px' }, { width: '260px' }])
     calls[1].animation.onfinish?.()
-    rerender(<Slot {...props} widthMode="sidebar" width={280} />)
+    rerender(<Slot {...props} width={280} />)
     expect(calls).toHaveLength(2)
+    expect(props.onExited).not.toHaveBeenCalled()
   })
 })

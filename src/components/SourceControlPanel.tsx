@@ -2223,7 +2223,7 @@ export default function SourceControlPanel() {
     const writeDisabled = Boolean(operation) || loading
     // 「变更 / 历史」两页根节点同为 div，靠 key 区分才会重新挂载并播放淡入。
     const changesPane = (
-      <div key="changes" className="view-fade flex min-h-0 flex-1 overflow-hidden">
+      <div key="changes" className="scm-changes-pane view-fade flex min-h-0 flex-1 overflow-hidden">
         <ScmResizableColumn
           width={scmLeftWidth}
           minWidth={SCM_LEFT_MIN}
@@ -2324,7 +2324,7 @@ export default function SourceControlPanel() {
             {commitError && <p className="text-ui-sm mt-1.5 text-danger">{commitError}</p>}
           </div>
         </ScmResizableColumn>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+        <div className="scm-diff-pane flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
           {inlineDiffLoading ? (
             <EmptyState
               icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
@@ -2478,7 +2478,7 @@ export default function SourceControlPanel() {
     ) : null
 
     const historyPane = (
-      <div key="history" className="view-fade flex min-h-0 flex-1 overflow-hidden">
+      <div key="history" className="scm-history-pane view-fade flex min-h-0 flex-1 overflow-hidden">
         {/* ~3/5: commit list by default; clicking a file covers this with the diff. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg">
           {showingCommitDiff ? (
@@ -2583,7 +2583,7 @@ export default function SourceControlPanel() {
           )}
         </div>
         {historyDetailPane ?? (
-          <div className="flex min-h-0 w-[min(40%,520px)] flex-shrink-0 flex-col border-l border-border bg-bg-sidebar">
+          <div className="scm-empty-history-detail flex min-h-0 w-[min(40%,520px)] flex-shrink-0 flex-col border-l border-border bg-bg-sidebar">
             <EmptyState
               icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
               title={t('暂无提交记录')}
@@ -2662,7 +2662,7 @@ export default function SourceControlPanel() {
   }
 
   return (
-    <div className="ui-font-scaled flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
+    <div className="scm-panel ui-font-scaled flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
       <ScmToolbar
         status={status}
         projectPath={currentProject?.path ?? null}

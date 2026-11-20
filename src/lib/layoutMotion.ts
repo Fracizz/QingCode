@@ -1,4 +1,4 @@
-// 布局级动效（见 DESIGN.md「动效一览」）：侧栏展开 / 收起的宽度过渡、切换面板布局后的区域淡入。
+// 布局级动效（见 DESIGN.md「动效一览」）：面板宽度过渡与原地淡入。
 // 只用 Web Animations，参数取 animations.css 的 CSS 变量；减少动效、窗口在后台或不支持时直接跳过。
 import { motionReduced } from './motionPreferences'
 
@@ -33,8 +33,19 @@ export function guardAnimation(animation: Animation, duration: number) {
   }, duration + 300)
 }
 
-function fadeIn(element: HTMLElement, duration: number, easing: string, fromOpacity = 0) {
-  const animation = element.animate([{ opacity: fromOpacity }, { opacity: 1 }], { duration, easing })
+export function animatePanelWidth(element: HTMLElement, from: number, to: number, expanded: number) {
+  const duration = Math.max(60, cssDuration('--motion-layout', 180) * Math.min(1, Math.abs(to - from) / expanded))
+  const animation = element.animate([{ width: `${from}px` }, { width: `${to}px` }], {
+    duration,
+    easing: EASE_SOFT,
+    fill: 'both',
+  })
+  guardAnimation(animation, duration)
+  return animation
+}
+
+function fadeIn(element: HTMLElement, duration: number, fromOpacity = 0) {
+  const animation = element.animate([{ opacity: fromOpacity }, { opacity: 1 }], { duration, easing: EASE_SOFT })
   guardAnimation(animation, duration)
   return animation
 }
@@ -61,7 +72,7 @@ export function crossfadeRegion(
     return
   }
   const interrupted = previous && (previous.fade.pending || previous.fade.playState === 'running')
-  let fromOpacity = 0
+  let fromOpacity = outgoing ? 0 : 0.45
   const reversing = interrupted && previous.outgoing === incoming && previous.incoming === outgoing
   if (reversing) {
     fromOpacity = 1 - Number(getComputedStyle(previous.incoming).opacity)
@@ -72,9 +83,9 @@ export function crossfadeRegion(
   previous?.cancel()
   if (fromOpacity >= 1) return
 
-  const base = interrupted && !reversing ? cssDuration('--motion-fast', 120) : cssDuration('--motion-view', 260)
-  const duration = Math.max(60, base * (1 - fromOpacity))
-  const fade = fadeIn(incoming, duration, EASE_SOFT, fromOpacity)
+  const base = cssDuration('--motion-fast', 120)
+  const duration = interrupted ? Math.max(40, base * (1 - fromOpacity)) : base
+  const fade = fadeIn(incoming, duration, fromOpacity)
   const reveal = outgoing instanceof HTMLElement && outgoing !== incoming
     ? outgoing.animate([{ visibility: 'visible' }, { visibility: 'visible' }], { duration })
     : undefined
@@ -92,15 +103,5 @@ export function crossfadeRegion(
 /** 同级子页只淡入正文，时长和缓动与 .view-fade 一致。 */
 export function fadeInSubpage(element: Element | null) {
   if (!canAnimateLayout(element)) return
-  const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease-out').trim()
-  return fadeIn(element, cssDuration('--motion-fast', 120), easing || 'cubic-bezier(0.16, 1, 0.3, 1)')
-}
-
-/** 面板布局切换（经典 / 侧边终端 / 终端工作台）后，让换了位置的区域整体淡入，只变透明度不位移。 */
-export function fadeInLayoutRegions(elements: (Element | null | undefined)[]) {
-  const duration = cssDuration('--motion-view', 260)
-  for (const element of elements) {
-    if (!canAnimateLayout(element)) continue
-    fadeIn(element, duration, EASE_SOFT)
-  }
+  return fadeIn(element, cssDuration('--motion-fast', 120))
 }

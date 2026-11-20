@@ -44,7 +44,7 @@ function DraftDialog({ title, onClose, onReplace }: { title: string; onClose: ()
 
 const NOTICE_TERMINAL = 'motion-fixture'
 
-/** 与 App.tsx 一致：侧栏每个面板一个带 key 的 .view-enter 外层；终端浮条用真实组件。 */
+/** 保留侧栏外框，换页只给新正文淡入。终端浮条使用真实组件。 */
 function PageSwitchFixture() {
   const [view, setView] = useState<'explorer' | 'search'>('explorer')
   // 与 App 一致：收起时 SidebarSlot 先播收拢，onExited 后才卸载；首屏不播展开。
@@ -77,8 +77,11 @@ function PageSwitchFixture() {
           animateOpen={animateOpen}
           freezeTerminals={false}
         >
-          <div key={view} data-testid="sidebar-view" data-view={view} className="view-enter w-[200px] flex-shrink-0 border-r border-divider bg-bg-sidebar p-2">
-            {view === 'explorer' ? '资源管理器' : '搜索'}
+          <div data-testid="sidebar-view" data-view={view} className="w-[200px] flex-shrink-0 border-r border-divider bg-bg-sidebar p-2">
+            <div data-testid="sidebar-heading">{view === 'explorer' ? '资源管理器' : '搜索'}</div>
+            <div key={view} data-testid="sidebar-body" className="view-fade mt-2">
+              {view === 'explorer' ? '项目文件' : '搜索结果'}
+            </div>
           </div>
         </SidebarSlot>
       )}

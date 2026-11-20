@@ -65,13 +65,28 @@ describe('leaveExitGhost', () => {
     expect(ghost.querySelector('[id], [role], [data-modal-autofocus]')).toBeNull()
     expect(ghost.querySelector('input')!.value).toBe('草稿')
     expect(document.getElementById('dlg')).toBeNull()
-    // 整体淡出 + 面板微缩两段动画。
-    expect(animations).toHaveLength(2)
+    expect(animations).toHaveLength(1)
 
     animations[0].finish()
     await animations[0].finished
     await Promise.resolve()
     expect(ghosts()).toHaveLength(0)
+  })
+
+  it('keeps the current menu and dialog opacity when closing during entry', () => {
+    const menu = document.createElement('div')
+    menu.style.opacity = '0.4'
+    document.body.appendChild(menu)
+    leaveExitGhost(menu, 'menu')
+    expect(Element.prototype.animate).toHaveBeenCalledWith([{ opacity: '0.4' }, { opacity: 0 }], expect.any(Object))
+
+    const overlay = modal()
+    overlay.querySelector<HTMLElement>('.modal-overlay-enter')!.style.opacity = '0.3'
+    overlay.querySelector<HTMLElement>('.modal-content-enter')!.style.opacity = '0.2'
+    leaveExitGhost(overlay, 'modal')
+    const ghost = ghosts().at(-1)!
+    expect(ghost.querySelector<HTMLElement>('.modal-overlay-enter')!.style.opacity).toBe('0.3')
+    expect(ghost.querySelector<HTMLElement>('.modal-content-enter')!.style.opacity).toBe('0.2')
   })
 
   it('falls back to a timer when the animation never settles', () => {
@@ -112,7 +127,7 @@ describe('leaveExitGhost', () => {
     expect(ghost.style.width).toBe('300px')
     expect(ghost.style.zIndex).toBe('150')
   })
-  it('keeps a float ghost inside its container, drifts it up and strips nested test ids', () => {
+  it('fades a float ghost in place and strips nested test ids', () => {
     const host = document.createElement('div')
     host.style.position = 'relative'
     const bar = document.createElement('form')
@@ -129,8 +144,8 @@ describe('leaveExitGhost', () => {
     expect(animations).toHaveLength(1)
     const [keyframes] = (Element.prototype.animate as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(keyframes).toEqual([
-      { opacity: 1, transform: 'translateY(0)' },
-      { opacity: 0, transform: 'translateY(-4px)' },
+      { opacity: '1' },
+      { opacity: 0 },
     ])
   })
 })

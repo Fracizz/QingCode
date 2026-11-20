@@ -58,6 +58,16 @@ try {
   click('强制更新…')
   click('结束 3 个终端并更新')
   check('confirmed direct update refreshes the overview', `!document.body.textContent.includes('强制更新…') && document.querySelector('aside [aria-current="true"]')?.textContent.includes('服务已就绪')`)
+
+  run('open', 'http://127.0.0.1:38439/web-tests/remote-connections.html?deferred&hold-update')
+  click('强制更新…')
+  click('结束 3 个终端并更新')
+  check('confirmed force update reaches verification before it can be backgrounded', `[...document.querySelectorAll('[role="status"]')].some(el => el.textContent.includes('正在验证远端服务与配对身份'))`)
+  capture('force-update-background-action')
+  click('后台运行')
+  check('backgrounding a force update returns to the workbench', `!document.querySelector('[role="dialog"]') && !document.querySelector('[role="alertdialog"]')`)
+  click('完成强制更新')
+  check('the confirmed force update succeeds after both dialogs close', `document.querySelector('[data-testid="operation-log"]')?.textContent.includes('已更新远端服务')`)
 } catch (error) {
   results.push({ name: String(error), passed: false })
   try { capture('failure') } catch { /* Navigation may have failed before a page existed. */ }

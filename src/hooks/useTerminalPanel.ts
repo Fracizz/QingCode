@@ -124,7 +124,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
     const collapse = () => { if (current) setTerminalClosing(false) }
     // 退场时保留原来的宽高，到透明度过渡结束再一次收起。
     if (fade) {
-      guardAnimation(fade, cssDuration('--motion-enter', 160))
+      guardAnimation(fade, cssDuration('--motion-enter', 140))
       void fade.finished.then(collapse, collapse)
     } else {
       queueMicrotask(collapse)

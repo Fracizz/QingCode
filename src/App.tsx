@@ -15,6 +15,7 @@ import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
 import SshReconnectDialog from './components/SshReconnectDialog'
 import TerminalShortcutBarManager from './components/TerminalShortcutBarManager'
+import TerminalProfilesManager from './components/TerminalProfilesManager'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
@@ -41,17 +42,7 @@ import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import SidebarSlot from './components/SidebarSlot'
 import { startSystemThemeListener } from './lib/themeSettings'
-import {
-  clampSidebarWidth,
-  clampWorkbenchPageWidth,
-  getDefaultWorkbenchPageWidth,
-  getWorkbenchPageMaxWidth,
-  loadSidebarWidth,
-  loadWorkbenchPageWidth,
-  saveSidebarWidth,
-  saveWorkbenchPageWidth,
-  WORKBENCH_PAGE_MIN_WIDTH,
-} from './lib/sidebarLayout'
+import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { applyEffectiveSettings } from './lib/effectiveSettings'
@@ -63,6 +54,7 @@ import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
+import { useEditorColumnMotion } from './hooks/useEditorColumnMotion'
 import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from './lib/panelLayout'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
@@ -72,7 +64,6 @@ import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { useGitPushSync } from './features/gitPushSync/useGitPushSync'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
-import { fadeInLayoutRegions } from './lib/layoutMotion'
 import TerminalSessionList from './components/TerminalSessionList'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
 import {
@@ -98,6 +89,15 @@ const CreateProjectDialog = lazy(() => import('./components/CreateProjectDialog'
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
+
+const sidebarTitles: Record<View, string> = {
+  explorer: '资源管理器',
+  search: '搜索',
+  run: '运行配置',
+  terminals: '终端列表',
+  settings: '设置',
+  sourceControl: '源代码管理',
+}
 
 migrateLegacySettings()
 void import('./lib/minimapSettings').then(m => m.migrateLegacyMinimapSetting())
@@ -126,10 +126,10 @@ function PageLoading({ title }: { title?: string }) {
   )
 }
 
-function PageEntrance({ title, children }: { title: string; children: ReactNode }) {
+function PageView({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Suspense fallback={<PageLoading title={title} />}>
-      <div className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
     </Suspense>
   )
 }
@@ -193,6 +193,7 @@ function App() {
       .join('\0')
   )
   const view = useUIStore(s => s.view)
+  const sidebarView = useUIStore(s => s.fullPageRestore?.sidebarView ?? s.view)
   const sidebarOpen = useUIStore(s => s.sidebarOpen)
   const setView = useUIStore(s => s.setView)
   const toggleActivityView = useUIStore(s => s.toggleActivityView)
@@ -237,7 +238,6 @@ function App() {
   } = useTerminalPanel()
 
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
-  const [workbenchPageWidth, setWorkbenchPageWidth] = useState(loadWorkbenchPageWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
   // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
@@ -246,19 +246,12 @@ function App() {
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const terminalWorkbench = panelLayout === 'terminalWorkbench'
-  // 终端工作台的编辑器列只放文档：Git 与设置以完整整页显示在左侧（独立宽度）。
-  const pageViewInSidebar =
-    terminalWorkbench && (view === 'sourceControl' || view === 'settings')
-  const sidebarSlotVisible =
-    sidebarOpen &&
-    (view === 'explorer' ||
-      view === 'search' ||
-      view === 'run' ||
-      view === 'terminals' ||
-      pageViewInSidebar)
+  // 工作台各视图共用侧栏宽度。其余布局打开整页时，侧栏仍显示进入前的视图。
+  const sidebarSlotVisible = sidebarOpen &&
+    (terminalWorkbench || (sidebarView !== 'settings' && sidebarView !== 'sourceControl'))
   // 侧栏收起时先保留最后一个视图，SidebarSlot 播完收拢再卸载；首屏挂载不播展开。
   // 整页（设置 / 源代码管理）从侧栏移到编辑区时直接卸载，避免同一页面短暂挂载两份。
-  const sidebarKind: View | null = sidebarSlotVisible ? view : null
+  const sidebarKind: View | null = sidebarSlotVisible ? sidebarView : null
   const [sidebarTrack, setSidebarTrack] = useState(() => ({
     kind: sidebarKind,
     leaving: null as View | null,
@@ -275,8 +268,12 @@ function App() {
     })
   }
   const renderedSidebar = sidebarKind ?? sidebarTrack.leaving
-  const wideSidebar = renderedSidebar === 'settings' || renderedSidebar === 'sourceControl'
-  const renderedSidebarWidth = wideSidebar ? workbenchPageWidth : sidebarWidth
+  const editorColumnRef = useEditorColumnMotion(
+    panelLayout,
+    sideEditorSlotVisible,
+    terminalPosition === 'side' && terminalOpen && !panelLayoutSwitching,
+    sidebarSlotVisible ? sidebarWidth : 0,
+  )
   const finishSidebarExit = useCallback(() => {
     setSidebarTrack(track => (track.kind === null ? { ...track, leaving: null } : track))
   }, [])
@@ -291,7 +288,7 @@ function App() {
   useLayoutEffect(() => {
     if (!panelLayoutSwitching) return
     document.body.dataset.panelLayoutSwitch = '1'
-    beginPanelResize(terminalPosition === 'side' ? 'vertical' : 'horizontal')
+    beginPanelResize(terminalPosition === 'side' ? 'vertical' : 'horizontal', { cursor: false })
   }, [panelLayoutSwitching, terminalPosition])
 
   useEffect(() => {
@@ -300,9 +297,7 @@ function App() {
     settlePanelResize(orientation)
     delete document.body.dataset.panelLayoutSwitch
     useUIStore.setState({ panelLayoutSwitching: false })
-    // 换了布局的终端区与编辑区整体淡入；侧栏视图若随之切换（如进入终端工作台），由侧栏自身的入场负责。
-    fadeInLayoutRegions([terminalPanelRef.current, document.querySelector('[data-editor-column]')])
-  }, [panelLayoutSwitching, terminalPosition, terminalPanelRef])
+  }, [panelLayoutSwitching, terminalPosition])
 
   useAppKeyboardShortcuts({
     shortcuts,
@@ -351,10 +346,6 @@ function App() {
     saveSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
 
-  useEffect(() => {
-    saveWorkbenchPageWidth(workbenchPageWidth)
-  }, [workbenchPageWidth])
-
   // Open the terminal panel when something (e.g. a run config) signals it.
   useEffect(() => {
     if (terminalOpenSignal > 0) setTerminalOpen(true)
@@ -367,7 +358,6 @@ function App() {
   useEffect(() => {
     const onResize = () => {
       setSidebarWidth(w => clampSidebarWidth(w))
-      setWorkbenchPageWidth(w => clampWorkbenchPageWidth(w))
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -481,38 +471,24 @@ function App() {
 
           {renderedSidebar && (
             <SidebarSlot
-              width={renderedSidebarWidth}
-              widthMode={terminalWorkbench ? (wideSidebar ? 'page' : 'sidebar') : undefined}
+              width={sidebarWidth}
               leaving={sidebarKind === null}
               onExited={finishSidebarExit}
               animateOpen={sidebarTrack.animateOpen}
               freezeTerminals={terminalPosition === 'side' && terminalOpen}
             >
               <ResizableSidebar
-                key={renderedSidebar}
-                width={renderedSidebarWidth}
-                onWidthChange={wideSidebar ? setWorkbenchPageWidth : setSidebarWidth}
-                bounds={wideSidebar ? {
-                  min: WORKBENCH_PAGE_MIN_WIDTH,
-                  max: getWorkbenchPageMaxWidth(),
-                  defaultWidth: getDefaultWorkbenchPageWidth(),
-                  clamp: clampWorkbenchPageWidth,
-                } : undefined}
-                className={renderedSidebar === 'explorer' || wideSidebar ? 'bg-bg-sidebar' : 'ui-font-scaled bg-bg-sidebar'}
+                width={sidebarWidth}
+                onWidthChange={setSidebarWidth}
+                className="ui-font-scaled bg-bg-sidebar"
               >
-                {renderedSidebar === 'explorer' ? (
-                  <PageEntrance title={t('资源管理器')}><Sidebar /></PageEntrance>
-                ) : renderedSidebar === 'search' ? (
-                  <PageEntrance title={t('搜索')}><SearchPanel /></PageEntrance>
-                ) : renderedSidebar === 'run' ? (
-                  <PageEntrance title={t('运行配置')}><RunPanel /></PageEntrance>
-                ) : renderedSidebar === 'terminals' ? (
-                  <PageEntrance title={t('终端列表')}><TerminalSessionList /></PageEntrance>
-                ) : renderedSidebar === 'settings' ? (
-                  <PageEntrance title={t('设置')}><SettingsEditor /></PageEntrance>
-                ) : (
-                  <PageEntrance title={t('源代码管理')}><SourceControlPanel /></PageEntrance>
-                )}
+                <PageView key={renderedSidebar} title={t(sidebarTitles[renderedSidebar])}>
+                  {renderedSidebar === 'explorer' ? <Sidebar /> :
+                    renderedSidebar === 'search' ? <SearchPanel /> :
+                    renderedSidebar === 'run' ? <RunPanel /> :
+                    renderedSidebar === 'terminals' ? <TerminalSessionList /> :
+                    renderedSidebar === 'settings' ? <SettingsEditor /> : <SourceControlPanel />}
+                </PageView>
               </ResizableSidebar>
             </SidebarSlot>
           )}
@@ -529,7 +505,7 @@ function App() {
               quadTerminal={sideQuadActive}
               editorVisible={sideEditorSlotVisible}
               widthResizerEdge={terminalWorkbench ? 'end' : 'start'}
-              hideTabs={terminalWorkbench && sidebarSlotVisible && view === 'terminals'}
+              sessionListVisible={terminalWorkbench && sidebarSlotVisible && view === 'terminals'}
               isTerminalResizing={isTerminalResizing}
               layoutSwitching={panelLayoutSwitching}
               onResizerPointerDown={onResizerPointerDown}
@@ -546,16 +522,18 @@ function App() {
           </Suspense>
 
           <div
+            ref={editorColumnRef}
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
             data-editor-column
+            inert={!sideEditorSlotVisible || undefined}
           >
-            {/* 设置、源代码管理的入场在加载边界内；编辑器分支的 key 不随文件变化。 */}
+            {/* 设置和源代码管理复用编辑区边界；编辑器分支的 key 不随文件变化。 */}
             {view === 'settings' && !terminalWorkbench ? (
-              <PageEntrance key="settings" title={t('设置')}><SettingsEditor /></PageEntrance>
+              <PageView key="settings" title={t('设置')}><SettingsEditor /></PageView>
             ) : view === 'sourceControl' && !terminalWorkbench ? (
-              <PageEntrance key="sourceControl" title={t('源代码管理')}><SourceControlPanel /></PageEntrance>
+              <PageView key="sourceControl" title={t('源代码管理')}><SourceControlPanel /></PageView>
             ) : (
-              <div key="editor" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div key="editor" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <EditorTabs />
                 <EditorBreadcrumbs />
                 {projectRestricted && currentProject && (
@@ -601,6 +579,7 @@ function App() {
       <ExplorerConflictDialog />
       <PropertiesDialog />
       <SshReconnectDialog />
+      <TerminalProfilesManager />
       <TerminalShortcutBarManager />
       <CommandPalette />
       <SymbolPicker />

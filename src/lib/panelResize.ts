@@ -33,6 +33,8 @@ let frozenTerminalSurfaces: FrozenTerminalSurface[] = []
 let resizeSession = 0
 let settleFallbackTimer: number | null = null
 let settleFrame = 0
+const layoutResizes = new Set<() => void>()
+let layoutResizeSession: number | null = null
 
 /** 面板分隔条开始、最终对齐与结束拖动事件。 */
 export const PANEL_RESIZE_BEGIN_EVENT = 'qingcode:panel-resize-begin'
@@ -142,6 +144,34 @@ export function beginPanelResize(
   orientation: PanelResizeOrientation = 'horizontal',
   options: PanelResizeBeginOptions = {}
 ) {
+  const interrupted = [...layoutResizes]
+  layoutResizes.clear()
+  layoutResizeSession = null
+  for (const finish of interrupted) finish()
+  startPanelResize(orientation, options)
+}
+
+/** 同时开合两个分隔线时，共用一次终端冻结，在最后一个到位后提交字符网格。 */
+export function beginPanelLayoutResize(onInterrupt: () => void): (() => void) | null {
+  if (isPanelResizing() && !document.body.hasAttribute('data-panel-resize-quiet')) return null
+  layoutResizes.add(onInterrupt)
+  if (layoutResizeSession !== resizeSession) {
+    startPanelResize('vertical', { cursor: false })
+    layoutResizeSession = resizeSession
+  }
+  const session = layoutResizeSession
+  return () => {
+    if (!layoutResizes.delete(onInterrupt) || layoutResizes.size) return
+    // 同一提交里换接分隔线时沿用现有快照，也覆盖 StrictMode 的卸载再挂载。
+    queueMicrotask(() => {
+      if (layoutResizes.size || layoutResizeSession !== session || resizeSession !== session) return
+      layoutResizeSession = null
+      settlePanelResize('vertical')
+    })
+  }
+}
+
+function startPanelResize(orientation: PanelResizeOrientation, options: PanelResizeBeginOptions) {
   resizeSession += 1
   cancelPendingSettle()
   document.body.classList.add(RESIZING_CLASS)

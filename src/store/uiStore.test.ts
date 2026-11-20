@@ -318,6 +318,18 @@ describe('full-page views (source control / settings)', () => {
     expect(useUIStore.getState().sideEditorVisible).toBe(false)
   })
 
+  it('retains the visible sidebar view while switching full pages and returns to it', () => {
+    useUIStore.setState({ view: 'search', sidebarOpen: true })
+    useUIStore.getState().toggleActivityView('settings')
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState()).toMatchObject({
+      sidebarOpen: true,
+      fullPageRestore: { sidebarView: 'search' },
+    })
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState()).toMatchObject({ view: 'search', sidebarOpen: true })
+  })
+
   it('keeps a manual editor toggle made while in the full-page view', () => {
     useUIStore.getState().toggleActivityView('sourceControl')
     useUIStore.getState().toggleSideEditorVisible()

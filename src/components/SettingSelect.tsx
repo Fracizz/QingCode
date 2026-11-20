@@ -67,7 +67,7 @@ export default function SettingSelect({
     // 至少与触发按钮同宽；选项（含勾选列）更长时按内容撑开，不超出窗口。
     // 触发按钮随选中项收窄时，固定同宽会把「自动（1 个）」这类选项截成省略号。
     // 用计算样式里的小数宽度向上取整：offsetWidth 舍去的零点几像素也会让末字变成省略号；
-    // 不用 getBoundingClientRect，入场动画（menu-enter）的缩放会让它量小。
+    // 读取滚动内容的完整高度，定位时不受菜单可视高度限制。
     const fitContent = () => {
       menu.style.width = 'max-content'
       const content = Math.ceil(Number.parseFloat(getComputedStyle(menu).width) || menu.offsetWidth)
@@ -218,11 +218,15 @@ export default function SettingSelect({
             ref={menuExitRef}
             id={listId}
             role="listbox"
+            data-setting-select-menu=""
             tabIndex={-1}
             aria-activedescendant={`${listId}-opt-${activeIndex}`}
             className="menu-enter ui-font-scaled fixed z-[80] flex flex-col gap-[3px] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 outline-none"
             style={{ ...menuStyle, zIndex: menuZIndex }}
             onKeyDown={onMenuKeyDown}
+            onBlur={event => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+            }}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()

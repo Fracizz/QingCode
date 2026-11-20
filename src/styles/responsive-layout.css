@@ -1,5 +1,6 @@
 /* Layout follows each editor column, including font changes and terminal splits. */
 .settings-shell { container: settings / inline-size; }
+.scm-panel { container: scm / inline-size; }
 .empty-editor { container: empty-editor / inline-size; }
 .project-manager { container: project-manager / inline-size; }
 .project-overflow-action { display: none; }
@@ -83,6 +84,30 @@
     border-bottom: 2px solid transparent;
   }
   .settings-nav > button[aria-current='page'] { border-bottom-color: var(--color-brand); }
+}
+
+@container scm (max-width: 560px) {
+  .scm-changes-pane,
+  .scm-history-pane {
+    flex-direction: column;
+  }
+
+  .scm-changes-pane > [data-scm-resizable-column],
+  .scm-history-pane > [data-scm-resizable-column],
+  .scm-empty-history-detail {
+    width: 100% !important;
+    height: auto;
+    flex: 1 1 0;
+  }
+
+  .scm-changes-pane > [data-scm-resizable-column] { flex-grow: 2; }
+  .scm-diff-pane,
+  .scm-history-pane > :last-child { border-top: 1px solid var(--color-border); }
+
+  .scm-changes-pane > [data-scm-resizable-column] > .panel-resizer,
+  .scm-history-pane > [data-scm-resizable-column] > .panel-resizer {
+    display: none;
+  }
 }
 
 @container empty-editor (max-width: 540px) {

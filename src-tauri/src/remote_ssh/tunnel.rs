@@ -297,18 +297,27 @@ pub(super) async fn activate(
     if manager.direct_config(&id).is_some() {
         return Ok(());
     }
-    let session = manager.live_session(&id).await?;
-    adopt(&id, session)?;
+    activate_gateway(manager, root, app, &id).await
+}
+
+async fn activate_gateway(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+    id: &str,
+) -> Result<(), String> {
+    let session = manager.live_session(id).await?;
+    adopt(id, session)?;
     // 快速路径：网关已在运行且版本合用时直接接入，不必暂存程序（Windows 上
     // 校验程序摘要要十几秒）。描述读不到或网关不可用再走完整准备。
-    if switch_if_running(manager, &id).await? {
+    if switch_if_running(manager, id).await? {
         return Ok(());
     }
     server_status::note_server_activity(
         manager,
         app,
         root,
-        &id,
+        id,
         server_status::ServerPhase::Installing,
     );
     let staged = server::stage_direct_gateway(manager, root).await?;
@@ -316,12 +325,12 @@ pub(super) async fn activate(
         manager,
         app,
         root,
-        &id,
+        id,
         server_status::ServerPhase::Handshaking,
     );
     let info = match read_gateway(manager, root, &staged).await? {
         Some(info) => {
-            let config = tunnel_config(&id, &info)?;
+            let config = tunnel_config(id, &info)?;
             match direct::test(&config).await {
                 Ok(health) if direct::require_usable_gateway(&config, &health).is_ok() => info,
                 Ok(_) => {
@@ -342,10 +351,10 @@ pub(super) async fn activate(
         }
         None => start_gateway(manager, root, &staged, &loopback_gateway()).await?,
     };
-    let config = tunnel_config(&id, &info)?;
+    let config = tunnel_config(id, &info)?;
     let health = direct::test(&config).await?;
     direct::require_usable_gateway(&config, &health)?;
-    switch_to_tunnel(manager, &id, config)
+    switch_to_tunnel(manager, id, config)
 }
 
 /// 显式更新：撤销隧道登记后重新建立（更旧的网关随之替换），再按「替换」
@@ -353,34 +362,45 @@ pub(super) async fn activate(
 pub(super) async fn update(
     manager: &SshManager,
     root: &RegisteredRoot,
-    app: &AppHandle,
+    app: Option<&AppHandle>,
+    confirmed_upgrade: Option<&server_status::DeferredUpgrade>,
 ) -> Result<(), String> {
     let id = parse_remote_uri(&root.uri)?.connection_id;
-    if let Some(config) = manager.direct_config(&id) {
-        direct::close_connection(&config.endpoint, &id);
-    }
-    manager
-        .direct_connections
-        .write()
-        .map_err(|_| "Server 状态不可用")?
-        .remove(&id);
-    activate(manager, root, Some(app)).await?;
-    let config = manager.direct_config(&id).ok_or("远端 Server 隧道未建立")?;
-    let access = server::DaemonAccess {
-        bin: "direct".into(),
-        token: config.token,
+    let gate = manager.server_gate(&format!("tunnel|{id}"))?;
+    let _guard = gate.lock().await;
+    let previous = {
+        let mut connections = manager
+            .direct_connections
+            .write()
+            .map_err(|_| "Server 状态不可用")?;
+        match connections.entry(id.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().tunnel.as_deref() == Some(id.as_str()) =>
+            {
+                entry.remove()
+            }
+            _ => return Err("远端 Server 隧道状态已变化，请刷新状态".into()),
+        }
     };
-    // 先按常规探测：更旧但仍有终端的 daemon 会被登记为沿用，这里再按显式更新替换。
-    server::ensure_server_endpoint_with_app(manager, root, Some(app)).await?;
-    if server::kept_daemon(&access).is_some_and(|kept| !kept.newer) {
-        server::shutdown_remote_daemon(manager, &id, &access).await;
-        server::forget_kept_daemon(&access);
-        // 与重启/SSH 更新一致：丢弃指向旧 daemon 的共享连接与绑定，
-        // 否则随后的 ensure 会复用已关闭的通道并留下「daemon 连接已关闭」。
-        server::invalidate_shared_daemon(manager, &id);
-        manager.clear_server_endpoint(&server::server_slot_key(&id, &root.canonical_path));
-        server::ensure_server_endpoint_with_app(manager, root, Some(app)).await?;
-    }
+    direct::close_connection(&previous.endpoint, &id);
+    activate_gateway(manager, root, app, &id).await?;
+    let config = manager.direct_config(&id).ok_or("远端 Server 隧道未建立")?;
+    server_status::note_server_activity(
+        manager,
+        app,
+        root,
+        &id,
+        server_status::ServerPhase::Handshaking,
+    );
+    server::ensure_gateway_endpoint(
+        manager,
+        root,
+        app,
+        &id,
+        config,
+        server::GatewayDaemonCheck::Update(confirmed_upgrade),
+    )
+    .await?;
     Ok(())
 }
 

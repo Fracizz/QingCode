@@ -73,6 +73,10 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
     await page.evaluate(() => { localStorage.removeItem('qingcode:panel-layout'); localStorage.removeItem('qingcode:terminal-panel') })
     await page.reload()
     await waitFor(() => Boolean(window.__QINGCODE_TEST__ && document.querySelector('button[aria-label="设置"]')))
+    await waitFor(() => {
+      const splash = document.querySelector('#startup-splash')
+      return !splash || getComputedStyle(splash).pointerEvents === 'none'
+    })
     await page.click('loc=role:button[name="打开项目"]', { label: 'open demo project' })
     await page.click('loc=role:button[name="信任并继续"]', { label: 'trust demo project' })
     await waitFor(() => document.body.textContent.includes('README.md'))
@@ -113,6 +117,91 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       assert.ok(rows.every(row => !/\d{2}:\d{2}/.test(row.text)))
     })
     await shot('list')
+
+    await step('侧栏各页互切时保持当前终端的位置和行列', async () => {
+      await waitFor(() => {
+        const active = document.querySelector('[data-terminal-pane-body="primary"]')
+        return active?.querySelector('.xterm-screen') && window.__QINGCODE_TEST__.terminalIds().includes(active.dataset.terminalView)
+      })
+      await page.waitForTimeout(500)
+      const { before, switches, resizes } = await page.evaluate(async () => {
+        const { terminalViewGrids } = await import('/src/store/terminal/ptySizing.ts')
+        const pane = () => document.querySelector('[data-terminal-pane-body="primary"]')
+        const screen = pane().querySelector('.xterm-screen')
+        const measure = () => {
+          const view = pane()
+          return {
+            bounds: view.getBoundingClientRect().toJSON(),
+            grid: terminalViewGrids.get(view.dataset.terminalView),
+            sameScreen: view.querySelector('.xterm-screen') === screen,
+          }
+        }
+        const before = measure()
+        const callCount = window.__QINGCODE_TEST__.calls().length
+        const switches = []
+        for (const name of ['资源管理器', '搜索', '设置', '源代码管理', '终端列表']) {
+          const button = document.querySelector(`button[aria-label="${name}"]`)
+          button.click()
+          await new Promise(resolve => requestAnimationFrame(resolve))
+          const firstFrame = measure()
+          await new Promise(resolve => setTimeout(resolve, 420))
+          switches.push({
+            name,
+            firstFrame,
+            settled: measure(),
+            selected: button.getAttribute('aria-pressed') === 'true',
+            strips: document.querySelectorAll('[data-terminal-panel] [role="tablist"]').length,
+          })
+        }
+        const resizes = window.__QINGCODE_TEST__.calls().slice(callCount).filter(name => name.endsWith('resize_terminal'))
+        return { before, switches, resizes }
+      })
+      assert.ok(before.grid?.rows > 0)
+      for (const { name, firstFrame, settled, selected, strips } of switches) {
+        assert.equal(selected, true, name)
+        assert.equal(strips, name === '终端列表' ? 0 : 1, name)
+        assert.deepEqual(firstFrame, before, name)
+        assert.deepEqual(settled, before, name)
+      }
+      assert.deepEqual(resizes, [])
+    })
+
+    await step('编辑器开合只过渡分隔线，终端在动画结束后更新网格', async () => {
+      const motion = await page.evaluate(async () => {
+        const { terminalViewGrids } = await import('/src/store/terminal/ptySizing.ts')
+        const grid = document.querySelector('.workspace-grid')
+        const editor = grid.querySelector('[data-editor-column]')
+        const terminal = grid.querySelector('[data-terminal-pane-body="primary"]')
+        const gridSize = () => terminalViewGrids.get(terminal.dataset.terminalView)
+        const initial = gridSize()
+        const measure = async (buttonLabel) => {
+          const baseline = gridSize()
+          document.querySelector(`button[aria-label="${buttonLabel}"]`).click()
+          const widths = new Set()
+          const start = performance.now()
+          let frozen = true
+          while (performance.now() - start < 550) {
+            await new Promise(resolve => requestAnimationFrame(resolve))
+            if (!grid.hasAttribute('data-editor-split-motion')) continue
+            widths.add(Math.round(editor.getBoundingClientRect().width))
+            const size = gridSize()
+            frozen &&= document.body.classList.contains('panel-resizing') && size.cols === baseline.cols && size.rows === baseline.rows
+          }
+          return { widths: widths.size, frozen, final: gridSize(), moving: grid.hasAttribute('data-editor-split-motion') }
+        }
+        const opening = await measure('显示编辑器')
+        const collapsed = await measure('隐藏编辑器')
+        return { opening, collapsed, initial }
+      })
+      assert.ok(motion.opening.widths >= 3)
+      assert.equal(motion.opening.frozen, true)
+      assert.ok(motion.opening.final.cols < motion.initial.cols)
+      assert.equal(motion.opening.moving, false)
+      assert.ok(motion.collapsed.widths >= 3)
+      assert.equal(motion.collapsed.frozen, true)
+      assert.deepEqual(motion.collapsed.final, motion.initial)
+      assert.equal(motion.collapsed.moving, false)
+    })
 
     await step('点击列表行切换终端', async () => {
       await page.click(rowSelector(1), { label: 'select first terminal' })
@@ -300,6 +389,7 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       await waitFor(() => document.querySelector('.workspace-grid').dataset.editorSlot === 'visible')
       await clickButton('终端列表', 'back to terminal list')
       await page.waitForSelector('[data-terminal-session-list]')
+      await waitFor(() => !document.querySelector('[data-editor-split-motion]'))
       const state = await layout()
       assert.ok(state.editor, '编辑器应可见')
       assert.ok(state.terminal.right <= state.editor.left + 1, '编辑器应在终端右侧')
@@ -329,7 +419,7 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
     await step('关闭最后一个编辑器标签后收起编辑器', async () => {
       await page.evaluate(() => document.querySelector('[aria-label="关闭文件"]').click())
       await waitFor(() => document.querySelector('.workspace-grid').dataset.editorSlot === 'collapsed')
-      // 终端列宽有 200ms 过渡，等动画结束后再比较。
+      // 等分隔线到位后再比较。
       await waitFor(() => {
         const list = document.querySelector('[data-terminal-session-list]').getBoundingClientRect()
         const terminal = document.querySelector('[data-terminal-panel]').getBoundingClientRect()

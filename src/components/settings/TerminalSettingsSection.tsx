@@ -1,4 +1,5 @@
 import type { RefObject } from 'react'
+import { Settings2 } from 'lucide-react'
 import { useI18n } from '../../lib/i18n'
 import {
   DEFAULT_FONT_SETTINGS,
@@ -7,7 +8,7 @@ import {
   type FontSettings,
 } from '../../lib/fontSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
-import type { TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
+import { DEFAULT_TERMINAL_PROFILE, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   defaultTerminalShell,
@@ -17,10 +18,10 @@ import {
 import { confirmClearTerminalPaste } from '../../lib/terminalPasteCleanup'
 import { parseTerminalPasteRetentionDays } from '../../lib/terminal/terminalPasteCleanupSettings'
 import type { Project } from '../../types'
+import { useUIStore } from '../../store/uiStore'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
 import { SettingItem } from '../SettingsLayout'
-import TerminalProfilesInline from '../TerminalProfilesInline'
 import TerminalShortcutBarSettings from '../TerminalShortcutBarSettings'
 import type { TerminalIntegrationSettingsState } from './useSettingsSectionState'
 import type { FontSettingUpdater, SettingsMatch } from './types'
@@ -51,6 +52,7 @@ export default function TerminalSettingsSection({
   settings,
 }: Props) {
   const { t } = useI18n()
+  const openProfilesManager = useUIStore(s => s.openTerminalProfilesManager)
   const {
     sshUploadOnPaste,
     largePasteAsFile,
@@ -144,8 +146,18 @@ export default function TerminalSettingsSection({
         </SettingItem>
       )}
       {!workspaceLocked && match('终端配置', '默认启动配置') && (
-        <div ref={profilesRef} className="scroll-mt-4">
-          <TerminalProfilesInline settings={terminal} onChange={onTerminalChange} />
+        <div ref={profilesRef} className="min-w-0 scroll-mt-4" aria-label={t('终端配置')}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-ui font-medium">{t('终端配置')}</h3>
+            <button type="button" aria-haspopup="dialog" className="terminal-profile-add" onClick={openProfilesManager}>
+              <Settings2 size={13} />{t('管理终端配置')}
+            </button>
+          </div>
+          <p className="mt-1.5 text-ui-sm leading-relaxed text-fg-muted">
+            {t('已有 {n} 个自定义配置。新建终端时可从下拉菜单选择配置。', {
+              n: terminal.profiles.filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id).length,
+            })}
+          </p>
         </div>
       )}
       {!workspaceLocked && match('快捷键栏', '自定义键', '快捷键', 'shortcut bar') && (

@@ -3,8 +3,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DirectServerUpdateDialog from './DirectServerUpdateDialog'
+import ServerOperationTasks from './ServerOperationTasks'
 import type { DirectServerUpdateApi } from '../lib/directServerUpdate'
 import { useProjectStore } from '../store/projectStore'
+import { useServerOperationStore } from '../store/serverOperationStore'
 import { useUIStore } from '../store/uiStore'
 import type { SshConnection } from '../types'
 
@@ -68,7 +70,16 @@ beforeEach(() => {
     pushToast,
   })
   useUIStore.setState({ serverUpdateRootUri: rootUri })
+  useServerOperationStore.setState({ tasks: {} })
 })
+
+function UpdateWithTaskCards() {
+  const root = useUIStore(s => s.serverUpdateRootUri)
+  return <>
+    {root && <DirectServerUpdateDialog rootUri={root} api={api} />}
+    <ServerOperationTasks />
+  </>
+}
 
 describe('direct Server package selection', () => {
   it('passes explicit deferred upgrade consent through the authorized direct update', async () => {
@@ -112,6 +123,44 @@ describe('direct Server package selection', () => {
     await act(async () => { finish(ready) })
     expect(useUIStore.getState().serverUpdateRootUri).toBeNull()
     expect(pushToast).toHaveBeenCalledWith('success', expect.any(String))
+  })
+
+  it.each(['success', 'failure'])('handles background update %s after the dialog unmounts', async outcome => {
+    let resolve!: (state: typeof ready) => void
+    let reject!: (reason: Error) => void
+    vi.mocked(api.prepare).mockResolvedValue(info)
+    vi.mocked(api.update).mockImplementation((_target, progress) => {
+      progress('uploading')
+      return new Promise((done, failed) => { resolve = done; reject = failed })
+    })
+    render(<UpdateWithTaskCards />)
+    fireEvent.click(await screen.findByRole('button', { name: '后台运行' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+
+    act(() => {
+      vi.mocked(api.update).mock.calls[0][1]('verifying')
+      useUIStore.setState({ serverUpdateRootUri: 'ssh://direct/other-project' })
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('正在验证远端服务与配对身份')
+    expect(button('正在更新…')).toBeDisabled()
+    expect(api.prepare).toHaveBeenCalledOnce()
+    expect(api.update).toHaveBeenCalledOnce()
+    fireEvent.click(button('关闭'))
+
+    await act(async () => {
+      if (outcome === 'success') resolve(ready)
+      else reject(new Error('restart failed'))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    if (outcome === 'success') {
+      expect(pushToast).toHaveBeenCalledWith('success', expect.any(String))
+      expect(screen.queryByRole('progressbar')).toBeNull()
+    } else {
+      expect(screen.getByRole('alert')).toHaveTextContent('restart failed')
+      expect(button('更新远端服务')).toBeEnabled()
+      expect(pushToast).not.toHaveBeenCalled()
+    }
   })
 
   it('requires an offline directory and keeps an invalid package from enabling update', async () => {

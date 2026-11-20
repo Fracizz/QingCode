@@ -266,3 +266,31 @@ body {
 .workspace-grid[data-panel-layout='terminalWorkbench'][data-editor-slot='collapsed'] .workspace-grid-editor {
   display: none;
 }
+
+/* 编辑器开合时由编辑器列宽度推动分隔线，终端使用余下的空间。
+   空的侧栏轨道宽度为 0，两侧布局共用同一套裁切规则。 */
+.workspace-grid[data-editor-split-motion][data-panel-layout='sideTerminal'][data-sidebar-slot][data-editor-slot][data-terminal-slot='visible'] {
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  grid-template-areas: 'activity sidebar editor terminal';
+}
+
+.workspace-grid[data-editor-split-motion][data-panel-layout='terminalWorkbench'][data-sidebar-slot][data-editor-slot][data-terminal-slot='visible'] {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: 'activity sidebar terminal editor';
+}
+
+.workspace-grid[data-editor-split-motion][data-editor-slot] > .workspace-grid-editor {
+  display: flex;
+}
+
+.workspace-grid[data-editor-split-motion][data-panel-layout='terminalWorkbench'] > .workspace-grid-editor {
+  align-items: flex-end;
+}
+
+.workspace-grid[data-editor-split-motion] > .workspace-grid-editor > :first-child {
+  width: var(--editor-content-width);
+}
+
+.workspace-grid[data-editor-split-motion] > [data-terminal-dock='side'] {
+  width: 100% !important;
+}

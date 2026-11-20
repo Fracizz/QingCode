@@ -6,6 +6,7 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from 'react'
 import {
   Circle,
@@ -49,6 +50,45 @@ import { useI18n } from '../lib/i18n'
 /** Exited tabs end with the restart button, which already carries its own hit area. */
 function terminalTabPaddingClass(status: TerminalTab['status']): string {
   return status === 'exited' ? 'pl-0.5 pr-0.5' : 'pl-0.5 pr-2.5'
+}
+
+function TerminalPaneHeader({
+  children,
+  focused = false,
+  onTitlePointerDown,
+}: {
+  children?: ReactNode
+  focused?: boolean
+  onTitlePointerDown?: () => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div
+      className={`ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b border-border bg-bg-deep ${
+        focused ? 'bg-bg-active/40' : ''
+      }`}
+      data-terminal-pane-focused={focused ? 'true' : undefined}
+    >
+      <div
+        className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-ui-xs font-semibold tracking-wide ${
+          focused ? 'text-fg' : 'text-fg-muted'
+        }`}
+        onPointerDown={onTitlePointerDown}
+      >
+        <TerminalIcon size={13} />{' '}
+        {t('终端')}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export function TerminalSessionHeader({ name }: { name?: string }) {
+  return (
+    <TerminalPaneHeader>
+      {name && <span className="min-w-0 truncate px-2 text-ui text-fg">{formatTerminalName(name)}</span>}
+    </TerminalPaneHeader>
+  )
 }
 
 export default function TerminalTabs({
@@ -199,23 +239,10 @@ export default function TerminalTabs({
 
   return (
     <>
-    <div
-      className={`ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b border-border bg-bg-deep ${
-        focused ? 'bg-bg-active/40' : ''
-      }`}
-      data-terminal-pane-focused={focused ? 'true' : undefined}
-    >
-        <div
-          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-ui-xs font-semibold tracking-wide ${
-            focused ? 'text-fg' : 'text-fg-muted'
-          }`}
-          onPointerDown={() => {
-            if (pane) setTerminalFocusPane(pane)
-          }}
-        >
-          <TerminalIcon size={13} />{' '}
-          {translate('终端')}
-        </div>
+      <TerminalPaneHeader
+        focused={focused}
+        onTitlePointerDown={pane ? () => setTerminalFocusPane(pane) : undefined}
+      >
         {/* Tabs + `+` hug content on the left (same pattern as project chips). */}
         <div
           ref={tabsAreaRef}
@@ -451,7 +478,7 @@ export default function TerminalTabs({
               onContextMenu={event => {
                 if (creatingTerminal) return
                 if (!shouldShowAppContextMenu(event)) return
-                setProfileMenu({ x: event.clientX, y: event.clientY })
+                setProfileMenu({ x: event.clientX, y: event.clientY, trigger: event.currentTarget })
               }}
             >
               {creatingTerminal ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -470,7 +497,7 @@ export default function TerminalTabs({
                   return
                 }
                 const rect = event.currentTarget.getBoundingClientRect()
-                setProfileMenu({ x: rect.left, y: rect.bottom + 4 })
+                setProfileMenu({ x: rect.left, y: rect.bottom + 4, trigger: event.currentTarget })
               }}
             >
               <ChevronDown size={12} />
@@ -555,7 +582,7 @@ export default function TerminalTabs({
             </div>
           ))}
         </div>
-      </div>
+      </TerminalPaneHeader>
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}

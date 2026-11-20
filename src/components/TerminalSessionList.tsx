@@ -930,7 +930,7 @@ export default function TerminalSessionList() {
                 }}
                 onContextMenu={event => {
                   if (creatingTerminal || !shouldShowAppContextMenu(event)) return
-                  setProfileMenu({ x: event.clientX, y: event.clientY, projectId: project.id })
+                  setProfileMenu({ x: event.clientX, y: event.clientY, projectId: project.id, trigger: event.currentTarget })
                 }}
               >
                 <Plus size={15} />
@@ -949,7 +949,7 @@ export default function TerminalSessionList() {
                     return
                   }
                   const rect = event.currentTarget.getBoundingClientRect()
-                  setProfileMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id })
+                  setProfileMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id, trigger: event.currentTarget })
                 }}
               >
                 <ChevronDown size={13} />
@@ -1019,7 +1019,7 @@ export default function TerminalSessionList() {
           <span
             role="img"
             aria-label={translate('{count} 个终端', { count: section.terminalCount })}
-            className="flex-shrink-0 tabular-nums"
+            className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-term-list-fg/10 px-1.5 py-0.5 font-medium leading-none text-term-list-fg tabular-nums"
           >
             {section.terminalCount}
           </span>
@@ -1067,7 +1067,7 @@ export default function TerminalSessionList() {
             }}
             onContextMenu={event => {
               if (creatingTerminal || !shouldShowAppContextMenu(event)) return
-              setProfileMenu({ x: event.clientX, y: event.clientY })
+              setProfileMenu({ x: event.clientX, y: event.clientY, trigger: event.currentTarget })
             }}
           >
             {creatingTerminal ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -1086,7 +1086,7 @@ export default function TerminalSessionList() {
                 return
               }
               const rect = event.currentTarget.getBoundingClientRect()
-              setProfileMenu({ x: rect.left, y: rect.bottom + 4 })
+              setProfileMenu({ x: rect.left, y: rect.bottom + 4, trigger: event.currentTarget })
             }}
           >
             <ChevronDown size={12} />
@@ -1256,7 +1256,7 @@ export default function TerminalSessionList() {
           ref={listRef}
           // 组间与组内同为 2px，项目行与会话行节奏一致；分组靠图标和缩进区分，不加分隔线。
           // 左右 8px：选中底色内缩，组头图标与表头标题、搜索框（12px）左对齐。
-          className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
+          className="view-fade flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
           onKeyDown={onListKeyDown}
         >
           <TooltipSuppressionContext

@@ -1344,6 +1344,68 @@ pub(crate) async fn update_server_endpoint_with_app(
     result.map(|_| ())
 }
 
+pub(crate) async fn ensure_gateway_endpoint(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+    connection_id: &str,
+    config: super::super::direct::DirectConnectionConfig,
+    check: super::daemon::GatewayDaemonCheck<'_>,
+) -> Result<Option<ServerEndpoint>, String> {
+    use super::daemon::GatewayDaemonCheck;
+    if !root.trusted {
+        return Ok(None);
+    }
+    let key = server_slot_key(connection_id, &root.canonical_path);
+    let verified = manager
+        .server_slot(&key)
+        .is_some_and(|slot| slot.endpoint.is_some());
+    let checked = async {
+        manager.ensure_connection_alive(connection_id).await?;
+        let health = super::super::direct::test(&config).await?;
+        super::super::direct::require_usable_gateway(&config, &health)?;
+        if verified && matches!(check, GatewayDaemonCheck::Ensure) {
+            return Ok(());
+        }
+        super::daemon::probe_shared_daemon(
+            manager,
+            connection_id,
+            &DaemonAccess {
+                bin: "direct".into(),
+                token: config.token.clone(),
+            },
+            check,
+        )
+        .await
+    }
+    .await;
+    if let Err(error) = checked {
+        let slot = ServerSlot {
+            last_failure: Some(error.clone()),
+            ..Default::default()
+        };
+        manager.set_server_slot(&key, slot);
+        publish_server_if_watched(app, manager, root);
+        return Err(error);
+    }
+    let endpoint = ServerEndpoint {
+        serve: None,
+        daemon: Some(DaemonAccess {
+            bin: "direct".into(),
+            token: config.token,
+        }),
+    };
+    manager.set_server_slot(
+        &key,
+        ServerSlot {
+            endpoint: Some(endpoint.clone()),
+            ..Default::default()
+        },
+    );
+    publish_server_if_watched(app, manager, root);
+    Ok(Some(endpoint))
+}
+
 async fn ensure_server_endpoint_inner(
     manager: &SshManager,
     root: &RegisteredRoot,
@@ -1376,56 +1438,15 @@ async fn ensure_server_endpoint_inner(
         }
     }
     if let Some(config) = manager.direct_config(&connection_id) {
-        if !root.trusted {
-            return Ok(None);
-        }
-        let key = server_slot_key(&connection_id, &root.canonical_path);
-        let verified = manager
-            .server_slot(&key)
-            .is_some_and(|slot| slot.endpoint.is_some());
-        let checked = async {
-            manager.ensure_connection_alive(&connection_id).await?;
-            let health = super::super::direct::test(&config).await?;
-            super::super::direct::require_usable_gateway(&config, &health)?;
-            if verified {
-                return Ok(());
-            }
-            super::daemon::probe_shared_daemon(
-                manager,
-                &connection_id,
-                &DaemonAccess {
-                    bin: "direct".into(),
-                    token: config.token.clone(),
-                },
-            )
-            .await
-        }
+        return ensure_gateway_endpoint(
+            manager,
+            root,
+            app,
+            &connection_id,
+            config,
+            super::daemon::GatewayDaemonCheck::Ensure,
+        )
         .await;
-        if let Err(error) = checked {
-            let slot = ServerSlot {
-                last_failure: Some(error.clone()),
-                ..Default::default()
-            };
-            manager.set_server_slot(&key, slot);
-            publish_server_if_watched(app, manager, root);
-            return Err(error);
-        }
-        let endpoint = ServerEndpoint {
-            serve: None,
-            daemon: Some(DaemonAccess {
-                bin: "direct".into(),
-                token: config.token,
-            }),
-        };
-        manager.set_server_slot(
-            &key,
-            ServerSlot {
-                endpoint: Some(endpoint.clone()),
-                ..Default::default()
-            },
-        );
-        publish_server_if_watched(app, manager, root);
-        return Ok(Some(endpoint));
     }
     let key = server_slot_key(&connection_id, &root.canonical_path);
     // 未信任项目、SSH 模式连接：不部署，直接公布直连原因。Windows 远端走 serve。

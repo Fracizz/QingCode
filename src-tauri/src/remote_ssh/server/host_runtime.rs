@@ -1,6 +1,6 @@
 //! One authenticated user daemon per host identity, shared by project roots.
 //! Readiness is memory-only: a new SSH incarnation must complete HELLO again.
-use super::daemon::{probe_shared_daemon, StaleDaemon};
+use super::daemon::{probe_shared_daemon, GatewayDaemonCheck, StaleDaemon};
 use super::scripts::sha256_of_file_async;
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -549,16 +549,21 @@ pub(super) async fn ensure_shared_daemon_with(
         identity_for_connection(manager, &parsed.connection_id).ok_or("SSH 主机指纹未确认")?;
     let entry = manager.host_daemons.entry(&identity);
     let probe_connection_id = parsed.connection_id.clone();
-    let result =
-        entry
-            .acquire(
-                &session.server_incarnation,
-                || super::deploy::prepare_shared_daemon(manager, root, app, stale),
-                |access| async move {
-                    probe_shared_daemon(manager, &probe_connection_id, &access).await
-                },
-            )
-            .await?;
+    let result = entry
+        .acquire(
+            &session.server_incarnation,
+            || super::deploy::prepare_shared_daemon(manager, root, app, stale),
+            |access| async move {
+                probe_shared_daemon(
+                    manager,
+                    &probe_connection_id,
+                    &access,
+                    GatewayDaemonCheck::Ensure,
+                )
+                .await
+            },
+        )
+        .await?;
     let current = manager.session(&parsed.connection_id)?;
     if current.handle.is_closed()
         || !Arc::ptr_eq(&current.server_incarnation, &session.server_incarnation)

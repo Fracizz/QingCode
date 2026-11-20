@@ -248,6 +248,125 @@ fn older_daemon_is_kept_only_when_compatible_and_hosting_live_terminals() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn gateway_update_recovers_when_the_old_daemon_closes_post_shutdown_handshakes() {
+    use super::super::super::direct;
+    use super::super::super::server_status::{self, DeferredUpgrade, ServerPhase};
+    use qingcode_server::ipc::IpcEndpoint;
+    use serde_json::json;
+
+    let (config, gateway, directory) = direct::tests::gateway().await;
+    let mut listener = IpcEndpoint::new(&directory).listen().unwrap().unwrap();
+    std::fs::write(directory.join("token"), qingcode_server::generate_token()).unwrap();
+    let daemon = tokio::spawn(async move {
+        let mut restarting = false;
+        let mut closed_handshakes = 0;
+        loop {
+            let mut stream = listener.accept().await.unwrap();
+            let Ok(frame) = proto::read_frame(&mut stream).await else {
+                continue; // The gateway also opens IPC connections to check liveness.
+            };
+            assert_eq!(frame.kind, Kind::Hello);
+            if restarting && closed_handshakes < 2 {
+                closed_handshakes += 1;
+                continue;
+            }
+            let version = if restarting { SERVER_VERSION } else { "0.0.9" };
+            let mut hello = hello_response(PROTOCOL_VERSION, version, &FULL_CAPABILITIES);
+            hello.pty_count = usize::from(!restarting);
+            proto::write_frame(
+                &mut stream,
+                &Frame::new(Kind::Hello, CONTROL_STREAM, proto::encode(&hello).unwrap()),
+            )
+            .await
+            .unwrap();
+            if restarting {
+                return closed_handshakes;
+            }
+            while let Ok(frame) = proto::read_frame(&mut stream).await {
+                let request: Request = proto::decode_value(&frame.payload).unwrap();
+                let result = match request.method.as_str() {
+                    "pty.list" => json!({"ptys": [{"exited": null}]}),
+                    "server.shutdown" => {
+                        restarting = true;
+                        json!({"ok": true})
+                    }
+                    other => panic!("unexpected RPC {other}"),
+                };
+                let response = Response {
+                    id: request.id,
+                    result,
+                };
+                proto::write_frame(
+                    &mut stream,
+                    &Frame::new(Kind::Res, request.id, proto::encode(&response).unwrap()),
+                )
+                .await
+                .unwrap();
+                if restarting {
+                    break;
+                }
+            }
+        }
+    });
+
+    let manager = SshManager::new();
+    let id = "test-gateway-update";
+    manager
+        .direct_connections
+        .write()
+        .unwrap()
+        .insert(id.into(), config.clone());
+    manager.direct_active.write().unwrap().insert(id.into());
+    let root = RegisteredRoot {
+        uri: format!("ssh://{id}/workspace"),
+        canonical_path: "/workspace".into(),
+        trusted: true,
+    };
+    let mut confirmed = DeferredUpgrade {
+        running_version: "0.0.9".into(),
+        target_version: SERVER_VERSION.into(),
+        live_terminals: 2,
+    };
+    let rejected = super::super::deploy::ensure_gateway_endpoint(
+        &manager,
+        &root,
+        None,
+        id,
+        config.clone(),
+        GatewayDaemonCheck::Update(Some(&confirmed)),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(rejected.contains("运行中的终端数已变化"));
+
+    confirmed.live_terminals = 1;
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        super::super::deploy::ensure_gateway_endpoint(
+            &manager,
+            &root,
+            None,
+            id,
+            config,
+            GatewayDaemonCheck::Update(Some(&confirmed)),
+        ),
+    )
+    .await;
+    gateway.abort();
+    let _ = gateway.await;
+    daemon.abort();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(result.unwrap().unwrap().is_some());
+    assert_eq!(daemon.await.unwrap(), 2);
+    let ready = server_status::state_for_root(&manager, &root).unwrap();
+    assert_eq!(ready.phase, ServerPhase::ReadyServer);
+    assert_eq!(ready.version.as_deref(), Some(SERVER_VERSION));
+    assert!(ready.deferred_upgrade.is_none());
+}
+
 #[test]
 fn newer_daemon_is_never_downgraded() {
     // 兼容的更新版：沿用，空闲或显式更新都不降级。

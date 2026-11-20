@@ -24,6 +24,7 @@ describe('terminal crossfade', () => {
     const third = surface()
     const previous = crossfadeRegion(second.element, first.element)
     expect(first.animate.mock.calls[0][0]).toEqual([{ visibility: 'visible' }, { visibility: 'visible' }])
+    expect(second.animate.mock.calls[0][1].duration).toBe(120)
 
     crossfadeRegion(third.element, second.element, previous)
     expect(first.animate.mock.results[0].value.cancel).toHaveBeenCalledOnce()
@@ -41,7 +42,16 @@ describe('terminal crossfade', () => {
     crossfadeRegion(first.element, second.element, previous)
     expect(first.animate.mock.calls[1]).toEqual([
       [{ opacity: 0.75 }, { opacity: 1 }],
-      { duration: 65, easing: expect.any(String) },
+      { duration: 40, easing: expect.any(String) },
+    ])
+  })
+
+  it('keeps text partially visible when a split pane switches without an outgoing layer', () => {
+    const next = surface()
+    crossfadeRegion(next.element)
+    expect(next.animate.mock.calls[0]).toEqual([
+      [{ opacity: 0.45 }, { opacity: 1 }],
+      { duration: 120, easing: expect.any(String) },
     ])
   })
 

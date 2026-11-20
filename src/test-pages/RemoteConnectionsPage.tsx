@@ -1,5 +1,6 @@
 import { createRoot, type Root } from 'react-dom/client'
 import { mockIPC } from '@tauri-apps/api/mocks'
+import type { Channel } from '@tauri-apps/api/core'
 import RemoteConnectionsManager from '../components/RemoteConnectionsManager'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SshServerStatusChip from '../components/SshServerStatusChip'
@@ -7,9 +8,13 @@ import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
 import { useProjectStore, useUIStore, useWebTestOperations } from './projectManagerAdapters'
 import { projectManagerFixtures } from './projectManagerFixtures'
 import type { SshServerState } from '../lib/sshServerStatus'
+import type { UpdatePhase } from '../lib/directServerUpdate'
 import '../App.css'
 
-let deferred = new URLSearchParams(location.search).has('deferred')
+const query = new URLSearchParams(location.search)
+let deferred = query.has('deferred')
+const holdUpdate = query.has('hold-update')
+let finishUpdate: (() => void) | undefined
 const impact = { runningVersion: '0.1.18-beta.10', targetVersion: '0.1.18-beta.13', liveTerminals: 3 }
 let useDirect = deferred
 let connected = true
@@ -35,6 +40,7 @@ export default function Page() {
         <button className={button} onClick={() => { portClosed = true }}>模拟端口关闭</button>
         <button className={button} onClick={() => { latencyFailed = true }}>模拟延迟超时</button>
         <button className={button} onClick={() => { latencyFailed = false }}>恢复延迟测量</button>
+        {holdUpdate && <button className={button} onClick={() => finishUpdate?.()}>完成强制更新</button>}
       </div>
       <pre data-testid="operation-log">{JSON.stringify(operations)}</pre>
     </main>
@@ -63,9 +69,20 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
       sourcePath: '/fixture/package/server', problem: null,
     }
     if (command === 'direct_agent_update' && deferred && params?.rootUri === wslRoot) {
-      const confirmed = (params?.options as { confirmedUpgrade?: typeof impact })?.confirmedUpgrade
+      const options = params.options as { confirmedUpgrade?: typeof impact; onProgress: Channel<UpdatePhase> }
+      const confirmed = options?.confirmedUpgrade
       if (confirmed?.liveTerminals !== impact.liveTerminals || confirmed.runningVersion !== impact.runningVersion ||
           confirmed.targetVersion !== impact.targetVersion) throw new Error('Missing fixture consent')
+      if (holdUpdate) {
+        options.onProgress.onmessage('verifying')
+        return new Promise(resolve => {
+          finishUpdate = () => {
+            finishUpdate = undefined
+            deferred = false
+            resolve(state('fixture-wsl'))
+          }
+        })
+      }
       deferred = false
       return state('fixture-wsl')
     }

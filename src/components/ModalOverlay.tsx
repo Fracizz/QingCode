@@ -74,6 +74,7 @@ export default function ModalOverlay({
       if (modalStack.at(-1)?.id !== modalId) return
       // A portaled menu owns Escape/Tab while it has focus, including inside dialogs.
       if (event.target instanceof HTMLElement && event.target.closest('[data-qingcode-context-menu]')) return
+      if (event.key === 'Escape' && event.target instanceof HTMLElement && event.target.closest('[data-setting-select-menu]')) return
 
       if (event.key === 'Escape' && onDismissRef.current) {
         event.preventDefault()

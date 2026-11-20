@@ -33,6 +33,33 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.evaluate(() => { localStorage.removeItem('qingcode:motion'); delete document.documentElement.dataset.motion })
     await page.waitForSelector('[data-testid="open-draft"]')
 
+    await step('菜单与弹窗保持位置和尺寸，入场只变透明度', async () => {
+      const entrance = await page.evaluate(async () => {
+        const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
+        const measure = selector => {
+          const element = document.querySelector(selector)
+          const effect = element.getAnimations()[0]?.effect
+          return {
+            duration: effect?.getTiming().duration,
+            opacity: effect?.getKeyframes().map(key => key.opacity),
+            transform: getComputedStyle(element).transform,
+          }
+        }
+        document.querySelector('[data-testid="open-menu"]').click()
+        await frame()
+        const menu = measure('[data-qingcode-context-menu]')
+        document.querySelector('[data-qingcode-context-menu] [role="menuitem"]').click()
+        await frame()
+        return { menu, modal: measure('.modal-content-enter') }
+      })
+      assert.deepEqual(entrance, {
+        menu: { duration: 120, opacity: ['0', '1'], transform: 'none' },
+        modal: { duration: 140, opacity: ['0', '1'], transform: 'none' },
+      })
+      await page.evaluate(() => document.querySelector('[role="dialog"] button:last-child').click())
+      await waitGhostsGone()
+    })
+
     await step('弹窗关闭留下只读残影淡出，真实弹窗立即卸载', async () => {
       await page.click('[data-testid="open-draft"]')
       await page.waitForSelector('[data-testid="draft"]')
@@ -82,7 +109,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(state.draft, '未保存的草稿')
       assert.equal(state.scrollTop, 80)
       assert.equal(state.cssAnimation, 'none', '残影不能重播入场动画')
-      assert.equal(state.webAnimations, 2, '整体淡出 + 面板微缩')
+      assert.equal(state.webAnimations, 1, '弹窗退出只淡出')
       assert.ok(state.midOpacity !== null, '退出途中出现半透明帧')
       assert.ok(state.fadeStartedAt <= 60, `点击后 60ms 内开始淡出：${state.fadeStartedAt}ms`)
       assert.ok(state.removedAt <= 250, `250ms 内移除残影：${state.removedAt}ms`)
@@ -168,7 +195,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await waitGhostsGone()
     })
 
-    await step('通知关闭时固定在原位淡出右移，堆栈立即补位', async () => {
+    await step('通知关闭时在原位淡出，堆栈立即补位', async () => {
       await page.click('[data-testid="push-toast"]')
       await page.click('[data-testid="push-toast"]')
       await page.waitForSelector('.toast-item')
@@ -189,48 +216,58 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
           position: getComputedStyle(ghost).position,
           sameSpot: Math.abs(box.top - before.top) < 1 && Math.abs(box.width - before.width) < 1,
           remaining: document.querySelectorAll('[data-floating-task-stack] .toast-item').length,
-          movedRight: moved > 0 && moved <= 8,
+          moved,
         }
       })
       console.log('toast exit', state)
-      assert.deepEqual(state, { ghosts: 1, parentIsBody: true, position: 'fixed', sameSpot: true, remaining: 1, movedRight: true })
+      assert.deepEqual(state, { ghosts: 1, parentIsBody: true, position: 'fixed', sameSpot: true, remaining: 1, moved: 0 })
       await waitGhostsGone()
       await page.evaluate(() => document.querySelector('button[aria-label="关闭通知"]')?.click())
       await waitGhostsGone()
     })
 
-    await step('侧栏换页：新面板淡入右移入场，旧面板不留残影，播完不残留 transform', async () => {
+    await step('侧栏换页：标题和边界留在原位，只淡入正文', async () => {
       await page.click('[data-testid="view-explorer"]')
       await settle()
       const state = await page.evaluate(async () => {
+        const header = document.querySelector('[data-testid="sidebar-heading"]')
+        const before = header.getBoundingClientRect().toJSON()
         document.querySelector('[data-testid="view-search"]').click()
         await new Promise(r => setTimeout(r, 10))
         const view = document.querySelector('[data-testid="sidebar-view"]')
+        const body = view.querySelector('[data-testid="sidebar-body"]')
         const snapshot = {
           view: view.dataset.view,
           views: document.querySelectorAll('[data-testid="sidebar-view"]').length,
           ghosts: document.querySelectorAll('[data-exit-ghost]').length,
-          animation: getComputedStyle(view).animationName,
+          animation: getComputedStyle(body).animationName,
+          duration: getComputedStyle(body).animationDuration,
+          sameHeader: view.querySelector('[data-testid="sidebar-heading"]') === header,
+          headerBounds: header.getBoundingClientRect().toJSON(),
+          before,
         }
         let midOpacity = null
         let shifted = false
         const start = performance.now()
         while (performance.now() - start < 400) {
           await new Promise(r => requestAnimationFrame(r))
-          const style = getComputedStyle(view)
+          const style = getComputedStyle(body)
           const opacity = Number(style.opacity)
           if (opacity > 0.05 && opacity < 0.95) midOpacity = opacity
           if (style.transform !== 'none') shifted = true
         }
-        return { ...snapshot, midOpacity, shifted, endTransform: getComputedStyle(view).transform, endOpacity: getComputedStyle(view).opacity }
+        return { ...snapshot, midOpacity, shifted, endTransform: getComputedStyle(body).transform, endOpacity: getComputedStyle(body).opacity }
       })
       console.log('sidebar view enter', state)
       assert.equal(state.view, 'search')
       assert.equal(state.views, 1, '旧面板立即卸载')
       assert.equal(state.ghosts, 0, '换页不做退出残影')
-      assert.equal(state.animation, 'view-in')
+      assert.equal(state.animation, 'view-fade-in')
+      assert.equal(state.duration, '0.12s')
+      assert.equal(state.sameHeader, true)
+      assert.deepEqual(state.headerBounds, state.before)
       assert.ok(state.midOpacity !== null, '入场途中出现半透明帧')
-      assert.equal(state.shifted, true, '入场有位移')
+      assert.equal(state.shifted, false)
       assert.equal(state.endTransform, 'none', '播完不残留 transform')
       assert.equal(state.endOpacity, '1')
       await shot('sidebar-view-enter')
@@ -290,7 +327,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       ['终端搜索条', 'toggle-search', 'toggle-search', '.terminal-search-bar'],
       ['终端连接提示', 'show-notice', 'clear-notice', '[data-testid="terminal-connection-notice"]'],
     ]) {
-      await step(`${name}：下落淡入，关闭时残影留在终端容器内上移淡出`, async () => {
+      await step(`${name}原位淡入淡出`, async () => {
         await page.click(`[data-testid="${open}"]`)
         await page.waitForSelector(selector)
         const enter = await page.evaluate(sel => getComputedStyle(document.querySelector(sel)).animationName, selector)
@@ -310,12 +347,12 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
             inHost: ghost?.parentElement === document.querySelector('[data-testid="terminal-host"]'),
             sameSpot: box ? Math.abs(box.left - before.left) < 1 && Math.abs(box.width - before.width) < 1 : false,
             testIds: ghost?.querySelectorAll('[data-testid]').length ?? -1,
-            movedUp: moved !== null && moved < 0 && moved >= -4,
+            moved,
           }
         }, [selector, close])
         console.log(`${name} exit`, { enter, ...state })
-        assert.equal(enter, 'float-in')
-        assert.deepEqual(state, { ghosts: 1, real: 0, inHost: true, sameSpot: true, testIds: 0, movedUp: true })
+        assert.equal(enter, 'view-fade-in')
+        assert.deepEqual(state, { ghosts: 1, real: 0, inHost: true, sameSpot: true, testIds: 0, moved: 0 })
         await waitGhostsGone()
       })
     }
@@ -368,7 +405,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       const reducedPage = await page.evaluate(async () => {
         document.querySelector('[data-testid="view-search"]').click()
         await new Promise(r => setTimeout(r, 10))
-        const viewDuration = getComputedStyle(document.querySelector('[data-testid="sidebar-view"]')).animationDuration
+        const viewDuration = getComputedStyle(document.querySelector('[data-testid="sidebar-body"]')).animationDuration
         document.querySelector('[data-testid="toggle-search"]').click()
         await new Promise(r => setTimeout(r, 30))
         document.querySelector('[data-testid="toggle-search"]').click()

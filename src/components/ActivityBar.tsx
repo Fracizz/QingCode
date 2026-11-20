@@ -154,7 +154,7 @@ function Item({
         aria-label={label}
         aria-pressed={active === true}
         onClick={onClick}
-        className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 btn-interactive transition-colors ${
+        className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 transition-colors active:bg-bg-active ${
           active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
         }`}
       >

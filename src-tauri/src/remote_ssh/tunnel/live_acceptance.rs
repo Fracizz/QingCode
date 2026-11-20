@@ -11,6 +11,8 @@
 //! QC_TUNNEL_SERVER_DIR  本地同版本服务包目录（含 manifest.json）
 //! QC_TUNNEL_DOWNLOAD    设为 1 时缺包从 Release 下载到 QC_TUNNEL_CACHE（默认系统临时目录）
 //! cargo test --lib live_ssh_tunnel_acceptance -- --ignored --nocapture
+//! 强制更新验收需要在独立账户预先启动一个兼容的旧版 daemon：
+//! cargo test --lib live_ssh_tunnel_force_update -- --ignored --nocapture
 //! ```
 
 use super::*;
@@ -376,6 +378,65 @@ async fn live_tunnel_gateway_rebinds_for_port_direct() {
     assert_eq!(restored.hostname, original.hostname);
     healthy("restored").await;
     close(&client.id).await;
+}
+
+#[tokio::test]
+#[ignore = "replaces an older daemon and ends terminals on a disposable QC_TUNNEL_* SSH account"]
+async fn live_ssh_tunnel_force_update() {
+    let client = connect("force-update").await;
+    // Start the gateway without the readiness probe, which upgrades an idle
+    // old daemon before a terminal can be created.
+    super::activate(&client.manager, &client.root, None)
+        .await
+        .unwrap();
+    let config = client.manager.direct_config(&client.id).unwrap();
+    let mut old_stream = hello(&config, &client.id).await;
+    let marker = format!("QC_TUNNEL_UPDATE_{}_", std::process::id());
+    let mut output = Vec::new();
+    let created = request(
+        &mut old_stream,
+        1,
+        "pty.create",
+        marker_command(&client, &marker),
+        &mut output,
+    )
+    .await;
+    server::ensure_server_endpoint_with_app(&client.manager, &client.root, None)
+        .await
+        .unwrap();
+    let confirmed = server::deferred_upgrade_impact(&client.manager, &client.root)
+        .await
+        .expect("测试需要预先启动一个兼容的旧版本 daemon");
+    assert_eq!(confirmed.live_terminals, 1, "请使用独立的测试账户");
+
+    update(&client.manager, &client.root, None, Some(&confirmed))
+        .await
+        .expect("强制更新应直接等到新版本就绪");
+    let state = server_status::state_for_root(&client.manager, &client.root).unwrap();
+    assert_eq!(state.phase, server_status::ServerPhase::ReadyServer);
+    assert_eq!(
+        state.version.as_deref(),
+        Some(qingcode_server::SERVER_VERSION)
+    );
+    assert!(state.deferred_upgrade.is_none());
+
+    let config = client.manager.direct_config(&client.id).unwrap();
+    let mut new_stream = hello(&config, &client.id).await;
+    let listed = request(
+        &mut new_stream,
+        1,
+        "pty.list",
+        serde_json::json!({}),
+        &mut output,
+    )
+    .await;
+    assert!(listed["ptys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|pty| pty["id"] != created["id"]));
+    drop(new_stream);
+    disconnect(&client.manager, &client.id).await.unwrap();
 }
 
 #[tokio::test]

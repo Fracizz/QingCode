@@ -1493,6 +1493,7 @@ export default function RemoteConnectionsManager() {
       )}
 
       {forceDirect && <DirectServerUpdateDialog rootUri={forceDirect.rootUri} confirmedUpgrade={forceDirect.confirmed}
+        onBackground={() => { setForceDirect(null); closeRemoteConnections() }}
         onClose={() => { setForceDirect(null); if (selectedId) void refreshStatus(selectedId) }} />}
 
       {logView && (

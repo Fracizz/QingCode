@@ -178,7 +178,7 @@ function RunPanelContent() {
     return (
       <div className="h-full flex flex-col bg-bg-sidebar text-fg">
         <Header title={t('运行配置')} />
-        <div className="px-4 py-6 text-ui text-fg-muted">{t('请先选择或添加项目')}</div>
+        <div className="view-fade px-4 py-6 text-ui text-fg-muted">{t('请先选择或添加项目')}</div>
       </div>
     )
   }
@@ -269,7 +269,7 @@ function RunPanelContent() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto pb-3">
+      <div className="view-fade flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (
           <div className="px-4 py-6 text-center">
             <p className="text-ui text-fg-muted mb-3">{t('尚未配置运行任务')}</p>

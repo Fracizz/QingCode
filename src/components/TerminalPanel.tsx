@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
-import TerminalTabs from './TerminalTabs'
+import TerminalTabs, { TerminalSessionHeader } from './TerminalTabs'
 import EmptyState from './EmptyState'
 import { TerminalHosts, TerminalSlot, type TerminalHostEntry } from './TerminalHost'
 import {
@@ -38,7 +38,7 @@ const DUAL_RATIO_MAX = 0.9
 /** Fixed sash width between terminal panes (no negative margin overlap). */
 const DUAL_RESIZER_PX = 8
 /** 终端面板开合只淡入淡出，尺寸一次到位（见 DESIGN.md「动效一览」）。 */
-const DOCK_FADE = 'transition-opacity duration-[var(--motion-enter)] ease-out'
+const DOCK_FADE = 'transition-opacity duration-[var(--motion-enter)] ease-[var(--ease-soft)]'
 
 type QuadRatios = { col: number; row: number }
 
@@ -91,8 +91,8 @@ export interface TerminalPanelProps {
   editorVisible?: boolean
   /** Side layout: which edge carries the terminal|editor width sash. */
   widthResizerEdge?: 'start' | 'end'
-  /** 终端工作台列表可见时由列表切换终端，隐藏横向标签栏。 */
-  hideTabs?: boolean
+  /** 终端工作台由列表切换会话时，主窗格显示等高的会话标题。 */
+  sessionListVisible?: boolean
   isTerminalResizing: boolean
   layoutSwitching?: boolean
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
@@ -115,7 +115,7 @@ export default function TerminalPanel({
   quadTerminal = false,
   editorVisible = true,
   widthResizerEdge = 'start',
-  hideTabs = false,
+  sessionListVisible = false,
   isTerminalResizing,
   layoutSwitching = false,
   onResizerPointerDown,
@@ -418,14 +418,14 @@ export default function TerminalPanel({
     handle.addEventListener('lostpointercapture', onLostCapture)
   }
 
-  // 列表显隐会带出/收起标签栏，改变终端高度，也要触发重新适配行列。
-  const layoutKey = `${position}:${terminalOpen}:${terminalHeight}:${sideSplit}:${dualTerminal}:${quadTerminal}:${editorVisible}:${terminalWidth}:${hideTabs}:${
+  // 会话标题和标签栏等高，切换侧栏视图不需要重新适配终端行列。
+  const layoutKey = `${position}:${terminalOpen}:${terminalHeight}:${sideSplit}:${dualTerminal}:${quadTerminal}:${editorVisible}:${terminalWidth}:${
     quadMode ? `q${quadRatios.col}:${quadRatios.row}` : dualMode ? dualRatio : 'single'
   }`
 
   const primaryEmpty = currentProject
-    ? hideTabs
-      ? t('当前项目「{name}」暂无终端，点击上方 + 新建', { name: currentProject.name })
+    ? sessionListVisible
+      ? t('当前项目「{name}」暂无终端，点击左侧列表的 + 新建', { name: currentProject.name })
       : t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
     : t('请先选择或添加项目，终端将默认基于当前项目创建')
 
@@ -641,7 +641,11 @@ export default function TerminalPanel({
     dualBody
   ) : (
     <>
-      {!hideTabs && <TerminalTabs />}
+      {sessionListVisible ? (
+        <TerminalSessionHeader name={projectTerminals.find(term => term.id === activeTerminalId)?.name} />
+      ) : (
+        <TerminalTabs />
+      )}
       <div className="relative flex-1 min-w-0 bg-bg-terminal overflow-hidden min-h-0">
         {projectTerminals.length === 0 && (
           <div className="absolute inset-0">

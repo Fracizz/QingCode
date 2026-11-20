@@ -185,7 +185,7 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
   .mobile-connection-qr { justify-self: start; }
 }
 
-/* Terminal profiles respond to the settings column, including side-terminal layouts. */
+/* Terminal management rows respond to the width of their container. */
 .terminal-profiles {
   container-type: inline-size;
 }

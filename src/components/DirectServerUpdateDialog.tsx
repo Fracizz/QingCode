@@ -13,23 +13,38 @@ import { hydrateSshSecrets, sshConnectionIdFromUri, sshRuntimeConfig, sshSecrets
 import { parseSshServerState, type DeferredUpgrade } from '../lib/sshServerStatus'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { beginServerOperation, finishServerOperation, reportServerOperation, useServerOperationStore } from '../store/serverOperationStore'
 import ModalOverlay from './ModalOverlay'
 import ServerOperationProgress from './ServerOperationProgress'
 
 const field = 'mt-1 w-full min-w-0 rounded border border-dialog-border bg-dialog-input px-3 py-1.5 text-fg'
 
-type Props = { rootUri: string; api?: DirectServerUpdateApi; confirmedUpgrade?: DeferredUpgrade; onClose?: () => void }
+const updatePhaseSteps: Record<UpdatePhase, number> = {
+  connecting: 1,
+  checkingPackage: 2,
+  downloading: 2,
+  uploading: 3,
+  restarting: 3,
+  verifying: 4,
+  restoring: 3,
+}
+
+type Props = { rootUri: string; api?: DirectServerUpdateApi; confirmedUpgrade?: DeferredUpgrade; onClose?: () => void; onBackground?: () => void }
 
 export default function DirectServerUpdateDialog(props: Props) {
   return <UpdateDialog key={props.rootUri} {...props} />
 }
 
-function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, onClose }: Props) {
+function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, onClose, onBackground }: Props) {
   const { t } = useI18n()
   const id = useId()
   const connections = useProjectStore(s => s.sshConnections)
   const pushToast = useProjectStore(s => s.pushToast)
   const connectionId = sshConnectionIdFromUri(rootUri)
+  const backgroundUpdate = useServerOperationStore(s => Object.values(s.tasks).find(task =>
+    task.kind === 'update' && task.background && !task.finishedAt &&
+    (task.rootUri === rootUri || (connectionId && sshConnectionIdFromUri(task.rootUri) === connectionId))
+  ))
   const direct = connections.find(connection => connection.id === connectionId)
   const candidates = directAgentSshCandidates(
     connections,
@@ -38,7 +53,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
   const [sshId, setSshId] = useState('')
   const [secret, setSecret] = useState('')
   const [working, setWorking] = useState<'choose' | 'prepare' | 'update' | null>(null)
-  const busy = working !== null
+  const busy = working !== null || Boolean(backgroundUpdate)
   const [mode, setMode] = useState<'automatic' | 'offline'>('automatic')
   const [directory, setDirectory] = useState('')
   const [info, setInfo] = useState<ServerPackageInfo | null>(null)
@@ -46,6 +61,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
   const [phase, setPhase] = useState<UpdatePhase>('connecting')
   const [startedAt, setStartedAt] = useState(0)
   const pending = useRef(false)
+  const backgrounded = useRef(false)
+  const updatePhase = useRef<UpdatePhase>('checkingPackage')
   const automaticallyPrepared = useRef(false)
   const generation = useRef(0)
   useEffect(
@@ -66,6 +83,19 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
   const dismiss = onClose ?? (() => useUIStore.setState({ serverUpdateRootUri: null }))
   const close = () => {
     if (!pending.current) dismiss()
+  }
+  const name = direct?.name ?? ssh?.name ?? 'Server'
+  const sendToBackground = () => {
+    if (working !== 'update' || !pending.current || backgrounded.current) return
+    backgrounded.current = true
+    beginServerOperation(rootUri, name, 'update', {
+      step: updatePhaseSteps[updatePhase.current],
+      label: updatePhaseLabels[updatePhase.current],
+      startedAt,
+      background: true,
+    })
+    if (onBackground) onBackground()
+    else dismiss()
   }
   const target = () => ({
     rootUri,
@@ -100,18 +130,28 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
   }
   const performUpdate = async (prepared: ServerPackageInfo & { directory: string }, request: number) => {
     setWorking('update')
+    updatePhase.current = 'checkingPackage'
     setPhase('checkingPackage')
-    const value = await api.update({ ...target(), packageDirectory: prepared.directory, ...(confirmedUpgrade && { confirmedUpgrade }) }, value => {
-      if (request === generation.current) setPhase(value)
-    })
-    if (request !== generation.current) return
-    const state = parseSshServerState(value)
-    if (state?.phase !== 'readyServer' || state.transport !== 'agent')
-      throw new Error(state?.reason ?? t('远端服务尚未就绪'))
-    if (confirmedUpgrade && state.version !== confirmedUpgrade.targetVersion)
-      throw new Error(t('远端服务尚未更新到目标版本，请刷新状态。'))
+    try {
+      const value = await api.update({ ...target(), packageDirectory: prepared.directory, ...(confirmedUpgrade && { confirmedUpgrade }) }, value => {
+        updatePhase.current = value
+        if (backgrounded.current) reportServerOperation(rootUri, updatePhaseSteps[value], updatePhaseLabels[value])
+        else if (request === generation.current) setPhase(value)
+      })
+      if (!backgrounded.current && request !== generation.current) return
+      const state = parseSshServerState(value)
+      if (state?.phase !== 'readyServer' || state.transport !== 'agent')
+        throw new Error(state?.reason ?? t('远端服务尚未就绪'))
+      if (confirmedUpgrade && state.version !== confirmedUpgrade.targetVersion)
+        throw new Error(t('远端服务尚未更新到目标版本，请刷新状态。'))
+    } catch (reason) {
+      if (!backgrounded.current) throw reason
+      finishServerOperation(rootUri, String(reason))
+      return
+    }
+    if (backgrounded.current) finishServerOperation(rootUri)
     pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
-    dismiss()
+    if (!backgrounded.current) dismiss()
   }
   const prepare = async (automatic = false) => {
     if (pending.current || !ssh || (mode === 'offline' && !directory)) return
@@ -156,6 +196,10 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
     }
   }
   useEffect(() => {
+    if (backgroundUpdate) {
+      automaticallyPrepared.current = true
+      return
+    }
     if (automaticallyPrepared.current || !ssh || mode !== 'automatic') return
     let cancelled = false
     // Defer past StrictMode's effect replay so it cannot invalidate an in-flight request.
@@ -345,42 +389,43 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
             </p>
           )}
         </div>
-        {busy && working !== 'choose' && (
+        {(working === 'prepare' || working === 'update' || backgroundUpdate) && (
           <div className="shrink-0 px-5 pb-3">
             <ServerOperationProgress
               compact
-              name={direct?.name ?? ssh?.name ?? 'Server'}
+              name={name}
               status={working === 'prepare' ? '准备中' : '更新中'}
-              label={updatePhaseLabels[phase]}
-              startedAt={startedAt}
-              step={
-                phase === 'connecting'
-                  ? 1
-                  : phase === 'checkingPackage' || phase === 'downloading'
-                    ? 2
-                    : phase === 'verifying'
-                      ? 4
-                      : 3
-              }
+              label={backgroundUpdate?.label ?? updatePhaseLabels[phase]}
+              startedAt={backgroundUpdate?.startedAt ?? startedAt}
+              step={backgroundUpdate?.step ?? updatePhaseSteps[phase]}
             />
           </div>
         )}
-        <footer className="flex shrink-0 justify-end gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
+        <footer className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
           <button
             type="button"
-            disabled={busy}
+            disabled={working !== null}
             onClick={close}
             className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
           >
-            {t('取消')}
+            {t(backgroundUpdate ? '关闭' : '取消')}
           </button>
+          {working === 'update' && (
+            <button
+              type="button"
+              onClick={sendToBackground}
+              className="rounded border border-dialog-border px-3 py-1.5 text-accent hover:bg-bg-hover"
+            >
+              {t('后台运行')}
+            </button>
+          )}
           <button
             type="button"
             disabled={busy || !ssh || !validPackage(info)}
             onClick={() => { setStartedAt(Date.now()); void update() }}
             className="rounded bg-action px-3 py-1.5 text-on-action disabled:opacity-40"
           >
-            {t(working === 'update' ? '正在更新…' : '更新并重新连接')}
+            {t(working === 'update' || backgroundUpdate ? '正在更新…' : '更新并重新连接')}
           </button>
         </footer>
       </section>

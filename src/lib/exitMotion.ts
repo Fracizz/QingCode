@@ -10,7 +10,7 @@ export type ExitKind = 'modal' | 'menu' | 'toast' | 'float'
 interface Ghost {
   kind: ExitKind
   node: HTMLElement
-  animations: Animation[]
+  animation: Animation
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -29,8 +29,8 @@ function exitDuration(): number {
   return FALLBACK_EXIT_MS
 }
 
-/** 克隆不带输入框当前值和滚动位置，逐个补上，避免淡出期间内容跳动。 */
-function copyLiveState(source: HTMLElement, clone: HTMLElement) {
+/** 保留输入框、滚动位置和弹窗仍在入场时的透明度。 */
+function copyLiveState(source: HTMLElement, clone: HTMLElement, modal: boolean) {
   const a = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT)
   const b = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT)
   let from: Node | null = source
@@ -45,6 +45,9 @@ function copyLiveState(source: HTMLElement, clone: HTMLElement) {
     if (s.scrollTop || s.scrollLeft) {
       // 克隆插入文档后才能滚动，先记下来。
       c.dataset.exitScroll = `${s.scrollTop},${s.scrollLeft}`
+    }
+    if (modal && s !== source && s.matches('.modal-overlay-enter, .modal-content-enter')) {
+      c.style.opacity = getComputedStyle(s).opacity
     }
     from = a.nextNode()
     to = b.nextNode()
@@ -82,22 +85,21 @@ function sanitize(clone: HTMLElement) {
 function removeGhost(ghost: Ghost) {
   if (!ghosts.delete(ghost)) return
   clearTimeout(ghost.timer)
-  for (const animation of ghost.animations) {
-    try { animation.cancel() } catch {}
-  }
+  try { ghost.animation.cancel() } catch {}
   ghost.node.remove()
 }
 
 /**
- * 在 element 被移除前留下残影并播放退出：弹窗淡出、面板微缩到 0.98；菜单只淡出；通知淡出并右移 8px；浮条淡出并上移 4px。
+ * 在 element 被移除前留下残影，从当前透明度原位淡出。
  * 减少动效、窗口在后台或环境不支持 Web Animations（如 jsdom）时什么都不做。
  */
 export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
   if (typeof document === 'undefined' || !element.isConnected) return
   if (typeof element.animate !== 'function' || motionReduced() || document.visibilityState === 'hidden') return
 
+  const opacity = getComputedStyle(element).opacity || '1'
   const clone = element.cloneNode(true) as HTMLElement
-  copyLiveState(element, clone)
+  copyLiveState(element, clone, kind === 'modal')
   sanitize(clone)
 
   if (kind === 'toast') {
@@ -123,26 +125,11 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
 
   const duration = exitDuration()
   const timing: KeyframeAnimationOptions = { duration, easing: EASE_EXIT, fill: 'forwards' }
-  const animations: Animation[] = []
-  if (kind === 'toast') {
-    animations.push(clone.animate([
-      { opacity: 1, transform: 'translateX(0)' },
-      { opacity: 0, transform: 'translateX(8px)' },
-    ], timing))
-  } else if (kind === 'float') {
-    animations.push(clone.animate([
-      { opacity: 1, transform: 'translateY(0)' },
-      { opacity: 0, transform: 'translateY(-4px)' },
-    ], timing))
-  } else {
-    animations.push(clone.animate([{ opacity: 1 }, { opacity: 0 }], timing))
-    const panel = kind === 'modal' ? clone.querySelector<HTMLElement>('.modal-content-enter') : null
-    if (panel) animations.push(panel.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.98)' }], timing))
-  }
+  const animation = clone.animate([{ opacity }, { opacity: 0 }], timing)
 
-  const ghost: Ghost = { kind, node: clone, animations, timer: setTimeout(() => removeGhost(ghost), duration + 100) }
+  const ghost: Ghost = { kind, node: clone, animation, timer: setTimeout(() => removeGhost(ghost), duration + 100) }
   ghosts.add(ghost)
-  animations[0].finished.then(() => removeGhost(ghost), () => removeGhost(ghost))
+  animation.finished.then(() => removeGhost(ghost), () => removeGhost(ghost))
 }
 
 /**

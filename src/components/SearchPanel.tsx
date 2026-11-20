@@ -1622,7 +1622,7 @@ export default function SearchPanel() {
         <div
           role="region"
           aria-label={t('搜索结果')}
-          className="flex-1 min-h-0 overflow-hidden flex flex-col"
+          className="view-fade flex-1 min-h-0 overflow-hidden flex flex-col"
           tabIndex={0}
           onKeyDown={onResultsKeyDown}
         >

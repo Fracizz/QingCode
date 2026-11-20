@@ -87,7 +87,7 @@ export function useTerminalTabActions({
   const currentProject = useProjectStore(s => s.currentProject)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
-  const requestSettings = useUIStore(s => s.requestSettings)
+  const openTerminalProfilesManager = useUIStore(s => s.openTerminalProfilesManager)
   const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -95,7 +95,12 @@ export function useTerminalTabActions({
     terminal: TerminalTab
   } | null>(null)
   // projectId 为空时在当前项目新建；工作台分组头的菜单会指定目标项目。
-  const [profileMenu, setProfileMenu] = useState<{ x: number; y: number; projectId?: string } | null>(null)
+  const [profileMenu, setProfileMenu] = useState<{
+    x: number
+    y: number
+    projectId?: string
+    trigger: HTMLButtonElement
+  } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -407,7 +412,10 @@ export function useTerminalTabActions({
         label: translate('管理终端配置'),
         icon: <Settings2 size={14} />,
         separatorBefore: true,
-        action: () => requestSettings('终端配置'),
+        action: () => {
+          profileMenu?.trigger.focus()
+          openTerminalProfilesManager()
+        },
       },
       {
         label: translate('终端管理（全部项目与手机）'),

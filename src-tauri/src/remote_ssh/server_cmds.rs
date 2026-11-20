@@ -86,11 +86,7 @@ pub async fn ssh_server_update(
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
-    if let Some(confirmed) = confirmed_upgrade {
-        let root = server_status::require_trusted_root(&manager, &root_uri)?;
-        confirmed.verify(&server::deferred_upgrade_impact(&manager, &root).await?)?;
-    }
-    server_status::ssh_server_update(root_uri, app, manager).await
+    server_status::ssh_server_update(root_uri, confirmed_upgrade.as_ref(), app, manager).await
 }
 
 /// 停掉某根的项目绑定与未共享的 serve，保留其他项目使用的用户级 daemon。

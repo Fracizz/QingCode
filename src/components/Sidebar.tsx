@@ -1713,7 +1713,7 @@ export default function Sidebar() {
       </div>
 
       {/* Current project tree only — project switching lives in the title bar picker */}
-      <div className="flex-1 min-h-0 flex flex-col pb-3">
+      <div className="view-fade flex-1 min-h-0 flex flex-col pb-3">
         {!currentProject ? (
           <div className="px-4 py-6 text-center">
             <p className="text-ui text-fg-muted mb-3">{t('未打开项目')}</p>

@@ -63,6 +63,7 @@ interface UIState {
   remoteConnectionsOpen: boolean
   /** 「终端管理」弹窗：跨项目列出电脑、手机与远端未接回的终端。 */
   terminalManagerOpen: boolean
+  terminalProfilesManagerOpen: boolean
   /** 远程连接管理页从「创建项目 → 添加远程主机」打开：直接进入新建表单，保存后自动关闭。 */
   remoteConnectionsCreating: boolean
   /** Whether the unified create-project dialog is open. */
@@ -113,6 +114,8 @@ interface UIState {
   closeRemoteConnections: () => void
   openTerminalManager: () => void
   closeTerminalManager: () => void
+  openTerminalProfilesManager: () => void
+  closeTerminalProfilesManager: () => void
   openCreateProject: () => void
   openCreateProjectForConnection: (connectionId: string) => void
   closeCreateProject: () => void
@@ -122,12 +125,13 @@ interface UIState {
 
 interface FullPageRestore {
   sidebarOpen: boolean
+  sidebarView: 'explorer' | 'search' | 'run'
   /** 进入前侧边终端布局的编辑器列是否可见；整页期间用户手动调整列后置为 null，不再恢复。 */
   editorVisible: boolean | null
 }
 
 /** Git 与设置：经典/侧边终端布局下占满编辑器列，终端工作台中改为左侧侧栏视图。 */
-function isPageView(view: View) {
+function isPageView(view: View): view is 'sourceControl' | 'settings' {
   return view === 'sourceControl' || view === 'settings'
 }
 
@@ -168,11 +172,11 @@ function workbenchTransition(
 function enterFullPage(state: UIState, view: View) {
   const fullPageRestore = state.fullPageRestore ?? {
     sidebarOpen: state.sidebarOpen,
+    sidebarView: isPageView(state.view) || state.view === 'terminals' ? 'explorer' as const : state.view,
     editorVisible: state.sideEditorVisible,
   }
   return {
     view,
-    sidebarOpen: true,
     sideEditorVisible: true,
     fullPageRestore,
   }
@@ -247,6 +251,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   workspaceManagerOpen: false,
   remoteConnectionsOpen: false,
   terminalManagerOpen: false,
+  terminalProfilesManagerOpen: false,
   serverUpdateRootUri: null,
   remoteConnectionsCreating: false,
   createProjectOpen: false,
@@ -271,10 +276,10 @@ export const useUIStore = create<UIState>((set, get) => ({
     set(state => {
       if (isFullPageView(view, state.panelLayout)) {
         if (state.view !== view) return enterFullPage(state, view)
-        // 再次点击整页视图图标：回到侧栏主视图，并恢复进入前的侧栏与编辑器列状态。
+        // 再次点击整页视图图标，回到之前的侧栏视图和布局。
         const restore = state.fullPageRestore
         return {
-          view: homeView(state.panelLayout),
+          view: restore?.sidebarView ?? homeView(state.panelLayout),
           ...leaveFullPage(state),
           sidebarOpen: restore ? restore.sidebarOpen : true,
         }
@@ -434,6 +439,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   closeRemoteConnections: () => set({ remoteConnectionsOpen: false, remoteConnectionsCreating: false }),
   openTerminalManager: () => set({ terminalManagerOpen: true }),
   closeTerminalManager: () => set({ terminalManagerOpen: false }),
+  openTerminalProfilesManager: () => set({ terminalProfilesManagerOpen: true }),
+  closeTerminalProfilesManager: () => set({ terminalProfilesManagerOpen: false }),
   openCreateProject: () => set({ createProjectOpen: true, createProjectConnectionId: null }),
   openCreateProjectForConnection: connectionId =>
     set({ createProjectOpen: true, createProjectConnectionId: connectionId }),

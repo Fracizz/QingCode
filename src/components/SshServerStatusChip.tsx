@@ -8,6 +8,7 @@ import { safeInvoke } from '../lib/tauri'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { useServerOperationStore } from '../store/serverOperationStore'
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
@@ -72,6 +73,17 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
   }, [dialog, state?.connectionId, state?.transport, refreshKey])
 
   useEffect(() => () => { logsRequest.current += 1 }, [])
+
+  useEffect(() => {
+    if (!dialog) return
+    // The overview sits underneath the update dialog. Release both when the update goes to the background.
+    return useServerOperationStore.subscribe((next, previous) => {
+      const task = next.tasks[rootUri]
+      const prior = previous.tasks[rootUri]
+      if (task?.kind === 'update' && task.background && (!prior?.background || prior.finishedAt) &&
+        useUIStore.getState().serverUpdateRootUri === rootUri) setDialog(null)
+    })
+  }, [dialog, rootUri])
 
   useEffect(() => {
     if (!hasBackend()) return

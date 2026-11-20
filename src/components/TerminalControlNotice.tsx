@@ -37,7 +37,7 @@ export default function TerminalControlNotice({ terminalId, offsetForSearch = fa
   const [busy, setBusy] = useState(false)
   // 菜单打开时按下角标：菜单先因外部点击收起，随后的 click 不应再把它打开。
   const closingRef = useRef(false)
-  // 共享结束时角标留下残影上移淡出（exitMotion 'float'）。
+  // 共享结束时角标留下残影原位淡出。
   const exitRef = useExitMotionRef<HTMLDivElement>('float')
   if (!control) return null
   const run = async (action: () => Promise<void>) => {
