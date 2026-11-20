@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleHelp,
@@ -1471,7 +1472,12 @@ export default function RemoteConnectionsManager() {
               </section>
               {(isNew || editing) && (isNew || selected) && (
                 <footer className="flex flex-shrink-0 flex-col gap-2 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
-                  {error && <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>}
+                  {error ? <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>
+                    // 成功结果就近显示：右下角提示在弹窗外容易错过，用户会以为点击无响应。
+                    : verified && !isNewAgent && <p role="status" className="flex items-center gap-1.5 rounded-md border border-ok/30 bg-ok/10 px-2.5 py-2 text-ui text-ok">
+                      <CheckCircle2 size={14} className="flex-shrink-0" aria-hidden="true" />
+                      {t('SSH 连接测试成功，主机指纹已确认，可以保存。')}
+                    </p>}
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {!isNew && <button type="button" disabled={testing || saving} onClick={() => void leaveEditor()} className={`${secondaryButtonClass} mr-auto`}>{t('返回概览')}</button>}
                     {!isNewAgent && !standaloneAgent && !directEnabled && sshFormActions}

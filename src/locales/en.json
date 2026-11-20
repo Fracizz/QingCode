@@ -1583,6 +1583,7 @@
     "{count} 项文件传输尚未完成，退出后将中断。": "{count} file transfer(s) are unfinished and will be interrupted when you quit.",
     "若仍被截断，请缩小范围或更换关键词": "If results remain truncated, narrow the scope or change the query.",
     "SSH 连接成功": "SSH connection established",
+    "SSH 连接测试成功，主机指纹已确认，可以保存。": "SSH connection test succeeded and the host fingerprint is confirmed. You can save now.",
     "远端服务常驻运行；SSH 断线重连后可继续接回已持久化的终端。": "The remote service runs resident; persistent terminals can reconnect after SSH comes back.",
     "经 SSH 隧道访问远端常驻服务；断线重连后可继续接回已持久化的终端。": "Uses the persistent remote service through an SSH tunnel; persisted terminals can be reattached after reconnecting.",
     "远端服务按项目启动，在当前 SSH 会话中提供增强功能。": "The remote service runs per project and provides enhancements for this SSH session.",

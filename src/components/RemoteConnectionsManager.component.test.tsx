@@ -350,6 +350,14 @@ describe('remote connection compatibility settings', () => {
     fireEvent.change(screen.getByLabelText('认证方式'), { target: { value: 'password' } })
     fireEvent.change(screen.getByLabelText('密码（加密保存在本机）'), { target: { value: 'secret' } })
     await testNewConnection()
+    // 测试结果必须在弹窗内可见，不能只靠弹窗外的提示。
+    expect(screen.getByRole('status')).toHaveTextContent('SSH 连接测试成功，主机指纹已确认，可以保存。')
+    // 修改密码后旧结果失效，提示随之消失。
+    fireEvent.change(screen.getByLabelText('密码（加密保存在本机）'), { target: { value: 'secret2' } })
+    expect(screen.queryByText('SSH 连接测试成功，主机指纹已确认，可以保存。')).toBeNull()
+    fireEvent.change(screen.getByLabelText('密码（加密保存在本机）'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    await screen.findByRole('status')
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveConnection).toHaveBeenCalledTimes(1))
     const savedId = saveConnection.mock.calls[0][0].id as string
