@@ -690,21 +690,16 @@ pub(crate) async fn ssh_spawn_script_unchecked(
             persistent_cwd.expect("server mode validates the task working directory");
         // 远端 Windows 配置终端：预热的 PowerShell 命中时接回后交付命令；带额外环境变量的
         // 配置与预热项启动条件不同，照常新建。未命中或过期走正常新建。
-        if shell_kind == "interactive"
-            && env.is_empty()
-            && windows_native_path(&parsed.path).is_some()
-        {
+        if shell_kind == "interactive" && env.is_empty() {
             let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
             launch.name = name.clone();
             let size = (cols.unwrap_or(80), rows.unwrap_or(24));
             let profile_pool = app
                 .state::<super::local_terminal::ConnectionShellPools>()
-                .profile_pool();
-            let pool = if profile_pool.has_entry(&id) {
-                Some(profile_pool)
-            } else {
-                super::local_terminal::pool_for_cwd(&app, &cwd)
-            };
+                .profile_pool(&cwd);
+            let pool = profile_pool
+                .filter(|p| p.has_entry(&id))
+                .or_else(|| super::local_terminal::pool_for_cwd(&app, &cwd));
             if let Some(pool) = pool {
                 if let Some(result) = pool
                     .take_remote(

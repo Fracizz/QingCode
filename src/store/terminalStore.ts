@@ -1,3 +1,4 @@
+import { localCodexPrewarm } from '../lib/terminal/localCodexPrewarm'
 import { connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { connectionDefaultProfileId } from '../lib/terminal/connectionDefaultProfile'
 import { recordShellOpen } from '../lib/terminal/shellOpenDiagnostics'
@@ -653,7 +654,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const remote = projectPath.startsWith('ssh://')
     // 远端带命令的配置也可领取：仅远端 Windows 的 PowerShell 预热项支持，其余由后端按未命中返回。
     const canReserve = remote || getTerminalPersistLocalSessions()
-    const selected = connection && connectionPrewarmProfile(connection)
+    const selected = connection ? connectionPrewarmProfile(connection) : localCodexPrewarm()
     const requestedProfile = selected && selected.id === profile.id ? { profileId: profile.id, command: startup } : undefined
     const reservation = canReserve
       ? await reservePrewarmedShell(projectPath, shell, !!startup, undefined, requestedProfile)

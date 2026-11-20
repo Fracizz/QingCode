@@ -827,6 +827,7 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
+        .manage(remote_ssh::local_terminal::LocalCodexPool::default())
         .manage(remote_ssh::local_terminal::ShellPrewarmPool::default())
         .manage(remote_ssh::local_terminal::ConnectionShellPools::default())
         .manage(mobile::MobileState::default())
@@ -1115,6 +1116,10 @@ pub fn run() {
                 tauri::WindowEvent::Focused(true) => pool.focus_window(window.label()),
                 tauri::WindowEvent::Destroyed => {
                     pool.close_window(window.label());
+                    window
+                        .state::<remote_ssh::local_terminal::LocalCodexPool>()
+                        .pool
+                        .close_window(window.label());
                     window
                         .state::<remote_ssh::local_terminal::ConnectionShellPools>()
                         .close_window(window.label());

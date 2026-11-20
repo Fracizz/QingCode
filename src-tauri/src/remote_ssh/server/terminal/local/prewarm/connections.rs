@@ -8,8 +8,7 @@ struct Connections {
     count: usize,
     running: bool,
     pools: BTreeMap<String, ShellPrewarmPool>,
-    profile: Option<(String, PrewarmProfile)>,
-    profile_pool: ShellPrewarmPool,
+    profiles: BTreeMap<String, (String, PrewarmProfile, ShellPrewarmPool)>,
 }
 
 #[derive(Clone, Default)]
@@ -20,34 +19,68 @@ impl ConnectionShellPools {
         self.1.notify_one();
     }
 
-    pub(crate) fn set_profile(&self, window: &str, profile: Option<PrewarmProfile>) {
+    pub(crate) fn set_profiles(
+        &self,
+        window: &str,
+        active: Option<PrewarmProfile>,
+        anchors: Vec<PrewarmProfile>,
+        enabled: bool,
+    ) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let next = profile.map(|p| (window.to_owned(), p));
-        if state.profile != next {
-            state.profile_pool.stop();
-            state.profile = next;
-            self.changed();
+        let mut next = BTreeMap::new();
+        if enabled {
+            for p in active.into_iter().chain(
+                anchors
+                    .into_iter()
+                    .filter(|p| codex::supported(&p.command))
+                    .map(|mut p| {
+                        p.cross_project = true;
+                        p
+                    }),
+            ) {
+                if let Some(id) = remote_uri_connection_id(&p.cwd) {
+                    next.insert(id.to_owned(), p);
+                }
+            }
         }
+        state.profiles.retain(|id, (owner, profile, pool)| {
+            let keep = owner == window && next.get(id) == Some(profile);
+            if !keep {
+                pool.stop()
+            }
+            keep
+        });
+        for (id, profile) in next {
+            state
+                .profiles
+                .entry(id)
+                .or_insert_with(|| (window.into(), profile, ShellPrewarmPool::default()));
+        }
+        self.changed();
     }
 
     pub(crate) fn close_window(&self, window: &str) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state
-            .profile
-            .as_ref()
-            .is_some_and(|(owner, _)| owner == window)
-        {
-            state.profile_pool.stop();
-            state.profile = None;
-        }
-    }
-
-    pub(crate) fn profile_pool(&self) -> ShellPrewarmPool {
         self.0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .profile_pool
-            .clone()
+            .profiles
+            .retain(|_, (owner, _, pool)| {
+                if owner == window {
+                    pool.stop();
+                    false
+                } else {
+                    true
+                }
+            });
+    }
+
+    pub(crate) fn profile_pool(&self, cwd: &str) -> Option<ShellPrewarmPool> {
+        self.0
+            .lock()
+            .ok()?
+            .profiles
+            .get(remote_uri_connection_id(cwd)?)
+            .map(|(_, _, pool)| pool.clone())
     }
 
     pub(crate) fn configure(&self, app: &AppHandle, shell: &str, count: usize) {
@@ -84,11 +117,11 @@ impl ConnectionShellPools {
                     return;
                 }
                 let manager = app.state::<SshManager>();
-                if let Some((window, profile)) = &state.profile {
+                for (window, profile, pool) in state.profiles.values() {
                     if let Some(target) = profile.target(&manager, window) {
-                        state.profile_pool.configure_target(&app, target);
+                        pool.configure_target(&app, target);
                     } else {
-                        state.profile_pool.stop();
+                        pool.stop();
                     }
                 }
                 let eligible = connected_targets(&manager);
@@ -136,9 +169,26 @@ impl PrewarmProfile {
             .registered_root(&self.cwd)
             .ok()
             .filter(|r| r.trusted)?;
-        let connection = remote_windows_connection(manager, &self.cwd)?;
-        let remote = RemoteTarget::connected(manager, &connection, &root)?;
+        let parsed = parse_remote_uri(&self.cwd).ok()?;
+        let win = windows_native_path(&parsed.path).is_some();
         let (launch, mut key) = remote_launch_key(&self.cwd, Some(&self.shell)).ok()?;
+        if self.cross_project {
+            let supported_shell = if win {
+                matches!(launch.resolved_shell.as_str(), "powershell" | "pwsh")
+            } else {
+                matches!(
+                    launch.resolved_shell.as_str(),
+                    "auto" | "bash" | "sh" | "zsh"
+                )
+            };
+            if !supported_shell || !codex::supported(&self.command) {
+                return None;
+            }
+        } else if !win {
+            return None;
+        }
+        let connection = parsed.connection_id;
+        let remote = RemoteTarget::connected(manager, &connection, &root)?;
         key.profile = Some(self.clone());
         Some(Target {
             project_path: self.cwd.clone(),
@@ -235,6 +285,43 @@ mod tests {
         assert!(!next["windev"].same_connection(&connected_targets(&manager)["windev"]));
         manager.direct_active.write().unwrap().remove("windev");
         assert!(connected_targets(&manager).is_empty());
+    }
+
+    #[test]
+    fn anchored_profiles_are_kept_per_connection_and_removed_on_revocation() {
+        let registry = ConnectionShellPools::default();
+        let profile = |host: &str, command: &str| PrewarmProfile {
+            cwd: format!("ssh://{host}/home/project"),
+            profile_id: "dev".into(),
+            shell: "auto".into(),
+            command: command.into(),
+            cross_project: false,
+        };
+        registry.set_profiles(
+            "main",
+            None,
+            vec![
+                profile("one", "claude"),
+                profile("two", "opencode"),
+                profile("other", "codex resume"),
+            ],
+            true,
+        );
+        let original = registry.profile_pool("ssh://one/home/other").unwrap();
+        assert!(registry.profile_pool("ssh://other/home/other").is_none());
+        registry.set_profiles(
+            "main",
+            Some(profile("one", "claude")),
+            vec![profile("one", "claude")],
+            true,
+        );
+        assert!(Arc::ptr_eq(
+            &original.0,
+            &registry.profile_pool("ssh://one/home/next").unwrap().0
+        ));
+        assert!(registry.profile_pool("ssh://two/home/other").is_none());
+        registry.close_window("main");
+        assert!(registry.profile_pool("ssh://one/home/other").is_none());
     }
 
     #[test]

@@ -17,6 +17,7 @@ path = "src/main.rs"
 # 应用协议与网络层使用 Rust 实现；TLS 的 ring 加密后端需要对应目标的 C 编译器。
 # musl 静态产物仍需在发布构建中验证，不能仅凭本地 GNU 编译成功认定可部署。
 [dependencies]
+tempfile = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 协议负载是 MessagePack（设计 §5.1），字节字段用 serde_bytes 走 bin 类型，

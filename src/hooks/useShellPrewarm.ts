@@ -1,4 +1,5 @@
-import { CONNECTION_PREWARM_PREFIX, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import { localCodexPrewarm, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
+import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
@@ -12,9 +13,10 @@ import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminal
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
-function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: { cwd: string; profileId: string; command: string; shell: string }) {
+type PrewarmProfile = { cwd: string; profileId: string; command: string; shell: string }
+function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: PrewarmProfile, localProfile?: Omit<PrewarmProfile, 'cwd'>, anchoredProfiles?: PrewarmProfile[]) {
   backendSequence = backendSequence.then(() =>
-    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }) }),
+    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }), ...(localProfile && { localProfile }), ...(anchoredProfiles?.length && { anchoredProfiles }) }),
   ).then(() => {}, () => {})
   return backendSequence
 }
@@ -47,8 +49,9 @@ export function useShellPrewarm(project: Project | null) {
         const active = projectRef.current
         if (!active?.path.startsWith('ssh://')) localProject = active
         const local = localHostWindows && localProject && (localProject.ephemeral || isProjectTrusted(localProject)) ? localProject : null
+        const codex = localHostWindows ? localCodexPrewarm() : undefined
         const [count, persist] = await Promise.all([
-          loadShellPrewarmCount(), local ? loadEffectiveTerminalPersistLocalSessions(local) : false,
+          loadShellPrewarmCount(), local || codex ? loadEffectiveTerminalPersistLocalSessions(local) : false,
         ])
         const shell = getPrewarmShell()
         if (stale()) return
@@ -56,7 +59,9 @@ export function useShellPrewarm(project: Project | null) {
         const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmProfile(connectionId)
         const profile = active && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
           command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
-        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile)
+        const localProfile = persist && codex ? { profileId: codex.id,
+          shell: codex.shell, command: codex.command.trim() } : undefined
+        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile, localProfile, connectionPrewarmAnchors())
       })().catch(() => {})
     }
     const invalidate = () => refresh(true)
@@ -67,7 +72,7 @@ export function useShellPrewarm(project: Project | null) {
     const onTrustSynced = () => { if (document.hasFocus()) recheck() }
     recheckRef.current = recheck
     const storage = (event: StorageEvent) => {
-      if (!event.key || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
+      if (!event.key || event.key === LOCAL_CODEX_PREWARM_KEY || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
     let unlisten: (() => void) | undefined

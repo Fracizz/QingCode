@@ -993,17 +993,17 @@ impl DaemonSession {
     }
 
     /// Idle prewarm output is replayable from the daemon. An exited PTY can no longer be claimed.
-    pub(super) fn idle_pty_exited(&mut self, pty_id: &str) -> bool {
+    pub(super) fn drain_idle_pty(&mut self, pty_id: &str, mut output: impl FnMut(&[u8])) -> bool {
         let Some(events) = self.events.as_mut() else {
             return true;
         };
         loop {
             match events.receiver.try_recv() {
-                Ok(queued) => {
-                    if matches!(queued.event, Event::PtyExit { id, .. } if id == pty_id) {
-                        return true;
-                    }
-                }
+                Ok(queued) => match queued.event {
+                    Event::PtyExit { id, .. } if id == pty_id => return true,
+                    Event::PtyData { id, data, .. } if id == pty_id => output(&data),
+                    _ => {}
+                },
                 Err(mpsc::error::TryRecvError::Empty) => return false,
                 Err(mpsc::error::TryRecvError::Disconnected) => return true,
             }

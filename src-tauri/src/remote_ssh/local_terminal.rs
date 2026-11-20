@@ -6,7 +6,9 @@ use super::terminal_exit::TerminalExitAction;
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest, TerminalManager};
-pub(crate) use local_terminal::prewarm::{ConnectionShellPools, PrewarmProfile, ShellPrewarmPool};
+pub(crate) use local_terminal::prewarm::{
+    ConnectionShellPools, LocalCodexPool, PrewarmProfile, ShellPrewarmPool,
+};
 use tauri::Manager;
 
 pub(crate) fn pool_for_cwd(app: &AppHandle, cwd: &str) -> Option<ShellPrewarmPool> {
@@ -136,6 +138,23 @@ pub async fn local_host_spawn_profile(
     let (cols, rows) = (cols.unwrap_or(80), rows.unwrap_or(24));
     if env.is_empty() {
         if let Some(result) = app
+            .state::<LocalCodexPool>()
+            .take(
+                &id,
+                &cwd,
+                shell.as_deref(),
+                &target,
+                name.as_deref(),
+                (cols, rows),
+                &app,
+                &manager,
+            )
+            .await?
+        {
+            return Ok(result);
+        }
+        allowlist.ensure_executable(&cwd)?;
+        if let Some(result) = app
             .state::<ShellPrewarmPool>()
             .take(
                 &id,
@@ -256,17 +275,29 @@ pub async fn local_host_finish_terminal_on_exit(
 }
 
 /// 最近聚焦的窗口同步用户设置，本机和每条符合条件的连接各自补充。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn configure_shell_prewarm(
     cwd: Option<String>,
     shell: Option<String>,
     count: serde_json::Value,
     profile: Option<PrewarmProfile>,
+    local_profile: Option<PrewarmProfile>,
+    anchored_profiles: Option<Vec<PrewarmProfile>>,
     window: tauri::Window,
     app: AppHandle,
     pool: State<'_, ShellPrewarmPool>,
 ) -> Result<usize, String> {
-    let result = pool.configure(&app, window.label(), cwd, shell, count, profile);
+    let result = pool.configure(
+        &app,
+        window.label(),
+        cwd,
+        shell,
+        count,
+        profile,
+        local_profile,
+        anchored_profiles.unwrap_or_default(),
+    );
     if result.is_err() {
         pool.clear_window(window.label());
     }
@@ -302,14 +333,26 @@ pub async fn reserve_prewarmed_shell(
         if let Some(p) = profile.filter(|_| id.is_none() && has_startup == Some(true)) {
             if let Some(id) = app
                 .state::<ConnectionShellPools>()
-                .profile_pool()
-                .reserve_profile(&cwd, shell.as_deref(), &p.profile_id, &p.command)
+                .profile_pool(&cwd)
+                .and_then(|pool| {
+                    pool.reserve_profile(&cwd, shell.as_deref(), &p.profile_id, &p.command)
+                })
             {
                 return Ok(serde_json::json!({"id": id, "profileHit": true}));
             }
         }
     } else {
         allowlist.ensure_executable(&cwd)?;
+        if let Some(p) = profile.filter(|_| id.is_none() && has_startup == Some(true)) {
+            if let Some(id) = app.state::<LocalCodexPool>().reserve(
+                &cwd,
+                shell.as_deref(),
+                &p.profile_id,
+                &p.command,
+            ) {
+                return Ok(serde_json::json!({"id": id, "profileHit": true}));
+            }
+        }
     }
     let Some(pool) = pool_for_cwd(&app, &cwd) else {
         return Ok(serde_json::json!({"reason": "no_target"}));
@@ -344,10 +387,18 @@ pub fn shell_prewarm_status(cwd: String, app: AppHandle) -> serde_json::Value {
     let mut status = pool_for_cwd(&app, &cwd)
         .map(|pool| pool.status(&cwd))
         .unwrap_or_else(|| inactive("no_target"));
-    let profile = app
-        .state::<ConnectionShellPools>()
-        .profile_pool()
-        .status(&cwd);
+    let profile = if cwd.starts_with(SSH_URI_PREFIX) {
+        app.state::<ConnectionShellPools>()
+            .profile_pool(&cwd)
+            .map(|pool| pool.status(&cwd))
+            .unwrap_or_else(|| inactive("no_target"))
+    } else if crate::run_environment::parse_wsl_path(&cwd).is_none()
+        && app.state::<PathAllowlist>().ensure_executable(&cwd).is_ok()
+    {
+        app.state::<LocalCodexPool>().pool.status(&cwd)
+    } else {
+        inactive("untrusted")
+    };
     if profile["target"] != 0 {
         status["profile"] = profile;
     }

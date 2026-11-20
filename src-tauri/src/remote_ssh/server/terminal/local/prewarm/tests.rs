@@ -125,6 +125,7 @@ pub(super) fn fake_shell() -> WarmShell {
         claim_cwd: false,
         launch,
         remote: None,
+        codex: None,
         startup_pipe: None,
         startup_input: false,
         marker: String::new(),
@@ -396,6 +397,7 @@ pub(super) fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
             incarnation: None,
             direct_peer: None,
         }),
+        codex: None,
         startup_pipe: None,
         startup_input: true,
         marker: String::new(),
@@ -762,6 +764,7 @@ fn profile_requires_same_connection_project_profile_shell_and_command() {
     let pool = ShellPrewarmPool::default();
     let mut entry = remote_shell("prepared", cwd, true);
     entry.key.profile = Some(PrewarmProfile {
+        cross_project: false,
         cwd: cwd.into(),
         shell: "auto".into(),
         profile_id: "agent".into(),
@@ -795,6 +798,7 @@ fn phone_claims_prepared_profile_under_its_own_terminal_id() {
     let pool = ShellPrewarmPool::default();
     let mut entry = remote_shell("prepared", cwd, true);
     entry.key.profile = Some(PrewarmProfile {
+        cross_project: false,
         cwd: cwd.into(),
         shell: "auto".into(),
         profile_id: "agent".into(),
@@ -843,6 +847,7 @@ async fn profile_runs_before_claim_and_its_screen_is_replayed() {
     let mut target = target_for(&remote_shell("fixture", &uri, true), 1);
     let command = "[Console]::WriteLine('QC-PROFILE-READY'); [IO.File]::AppendAllText((Join-Path $PWD 'once.txt'), 'X')";
     target.key.profile = Some(PrewarmProfile {
+        cross_project: false,
         cwd: uri,
         shell: "powershell".into(),
         profile_id: "fixture".into(),

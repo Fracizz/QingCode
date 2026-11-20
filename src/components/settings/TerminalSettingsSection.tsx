@@ -11,6 +11,7 @@ import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
 import { DEFAULT_TERMINAL_PROFILE, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
+  detectTerminalHostPlatform,
   defaultTerminalShell,
   terminalShellLabelKey,
   type TerminalShellId,
@@ -21,6 +22,7 @@ import type { Project } from '../../types'
 import { useUIStore } from '../../store/uiStore'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
+import LocalCodexPrewarm from './LocalCodexPrewarm'
 import { SettingItem } from '../SettingsLayout'
 import TerminalShortcutBarSettings from '../TerminalShortcutBarSettings'
 import type { TerminalIntegrationSettingsState } from './useSettingsSectionState'
@@ -227,6 +229,9 @@ export default function TerminalSettingsSection({
             <option value="on">{t('开启')}</option>
           </select>
         </SettingItem>
+      )}
+      {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('Codex', 'Claude Code', 'OpenCode', 'CLI', '预热') && (
+        <LocalCodexPrewarm profiles={terminal.profiles} />
       )}
       {match('预热', 'Shell', 'shellPrewarmCount') && (
         <SettingItem
