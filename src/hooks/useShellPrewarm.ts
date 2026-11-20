@@ -4,6 +4,7 @@ import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { CLI_PREWARM_SERVER_OUTDATED_EVENT, notifyCliPrewarmServerOutdated } from '../lib/terminal/cliPrewarmServerOutdated'
 import type { Project } from '../types'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { isProjectTrusted, WORKSPACE_TRUST_CHANGED_EVENT, WORKSPACE_TRUST_SYNCED_EVENT } from '../lib/workspaceTrust'
@@ -84,6 +85,11 @@ export function useShellPrewarm(project: Project | null) {
     }).finally(() => {
       if (!disposed) recheck()
     }).catch(() => {})
+    // 远端 daemon 过旧时原生池暂停 CLI 预热并只通知所属窗口；提示自动消失，不阻塞新建终端。
+    let unlistenOutdated: (() => void) | undefined
+    void getCurrentWindow().listen<{ cwd?: unknown }>(CLI_PREWARM_SERVER_OUTDATED_EVENT, event => notifyCliPrewarmServerOutdated(event.payload?.cwd))
+      .then(stop => { if (disposed) stop(); else unlistenOutdated = stop })
+      .catch(() => {})
     // CLI 设置导入可由主窗口处理，预算却在另一个窗口。接收方只重读，不再次广播。
     const settingsChannel = new BroadcastChannel(SHELL_PREWARM_CHANGED_EVENT)
     settingsChannel.onmessage = recheck
@@ -110,6 +116,7 @@ export function useShellPrewarm(project: Project | null) {
       window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
       window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
       unlisten?.()
+      unlistenOutdated?.()
       window.removeEventListener(TERMINAL_PROFILE_TRUST_CHANGED_EVENT, invalidate)
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)

@@ -13,7 +13,10 @@ pub(crate) use codex::LocalCodexPool;
 pub(crate) use connections::ConnectionShellPools;
 use qingcode_server::ipc::{IpcEndpoint, IpcStream};
 use std::time::Instant;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+/// 远端 daemon 过旧导致 CLI 预热无法启动时发给所属窗口的事件，载荷 `{ cwd }`。
+const CLI_PREWARM_SERVER_OUTDATED_EVENT: &str = "cli-prewarm-server-outdated";
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -1204,7 +1207,12 @@ impl ShellPrewarmPool {
                 if paused_reason.is_none()
                     && matches!(
                         state.paused_reason,
-                        Some("profile_exited" | "codex_not_ready" | "cli_not_ready")
+                        Some(
+                            "profile_exited"
+                                | "codex_not_ready"
+                                | "cli_not_ready"
+                                | "server_outdated"
+                        )
                     )
                 {
                     continue;
@@ -1261,6 +1269,17 @@ impl ShellPrewarmPool {
                         .as_ref()
                         .is_some_and(|p| !remote || p.cross_project)
                     {
+                        if remote && error == codex::SERVER_OUTDATED {
+                            // 旧 daemon 有运行中的终端时会推迟升级：暂停到配置变化，并提示所属窗口（不阻塞）。
+                            state.paused_reason = Some("server_outdated");
+                            drop(state);
+                            let _ = app.emit_to(
+                                target.window.as_str(),
+                                CLI_PREWARM_SERVER_OUTDATED_EVENT,
+                                serde_json::json!({"cwd": target.project_path}),
+                            );
+                            continue;
+                        }
                         // A login or upgrade prompt can persist until the user resolves it.
                         state.paused_reason = Some(
                             if target

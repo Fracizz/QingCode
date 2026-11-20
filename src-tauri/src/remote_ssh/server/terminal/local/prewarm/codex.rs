@@ -189,6 +189,9 @@ impl LocalCodexPool {
     }
 }
 
+/// 远端 daemon 版本过旧、不支持 `pty.claimCwdFile` 时的错误；预热循环据此暂停并提示升级。
+pub(super) const SERVER_OUTDATED: &str = "远端服务需要更新以交付 CLI 工作目录";
+
 pub(super) fn supported(command: &str) -> bool {
     matches!(command, "codex" | "claude" | "opencode")
 }
@@ -596,7 +599,7 @@ pub(super) async fn prepare_at(
             .as_ref()
             .is_some_and(|s| s.supports("pty.claimCwdFile"))
     {
-        return Err("远端服务需要更新以交付 CLI 工作目录".into());
+        return Err(SERVER_OUTDATED.into());
     }
     if let Some(handoff) = &handoff {
         env.insert(

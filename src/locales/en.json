@@ -2118,6 +2118,8 @@
     "保存 Shell 预热设置失败: {error}": "Failed to save shell prewarming settings: {error}",
     "跨项目 CLI 启动目录": "Cross-project CLI startup directory",
     "使用当前项目": "Use current project",
+    "{name} 的远端服务需升级后 CLI 预热才生效": "Update the remote server on {name} to enable CLI prewarming",
+    "终端已按普通 Shell 预热照常打开；远端仍有运行中的终端时升级会被推迟。": "Terminals still open with plain shell prewarming. The upgrade is deferred while remote terminals are running.",
     "远端 CLI 预热": "Remote CLI prewarming",
     "为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。": "Start the selected CLI on this connection in advance and switch to the trusted project when its terminal opens.",
     "仅预热普通 Shell": "Plain shell only",

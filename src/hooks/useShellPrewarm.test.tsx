@@ -16,7 +16,7 @@ vi.mock('../lib/terminal/localCodexPrewarm', () => ({
 vi.mock('../lib/terminal/connectionPrewarmProfile', () => ({
   connectionPrewarmAnchors: () => [], CONNECTION_PREWARM_PREFIX: 'profile:', connectionPrewarmProfile: mocks.preset,
 }))
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged }) }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged, listen: () => Promise.resolve(() => {}) }) }))
 vi.mock('../lib/tauri', () => ({ isTauri: () => true, safeInvoke: mocks.invoke }))
 vi.mock('../lib/workspaceTrust', () => ({ isProjectTrusted: mocks.trusted, WORKSPACE_TRUST_CHANGED_EVENT: 'trust-changed', WORKSPACE_TRUST_SYNCED_EVENT: 'trust-synced' }))
 vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
