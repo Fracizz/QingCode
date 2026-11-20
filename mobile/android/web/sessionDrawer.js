@@ -23,7 +23,7 @@ import {
   toggleSessionPin,
   updateSessionAttention,
 } from './protocol.js';
-import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
+import { attachDragSort, attachLongPress, attachSwipeDismiss, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove, setText } from './dom.js';
@@ -63,6 +63,11 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
   const projectSort = runningFirstToggle('drawer-sort');
   get('drawer-new-session').before(projectSort.element);
   onSessionPrefsChange(() => { if (drawer.open || docked) render(); });
+  // 手机抽屉占满整屏，没有空白处可点：在非会话行区域左滑关闭。会话行自身左滑露出「结束」，输入框左滑是移动光标，都不接管。
+  attachSwipeDismiss(drawer, () => close(), {
+    enabled: () => drawer.open && !docked && !state.busy(),
+    ignore: '.session-option, input, textarea, select',
+  });
 
   function allMode() { return scope === 'all' && allAvailable === true && availabilityAddress === state.profile()?.id; }
 

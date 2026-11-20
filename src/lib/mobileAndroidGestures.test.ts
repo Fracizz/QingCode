@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachKeyRepeat, attachLongPress, attachPullToRefresh, attachSheetDrag } from '../../mobile/android/web/gestures.js'
+import { attachKeyRepeat, attachLongPress, attachPullToRefresh, attachSheetDrag, attachSwipeDismiss } from '../../mobile/android/web/gestures.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => {
@@ -278,5 +278,55 @@ describe('Android long press', () => {
     pointer(button, 'pointerdown', 0)
     button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     expect(longPress).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('Android drawer swipe dismiss', () => {
+  function fixture(enabled = () => true) {
+    const drawer = document.createElement('dialog')
+    const head = document.createElement('div')
+    const row = document.createElement('div')
+    row.className = 'session-option'
+    drawer.append(head, row)
+    document.body.append(drawer)
+    const close = vi.fn()
+    disposers.push(attachSwipeDismiss(drawer, close, { enabled, ignore: '.session-option' }))
+    return { drawer, head, row, close }
+  }
+
+  it('follows a leftward swipe and closes past the distance', () => {
+    const { drawer, head, close } = fixture()
+    touch(head, 'touchstart', [[300, 100]])
+    expect(touch(head, 'touchmove', [[280, 102]]).defaultPrevented).toBe(true)
+    expect(drawer.style.transform).toBe('translateX(-20px)')
+    touch(head, 'touchmove', [[150, 104]])
+    touch(head, 'touchend', [])
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('snaps back on a short swipe and leaves vertical scrolling alone', () => {
+    const { head, close } = fixture()
+    touch(head, 'touchstart', [[300, 100]])
+    touch(head, 'touchmove', [[280, 100]])
+    touch(head, 'touchend', [])
+    expect(close).not.toHaveBeenCalled()
+    touch(head, 'touchstart', [[300, 100]])
+    expect(touch(head, 'touchmove', [[290, 200]]).defaultPrevented).toBe(false)
+    touch(head, 'touchmove', [[150, 220]])
+    touch(head, 'touchend', [])
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('ignores rows with their own swipe and disabled states', () => {
+    let on = true
+    const { head, row, close } = fixture(() => on)
+    touch(row, 'touchstart', [[300, 100]])
+    touch(row, 'touchmove', [[100, 100]])
+    touch(row, 'touchend', [])
+    on = false
+    touch(head, 'touchstart', [[300, 100]])
+    touch(head, 'touchmove', [[100, 100]])
+    touch(head, 'touchend', [])
+    expect(close).not.toHaveBeenCalled()
   })
 })

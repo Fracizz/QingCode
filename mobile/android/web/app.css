@@ -1196,6 +1196,14 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
   }
   .sheet-handle span { width: 36px; height: 4px; border-radius: 2px; background: var(--muted); opacity: .55; }
   dialog.sheet .dialog-actions { bottom: calc(-16px - var(--safe-bottom)); }
+  /* 竖屏手机：会话抽屉占满整屏宽度，项目名尽量完整显示；关闭靠返回箭头、系统返回或左滑。 */
+  dialog.session-drawer:not([data-docked="true"]) {
+    width: 100%;
+    max-width: 100%;
+    padding-right: max(12px, var(--safe-right));
+    border-width: 0;
+    border-radius: 0;
+  }
 }
 @media (max-width: 360px) {
   .hero-title { font-size: 28px; }
@@ -1255,16 +1263,19 @@ dialog.session-drawer[data-docked="true"][open] { animation: none; }
     transform: translateX(calc(var(--safe-left) - 100%));
   }
 }
-/* 常驻侧栏组头两行：项目名独占首行（最多两行），来源标签与数量放第二行；「+」「⋯」与首行对齐。 */
+/* 侧栏组头两行（手机抽屉与平板常驻一致）：项目名独占首行（最多两行），来源标签与数量放第二行；「+」「⋯」与首行对齐。 */
 .session-group-meta { display: contents; }
-dialog.session-drawer[data-docked="true"] .session-group-head-tools { align-items: flex-start; }
-dialog.session-drawer[data-docked="true"] .session-group-toggle { display: grid; grid-template-columns: 15px minmax(0, 1fr); align-items: center; gap: 2px 6px; padding-block: 9px 6px; line-height: 1.4; }
-dialog.session-drawer[data-docked="true"] .session-group-toggle .session-group-icon { align-self: start; margin-top: calc((1.4em - 15px) / 2); }
-dialog.session-drawer[data-docked="true"] .session-group-toggle strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-dialog.session-drawer[data-docked="true"] .session-group-meta { display: flex; grid-column: 2; align-items: center; gap: 6px; min-width: 0; }
-dialog.session-drawer[data-docked="true"] .session-group-meta .session-group-source { flex: 0 1 auto; }
-dialog.session-drawer[data-docked="true"] .session-group-meta .session-group-badge { margin: 0; }
-dialog.session-drawer[data-docked="true"] .session-group[data-empty="true"] .session-group-toggle { min-height: 0; padding-block: 8px 5px; line-height: 1.4; }
+dialog.session-drawer .session-group-head-tools { align-items: flex-start; }
+dialog.session-drawer .session-group-toggle { display: grid; grid-template-columns: 15px minmax(0, 1fr); align-items: center; gap: 2px 6px; padding-block: 9px 6px; line-height: 1.4; }
+dialog.session-drawer .session-group-toggle .session-group-icon { align-self: start; margin-top: calc((1.4em - 15px) / 2); }
+dialog.session-drawer .session-group-toggle strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+dialog.session-drawer .session-group-meta { display: flex; grid-column: 2; align-items: center; gap: 6px; min-width: 0; }
+dialog.session-drawer .session-group-meta .session-group-source { flex: 0 1 auto; }
+dialog.session-drawer .session-group-meta .session-group-badge { margin: 0; }
+dialog.session-drawer .session-group[data-empty="true"] .session-group-toggle { min-height: 0; padding-block: 8px 5px; line-height: 1.4; }
+/* 第二行放不下时先省略补充说明，再让来源标签带省略号收窄，不再被外层直接切掉半个字。 */
+dialog.session-drawer .session-group-meta .project-source-chip { flex: 0 1 auto; min-width: 2.5em; }
+dialog.session-drawer .session-group-meta .project-source-note { flex-shrink: 999; }
 /* 会话行：缩进收窄；状态行最多两行不截断；当前会话左侧加强调色竖条。 */
 dialog.session-drawer[data-docked="true"] #session-overview .session-group-rows { margin-left: 8px; }
 dialog.session-drawer[data-docked="true"] .session-option small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }

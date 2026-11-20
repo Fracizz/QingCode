@@ -178,6 +178,82 @@ export function attachPullToRefresh(scroller, indicator, { onRefresh, enabled = 
   };
 }
 
+/**
+ * 左侧抽屉左滑关闭：横向为主的左滑让抽屉跟手左移，超过距离或快速左甩时关闭，否则回弹。
+ * 起点落在 ignore 选择器内（自带横滑的行、输入框）或 enabled() 为假时不接管；纵向滑动照常滚动列表。
+ */
+export function attachSwipeDismiss(target, close, { enabled = () => true, ignore = '', distance = 72, velocity = 0.5, slop = 10 } = {}) {
+  let drag = null;
+  let releaseTimer = null;
+
+  function release() {
+    clearTimeout(releaseTimer);
+    releaseTimer = null;
+    target.style.removeProperty('transform');
+    target.style.removeProperty('transition');
+  }
+
+  function start(event) {
+    drag = null;
+    if (event.touches.length !== 1 || !enabled() || (ignore && event.target.closest?.(ignore))) return;
+    release();
+    const touch = event.touches[0];
+    drag = { x: touch.clientX, y: touch.clientY, at: event.timeStamp, offset: 0, axis: null };
+  }
+
+  function move(event) {
+    if (!drag) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - drag.x;
+    const dy = touch.clientY - drag.y;
+    if (!drag.axis) {
+      if (Math.hypot(dx, dy) < slop) return;
+      // 只认明显向左的横滑；其余交给列表滚动和行内手势。
+      drag.axis = dx < 0 && Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y';
+      if (drag.axis === 'x') target.style.transition = 'none';
+    }
+    if (drag.axis !== 'x') return;
+    event.preventDefault();
+    drag.offset = Math.min(0, dx);
+    target.style.transform = `translateX(${drag.offset}px)`;
+  }
+
+  function end(event) {
+    const current = drag;
+    drag = null;
+    if (!current || current.axis !== 'x') return;
+    const moved = -current.offset;
+    const elapsed = Math.max(1, event.timeStamp - current.at);
+    if (moved >= distance || (moved > 24 && moved / elapsed >= velocity)) {
+      // 保持左移位置随关闭淡出，淡出结束后再清掉内联样式，避免先弹回再消失。
+      target.style.removeProperty('transition');
+      close();
+      releaseTimer = setTimeout(release, 240);
+    } else {
+      target.style.transition = 'transform 160ms ease-out';
+      target.style.transform = '';
+      releaseTimer = setTimeout(release, 180);
+    }
+  }
+
+  function cancel() {
+    if (drag?.axis === 'x') release();
+    drag = null;
+  }
+
+  target.addEventListener('touchstart', start, { passive: true });
+  target.addEventListener('touchmove', move, { passive: false });
+  target.addEventListener('touchend', end);
+  target.addEventListener('touchcancel', cancel);
+  return () => {
+    release();
+    target.removeEventListener('touchstart', start);
+    target.removeEventListener('touchmove', move);
+    target.removeEventListener('touchend', end);
+    target.removeEventListener('touchcancel', cancel);
+  };
+}
+
 /** 底部弹层：按住拖动条下滑，超过距离或快速下甩时关闭，否则回弹。 */
 export function attachSheetDrag(sheet, handle, close, { distance = 88, velocity = 0.6 } = {}) {
   let drag = null;
