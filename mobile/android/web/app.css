@@ -761,6 +761,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #history-content .history-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; color: var(--muted); font: 600 11px/1.6 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
 #history-content .history-divider::before, #history-content .history-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 #history-content .history-divider:first-child { margin-top: 0; }
+/* 安卓系统中文字体通常只有 Regular，粗体靠 Chromium 描边伪加粗，个别字形（如「限」）会变成空心轮廓。
+   终端与历史关闭伪粗体，粗体按常规字重显示（基础色粗体仍提亮）。 */
+#viewport, #terminal-history { font-synthesis-weight: none; }
 #viewport { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 8px; touch-action: pinch-zoom; overscroll-behavior: contain; }
 /* 切换终端时盖在新终端上的旧画面，只看不点。 */
 #viewport .terminal-held-frame { position: absolute; z-index: 1; pointer-events: none; transition: opacity 150ms var(--ease-exit); }

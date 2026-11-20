@@ -261,8 +261,13 @@ pub struct DeferredUpgrade {
 }
 
 impl DeferredUpgrade {
+    /// 版本须与确认时一致；终端数只拒绝增加。减少是安全的（用户已同意结束更多），
+    /// 而本客户端未领取的预热终端在更新重连时会被 daemon 回收，计数必然下降。
     pub(super) fn verify(&self, actual: &Self) -> Result<(), String> {
-        if self == actual {
+        if self.running_version == actual.running_version
+            && self.target_version == actual.target_version
+            && actual.live_terminals <= self.live_terminals
+        {
             Ok(())
         } else {
             Err("远端版本或运行中的终端数已变化，请重新确认强制更新".into())
@@ -918,6 +923,11 @@ mod tests {
                 assert!(impact.verify(&impact).is_ok());
                 let mut changed = impact.clone();
                 changed.live_terminals += 1;
+                assert!(impact.verify(&changed).is_err());
+                // 终端减少（如预热终端被回收）仍视为已确认。
+                changed.live_terminals = 1;
+                assert!(impact.verify(&changed).is_ok());
+                changed.running_version = "0.1.0-beta.0".into();
                 assert!(impact.verify(&changed).is_err());
             }
             let reason = state.reason.unwrap();

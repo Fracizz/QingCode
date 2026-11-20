@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CJK_FONT_FAMILY, CJK_SIZE_ADJUST, createCjkFontFace, createTerminalFontLoader } from '../../mobile/android/web/terminalFont.js'
 
@@ -80,5 +82,13 @@ describe('Android terminal symbol font readiness', () => {
     expect(fonts.load).toHaveBeenCalledOnce()
     await createTerminalFontLoader({ load: () => Promise.resolve([]) })()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('Android terminal bold rendering', () => {
+  it('disables synthetic bold for the live terminal and history so CJK glyphs never render hollow', () => {
+    const css = readFileSync(resolve(import.meta.dirname, '../../mobile/android/web/app.css'), 'utf8')
+    const rule = /([^{}]+)\{\s*font-synthesis-weight:\s*none;\s*\}/.exec(css)
+    expect(rule?.[1].split(',').map(selector => selector.replace(/\/\*[\s\S]*?\*\//g, '').trim())).toEqual(['#viewport', '#terminal-history'])
   })
 })

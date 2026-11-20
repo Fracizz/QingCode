@@ -247,9 +247,10 @@ export default function RemoteConnectionsManager() {
     if (statesResult.status === 'fulfilled') setStatesByConnection(prev => ({ ...prev, [id]: statesResult.value }))
   }, [])
 
-  const refreshDetail = useCallback(async (id: string, includeStatus = true) => {
+  // silent：定时轮询不切到「正在读取…」，避免列表每 5 秒闪一次。
+  const refreshDetail = useCallback(async (id: string, includeStatus = true, silent = false) => {
     const requestId = ++detailRequestRef.current
-    setDetailLoading(true)
+    if (!silent) setDetailLoading(true)
     const [nextRoots] = await Promise.all([
       listSshWorkspaceRoots(id),
       includeStatus ? refreshStatus(id) : Promise.resolve(),
@@ -341,7 +342,7 @@ export default function RemoteConnectionsManager() {
       }
     }
     const refresh = () => {
-      if (selectedId && selectedId !== NEW_SSH_CONNECTION_ID && selectedId !== NEW_AGENT_CONNECTION_ID && document.visibilityState !== 'hidden') void refreshDetail(selectedId)
+      if (selectedId && selectedId !== NEW_SSH_CONNECTION_ID && selectedId !== NEW_AGENT_CONNECTION_ID && document.visibilityState !== 'hidden') void refreshDetail(selectedId, true, true)
     }
     const timer = setInterval(refresh, 5000)
     window.addEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
@@ -1001,7 +1002,7 @@ export default function RemoteConnectionsManager() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="remote-connections-title"
-          className="ui-font-scaled modal-content-enter modal-panel modal-xl flex h-[80vh] w-[94vw] max-h-[85vh] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
+          className="ui-font-scaled modal-content-enter modal-panel modal-xl flex h-[76vh] w-[94vw] max-w-[1008px] max-h-[81vh] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
@@ -1279,7 +1280,7 @@ export default function RemoteConnectionsManager() {
 
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>{t('信任与项目根')}</p>
-                          {detailLoading ? (
+                          {detailLoading && roots.length === 0 ? (
                             <p className={helpClass}>{t('正在读取…')}</p>
                           ) : roots.length === 0 ? (
                             <p className={helpClass}>
@@ -1352,7 +1353,7 @@ export default function RemoteConnectionsManager() {
                               <Settings size={14} />{t('服务安装设置')}
                             </button>
                           </div>
-                          {detailLoading ? (
+                          {detailLoading && serverStates.length === 0 ? (
                             <p className={helpClass}>{t('正在读取…')}</p>
                           ) : serverStates.length === 0 ? (
                             <p className={helpClass}>

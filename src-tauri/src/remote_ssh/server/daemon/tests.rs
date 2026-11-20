@@ -327,7 +327,7 @@ async fn gateway_update_recovers_when_the_old_daemon_closes_post_shutdown_handsh
     let mut confirmed = DeferredUpgrade {
         running_version: "0.0.9".into(),
         target_version: SERVER_VERSION.into(),
-        live_terminals: 2,
+        live_terminals: 0,
     };
     let rejected = super::super::deploy::ensure_gateway_endpoint(
         &manager,

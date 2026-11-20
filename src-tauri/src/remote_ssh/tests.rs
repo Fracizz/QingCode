@@ -1626,3 +1626,36 @@ fn parse_ctime_output_handles_units_and_unsupported_values() {
     assert_eq!(parse_ctime_output("-\n", false), None);
     assert_eq!(parse_ctime_output("", true), None);
 }
+
+#[test]
+fn server_states_skip_idle_passive_roots() {
+    use super::connection::passive_root_idle;
+    use super::server_status::{ServerMode, ServerPhase, SshServerState};
+    let state = |phase, reason: Option<&str>| SshServerState {
+        connection_id: "c".into(),
+        root_uri: "ssh://c/a".into(),
+        phase,
+        mode: ServerMode::Unknown,
+        connection_mode: None,
+        version: None,
+        transport: None,
+        reason: reason.map(Into::into),
+        deferred_upgrade: None,
+        timings: None,
+    };
+    // 后台登记、从未部署的根：不计入，否则管理页永远「正在准备服务」。
+    assert!(passive_root_idle(true, &state(ServerPhase::Probing, None)));
+    // 前台根仍在探测、或后台根有失败原因 / 已在推进时照常展示。
+    assert!(!passive_root_idle(
+        false,
+        &state(ServerPhase::Probing, None)
+    ));
+    assert!(!passive_root_idle(
+        true,
+        &state(ServerPhase::Probing, Some("失败"))
+    ));
+    assert!(!passive_root_idle(
+        true,
+        &state(ServerPhase::Installing, None)
+    ));
+}

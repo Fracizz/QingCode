@@ -664,7 +664,14 @@ pub fn ssh_server_states(
         .roots_for_connection(&connection_id)
         .iter()
         .filter_map(|root| server_status::state_for_root(&manager, root).ok())
+        .filter(|state| !passive_root_idle(manager.root_is_passive(&state.root_uri), state))
         .collect())
+}
+
+/// 后台登记（未在前台打开）的根不会部署服务，也没有 slot，稳态推导会一直停在
+/// 「探测中」，让连接管理页永远显示「正在准备服务」。这类根不计入聚合。
+pub(super) fn passive_root_idle(passive: bool, state: &server_status::SshServerState) -> bool {
+    passive && state.phase == server_status::ServerPhase::Probing && state.reason.is_none()
 }
 
 #[tauri::command]

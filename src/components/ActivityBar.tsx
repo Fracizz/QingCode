@@ -98,12 +98,34 @@ export default function ActivityBar({
           active={active === 'run' && sidebarOpen}
           onClick={() => onActiveChange('run')}
         />
+        <Item
+          icon={<Settings size={22} strokeWidth={1.5} />}
+          label={t('设置')}
+          active={active === 'settings' && (sidebarOpen || !terminalWorkbench)}
+          onClick={() => onActiveChange('settings')}
+        />
       </div>
 
-      {/* 动作：打开弹窗或面板，与视图之间用细线分开 */}
+      {/* 收起活动栏：放在视图与动作之间，兼作两组的分隔线 */}
+      <Tooltip label={t('向左收起活动栏')} side="right" wrapperClassName="w-full flex justify-center">
+        <button
+          type="button"
+          aria-label={t('向左收起活动栏')}
+          aria-expanded={true}
+          onClick={() => setActivityBarHidden(true)}
+          className="my-2 flex h-5 w-10 items-center justify-center rounded text-fg-dim transition-colors hover:text-fg"
+        >
+          <span className="relative flex w-6 items-center justify-center">
+            <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
+            <ChevronLeft size={12} className="relative bg-bg-activity text-fg-muted" />
+          </span>
+        </button>
+      </Tooltip>
+
+      {/* 动作：打开弹窗或面板 */}
       <div
         data-activity-group="actions"
-        className="mt-1 flex flex-col items-center border-t border-divider pt-2"
+        className="flex flex-col items-center"
       >
         <Item icon={<FolderPlus size={22} strokeWidth={1.5} />} label={t('新建项目')} onClick={onAddProject} />
         <Item icon={<ListChecks size={22} strokeWidth={1.5} />} label={t('项目管理')} onClick={onManageProjects} />
@@ -114,27 +136,6 @@ export default function ActivityBar({
           active={terminalOpen}
           onClick={onToggleTerminal}
         />
-      </div>
-
-      {/* 底部：设置与收起活动栏 */}
-      <div data-activity-group="footer" className="mt-auto flex flex-col items-center">
-        <Item
-          icon={<Settings size={22} strokeWidth={1.5} />}
-          label={t('设置')}
-          active={active === 'settings' && (sidebarOpen || !terminalWorkbench)}
-          onClick={() => onActiveChange('settings')}
-        />
-        <Tooltip label={t('向左收起活动栏')} side="right">
-          <button
-            type="button"
-            aria-label={t('向左收起活动栏')}
-            aria-expanded={true}
-            onClick={() => setActivityBarHidden(true)}
-            className="flex h-5 w-10 items-center justify-center rounded-md text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
-          >
-            <ChevronLeft size={14} />
-          </button>
-        </Tooltip>
       </div>
     </div>
   )
