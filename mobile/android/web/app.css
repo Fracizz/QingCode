@@ -1295,7 +1295,10 @@ dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
 dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
 /* 收回：原地淡出不位移，ease-out 让透明度在前几帧就降下去，缩短面板与终端叠字的时间，遮罩随后淡出。
    点会话切换时 app.js 写 data-handoff，面板直接消失（见下条），不和正在重建的终端交叠成拖影。 */
-dialog.session-drawer:not([open]) { transform: none; transition-duration: 120ms, 0s, 180ms, 180ms; transition-timing-function: ease-out; }
+dialog.session-drawer:not([open]) { transform: none; }
+/* 写完整过渡而不只改时长，不依赖 dialog 基础规则里属性的先后顺序；transform 不列出即立即到位。
+   :where 不增加优先级：常驻侧栏仍由 transition: none 接管，data-handoff（同优先级、写在后面）仍能让面板直接消失。 */
+dialog.session-drawer:not([open]):where(:not([data-docked="true"])) { transition: opacity 120ms ease-out, display 180ms allow-discrete, overlay 180ms allow-discrete; }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
 /* 终端操作菜单交给子页或另一个弹层时（app.js 写 data-handoff）：面板本身立即消失，只让遮罩照常淡出，与下一层的入场交叠而不是一下一上两段位移。 */
 dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; opacity: 0; }
@@ -1332,7 +1335,7 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
-  dialog, dialog::backdrop { transition: none; }
+  dialog, dialog::backdrop, dialog.session-drawer:not([open]) { transition: none; }
   :root[data-session-dock-motion] :is(main, dialog.session-drawer[data-docked="true"]) { transition-property: none; }
   dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
