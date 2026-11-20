@@ -330,12 +330,13 @@ function ManagerDialog() {
               const name = keyName(key)
               const visible = !state.hidden.includes(key)
               const info = builtinKeyInfo(key)
+              const chip = def ? customKeyLabel(def) : t(info?.label ?? key)
               return (
                 <div
                   key={key}
                   data-shortcut-row={key}
                   draggable
-                  className={`terminal-profile-row relative border-b border-border last:border-b-0 ${dragged === key ? 'opacity-40' : ''}`}
+                  className={`terminal-profile-row relative border-b border-border last:border-b-0 hover:bg-bg-hover ${dragged === key ? 'opacity-40' : ''}`}
                   onDragStart={event => {
                     event.dataTransfer.effectAllowed = 'move'
                     event.dataTransfer.setData('text/plain', key)
@@ -357,17 +358,21 @@ function ManagerDialog() {
                   )}
                   <div className="terminal-profile-summary">
                     <GripVertical size={14} aria-hidden className="ml-1 shrink-0 cursor-grab text-fg-dim active:cursor-grabbing" />
-                    <label className="terminal-profile-toggle cursor-pointer">
+                    {/* 整行悬停高亮（见 className），label 自身不再单独出现半截底色 */}
+                    <label className="terminal-profile-toggle cursor-pointer hover:!bg-transparent">
                       <input
                         type="checkbox"
                         checked={visible}
                         aria-label={t('在快捷键栏显示 {name}', { name })}
                         onChange={() => state.toggleHidden(key)}
                       />
-                      <span className="terminal-shortcut-key shrink-0">{def ? customKeyLabel(def) : t(info?.label ?? key)}</span>
-                      <span className="min-w-0 flex-1 text-left">
-                        <span className="block truncate">{name}</span>
-                        <span className="mt-0.5 block truncate text-ui-sm text-fg-muted">
+                      {/* 固定宽度的按钮预览列，保证后面的说明文字左对齐 */}
+                      <span className="flex w-28 shrink-0">
+                        <span className={`terminal-shortcut-key !max-w-full truncate ${visible ? '' : 'opacity-50'}`}>{chip}</span>
+                      </span>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-2 truncate text-left">
+                        {name !== chip && <span className="shrink-0 truncate">{name}</span>}
+                        <span className="min-w-0 truncate text-ui-sm text-fg-muted">
                           {def
                             ? <><span className="font-mono">{customKeyDetail(def)}</span>{def.shortcut && <><span className="mx-1.5">·</span>{def.shortcut}</>}</>
                             : visible ? t('内置') : t('内置 · 在「⋯」中')}
@@ -409,7 +414,7 @@ function ManagerDialog() {
             })}
           </div>
           {state.removed.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-ui-sm text-fg-muted" data-shortcut-removed="">
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-ui-sm text-fg-muted" data-shortcut-removed="">
               <span>{t('已删除的内置键：')}</span>
               {state.removed.map(key => {
                 const info = builtinKeyInfo(key)

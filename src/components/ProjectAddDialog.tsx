@@ -247,11 +247,14 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                         />
                       )}
                     </span>
-                    <span className="min-w-0 flex-1 text-ui">
-                      <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                    <span className="flex min-w-0 flex-1 flex-col text-ui">
+                      {/* self-start：按内容收缩，SSH 徽标紧跟来源标签，与名字同一行对齐 */}
+                      <span className="flex min-w-0 max-w-full items-center gap-1.5 self-start">
+                        <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                        <ProjectKindBadge project={project} />
+                      </span>
                       <span className="block truncate text-ui-sm text-fg-dim">{location}</span>
                     </span>
-                    <ProjectKindBadge project={project} />
                     {project.hidden ? (
                       <span className="flex-shrink-0 text-ui-sm text-fg-dim">
                         {t('已隐藏')}

@@ -1,5 +1,6 @@
 import { Cloud, Folder, FolderOpen } from 'lucide-react'
 import Tooltip from './Tooltip'
+import { ProjectSourceBadge } from './ProjectName'
 import { useI18n } from '../lib/i18n'
 import { isSshProject } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
@@ -29,13 +30,12 @@ export function ProjectKindIcon({
   return <Icon size={size} className={className} />
 }
 
+/** 项目类型徽标与来源徽标（连接名 / 发行版）同一外观，并排时高度、字号一致。 */
 export function WslKindBadge({ label = 'WSL' }: { label?: string } = {}) {
   const { t } = useI18n()
   return (
     <Tooltip label={t('WSL 项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center rounded border border-border-strong px-1 py-[3px] text-ui-badge text-fg-muted">
-        {label}
-      </span>
+      <ProjectSourceBadge source={label} className="flex-shrink-0" />
     </Tooltip>
   )
 }
@@ -44,9 +44,7 @@ export function SshKindBadge() {
   const { t } = useI18n()
   return (
     <Tooltip label={t('SSH 远程项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center rounded border border-border-strong px-1 py-[3px] text-ui-badge text-fg-muted">
-        {t('SSH')}
-      </span>
+      <ProjectSourceBadge source={t('SSH')} className="flex-shrink-0" />
     </Tooltip>
   )
 }
