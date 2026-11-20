@@ -30,6 +30,7 @@ import {
   viewerFontSize,
   kickedNotice,
   updateSessionAttention,
+  isProjectTrusted,
 } from './protocol.js';
 import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchLineWheel, dispatchVirtualClick, dispatchVirtualMouse } from './terminalTouch.js';
 import { attachTerminalJog } from './terminalJog.js';
@@ -150,6 +151,8 @@ let profiles = [];
 let profile = null;
 let project = null;
 let projects = [];
+// 项目页展示用：含电脑上未信任的项目（trusted === false，置灰不可操作）；其余功能只用已信任的 projects。
+let listedProjects = [];
 let loaded = false;
 let profileEpoch = 0;
 let page = 'home';
@@ -310,6 +313,7 @@ const dashboard = createDashboardView({
     profile: () => profile,
     profiles: () => profiles,
     projects: () => projects,
+    listedProjects: () => listedProjects,
     loaded: () => loaded,
     refreshing: () => manualRefreshing,
     hostState,
@@ -801,9 +805,10 @@ async function refreshProjects() {
     ? setTimeout(() => { if (epoch === profileEpoch) updateHost('checking'); }, REFRESH_CHECKING_DELAY)
     : (updateHost('checking'), null);
   try {
-    const list = await remote('projects').finally(() => clearTimeout(slow));
+    const list = await remote('projects', { all: true }).finally(() => clearTimeout(slow));
     if (epoch !== profileEpoch) return false;
-    projects = list;
+    listedProjects = list;
+    projects = list.filter(isProjectTrusted);
     loaded = true;
     hostFailure.delete(profile.id);
     updateHost('online');
@@ -830,6 +835,7 @@ async function activate(item, next = 'home') {
       if (hostState(profile) !== 'expired') health.delete(profile.id);
     }
     projects = [];
+    listedProjects = [];
     loaded = false;
     get('search').value = '';
   }
@@ -877,6 +883,7 @@ function forgetProfile(item) {
     profileEpoch += 1;
     profile = null;
     projects = [];
+    listedProjects = [];
     loaded = false;
     localStorage.setItem(prefix + 'active', '');
     localStorage.removeItem(prefix + 'open');

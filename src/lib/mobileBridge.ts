@@ -44,6 +44,8 @@ interface Request {
   endTerminal?: string
   /** 电脑重启后在后台连接远端项目，以便接回仍在运行的手机终端。 */
   connectRemoteProjects?: boolean
+  /** 列表里同时给出未信任项目（`trusted: false`），供手机置灰显示，与电脑端项目数一致。 */
+  allProjects?: boolean
 }
 
 /** 只开放交互式终端：运行任务的输出可能含密钥，先不让手机接入。 */
@@ -192,7 +194,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
 
 async function respond({
   project: projectId = null, attachment, profiles, shortcutKeys, profile, desktopTerminals, mirrorStart, seed, endTerminal,
-  connectRemoteProjects: connectRemote, fileAccess, fileRules,
+  connectRemoteProjects: connectRemote, fileAccess, fileRules, allProjects,
 }: Request) {
   if (connectRemote) {
     // 主机可能很慢，不占用桥接请求的超时；连上后由电脑端的扫描接回。
@@ -232,7 +234,11 @@ async function respond({
   }
   const connections = await listSshConnections()
   const hosts = new Map(connections.map(connection => [connection.id, connection]))
-  return trusted.map(project => mobileProject(project, hosts))
+  if (!allProjects) return trusted.map(project => mobileProject(project, hosts))
+  // 未信任项目只给名称与位置：打开、新建终端、浏览文件仍走上面按 id 的信任校验。
+  return projects
+    .filter(project => !project.ephemeral)
+    .map(project => ({ ...mobileProject(project, hosts), trusted: isProjectTrusted(project) }))
 }
 
 export async function listenForMobileRequests(): Promise<() => void> {

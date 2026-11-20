@@ -623,6 +623,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 :is(.project-source, .project-path) > span { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .project-source[data-kind="ssh"] > :first-child { color: var(--source-ssh); }
 .project-source[data-kind="wsl"] > :first-child { color: var(--source-wsl); }
+.project-untrusted { color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.project-row.untrusted .project-face { opacity: .5; }
 .project-session-count { margin-inline-start: auto; color: var(--accent); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .project-path { display: block; margin-top: 2px; font: 11.5px/1.5 var(--mono); }
 .project-path > span { vertical-align: top; white-space: pre-wrap; }

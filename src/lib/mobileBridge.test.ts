@@ -136,6 +136,20 @@ describe('mobile project bridge', () => {
     expect(mocks.upload).not.toHaveBeenCalled()
   })
 
+  it('lists untrusted projects with a trusted flag only when the phone asks for all', async () => {
+    restrictProject(wsl)
+    const undecided = { ...wsl, id: 'undecided', path: 'wsl://Debian/home/app' }
+    const temporary = { ...local, id: 'temporary', path: 'D:/tmp', ephemeral: true }
+    mocks.listProjects.mockResolvedValue([local, wsl, undecided, temporary])
+    expect(await send({ project: null, allProjects: true })).toMatchObject({ data: [
+      { id: local.id, trusted: true },
+      { id: wsl.id, trusted: false },
+      { id: undecided.id, trusted: false },
+    ] })
+    expect(await send({ project: null })).toMatchObject({ data: [{ id: local.id }] })
+    expect(await send({ project: wsl.id, allProjects: true })).toMatchObject({ error: expect.stringContaining('信任') })
+  })
+
   it('does not reopen a project removed in another window', async () => {
     mocks.currentProjects = [local, wsl]
     mocks.listProjects.mockResolvedValue([local])

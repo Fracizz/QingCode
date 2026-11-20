@@ -43,6 +43,7 @@ import {
   projectPlaceLabel,
   projectSourceLabel,
   groupProjectsByHost,
+  isProjectTrusted,
   projectLocation,
   sessionIdleInfo,
   sessionStatusLine,
@@ -281,6 +282,12 @@ describe('Android project display', () => {
     ])
     expect(groups.map(group => group.items.map(item => item.id))).toEqual([['1', '4'], ['2'], ['3', '5']])
     expect(groups.map(group => group.label)).toEqual(['远端 · WSL · localhost', '远端 · WinDev · 192.168.252.107', '本机'])
+  })
+
+  it('treats projects from older computers without a trusted flag as trusted', () => {
+    expect(isProjectTrusted({ id: 'a' })).toBe(true)
+    expect(isProjectTrusted({ id: 'a', trusted: true })).toBe(true)
+    expect(isProjectTrusted({ id: 'a', trusted: false })).toBe(false)
   })
 })
 

@@ -12,7 +12,12 @@ pub(super) enum Operation {
     },
     Ping,
     Capabilities,
-    Projects,
+    Projects {
+        /// 新版手机传 true：同时列出未信任项目（带 `trusted: false`），与电脑端项目数一致；
+        /// 旧版不传，仍只拿到已信任项目。未信任项目的终端、文件等操作照旧被电脑端拒绝。
+        #[serde(default)]
+        all: bool,
+    },
     FileList {
         project: String,
         #[serde(default)]
@@ -161,7 +166,9 @@ pub(super) async fn operate(
             "features": ["project_files", "terminal_profiles", "shortcut_keys", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream"],
             "sessionScope": "shared",
         })),
-        Operation::Projects => desktop(app, None).await,
+        Operation::Projects { all } => {
+            desktop_query(app, json!({ "project": null, "allProjects": all })).await
+        }
         Operation::FileList {
             project,
             path,

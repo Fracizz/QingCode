@@ -1,5 +1,5 @@
 // 工作台三页的渲染：连接列表、首页（当前电脑与最近项目）、项目列表。只读取状态，不发请求。
-import { groupProjectsByHost, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, projectSourceParts, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
+import { groupProjectsByHost, isProjectTrusted, matchesProject, pendingSessions, pendingTime, projectLocation, projectSourceLabel, projectSourceParts, sessionIdleInfo, sessionName, sessionRunning } from './protocol.js';
 import { get, icon, rowText, button, avatar } from './dom.js';
 import { attachLongPress, attachSwipeReveal } from './gestures.js';
 import { dateLocale, t } from './i18n.js';
@@ -162,11 +162,16 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
       : profile.name + ' / ' + projectSourceLabel(recent);
   }
 
+  /** 项目页列出的项目：含未信任（置灰）；旧调用方没有 listedProjects 时退回已信任列表。 */
+  function listedProjects() {
+    return state.listedProjects?.() ?? state.projects();
+  }
+
   function renderConnectionStats() {
     const stats = get('current-connection-stats');
     if (!stats) return;
     const sessions = state.projects().reduce((sum, item) => sum + state.sessionCount(item.id), 0);
-    stats.textContent = [t('电脑 {value}', { value: state.latency() }), t('{n} 个项目', { n: state.projects().length }), t('{n} 个会话', { n: sessions })].join(' · ');
+    stats.textContent = [t('电脑 {value}', { value: state.latency() }), t('{n} 个项目', { n: listedProjects().length }), t('{n} 个会话', { n: sessions })].join(' · ');
   }
 
   function updateProjectSessionCount(badge, projectId) {
@@ -178,12 +183,21 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
 
   /** grouped：所在主机已由分组标题说明，来源只留给读屏。 */
   function projectRow(item, { grouped = false } = {}) {
+    const trusted = isProjectTrusted(item);
     const row = button('row project-open', () => { void openProject(item); });
     const heading = document.createElement('span');
     heading.className = 'project-heading';
     const name = document.createElement('strong');
     name.textContent = item.name;
     heading.append(name);
+    if (!trusted) {
+      // 与电脑端项目数保持一致，但未信任的项目在电脑上信任前不能打开、新建终端或浏览文件。
+      row.disabled = true;
+      const note = document.createElement('span');
+      note.className = 'project-untrusted';
+      note.textContent = t('未信任');
+      heading.append(note);
+    }
 
     const source = document.createElement('small');
     source.className = grouped ? 'project-source sr-only' : 'project-source';
@@ -240,8 +254,14 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     const actions = document.createElement('span');
     actions.className = 'project-actions';
     actions.append(add, files);
+    if (!trusted) {
+      add.disabled = true;
+      files.disabled = true;
+      row.setAttribute('aria-description', t('请先在电脑上信任该项目'));
+    }
     face.append(row, actions);
     wrapper.append(copy, face);
+    wrapper.classList.toggle('untrusted', !trusted);
     const swipe = attachSwipeReveal(wrapper, face);
     attachLongPress(row, swipe.open);
     return wrapper;
@@ -282,7 +302,7 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
   function renderProjects() {
     const profile = state.profile();
     const query = get('search').value.trim().toLowerCase();
-    const matching = state.projects().filter(item => matchesProject(item, query));
+    const matching = listedProjects().filter(item => matchesProject(item, query));
     const list = get('project-list');
     const groups = groupProjectsByHost(matching);
     if (groups.length > 1) list.replaceChildren(...groups.map(group => projectGroup(group, !!query)));
@@ -303,10 +323,10 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     get('project-filters').hidden = !profile;
     // 大标题上方的小字：已连接时说明当前电脑与项目数，未配对时引导先连接。
     get('project-subtitle').textContent = profile
-      ? [profile.name, state.loaded() ? t('{n} 个项目', { n: state.projects().length }) : ''].filter(Boolean).join(' · ')
+      ? [profile.name, state.loaded() ? t('{n} 个项目', { n: listedProjects().length }) : ''].filter(Boolean).join(' · ')
       : t('请先在「连接」中配对电脑。');
     get('list-label').textContent = matching.length ? t('{n} 个项目', { n: matching.length })
-      : state.loaded() ? (query ? t('没有匹配的项目') : t('没有已信任的项目'))
+      : state.loaded() ? (query ? t('没有匹配的项目') : t('电脑上还没有项目'))
         : checking ? t('正在读取项目…') : '';
     get('project-swipe-hint').hidden = !matching.length;
     const empty = !matching.length && !checking;

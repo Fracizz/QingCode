@@ -436,6 +436,11 @@ export function projectLocation(project) {
 }
 
 /** 按所在主机分组，组和组内项目都保持电脑端给出的顺序；同一连接名和地址算同一台主机。 */
+/** 旧版电脑不带 trusted 字段，列出的都是已信任项目。 */
+export function isProjectTrusted(project) {
+  return project?.trusted !== false;
+}
+
 export function groupProjectsByHost(projects) {
   const groups = new Map();
   for (const project of Array.isArray(projects) ? projects : []) {
