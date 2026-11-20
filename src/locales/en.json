@@ -1583,6 +1583,7 @@
     "{count} 项文件传输尚未完成，退出后将中断。": "{count} file transfer(s) are unfinished and will be interrupted when you quit.",
     "若仍被截断，请缩小范围或更换关键词": "If results remain truncated, narrow the scope or change the query.",
     "SSH 连接成功": "SSH connection established",
+    "Linux/macOS 远端的 CLI 本身启动较快，预热提速通常不明显；主要好处是新建时直接进入项目，不停在目录信任确认。Windows 远端提速更明显。": "CLIs already start quickly on Linux/macOS remotes, so prewarming usually saves little time there; the main benefit is opening straight into the project without the folder trust prompt. The speedup is larger on Windows remotes.",
     "SSH 连接测试成功，主机指纹已确认，可以保存。": "SSH connection test succeeded and the host fingerprint is confirmed. You can save now.",
     "远端服务常驻运行；SSH 断线重连后可继续接回已持久化的终端。": "The remote service runs resident; persistent terminals can reconnect after SSH comes back.",
     "经 SSH 隧道访问远端常驻服务；断线重连后可继续接回已持久化的终端。": "Uses the persistent remote service through an SSH tunnel; persisted terminals can be reattached after reconnecting.",

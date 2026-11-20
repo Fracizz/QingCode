@@ -80,3 +80,16 @@ it('explains that the CLI starts in the dedicated empty directory', () => {
   expect(screen.getByText(/~\/\.qingcode\/cli-prewarm/)).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'CLI 启动目录' })).toBeNull()
 })
+
+it('hints that prewarming gains less on non-Windows remotes', () => {
+  const hint = /Linux\/macOS 远端的 CLI 本身启动较快/
+  const project = (id: string, path: string): Project => ({ id, name: id, path, kind: 'ssh', created_at: 1, last_opened_at: 1 })
+  useProjectStore.setState({ projects: [project('l', 'ssh://linux/home/dev/app'), project('w', 'ssh://win/C:/Users/dev/app')] })
+  const view = render(<ConnectionPrewarmProfile connectionId="linux" />)
+  expect(screen.getByText(hint)).toBeTruthy()
+  view.rerender(<ConnectionPrewarmProfile connectionId="win" />)
+  expect(screen.queryByText(hint)).toBeNull()
+  // 没有项目时无法判断远端系统，不提示。
+  view.rerender(<ConnectionPrewarmProfile connectionId="none" />)
+  expect(screen.queryByText(hint)).toBeNull()
+})

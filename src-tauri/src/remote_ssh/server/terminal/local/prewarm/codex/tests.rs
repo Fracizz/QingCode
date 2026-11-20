@@ -539,3 +539,21 @@ fn launch_scripts_never_carry_carriage_returns() {
         assert!(!script.trim().is_empty());
     }
 }
+
+#[test]
+fn claude_composer_ignores_dim_placeholder_suggestion() {
+    // 真实 Claude 2.1.32x 空输入框：`❯ ` 后跟暗色示例 `Try "..."`，光标停在 ❯ 之后。
+    let rule = "─".repeat(8);
+    let mut parser = vt100::Parser::new(10.try_into().unwrap(), 60.try_into().unwrap(), 0);
+    parser.process(
+        format!("{rule}\r\n❯ \x1b[2mTry \"fix typecheck errors\"\x1b[22m\r\n{rule}").as_bytes(),
+    );
+    let screen = parser.screen();
+    assert!(!claude_composer(&claude_rows(screen), ""));
+    assert!(claude_composer(&claude_input_rows(screen), ""));
+    // 用户真正输入的文字不是暗色，仍按实际内容判断。
+    let mut typed = vt100::Parser::new(10.try_into().unwrap(), 60.try_into().unwrap(), 0);
+    typed.process(format!("{rule}\r\n❯ /cd\x1b[2m <path>\x1b[22m\r\n{rule}").as_bytes());
+    assert!(claude_composer(&claude_input_rows(typed.screen()), "/cd"));
+    assert!(!claude_composer(&claude_input_rows(typed.screen()), ""));
+}

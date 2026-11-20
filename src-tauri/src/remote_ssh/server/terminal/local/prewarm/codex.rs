@@ -344,7 +344,8 @@ impl CodexSession {
     ) -> Result<(), String> {
         self.wait_for(session, id, |v| {
             let screen = claude_rows(v.screen.screen());
-            claude_composer(&screen, "") || claude_trust_choice(&screen, cwd).is_some()
+            claude_composer(&claude_input_rows(v.screen.screen()), "")
+                || claude_trust_choice(&screen, cwd).is_some()
         })
         .await?;
         let screen = claude_rows(self.screen.screen());
@@ -412,7 +413,7 @@ impl CodexSession {
             cwd.to_string()
         };
         self.wait_for(session, id, |v| {
-            claude_composer(&claude_rows(v.screen.screen()), "")
+            claude_composer(&claude_input_rows(v.screen.screen()), "")
         })
         .await?;
         send_input_to_session(session, id, &self.input_seq, b"/cd".to_vec())
@@ -420,7 +421,7 @@ impl CodexSession {
             .map_err(|e| e.0)?;
         self.wait_for(session, id, |v| {
             let content = claude_rows(v.screen.screen());
-            claude_composer(&content, "/cd")
+            claude_composer(&claude_input_rows(v.screen.screen()), "/cd")
                 && content.lines().any(|line| {
                     line.contains("/cd")
                         && line.contains("Move this session to a new working directory")
@@ -437,7 +438,7 @@ impl CodexSession {
         .map_err(|e| e.0)?;
         let draft = format!("/cd {path}");
         self.wait_for(session, id, |v| {
-            claude_composer(&claude_rows(v.screen.screen()), &draft)
+            claude_composer(&claude_input_rows(v.screen.screen()), &draft)
         })
         .await?;
         validate()?;
@@ -451,7 +452,7 @@ impl CodexSession {
         };
         self.wait_for(session, id, |v| {
             let screen = v.screen.screen();
-            claude_composer(&claude_rows(screen), "")
+            claude_composer(&claude_input_rows(screen), "")
                 && claude_reports(screen, &expected, windows_native_path(cwd).is_some())
         })
         .await
@@ -561,6 +562,35 @@ fn claude_rows(screen: &vt100::Screen) -> String {
         .rows(0, screen.size().1.get())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// 输入框判定用的画面：去掉暗色（dim）单元格。Claude 空输入框会以暗色显示
+/// `Try "..."` 之类的示例占位，直接按文本判断会误认为已有输入，预热一直等到超时。
+fn claude_input_rows(screen: &vt100::Screen) -> String {
+    let (rows, cols) = screen.size();
+    (0..rows.get())
+        .map(|row| {
+            let mut line = String::new();
+            for col in 0..cols.get() {
+                let Some(cell) = screen.cell(row, col) else {
+                    continue;
+                };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                if cell.dim() || !cell.has_contents() {
+                    line.push(' ');
+                } else {
+                    line.push_str(cell.contents());
+                }
+            }
+            line.trim_end().to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
 }
 
 // Claude renders the live input between two horizontal rules. History,
