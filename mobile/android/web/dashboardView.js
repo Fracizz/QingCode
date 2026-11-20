@@ -295,9 +295,11 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     }
     const checking = state.hostState(profile) === 'checking';
     list.setAttribute('aria-busy', String(checking));
-    get('refresh').disabled = !profile || checking;
-    get('refresh').dataset.busy = String(checking);
-    get('refresh').setAttribute('aria-label', checking ? t('正在读取项目') : t('刷新项目'));
+    // 手动刷新时即使状态保持在线也要转圈，否则快速完成的刷新没有任何反馈。
+    const busy = checking || !!state.refreshing?.();
+    get('refresh').disabled = !profile || busy;
+    get('refresh').dataset.busy = String(busy);
+    get('refresh').setAttribute('aria-label', busy ? t('正在读取项目') : t('刷新项目'));
     get('project-filters').hidden = !profile;
     // 大标题上方的小字：已连接时说明当前电脑与项目数，未配对时引导先连接。
     get('project-subtitle').textContent = profile

@@ -311,6 +311,7 @@ const dashboard = createDashboardView({
     profiles: () => profiles,
     projects: () => projects,
     loaded: () => loaded,
+    refreshing: () => manualRefreshing,
     hostState,
     hostFailure: item => hostFailure.get(item?.id) ?? '',
     resumeSession: () => resumeSession(),
@@ -786,6 +787,8 @@ function updateHost(state) {
 }
 
 const REFRESH_CHECKING_DELAY = 1200;
+// 刷新按钮的手动刷新进行中（含最短转圈时间）。
+let manualRefreshing = false;
 
 async function refreshProjects() {
   if (!profile) return false;
@@ -908,7 +911,20 @@ get('open-settings').addEventListener('click', () => get('settings-dialog').show
 // 叠在终端设置上打开：返回时回到终端设置，与快捷键栏一致。
 get('open-settings-from-terminal').addEventListener('click', () => get('settings-dialog').showModal());
 get('add-host').addEventListener('click', () => pairing.openPair());
-get('refresh').addEventListener('click', () => { void refreshProjects(); });
+// 在线时刷新往往不到 REFRESH_CHECKING_DELAY 就结束，状态不会进入「连接中」，按钮没有任何变化，看起来像没响应。
+// 手动点击时让图标至少转 MANUAL_REFRESH_MIN_SPIN，期间禁用按钮防止连点。
+const MANUAL_REFRESH_MIN_SPIN = 600;
+get('refresh').addEventListener('click', async () => {
+  if (manualRefreshing) return;
+  manualRefreshing = true;
+  dashboard.renderProjects();
+  try {
+    await Promise.all([refreshProjects(), new Promise(resolve => setTimeout(resolve, MANUAL_REFRESH_MIN_SPIN))]);
+  } finally {
+    manualRefreshing = false;
+    dashboard.renderProjects();
+  }
+});
 get('search').addEventListener('input', () => dashboard.renderProjects());
 get('resume').addEventListener('click', () => { void openProject(lastProject()); });
 get('browse-projects').addEventListener('click', () => showPage('project'));
