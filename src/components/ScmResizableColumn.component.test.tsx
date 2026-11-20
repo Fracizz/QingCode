@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScmResizableColumn from './ScmResizableColumn'
 import ResizableSidebar from './ResizableSidebar'
 import * as panelResize from '../lib/panelResize'
+import { getSidebarMaxWidth } from '../lib/sidebarLayout'
 
 vi.mock('../lib/panelResize', async importOriginal => {
   const actual = await importOriginal<typeof import('../lib/panelResize')>()
@@ -135,7 +136,7 @@ describe('ScmResizableColumn', () => {
     fireEvent.keyDown(separator, { key: 'ArrowRight' })
     expect(onWidthChange).toHaveBeenLastCalledWith(190)
     fireEvent.keyDown(separator, { key: 'End' })
-    expect(onWidthChange).toHaveBeenLastCalledWith(520)
+    expect(onWidthChange).toHaveBeenLastCalledWith(getSidebarMaxWidth())
     fireEvent.keyDown(separator, { key: 'Enter' })
     expect(onWidthChange).toHaveBeenLastCalledWith(320)
     fireEvent(separator, pointerEvent('pointerdown', 180))

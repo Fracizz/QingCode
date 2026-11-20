@@ -2,7 +2,9 @@ import { translate } from './i18n'
 import {
   ACTIVITY_BAR_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MAX_WIDTH,
+  clampSidebarWidth,
+  getSidebarMaxWidth,
+  getSidebarMinWidth,
   SIDEBAR_MIN_WIDTH,
 } from './sidebarLayout'
 
@@ -104,10 +106,14 @@ export function terminalWidthResizerHint(width: number, t: TranslateFn = transla
   })
 }
 
-export function sidebarResizerHint(width: number, t: TranslateFn = translate) {
+export function sidebarResizerHint(
+  width: number,
+  t: TranslateFn = translate,
+  page = false,
+) {
   return t('拖动调整侧边栏宽度 · {min}–{max}px · 当前 {current}px', {
-    min: SIDEBAR_MIN_WIDTH,
-    max: SIDEBAR_MAX_WIDTH,
+    min: clampSidebarWidth(getSidebarMinWidth(page), page),
+    max: getSidebarMaxWidth(page),
     current: Math.round(width),
   })
 }

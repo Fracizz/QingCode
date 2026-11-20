@@ -1019,7 +1019,7 @@ export default function TerminalSessionList() {
           <span
             role="img"
             aria-label={translate('{count} 个终端', { count: section.terminalCount })}
-            className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-term-list-fg/10 px-1.5 py-0.5 font-medium leading-none text-term-list-fg tabular-nums"
+            className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-term-list-fg/10 px-1.5 py-0.5 text-ui-2xs font-medium leading-none text-term-list-fg tabular-nums"
           >
             {section.terminalCount}
           </span>

@@ -3,14 +3,16 @@ import ScmResizableColumn from './ScmResizableColumn'
 import {
   clampSidebarWidth,
   SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
+  getSidebarMaxWidth,
+  getSidebarMinWidth,
 } from '../lib/sidebarLayout'
 import { sidebarResizerHint } from '../lib/panelLayout'
 import { useI18n } from '../lib/i18n'
 
 interface Props {
   width: number
+  /** 当前是设置 / 源代码管理整页：使用整页的宽度范围。 */
+  page?: boolean
   onWidthChange: (width: number) => void
   children: ReactNode
   className?: string
@@ -19,6 +21,7 @@ interface Props {
 /** Share the frame-batched preview and end-of-drag persistence used by SCM. */
 export default function ResizableSidebar({
   width,
+  page = false,
   onWidthChange,
   children,
   className,
@@ -27,15 +30,15 @@ export default function ResizableSidebar({
   return (
     <ScmResizableColumn
       width={width}
-      minWidth={SIDEBAR_MIN_WIDTH}
-      maxWidth={clampSidebarWidth(SIDEBAR_MAX_WIDTH)}
+      minWidth={clampSidebarWidth(getSidebarMinWidth(page), page)}
+      maxWidth={getSidebarMaxWidth(page)}
       defaultWidth={SIDEBAR_DEFAULT_WIDTH}
       constrainToParent={false}
       // 侧栏宽度会改变右侧终端尺寸，拖动时需要冻结终端画面防闪烁。
       freezeTerminals
       borderColorClass="border-divider"
-      onWidthChange={next => onWidthChange(clampSidebarWidth(next))}
-      tooltip={sidebarResizerHint(width, t)}
+      onWidthChange={next => onWidthChange(clampSidebarWidth(next, page))}
+      tooltip={sidebarResizerHint(width, t, page)}
       className={className}
     >
       {children}

@@ -112,14 +112,17 @@ export function findCustomKey(layout: TerminalShortcutLayout, key: string): Term
   return layout.custom.find(def => def.id === id) ?? null
 }
 
-/** 校验并规整一个自定义键；无效时返回 null。文本去掉首尾空白，不允许换行和控制字符。 */
+/**
+ * 校验并规整一个自定义键；无效时返回 null。
+ * 文本原样保留首尾空格（如 `git commit -m ` 依赖结尾空格），但不能全是空白，不允许换行和控制字符。
+ */
 export function normalizeCustomKey(raw: unknown): TerminalCustomKey | null {
   if (!raw || typeof raw !== 'object') return null
   const value = raw as Record<string, unknown>
   const id = typeof value.id === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(value.id) ? value.id : null
   if (!id || typeof value.text !== 'string') return null
-  const text = value.text.trim()
-  if (!text || text.length > CUSTOM_KEY_TEXT_LIMIT || /[\x00-\x1f\x7f]/.test(text)) return null
+  const text = value.text
+  if (!text.trim() || text.length > CUSTOM_KEY_TEXT_LIMIT || /[\x00-\x1f\x7f]/.test(text)) return null
   const name = typeof value.name === 'string' ? value.name.trim().slice(0, CUSTOM_KEY_NAME_LIMIT) : ''
   const shortcut =
     typeof value.shortcut === 'string' && isShortcutBound(value.shortcut)

@@ -91,8 +91,11 @@ describe('parseShortcutBarState', () => {
 describe('custom keys', () => {
   it('normalizes text, name and shortcut', () => {
     expect(normalizeCustomKey({ id: 'k1', text: '  /compact ', name: ' 压缩 ', shortcut: 'Alt+Ctrl+1' })).toEqual({
-      id: 'k1', name: '压缩', text: '/compact', enter: true, shortcut: 'Ctrl+Alt+1',
+      id: 'k1', name: '压缩', text: '  /compact ', enter: true, shortcut: 'Ctrl+Alt+1',
     })
+    // 结尾空格是命令的一部分（如 `git commit -m `），必须原样发送
+    expect(customKeyInput(normalizeCustomKey({ id: 'k1', text: 'git commit -m ', enter: false })!).data)
+      .toBe('git commit -m ')
     expect(normalizeCustomKey({ id: 'k1', text: '   ' })).toBeNull()
     expect(normalizeCustomKey({ id: 'k1', text: 'a\tb' })).toBeNull()
     expect(normalizeCustomKey({ id: 'k1', text: 'x'.repeat(201) })).toBeNull()

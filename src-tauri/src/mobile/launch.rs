@@ -65,8 +65,16 @@ pub(super) async fn create(
         .and_then(LaunchProfile::command)
         .map(str::to_owned);
     let shell = profile.map(|profile| profile.shell);
+    // 电脑端为该连接选中的「预热终端配置」已在运行时直接接入，否则退回普通 Shell 池。
     let prewarmed =
-        reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), command.is_some());
+        reserve_prewarmed_profile(
+            app,
+            &id,
+            &project,
+            shell.as_deref(),
+            profile_id,
+            command.as_deref(),
+        ) || reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), command.is_some());
     let result = if project.kind == ProjectKind::Ssh {
         if let Some(command) = command {
             // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
@@ -178,6 +186,27 @@ fn reserve_prewarmed_shell(
             pool.reserve_as(id, &project.path, shell, has_startup)
                 .is_ok()
         })
+}
+
+/// 远端 Windows Server 模式项目：电脑端为该连接选中的终端配置已提前运行时，预留并改用手机
+/// 终端 id；`ssh_spawn_script_unchecked` 按 id 在配置池中领取并重放之前的输出。项目、配置、
+/// Shell 与命令须与预热项完全一致（预热只跟随电脑端当前项目），否则按未命中处理。
+fn reserve_prewarmed_profile(
+    app: &AppHandle,
+    id: &str,
+    project: &Project,
+    shell: Option<&str>,
+    profile_id: Option<&str>,
+    command: Option<&str>,
+) -> bool {
+    let (Some(profile_id), Some(command)) = (profile_id, command) else {
+        return false;
+    };
+    project.kind == ProjectKind::Ssh
+        && app
+            .state::<crate::remote_ssh::local_terminal::ConnectionShellPools>()
+            .profile_pool()
+            .reserve_profile_as(id, &project.path, shell, profile_id, command)
 }
 
 /// 领取本机预热 Shell；未命中返回 None 走原来的进程内新建。启动命令交付后确认丢失时

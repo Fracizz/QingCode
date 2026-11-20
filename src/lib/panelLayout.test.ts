@@ -19,7 +19,7 @@ import {
 } from './panelLayout'
 import {
   ACTIVITY_BAR_WIDTH,
-  SIDEBAR_MAX_WIDTH,
+  getSidebarMaxWidth,
   SIDEBAR_MIN_WIDTH,
 } from './sidebarLayout'
 
@@ -102,7 +102,7 @@ describe('resizer hints', () => {
       `Drag to resize terminal width · ${getTerminalMinWidth()}–${getTerminalMaxWidth()}px · current 400px`
     )
     expect(sidebarResizerHint(260, tEn)).toBe(
-      `Drag to resize sidebar width · ${SIDEBAR_MIN_WIDTH}–${SIDEBAR_MAX_WIDTH}px · current 260px`
+      `Drag to resize sidebar width · ${SIDEBAR_MIN_WIDTH}–${getSidebarMaxWidth()}px · current 260px`
     )
   })
 })

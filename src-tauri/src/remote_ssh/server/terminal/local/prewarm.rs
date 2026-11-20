@@ -666,6 +666,22 @@ impl ShellPrewarmPool {
         self.reserve_key(&key, cwd, false).ok()
     }
 
+    /// 同 [`Self::reserve_profile`]，命中后改按调用方的终端 id 领取（手机终端需 `mobile-` id）。
+    pub(crate) fn reserve_profile_as(
+        &self,
+        id: &str,
+        cwd: &str,
+        shell: Option<&str>,
+        profile_id: &str,
+        command: &str,
+    ) -> bool {
+        if self.has_entry(id) {
+            return false;
+        }
+        self.reserve_profile(cwd, shell, profile_id, command)
+            .is_some_and(|warm_id| self.rename_reserved(&warm_id, id).is_ok())
+    }
+
     /// 本机项目领取。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take(

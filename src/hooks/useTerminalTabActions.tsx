@@ -27,7 +27,9 @@ import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { switchToTerminalProject } from './useTerminalProjectSelection'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
-import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '@/lib/terminal/terminalProfiles'
+import { loadTerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
+import { effectiveDefaultProfileIdFor } from '@/lib/terminal/connectionDefaultProfile'
+import { sshConnectionIdFromUri } from '@/lib/sshWorkspace'
 import {
   canCloseTerminalDirectly,
   listBusyTerminals,
@@ -389,7 +391,14 @@ export function useTerminalTabActions({
 
   const profileMenuItems = (targetProjectId?: string, onCreate?: () => void): ContextMenuItem[] => {
     const settings = loadTerminalProfileSettings()
-    const effectiveDefaultId = getEffectiveDefaultProfileId(settings)
+    const targetProject = targetProjectId && targetProjectId !== currentProject?.id
+      ? useProjectStore.getState().projects.find(project => project.id === targetProjectId)
+      : currentProject
+    // 与 addTerminal 一致：「（默认）」标记跟随目标项目所属远程连接的默认配置。
+    const effectiveDefaultId = effectiveDefaultProfileIdFor(
+      targetProject ? sshConnectionIdFromUri(targetProject.path) : null,
+      settings,
+    )
     const limited = targetProjectId && targetProjectId !== currentProject?.id
       ? terminals.filter(terminal => terminal.projectId === targetProjectId).length >= MAX_TERMINALS_PER_PROJECT
       : atLimit

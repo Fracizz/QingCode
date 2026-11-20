@@ -789,6 +789,26 @@ fn profile_requires_same_connection_project_profile_shell_and_command() {
         .is_none());
 }
 
+#[test]
+fn phone_claims_prepared_profile_under_its_own_terminal_id() {
+    let cwd = "ssh://win/D:/work/a";
+    let pool = ShellPrewarmPool::default();
+    let mut entry = remote_shell("prepared", cwd, true);
+    entry.key.profile = Some(PrewarmProfile {
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+    });
+    pool.0.lock().unwrap().shells.push(entry);
+    assert!(!pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "other", "claude"));
+    assert!(!pool.has_entry("mobile-1"));
+    assert!(pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "agent", "claude"));
+    assert!(pool.has_entry("mobile-1"));
+    assert!(!pool.has_entry("prepared"));
+    assert!(!pool.reserve_profile_as("mobile-2", cwd, Some("auto"), "agent", "claude"));
+}
+
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread")]
 async fn profile_runs_before_claim_and_its_screen_is_replayed() {

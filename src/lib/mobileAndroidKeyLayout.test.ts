@@ -126,9 +126,9 @@ describe('Android shortcut bar layout', () => {
     expect(old.order).toEqual([...builtins].reverse())
   })
 
-  it('validates custom keys: trims text and rejects empty, multi-line or control text', () => {
-    expect(normalizeCustomKey({ id: 'a', name: '  新会话 ', text: ' /new ', enter: true }))
-      .toEqual({ id: 'a', name: '新会话', text: '/new', enter: true })
+  it('validates custom keys: keeps text spaces and rejects blank, multi-line or control text', () => {
+    expect(normalizeCustomKey({ id: 'a', name: '  新会话 ', text: 'git commit -m ', enter: true }))
+      .toEqual({ id: 'a', name: '新会话', text: 'git commit -m ', enter: true })
     expect(normalizeCustomKey({ id: 'a', text: 'git status', enter: false })?.enter).toBe(false)
     for (const text of ['', '   ', 'a\nb', 'a\rb', '\x1b[A', 'x'.repeat(201)]) {
       expect(normalizeCustomKey({ id: 'a', text })).toBeNull()

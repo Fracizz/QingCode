@@ -42,7 +42,11 @@ import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import SidebarSlot from './components/SidebarSlot'
 import { startSystemThemeListener } from './lib/themeSettings'
-import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
+import {
+  clampSidebarWidth,
+  loadSidebarWidth,
+  saveSidebarWidth,
+} from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { applyEffectiveSettings } from './lib/effectiveSettings'
@@ -268,11 +272,14 @@ function App() {
     })
   }
   const renderedSidebar = sidebarKind ?? sidebarTrack.leaving
+  // 设置 / 源代码管理是整页：共用侧栏宽度，但显示范围为工作区一半到窗口 2/3，避免内容挤成窄条。
+  const sidebarPage = renderedSidebar === 'settings' || renderedSidebar === 'sourceControl'
+  const displayedSidebarWidth = clampSidebarWidth(sidebarWidth, sidebarPage)
   const editorColumnRef = useEditorColumnMotion(
     panelLayout,
     sideEditorSlotVisible,
     terminalPosition === 'side' && terminalOpen && !panelLayoutSwitching,
-    sidebarSlotVisible ? sidebarWidth : 0,
+    sidebarSlotVisible ? displayedSidebarWidth : 0,
   )
   const finishSidebarExit = useCallback(() => {
     setSidebarTrack(track => (track.kind === null ? { ...track, leaving: null } : track))
@@ -471,14 +478,15 @@ function App() {
 
           {renderedSidebar && (
             <SidebarSlot
-              width={sidebarWidth}
+              width={displayedSidebarWidth}
               leaving={sidebarKind === null}
               onExited={finishSidebarExit}
               animateOpen={sidebarTrack.animateOpen}
               freezeTerminals={terminalPosition === 'side' && terminalOpen}
             >
               <ResizableSidebar
-                width={sidebarWidth}
+                width={displayedSidebarWidth}
+                page={sidebarPage}
                 onWidthChange={setSidebarWidth}
                 className="ui-font-scaled bg-bg-sidebar"
               >
