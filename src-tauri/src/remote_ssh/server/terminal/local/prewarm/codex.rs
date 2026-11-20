@@ -239,6 +239,8 @@ pub(super) struct CodexSession {
     agent: String,
     nonce: String,
     handoff: Option<tempfile::NamedTempFile>,
+    /// CLI 启动所在的专用空目录（本机 `codex-prewarm`，远端 `~/.qingcode/cli-prewarm`）。
+    pub(super) anchor: String,
 }
 
 impl CodexSession {
@@ -318,12 +320,14 @@ impl CodexSession {
 
     /// A fresh Claude installation asks for folder trust even in our empty
     /// application directory. Handle only this exact prompt in the unclaimed
-    /// local PTY. Target projects and other Claude dialogs stay interactive.
-    async fn trust_local_claude_anchor(
+    /// PTY. Target projects and other Claude dialogs stay interactive.
+    /// 本机在磁盘上复查专用目录；远端由启动脚本在启动 Claude 前校验同一条件。
+    async fn trust_claude_anchor(
         &mut self,
         session: &mut DaemonSession,
         id: &str,
         cwd: &str,
+        local: bool,
     ) -> Result<(), String> {
         self.wait_for(session, id, |v| {
             let screen = claude_rows(v.screen.screen());
@@ -336,6 +340,9 @@ impl CodexSession {
         }
         let path = Path::new(cwd);
         let check = || -> Result<(), String> {
+            if !local {
+                return Ok(());
+            }
             let parent = path.parent().ok_or("无效的预热目录")?;
             if checked_anchor(parent, false)? != path.canonicalize().map_err(|e| e.to_string())?
                 || parent.ancestors().any(|dir| dir.join(".git").exists())
@@ -568,13 +575,16 @@ fn claude_composer(screen: &str, expected: &str) -> bool {
 
 pub(super) async fn prepare(entry: &mut WarmShell, target: &Target) -> Result<(), String> {
     let cwd = crate::terminal::strip_windows_verbatim_prefix(&target.cwd);
-    prepare_at(entry, target, &cwd).await
+    prepare_at(entry, target, &cwd, &cwd).await
 }
 
+/// `cwd` 是 CLI 的专用空启动目录；`launch_dir` 是创建 PTY 时已存在的目录。
+/// 远端专用目录可能尚不存在，由启动脚本在家目录下创建并校验为空、非链接后进入。
 pub(super) async fn prepare_at(
     entry: &mut WarmShell,
     target: &Target,
     cwd: &str,
+    launch_dir: &str,
 ) -> Result<(), String> {
     let profile = target.key.profile.as_ref().ok_or("缺少 CLI 预热配置")?;
     let agent = profile.command.as_str();
@@ -607,9 +617,7 @@ pub(super) async fn prepare_at(
             handoff.path().to_string_lossy().into_owned(),
         );
     }
-    if !remote {
-        env.insert("QINGCODE_CODEX_ANCHOR".into(), cwd.into());
-    }
+    env.insert("QINGCODE_CODEX_ANCHOR".into(), cwd.into());
     env.insert("QINGCODE_PREWARM_AGENT".into(), agent.into());
     env.insert("QINGCODE_PREWARM_NONCE".into(), nonce.clone());
     env.extend(crate::terminal::terminal_identity_env(&entry.id).map(|(k, v)| (k.into(), v)));
@@ -640,7 +648,7 @@ pub(super) async fn prepare_at(
     };
     let session = entry.session.as_mut().ok_or("CLI 预热会话不可用")?;
     let created = session.request("pty.createTransient", &serde_json::json!({
-        "cwd": cwd, "claimCwdFile": cwd_file, "shell": shell, "args": args, "env": env, "cols": 120, "rows": 30
+        "cwd": launch_dir, "claimCwdFile": cwd_file, "shell": shell, "args": args, "env": env, "cols": 120, "rows": 30
     })).await?;
     entry.pty_id = created["id"].as_str().ok_or("预热应答缺少 id")?.into();
     let mut codex = CodexSession {
@@ -654,6 +662,7 @@ pub(super) async fn prepare_at(
         agent: agent.into(),
         nonce: nonce.clone(),
         handoff,
+        anchor: cwd.into(),
     };
     let ready = tokio::time::timeout(READY_TIMEOUT, async {
         if agent == "opencode" {
@@ -663,11 +672,9 @@ pub(super) async fn prepare_at(
                 .map(|_| ());
         }
         if agent == "claude" {
-            if !remote {
-                codex
-                    .trust_local_claude_anchor(session, &entry.pty_id, cwd)
-                    .await?;
-            }
+            codex
+                .trust_claude_anchor(session, &entry.pty_id, cwd, !remote)
+                .await?;
             return codex
                 .claude_cd(session, &entry.pty_id, cwd, false, &|| Ok(()))
                 .await;

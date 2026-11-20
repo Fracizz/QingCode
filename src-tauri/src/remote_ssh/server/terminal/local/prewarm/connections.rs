@@ -167,7 +167,7 @@ impl ConnectionShellPools {
 }
 
 impl PrewarmProfile {
-    fn target(&self, manager: &SshManager, window: &str) -> Option<Target> {
+    pub(super) fn target(&self, manager: &SshManager, window: &str) -> Option<Target> {
         let root = manager
             .registered_root(&self.cwd)
             .ok()

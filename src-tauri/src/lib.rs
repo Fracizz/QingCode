@@ -1051,7 +1051,6 @@ pub fn run() {
             remote_ssh::ssh_file_stat,
             remote_ssh::ssh_file_mtime,
             remote_ssh::ssh_file_ctime,
-            remote_ssh::ssh_cli_trusted_roots,
             remote_ssh::ssh_read_file,
             remote_ssh::ssh_read_image_file,
             remote_ssh::ssh_detect_file_encoding,

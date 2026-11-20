@@ -11,6 +11,8 @@
         if ($anchor) {
             # This override is scoped to one process. Quote the directory as a TOML
             # table key, including spaces and dots in the application data path.
+            # Create the remote dedicated directory on first use; it is then checked to be an empty non-link.
+            if (!(Test-Path -LiteralPath $anchor)) { New-Item -ItemType Directory -Path $anchor -ErrorAction Stop | Out-Null }
             Set-Location -LiteralPath $anchor -ErrorAction Stop
             $info = Get-Item -Force -LiteralPath $anchor -ErrorAction Stop
             if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or

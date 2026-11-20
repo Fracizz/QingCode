@@ -1,5 +1,5 @@
 import { localCodexPrewarm, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
-import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmProfile, preloadConnectionCliTrust } from '../lib/terminal/connectionPrewarmProfile'
+import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
@@ -63,11 +63,8 @@ export function useShellPrewarm(project: Project | null) {
           command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
         const localProfile = persist && codex ? { profileId: codex.id,
           shell: codex.shell, command: codex.command.trim() } : undefined
-        // 启动目录：用户固定 > CLI 配置里已信任（用户授权读取后）> OpenCode 取最近打开；读不到则只预热当前项目。
-        const projects = useProjectStore.getState().projects
-        await preloadConnectionCliTrust(projects).catch(() => {})
-        if (stale()) return
-        const anchors = connectionPrewarmAnchors(projects, connectionId, active?.path)
+        // 当前项目不在的连接，用其最近打开的受信任项目授权连接；CLI 都在专用空目录启动。
+        const anchors = connectionPrewarmAnchors(useProjectStore.getState().projects, connectionId)
         await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile, localProfile, anchors)
       })().catch(() => {})
     }

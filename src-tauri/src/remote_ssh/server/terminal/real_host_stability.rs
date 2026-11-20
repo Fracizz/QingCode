@@ -16,6 +16,10 @@
 //!                     另有 prewarm（仅 Windows 远端：冷启动 vs 预热领取耗时、未领取回收），需显式指定
 //!                     prewarmidle（仅 Windows 远端：按产品链路预热、不读输出，静置后领取），需显式指定
 //! QC_STAB_PREWARM_IDLE_SECS  prewarmidle 的静置秒数列表（默认 3,12,40）
+//! QC_STAB_CLI_PATH    cli 阶段的远端 PATH（含 claude / codex / opencode；没有时可用
+//!                     scripts/real-host/cli-stubs 的替身：Windows 用 *.cmd，Linux 用无扩展名 bash 脚本），
+//!                     需显式指定 cli 阶段
+//! QC_STAB_CLI_AGENTS  cli 阶段要测的 CLI（默认 codex,claude,opencode）
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
 
@@ -539,6 +543,84 @@ async fn connect(
         daemon,
         windows,
     })
+}
+
+/// CLI 预热：与本机一致，CLI 在 `~/.qingcode/cli-prewarm` 专用空目录启动（Codex 临时信任、
+/// Claude 只在该目录自动确认），再切到项目；专用目录保持为空，有内容时拒绝启动。
+async fn phase_cli(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    let Some(path) = env("QC_STAB_CLI_PATH") else {
+        println!("[stab][cli] 未设置 QC_STAB_CLI_PATH，跳过");
+        return Ok(());
+    };
+    let agents = env("QC_STAB_CLI_AGENTS").unwrap_or_else(|| "codex,claude,opencode".into());
+    let shell = if ctx.windows { "powershell" } else { "auto" };
+    let project = windows_native_path(&ctx.root.canonical_path)
+        .unwrap_or_else(|| ctx.root.canonical_path.clone());
+    let probe = |agent: String| {
+        let env = BTreeMap::from([("PATH".to_string(), path.clone())]);
+        let project = &project;
+        async move {
+            local::prewarm::real_host_cli_probe(
+                &ctx.manager,
+                &ctx.root.uri,
+                &agent,
+                shell,
+                env,
+                project,
+            )
+            .await
+        }
+    };
+    let (count_unix, count_windows) = (
+        "ls -A ~/.qingcode/cli-prewarm | wc -l",
+        "@(Get-ChildItem -Force -LiteralPath (Join-Path $env:USERPROFILE '.qingcode/cli-prewarm')).Count",
+    );
+    for agent in agents.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+        let started = Instant::now();
+        match probe(agent.to_string()).await {
+            Ok((anchor, screen)) => {
+                let tail: Vec<_> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
+                println!(
+                    "[stab][cli] {agent} 预热+切换 {}，启动目录 {anchor}，画面末行 {:?}",
+                    ms(started.elapsed()),
+                    tail.iter().rev().take(4).rev().collect::<Vec<_>>()
+                );
+                if !anchor
+                    .replace('\\', "/")
+                    .ends_with("/.qingcode/cli-prewarm")
+                {
+                    failures.push(format!("cli[{agent}]：启动目录不是专用目录：{anchor}"));
+                }
+            }
+            Err(error) => failures.push(format!("cli[{agent}]：{error}")),
+        }
+        let count = remote_exec(ctx, count_unix, count_windows).await?;
+        if count.trim() != "0" {
+            failures.push(format!("cli[{agent}]：专用目录不为空（{}）", count.trim()));
+        }
+    }
+    // 专用目录被放入内容时，启动脚本必须拒绝在其中启动 CLI。
+    let Some(agent) = agents.split(',').map(str::trim).find(|a| !a.is_empty()) else {
+        return Ok(());
+    };
+    remote_exec(
+        ctx,
+        "echo x > ~/.qingcode/cli-prewarm/planted",
+        "Set-Content -LiteralPath (Join-Path $env:USERPROFILE '.qingcode/cli-prewarm/planted') -Value x",
+    )
+    .await?;
+    let planted = tokio::time::timeout(Duration::from_secs(40), probe(agent.to_string())).await;
+    remote_exec(
+        ctx,
+        "rm -f ~/.qingcode/cli-prewarm/planted",
+        "Remove-Item -Force -LiteralPath (Join-Path $env:USERPROFILE '.qingcode/cli-prewarm/planted')",
+    )
+    .await?;
+    match planted {
+        Ok(Ok(_)) => failures.push("cli：专用目录有内容时仍启动了 CLI".into()),
+        _ => println!("[stab][cli] 专用目录有内容时拒绝启动：通过"),
+    }
+    Ok(())
 }
 
 async fn remote_exec(ctx: &Ctx, unix: &str, windows: &str) -> Result<String, String> {
@@ -2061,7 +2143,8 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 11] = [
+    let phases_list: [(&str, Phase); 12] = [
+        ("cli", |ctx, failures| Box::pin(phase_cli(ctx, failures))),
         ("prewarm", |ctx, failures| {
             Box::pin(phase_prewarm(ctx, failures))
         }),

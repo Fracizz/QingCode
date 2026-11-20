@@ -66,10 +66,7 @@ QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打�
 
 ## 同一远程连接的跨项目 CLI 预热
 
-在「远程连接 → 远端 CLI 预热」选择已信任的裸命令 `claude`、`opencode` 或 `codex` 即可。CLI 在「CLI 启动目录」里启动，候选只有此连接上已注册、已信任的项目（临时项目不计）；固定的目录失去信任后回到默认。
-
-- **OpenCode**：没有目录信任，默认「自动」：当前项目在此连接上时用当前项目，否则用最近打开的已信任项目。
-- **Claude Code / Codex**：启动目录必须已被 CLI 自己信任，否则预热停在信任确认、无法就绪。默认不猜：未选择时只在当前项目预热（与旧行为一致）。可手动固定，或打开「读取 … 信任配置自动选择目录」（默认关闭，开启即授权）：QingCode 在已信任项目上执行一次只读命令，读取远端 `${CLAUDE_CONFIG_DIR:-~}/.claude.json`（`projects.<路径>.hasTrustDialogAccepted`）或 `${CODEX_HOME:-~/.codex}/config.toml`（`[projects.'<路径>'] trust_level = "trusted"`），只返回同时被 CLI 信任的已注册项目，文件内容不离开后端、不保存。Claude 的信任按上级目录继承，Codex 只认精确路径。自动优先当前项目，其次最近打开；结果缓存 5 分钟（失败 1 分钟），面板可「重新读取」。读不到配置、读取失败或没有匹配时，面板提示并由用户手动选择；手动选择的目录未被 CLI 信任时同样提示。
+在「远程连接 → 远端 CLI 预热」选择已信任的裸命令 `claude`、`opencode` 或 `codex` 即可，不需要选目录。逻辑与本机相同：CLI 在 QingCode 专用的空目录启动，远端为 `~/.qingcode/cli-prewarm`（Windows 为 `%USERPROFILE%\.qingcode\cli-prewarm`），不在任何用户项目里。启动脚本首次使用时创建该目录，每次启动前确认它不是链接且为空，否则拒绝启动。Codex 带 `-c projects={"<该目录>"={trust_level="trusted"}}` 只对本进程临时信任它，不写 `config.toml`；Claude 只在该目录出现首次信任提示时自动确认；OpenCode 没有目录信任。当前项目所在连接用当前项目、其他连接用最近打开的已信任项目授权建立连接，这个项目只决定能否连接，不是 CLI 的工作目录。
 要切换的目标项目也须已注册并受信任。每条已认证的 Server 连接最多保留一个所选 CLI，切换标签或项目后仍可领取。Shell 预热数量设为零时停止。
 
 远端沿用 SSH 终端的 Shell 解析规则。Windows 需要实际解析到 Windows PowerShell 或 PowerShell 7。POSIX 使用 `/bin/sh` 运行启动脚本，退出 CLI 后接回用户的登录 Shell。OpenCode 的 POSIX 目录校验还会调用远端 Python。Claude Code 和 Codex 通过远端服务的 `pty.claimCwdFile` 能力，把领取时验证过的目录交给退出后的 Shell；旧服务走普通启动。OpenCode 服务只监听终端所在主机的回环地址。首次登录或目标项目信任确认在正常交互终端中完成。连接断开、身份变化、撤销项目信任或停用配置后，空闲会话失效。

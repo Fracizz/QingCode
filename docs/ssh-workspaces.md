@@ -493,4 +493,4 @@ Windows 重解析点或时间不可读的批次均跳过；清理不递归删除
 设置中的「清理粘贴文件」可手动处理本机、WSL 和 SSH 附件。
 清理会使历史终端与会话中的附件路径失效；需要长期保留的文件应移出此目录。
 
-开启 Server 模式后，可为每条连接预热 Claude Code、OpenCode 或 Codex，启动目录从此连接的已信任项目中选：OpenCode 自动取当前或最近打开的项目；Claude Code / Codex 需用户固定，或授权只读读取远端 CLI 信任配置后自动挑选（这是唯一读取项目根之外文件的例外，仅限这两个固定配置文件、只返回匹配结果）。支持的 Shell、目录确认和版本要求见[跨项目 CLI 预热](windows-shell-prewarm.md#同一远程连接的跨项目-cli-预热)。
+开启 Server 模式后，可为每条连接预热 Claude Code、OpenCode 或 Codex，与本机一样在 QingCode 专用的空目录 `~/.qingcode/cli-prewarm` 启动，不需要选目录。支持的 Shell、目录确认和版本要求见[跨项目 CLI 预热](windows-shell-prewarm.md#同一远程连接的跨项目-cli-预热)。

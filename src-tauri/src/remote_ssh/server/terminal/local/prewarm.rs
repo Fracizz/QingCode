@@ -909,10 +909,7 @@ impl ShellPrewarmPool {
                 }
             };
             let directory = native.as_deref().unwrap_or(working_directory);
-            let anchor_path = windows_native_path(&remote.root.canonical_path);
-            let anchor = anchor_path
-                .as_deref()
-                .unwrap_or(&remote.root.canonical_path);
+            let anchor = entry.codex.as_ref()?.anchor.clone();
             if let Err(error) = valid() {
                 return Some(Err(error));
             }
@@ -926,7 +923,7 @@ impl ShellPrewarmPool {
                     entry.session.as_mut()?,
                     &entry.pty_id,
                     directory,
-                    anchor,
+                    &anchor,
                     &valid,
                 ),
             )
@@ -1633,12 +1630,44 @@ async fn create_local_warm_shell(
 }
 
 /// 连接已认证且具有就绪 daemon；不在后台触发部署或重新登录。
+/// 远端 CLI 专用启动目录（SFTP 形态）`~/.qingcode/cli-prewarm`，与本机 `codex-prewarm` 同理：
+/// 不在任何用户项目里，Codex 只对该进程临时信任它，Claude 只在它里面自动确认信任。
+/// 返回 (家目录, 专用目录)；家目录已存在，用作创建 PTY 的目录。
+async fn remote_cli_anchor(
+    manager: &SshManager,
+    connection_id: &str,
+) -> Result<(String, String), String> {
+    let home = match manager.direct_config(connection_id) {
+        Some(config) => {
+            let info = crate::remote_ssh::direct::workspace_request(
+                &config,
+                &serde_json::json!({"op": "info"}),
+            )
+            .await?;
+            info["homePath"]
+                .as_str()
+                .ok_or("Server 家目录无效")?
+                .to_owned()
+        }
+        None => {
+            let sftp = manager.open_sftp(connection_id).await?;
+            crate::remote_ssh::resolve_remote_home(&sftp, "").await
+        }
+    };
+    let home = home.trim_end_matches('/');
+    if home.is_empty() || !home.starts_with('/') || home.chars().any(char::is_control) {
+        return Err("无法确定远端家目录".into());
+    }
+    Ok((home.to_owned(), format!("{home}/.qingcode/cli-prewarm")))
+}
+
 async fn create_remote_warm_shell(
     manager: &SshManager,
     target: &Target,
     remote: &RemoteTarget,
 ) -> Result<WarmShell, String> {
     let directory = if target.key.profile.is_some() {
+        // 已信任的项目根只用于授权打开连接；CLI 本身在专用空目录启动。
         let parsed = parse_remote_uri(&target.project_path)?;
         let sftp = manager.open_sftp(&remote.connection_id).await?;
         let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root).await?;
@@ -1647,7 +1676,7 @@ async fn create_remote_warm_shell(
         {
             return Err("预热终端需要匹配已注册项目根目录".into());
         }
-        Some(canonical)
+        Some(remote_cli_anchor(manager, &remote.connection_id).await?)
     } else {
         None
     };
@@ -1673,7 +1702,7 @@ async fn prepare_remote_shell(
     remote: &RemoteTarget,
     transport: SessionTransport,
     session: DaemonSession,
-    directory: Option<String>,
+    directory: Option<(String, String)>,
 ) -> Result<WarmShell, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
@@ -1703,9 +1732,9 @@ async fn prepare_remote_shell(
         return Err("远端 daemon 不支持预热终端切换目录".into());
     }
     if target.key.profile.is_some() {
-        let directory = directory.ok_or("缺少已校验的预热目录")?;
-        let native = windows_native_path(&directory);
-        codex::prepare_at(&mut entry, target, native.as_deref().unwrap_or(&directory)).await?;
+        let (home, anchor) = directory.ok_or("缺少已校验的预热目录")?;
+        let native = |path: &str| windows_native_path(path).unwrap_or_else(|| path.to_owned());
+        codex::prepare_at(&mut entry, target, &native(&anchor), &native(&home)).await?;
         return Ok(entry);
     }
     entry.marker = uuid::Uuid::new_v4().simple().to_string();
@@ -1755,6 +1784,46 @@ async fn prepare_remote_shell(
     .await
     .map_err(|_| "远端 Shell 配置未在时限内就绪".to_string())??;
     Ok(entry)
+}
+
+/// 真机验收：按产品路径为 `root_uri` 所在连接预热一个 CLI，再切到 `project_dir`（远端原生路径）。
+/// 返回专用启动目录与切换后的 CLI 画面。
+#[cfg(test)]
+pub(in crate::remote_ssh::server::terminal) async fn real_host_cli_probe(
+    manager: &SshManager,
+    root_uri: &str,
+    command: &str,
+    shell: &str,
+    env: BTreeMap<String, String>,
+    project_dir: &str,
+) -> Result<(String, String), String> {
+    let profile = PrewarmProfile {
+        cwd: root_uri.into(),
+        cross_project: true,
+        profile_id: command.into(),
+        shell: shell.into(),
+        command: command.into(),
+    };
+    let mut target = profile
+        .target(manager, "stab")
+        .ok_or("CLI 预热目标不可用（连接、信任或 Shell 不满足）")?;
+    target.launch.env.extend(env);
+    let remote = target.remote.clone().ok_or("缺少远端目标")?;
+    let mut entry = create_remote_warm_shell(manager, &target, &remote).await?;
+    let anchor = entry.codex.as_ref().ok_or("缺少 CLI 会话")?.anchor.clone();
+    let session = entry.session.as_mut().ok_or("缺少会话")?;
+    let cli = entry.codex.as_mut().ok_or("缺少 CLI 会话")?;
+    let switched = tokio::time::timeout(
+        cli.switch_timeout(),
+        cli.enter(session, &entry.pty_id, project_dir, &anchor, || Ok(())),
+    )
+    .await;
+    let screen = cli.screen.screen().contents();
+    match switched {
+        Ok(Ok(())) => Ok((anchor, screen)),
+        Ok(Err(error)) => Err(format!("切换到项目失败：{error}\n{screen}")),
+        Err(_) => Err(format!("切换到项目超时\n{screen}")),
+    }
 }
 
 #[cfg(test)]

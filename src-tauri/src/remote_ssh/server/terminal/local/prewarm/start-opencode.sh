@@ -1,7 +1,12 @@
 # A separate server for this PTY. Keep the password out of the terminal,
 # shell history and child command lines.
 qc_nonce=$QINGCODE_PREWARM_NONCE
-unset QINGCODE_PREWARM_NONCE
+qc_anchor=$QINGCODE_CODEX_ANCHOR
+unset QINGCODE_PREWARM_NONCE QINGCODE_CODEX_ANCHOR
+# Start in the QingCode-owned empty directory, never a user project.
+[ -n "$qc_anchor" ] && [ ! -L "$qc_anchor" ] || exit 1
+mkdir -p -- "$qc_anchor" && cd -P -- "$qc_anchor" || exit 1
+[ -z "$(ls -A .)" ] || exit 1
 qc_dir=$(mktemp -d) || exit 1
 qc_pass=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n') || exit 1
 [ "${#qc_pass}" = 48 ] || exit 1

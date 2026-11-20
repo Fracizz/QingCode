@@ -3,6 +3,8 @@
     $anchor = $env:QINGCODE_CODEX_ANCHOR
     if ($anchor) {
         Remove-Item Env:QINGCODE_CODEX_ANCHOR
+        # Create the remote dedicated directory on first use; it is then checked to be an empty non-link.
+        if (!(Test-Path -LiteralPath $anchor)) { New-Item -ItemType Directory -Path $anchor | Out-Null }
         Set-Location -LiteralPath $anchor
         if (((Get-Item -Force -LiteralPath $anchor).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
             @(Get-ChildItem -Force -LiteralPath $anchor).Count) { exit 1 }

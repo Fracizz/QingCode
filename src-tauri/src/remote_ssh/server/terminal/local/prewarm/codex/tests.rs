@@ -85,6 +85,7 @@ fn a_loading_composer_and_a_previous_command_do_not_authorize_enter() {
         agent: "codex".into(),
         nonce: String::new(),
         handoff: None,
+        anchor: String::new(),
     };
     view.screen.process("› Ask Codex to do anything".as_bytes());
     assert!(!view.input_ready());
@@ -461,7 +462,7 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
     ] {
         target.launch.env.insert(k.into(), v.into());
     }
-    prepare_at(&mut entry, &target, anchor).await?;
+    prepare_at(&mut entry, &target, anchor, anchor).await?;
     let session = entry.session.as_mut().unwrap();
     let cli = entry.codex.as_mut().unwrap();
     if !matches!(
