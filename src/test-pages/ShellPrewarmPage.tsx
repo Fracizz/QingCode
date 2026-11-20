@@ -5,14 +5,14 @@ import TerminalSettingsSection from '../components/settings/TerminalSettingsSect
 import { useTerminalIntegrationSettings } from '../components/settings/useSettingsSectionState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { DEFAULT_FONT_SETTINGS } from '../lib/fontSettings'
-import { loadTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
+import { trustTerminalProfile } from '../lib/terminal/terminalProfileTrust'
+import { loadTerminalProfileSettings, saveTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
 import { useLocaleStore } from '../lib/i18n'
-import { trustProject } from '../lib/workspaceTrust'
 import type { Project } from '../types'
 import '../App.css'
 
 const projects: Project[] = [
-  { id: 'local', name: 'Local', path: '/fixture/app', created_at: 1, last_opened_at: 1 },
+  { id: 'local', name: 'Local', path: 'D:/fixture/project', created_at: 1, last_opened_at: 1 },
   { id: 'wsl', name: 'WSL', path: '\\\\wsl.localhost\\Ubuntu\\home\\app', created_at: 1, last_opened_at: 1 },
   { id: 'ssh', name: 'SSH', path: 'ssh://c1/home/app', kind: 'ssh', connection_id: 'c1', created_at: 1, last_opened_at: 1 },
 ]
@@ -23,7 +23,7 @@ export function Settings({ project, workspace }: { project: Project; workspace: 
   const settings = useTerminalIntegrationSettings(workspace ? 'workspace' : 'user', project, 0)
   const profilesRef = useRef<HTMLDivElement>(null)
   return <TerminalSettingsSection
-    match={(...words) => words.includes('shellPrewarmCount')}
+    match={(...words) => words.includes('shellPrewarmCount') || words.includes('Codex')}
     workspaceLocked={workspace} currentProject={project}
     fonts={DEFAULT_FONT_SETTINGS} onFontChange={() => {}}
     terminal={loadTerminalProfileSettings()} onTerminalChange={() => {}}
@@ -59,7 +59,11 @@ export default function Page() {
 
 if (import.meta.env.MODE === 'web-test') {
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Windows' })
-  projects.forEach(trustProject)
+  const profiles = ['Codex', 'Claude', 'OpenCode'].map(name => ({
+    id: name.toLowerCase(), name, command: name.toLowerCase(), shell: 'pwsh' as const,
+  }))
+  saveTerminalProfileSettings({ ...loadTerminalProfileSettings(), profiles })
+  profiles.forEach(trustTerminalProfile)
   useLocaleStore.getState().setLanguage('zh-CN')
   Object.assign(window, { shellPrewarmFixture: { disk, cleanups } })
   mockIPC((command, args) => {

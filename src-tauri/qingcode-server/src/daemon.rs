@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
-use std::io::Write as _;
+use std::io::{Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -90,6 +90,7 @@ pub const CAPABILITIES: &[&str] = &[
     "git.watchPush",
     // `pty.claim` 接受 cwd：预热终端可按主机复用到同机的其他项目目录。
     "pty.claimCwd",
+    "pty.claimCwdFile",
 ];
 
 /// daemon 启动参数。
@@ -720,6 +721,7 @@ struct PtyRoute {
     exit_delivered: bool,
     /// 未领取的预热 PTY 随创建连接断开而结束，不能成为持久化孤儿。
     transient: bool,
+    cwd_file: Option<tempfile::NamedTempFile>,
 }
 
 impl PtyRoute {
@@ -732,6 +734,7 @@ impl PtyRoute {
             pending_bytes: 0,
             exit_delivered,
             transient: false,
+            cwd_file: None,
         }
     }
 
@@ -825,14 +828,15 @@ impl Daemon {
         conn_id: u32,
         options: PtyCreateOptions,
     ) -> Result<crate::pty::PtyInfo, String> {
-        self.create_pty_with_lifetime(conn_id, options, false)
+        self.create_pty_with_lifetime(conn_id, options, false, false)
     }
 
     fn create_pty_with_lifetime(
         &self,
         conn_id: u32,
-        options: PtyCreateOptions,
+        mut options: PtyCreateOptions,
         transient: bool,
+        cwd_file: bool,
     ) -> Result<crate::pty::PtyInfo, String> {
         let mut routes = self.routes.lock().unwrap();
         // spawn_blocking 的 create 可能晚于原连接退出才开始。与 detach 共用
@@ -846,9 +850,22 @@ impl Daemon {
         if self.closing.load(Ordering::SeqCst) || !connection_open {
             return Err("连接已关闭，终端未创建".to_string());
         }
+        // The shell opens the file before reporting ready. Its open handle
+        // survives removal of the transient route after a successful claim.
+        let cwd_file = if cwd_file {
+            let file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+            options.env.insert(
+                "QINGCODE_CODEX_HANDOFF".into(),
+                file.path().to_string_lossy().into_owned(),
+            );
+            Some(file)
+        } else {
+            None
+        };
         let info = self.pty.create(options)?;
         let mut route = PtyRoute::new(conn_id, info.seq, RoutePhase::Live, false);
         route.transient = transient;
+        route.cwd_file = cwd_file;
         routes.insert(info.id.clone(), route);
         Ok(info)
     }
@@ -2138,6 +2155,8 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 #[serde(default)]
                 cwd: Option<String>,
                 #[serde(default)]
+                claim_cwd_file: bool,
+                #[serde(default)]
                 shell: Option<String>,
                 #[serde(default)]
                 args: Vec<String>,
@@ -2193,7 +2212,12 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             let conn_id = conn.conn_id;
             let created = tokio::task::spawn_blocking(move || {
                 if transient {
-                    daemon_for_create.create_pty_with_lifetime(conn_id, options, true)
+                    daemon_for_create.create_pty_with_lifetime(
+                        conn_id,
+                        options,
+                        true,
+                        params.claim_cwd_file,
+                    )
                 } else {
                     daemon_for_create.create_pty_with_route(conn_id, options)
                 }
@@ -2383,13 +2407,24 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             };
             let claimed = {
                 let mut routes = daemon.routes.lock().unwrap();
-                if routes
-                    .get(&params.id)
-                    .is_some_and(|route| route.conn_id == conn.conn_id && route.transient)
+                if let Some(route) = routes
+                    .get_mut(&params.id)
+                    .filter(|route| route.conn_id == conn.conn_id && route.transient)
                 {
                     // 与连接清理共用 routes 锁，避免刚领取就被当成预热进程结束。
                     let result = match &cwd {
-                        Some(cwd) => daemon.pty.set_cwd(&params.id, cwd),
+                        Some(cwd) => daemon.pty.set_cwd(&params.id, cwd).and_then(|()| {
+                            if let Some(file) = &mut route.cwd_file {
+                                let path = cwd.to_str().ok_or("项目路径无法编码")?;
+                                #[cfg(windows)]
+                                let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+                                file.rewind()
+                                    .and_then(|()| file.as_file().set_len(0))
+                                    .and_then(|()| file.write_all(path.as_bytes()))
+                                    .map_err(|e| e.to_string())?;
+                            }
+                            Ok(())
+                        }),
                         None => Ok(()),
                     }
                     .and_then(|()| match params.name {

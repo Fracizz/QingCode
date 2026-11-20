@@ -1,3 +1,4 @@
+import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
 import ConnectionDefaultProfile from './ConnectionDefaultProfile'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1237,6 +1238,9 @@ export default function RemoteConnectionsManager() {
                         />}
                         {!editing && <>
                         <ConnectionDefaultProfile connectionId={selected.id} />
+                        {(directEnabled || standaloneAgent || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') && (
+                          <ConnectionPrewarmProfile connectionId={selected.id} />
+                        )}
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
                             {t(allProjects ? '远程项目' : '最近项目')}

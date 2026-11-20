@@ -694,7 +694,13 @@ pub(crate) async fn ssh_spawn_script_unchecked(
             let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
             launch.name = name.clone();
             let size = (cols.unwrap_or(80), rows.unwrap_or(24));
-            if let Some(pool) = super::local_terminal::pool_for_cwd(&app, &cwd) {
+            let profile_pool = app
+                .state::<super::local_terminal::ConnectionShellPools>()
+                .profile_pool(&cwd);
+            let pool = profile_pool
+                .filter(|p| p.has_entry(&id))
+                .or_else(|| super::local_terminal::pool_for_cwd(&app, &cwd));
+            if let Some(pool) = pool {
                 if let Some(result) = pool
                     .take_remote(
                         &id,

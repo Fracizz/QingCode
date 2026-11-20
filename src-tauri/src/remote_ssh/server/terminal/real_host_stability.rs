@@ -874,6 +874,7 @@ async fn phase_prewarm_idle(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(),
         let from_seq = session
             .enter_prewarm_directory(
                 &pty_id,
+                &AtomicU64::new(0),
                 &marker,
                 super::local::prewarm::remote_input_line(&directory),
             )

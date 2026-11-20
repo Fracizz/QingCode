@@ -50,6 +50,26 @@
 以及 1 / 4 / 8 个空闲 Shell 的宿主、ConPTY、Shell 和子进程总内存。
 本功能不承诺固定内存成本或固定启动时间，用户 profile 会显著影响两者。
 
+## 本机 CLI 预热
+
+在 Windows 的「设置 → 终端 → 本机 CLI 预热」中选择一个已信任的 PowerShell 配置。启动命令支持 `claude`、`opencode` 和 `codex`，Shell 可选自动、PowerShell 7 或 Windows PowerShell。功能默认关闭，启用时需开启「本地终端可接回」且 Shell 预热数量大于零。带参数的命令沿用原有启动方式。
+
+QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打开已信任的项目并新建所选配置后，标签独占该会话。三个工具分别按自己的接口绑定目录。
+
+| 工具 | 预热与领取 |
+| --- | --- |
+| Claude Code | 提前启动交互界面。在确认属于专用空目录后可完成 Claude 对该目录的首次信任提示。领取时用内置 `/cd` 切换，再对同一路径执行一次 `/cd` 核对当前目录。目标项目首次信任仍由用户确认。 |
+| OpenCode | 提前启动一个仅监听本机回环地址、使用随机密码的 `opencode serve`。领取时先核对服务端返回的工作目录，再用 `opencode attach --dir` 启动交互界面。需要支持 `serve` 和 `attach --dir` 的版本。 |
+| Codex | 提前启动交互界面并核对 `/pwd`。领取时执行 `/cd` 并再次核对 `/pwd`。 |
+
+退出 CLI 后，PowerShell 停留在目标项目。若遇到登录、升级、目标项目信任提示或无法确认目录，QingCode 在目标项目走普通启动。可用 `terminal prewarm status --project <项目>` 查看 `profile.ready` 和暂停原因，命中后在 `terminal diagnostics` 查看 `prewarm.kind=profile`。
+
+## 同一远程连接的跨项目 CLI 预热
+
+在「远程连接 → 远端 CLI 预热」选择已信任的裸命令 `claude`、`opencode` 或 `codex`，再在「跨项目 CLI 启动目录」选择此连接上已注册、已信任的项目。保留「使用当前项目」时，在当前活动的已信任项目中预热所选 CLI。要切换的目标项目也须已注册并受信任。每条已认证的 Server 连接最多保留一个所选 CLI，切换标签或项目后仍可领取。Shell 预热数量设为零时停止。
+
+远端沿用 SSH 终端的 Shell 解析规则。Windows 需要实际解析到 Windows PowerShell 或 PowerShell 7。POSIX 使用 `/bin/sh` 运行启动脚本，退出 CLI 后接回用户的登录 Shell。OpenCode 的 POSIX 目录校验还会调用远端 Python。Claude Code 和 Codex 通过远端服务的 `pty.claimCwdFile` 能力，把领取时验证过的目录交给退出后的 Shell；旧服务走普通启动。OpenCode 服务只监听终端所在主机的回环地址。首次登录或目标项目信任确认在正常交互终端中完成。连接断开、身份变化、撤销项目信任或停用配置后，空闲会话失效。
+
 ## Android 移动连接
 
 手机新建终端与电脑端共用同一个池，条件与电脑端新建一致：本机 Windows 项目（含 PowerShell 配置命令）、SSH Server 模式项目（含 PowerShell / POSIX Shell 配置命令）；WSL 和 CMD 配置命令不领取。

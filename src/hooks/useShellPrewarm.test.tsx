@@ -4,9 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 
 const mocks = vi.hoisted(() => ({
+  localCodex: vi.fn(() => undefined as { id: string; shell: string; command: string } | undefined),
+  preset: vi.fn((_connection: string) => undefined as { id: string; command: string; shell: string } | undefined),
   onFocusChanged: vi.fn(async (_listener: (event: { payload: boolean }) => void) => () => {}),
   invoke: vi.fn(async (..._args: unknown[]) => 0), count: vi.fn(async () => 'auto' as 'auto' | number),
   persist: vi.fn(async () => true), trusted: vi.fn(() => true), platform: vi.fn(() => 'win'),
+}))
+vi.mock('../lib/terminal/localCodexPrewarm', () => ({
+  LOCAL_CODEX_PREWARM_KEY: 'local-codex', localCodexPrewarm: mocks.localCodex,
+}))
+vi.mock('../lib/terminal/connectionPrewarmProfile', () => ({
+  connectionPrewarmAnchors: () => [], CONNECTION_PREWARM_PREFIX: 'profile:', connectionPrewarmProfile: mocks.preset,
 }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged }) }))
 vi.mock('../lib/tauri', () => ({ isTauri: () => true, safeInvoke: mocks.invoke }))
@@ -25,6 +33,8 @@ const configuredPaths = () => mocks.invoke.mock.calls.map(call => (call[2] as { 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.preset.mockReset()
+  mocks.localCodex.mockReset()
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   mocks.count.mockResolvedValue('auto')
   mocks.persist.mockResolvedValue(true)
@@ -46,6 +56,19 @@ describe('Windows prewarm coordinator', () => {
     expect(configuredPaths().filter(path => path === project.path)).toHaveLength(1)
     hook.unmount()
     await act(async () => {})
+  })
+
+  it('keeps the local Codex profile across project changes, including a window with no project', async () => {
+    mocks.localCodex.mockReturnValue({ id: 'ai', shell: 'pwsh', command: 'codex' })
+    const hook = renderHook(({ value }: { value: Project | null }) => useShellPrewarm(value), { initialProps: { value: null as Project | null } })
+    const profile = { profileId: 'ai', shell: 'pwsh', command: 'codex' }
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ cwd: null, localProfile: profile }))
+    hook.rerender({ value: project })
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ cwd: project.path, localProfile: profile }))
+    mocks.persist.mockResolvedValue(false)
+    act(() => notifyShellPrewarmChanged())
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).not.toHaveProperty('localProfile'))
+    hook.unmount()
   })
 
   it('discards late settings from a previous project without clearing the new pool', async () => {
@@ -80,6 +103,26 @@ describe('Windows prewarm coordinator', () => {
     mocks.invoke.mockClear()
     hook.rerender({ value: { ...next, id: 'three', path: 'D:/work/three' } })
     await waitFor(() => expect(configuredPaths()).toEqual([null]))
+    hook.unmount()
+    await act(async () => {})
+  })
+
+  it('prestarts the selected profile only for the active trusted connection and project', async () => {
+    mocks.preset.mockImplementation(connection => connection === 'win'
+      ? { id: 'agent', shell: 'powershell', command: 'claude' } : undefined)
+    const active = { ...project, path: 'ssh://win/D:/code/a' }
+    const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: active } })
+    const args = () => mocks.invoke.mock.lastCall?.[2]
+    await waitFor(() => expect(args()).toMatchObject({ profile: {
+      cwd: active.path, profileId: 'agent', shell: 'powershell', command: 'claude',
+    } }))
+    const other = { ...active, path: 'ssh://other/D:/code/a' }
+    hook.rerender({ value: other })
+    await waitFor(() => expect(args()).not.toHaveProperty('profile'))
+    mocks.trusted.mockReturnValue(false)
+    hook.rerender({ value: active })
+    await act(async () => {})
+    expect(args()).not.toHaveProperty('profile')
     hook.unmount()
     await act(async () => {})
   })

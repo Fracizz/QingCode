@@ -125,10 +125,12 @@ pub(super) fn fake_shell() -> WarmShell {
         claim_cwd: false,
         launch,
         remote: None,
+        codex: None,
         startup_pipe: None,
         startup_input: false,
         marker: String::new(),
         from_seq: 0,
+        input_seq: AtomicU64::new(0),
         session: None,
         transport: None,
         reserved_at: None,
@@ -396,10 +398,12 @@ pub(super) fn remote_shell(id: &str, cwd: &str, claim_cwd: bool) -> WarmShell {
             incarnation: None,
             direct_peer: None,
         }),
+        codex: None,
         startup_pipe: None,
         startup_input: true,
         marker: String::new(),
         from_seq: 0,
+        input_seq: AtomicU64::new(0),
         session: None,
         transport: None,
         reserved_at: None,
@@ -641,6 +645,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
             target.remote.as_ref().unwrap(),
             SessionTransport::Local,
             session,
+            None,
         )
         .await
         .unwrap();
@@ -659,6 +664,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
             assert!(session
                 .enter_prewarm_directory(
                     &entry.pty_id,
+                    &entry.input_seq,
                     &entry.marker,
                     remote_input_line(missing.to_str().unwrap())
                 )
@@ -669,6 +675,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
         let from_seq = session
             .enter_prewarm_directory(
                 &entry.pty_id,
+                &entry.input_seq,
                 &entry.marker,
                 directory_input(cwd, mode, &entry.marker).unwrap(),
             )
@@ -876,6 +883,7 @@ async fn posix_remote_shell_enters_the_claiming_project_before_running_the_comma
             target.remote.as_ref().unwrap(),
             SessionTransport::Local,
             session,
+            None,
         )
         .await
         .unwrap();
@@ -892,7 +900,7 @@ async fn posix_remote_shell_enters_the_claiming_project_before_running_the_comma
         if i == 2 {
             let missing = directory_input(&format!("{cwd}/missing"), mode, &marker).unwrap();
             assert!(session
-                .enter_prewarm_directory(&entry.pty_id, &marker, missing)
+                .enter_prewarm_directory(&entry.pty_id, &entry.input_seq, &marker, missing)
                 .await
                 .is_err());
             continue;
@@ -900,7 +908,7 @@ async fn posix_remote_shell_enters_the_claiming_project_before_running_the_comma
         let start = Instant::now();
         let line = directory_input(&cwd, mode, &marker).unwrap();
         let from_seq = session
-            .enter_prewarm_directory(&entry.pty_id, &marker, line)
+            .enter_prewarm_directory(&entry.pty_id, &entry.input_seq, &marker, line)
             .await
             .unwrap();
         session
@@ -937,4 +945,67 @@ async fn posix_remote_shell_enters_the_claiming_project_before_running_the_comma
             .unwrap();
     }
     daemon.abort();
+}
+
+#[test]
+fn profile_requires_same_connection_project_profile_shell_and_command() {
+    let cwd = "ssh://win/D:/work/a";
+    let pool = ShellPrewarmPool::default();
+    let mut entry = remote_shell("prepared", cwd, true);
+    entry.key.profile = Some(PrewarmProfile {
+        cross_project: true,
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+    });
+    assert!(!entry.can_rebind());
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target_for(&entry, 1));
+        state.shells.push(entry);
+    }
+    for (path, shell, id, cmd) in [
+        ("ssh://other/D:/work/a", "auto", "agent", "claude"),
+        ("ssh://win/D:/work/b", "auto", "agent", "claude"),
+        (cwd, "cmd", "agent", "claude"),
+        (cwd, "auto", "other", "claude"),
+        (cwd, "auto", "agent", "claude --resume"),
+    ] {
+        assert!(pool.reserve_profile(path, Some(shell), id, cmd).is_none());
+    }
+    assert!(pool.reserve(cwd, Some("auto"), true).is_err());
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("prepared")
+    );
+    assert!(pool
+        .reserve_profile(cwd, Some("auto"), "agent", "claude")
+        .is_none());
+}
+
+#[test]
+fn phone_claims_prepared_profile_under_its_own_terminal_id() {
+    let cwd = "ssh://win/D:/work/a";
+    let pool = ShellPrewarmPool::default();
+    let mut entry = remote_shell("prepared", cwd, true);
+    entry.key.profile = Some(PrewarmProfile {
+        cross_project: true,
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+    });
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target_for(&entry, 1));
+        state.shells.push(entry);
+    }
+    assert!(!pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "other", "claude"));
+    assert!(!pool.has_entry("mobile-1"));
+    assert!(pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "agent", "claude"));
+    assert!(pool.has_entry("mobile-1"));
+    assert!(!pool.has_entry("prepared"));
+    assert!(!pool.reserve_profile_as("mobile-2", cwd, Some("auto"), "agent", "claude"));
 }

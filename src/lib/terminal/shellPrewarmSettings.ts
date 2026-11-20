@@ -28,7 +28,7 @@ export function notifyShellPrewarmChanged(source: ShellPrewarmChangeSource = 'se
 }
 
 /** 用预先分配的身份创建标签；未命中/功能不可用时立即走正常新建。 */
-export type ShellReservation = { id: string } | { reason: string }
+export type ShellReservation = { id: string; profileHit?: boolean } | { reason: string }
 
 export async function reservePrewarmedShell(
   cwd: string,
@@ -36,10 +36,11 @@ export async function reservePrewarmedShell(
   hasStartup = false,
   /** 重启已有标签时传原 id：预留项改按该 id 领取，标签 id 保持不变。 */
   id?: string,
+  profile?: { profileId: string; command: string },
 ): Promise<ShellReservation> {
   if (!isTauri() || (!cwd.startsWith('ssh://') && detectTerminalHostPlatform() !== 'win')) {
     return { reason: 'unsupported_host' }
   }
-  return safeInvoke<ShellReservation>('领取预热 Shell', 'reserve_prewarmed_shell', { cwd, shell, hasStartup, id: id ?? null })
+  return safeInvoke<ShellReservation>('领取预热 Shell', 'reserve_prewarmed_shell', { cwd, shell, hasStartup, id: id ?? null, ...(profile && { profile }) })
     .catch(() => ({ reason: 'reserve_unavailable' }))
 }
