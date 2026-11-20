@@ -63,6 +63,12 @@ impl DirectFs {
         attributes(value)
     }
 
+    /// 创建时间（Unix 秒）；旧版 server 不返回 `btime`，此时为 None。
+    pub(super) async fn created(&self, path: String) -> Result<Option<u64>> {
+        let value = self.request("metadata", json!({"path":path})).await?;
+        Ok(value.get("btime").and_then(Value::as_u64))
+    }
+
     pub(super) async fn exists(&self, path: String) -> Result<bool> {
         self.request("exists", json!({"path":path}))
             .await?

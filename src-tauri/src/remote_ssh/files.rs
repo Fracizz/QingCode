@@ -34,6 +34,67 @@ pub async fn ssh_file_mtime(
     Ok(metadata.mtime.map(|seconds| u64::from(seconds) * 1000))
 }
 
+/// 属性面板的「创建时间」（Unix 毫秒）。SFTP v3 不带创建时间：
+/// 直连 server 用其 metadata 的 `btime`；普通 SFTP 仅在项目已信任时执行一次只读的
+/// `stat` / PowerShell 查询，未信任或远端不支持时返回 None（界面显示「—」）。
+#[tauri::command]
+pub async fn ssh_file_ctime(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<Option<u64>, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    if let Some(direct) = &sftp.direct {
+        let seconds = direct
+            .created(parsed.path)
+            .await
+            .map_err(|error| format!("读取远程文件创建时间失败：{error}"))?;
+        return Ok(seconds.filter(|value| *value > 0).map(|value| value * 1000));
+    }
+    if !root.trusted {
+        return Ok(None);
+    }
+    let (unix, windows) = ctime_commands(&parsed.path);
+    let Ok(output) = manager
+        .exec_remote_shell(&path, &unix, &windows, true, REMOTE_EXEC_TIMEOUT)
+        .await
+    else {
+        return Ok(None);
+    };
+    if output.exit_code != 0 {
+        return Ok(None);
+    }
+    Ok(parse_ctime_output(
+        &output.stdout,
+        windows_native_path(&parsed.path).is_some(),
+    ))
+}
+
+/// Unix：GNU `stat -c %W`（秒，不支持时为 0 或 `-`），失败再试 BSD/macOS `stat -f %B`。
+/// Windows：PowerShell 输出 CreationTimeUtc 的 Unix 毫秒。
+pub(super) fn ctime_commands(remote_path: &str) -> (String, String) {
+    let quoted = shell_quote(remote_path);
+    let unix = format!("stat -c %W -- {quoted} 2>/dev/null || stat -f %B -- {quoted}");
+    let native = windows_native_path(remote_path).unwrap_or_else(|| remote_path.to_string());
+    let windows = format!(
+        "[DateTimeOffset]::new((Get-Item -LiteralPath '{}' -Force).CreationTimeUtc).ToUnixTimeMilliseconds()",
+        powershell_literal(&native)
+    );
+    (unix, windows)
+}
+
+/// 取输出最后一个非空行；Unix 结果是秒，Windows 结果已是毫秒。0 / 非数字视为不可用。
+pub(super) fn parse_ctime_output(stdout: &str, windows: bool) -> Option<u64> {
+    let value = stdout
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())?
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)?;
+    Some(if windows { value } else { value * 1000 })
+}
+
 #[tauri::command]
 pub async fn ssh_read_file(
     path: String,

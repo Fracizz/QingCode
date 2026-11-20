@@ -36,9 +36,10 @@ describe('getPropertiesLocation', () => {
 })
 
 describe('loadFileProperties', () => {
-  it('reads remote size and mtime without asking for a creation time', async () => {
+  it('reads remote size, creation and modification time', async () => {
     invoke.mockImplementation(async (_action: string, command: string) => {
       if (command === 'file_stat') return { size: 42, is_dir: false }
+      if (command === 'file_ctime') return 1_600_000_000_000
       if (command === 'file_mtime') return 1_700_000_000_000
       throw new Error(`unexpected ${command}`)
     })
@@ -47,11 +48,21 @@ describe('loadFileProperties', () => {
     expect(properties).toMatchObject({
       kind: 'file',
       size: 42,
-      createdMs: null,
+      createdMs: 1_600_000_000_000,
       modifiedMs: 1_700_000_000_000,
       location: '/home/user/project',
     })
-    expect(invoke.mock.calls.map(call => call[1])).not.toContain('file_ctime')
+  })
+
+  it('shows no creation time when the remote cannot provide one', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'file_stat') return { size: 1, is_dir: false }
+      if (command === 'file_ctime') throw new Error('unsupported')
+      if (command === 'file_mtime') return 1_700_000_000_000
+      throw new Error(`unexpected ${command}`)
+    })
+    const properties = await loadFileProperties('ssh://conn/srv/a.txt', 'a.txt', false)
+    expect(properties.createdMs).toBeNull()
   })
 })
 

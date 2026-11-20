@@ -155,7 +155,8 @@ fn attributes(meta: &std::fs::Metadata) -> Value {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
     };
-    json!({"size":meta.len(),"permissions":permissions,"atime":seconds(meta.accessed()),"mtime":seconds(meta.modified())})
+    // btime：创建时间（SFTP v3 没有该字段，客户端属性面板靠它显示「创建时间」；文件系统不支持时为 null）。
+    json!({"size":meta.len(),"permissions":permissions,"atime":seconds(meta.accessed()),"mtime":seconds(meta.modified()),"btime":seconds(meta.created())})
 }
 fn with_handle<T>(
     v: &Value,

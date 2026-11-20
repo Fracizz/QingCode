@@ -1600,3 +1600,29 @@ fn tunnel_first_only_for_trusted_server_mode_windows_roots() {
     ));
     assert!(!tunnel_first_eligible(RemoteMode::Server, true, "/srv/app"));
 }
+
+#[test]
+fn ctime_commands_quote_unix_and_windows_paths() {
+    let (unix, _) = ctime_commands("/home/u/it's.md");
+    assert_eq!(
+        unix,
+        r"stat -c %W -- '/home/u/it'\''s.md' 2>/dev/null || stat -f %B -- '/home/u/it'\''s.md'"
+    );
+    let (_, windows) = ctime_commands("/D:/code/o'k/AGENTS.md");
+    assert!(windows.contains(r"-LiteralPath 'D:\code\o''k\AGENTS.md'"));
+}
+
+#[test]
+fn parse_ctime_output_handles_units_and_unsupported_values() {
+    assert_eq!(
+        parse_ctime_output("1700000000\n", false),
+        Some(1_700_000_000_000)
+    );
+    assert_eq!(
+        parse_ctime_output("\r\n1700000000123\r\n", true),
+        Some(1_700_000_000_123)
+    );
+    assert_eq!(parse_ctime_output("0\n", false), None);
+    assert_eq!(parse_ctime_output("-\n", false), None);
+    assert_eq!(parse_ctime_output("", true), None);
+}
