@@ -100,8 +100,11 @@ export function crossfadeRegion(
   }
 }
 
-/** 同级子页只淡入正文，时长和缓动与 .view-fade 一致。 */
+/** 子页淡入的起始不透明度：不从全透明开始，避免换页瞬间整块闪黑。 */
+export const SUBPAGE_FADE_FROM = 0.35
+
+/** 同级子页只淡入正文：从半透明过渡到不透明，时长取 --motion-enter，比 .view-fade 更柔和。 */
 export function fadeInSubpage(element: Element | null) {
   if (!canAnimateLayout(element)) return
-  return fadeIn(element, cssDuration('--motion-fast', 120))
+  return fadeIn(element, cssDuration('--motion-enter', 140), SUBPAGE_FADE_FROM)
 }

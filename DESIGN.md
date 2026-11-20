@@ -778,7 +778,8 @@ Server 安装、更新和打开远程项目共用右下角任务卡。单任务�
 | `.modal-content-enter` | 对话框面板原位淡入 | 140ms |
 | `.menu-enter` | 右键和下拉菜单原位淡入 | 120ms |
 | `.tooltip-enter` | Tooltip 淡入（配合默认 600ms 悬停延迟） | 120ms |
-| `.view-fade` | 侧栏和整页正文、同级子页、欢迎页与状态提示原位淡入 | 120ms |
+| `.view-fade` | 侧栏和整页正文、欢迎页与状态提示原位淡入 | 120ms |
+| `useSubpageFade` | 同级子页（设置分类、SSH 服务器对话框视图）切换时正文从 0.35 不透明度淡入，不从全透明开始以免闪烁 | 140ms |
 | `.float-enter` | 终端搜索条、连接提示和多端共享角标原位淡入，退出复用 `useExitMotionRef('float')` | 120ms |
 | `.dirty-pulse` | 运行中终端圆点呼吸；未保存文件使用静态圆点 | 2.4s 循环 |
 | `html.theme-transition` | 主题切换时由 `applyTheme` 临时挂载 260ms，全局颜色 200ms 过渡 | 200ms |

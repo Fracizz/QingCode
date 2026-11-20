@@ -164,8 +164,12 @@ const SCM_ACTION_COLUMN =
   'absolute inset-y-0 right-[var(--scm-scrollbar-width,0px)] flex w-9 items-center justify-center'
 const SCM_ROW_ACTION_COLUMN = 'absolute inset-y-0 right-0 flex w-9 items-center justify-center'
 const SCM_ACTION_TOOLTIP = 'flex h-full w-full items-center justify-center'
+// 尺寸用 em 跟随界面字号缩放（默认字号下仍为 14px），避免大字号时字母撑出方块；
+// 等宽字体让 M/+/D 等字形左右对称。
 const STATUS_BADGE =
-  'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-ui-2xs font-bold leading-none'
+  'inline-flex h-[1.4em] w-[1.4em] shrink-0 items-center justify-center rounded-[3px] font-mono text-ui-2xs font-bold'
+// 裁掉字体上下留白，按大写字母高度垂直居中，避免字形偏上或偏下。
+const STATUS_BADGE_GLYPH = 'block leading-none [text-box:trim-both_cap_alphabetic]'
 
 function GitScmStatusBadge({ status, group }: { status: string; group: GitChangeGroup }) {
   const tone = scmStatusBadgeTone(status, group)
@@ -181,7 +185,7 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
             ? `${STATUS_BADGE} bg-warn text-bg`
             : `${STATUS_BADGE} bg-accent/80 text-bg`
   const label = tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
-  return <span className={className}>{label}</span>
+  return <span className={className}><span className={STATUS_BADGE_GLYPH}>{label}</span></span>
 }
 
 function ScmOperationAlert({

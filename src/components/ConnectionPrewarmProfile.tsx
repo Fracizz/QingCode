@@ -26,18 +26,18 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
   return <div className="space-y-2">
     <h3 className="text-ui font-semibold text-fg">{t('远端 CLI 预热')}</h3>
     <p className="text-ui-sm text-fg-muted">{t('为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。')}</p>
-    <SettingSelect menuZIndex={135} aria-label={t('远端 CLI 预热')} value={selected?.id ?? ''}
+    <div><SettingSelect menuZIndex={135} aria-label={t('远端 CLI 预热')} value={selected?.id ?? ''}
       options={[{ value: '', label: t('仅预热普通 Shell') }, ...profiles.map(p => ({
         value: p.id, label: p.name, disabled: !isTerminalProfileTrusted(p),
       }))]}
       onChange={id => saveConnectionPrewarmProfile(connectionId, profiles.find(p => p.id === id) ?? null)}
-    />
-    {selected && isPrewarmCli(selected.command) && <>
-      <label className="text-ui-sm text-fg">{t('跨项目 CLI 启动目录')}</label>
+    /></div>
+    {selected && isPrewarmCli(selected.command) && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+      <label className="text-ui-sm text-fg-muted">{t('跨项目 CLI 启动目录')}</label>
       <SettingSelect aria-label={t('跨项目 CLI 启动目录')} menuZIndex={135}
         value={roots.some(p => p.path === currentAnchor?.cwd) ? currentAnchor?.cwd ?? '' : ''}
         options={[{ value: '', label: t('使用当前项目') }, ...roots.map(p => ({ value: p.path, label: sshRemoteDisplayPath(sshRemotePathFromUri(p.path)) }))]}
         onChange={cwd => saveConnectionPrewarmProfile(connectionId, selected, cwd || undefined)} />
-    </>}
+    </div>}
   </div>
 }
