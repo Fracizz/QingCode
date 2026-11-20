@@ -45,10 +45,10 @@ sha2 = "0.10"
 # 不新增传递依赖；纯 Rust、无 C 依赖，musl 静态链接不受影响。
 getrandom = "0.4"
 # Independent HTTPS/WSS endpoint; Rust TLS with ring matches the SSH client's provider.
-rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", features = ["sink"] }
 # flock / setsid / SIGHUP 等只有 unix 需要，Windows 目标上不会被链接。
 [target.'cfg(unix)'.dependencies]
@@ -56,10 +56,10 @@ libc = "0.2"
 # serve --detach 的 Windows 自拉起需要 CreateProcessW + HANDLE_LIST 精确控制
 # 句柄继承（std::process::Command 会把父进程的全部可继承句柄——包括 SSH 会话
 # 的 stdout 管道——复制给子进程，导致 exec 通道永远等不到 EOF）。版本对齐
-# notify 依赖树里的 windows-sys 0.60；linux musl 构建不编译此依赖。
+# notify 依赖树里的 windows-sys 0.61；linux musl 构建不编译此依赖。
 [target.'cfg(windows)'.dependencies]
 base64 = "0.22"
-windows-sys = { version = "0.60", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   # daemon named pipe 的「仅当前用户」DACL：SID → SDDL 字符串 → 安全描述符。

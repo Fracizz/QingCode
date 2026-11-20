@@ -114,7 +114,7 @@ pub(super) async fn start_locked(
                 SavedSettings {
                     endpoint: SavedEndpoint::Port { port },
                     certificate: certificate.cert.der().to_vec(),
-                    private_key: certificate.key_pair.serialize_der(),
+                    private_key: certificate.signing_key.serialize_der(),
                     code,
                     password,
                     enabled: true,

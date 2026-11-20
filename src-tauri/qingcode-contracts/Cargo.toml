@@ -9,7 +9,7 @@ export = ["dep:ts-rs"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-ts-rs = { version = "11", optional = true, features = ["no-serde-warnings"] }
+ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 
 [[bin]]
 name = "export-file-ipc"

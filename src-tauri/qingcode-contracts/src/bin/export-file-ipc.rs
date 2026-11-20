@@ -1,6 +1,6 @@
 use qingcode_contracts::*;
 use std::{env, fs, path::Path};
-use ts_rs::TS;
+use ts_rs::{Config, TS};
 
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
@@ -14,13 +14,15 @@ fn main() {
          // Regenerate: pnpm ipc:generate\n\
          // u64 maps to JSON number; file commands operate within safe integer limits.\n\n",
     );
+    // 固定使用默认配置，避免 TS_RS_* 环境变量影响生成结果
+    let cfg = Config::new();
     for declaration in [
-        FileNode::decl(),
-        FileStat::decl(),
-        FileSlice::decl(),
-        LineOffsetResult::decl(),
-        RemoteFileNode::decl(),
-        RemoteFileSlice::decl(),
+        FileNode::decl(&cfg),
+        FileStat::decl(&cfg),
+        FileSlice::decl(&cfg),
+        LineOffsetResult::decl(&cfg),
+        RemoteFileNode::decl(&cfg),
+        RemoteFileSlice::decl(&cfg),
     ] {
         output.push_str("export ");
         output.push_str(&declaration);

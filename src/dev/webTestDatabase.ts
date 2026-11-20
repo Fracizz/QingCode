@@ -59,7 +59,8 @@ export async function openWebTestDatabase(
   save: (bytes: Uint8Array) => void,
   wasmPath = wasmUrl
 ) {
-  const SQL = await initSqlJs({ locateFile: () => wasmPath })
+  // sql.js ≥1.16 必填：使用标准 SQLite 数学函数，与原生 rusqlite/sqlx 行为一致
+  const SQL = await initSqlJs({ locateFile: () => wasmPath, useOldExtensionFunctions: false })
   const db = new SQL.Database(bytes)
   const current = Number(db.exec('PRAGMA user_version')[0].values[0][0])
   const migrations = nativeMigrationSql(rustSource)

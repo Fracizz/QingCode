@@ -274,7 +274,7 @@ fn identity(dir: &Path) -> Result<Identity, String> {
             rcgen::generate_simple_self_signed(vec!["qingcode.local".into(), "localhost".into()])
                 .map_err(|e| format!("生成直连证书失败: {e}"))?;
         private_write(&cert_path, certified.cert.der().as_ref())?;
-        private_write(&key_path, &certified.key_pair.serialize_der())?;
+        private_write(&key_path, &certified.signing_key.serialize_der())?;
         private_write(&token_path, crate::generate_token().as_bytes())?;
     }
     let token = read_pairing_token(dir)?;
