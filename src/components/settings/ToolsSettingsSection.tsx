@@ -38,7 +38,7 @@ export default function ToolsSettingsSection({ match, workspaceLocked, isWindows
           <button
             type="button"
             disabled={cliSkillBusy || workspaceLocked}
-            className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
             onClick={() => {
               setCliSkillBusy(true)
               void (async () => {
@@ -97,7 +97,7 @@ export default function ToolsSettingsSection({ match, workspaceLocked, isWindows
                   <button
                     type="button"
                     disabled={openWithBusy}
-                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                    className="btn btn-secondary btn-sm"
                     onClick={() => {
                       setOpenWithBusy(true)
                       void registerOpenWith()
@@ -119,7 +119,7 @@ export default function ToolsSettingsSection({ match, workspaceLocked, isWindows
                   <button
                     type="button"
                     disabled={openWithBusy || !openWith?.registered}
-                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                    className="btn btn-secondary btn-sm"
                     onClick={() => {
                       setOpenWithBusy(true)
                       void unregisterOpenWith()

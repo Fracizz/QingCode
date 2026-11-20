@@ -130,7 +130,7 @@ export default function SymbolPicker() {
         aria-modal="true"
         aria-labelledby="symbol-picker-title"
         aria-describedby="symbol-picker-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter flex flex-col overflow-hidden"
       >
         <h2 id="symbol-picker-title" className="sr-only">
           {t('转到编辑器中的符号')}

@@ -1010,7 +1010,7 @@ export default function Editor() {
   if (!activeTab) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
-        <FileText size={40} strokeWidth={1.2} />
+        <FileText size={28} strokeWidth={1.5} />
         <p className="text-ui-lg">{t('从侧边栏打开文件开始编辑')}</p>
         <p className="text-ui-sm text-fg-dim flex items-center gap-1.5">
           <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}

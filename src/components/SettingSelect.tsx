@@ -243,13 +243,13 @@ export default function SettingSelect({
                   role="option"
                   aria-selected={isSelected}
                   disabled={option.disabled}
-                  className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui outline-none transition-colors
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui outline-none transition-colors
                     ${
                       isActive
                         ? 'bg-bg-active text-fg'
                         : 'text-fg hover:bg-bg-active focus:bg-bg-active'
                     }
-                    disabled:cursor-not-allowed disabled:opacity-40`}
+                    disabled:cursor-not-allowed disabled:opacity-50`}
                   onMouseEnter={() => {
                     if (!option.disabled) setActiveIndex(index)
                   }}

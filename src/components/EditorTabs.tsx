@@ -78,7 +78,7 @@ function TabChrome({
 
   return (
     <>
-      {Icon && <Icon size={15} className={iconClass} />}
+      {Icon && <Icon size={16} className={iconClass} />}
       <span
         className={`text-ui truncate ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
       >
@@ -111,7 +111,7 @@ function TabChrome({
                   onClose()
                 }}
               >
-                <X size={13} />
+                <X size={14} />
               </button>
             </Tooltip>
           </>
@@ -130,7 +130,7 @@ function TabChrome({
                 onClose()
               }}
             >
-              <X size={13} />
+              <X size={14} />
             </button>
           </Tooltip>
         )}
@@ -475,14 +475,14 @@ export default function EditorTabs() {
             <button
               type="button"
               aria-label={t('显示所有打开的文件')}
-              className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+              className="icon-btn ui-chip relative w-7"
               onClick={event => {
                 const rect = event.currentTarget.getBoundingClientRect()
                 setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
               }}
             >
               <ChevronDown size={14} />
-              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
+              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-ui-2xs font-semibold leading-[12px] text-on-action">
                 {hiddenCount > 99 ? '99+' : hiddenCount}
               </span>
             </button>

@@ -52,7 +52,7 @@ export default function SshServerRecovery({ project, opening, onRetry, onBusyCha
       }
     }
   }
-  const buttonClass = 'rounded border border-border-strong px-2.5 py-1.5 text-ui-sm text-fg hover:bg-bg-hover disabled:opacity-50'
+  const buttonClass = 'btn btn-secondary btn-sm'
   return (
     <section aria-label={t('修复远端服务包')} className="space-y-2 rounded border border-border p-3 text-ui-sm">
       <p className="text-fg-muted">{t('重新选择与客户端版本一致的 servers 目录，或在线下载。验证通过后仅更新此项目并自动重试。')}</p>

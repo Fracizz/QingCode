@@ -110,11 +110,7 @@ export default function EmptyEditor() {
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-ui transition-all duration-150 hover:shadow-elevation-1 ${
-              action.primary
-                ? 'border-brand/50 bg-brand/10 text-brand font-medium hover:border-brand/70 hover:bg-brand/20'
-                : 'border-border-strong bg-bg-elevated/80 text-fg-muted hover:bg-bg-active hover:text-fg'
-            }`}
+            className={`btn ${action.primary ? 'btn-primary' : 'btn-secondary'}`}
           >
             {action.icon}
             <span>{action.label}</span>
@@ -145,7 +141,7 @@ export default function EmptyEditor() {
                   type="button"
                   aria-label={projectLabels.get(project.id)?.text ?? project.name}
                   onClick={() => void switchProject(project)}
-                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-ui-sm text-fg-muted transition-all duration-150 hover:border-brand/60 hover:bg-bg-hover hover:text-fg hover:shadow-sm"
+                  className="max-w-[180px] truncate rounded-md border border-border px-3 py-1 text-ui-sm text-fg-muted transition-colors duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg"
                 >
                   <ProjectName name={project.name} label={projectLabels.get(project.id)} />
                 </button>
@@ -179,7 +175,7 @@ export default function EmptyEditor() {
                   <Tooltip label={tooltipPath} side="bottom" wrapperClassName="block w-full">
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
                       onClick={() => void openFile(file.path)}
                     >
                       <FileText size={12} className="flex-shrink-0 opacity-70" />

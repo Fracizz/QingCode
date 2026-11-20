@@ -32,11 +32,11 @@ const REPEAT_DELAY = 400
 const REPEAT_INTERVAL = 60
 
 const ICONS: Partial<Record<TerminalShortcutBuiltinKey, ReactNode>> = {
-  up: <ArrowUp size={13} />,
-  down: <ArrowDown size={13} />,
-  left: <ArrowLeft size={13} />,
-  right: <ArrowRight size={13} />,
-  backspace: <Delete size={13} />,
+  up: <ArrowUp size={12} />,
+  down: <ArrowDown size={12} />,
+  left: <ArrowLeft size={12} />,
+  right: <ArrowRight size={12} />,
+  backspace: <Delete size={12} />,
 }
 
 export interface TerminalShortcutBarProps {
@@ -269,7 +269,7 @@ export function TerminalShortcutBarExpand() {
           onMouseDown={event => event.stopPropagation()}
           onClick={() => setCollapsed(false)}
         >
-          <ChevronUp size={13} />
+          <ChevronUp size={12} />
         </button>
       </Tooltip>
     </div>

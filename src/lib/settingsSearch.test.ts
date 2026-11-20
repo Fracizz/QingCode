@@ -42,11 +42,12 @@ describe('settings search aliases and scope', () => {
     }
   })
 
-  it('finds shell prewarming only in Windows user settings', () => {
+  it('finds shell prewarming in user settings on every platform', () => {
     for (const query of ['预热', 'prewarm', 'terminal.integrated.shellprewarmcount']) {
       expect(matchesSettingsCategory('terminal', query, false, t, true)).toBe(true)
       expect(matchesSettingsTerms(query, ['预热', 'Shell', 'shellPrewarmCount'], false, t, true)).toBe(true)
-      expect(matchesSettingsCategory('terminal', query, false, t, false)).toBe(false)
+      // 远端 Linux / macOS 与 Windows 的 Server 模式连接在任意客户端上都能预热。
+      expect(matchesSettingsCategory('terminal', query, false, t, false)).toBe(true)
       expect(matchesSettingsCategory('terminal', query, true, t, true)).toBe(false)
     }
   })

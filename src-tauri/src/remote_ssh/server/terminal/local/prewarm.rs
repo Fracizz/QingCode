@@ -1,4 +1,5 @@
-//! Windows 普通 Shell 的空闲池。每个预热会话持有一个 transient PTY，
+//! 普通 Shell 的空闲池（本机 Windows；远端 Server 模式的 Windows 与 Linux/macOS）。
+//! 每个预热会话持有一个 transient PTY，
 //! 未领取时关闭连接即可由 daemon 回收；正式终端仍走原有持久化链路。
 //!
 //! 本机目标由项目窗口协调；远端由 connections 按已认证连接补充，空闲时在用户主目录，
@@ -23,20 +24,10 @@ const REMOTE_CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
 const CLAIM_CWD_CAPABILITY: &str = "pty.claimCwd";
 
 /// 复用条件：同一主机上启动参数相同。工作目录不在键里，见 [`WarmShell::can_rebind`]。
-#[derive(Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PrewarmProfile {
-    cwd: String,
-    profile_id: String,
-    shell: String,
-    command: String,
-}
-
 #[derive(Clone, PartialEq, Eq)]
 struct LaunchKey {
     /// `None` 为本机 PTY 宿主；远端为 SSH 连接 id。
     host: Option<String>,
-    profile: Option<PrewarmProfile>,
     shell: Option<String>,
     args: Vec<String>,
     env: BTreeMap<String, String>,
@@ -45,7 +36,6 @@ impl LaunchKey {
     fn from_parts(host: Option<String>, launch: &PersistentLaunch) -> Self {
         Self {
             host,
-            profile: None,
             shell: launch.shell.clone(),
             args: launch.args.clone(),
             env: launch.env.clone(),
@@ -108,15 +98,20 @@ struct WarmShell {
 impl WarmShell {
     /// 远端先切换目录并由 daemon 改记 PTY 工作目录，供接回时验证项目根。
     fn can_rebind(&self) -> bool {
-        if self.key.profile.is_some() {
-            return false;
-        }
         match &self.remote {
             None => self.startup_pipe.is_some(),
-            Some(_) => {
-                self.claim_cwd && (self.startup_input || self.launch.resolved_shell == "cmd")
-            }
+            Some(_) => self.claim_cwd && self.input_mode().is_some(),
         }
+    }
+
+    /// 远端预热项领取时经 PTY 输入交付目录与命令的方式；不支持的 Shell 为 None。
+    fn input_mode(&self) -> Option<RemoteInput> {
+        let remote = self.remote.as_ref()?;
+        RemoteInput::for_launch(
+            &remote.root.canonical_path,
+            &self.launch,
+            self.startup_input,
+        )
     }
 
     fn alive(&mut self) -> bool {
@@ -127,7 +122,9 @@ impl WarmShell {
     }
 
     fn has_startup_channel(&self) -> bool {
-        self.startup_pipe.is_some() || self.startup_input
+        self.startup_pipe.is_some()
+            || self.startup_input
+            || matches!(self.input_mode(), Some(RemoteInput::Posix(_)))
     }
 }
 
@@ -184,11 +181,57 @@ fn resolve_launch(cwd: &str, shell: Option<&str>) -> Result<PersistentLaunch, St
     )?
 }
 
-/// 只有远端为 Windows（`/C:/...` 形态）且走 Server 模式的 SSH 项目才预热。
-fn remote_windows_connection(manager: &SshManager, cwd: &str) -> Option<String> {
+/// 走 Server 模式（远端 daemon 托管 PTY）的 SSH 项目才预热；Windows 与 POSIX 远端都支持。
+fn remote_server_connection(manager: &SshManager, cwd: &str) -> Option<String> {
     let parsed = parse_remote_uri(cwd).ok()?;
-    (windows_native_path(&parsed.path).is_some() && manager.server_mode(&parsed.connection_id))
+    manager
+        .server_mode(&parsed.connection_id)
         .then_some(parsed.connection_id)
+}
+
+/// 远端 Shell 的原生工作目录：Windows 为 `C:\...`，POSIX 为绝对路径本身。
+fn remote_native_directory(path: &str) -> Option<String> {
+    windows_native_path(path).or_else(|| path.starts_with('/').then(|| path.to_string()))
+}
+
+/// POSIX 远端交互 Shell 的输入写法。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PosixShell {
+    /// sh，或「自动」（登录用户的 `$SHELL`，可能是 fish 等）：只用各家通用的写法。
+    Plain,
+    /// bash / zsh：用 `builtin` 绕开用户定义的同名函数（如 zoxide 接管的 cd）。
+    Builtin,
+}
+
+/// 远端预热项交付目录（与命令）的方式。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteInput {
+    /// profile 之后读取一行 base64（不回显）。
+    PowerShell,
+    /// 普通 CMD 输入，只支持普通终端。
+    Cmd,
+    /// 交互 Shell 的普通输入：rc 照常加载，行首空格让开启 ignorespace 的 Shell 不记入历史。
+    Posix(PosixShell),
+}
+impl RemoteInput {
+    pub(crate) fn for_launch(
+        root_path: &str,
+        launch: &PersistentLaunch,
+        powershell_ready: bool,
+    ) -> Option<Self> {
+        if windows_native_path(root_path).is_some() {
+            return if powershell_ready {
+                Some(Self::PowerShell)
+            } else {
+                (launch.resolved_shell == "cmd").then_some(Self::Cmd)
+            };
+        }
+        match launch.resolved_shell.as_str() {
+            "sh" | "auto" => Some(Self::Posix(PosixShell::Plain)),
+            "bash" | "zsh" => Some(Self::Posix(PosixShell::Builtin)),
+            _ => None,
+        }
+    }
 }
 
 /// 与 `ssh_create_terminal` 相同的启动参数；两侧一致才能命中。
@@ -259,14 +302,6 @@ fn remote_target_valid(manager: &SshManager, remote: &RemoteTarget) -> bool {
 impl PoolState {
     // Keep at most one extra transient PTY while a reservation is waiting for its view.
     fn refill_slots(&self, count: usize) -> usize {
-        // A selected profile may run a costly command. Refill after ownership transfers.
-        if self
-            .target
-            .as_ref()
-            .is_some_and(|target| target.key.profile.is_some())
-        {
-            return count.saturating_sub(self.shells.len());
-        }
         let idle = self
             .shells
             .iter()
@@ -298,10 +333,6 @@ impl PoolState {
         let before = self.shells.len();
         self.shells.retain_mut(|entry| {
             if !entry.alive() {
-                if entry.key.profile.is_some() {
-                    // An opted-in command may deliberately exit. Never relaunch it on a timer.
-                    self.paused_reason = Some("profile_exited");
-                }
                 return false;
             }
             entry
@@ -367,14 +398,11 @@ impl ShellPrewarmPool {
         cwd: Option<String>,
         shell: Option<String>,
         count: serde_json::Value,
-        profile: Option<PrewarmProfile>,
     ) -> Result<usize, String> {
         let Some(mut state) = self.lock_for_window(window) else {
             return Ok(0);
         };
         let count = resolve_count(&count);
-        app.state::<ConnectionShellPools>()
-            .set_profile(window, profile.filter(|_| count > 0));
         if let Some(shell) = &shell {
             app.state::<ConnectionShellPools>()
                 .configure(app, shell, count);
@@ -428,11 +456,7 @@ impl ShellPrewarmPool {
             state.target.as_ref().and_then(|t| t.remote.as_ref()),
             &target.remote,
         ) {
-            (Some(a), Some(b)) => {
-                a.same_connection(b)
-                    && (target.key.profile.is_none()
-                        || a.root.canonical_path == b.root.canonical_path)
-            }
+            (Some(a), Some(b)) => a.same_connection(b),
             (None, None) => true,
             _ => false,
         };
@@ -473,10 +497,9 @@ impl ShellPrewarmPool {
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let Some(target) = state.target.as_ref().filter(|t| {
             t.project_path == cwd
-                || t.key.profile.is_none()
-                    && t.remote
-                        .as_ref()
-                        .is_some_and(|r| remote_uri_connection_id(cwd) == Some(&r.connection_id))
+                || t.remote
+                    .as_ref()
+                    .is_some_and(|r| remote_uri_connection_id(cwd) == Some(&r.connection_id))
         }) else {
             return serde_json::json!({"target": 0, "ready": 0, "preparing": 0, "reserved": 0,
                 "reason": if state.target.is_some() { "other_project" } else { "no_target" }});
@@ -649,39 +672,6 @@ impl ShellPrewarmPool {
             .any(|entry| entry.id == id)
     }
 
-    pub(crate) fn reserve_profile(
-        &self,
-        cwd: &str,
-        shell: Option<&str>,
-        profile_id: &str,
-        command: &str,
-    ) -> Option<String> {
-        let (_, mut key) = remote_launch_key(cwd, shell).ok()?;
-        key.profile = Some(PrewarmProfile {
-            cwd: cwd.into(),
-            shell: shell?.into(),
-            profile_id: profile_id.into(),
-            command: command.into(),
-        });
-        self.reserve_key(&key, cwd, false).ok()
-    }
-
-    /// 同 [`Self::reserve_profile`]，命中后改按调用方的终端 id 领取（手机终端需 `mobile-` id）。
-    pub(crate) fn reserve_profile_as(
-        &self,
-        id: &str,
-        cwd: &str,
-        shell: Option<&str>,
-        profile_id: &str,
-        command: &str,
-    ) -> bool {
-        if self.has_entry(id) {
-            return false;
-        }
-        self.reserve_profile(cwd, shell, profile_id, command)
-            .is_some_and(|warm_id| self.rename_reserved(&warm_id, id).is_ok())
-    }
-
     /// 本机项目领取。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn take(
@@ -768,21 +758,14 @@ impl ShellPrewarmPool {
             return None;
         }
         let connection_id = parse_remote_uri(cwd).ok()?.connection_id;
-        let mut key = LaunchKey::from_parts(Some(connection_id), launch);
-        let profile = self.0.lock().ok()?.target.as_ref()?.key.profile.clone();
-        if let Some(profile) = &profile {
-            if profile.cwd != cwd || Some(profile.command.as_str()) != startup {
-                return None;
-            }
-        }
-        key.profile = profile;
-        let native = windows_native_path(working_directory);
+        let key = LaunchKey::from_parts(Some(connection_id), launch);
+        let native = remote_native_directory(working_directory);
         let Some(mut entry) = self.take_key(id, &key, cwd, native.is_some()) else {
             trace("take_miss", serde_json::json!({"remote": true}));
             return None;
         };
         let remote = entry.remote.as_ref()?;
-        if key.profile.is_none() && startup.is_some() && !entry.has_startup_channel() {
+        if startup.is_some() && !entry.has_startup_channel() {
             return None;
         }
         let current = match manager.root_for_uri(cwd, true) {
@@ -796,25 +779,27 @@ impl ShellPrewarmPool {
         if !RemoteTarget::connected(manager, &remote.connection_id, root)
             .is_some_and(|binding| binding.same_connection(remote))
         {
+            trace(
+                "take_stale",
+                serde_json::json!({"remote": true, "reason": "connection"}),
+            );
             return None;
         }
-        if key.profile.is_some() {
-            if remote.root.uri != current.uri
-                || remote.root.canonical_path != current.canonical_path
-                || windows_native_path(working_directory)
-                    != windows_native_path(&remote.root.canonical_path)
-            {
-                return Some(Err("预热终端的项目目录已变化".into()));
-            }
-            let name = daemon_terminal_name(id, launch.name.as_deref());
-            let result = self.attach(id, entry, name, None, size, app, manager).await;
-            if result.is_some() {
-                record_hit(id, true);
-            }
-            return Some(result.ok_or_else(|| "接入预热的终端配置失败，请重新打开终端".into()));
-        }
         let directory = native?;
-        let line = directory_input(&directory, entry.startup_input)?;
+        let input = entry.input_mode().and_then(|mode| {
+            Some((
+                mode,
+                directory_input(&directory, mode, &entry.marker)?,
+                startup_input_line(startup.unwrap_or_default().trim(), mode)?,
+            ))
+        });
+        let Some((_, line, startup_line)) = input else {
+            trace(
+                "take_stale",
+                serde_json::json!({"remote": true, "reason": "input"}),
+            );
+            return None;
+        };
         match entry
             .session
             .as_mut()?
@@ -836,19 +821,14 @@ impl ShellPrewarmPool {
             return Some(Err("预热领取期间项目授权或远程连接已变化".into()));
         }
         entry.remote.as_mut()?.root = current;
-        let startup_input = entry.startup_input;
         // 与正常新建相同的 daemon 名称规则，接回孤儿终端时才能恢复标签名。
         let name = daemon_terminal_name(id, launch.name.as_deref());
         let claim_cwd = Some(working_directory.to_string());
         let result = self
             .attach(id, entry, name, claim_cwd, size, app, manager)
             .await?;
-        {
-            let line = if startup_input {
-                remote_input_line(startup.unwrap_or_default().trim())
-            } else {
-                b"@set \"QINGCODE_PREWARM_NONCE=\" & cls\r".to_vec()
-            };
+        if !startup_line.is_empty() {
+            let line = startup_line;
             let terminal = manager
                 .persistent_terminals
                 .read()
@@ -1040,9 +1020,6 @@ impl ShellPrewarmPool {
                         );
                     }
                 }
-                if paused_reason.is_none() && state.paused_reason == Some("profile_exited") {
-                    continue;
-                }
                 state.paused_reason = paused_reason;
                 let slots = state.refill_slots(target.count);
                 if paused_reason.is_some() || slots == 0 {
@@ -1205,10 +1182,75 @@ pub(in crate::remote_ssh::server::terminal) fn remote_input_line(command: &str) 
     line
 }
 
-fn directory_input(directory: &str, powershell: bool) -> Option<Vec<u8>> {
-    if powershell {
-        return Some(remote_input_line(directory));
+/// POSIX 单引号字面量：`'` 写成 `'\''`。
+fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// 经 PTY 输入一行交付的文本不能含控制字符（换行会拆成多条命令）。
+fn single_line(value: &str) -> bool {
+    !value.chars().any(char::is_control)
+}
+
+fn posix_builtin(shell: PosixShell, command: &str) -> String {
+    match shell {
+        PosixShell::Plain => command.to_string(),
+        PosixShell::Builtin => format!("builtin {command}"),
     }
+}
+
+/// 输出标记的命令。格式串与 nonce 分开写，回显的命令行不会误命中；也不经环境变量，
+/// 不在用户的 Shell 里留下额外变量。
+fn posix_marker(shell: PosixShell, nonce: &str, phase: &str) -> String {
+    format!(
+        "{} 'QC-%s-{phase}!\\n' '{nonce}'",
+        posix_builtin(shell, "printf")
+    )
+}
+
+/// POSIX 预热 Shell 加载完 rc、进入提示符后才会读到这一行，借此确认就绪。
+pub(crate) fn posix_ready_input(shell: PosixShell, nonce: &str) -> Vec<u8> {
+    format!(" {}\r", posix_marker(shell, nonce, "ready")).into_bytes()
+}
+
+/// 接回后交付的一行（可为空）。CMD 清除 nonce 并清屏，不支持配置命令；POSIX 接回时
+/// 屏幕上只有项目目录下的新提示符，普通终端无需输入，配置命令须为单行。
+/// 不能交付时返回 None，照常新建。
+fn startup_input_line(command: &str, mode: RemoteInput) -> Option<Vec<u8>> {
+    match mode {
+        RemoteInput::PowerShell => Some(remote_input_line(command)),
+        RemoteInput::Cmd => command
+            .is_empty()
+            .then(|| b"@set \"QINGCODE_PREWARM_NONCE=\" & cls\r".to_vec()),
+        RemoteInput::Posix(_) if command.is_empty() => Some(Vec::new()),
+        RemoteInput::Posix(_) => single_line(command).then(|| format!("{command}\r").into_bytes()),
+    }
+}
+
+/// 领取时让预热 Shell 进入项目目录并回报结果。POSIX 目录是以 `/` 开头的绝对路径，
+/// 不需要 `--`（fish 等不一定认）。
+fn directory_input(directory: &str, mode: RemoteInput, nonce: &str) -> Option<Vec<u8>> {
+    let shell = match mode {
+        RemoteInput::PowerShell => return Some(remote_input_line(directory)),
+        RemoteInput::Cmd => return cmd_directory_input(directory),
+        RemoteInput::Posix(shell) => shell,
+    };
+    if !single_line(directory) || !directory.starts_with('/') {
+        return None;
+    }
+    Some(
+        format!(
+            " {} {} && {} || {}\r",
+            posix_builtin(shell, "cd"),
+            posix_quote(directory),
+            posix_marker(shell, nonce, "cwd"),
+            posix_marker(shell, nonce, "error"),
+        )
+        .into_bytes(),
+    )
+}
+
+fn cmd_directory_input(directory: &str) -> Option<Vec<u8>> {
     // CMD expands percent variables even inside quotes. Use normal creation for
     // paths the command parser cannot represent literally.
     if directory.contains(['%', '"', '!', '\r', '\n']) || directory.chars().any(char::is_control) {
@@ -1360,17 +1402,6 @@ async fn create_remote_warm_shell(
     target: &Target,
     remote: &RemoteTarget,
 ) -> Result<WarmShell, String> {
-    let directory = if target.key.profile.is_some() {
-        let parsed = parse_remote_uri(&target.project_path)?;
-        let sftp = manager.open_sftp(&remote.connection_id).await?;
-        let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root).await?;
-        if windows_native_path(&canonical) != windows_native_path(&remote.root.canonical_path) {
-            return Err("预热终端需要匹配已注册项目根目录".into());
-        }
-        Some(canonical)
-    } else {
-        None
-    };
     let client_id = manager.daemon_client_id(&remote.connection_id);
     let (transport, session) = open_terminal_daemon_session(
         manager,
@@ -1385,7 +1416,7 @@ async fn create_remote_warm_shell(
         transport.release();
         return Err("预热期间项目授权或连接已变化".into());
     }
-    prepare_remote_shell(target, remote, transport, session, directory).await
+    prepare_remote_shell(target, remote, transport, session).await
 }
 
 async fn prepare_remote_shell(
@@ -1393,7 +1424,6 @@ async fn prepare_remote_shell(
     remote: &RemoteTarget,
     transport: SessionTransport,
     session: DaemonSession,
-    directory: Option<String>,
 ) -> Result<WarmShell, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
@@ -1420,29 +1450,20 @@ async fn prepare_remote_shell(
     if !entry.claim_cwd {
         return Err("远端 daemon 不支持预热终端切换目录".into());
     }
-    if let Some(profile) = &target.key.profile {
-        let directory = directory.ok_or("缺少已校验的预热目录")?;
-        let launch = crate::remote_ssh::terminal_cmds::persistent_profile_launch(
-            &directory,
-            &profile.command,
-            &HashMap::new(),
-            Some(&profile.shell),
-            None,
-        )?;
-        let response = entry.session.as_ref().unwrap().request("pty.createTransient", &serde_json::json!({
-            "cwd": directory, "shell": launch.shell, "args": launch.args, "env": env, "cols": 120, "rows": 30,
-        })).await?;
-        entry.pty_id = response["id"].as_str().ok_or("预热应答缺少 id")?.into();
-        // The program is already running. Replay its initial output on attach.
-        return Ok(entry);
-    }
     entry.marker = uuid::Uuid::new_v4().simple().to_string();
-    env.insert("QINGCODE_PREWARM_NONCE".into(), entry.marker.clone());
     let (args, startup_input) = remote_ready_args(&target.launch);
-    if !startup_input && target.launch.resolved_shell != "cmd" {
-        return Err("该远端 Shell 不支持连接预热".into());
+    let mode = RemoteInput::for_launch(&remote.root.canonical_path, &target.launch, startup_input)
+        .ok_or("该远端 Shell 不支持连接预热")?;
+    if !matches!(mode, RemoteInput::Posix(_)) {
+        env.insert("QINGCODE_PREWARM_NONCE".into(), entry.marker.clone());
     }
-    entry.startup_input = startup_input;
+    // POSIX Shell 不改启动参数，正常加载 rc；就绪由下面的输入行确认。
+    let args = if matches!(mode, RemoteInput::Posix(_)) {
+        target.launch.args.clone()
+    } else {
+        args
+    };
+    entry.startup_input = mode == RemoteInput::PowerShell;
     let session = entry.session.as_mut().unwrap();
     let response = session
         .request(
@@ -1458,12 +1479,23 @@ async fn prepare_remote_shell(
         .and_then(|value| value.as_str())
         .ok_or("预热应答缺少 id")?
         .to_string();
+    if let RemoteInput::Posix(shell) = mode {
+        // 输入先进 PTY 缓冲，Shell 加载完 rc 进入提示符后才读取执行。
+        send_input_to_session(
+            session,
+            &entry.pty_id,
+            &AtomicU64::new(0),
+            posix_ready_input(shell, &entry.marker),
+        )
+        .await
+        .map_err(|e| e.0)?;
+    }
     entry.from_seq = tokio::time::timeout(
         READY_TIMEOUT,
         session.wait_shell_marker(&entry.pty_id, &entry.marker, "ready"),
     )
     .await
-    .map_err(|_| "远端 PowerShell profile 未在时限内就绪".to_string())??;
+    .map_err(|_| "远端 Shell 配置未在时限内就绪".to_string())??;
     Ok(entry)
 }
 

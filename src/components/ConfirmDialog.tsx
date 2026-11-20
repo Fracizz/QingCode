@@ -10,17 +10,17 @@ const KIND_META: Record<
   warning: {
     icon: AlertTriangle,
     iconClass: 'text-warn bg-warn/10',
-    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm',
+    confirmClass: 'btn-primary',
   },
   danger: {
     icon: Trash2,
     iconClass: 'text-danger bg-danger/10',
-    confirmClass: 'bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm',
+    confirmClass: 'btn-danger',
   },
   info: {
     icon: Info,
     iconClass: 'text-accent bg-accent/10',
-    confirmClass: 'bg-action hover:bg-action/90 text-on-action shadow-sm',
+    confirmClass: 'btn-primary',
   },
 }
 
@@ -52,15 +52,13 @@ export default function ConfirmDialog() {
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        className={`ui-font-scaled modal-content-enter relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3 ${
-          wide ? 'max-w-[520px]' : 'max-w-[420px]'
-        }`}
+        className={`modal-panel ui-font-scaled modal-content-enter ${wide ? 'modal-md' : 'modal-sm'}`}
       >
         <div className="flex gap-3.5 px-5 pt-5 pb-4">
           <div
             className={`mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border/60 ${meta.iconClass}`}
           >
-            <Icon size={18} />
+            <Icon size={16} />
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="confirm-title" className="text-ui-lg font-semibold text-fg">
@@ -105,7 +103,7 @@ export default function ConfirmDialog() {
           <button
             type="button"
             data-modal-autofocus
-            className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary"
             onClick={() => answer(false)}
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
@@ -113,7 +111,7 @@ export default function ConfirmDialog() {
           {hasAlt && (
             <button
               type="button"
-              className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg hover:bg-bg-hover transition-colors"
+              className="btn btn-secondary"
               onClick={() => answer('alt')}
             >
               {t(request.altLabel!)}
@@ -121,7 +119,7 @@ export default function ConfirmDialog() {
           )}
           <button
             type="button"
-            className={`px-3.5 py-1.5 text-ui font-medium rounded-md transition-all duration-150 ${meta.confirmClass}`}
+            className={`btn ${meta.confirmClass}`}
             onClick={() => answer(true)}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

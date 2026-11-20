@@ -71,7 +71,7 @@ export default function TerminalStatusMark({
     return (
       <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
         <span role="img" aria-label={label} data-terminal-activity="running" className="flex text-accent">
-          <LoaderCircle size={12} strokeWidth={2.5} className="animate-spin" aria-hidden="true" />
+          <LoaderCircle size={12} className="animate-spin" aria-hidden="true" />
         </span>
       </Tooltip>
     )

@@ -652,7 +652,7 @@ export default function ProjectPicker() {
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
                     onContextMenu={event => openProjectContextMenu(event, project)}
-                    className={`group flex items-center gap-2 rounded px-2.5 py-1.5 text-ui outline-none
+                    className={`group flex items-center gap-2 rounded-md px-2.5 py-1.5 text-ui outline-none
                       ${
                         isCurrent
                           ? 'bg-bg-active text-fg'
@@ -665,7 +665,7 @@ export default function ProjectPicker() {
                       {unavailable ? (
                         <AlertTriangle size={14} className="text-warn" />
                       ) : isCurrent ? (
-                        <Check size={13} className="text-brand" />
+                        <Check size={14} className="text-brand" />
                       ) : (
                         <ProjectKindIcon
                           project={project}
@@ -710,7 +710,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('重命名项目')}
-                          className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-active ${
+                          className={`icon-btn hover:bg-bg-active ${
                             unavailable
                               ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
                               : ''
@@ -720,7 +720,7 @@ export default function ProjectPicker() {
                             handleRename(project)
                           }}
                         >
-                          <Pencil size={13} />
+                          <Pencil size={14} />
                         </button>
                       </Tooltip>
                       {unavailable ? (
@@ -732,7 +732,7 @@ export default function ProjectPicker() {
                           <button
                             type="button"
                             aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
-                            className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
+                            className="icon-btn text-warn hover:bg-bg-active hover:text-fg"
                             onClick={event => {
                               event.stopPropagation()
                               if (project.kind === 'ssh') {
@@ -742,7 +742,7 @@ export default function ProjectPicker() {
                               }
                             }}
                           >
-                            <LocateFixed size={13} />
+                            <LocateFixed size={14} />
                           </button>
                         </Tooltip>
                       ) : project.kind === 'ssh' ? null : (
@@ -754,13 +754,13 @@ export default function ProjectPicker() {
                           <button
                             type="button"
                             aria-label={t('在文件管理器中打开')}
-                            className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-active"
+                            className="icon-btn hover:bg-bg-active"
                             onClick={event => {
                               event.stopPropagation()
                               void handleOpenInExplorer(project.path)
                             }}
                           >
-                            <ExternalLink size={13} />
+                            <ExternalLink size={14} />
                           </button>
                         </Tooltip>
                       )}
@@ -772,7 +772,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                          className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded hover:bg-bg-active text-fg-dim ${
+                          className={`icon-btn hover:bg-bg-active ${
                             unavailable ? 'hover:text-danger' : 'hover:text-fg'
                           }`}
                           onClick={event => {
@@ -780,7 +780,7 @@ export default function ProjectPicker() {
                             handleRemove(project)
                           }}
                         >
-                          {unavailable ? <X size={13} /> : <EyeOff size={13} />}
+                          {unavailable ? <X size={14} /> : <EyeOff size={14} />}
                         </button>
                       </Tooltip>
                     </span>
@@ -793,7 +793,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageProjects}
-                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <ListChecks size={14} />
@@ -804,7 +804,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageWorkspaces}
-                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-hover focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Layers size={14} />

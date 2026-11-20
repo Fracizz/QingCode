@@ -14,8 +14,8 @@ export default function ChoiceDialog() {
   if (progress) return (
     <ModalOverlay zIndex={INTERRUPT_MODAL_Z}>
       <div role="dialog" aria-modal="true" aria-label={t('退出 QingCode')}
-        className="flex w-full max-w-[360px] items-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-5 py-4 shadow-elevation-3">
-        <LoaderCircle size={18} aria-hidden className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        className="modal-panel modal-sm flex items-center gap-3 px-5 py-4">
+        <LoaderCircle size={16} aria-hidden className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
         <p role="status" className="text-ui text-fg">{progress}</p>
       </div>
     </ModalOverlay>
@@ -25,10 +25,10 @@ export default function ChoiceDialog() {
   const markdownDetail = Boolean(request.detailMarkdown && request.detail)
   const wideActions = request.wideActions
   const panelLayout = markdownDetail
-    ? 'flex max-h-[80vh] max-w-[min(90vw,640px)] flex-col overflow-hidden'
+    ? 'modal-lg flex max-h-[80vh] flex-col overflow-hidden'
     : wideActions
-      ? 'max-h-[calc(100dvh-2rem)] max-w-[560px] overflow-y-auto'
-      : 'max-w-[460px]'
+      ? 'modal-md max-h-[calc(100dvh-2rem)] overflow-y-auto'
+      : 'modal-md'
 
   return (
     <ModalOverlay onDismiss={() => answer(null)} zIndex={INTERRUPT_MODAL_Z}>
@@ -37,11 +37,11 @@ export default function ChoiceDialog() {
         aria-modal="true"
         aria-labelledby="choice-title"
         aria-describedby="choice-message"
-        className={`modal-content-enter relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3 ${panelLayout} ${wideActions ? '@container/choice text-ui' : ''}`}
+        className={`modal-panel modal-content-enter ${panelLayout} ${wideActions ? '@container/choice text-ui' : ''}`}
       >
         <div className={`flex gap-3.5 px-5 pt-5 pb-4 ${markdownDetail ? 'flex-shrink-0' : ''}`}>
           <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border/60 bg-warn/10 text-warn">
-            <AlertTriangle size={18} />
+            <AlertTriangle size={16} />
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="choice-title" className="text-ui-lg font-semibold text-fg">
@@ -83,10 +83,10 @@ export default function ChoiceDialog() {
                 data-modal-autofocus={isPrimary || undefined}
                 className={
                   option.danger
-                    ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm transition-all duration-150'
+                    ? 'btn btn-danger'
                     : isPrimary
-                      ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150'
-                      : 'px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
+                      ? 'btn btn-primary'
+                      : 'btn btn-secondary'
                 }
                 onClick={() => answer(option.id)}
               >

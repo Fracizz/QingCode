@@ -60,7 +60,7 @@ fn remote_powershell_waits_for_a_hidden_startup_line_after_its_setup() {
     let (args, startup) = remote_ready_args(&launch);
     assert!(!startup);
     assert!(args.last().unwrap().contains("-ready!"));
-    assert!(directory_input(r"C:\work\%PATH%", false).is_none());
+    assert!(directory_input(r"C:\work\%PATH%", RemoteInput::Cmd, "n").is_none());
 }
 
 #[test]
@@ -641,7 +641,6 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
             target.remote.as_ref().unwrap(),
             SessionTransport::Local,
             session,
-            None,
         )
         .await
         .unwrap();
@@ -652,6 +651,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
         let path = dir.path().join(format!("项目 [{i}] & test"));
         std::fs::create_dir(&path).unwrap();
         let cwd = path.to_str().unwrap();
+        let mode = entry.input_mode().unwrap();
         let session = entry.session.as_mut().unwrap();
         let start = Instant::now();
         if i == 3 {
@@ -670,7 +670,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
             .enter_prewarm_directory(
                 &entry.pty_id,
                 &entry.marker,
-                directory_input(cwd, entry.startup_input).unwrap(),
+                directory_input(cwd, mode, &entry.marker).unwrap(),
             )
             .await
             .unwrap();
@@ -757,133 +757,184 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
 }
 
 #[test]
-fn profile_requires_same_connection_project_profile_shell_and_command() {
-    let cwd = "ssh://win/D:/work/a";
-    let pool = ShellPrewarmPool::default();
-    let mut entry = remote_shell("prepared", cwd, true);
-    entry.key.profile = Some(PrewarmProfile {
-        cwd: cwd.into(),
-        shell: "auto".into(),
-        profile_id: "agent".into(),
-        command: "claude".into(),
-    });
-    assert!(!entry.can_rebind());
-    pool.0.lock().unwrap().shells.push(entry);
-    for (path, shell, id, cmd) in [
-        ("ssh://other/D:/work/a", "auto", "agent", "claude"),
-        ("ssh://win/D:/work/b", "auto", "agent", "claude"),
-        (cwd, "cmd", "agent", "claude"),
-        (cwd, "auto", "other", "claude"),
-        (cwd, "auto", "agent", "claude --resume"),
-    ] {
-        assert!(pool.reserve_profile(path, Some(shell), id, cmd).is_none());
-    }
-    assert!(pool.reserve(cwd, Some("auto"), true).is_err());
+fn posix_remotes_prewarm_bash_zsh_sh_and_the_login_shell() {
+    let launch = |shell| {
+        crate::remote_ssh::terminal_cmds::persistent_shell_launch("/srv/app", Some(shell)).unwrap()
+    };
+    let mode = |shell| RemoteInput::for_launch("/srv/app", &launch(shell), false);
+    assert_eq!(mode("bash"), Some(RemoteInput::Posix(PosixShell::Builtin)));
+    assert_eq!(mode("zsh"), Some(RemoteInput::Posix(PosixShell::Builtin)));
+    assert_eq!(mode("sh"), Some(RemoteInput::Posix(PosixShell::Plain)));
+    // 「自动」由 daemon 启动登录用户的 $SHELL，只用各家通用的写法。
+    assert_eq!(mode("auto"), Some(RemoteInput::Posix(PosixShell::Plain)));
+    assert!(launch("auto").shell.is_none());
+    // POSIX 不改启动参数，rc 照常加载。
+    assert!(launch("bash").args.is_empty());
+    let mut unknown = launch("bash");
+    unknown.resolved_shell = "nu".into();
+    assert_eq!(RemoteInput::for_launch("/srv/app", &unknown, false), None);
+    // Windows 远端仍只支持 PowerShell 与 CMD。
     assert_eq!(
-        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
-            .as_deref(),
-        Some("prepared")
+        RemoteInput::for_launch("/C:/work", &launch("bash"), false),
+        None
     );
-    assert!(pool
-        .reserve_profile(cwd, Some("auto"), "agent", "claude")
-        .is_none());
 }
 
 #[test]
-fn phone_claims_prepared_profile_under_its_own_terminal_id() {
-    let cwd = "ssh://win/D:/work/a";
-    let pool = ShellPrewarmPool::default();
-    let mut entry = remote_shell("prepared", cwd, true);
-    entry.key.profile = Some(PrewarmProfile {
-        cwd: cwd.into(),
-        shell: "auto".into(),
-        profile_id: "agent".into(),
-        command: "claude".into(),
-    });
-    pool.0.lock().unwrap().shells.push(entry);
-    assert!(!pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "other", "claude"));
-    assert!(!pool.has_entry("mobile-1"));
-    assert!(pool.reserve_profile_as("mobile-1", cwd, Some("auto"), "agent", "claude"));
-    assert!(pool.has_entry("mobile-1"));
-    assert!(!pool.has_entry("prepared"));
-    assert!(!pool.reserve_profile_as("mobile-2", cwd, Some("auto"), "agent", "claude"));
+fn posix_directory_and_startup_lines_are_single_quoted_and_skip_history() {
+    let mode = RemoteInput::Posix(PosixShell::Builtin);
+    let line = directory_input("/srv/it's a [dir] & $HOME", mode, "abc").unwrap();
+    assert_eq!(
+        String::from_utf8(line).unwrap(),
+        concat!(
+            " builtin cd '/srv/it'\\''s a [dir] & $HOME'",
+            " && builtin printf 'QC-%s-cwd!\\n' 'abc'",
+            " || builtin printf 'QC-%s-error!\\n' 'abc'\r"
+        )
+    );
+    let plain = directory_input("/srv/a", RemoteInput::Posix(PosixShell::Plain), "abc").unwrap();
+    assert!(String::from_utf8(plain)
+        .unwrap()
+        .starts_with(" cd '/srv/a' && printf "));
+    assert!(directory_input("/srv/a\nrm -rf ~", mode, "abc").is_none());
+    assert!(directory_input("relative", mode, "abc").is_none());
+    // 格式串与 nonce 分开写：回显的命令行不含完整标记。
+    let ready = String::from_utf8(posix_ready_input(PosixShell::Builtin, "abc")).unwrap();
+    assert!(ready.starts_with(' ') && ready.ends_with('\r'));
+    assert!(!ready.contains("QC-abc-ready!"));
+
+    // 普通终端接回后不输入任何内容；配置命令须为单行。
+    assert_eq!(startup_input_line("", mode), Some(Vec::new()));
+    assert_eq!(
+        startup_input_line("claude --resume", mode),
+        Some(b"claude --resume\r".to_vec())
+    );
+    assert!(startup_input_line("echo a\necho b", mode).is_none());
+    // CMD 只接普通终端。
+    assert!(startup_input_line("dir", RemoteInput::Cmd).is_none());
+    assert!(startup_input_line("", RemoteInput::Cmd).is_some());
 }
 
-#[cfg(windows)]
+#[test]
+fn posix_remote_shells_can_move_to_another_project_and_take_startup_commands() {
+    let project_a = "ssh://linux/srv/a";
+    let project_b = "ssh://linux/srv/b";
+    let pool = ShellPrewarmPool::default();
+    let mut entry = remote_shell("warm", project_a, true);
+    entry.startup_input = false;
+    (entry.launch, entry.key) = remote_launch_key(project_a, Some("bash")).unwrap();
+    assert!(entry.can_rebind());
+    assert!(entry.has_startup_channel());
+    let key = entry.key.clone();
+    pool.0.lock().unwrap().shells.push(entry);
+    assert!(pool.reserve_key(&key, project_b, true).is_ok());
+
+    // daemon 不支持改记目录时不能跨项目领取。
+    let mut old = remote_shell("old", project_a, false);
+    (old.launch, old.key) = remote_launch_key(project_a, Some("bash")).unwrap();
+    assert!(!old.can_rebind());
+}
+
+/// 真实 daemon + bash：预热、进入领取项目、接回后命令只执行一次。
+/// Windows 的 daemon 只托管 PowerShell / CMD，此用例只在 POSIX 主机上运行。
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-async fn profile_runs_before_claim_and_its_screen_is_replayed() {
+async fn posix_remote_shell_enters_the_claiming_project_before_running_the_command() {
     use qingcode_server::daemon::{DaemonOptions, RunDir};
     let dir = tempfile::tempdir().unwrap();
     let run_dir = RunDir::resolve(Some(dir.path())).unwrap();
-    let daemon = tokio::spawn(qingcode_server::daemon::run_async(DaemonOptions {
+    let options = DaemonOptions {
         state_dir: Some(dir.path().into()),
         ..Default::default()
-    }));
-    let (stream, token) = tokio::time::timeout(READY_TIMEOUT, async {
-        loop {
-            if let Ok(token) = run_dir.read_token() {
-                if let Ok(stream) =
-                    qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir())).await
-                {
-                    return (stream, token);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let session = DaemonSession::open_local(stream, "test:preset", token)
-        .await
-        .unwrap();
-    let path = dir.path().join("preset project");
-    std::fs::create_dir(&path).unwrap();
-    let directory = path.to_str().unwrap();
-    let uri = format!("ssh://test/{}", directory.replace('\\', "/"));
-    let mut target = target_for(&remote_shell("fixture", &uri, true), 1);
-    let command = "[Console]::WriteLine('QC-PROFILE-READY'); [IO.File]::AppendAllText((Join-Path $PWD 'once.txt'), 'X')";
-    target.key.profile = Some(PrewarmProfile {
-        cwd: uri,
-        shell: "powershell".into(),
-        profile_id: "fixture".into(),
-        command: command.into(),
-    });
-    let entry = prepare_remote_shell(
-        &target,
-        target.remote.as_ref().unwrap(),
-        SessionTransport::Local,
-        session,
-        Some(directory.into()),
-    )
-    .await
-    .unwrap();
+    };
+    let daemon = tokio::spawn(qingcode_server::daemon::run_async(options));
     tokio::time::timeout(READY_TIMEOUT, async {
-        while !path.join("once.txt").is_file() {
+        while !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("profile must run in project cwd before the tab is opened");
-    let session = entry.session.as_ref().unwrap();
-    session
-        .request("pty.claim", &serde_json::json!({"id":entry.pty_id}))
+    .unwrap();
+    let anchor = format!("ssh://conn-1{}", dir.path().display());
+    let mut ready = Vec::new();
+    for shell in ["bash", "sh", "bash"] {
+        let mut entry = remote_shell("test", &anchor, true);
+        entry.startup_input = false;
+        let mut target = target_for(&entry, 2);
+        (target.launch, target.key) = remote_launch_key(&anchor, Some(shell)).unwrap();
+        target.cwd.clear();
+        let stream = qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir()))
+            .await
+            .unwrap();
+        let session =
+            DaemonSession::open_local(stream, "test:posix", run_dir.read_token().unwrap())
+                .await
+                .unwrap();
+        let start = Instant::now();
+        let entry = prepare_remote_shell(
+            &target,
+            target.remote.as_ref().unwrap(),
+            SessionTransport::Local,
+            session,
+        )
         .await
         .unwrap();
-    let output = session
-        .attach(&entry.pty_id, entry.from_seq, true)
+        println!("{shell} create-to-ready {:?}", start.elapsed());
+        ready.push(entry);
+    }
+    for (i, mut entry) in ready.into_iter().enumerate() {
+        let path = dir.path().join(format!("项目 [{i}] & it's"));
+        std::fs::create_dir(&path).unwrap();
+        let cwd = path.to_str().unwrap().to_string();
+        let mode = entry.input_mode().unwrap();
+        let marker = entry.marker.clone();
+        let session = entry.session.as_mut().unwrap();
+        if i == 2 {
+            let missing = directory_input(&format!("{cwd}/missing"), mode, &marker).unwrap();
+            assert!(session
+                .enter_prewarm_directory(&entry.pty_id, &marker, missing)
+                .await
+                .is_err());
+            continue;
+        }
+        let start = Instant::now();
+        let line = directory_input(&cwd, mode, &marker).unwrap();
+        let from_seq = session
+            .enter_prewarm_directory(&entry.pty_id, &marker, line)
+            .await
+            .unwrap();
+        session
+            .request(
+                "pty.claim",
+                &serde_json::json!({"id":entry.pty_id, "cwd":cwd}),
+            )
+            .await
+            .unwrap();
+        let attach = session.attach(&entry.pty_id, from_seq, true).await.unwrap();
+        let input_seq = AtomicU64::new(attach.response["nextInputSeq"].as_u64().unwrap());
+        let line = startup_input_line("printf X >> once.txt", mode).unwrap();
+        send_input_to_session(session, &entry.pty_id, &input_seq, line)
+            .await
+            .unwrap();
+        let file = path.join("once.txt");
+        tokio::time::timeout(READY_TIMEOUT, async {
+            while !std::fs::read_to_string(&file).is_ok_and(|v| v == "X") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
         .await
-        .unwrap();
-    let bytes = output
-        .chunks
-        .into_iter()
-        .flat_map(|c| c.data)
-        .collect::<Vec<_>>();
-    assert!(String::from_utf8_lossy(&bytes).contains("QC-PROFILE-READY"));
-    assert_eq!(std::fs::read_to_string(path.join("once.txt")).unwrap(), "X");
-    session
-        .request("pty.kill", &serde_json::json!({"id":entry.pty_id}))
-        .await
-        .unwrap();
-    drop(entry);
+        .expect("command must execute once in the claiming project");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "X");
+        println!(
+            "{} claim-to-output {:?}",
+            entry.launch.resolved_shell,
+            start.elapsed()
+        );
+        session
+            .request("pty.kill", &serde_json::json!({"id":entry.pty_id}))
+            .await
+            .unwrap();
+    }
     daemon.abort();
 }

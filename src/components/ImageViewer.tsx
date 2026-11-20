@@ -401,12 +401,12 @@ export default function ImageViewer({ tab }: Props) {
   if (error) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-bg text-fg-muted px-6 text-center">
-        <ImageOff size={32} className="text-warn" aria-hidden />
+        <ImageOff size={28} strokeWidth={1.5} className="text-warn" aria-hidden />
         <p className="text-ui-lg">{t('加载图片失败')}</p>
         <p className="max-w-xl break-all font-mono text-ui-sm text-fg-dim">{error}</p>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-ui-sm text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+          className="btn btn-secondary"
           onClick={() => setAttempt(count => count + 1)}
         >
           <RotateCw size={14} />
@@ -427,7 +427,7 @@ export default function ImageViewer({ tab }: Props) {
             disabled={!natural || renderScale <= MIN_SCALE}
             onClick={zoomOut}
           >
-            <ZoomOut size={13} />
+            <ZoomOut size={14} />
           </ToolbarButton>
           <Tooltip label={t('滚轮缩放，拖拽平移，双击切换适应窗口 / 原始大小')} side="bottom">
             <span
@@ -442,7 +442,7 @@ export default function ImageViewer({ tab }: Props) {
             disabled={!natural || renderScale >= MAX_SCALE}
             onClick={zoomIn}
           >
-            <ZoomIn size={13} />
+            <ZoomIn size={14} />
           </ToolbarButton>
           <span className="mx-1 h-3.5 w-px bg-border" aria-hidden />
           <ToolbarButton label={`${t('适应窗口')} (0)`} active={view.fit} onClick={fitToWindow}>
@@ -459,10 +459,10 @@ export default function ImageViewer({ tab }: Props) {
             disabled={!natural}
             onClick={() => rotate(-1)}
           >
-            <RotateCcw size={13} />
+            <RotateCcw size={14} />
           </ToolbarButton>
           <ToolbarButton label={`${t('向右旋转')} (R)`} disabled={!natural} onClick={() => rotate(1)}>
-            <RotateCw size={13} />
+            <RotateCw size={14} />
           </ToolbarButton>
         </span>
       </div>

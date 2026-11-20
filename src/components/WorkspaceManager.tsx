@@ -121,7 +121,7 @@ export default function WorkspaceManager() {
         aria-modal="true"
         aria-labelledby="workspace-manager-title"
         aria-describedby="workspace-manager-description"
-        className="ui-font-scaled modal-content-enter relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter max-h-[80vh] flex flex-col"
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
@@ -136,9 +136,9 @@ export default function WorkspaceManager() {
             type="button"
             aria-label={t('关闭')}
             onClick={closeWorkspaceManager}
-            className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+            className="icon-btn"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
 
@@ -147,9 +147,9 @@ export default function WorkspaceManager() {
             type="button"
             disabled={busyId === '__save__'}
             onClick={() => void handleSaveCurrent()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+            className="btn btn-secondary btn-sm"
           >
-            <Plus size={13} /> {t('将顶栏项目保存为工作区')}
+            <Plus size={12} /> {t('将顶栏项目保存为工作区')}
           </button>
           <span className="text-ui-sm text-fg-muted">
             {t('将当前顶栏可见项目及其标签/终端快照打包')}
@@ -160,7 +160,7 @@ export default function WorkspaceManager() {
           {workspaces.length === 0 ? (
             <EmptyState
               className="py-10"
-              icon={<Layers size={28} strokeWidth={1.2} />}
+              icon={<Layers size={28} strokeWidth={1.5} />}
               title={t('暂无多项目工作区。可先在顶栏显示相关项目，再点上方保存。')}
             />
           ) : (
@@ -176,7 +176,7 @@ export default function WorkspaceManager() {
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 text-ui text-fg font-medium">
-                          {isActive && <Check size={13} className="text-accent flex-shrink-0" />}
+                          {isActive && <Check size={14} className="text-accent flex-shrink-0" />}
                           <span className="truncate">
                             {formatNamedWorkspaceName(workspace.name, t)}
                           </span>
@@ -238,7 +238,7 @@ export default function WorkspaceManager() {
           <button
             type="button"
             onClick={closeWorkspaceManager}
-            className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
+            className="btn btn-primary"
           >
             {t('完成')}
           </button>
@@ -268,10 +268,7 @@ function ActBtn({
         aria-label={label}
         disabled={disabled}
         onClick={onClick}
-        className={`p-1 rounded transition-colors disabled:opacity-40
-          ${danger
-            ? 'text-fg-dim hover:text-danger'
-            : 'text-fg-dim hover:text-fg hover:bg-bg-active'}`}
+        className={`icon-btn hover:bg-bg-active ${danger ? 'hover:text-danger' : ''}`}
       >
         {children}
       </button>

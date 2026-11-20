@@ -95,7 +95,7 @@ export interface TerminalTab {
   /** Window-local monotonic timestamp for an authorized new tab, consumed on first spawn. */
   openRequestedAt?: number
   /** Outcome of the current launch; old/restored tabs may lack this observation. */
-  prewarm?: { outcome: 'reserved' | 'hit' | 'miss' | 'unknown'; reason?: string; kind?: 'profile' }
+  prewarm?: { outcome: 'reserved' | 'hit' | 'miss' | 'unknown'; reason?: string }
   id: string
   name: string
   projectId: string

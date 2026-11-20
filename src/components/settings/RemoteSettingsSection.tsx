@@ -52,7 +52,7 @@ export default function RemoteSettingsSection({
         >
           <button
             type="button"
-            className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
+            className="btn btn-secondary btn-sm"
             onClick={() => useUIStore.getState().openRemoteConnections()}
           >
             {t('管理远程连接…')}

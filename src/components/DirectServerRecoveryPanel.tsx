@@ -56,7 +56,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     setNotice(outcome.notice ?? '')
   }
   const configure = () => { onConfigure?.(); useUIStore.getState().openRemoteConnections() }
-  const button = 'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
+  const button = 'btn btn-secondary border-dialog-border'
 
   return <section aria-label={t('启动与开机自启')} className="@container/recovery min-w-0 space-y-2.5 rounded border border-dialog-border bg-dialog-sidebar p-3">
     <ServerAutoStartSwitch checked={autoStart} disabled={busy} onChange={setAutoStart} />
@@ -74,7 +74,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
         />
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy} onClick={() => void run(true)} className={`${button} inline-flex items-center gap-1.5`}>{busy ? <LoaderCircle size={13} className="animate-spin" /> : <Play size={13} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
+        <button type="button" disabled={busy} onClick={() => void run(true)} className={button}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
         <button type="button" disabled={busy} onClick={() => void run(false)} className={button}>{t('应用自启设置')}</button>
       </div>
     </> : <>

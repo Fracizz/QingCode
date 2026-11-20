@@ -55,10 +55,13 @@ function terminalTabPaddingClass(status: TerminalTab['status']): string {
 function TerminalPaneHeader({
   children,
   focused = false,
+  compact = false,
   onTitlePointerDown,
 }: {
   children?: ReactNode
   focused?: boolean
+  /** 多格终端：每格都有标签栏，格首只留图标，不再重复「终端」字样。 */
+  compact?: boolean
   onTitlePointerDown?: () => void
 }) {
   const { t } = useI18n()
@@ -70,13 +73,14 @@ function TerminalPaneHeader({
       data-terminal-pane-focused={focused ? 'true' : undefined}
     >
       <div
-        className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-ui-xs font-semibold tracking-wide ${
-          focused ? 'text-fg' : 'text-fg-muted'
-        }`}
+        data-terminal-pane-title=""
+        className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border text-ui-xs font-semibold tracking-wide ${
+          compact ? 'px-2.5' : 'px-3'
+        } ${focused ? 'text-fg' : 'text-fg-muted'}`}
         onPointerDown={onTitlePointerDown}
       >
-        <TerminalIcon size={13} />{' '}
-        {t('终端')}
+        <TerminalIcon size={14} />
+        {!compact && t('终端')}
       </div>
       {children}
     </div>
@@ -146,11 +150,11 @@ export default function TerminalTabs({
   // 面板收起方向跟随终端所在位置：工作台终端在中列，向左收。
   const collapseIcon =
     panelLayout === 'terminalWorkbench' ? (
-      <ChevronLeft size={15} />
+      <ChevronLeft size={16} />
     ) : terminalPositionForTemplate(panelLayout) === 'side' ? (
-      <ChevronRight size={15} />
+      <ChevronRight size={16} />
     ) : (
-      <ChevronDown size={15} />
+      <ChevronDown size={16} />
     )
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
   const activityIndicator = useSyncExternalStore(
@@ -241,6 +245,7 @@ export default function TerminalTabs({
     <>
       <TerminalPaneHeader
         focused={focused}
+        compact={Boolean(pane)}
         onTitlePointerDown={pane ? () => setTerminalFocusPane(pane) : undefined}
       >
         {/* Tabs + `+` hug content on the left (same pattern as project chips). */}
@@ -368,7 +373,7 @@ export default function TerminalTabs({
                       {isCloseArmed ? (
                         <Circle size={9} fill="currentColor" />
                       ) : (
-                        <X size={13} className="opacity-60 group-hover:opacity-100" />
+                        <X size={14} className="opacity-60 group-hover:opacity-100" />
                       )}
                     </button>
                   </Tooltip>
@@ -528,8 +533,8 @@ export default function TerminalTabs({
                 aria-hidden="true"
                 className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-px -translate-y-1/2 bg-border-strong"
               />
-              <List size={15} />
-              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
+              <List size={16} />
+              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-ui-2xs font-semibold leading-[12px] text-on-action">
                 {hiddenCount > 99 ? '99+' : hiddenCount}
               </span>
             </button>
@@ -555,7 +560,7 @@ export default function TerminalTabs({
                 className="flex ui-chip h-6 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
                 onClick={() => void handleCloseAllProject()}
               >
-                <X size={15} />
+                <X size={16} />
               </button>
             </Tooltip>
           </div>

@@ -197,7 +197,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           aria-label={t('远端服务状态未知')}
           onClick={() => setRefreshKey(key => key + 1)}
         >
-          <AlertCircle size={13} className="text-warn" aria-hidden />
+          <AlertCircle size={12} className="text-warn" aria-hidden />
           <span className="truncate">{t('服务状态未知')}</span>
         </button>
       </StatusTip>

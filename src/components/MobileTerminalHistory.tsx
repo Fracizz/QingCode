@@ -149,13 +149,13 @@ function HistoryPages({ id, preview, startAtTop, scrollUp = 0, style, onReturn }
         if (event.deltaY < 0 && !event.ctrlKey && !event.metaKey) prefetch(event.currentTarget)
       }}
       style={style}
-      className="min-h-0 flex-1 select-text overflow-auto px-3 py-2 font-mono text-[13px] leading-[1.45] [overflow-anchor:none]"
+      className="min-h-0 flex-1 select-text overflow-auto px-3 py-2 font-mono text-ui leading-[1.45] [overflow-anchor:none]"
     >
       {more ? (
         <div className="mb-2 text-ui-sm">
           {error && <p role="alert" className="text-danger">{t('读取终端历史失败：{error}', { error })}</p>}
           <button type="button" disabled={loading} onClick={() => void loadOlder()}
-            className="rounded border border-border px-2 py-0.5 text-accent hover:bg-bg-hover disabled:opacity-50">
+            className="btn btn-secondary btn-sm">
             {loading ? t('正在加载历史…') : error ? t('重试') : t('加载更早输出')}
           </button>
         </div>

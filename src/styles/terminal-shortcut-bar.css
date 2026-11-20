@@ -11,6 +11,13 @@
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-terminal);
   overflow: hidden;
+  transition: opacity var(--motion-fast) var(--ease-soft);
+}
+
+/* 双 / 四终端：只有聚焦格显示快捷键栏，避免一屏重复四份。其他格只把栏淡出、保留占位高度，
+   切换聚焦不改变终端行数（不触发 PTY 改尺寸和 TUI 重绘）；鼠标移到栏上或键盘进入时再显示。 */
+[data-terminal-pane-shell]:not([data-terminal-active]) .terminal-shortcut-bar:not(:hover):not(:focus-within) {
+  opacity: 0;
 }
 
 .terminal-shortcut-keys {

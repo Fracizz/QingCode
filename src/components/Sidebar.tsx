@@ -1677,7 +1677,7 @@ export default function Sidebar() {
         className={`${EXPLORER_HEADING_INSET} ${EXPLORER_HEADING_ROW} justify-between pr-4 text-ui-xs font-semibold tracking-wide text-fg-muted`}
       >
         <span className={`${EXPLORER_HEADING_GRID} min-w-0`}>
-          <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
+          <FolderOpen size={16} className={EXPLORER_HEADING_ICON} />
           <span className={EXPLORER_HEADING_LABEL}>{t('资源管理器')}</span>
         </span>
         <div className="flex items-center gap-0.5">
@@ -1687,10 +1687,9 @@ export default function Sidebar() {
               onClick={handleLocateActiveFile}
               disabled={!activeTabPath}
               aria-label={t('在侧边栏定位当前文件')}
-              className={`p-1 rounded transition-colors flex-shrink-0
-              ${!activeTabPath ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              className="icon-btn"
             >
-              <LocateFixed size={13} />
+              <LocateFixed size={14} />
             </button>
           </Tooltip>
           <Tooltip label={t('刷新')} side="bottom">
@@ -1700,11 +1699,10 @@ export default function Sidebar() {
               disabled={refreshing || !currentProject}
               aria-label={t('刷新')}
               aria-busy={refreshing}
-              className={`p-1 rounded transition-colors flex-shrink-0
-              ${!currentProject ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              className={`icon-btn ${currentProject ? 'disabled:opacity-100' : ''}`}
             >
               <RefreshCw
-                size={13}
+                size={14}
                 className={refreshing ? 'text-accent animate-spin' : undefined}
               />
             </button>
@@ -1719,7 +1717,7 @@ export default function Sidebar() {
             <p className="text-ui text-fg-muted mb-3">{t('未打开项目')}</p>
             <button
               onClick={handleAddProject}
-              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="btn btn-secondary"
             >
               <Plus size={14} /> {t('添加项目')}
             </button>
@@ -1758,11 +1756,11 @@ export default function Sidebar() {
                 >
                   <span className={`${EXPLORER_HEADING_GRID} min-w-0 flex-1`}>
                     {unavailable ? (
-                      <AlertTriangle size={15} className="size-[15px] shrink-0 text-warn" />
+                      <AlertTriangle size={16} className="size-[15px] shrink-0 text-warn" />
                     ) : (
                       <ProjectKindIcon
                         project={currentProject}
-                        size={15}
+                        size={16}
                         open
                         className={EXPLORER_HEADING_ICON}
                       />
@@ -1790,7 +1788,7 @@ export default function Sidebar() {
                           void startCreateEntry(currentProject.path, false, currentProject.id)
                         }}
                       >
-                        <FilePlus size={13} />
+                        <FilePlus size={14} />
                       </button>
                     </Tooltip>
                     <Tooltip label={t('新建文件夹')} side="bottom">
@@ -1804,7 +1802,7 @@ export default function Sidebar() {
                           void startCreateEntry(currentProject.path, true, currentProject.id)
                         }}
                       >
-                        <FolderPlus size={13} />
+                        <FolderPlus size={14} />
                       </button>
                     </Tooltip>
                     <Tooltip label={t('在文件管理器中打开')} side="bottom">
@@ -1818,7 +1816,7 @@ export default function Sidebar() {
                           void handleOpenProject(currentProject.path)
                         }}
                       >
-                        <ExternalLink size={13} />
+                        <ExternalLink size={14} />
                       </button>
                     </Tooltip>
                     {unavailable && (
@@ -1840,7 +1838,7 @@ export default function Sidebar() {
                               }
                             }}
                           >
-                            <LocateFixed size={13} />
+                            <LocateFixed size={14} />
                           </button>
                         </Tooltip>
                         <Tooltip label={t('移除项目')} side="bottom">
@@ -1857,7 +1855,7 @@ export default function Sidebar() {
                               )
                             }}
                           >
-                            <X size={13} />
+                            <X size={14} />
                           </button>
                         </Tooltip>
                       </>

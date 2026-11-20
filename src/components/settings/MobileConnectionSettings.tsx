@@ -50,6 +50,8 @@ const initial: Status = {
   error: null,
 }
 const control = 'setting-control rounded border border-border-strong px-2.5 py-1 text-ui-sm hover:border-accent/60 disabled:opacity-50'
+// 按钮走控件基准（DESIGN.md「控件基准」），与输入框同高。
+const button = 'btn btn-secondary btn-sm'
 const QUIET_ZONE = 4
 const MAX_DEVICES = 8
 const PASSWORD = /^[!-~]{6,20}$/
@@ -330,7 +332,7 @@ export default function MobileConnectionSettings() {
               <div className="col-start-2 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className={control}
+                  className={button}
                   disabled={!loaded || busy !== null || activePort === nextPort}
                   onClick={() => {
                     void save()
@@ -341,7 +343,7 @@ export default function MobileConnectionSettings() {
                 {activePort !== null && (
                   <button
                     type="button"
-                    className={control}
+                    className={button}
                     disabled={busy !== null}
                     onClick={() => {
                       void stop()
@@ -429,7 +431,7 @@ export default function MobileConnectionSettings() {
                   )}
                   <button
                     type="button"
-                    className={control + ' inline-flex items-center gap-1.5'}
+                    className={button}
                     disabled={!link}
                     onClick={() => {
                       void copyLink()
@@ -489,7 +491,7 @@ export default function MobileConnectionSettings() {
                   </span>
                   <button
                     type="button"
-                    className={control + ' mobile-connection-device-remove'}
+                    className="btn btn-danger-outline btn-sm mobile-connection-device-remove"
                     disabled={busy !== null}
                     aria-label={`移除 ${device.name}`}
                     onClick={() => {

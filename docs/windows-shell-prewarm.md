@@ -1,12 +1,12 @@
-# Windows Shell 预热
+# Shell 预热
 
 设置 → 终端 → **Shell 预热数量** 控制每条符合条件的远程连接和本机的空闲普通终端数量。
 
 - **本机 Windows 项目**：仅 Windows 客户端，需开启“本地终端可接回”；关闭后预热随之停止。不预热 WSL。
-- **远端为 Windows 的 SSH 项目**：任意客户端，要求 Server 模式（远端 daemon 托管终端），不依赖“本地终端可接回”。
-  **Linux / POSIX 远端不预热**，SSH 直连模式也不预热。
+- **SSH Server 模式项目**：任意客户端，远端 Windows 与 Linux / macOS 均可，要求 Server 模式（远端 daemon 托管终端），不依赖“本地终端可接回”。
+  Windows 远端预热 PowerShell / CMD，POSIX 远端预热 bash / zsh / sh 或「自动」（登录用户的 `$SHELL`）。SSH 直连模式不预热。
 
-本机 Windows 的 PowerShell 配置（例如默认配置 `claude`）与普通终端共用空闲 Shell。点击新建并通过配置命令的信任检查后，才在领取的 PowerShell 中运行启动命令。远端 Windows 的 SSH Server 模式项目同样支持 PowerShell 配置（见下文“SSH 远端”）。带启动命令的 CMD 配置、远端 Linux 配置、带额外环境变量的远端配置和运行任务沿用原启动方式。
+本机 Windows 的 PowerShell 配置（例如默认配置 `claude`）与普通终端共用空闲 Shell。点击新建并通过配置命令的信任检查后，才在领取的 PowerShell 中运行启动命令。SSH Server 模式项目同样支持远端 PowerShell 与 POSIX Shell 的配置（见下文“SSH 远端”）。带启动命令的 CMD 配置、多行命令的 POSIX 配置、带额外环境变量的远端配置和运行任务沿用原启动方式。
 
 用户 `default-settings.json` 支持以下 JSON5 设置；工作区同名键会被忽略：
 
@@ -18,7 +18,7 @@
 默认配置可预热时，池使用该配置实际选择的 Shell；默认配置为 WSL 或带启动命令的 CMD 时，池继续使用普通终端的全局 Shell 设置。
 默认 `auto` 固定保留 **1 个**空闲 Shell：成功预留就立即开始补充，因此常驻多个只对补充完成前的连续快速新建有帮助。
 手动 1–8 用于需要连开多个终端的场景。等待接回期间，每个池最多额外准备 1 个 Shell。诊断中的 `preparing` 表示池为空且正在准备，`all_reserved` 表示池内现有项都已预留。
-同一连接上的受信任项目共享这一数量。本机和每条已连接的 Windows Server 模式连接独立补充。例如设置为 2，已有本机、WinDev 和另一条符合条件的连接时，三处可各保留 2 个。已打开的终端不计入空闲数量。
+同一连接上的受信任项目共享这一数量。本机和每条已连接的 Server 模式连接独立补充。例如设置为 2，已有本机、WinDev 和另一条符合条件的连接时，三处可各保留 2 个。已打开的终端不计入空闲数量。
 最近聚焦的 QingCode 窗口同步用户设置。切换到本机、其他连接或无项目窗口时，符合条件的远程连接继续补充。关闭预热会清空所有池。
 
 每个池在配置或预留后立即开始逐个补充。后台定期复查连接、项目注册与信任状态。
@@ -50,22 +50,14 @@
 以及 1 / 4 / 8 个空闲 Shell 的宿主、ConPTY、Shell 和子进程总内存。
 本功能不承诺固定内存成本或固定启动时间，用户 profile 会显著影响两者。
 
-## 按远程连接预启动终端配置
-
-在「远程连接」中选中连接，通过「预热终端配置」选择已信任的终端配置。默认值为「仅预热普通 Shell」。启用后，在当前受信任的 Windows Server 模式项目中额外启动一个配置终端，使用项目目录运行配置命令。不同连接分别保存选择。全局 Shell 预热数量为 0 时，配置预启动也会关闭。
-
-桌面或手机新建相同配置的终端时接入已有进程，并显示之前的输出。手机须在电脑端当前活动项目中新建该配置才能命中，命中后改用手机终端的 `mobile-` id。领取后补充一个空闲会话。切换活动项目、撤销信任或关闭预热会回收未领取会话。修改命令或 Shell 后需重新选择。普通 Shell 和其他配置沿用原有预热池。
-
-CLI 的 `terminal prewarm status` 在当前项目有配置预启动目标时额外返回 `profile` 计数。这里的 `ready` 表示进程已可接入，应用的提示符可能仍在加载。`terminal diagnostics` 显示 `prewarm.outcome=hit` 且 `kind=profile` 时表示已接入提前运行的程序。
-
 ## Android 移动连接
 
-手机新建终端与电脑端共用同一个池，条件与电脑端新建一致：本机 Windows 项目（含 PowerShell 配置命令）、远端为 Windows 的 SSH Server 模式项目（含 PowerShell 配置命令）；WSL 和 CMD 配置命令不领取。
-手机按目标项目所在的连接领取，也可从本机池领取。电脑端为连接选中的「预热终端配置」也可由手机领取（见上一节）。
+手机新建终端与电脑端共用同一个池，条件与电脑端新建一致：本机 Windows 项目（含 PowerShell 配置命令）、SSH Server 模式项目（含 PowerShell / POSIX Shell 配置命令）；WSL 和 CMD 配置命令不领取。
+手机按目标项目所在的连接领取，也可从本机池领取。
 领取前预留项改用手机终端的 `mobile-` id，输出因此路由给手机；Shell 内的 `QINGCODE_TERMINAL_ID` 仍是预热时分配的值。
 本机领取后终端由本机 PTY 宿主托管（未命中时仍由 QingCode 进程持有），停止移动连接、撤销设备或关闭应用时与其他手机终端一样被结束。
 
-## SSH 远端（Windows）
+## SSH 远端
 
 同一连接中，后台使用已认证的 daemon 会话创建临时 PTY。每个空闲项占用一个 daemon 通道。
 空闲 Shell 在远端用户主目录启动，普通终端和兼容的配置终端共享。PowerShell 完成用户 profile 并发出就绪标记后才入池。CMD 在完成启动设置后报告就绪。
@@ -76,6 +68,13 @@ CLI 的 `terminal prewarm status` 在当前项目有配置预启动目标时额�
 - 本机内存压力判断只约束本机项目；远端预热不受本机内存影响。
 - 远端目录确认与接回各限 5 秒（本机接回 2 秒），失败回退正常新建，并通过 `kill_detached_terminal` 后台清理已转为 detached 的 PTY。
 - 远端旧版 daemon 不认识 `pty.createTransient` 时预热失败并退避重试，终端照常新建。
+
+### Linux / macOS 远端
+
+- 适用 bash、zsh、sh 及「自动」（daemon 以登录 Shell 启动用户的 `$SHELL`）；启动参数不变，rc 照常加载。其他 Shell 名称不预热。
+- 创建后向 PTY 输入一行 ` printf 'QC-%s-ready!\n' '<nonce>'`，Shell 加载完 rc 进入提示符才会执行，输出标记即入池。格式串与 nonce 分开写，回显的命令行不会误命中；nonce 不进环境变量。
+- 领取时输入 ` cd '<目录>' && printf …cwd… || printf …error…`（单引号转义，bash / zsh 用 `builtin cd` / `builtin printf` 绕开同名函数）。目录含控制字符时走正常新建。
+- 输入行以空格开头，开启 `ignorespace`（bash 的 `HISTCONTROL`、zsh 的 `HIST_IGNORE_SPACE`）时不记入历史。接回从标记之后回放，用户只看到项目目录下的新提示符；配置命令作为普通输入交付，多行命令走正常新建。
 - 诊断事件 `terminal.prewarm_hit` 的 `remote` 字段区分本机与远端命中。
 
 ## 验证

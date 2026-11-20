@@ -58,17 +58,17 @@ export default function ProjectIdleEditor() {
           <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
         </div>
 
-        <ul className="flex flex-col gap-0.5">
-          {actions.map(action => {
+        <ul className="flex flex-col gap-1.5">
+          {actions.map((action, index) => {
             const Icon = action.icon
             return (
               <li key={action.label}>
                 <button
                   type="button"
                   onClick={action.onClick}
-                  className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                  className={`btn ${index === 0 ? 'btn-primary' : 'btn-secondary'} w-full justify-start gap-2.5 text-left`}
                 >
-                  <Icon size={13} className="shrink-0 opacity-70" />
+                  <Icon size={14} className={`shrink-0 ${index === 0 ? '' : 'opacity-70'}`} />
                   <span className="min-w-0 flex-1 truncate">{action.label}</span>
                   {action.shortcut && <Kbd>{action.shortcut}</Kbd>}
                 </button>
@@ -96,9 +96,9 @@ export default function ProjectIdleEditor() {
                       <button
                         type="button"
                         onClick={() => void openFile(file.path)}
-                        className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
                       >
-                        <Icon size={13} className="shrink-0 opacity-70" />
+                        <Icon size={14} className="shrink-0 opacity-70" />
                         <span className="truncate text-fg">{name}</span>
                         {parent && (
                           <span className="ml-auto max-w-[55%] truncate text-fg-dim">{parent}</span>

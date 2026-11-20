@@ -42,7 +42,7 @@ export default function TerminalConnectionNotice({ terminalId, offsetForSearch =
       role="status"
       aria-live="polite"
       data-testid="terminal-connection-notice"
-      className={`float-enter pointer-events-none absolute right-3 z-10 max-w-[min(480px,calc(100%-24px))] rounded border border-border bg-bg-deep/90 px-2.5 py-1 text-ui-sm text-fg-muted shadow-sm ${
+      className={`float-enter pointer-events-none absolute right-3 z-10 max-w-[min(480px,calc(100%-24px))] rounded-md border border-border bg-bg-deep/90 px-2.5 py-1 text-ui-sm text-fg-muted shadow-sm ${
         offsetForSearch ? (belowControl ? 'top-[5.5rem]' : 'top-12') : (belowControl ? 'top-10' : 'top-2')
       }`}
     >

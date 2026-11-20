@@ -232,7 +232,7 @@ export default function ContextMenu({
                 aria-checked={item.checked !== undefined ? item.checked : undefined}
                 disabled={item.disabled}
                 tabIndex={activeIndex === index ? 0 : -1}
-                className={`flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-ui outline-none transition-colors
+                className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-ui outline-none transition-colors
               ${
                 item.danger
                   ? 'text-danger hover:bg-danger/10 focus:bg-danger/10'

@@ -85,10 +85,10 @@ export default function SshServerDialog({
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-connection`}
-        className="modal-content-enter relative flex max-h-[70vh] w-full max-w-[960px] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+        className="modal-panel modal-xl modal-content-enter flex max-h-[70vh] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
       >
         <header className="flex flex-shrink-0 items-start gap-3 bg-dialog-chrome px-5 pb-4 pt-5">
-          <Server size={20} className="mt-0.5 flex-shrink-0 text-fg-muted" aria-hidden />
+          <Server size={16} className="mt-0.5 flex-shrink-0 text-fg-muted" aria-hidden />
           <div className="min-w-0 flex-1">
             <h2 id={`${id}-title`} className="text-ui-lg font-semibold text-fg">
               {t('远程连接')}
@@ -105,7 +105,7 @@ export default function SshServerDialog({
               type="button"
               aria-label={t('关闭对话框')}
               data-modal-autofocus
-              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg"
+              className="icon-btn"
               onClick={onClose}
             >
               <X size={16} />
@@ -221,10 +221,10 @@ export default function SshServerDialog({
                   type="button"
                   aria-label={t('刷新日志')}
                   disabled={logsLoading}
-                  className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-dialog-border px-2.5 py-1 text-ui-sm hover:bg-bg-hover disabled:opacity-40"
+                  className="btn btn-secondary btn-sm border-dialog-border"
                   onClick={onRefreshLogs}
                 >
-                  <RefreshCw size={13} className={logsLoading ? 'animate-spin' : ''} aria-hidden />
+                  <RefreshCw size={14} className={logsLoading ? 'animate-spin' : ''} aria-hidden />
                   {logsLoading ? t('读取日志中…') : t('刷新日志')}
                 </button>
               </div>
@@ -258,7 +258,7 @@ export default function SshServerDialog({
         {view !== 'agent' && <footer className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-ui-sm text-fg hover:bg-bg-hover"
+            className="btn btn-ghost"
             onClick={onSettings}
           >
             <Settings2 size={14} aria-hidden />
@@ -269,7 +269,7 @@ export default function SshServerDialog({
               type="button"
               disabled={busy}
               onClick={onEnableServer}
-              className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
+              className="btn btn-primary"
             >
               {busy ? t('正在切换…') : t('启用远端服务')}
             </button>
@@ -278,7 +278,7 @@ export default function SshServerDialog({
               type="button"
               disabled={busy || !!blocker || pending}
               onClick={mismatch && onUpdate ? onUpdate : onRestart}
-              className="inline-flex items-center gap-1.5 rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40"
+              className="btn btn-secondary border-dialog-border"
             >
               {busy ? (
                 <LoaderCircle size={14} className="animate-spin" aria-hidden />
@@ -340,7 +340,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
       className={`flex items-start gap-3 rounded-md border p-3 ${mismatch ? 'border-warn/40 bg-warn/5' : ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
     >
       <Icon
-        size={18}
+        size={16}
         aria-hidden
         className={`mt-0.5 flex-shrink-0 ${mismatch ? 'text-warn' : pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
       />

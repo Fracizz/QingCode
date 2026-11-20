@@ -399,7 +399,7 @@ export default function StatusBar() {
                   setStandaloneMenu({ x: rect.left, y: rect.top })
                 }}
               >
-                <FileText size={13} className="flex-shrink-0 text-brand" />
+                <FileText size={14} className="flex-shrink-0 text-brand" />
                 <span className="truncate">{t('独立文件')}</span>
               </button>
             </StatusTip>
@@ -408,11 +408,11 @@ export default function StatusBar() {
               {currentProject ? (
                 <ProjectKindIcon
                   project={currentProject}
-                  size={13}
+                  size={14}
                   className="flex-shrink-0 text-brand"
                 />
               ) : (
-                <Folder size={13} className="flex-shrink-0 text-brand" />
+                <Folder size={14} className="flex-shrink-0 text-brand" />
               )}
               {currentProject ? (
                 <StatusTip
@@ -445,7 +445,7 @@ export default function StatusBar() {
                   className={`inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
                   onClick={() => setView('sourceControl')}
                 >
-                  <GitBranch size={13} className="flex-shrink-0" />
+                  <GitBranch size={14} className="flex-shrink-0" />
                   <span className="truncate">
                     {gitHead.detached
                       ? t('分离 HEAD · {sha}', { sha: gitHead.name })
@@ -459,7 +459,7 @@ export default function StatusBar() {
         {restricted && (
           <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
             <span className="flex flex-shrink-0 items-center gap-1 text-warn">
-              <ShieldAlert size={13} />
+              <ShieldAlert size={14} />
               {t('受限')}
             </span>
           </StatusTip>
@@ -523,7 +523,7 @@ export default function StatusBar() {
               className={`flex items-center gap-1.5 ${STATUS_ACTION}`}
               onClick={requestToggleTerminal}
             >
-              <TerminalIcon size={13} className={`flex-shrink-0 ${runningTerminals > 0 ? '' : STATUS_SECONDARY}`} />
+              <TerminalIcon size={14} className={`flex-shrink-0 ${runningTerminals > 0 ? '' : STATUS_SECONDARY}`} />
               <span className={`tabular-nums ${runningTerminals > 0 ? '' : STATUS_SECONDARY}`}>{runningTerminals}</span>
             </button>
           </StatusTip>

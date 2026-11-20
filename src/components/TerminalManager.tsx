@@ -614,7 +614,7 @@ export default function TerminalManager() {
         aria-modal="true"
         aria-busy={operationPending}
         aria-labelledby="terminal-manager-title"
-        className="ui-font-scaled modal-content-enter relative flex h-[min(66vh,680px)] min-h-[min(320px,calc(100dvh-2rem))] w-[94vw] max-w-[860px] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+        className="modal-panel modal-xl ui-font-scaled modal-content-enter flex h-[min(66vh,680px)] min-h-[min(320px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
@@ -632,7 +632,7 @@ export default function TerminalManager() {
                 aria-label={t('刷新')}
                 disabled={operationPending}
                 onClick={refreshAll}
-                className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                className="icon-btn"
               >
                 <RefreshCw size={16} className={loadingRemote ? 'motion-safe:animate-spin' : ''} />
               </button>
@@ -642,9 +642,9 @@ export default function TerminalManager() {
                 type="button"
                 aria-label={t('关闭')}
                 onClick={close}
-                className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                className="icon-btn"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </Tooltip>
           </div>
@@ -657,8 +657,8 @@ export default function TerminalManager() {
             onChange={changeFilter}
             ariaLabel={t('按来源筛选')}
           />
-          <label className="flex min-w-[180px] flex-1 items-center gap-1 rounded border border-border-strong bg-dialog-input px-2">
-            <Search size={13} className="text-fg-dim" />
+          <label className="flex min-w-[180px] flex-1 items-center gap-1 rounded-md border border-border-strong bg-dialog-input px-2">
+            <Search size={14} className="text-fg-dim" />
             <input
               ref={searchRef}
               data-modal-autofocus
@@ -680,7 +680,7 @@ export default function TerminalManager() {
                   }}
                   className="rounded p-0.5 text-fg-dim hover:bg-bg-hover hover:text-fg"
                 >
-                  <X size={13} />
+                  <X size={12} />
                 </button>
               </Tooltip>
             )}
@@ -695,20 +695,18 @@ export default function TerminalManager() {
                 setRunningFirst(value => !value)
                 setPage(0)
               }}
-              className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border ${
-                runningFirst
-                  ? 'border-accent/60 bg-accent/15 text-accent'
-                  : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
+              className={`icon-btn icon-btn-md border ${
+                runningFirst ? 'border-accent/60 bg-accent/15 text-accent' : 'border-transparent'
               }`}
             >
-              <Bell size={15} />
+              <Bell size={14} />
             </button>
           </Tooltip>
         </div>
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {(mobileError || remoteErrors.length > 0) && (
-            <div className="mb-3 space-y-1 rounded border border-border px-3 py-2 text-ui-sm text-fg-muted">
+            <div className="mb-3 space-y-1 rounded-md border border-border px-3 py-2 text-ui-sm text-fg-muted">
               {mobileError && <p>{t('读取手机终端失败：{error}', { error: mobileError })}</p>}
               {remoteErrors.map(error => (
                 <p key={error}>{t('查询远端终端失败：{error}', { error })}</p>
@@ -737,16 +735,16 @@ export default function TerminalManager() {
                     />
                     <span className="truncate">{group.projectName}</span>
                     {group.projectId === currentProjectId && (
-                      <span className="rounded bg-bg-active px-1 text-[11px] font-normal text-brand">{t('当前项目')}</span>
+                      <span className="rounded bg-bg-active px-1 text-ui-xs font-normal text-brand">{t('当前项目')}</span>
                     )}
                     {group.missing && (
-                      <span className="rounded bg-bg-active px-1 text-[11px] font-normal">{t('不在项目列表中')}</span>
+                      <span className="rounded bg-bg-active px-1 text-ui-xs font-normal">{t('不在项目列表中')}</span>
                     )}
                     <span className="font-normal">
                       {group.entries.length === group.total ? group.total : `${group.entries.length}/${group.total}`}
                     </span>
                   </h3>
-                  <ul className="divide-y divide-border overflow-hidden rounded border border-border">
+                  <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
                     {group.entries.map(entry => (
                       <li key={entry.key}>
                         <Row
@@ -796,7 +794,7 @@ export default function TerminalManager() {
             type="button"
             disabled={operationPending || exitedVisible.length === 0}
             onClick={() => toggleSelected(exitedVisible.map(entry => entry.key), true)}
-            className="rounded px-2 py-0.5 text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
+            className="btn btn-ghost btn-sm"
           >
             {t('选中已退出 {n}', { n: exitedVisible.length })}
           </button>
@@ -806,7 +804,7 @@ export default function TerminalManager() {
                 type="button"
                 disabled={busyKey !== null}
                 onClick={() => void endEntries(selectedEntries, t('关闭所选终端'))}
-                className="rounded px-2 py-0.5 text-danger hover:bg-bg-hover disabled:opacity-40"
+                className="btn btn-ghost btn-sm text-danger"
               >
                 {t('关闭所选 {n}', { n: selectedEntries.length })}
               </button>
@@ -814,7 +812,7 @@ export default function TerminalManager() {
                 type="button"
                 disabled={operationPending}
                 onClick={() => setSelected(new Set())}
-                className="rounded px-2 py-0.5 text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                className="btn btn-ghost btn-sm"
               >
                 {t('取消选择')}
               </button>
@@ -829,9 +827,9 @@ export default function TerminalManager() {
                     aria-label={t('上一页')}
                     disabled={operationPending || paged.page === 0}
                     onClick={() => setPage(paged.page - 1)}
-                    className="rounded p-0.5 hover:bg-bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
+                    className="icon-btn"
                   >
-                    <ChevronLeft size={15} />
+                    <ChevronLeft size={14} />
                   </button>
                 </Tooltip>
                 <span className="min-w-[4.5em] text-center tabular-nums">
@@ -843,9 +841,9 @@ export default function TerminalManager() {
                     aria-label={t('下一页')}
                     disabled={operationPending || paged.page >= paged.pageCount - 1}
                     onClick={() => setPage(paged.page + 1)}
-                    className="rounded p-0.5 hover:bg-bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
+                    className="icon-btn"
                   >
-                    <ChevronRight size={15} />
+                    <ChevronRight size={14} />
                   </button>
                 </Tooltip>
               </nav>
@@ -855,9 +853,9 @@ export default function TerminalManager() {
                 type="button"
                 disabled={operationPending || attachable.length === 0}
                 onClick={() => void attachAll()}
-                className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-fg hover:bg-bg-hover disabled:opacity-40"
+                className="btn btn-secondary btn-sm"
               >
-                {busyKey === ATTACH_BATCH_KEY && <LoaderCircle size={13} className="motion-safe:animate-spin" />}
+                {busyKey === ATTACH_BATCH_KEY && <LoaderCircle size={12} className="motion-safe:animate-spin" />}
                 {t('全部接回')}
               </button>
             </Tooltip>
@@ -873,7 +871,7 @@ export default function TerminalManager() {
                 type="button"
                 disabled={busyKey !== null || visibleEntries.length === 0}
                 onClick={() => void endEntries(visibleEntries, query.trim() || filter !== 'all' ? t('关闭筛选结果') : t('全部关闭'))}
-                className="rounded border border-border px-2 py-0.5 text-danger hover:bg-bg-hover disabled:opacity-40"
+                className="btn btn-danger-outline btn-sm"
               >
                 {query.trim() || filter !== 'all' ? t('关闭筛选结果') : t('全部关闭')}
               </button>
@@ -1007,9 +1005,7 @@ function Row(props: RowProps) {
               aria-label={`${action.label}：${entry.name}`}
               disabled={disabled}
               onClick={action.onClick}
-              className={`rounded p-1 text-fg-dim transition-colors hover:bg-bg-active disabled:opacity-40 ${
-                action.danger ? 'hover:text-danger' : 'hover:text-fg'
-              }`}
+              className={`icon-btn hover:bg-bg-active ${action.danger ? 'hover:text-danger' : ''}`}
             >
               {action.icon}
             </button>
@@ -1098,7 +1094,7 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
         role="dialog"
         aria-modal="true"
         aria-labelledby="mobile-preview-title"
-        className="ui-font-scaled modal-content-enter flex h-[min(80dvh,760px)] w-full max-w-[960px] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+        className="modal-panel modal-xl ui-font-scaled modal-content-enter flex h-[min(80dvh,760px)] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
           <Eye size={16} className="shrink-0 text-fg-muted" />
@@ -1120,7 +1116,7 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
           )}
           <Tooltip label={t('关闭')} side="left">
             <button type="button" data-modal-autofocus aria-label={t('关闭')} onClick={onClose}
-              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg">
+              className="icon-btn">
               <X size={16} />
             </button>
           </Tooltip>
@@ -1150,7 +1146,7 @@ function MobilePreviewDialog({ session, onClose }: { session: MobileSessionSumma
                 event.preventDefault()
                 setHistoryStart('top')
               }}
-              className="m-0 min-h-0 flex-1 select-text overflow-auto whitespace-pre bg-bg-deep px-4 py-3 font-mono text-[13px] leading-[1.45]"
+              className="m-0 min-h-0 flex-1 select-text overflow-auto whitespace-pre bg-bg-deep px-4 py-3 font-mono text-ui leading-[1.45]"
             >
               {history.length > 0 && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{history.join('\n')}{'\n'}</span>}
               {screen}

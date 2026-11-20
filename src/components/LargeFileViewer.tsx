@@ -355,7 +355,7 @@ export default function LargeFileViewer({ tab }: Props) {
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="btn btn-ghost btn-sm"
           disabled={loading || offset <= 0}
           onClick={goPrev}
         >
@@ -363,7 +363,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </button>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="btn btn-ghost btn-sm"
           disabled={loading || eof}
           onClick={goNext}
         >
@@ -374,7 +374,7 @@ export default function LargeFileViewer({ tab }: Props) {
           <button
             key={pct}
             type="button"
-            className="rounded px-1.5 py-0.5 font-mono text-ui-xs text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+            className="btn btn-ghost btn-sm font-mono text-fg-dim hover:text-fg"
             disabled={loading || fileSize <= 0}
             onClick={() => jumpPercent(pct === 100 ? 99 : pct)}
           >
@@ -387,7 +387,7 @@ export default function LargeFileViewer({ tab }: Props) {
           <input
             type="number"
             min={1}
-            className="w-20 rounded border border-border bg-bg-elevated px-1.5 py-0.5 font-mono text-ui-xs text-fg outline-none focus:border-accent"
+            className="w-20 rounded-md border border-border bg-bg-elevated px-1.5 py-0.5 font-mono text-ui-xs text-fg outline-none focus:border-accent"
             value={lineInput}
             disabled={loading}
             onChange={e => setLineInput(e.target.value)}
@@ -402,7 +402,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </label>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="btn btn-ghost btn-sm"
           disabled={loading || !lineInput.trim()}
           onClick={() => void jumpToLine()}
         >
@@ -413,7 +413,7 @@ export default function LargeFileViewer({ tab }: Props) {
           <Search size={12} className="flex-shrink-0 text-fg-dim" aria-hidden />
           <input
             type="search"
-            className="w-36 min-w-0 rounded border border-border bg-bg-elevated px-1.5 py-0.5 text-ui-xs text-fg outline-none focus:border-accent"
+            className="w-36 min-w-0 rounded-md border border-border bg-bg-elevated px-1.5 py-0.5 text-ui-xs text-fg outline-none focus:border-accent"
             value={searchInput}
             disabled={loading}
             onChange={e => setSearchInput(e.target.value)}
@@ -428,7 +428,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </label>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="btn btn-ghost btn-sm"
           disabled={loading || !searchInput.trim()}
           onClick={() => void findInDirection(1)}
         >
@@ -436,7 +436,7 @@ export default function LargeFileViewer({ tab }: Props) {
         </button>
         <button
           type="button"
-          className="rounded px-2 py-0.5 text-ui-xs text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+          className="btn btn-ghost btn-sm"
           disabled={loading || !searchInput.trim()}
           onClick={() => void findInDirection(-1)}
         >

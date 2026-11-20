@@ -193,10 +193,10 @@ export default function WorkspaceMenu() {
               setOpen(true)
             }}
             onDoubleClick={event => event.stopPropagation()}
-            className={`flex max-w-[120px] items-center gap-1 h-6 rounded px-1.5 text-ui-sm flex-shrink-0 transition-colors disabled:opacity-50
+            className={`flex max-w-[120px] items-center gap-1 h-6 rounded-md px-1.5 text-ui-sm flex-shrink-0 transition-colors disabled:opacity-50
               ${open ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
           >
-            <Layers size={13} className="flex-shrink-0" />
+            <Layers size={14} className="flex-shrink-0" />
             <span className="truncate">{buttonLabel}</span>
             <ChevronDown
               size={12}
@@ -238,14 +238,14 @@ export default function WorkspaceMenu() {
                       role="menuitem"
                       disabled={busy}
                       onClick={() => void handleOpen(workspace)}
-                      className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui outline-none disabled:opacity-50
+                      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui outline-none disabled:opacity-50
                         ${isActive ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover focus:bg-bg-active'}`}
                     >
                       <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                         {isActive ? (
-                          <Check size={13} className="text-accent" />
+                          <Check size={14} className="text-accent" />
                         ) : (
-                          <Layers size={13} className="text-fg-muted" />
+                          <Layers size={14} className="text-fg-muted" />
                         )}
                       </span>
                       <span className="min-w-0 flex-1 truncate">
@@ -266,7 +266,7 @@ export default function WorkspaceMenu() {
                 role="menuitem"
                 disabled={busy}
                 onClick={() => void handleSave()}
-                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Plus size={14} />
@@ -278,7 +278,7 @@ export default function WorkspaceMenu() {
                 role="menuitem"
                 disabled={busy}
                 onClick={handleManage}
-                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none disabled:opacity-50"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Settings2 size={14} />

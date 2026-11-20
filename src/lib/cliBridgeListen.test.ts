@@ -107,7 +107,7 @@ describe('listenForCliRequests', () => {
       dispatch({ payload: { id: 'diag', op: 'terminal.diagnostics', config: 'warm-tab', project: project.id } })
       await vi.waitFor(() => expect(safeInvoke).toHaveBeenCalledWith(expect.any(String), 'resolve_cli_request',
         expect.objectContaining({ id: 'diag', ok: true, data: expect.objectContaining({ prewarm: { outcome: 'reserved' } }) })))
-      expect(reserve).toHaveBeenCalledWith(project.path, expect.any(String), true, undefined, undefined)
+      expect(reserve).toHaveBeenCalledWith(project.path, expect.any(String), true)
       expect(useTerminalStore.getState().terminals[0].launchCommand).toBe('opencode')
     } finally {
       await useTerminalStore.getState().closeTerminal('warm-tab')

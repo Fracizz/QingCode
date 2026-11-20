@@ -128,12 +128,12 @@ export default function ScmToolbar({
   )
 
   const segmentBtn = (active = false) =>
-    `flex h-full shrink-0 items-center gap-1 px-1.5 text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40 ${
+    `flex h-full shrink-0 items-center gap-1 px-1.5 text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-50 ${
       active ? 'bg-bg-hover/60' : ''
     }`
 
   const menuBtn =
-    'flex h-full w-5 shrink-0 items-center justify-center border-l border-border/45 text-fg-dim transition-colors hover:bg-bg-hover/80 disabled:opacity-40'
+    'flex h-full w-5 shrink-0 items-center justify-center border-l border-border/45 text-fg-dim transition-colors hover:bg-bg-hover/80 disabled:opacity-50'
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -152,17 +152,17 @@ export default function ScmToolbar({
             aria-label={t('选择分支')}
             disabled={writeDisabled}
             onClick={onOpenBranchMenu}
-            className="flex h-full w-full min-w-0 items-center gap-1 px-2 text-left transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
+            className="flex h-full w-full min-w-0 items-center gap-1 px-2 text-left transition-colors hover:bg-bg-hover/80 disabled:opacity-50"
           >
           <GitBranch size={12} className="shrink-0 text-brand" />
           <span className="min-w-0 truncate font-mono text-ui-xs">
             {status?.branch ?? t('游离 HEAD')}
           </span>
           {operationKind === 'switch' ? (
-            <LoaderCircle size={11} className="shrink-0 animate-spin text-accent" />
+            <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
           ) : (
             <ChevronDown
-              size={11}
+              size={12}
               className={`shrink-0 text-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`}
             />
           )}
@@ -230,7 +230,7 @@ export default function ScmToolbar({
           onClick={onOpenPullMenu}
           className={menuBtn}
         >
-          <ChevronDown size={11} />
+          <ChevronDown size={12} />
         </button>
       </SegmentGroup>
 
@@ -262,7 +262,7 @@ export default function ScmToolbar({
           onClick={onOpenPushMenu}
           className={menuBtn}
         >
-          <ChevronDown size={11} />
+          <ChevronDown size={12} />
         </button>
       </SegmentGroup>
 
@@ -285,7 +285,7 @@ export default function ScmToolbar({
               onClick={() => {
                 if (primary) onCopyRemoteUrl(primary.url)
               }}
-              className="flex h-full min-w-0 flex-1 items-center gap-1 px-1.5 text-left text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
+              className="flex h-full min-w-0 flex-1 items-center gap-1 px-1.5 text-left text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-50"
             >
               {remotesLoading && remotes === null ? (
                 <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
@@ -295,7 +295,7 @@ export default function ScmToolbar({
               <span className="min-w-0 truncate font-mono text-ui-xs">
                 {primary?.url ?? t('暂无远程地址')}
               </span>
-              {primary && <Copy size={11} className="shrink-0 text-fg-dim" />}
+              {primary && <Copy size={12} className="shrink-0 text-fg-dim" />}
             </button>
             {hasMultipleRemotes && (
               <button
@@ -308,7 +308,7 @@ export default function ScmToolbar({
                 className={menuBtn}
               >
                 <ChevronDown
-                  size={11}
+                  size={12}
                   className={`transition-transform ${remotesMenuOpen ? 'rotate-180' : ''}`}
                 />
               </button>
@@ -336,13 +336,13 @@ export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmP
     <div
       ref={menuExitRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] min-w-[10rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPull}
       >
         <ArrowDown size={12} />
@@ -351,7 +351,7 @@ export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmP
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPullRebase}
       >
         <ArrowDown size={12} />
@@ -382,7 +382,7 @@ export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) 
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPush}
       >
         <ArrowUp size={12} />
@@ -420,7 +420,7 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
           key={row.key}
           type="button"
           role="menuitem"
-          className="group flex w-full items-start gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+          className="group flex w-full items-start gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
           onClick={() => onCopy(row.url)}
         >
           <Copy size={12} className="mt-1 shrink-0 text-fg-dim group-hover:text-fg-muted" />

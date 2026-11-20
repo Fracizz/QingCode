@@ -106,13 +106,13 @@ function ProfilesDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="ui-font-scaled modal-content-enter relative flex max-h-[85vh] w-full max-w-[720px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-panel modal-lg ui-font-scaled modal-content-enter flex max-h-[85vh] flex-col"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3.5">
           <h2 id={titleId} className="text-ui-lg font-semibold text-fg">{t('管理终端配置')}</h2>
           <Tooltip label={t('关闭')} side="bottom">
             <button type="button" aria-label={t('关闭')} className="terminal-profile-icon" onClick={close}>
-              <X size={15} />
+              <X size={16} />
             </button>
           </Tooltip>
         </div>
@@ -120,10 +120,10 @@ function ProfilesDialog() {
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-ui-sm text-fg-muted">{t('修改自动保存。')}</p>
             <button type="button" onClick={() => addProfile()} className="terminal-profile-add">
-              <Plus size={13} />{t('添加终端配置')}
+              <Plus size={14} />{t('添加终端配置')}
             </button>
           </div>
-          <div className="overflow-hidden rounded border border-border">
+          <div className="overflow-hidden rounded-md border border-border">
             {profiles.map((profile, index) => {
               const builtin = profile.id === DEFAULT_TERMINAL_PROFILE.id
               const expanded = editingId === profile.id
@@ -173,12 +173,12 @@ function ProfilesDialog() {
                       {!builtin && <>
                         <Tooltip label={t('复制配置')} side="top">
                           <button type="button" aria-label={t('复制终端配置「{name}」', { name })} className="terminal-profile-icon" onClick={() => addProfile(profile)}>
-                            <Copy size={13} />
+                            <Copy size={14} />
                           </button>
                         </Tooltip>
                         <Tooltip label={t('删除')} side="top">
                           <button type="button" aria-label={t('删除终端配置「{name}」', { name })} className="terminal-profile-icon hover:!text-danger" onClick={() => void removeProfile(profile)}>
-                            <Trash2 size={13} />
+                            <Trash2 size={14} />
                           </button>
                         </Tooltip>
                       </>}

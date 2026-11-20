@@ -1,4 +1,3 @@
-import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
 import ConnectionDefaultProfile from './ConnectionDefaultProfile'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -95,16 +94,16 @@ import {
 import type { Project, SshConnectionMode } from '../types'
 
 const fieldClass =
-  'min-w-0 w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none placeholder:text-fg-dim focus:border-accent'
+  'min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none placeholder:text-fg-dim focus:border-accent'
 const labelClass = 'min-w-0 text-ui-sm font-medium text-dialog-label'
 const helpClass = 'text-ui-sm leading-[var(--ui-line-height)] text-fg-muted'
 const sectionTitleClass = 'flex items-center gap-1.5 text-ui font-semibold text-fg'
 const valueBoxClass =
-  'mt-1 flex items-center gap-2 rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 font-mono text-ui-sm text-fg'
+  'mt-1 flex items-center gap-2 rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 font-mono text-ui-sm text-fg'
 const primaryButtonClass =
-  'rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50'
+  'btn btn-primary'
 const secondaryButtonClass =
-  'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
+  'btn btn-secondary border-dialog-border'
 
 type LogView = { rootUri: string; text: string; loading: boolean }
 const NEW_AGENT_CONNECTION_ID = '__new_agent__'
@@ -892,9 +891,9 @@ export default function RemoteConnectionsManager() {
               <button
                 type="button"
                 onClick={() => void choosePrivateKey()}
-                className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-dialog-border px-2.5 text-ui text-fg hover:bg-bg-hover"
+                className="btn btn-secondary border-dialog-border"
               >
-                <KeyRound size={13} />
+                <KeyRound size={14} />
                 {t('选择')}
               </button>
             </div>
@@ -949,13 +948,13 @@ export default function RemoteConnectionsManager() {
             '远程开发通过 SSH 连接，信任项目后自动部署远端服务，提供文件监听、内容搜索与持久终端。'
           )}
         </p>
-        <div className="rounded border border-dialog-border">
+        <div className="rounded-md border border-dialog-border">
           <button
             type="button"
             aria-expanded={advancedOpen}
             aria-controls="ssh-connection-advanced"
             onClick={() => setAdvancedOpen(open => !open)}
-            className="flex w-full items-center gap-1.5 rounded px-2.5 py-2 text-ui text-fg hover:bg-bg-hover"
+            className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-2 text-ui text-fg hover:bg-bg-hover"
           >
             {advancedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             {t('高级')}
@@ -1001,7 +1000,7 @@ export default function RemoteConnectionsManager() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="remote-connections-title"
-          className="ui-font-scaled modal-content-enter relative flex h-[80vh] w-[94vw] max-w-[1100px] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+          className="ui-font-scaled modal-content-enter modal-panel modal-xl flex h-[80vh] w-[94vw] max-h-[85vh] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
@@ -1017,10 +1016,10 @@ export default function RemoteConnectionsManager() {
                 type="button"
                 disabled={saving || directDraft.busy}
                   onClick={() => void requestNavigation(closeRemoteConnections)}
-                className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                className="icon-btn"
                 aria-label={t('关闭')}
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </Tooltip>
           </div>
@@ -1028,11 +1027,11 @@ export default function RemoteConnectionsManager() {
           <div className="flex min-h-0 flex-1">
             <aside className="flex w-36 flex-shrink-0 flex-col border-r border-dialog-separator bg-dialog-sidebar sm:w-60">
               <div className="space-y-2 p-2">
-                <label className="flex items-center gap-1 rounded border border-dialog-border bg-dialog-input px-2">
-                  <Search size={13} className="shrink-0 text-fg-dim" aria-hidden />
+                <label className="flex items-center gap-1 rounded-md border border-dialog-border bg-dialog-input px-2">
+                  <Search size={14} className="shrink-0 text-fg-dim" aria-hidden />
                   <input className="min-w-0 w-full bg-transparent py-1.5 text-ui-sm text-fg outline-none" aria-label={t('搜索连接或项目')} placeholder={t('搜索连接或项目')} value={search} onChange={event => setSearch(event.target.value)} />
                 </label>
-                <button type="button" aria-pressed={attentionOnly} onClick={() => setAttentionOnly(value => !value)} className={`w-full rounded px-2 py-1 text-left text-ui-sm ${attentionOnly ? 'bg-dialog-active text-warn' : 'text-fg-muted hover:bg-bg-hover'}`}>
+                <button type="button" aria-pressed={attentionOnly} onClick={() => setAttentionOnly(value => !value)} className={`w-full rounded-md px-2 py-1 text-left text-ui-sm ${attentionOnly ? 'bg-dialog-active text-warn' : 'text-fg-muted hover:bg-bg-hover'}`}>
                   {t('需要处理')} · {attentionCount}
                 </button>
                 <button
@@ -1041,7 +1040,7 @@ export default function RemoteConnectionsManager() {
                   aria-haspopup="menu"
                   aria-expanded={Boolean(createMenu)}
                   onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setCreateMenu({ x: rect.left, y: rect.bottom + 4 }) }}
-                  className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui transition-colors ${
+                  className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-ui transition-colors ${
                     isNew
                       ? 'border-brand/60 bg-brand/10 text-brand'
                       : 'border-dialog-border text-fg hover:bg-bg-hover'
@@ -1049,7 +1048,7 @@ export default function RemoteConnectionsManager() {
                 >
                   <Plus size={14} aria-hidden />
                   {t('新建')}
-                  <ChevronDown size={13} aria-hidden />
+                  <ChevronDown size={12} aria-hidden />
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -1098,7 +1097,7 @@ export default function RemoteConnectionsManager() {
                   <div className="flex flex-col gap-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">
-                        <Server size={15} className="flex-shrink-0 text-fg-muted" />
+                        <Server size={16} className="flex-shrink-0 text-fg-muted" />
                         <h3 className="min-w-0 truncate text-ui-lg font-semibold text-fg">
                           {isNewAgent ? t('新建 Server 直连') : isNew ? t('新建连接') : selected!.name}
                         </h3>
@@ -1115,7 +1114,7 @@ export default function RemoteConnectionsManager() {
                       </div>
                       {!isNew && selected && (
                         <div className="flex flex-wrap items-center gap-2">
-                          {!editing && <button type="button" onClick={() => setEditing(true)} className={`${primaryButtonClass} inline-flex items-center gap-1`}><Pencil size={13} />{t('编辑连接')}</button>}
+                          {!editing && <button type="button" onClick={() => setEditing(true)} className={primaryButtonClass}><Pencil size={14} />{t('编辑连接')}</button>}
                           <button type="button" disabled={detailLoading} onClick={() => void refreshDetail(selected.id)} className={secondaryButtonClass}>{t('刷新状态')}</button>
                           <Tooltip label={t('更多连接操作')} side="left">
                             <button
@@ -1123,7 +1122,7 @@ export default function RemoteConnectionsManager() {
                               aria-haspopup="menu"
                               aria-expanded={Boolean(actionMenu)}
                               onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setActionMenu({ x: rect.right - 180, y: rect.bottom + 4 }) }}
-                              className="rounded p-1.5 text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              className="icon-btn icon-btn-md"
                               aria-label={t('更多连接操作')}
                             >
                               <MoreHorizontal size={16} />
@@ -1133,10 +1132,10 @@ export default function RemoteConnectionsManager() {
                       )}
                     </div>
 
-                    {error && !isNew && !editing && <p role="alert" className="whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui text-danger">{error}</p>}
+                    {error && !isNew && !editing && <p role="alert" className="whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-ui text-danger">{error}</p>}
 
                     {!isNew && selected && !editing && (
-                      <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
+                      <div className="space-y-2 rounded-md border border-dialog-border bg-dialog-sidebar p-3">
                         <p className="break-all font-mono text-ui-sm text-fg">{directEndpoint ? `${directEndpoint.host}:${directEndpoint.port}` : sshConnectionTarget(selected)}</p>
                         <p className={helpClass}>{t(connectionModeLabel)}</p>
                         <p className={helpClass}>{t('选择下方项目以打开或重新连接；需要认证时会提示输入凭据。')}</p>
@@ -1174,7 +1173,7 @@ export default function RemoteConnectionsManager() {
                       </div>
                     )}
 
-                    {!isNew && !editing && selected && selectedDirect?.enabled && <details className="rounded border border-dialog-border p-3">
+                    {!isNew && !editing && selected && selectedDirect?.enabled && <details className="rounded-md border border-dialog-border p-3">
                       <summary className="cursor-pointer text-ui font-medium text-fg">{t('启动 Server 与开机自启')}</summary>
                       <div className="mt-3"><DirectServerRecoveryPanel key={selected.id} connectionId={selected.id} info={selectedDirect} connections={connections} onStarted={() => refreshDetail(selected.id)} onUpdated={info => setDirectInfos(prev => ({ ...prev, [selected.id]: info }))} /></div>
                     </details>}
@@ -1238,26 +1237,24 @@ export default function RemoteConnectionsManager() {
                         />}
                         {!editing && <>
                         <ConnectionDefaultProfile connectionId={selected.id} />
-                        {(directEnabled || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') &&
-                          <ConnectionPrewarmProfile connectionId={selected.id} />}
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
                             {t(allProjects ? '远程项目' : '最近项目')}
                             <span className="ml-1 text-ui-sm font-normal text-fg-dim">
                               {connectionProjects.length}
                             </span>
-                            <button type="button" className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded border border-dialog-border px-2.5 py-1 text-ui-sm font-normal text-fg hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProjectForConnection(selected.id) }}><Plus size={13} />{t('添加项目')}</button>
+                            <button type="button" className="btn btn-secondary btn-sm ml-auto border-dialog-border" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProjectForConnection(selected.id) }}><Plus size={14} />{t('添加项目')}</button>
                           </p>
                           {connectionProjects.length === 0 ? (
                             <p className={helpClass}>{t('暂无使用此连接的远程项目。')}</p>
                           ) : (
-                            <ul className="overflow-hidden rounded border border-dialog-border">
+                            <ul className="overflow-hidden rounded-md border border-dialog-border">
                               {visibleProjects.map(project => (
                                 <li
                                   key={project.id}
                                   className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 border-b border-dialog-separator px-3 py-2 last:border-b-0 @lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1.5fr)_auto]"
                                 >
-                                  <FolderOpen size={13} className="flex-shrink-0 text-fg-dim" />
+                                  <FolderOpen size={14} className="flex-shrink-0 text-fg-dim" />
                                   <span className="col-start-2 row-start-1 min-w-0 text-ui text-fg [overflow-wrap:anywhere]">
                                     {project.name}
                                   </span>
@@ -1285,16 +1282,16 @@ export default function RemoteConnectionsManager() {
                               {t('当前会话没有已注册的项目根。重新打开远程项目后会登记在这里。')}
                             </p>
                           ) : (
-                            <ul className="overflow-hidden rounded border border-dialog-border">
+                            <ul className="overflow-hidden rounded-md border border-dialog-border">
                               {roots.map(root => (
                                 <li
                                   key={root.rootUri}
                                   className="flex flex-wrap items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
                                   {root.trusted ? (
-                                    <ShieldCheck size={13} className="flex-shrink-0 text-accent" />
+                                    <ShieldCheck size={14} className="flex-shrink-0 text-accent" />
                                   ) : (
-                                    <ShieldOff size={13} className="flex-shrink-0 text-warn" />
+                                    <ShieldOff size={14} className="flex-shrink-0 text-warn" />
                                   )}
                                   <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
                                     {remoteShort(root.rootUri)}
@@ -1312,7 +1309,7 @@ export default function RemoteConnectionsManager() {
                                     <button
                                       type="button"
                                       onClick={() => void revokeTrust(root.rootUri)}
-                                      className="flex-shrink-0 rounded px-2 py-0.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
+                                      className="btn btn-ghost btn-sm"
                                     >
                                       {t('撤销信任')}
                                     </button>
@@ -1337,7 +1334,7 @@ export default function RemoteConnectionsManager() {
                                 className="rounded p-0.5 text-fg-dim hover:text-fg"
                                 aria-label={t('关于远端服务')}
                               >
-                                <CircleHelp size={13} aria-hidden />
+                                <CircleHelp size={14} aria-hidden />
                               </button>
                             </Tooltip>
                             <button
@@ -1346,9 +1343,9 @@ export default function RemoteConnectionsManager() {
                                 closeRemoteConnections()
                                 useUIStore.getState().requestSettings('ssh.server')
                               }}
-                              className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded border border-dialog-border px-2.5 py-1 text-ui-sm font-normal text-fg hover:bg-bg-hover"
+                              className="btn btn-secondary btn-sm ml-auto border-dialog-border"
                             >
-                              <Settings size={13} />{t('服务安装设置')}
+                              <Settings size={14} />{t('服务安装设置')}
                             </button>
                           </div>
                           {detailLoading ? (
@@ -1358,13 +1355,13 @@ export default function RemoteConnectionsManager() {
                               {t('当前会话没有可查询的项目。重新打开远程项目后会显示服务状态。')}
                             </p>
                           ) : (
-                            <ul className="overflow-hidden rounded border border-dialog-border">
+                            <ul className="overflow-hidden rounded-md border border-dialog-border">
                               {serverStates.map(state => (
                                 <li
                                   key={state.rootUri}
                                   className="flex flex-wrap items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
-                                  <FileText size={13} className="flex-shrink-0 text-fg-dim" />
+                                  <FileText size={14} className="flex-shrink-0 text-fg-dim" />
                                   <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
                                     {remoteShort(state.rootUri)}
                                   </span>
@@ -1420,7 +1417,7 @@ export default function RemoteConnectionsManager() {
                                               sshServerUsesGateway(state) || directEnabled
                                             )
                                           }
-                                          className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                                          className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-50"
                                           aria-label={t(
                                             sshServerUsesGateway(state) || directEnabled ? '重新连接 Server' : sshServerIsDirect(state)
                                               ? '切换到远端服务'
@@ -1453,7 +1450,7 @@ export default function RemoteConnectionsManager() {
                   </div>
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                    <Server size={28} className="text-fg-dim" />
+                    <Server size={28} strokeWidth={1.5} className="text-fg-dim" />
                     <p className={helpClass}>
                       {t('还没有 SSH 连接。新建一个连接，或通过「打开 SSH 项目」创建。')}
                     </p>
@@ -1469,7 +1466,7 @@ export default function RemoteConnectionsManager() {
               </section>
               {(isNew || editing) && (isNew || selected) && (
                 <footer className="flex flex-shrink-0 flex-col gap-2 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
-                  {error && <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>}
+                  {error && <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>}
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {!isNew && <button type="button" disabled={testing || saving} onClick={() => void leaveEditor()} className={`${secondaryButtonClass} mr-auto`}>{t('返回概览')}</button>}
                     {!isNewAgent && !standaloneAgent && !directEnabled && sshFormActions}
@@ -1504,7 +1501,7 @@ export default function RemoteConnectionsManager() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="remote-connections-log-title"
-            className="modal-content-enter relative flex max-h-[min(70vh,520px)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+            className="modal-content-enter modal-panel modal-lg flex max-h-[min(70vh,520px)] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
             onPointerDown={event => event.stopPropagation()}
           >
             <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4">
@@ -1519,7 +1516,7 @@ export default function RemoteConnectionsManager() {
                   <button
                     type="button"
                     aria-label={t('刷新')}
-                    className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                    className="icon-btn"
                     onClick={() => void showLogs(logView.rootUri)}
                   >
                     <RefreshCw size={16} />
@@ -1529,7 +1526,7 @@ export default function RemoteConnectionsManager() {
                   <button
                     type="button"
                     aria-label={t('关闭')}
-                    className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                    className="icon-btn"
                     onClick={() => setLogView(null)}
                   >
                     <X size={16} />
@@ -1538,7 +1535,7 @@ export default function RemoteConnectionsManager() {
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-              <pre className="whitespace-pre-wrap break-words rounded border border-dialog-border bg-dialog-input p-3 font-mono text-ui-sm text-fg">
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-dialog-border bg-dialog-input p-3 font-mono text-ui-sm text-fg">
                 {logView.loading ? t('读取日志中…') : logView.text || t('没有日志')}
               </pre>
             </div>

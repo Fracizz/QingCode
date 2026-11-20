@@ -76,7 +76,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
         aria-modal="true"
         aria-labelledby="compare-title"
         aria-describedby="compare-description"
-        className="relative flex h-[min(80vh,640px)] w-full max-w-[920px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-xl flex h-[min(80vh,640px)] flex-col"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <GitCompare size={16} className="text-accent" />
@@ -97,7 +97,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
           <button
             ref={closeRef}
             type="button"
-            className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary"
             onClick={onClose}
           >
             {t('关闭')}
@@ -106,11 +106,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
             <button
               key={action.label}
               type="button"
-              className={
-                action.primary
-                  ? 'px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors'
-                  : 'px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
-              }
+              className={`btn ${action.primary ? 'btn-primary' : 'btn-secondary'}`}
               onClick={action.onClick}
             >
               {action.label}

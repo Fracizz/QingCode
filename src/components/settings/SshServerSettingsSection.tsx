@@ -145,7 +145,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
           <button
             type="button"
             disabled={offlineBusy}
-            className="setting-control shrink-0 px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
             aria-label={t('选择离线目录')}
             onClick={() => void chooseOfflineDir()}
           >
@@ -154,7 +154,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
           <button
             type="button"
             disabled={offlineBusy || !offlineDir}
-            className="setting-control shrink-0 px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
             aria-label={t('清除离线目录')}
             onClick={() => void clearOfflineDir()}
           >

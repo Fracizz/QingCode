@@ -296,7 +296,7 @@ export default function ProjectManager() {
         aria-modal="true"
         aria-labelledby="project-manager-title"
         aria-describedby="project-manager-description"
-        className="project-manager ui-font-scaled modal-content-enter relative w-[94vw] max-w-[1200px] max-h-[85vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-xl project-manager ui-font-scaled modal-content-enter max-h-[85vh] flex flex-col"
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -316,9 +316,9 @@ export default function ProjectManager() {
             type="button"
             aria-label={t('关闭')}
             onClick={closeProjectManager}
-            className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+            className="icon-btn"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
 
@@ -327,16 +327,16 @@ export default function ProjectManager() {
           <button
             type="button"
             onClick={openCreateProject}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary btn-sm"
           >
-            <FolderPlus size={13} /> {t('新建项目')}
+            <FolderPlus size={14} /> {t('新建项目')}
           </button>
           <button
             type="button"
             onClick={() => void addTerminalProjectWithPrompt()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary btn-sm"
           >
-            <TerminalIcon size={13} /> {t('新建草稿项目')}
+            <TerminalIcon size={14} /> {t('新建草稿项目')}
           </button>
           <button
             type="button"
@@ -344,14 +344,14 @@ export default function ProjectManager() {
               closeProjectManager()
               openWorkspaceManager()
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary btn-sm"
           >
-            <Layers size={13} /> {t('多项目工作区')}
+            <Layers size={14} /> {t('多项目工作区')}
           </button>
 
           <div className="flex w-full flex-wrap items-center gap-2">
-            <div className="flex min-w-[180px] flex-1 items-center gap-1.5 rounded border border-border-strong bg-bg-active px-2 py-1 focus-within:border-accent">
-              <Search size={13} className="flex-shrink-0 text-fg-muted" />
+            <div className="flex min-w-[180px] flex-1 items-center gap-1.5 rounded-md border border-border-strong bg-bg-active px-2 py-1 focus-within:border-accent">
+              <Search size={14} className="flex-shrink-0 text-fg-muted" />
               <input
                 ref={searchRef}
                 type="text"
@@ -375,7 +375,7 @@ export default function ProjectManager() {
                   }}
                   className="flex-shrink-0 rounded p-0.5 text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
                 >
-                  <X size={13} />
+                  <X size={14} />
                 </button>
               )}
             </div>
@@ -386,7 +386,7 @@ export default function ProjectManager() {
                 setSourceFilter(event.target.value)
                 setPage(1)
               }}
-              className="max-w-[240px] min-w-0 rounded border border-border-strong bg-bg-active px-1.5 py-1 text-ui-sm text-fg outline-none focus:border-accent"
+              className="max-w-[240px] min-w-0 rounded-md border border-border-strong bg-bg-active px-1.5 py-1 text-ui-sm text-fg outline-none focus:border-accent"
             >
               <option value="all">{t('全部来源')}</option>
               <option value="local">{t('本机')}</option>
@@ -432,7 +432,7 @@ export default function ProjectManager() {
                   setSortKey(e.target.value as SortKey)
                   setPage(1)
                 }}
-                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+                className="bg-bg-active border border-border-strong rounded-md px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
               >
                 {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
                   <option key={k} value={k}>
@@ -447,9 +447,9 @@ export default function ProjectManager() {
                   setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
                   setPage(1)
                 }}
-                className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+                className="icon-btn"
               >
-                {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                {sortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
               </button>
             </div>
           </div>
@@ -464,21 +464,21 @@ export default function ProjectManager() {
             <button
               type="button"
               onClick={() => void handleBatchRemove()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+              className="btn btn-secondary btn-sm"
             >
-              <FolderMinus size={13} /> {t('批量移除')}
+              <FolderMinus size={14} /> {t('批量移除')}
             </button>
             <button
               type="button"
               onClick={() => void saveSelectedProjectsAsWorkspace([...selectedIds])}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+              className="btn btn-secondary btn-sm"
             >
-              <Layers size={13} /> {t('保存选中为多项目工作区')}
+              <Layers size={14} /> {t('保存选中为多项目工作区')}
             </button>
             <button
               type="button"
               onClick={clearSelection}
-              className="ml-auto px-2 py-1 text-ui-sm rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              className="btn btn-ghost btn-sm ml-auto"
             >
               {t('取消选择')}
             </button>
@@ -559,13 +559,13 @@ export default function ProjectManager() {
                       <td className="project-name-cell px-3 py-2 align-middle">
                         <div className="flex min-w-0 items-center gap-1.5">
                           {unavailable ? (
-                            <AlertTriangle size={13} className="text-warn flex-shrink-0" />
+                            <AlertTriangle size={14} className="text-warn flex-shrink-0" />
                           ) : project.hidden ? (
-                            <EyeOff size={13} className="text-fg-dim flex-shrink-0" />
+                            <EyeOff size={14} className="text-fg-dim flex-shrink-0" />
                           ) : (
                             <ProjectKindIcon
                               project={project}
-                              size={13}
+                              size={14}
                               className={`${isCurrent ? 'text-brand' : 'text-fg-muted'} flex-shrink-0`}
                             />
                           )}
@@ -601,7 +601,7 @@ export default function ProjectManager() {
                                 label={projectLabels.get(project.id)}
                               />
                               {isCurrent && (
-                                <Check size={13} className="ml-1 shrink-0 text-brand" />
+                                <Check size={14} className="ml-1 shrink-0 text-brand" />
                               )}
                             </button>
                           </Tooltip>
@@ -629,7 +629,7 @@ export default function ProjectManager() {
                           aria-label={t('项目操作：{name}', { name: projectLabels.get(project.id)?.text ?? project.name })}
                           aria-haspopup="menu"
                           aria-expanded={actionMenu?.projectId === project.id}
-                          className="project-overflow-action rounded p-1.5 text-fg-muted hover:bg-bg-hover hover:text-fg focus:bg-bg-hover"
+                          className="project-overflow-action icon-btn icon-btn-md focus:bg-bg-hover"
                           onClick={event => {
                             event.currentTarget.focus()
                             const rect = event.currentTarget.getBoundingClientRect()
@@ -724,7 +724,7 @@ export default function ProjectManager() {
                   setPageSize(Number(event.target.value))
                   setPage(1)
                 }}
-                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+                className="bg-bg-active border border-border-strong rounded-md px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
               >
                 {[10, 20, 50].map(size => (
                   <option key={size} value={size}>
@@ -767,7 +767,7 @@ export default function ProjectManager() {
           <button
             type="button"
             onClick={closeProjectManager}
-            className="flex-shrink-0 px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
+            className="btn btn-primary"
           >
             {t('完成')}
           </button>
@@ -799,7 +799,7 @@ function Th({
         }`}
       >
         {children}
-        {active && (dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+        {active && (dir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
       </button>
     </th>
   )
@@ -866,7 +866,7 @@ function Checkbox({
       {indeterminate ? (
         <span className="block h-[2px] w-2 bg-current" />
       ) : (
-        <Check size={11} className={checked ? 'text-white' : 'text-transparent'} />
+        <Check size={12} className={checked ? 'text-white' : 'text-transparent'} />
       )}
     </button>
   )

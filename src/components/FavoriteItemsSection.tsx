@@ -239,9 +239,9 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
         onClick={toggleExpanded}
       >
         <span className={EXPLORER_TREE_CHEVRON_COL} aria-hidden="true">
-          <ChevronRight size={13} className={`chevron-transition ${expanded ? 'rotate-90 text-fg' : ''}`} />
+          <ChevronRight size={14} className={`chevron-transition ${expanded ? 'rotate-90 text-fg' : ''}`} />
         </span>
-        <Bookmark size={13} className="shrink-0 text-warn" />
+        <Bookmark size={14} className="shrink-0 text-warn" />
         <span className="min-w-0 flex-1 truncate text-left leading-tight">{t('收藏夹')}</span>
         <span className="shrink-0 tabular-nums text-ui-2xs font-normal text-fg-dim">{items.length}</span>
       </button>
@@ -313,7 +313,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
                 )}
                 <span className={`${EXPLORER_TREE_CHEVRON_COL} pt-0.5`} aria-hidden="true" />
                 {item.kind === 'directory' ? (
-                  <Folder size={15} className="mt-0.5 shrink-0 text-accent" />
+                  <Folder size={16} className="mt-0.5 shrink-0 text-accent" />
                 ) : (
                   <FileIcon size={14} className="mt-0.5 shrink-0 text-fg-muted" />
                 )}
@@ -334,7 +334,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
                       className="rounded p-0.5 text-fg-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
                       onClick={event => handleRemove(item, event)}
                     >
-                      <X size={13} />
+                      <X size={14} />
                     </button>
                   </Tooltip>
                 </span>

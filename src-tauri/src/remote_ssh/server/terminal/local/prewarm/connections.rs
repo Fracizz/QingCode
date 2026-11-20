@@ -1,4 +1,4 @@
-//! One refill worker per authenticated Windows Server connection. A registered,
+//! One refill worker per authenticated Server-mode connection (Windows or POSIX). A registered,
 //! trusted root permits opening the transport; the idle shell itself starts at home.
 use super::*;
 
@@ -8,8 +8,6 @@ struct Connections {
     count: usize,
     running: bool,
     pools: BTreeMap<String, ShellPrewarmPool>,
-    profile: Option<(String, PrewarmProfile)>,
-    profile_pool: ShellPrewarmPool,
 }
 
 #[derive(Clone, Default)]
@@ -18,36 +16,6 @@ pub(crate) struct ConnectionShellPools(Arc<Mutex<Connections>>, Arc<Notify>);
 impl ConnectionShellPools {
     pub(crate) fn changed(&self) {
         self.1.notify_one();
-    }
-
-    pub(crate) fn set_profile(&self, window: &str, profile: Option<PrewarmProfile>) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let next = profile.map(|p| (window.to_owned(), p));
-        if state.profile != next {
-            state.profile_pool.stop();
-            state.profile = next;
-            self.changed();
-        }
-    }
-
-    pub(crate) fn close_window(&self, window: &str) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state
-            .profile
-            .as_ref()
-            .is_some_and(|(owner, _)| owner == window)
-        {
-            state.profile_pool.stop();
-            state.profile = None;
-        }
-    }
-
-    pub(crate) fn profile_pool(&self) -> ShellPrewarmPool {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .profile_pool
-            .clone()
     }
 
     pub(crate) fn configure(&self, app: &AppHandle, shell: &str, count: usize) {
@@ -84,13 +52,6 @@ impl ConnectionShellPools {
                     return;
                 }
                 let manager = app.state::<SshManager>();
-                if let Some((window, profile)) = &state.profile {
-                    if let Some(target) = profile.target(&manager, window) {
-                        state.profile_pool.configure_target(&app, target);
-                    } else {
-                        state.profile_pool.stop();
-                    }
-                }
                 let eligible = connected_targets(&manager);
                 state.pools.retain(|id, pool| {
                     if eligible.contains_key(id) {
@@ -107,6 +68,13 @@ impl ConnectionShellPools {
                     else {
                         continue;
                     };
+                    // fish 等无法经输入确认目录的 Shell 不预热，避免反复创建失败。
+                    let powershell = remote_ready_args(&launch).1;
+                    if RemoteInput::for_launch(&remote.root.canonical_path, &launch, powershell)
+                        .is_none()
+                    {
+                        continue;
+                    }
                     let pool = state.pools.entry(id.clone()).or_default();
                     pool.configure_target(
                         &app,
@@ -130,28 +98,6 @@ impl ConnectionShellPools {
     }
 }
 
-impl PrewarmProfile {
-    fn target(&self, manager: &SshManager, window: &str) -> Option<Target> {
-        let root = manager
-            .registered_root(&self.cwd)
-            .ok()
-            .filter(|r| r.trusted)?;
-        let connection = remote_windows_connection(manager, &self.cwd)?;
-        let remote = RemoteTarget::connected(manager, &connection, &root)?;
-        let (launch, mut key) = remote_launch_key(&self.cwd, Some(&self.shell)).ok()?;
-        key.profile = Some(self.clone());
-        Some(Target {
-            project_path: self.cwd.clone(),
-            cwd: self.cwd.clone(),
-            key,
-            launch,
-            count: 1,
-            window: window.to_owned(),
-            remote: Some(remote),
-        })
-    }
-}
-
 fn connected_targets(manager: &SshManager) -> BTreeMap<String, RemoteTarget> {
     let roots = manager
         .roots
@@ -160,7 +106,7 @@ fn connected_targets(manager: &SshManager) -> BTreeMap<String, RemoteTarget> {
         .unwrap_or_default();
     let mut eligible = BTreeMap::new();
     for root in roots.into_iter().filter(|r| r.trusted) {
-        let Some(id) = remote_windows_connection(manager, &root.uri) else {
+        let Some(id) = remote_server_connection(manager, &root.uri) else {
             continue;
         };
         let Some(binding) = RemoteTarget::connected(manager, &id, &root) else {
@@ -180,7 +126,7 @@ mod tests {
     use super::super::tests::{fake_shell, remote_shell, target_for, with_id};
     use super::*;
     #[test]
-    fn only_connected_trusted_windows_roots_contribute_one_target_per_connection() {
+    fn only_connected_trusted_server_roots_contribute_one_target_per_connection() {
         use crate::remote_ssh::direct::DirectConnectionConfig;
         let manager = SshManager::new();
         for (id, paths) in [
@@ -211,7 +157,9 @@ mod tests {
             }
         }
         let initial = connected_targets(&manager);
-        assert_eq!(initial.len(), 2);
+        // Linux 远端的 Server 模式连接同样预热。
+        assert_eq!(initial.len(), 3);
+        assert_eq!(initial["linux"].root.uri, "ssh://linux/home/work");
         assert_eq!(initial["windev"].root.uri, "ssh://windev/D:/a");
         manager
             .roots
@@ -221,6 +169,7 @@ mod tests {
             .unwrap()
             .trusted = false;
         manager.direct_active.write().unwrap().remove("other");
+        manager.direct_active.write().unwrap().remove("linux");
         let next = connected_targets(&manager);
         assert_eq!(next.len(), 1);
         assert_eq!(next["windev"].root.uri, "ssh://windev/D:/b");

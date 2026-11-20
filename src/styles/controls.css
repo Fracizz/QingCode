@@ -1,0 +1,123 @@
+/*
+ * 控件基准（DESIGN.md「控件基准」）。放在 components 层：调用处的 Tailwind 工具类
+ * （如 w-full、mt-2、justify-start）仍可覆盖，按钮不必再各自拼圆角、内边距和禁用透明度。
+ *
+ * 圆角三档：4px 行内小按钮 / 徽标（--radius-sm）；6px 按钮、输入框、列表行（--radius-md）；
+ * 8px 菜单、弹窗、通知等浮层（--radius-lg）。
+ */
+@layer components {
+  .btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-size: var(--ui-font-size);
+    font-weight: 500;
+    line-height: var(--ui-line-height);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .btn:disabled,
+  .btn[aria-disabled='true'] {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* 紧凑按钮：工具条、行尾、卡片内的次级动作，与输入框同高。 */
+  .btn-sm {
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: var(--ui-font-size-sm);
+  }
+
+  /* 实心主操作：每个弹窗 / 区块最多一个。 */
+  .btn-primary {
+    background: var(--color-action);
+    color: var(--color-on-action);
+  }
+  .btn-primary:hover:not(:disabled):not([aria-disabled='true']) {
+    background: color-mix(in srgb, var(--color-action) 88%, var(--color-fg));
+  }
+  /* 描边次操作：取消、刷新、打开目录等。 */
+  .btn-secondary {
+    border-color: var(--color-border-strong);
+    color: var(--color-fg);
+  }
+  .btn-secondary:hover:not(:disabled):not([aria-disabled='true']),
+  .btn-ghost:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--color-bg-hover);
+    color: var(--color-fg);
+  }
+  /* 无边框弱操作：链接式的「清除」「范围说明」、工具条文字按钮。 */
+  .btn-ghost {
+    color: var(--color-fg-muted);
+  }
+  /* 实心危险操作：只用于确认删除 / 断开等不可逆动作。 */
+  .btn-danger {
+    background: var(--color-destructive);
+    color: var(--color-on-destructive);
+  }
+  .btn-danger:hover:not(:disabled):not([aria-disabled='true']) {
+    background: color-mix(in srgb, var(--color-destructive) 88%, var(--color-fg));
+  }
+  /* 描边危险操作：列表里的「删除」「移除」入口，点击后再确认。 */
+  .btn-danger-outline {
+    border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
+    color: var(--color-danger);
+  }
+  .btn-danger-outline:hover:not(:disabled):not([aria-disabled='true']) {
+    background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  }
+
+  /* 纯图标按钮：默认与 chip 同高（24px 基准），随界面字号放大并保持方形。 */
+  .icon-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: var(--ui-chip-height);
+    height: var(--ui-chip-height);
+    border-radius: var(--radius-sm);
+    color: var(--color-fg-muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .icon-btn:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--color-bg-hover);
+    color: var(--color-fg);
+  }
+  .icon-btn[aria-pressed='true'],
+  .icon-btn[aria-expanded='true'] {
+    background: var(--color-bg-active);
+    color: var(--color-fg);
+  }
+  .icon-btn:disabled,
+  .icon-btn[aria-disabled='true'] {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* 与输入框、按钮并排时用控件高度和 6px 圆角。 */
+  .icon-btn-md {
+    width: var(--ui-control-height);
+    height: var(--ui-control-height);
+    border-radius: var(--radius-md);
+  }
+
+  /* 弹窗面板：外壳由 ModalOverlay 提供，面板只用四档宽度。 */
+  .modal-panel {
+    position: relative;
+    width: 100%;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-elevation-3);
+  }
+  .modal-sm { max-width: 420px; }
+  .modal-md { max-width: 560px; }
+  .modal-lg { max-width: 720px; }
+  .modal-xl { max-width: 960px; }
+}

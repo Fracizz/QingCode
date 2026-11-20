@@ -295,7 +295,7 @@ export default function TerminalComposer({
             aria-label={translate('关闭')}
             disabled={busy}
             onClick={onClose}
-            className="rounded p-1 hover:bg-bg-hover disabled:opacity-50"
+            className="icon-btn"
           >
             <X size={16} />
           </button>
@@ -330,7 +330,7 @@ export default function TerminalComposer({
         <button
           type="button"
           disabled={busy}
-          className="flex items-center gap-1 rounded border border-border-strong px-3 py-1.5 text-ui hover:bg-bg-hover disabled:opacity-50"
+          className="btn btn-secondary"
           onClick={() => {
             if (!isTauri()) {
               fileInput.current?.click()
@@ -365,7 +365,7 @@ export default function TerminalComposer({
           <button
             type="button"
             disabled={busy || !text}
-            className="inline-flex items-center gap-1 rounded border border-border-strong px-3 py-1.5 text-ui hover:bg-bg-hover disabled:opacity-50"
+            className="btn btn-secondary"
             onClick={() => {
               void copyToClipboard(text)
                 .then(() => {
@@ -383,7 +383,7 @@ export default function TerminalComposer({
           <button
             type="button"
             disabled={busy || !text.trim()}
-            className="rounded bg-action px-3 py-1.5 text-ui text-on-action disabled:opacity-50"
+            className="btn btn-primary"
             onClick={() => {
               if (onFill(text)) {
                 setDraft(terminalId, '')

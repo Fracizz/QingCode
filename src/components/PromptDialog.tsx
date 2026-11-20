@@ -55,11 +55,11 @@ export default function PromptDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="prompt-title"
-        className="modal-content-enter relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-content-enter modal-panel modal-sm"
       >
         <div className="flex gap-3.5 px-5 pt-5 pb-4">
           <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border/60 bg-accent/10 text-accent">
-            <Pencil size={18} />
+            <Pencil size={16} />
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="prompt-title" className="text-ui-lg font-semibold text-fg">
@@ -100,14 +100,14 @@ export default function PromptDialog() {
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5 bg-bg-deep/20 rounded-b-lg">
           <button
             type="button"
-            className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="btn btn-secondary"
             onClick={() => answer(null)}
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
           <button
             type="button"
-            className="px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150"
+            className="btn btn-primary"
             onClick={submit}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

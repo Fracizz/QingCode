@@ -61,6 +61,26 @@ export default tseslint.config(
       'no-control-regex': 'off',
       // Ban browser-native tooltips; use shared Tooltip (see DESIGN.md).
       'react/forbid-dom-props': ['error', { forbid: ['title'] }],
+      // 控件基准（DESIGN.md「控件基准」）：字号走 text-ui-* token，圆角只用 4 / 6 / 8 三档，
+      // 图标 size 只用 12 / 14 / 16（展示图标 22 / 28 除外）。
+      'no-restricted-syntax': [
+        'error',
+        ...['Literal[value', 'TemplateElement[value.raw'].flatMap(node => [
+          {
+            selector: `${node}=/(^|[\\s:])text-\\[\\d+(\\.\\d+)?px\\]/]`,
+            message: '字号使用 text-ui-* token，不写固定像素（DESIGN.md「字号层级」）。',
+          },
+          {
+            selector: `${node}=/(^|[\\s:])rounded(-[trblse]{1,2})?-\\[\\d+(\\.\\d+)?px\\]/]`,
+            message: '圆角只用 rounded（4px）/ rounded-md（6px）/ rounded-lg（8px）三档（DESIGN.md「控件基准」）。',
+          },
+        ]),
+        {
+          selector:
+            'JSXAttribute[name.name="size"] > JSXExpressionContainer > Literal:matches([value=10], [value=11], [value=13], [value=15], [value=17], [value=18], [value=20])',
+          message: '图标尺寸只用 12 / 14 / 16，展示图标用 22 / 28（DESIGN.md「控件基准」）。',
+        },
+      ],
     },
     settings: {
       react: { version: 'detect' },

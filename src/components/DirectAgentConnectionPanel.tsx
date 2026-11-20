@@ -25,8 +25,8 @@ import {
   type DirectAgentInfo,
 } from '../lib/directAgent'
 
-const fieldClass = 'mt-1 min-w-0 w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
-const buttonClass = 'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
+const fieldClass = 'mt-1 min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+const buttonClass = 'btn btn-secondary border-dialog-border'
 const spinClass = 'animate-spin motion-reduce:animate-none'
 
 const FIREWALL_PLATFORMS: readonly { value: DirectAgentFirewallPlatform; label: string }[] = [
@@ -485,8 +485,8 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   // 自动打开的面板读取期间也隐藏标题，避免已启用的连接闪一下折叠头。
   const headerless = Boolean(managedInfo) || (busy === 'loading' && (standalone || initiallyOpen))
 
-  const testButton = <button type="button" disabled={Boolean(busy)} onClick={() => void test()} aria-busy={busy === 'testing'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'testing' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'testing' ? '正在测试直连…' : '测试直连')}</button>
-  const saveButton = <button type="button" disabled={Boolean(busy) || !verifiedNow} onClick={() => void save(true)} aria-busy={busy === 'saving' && savingEnabled} className="inline-flex items-center gap-2 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40">{busy === 'saving' && savingEnabled && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'saving' && savingEnabled ? '正在保存并启用…' : '保存并启用直连')}</button>
+  const testButton = <button type="button" disabled={Boolean(busy)} onClick={() => void test()} aria-busy={busy === 'testing'} className={buttonClass}>{busy === 'testing' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'testing' ? '正在测试直连…' : '测试直连')}</button>
+  const saveButton = <button type="button" disabled={Boolean(busy) || !verifiedNow} onClick={() => void save(true)} aria-busy={busy === 'saving' && savingEnabled} className="btn btn-primary">{busy === 'saving' && savingEnabled && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'saving' && savingEnabled ? '正在保存并启用…' : '保存并启用直连')}</button>
   const verifyHint = !verifiedNow && !anyBusy && <span className="text-ui-sm text-fg-muted">{t('测试通过后才能保存并启用。')}</span>
 
   const pairingForm = <>
@@ -507,7 +507,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       <p className="mt-1">{t('历史端口仅供核对，不会自动回退。确认旧端口不再使用后，请清理对应的防火墙规则。')}</p>
     </div>}
     <label className="block text-ui-sm text-dialog-label">{t('Server 认证凭据')}<input disabled={firewallApplying} type="password" value={token} onChange={event => { invalidate(); setToken(event.target.value) }} autoComplete="new-password" placeholder={info?.tokenSaved ? t('已安全保存，留空继续使用') : t('从配对信息导入或填写')} className={fieldClass} /></label>
-    {fingerprint && <div className="rounded border border-dialog-border bg-dialog-input p-2 text-ui-sm"><p className="mb-1 flex items-center gap-1 text-fg-muted"><ShieldCheck size={13} />{t('服务器证书指纹')}</p><p className="break-all font-mono text-fg">{fingerprint}</p></div>}
+    {fingerprint && <div className="rounded border border-dialog-border bg-dialog-input p-2 text-ui-sm"><p className="mb-1 flex items-center gap-1 text-fg-muted"><ShieldCheck size={14} />{t('服务器证书指纹')}</p><p className="break-all font-mono text-fg">{fingerprint}</p></div>}
   </>
 
   const firewallBody = <div className="grid grid-cols-1 items-start gap-3 text-ui-sm @min-[48rem]/direct-agent:grid-cols-2">
@@ -521,14 +521,14 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       {firewallPlatform && <p className="text-fg-muted">{t(directAgentFirewallHintKey(firewallPlatform))}</p>}
       {firewallCommand && <>
         <code className="block break-all rounded bg-dialog-input p-2 font-mono text-fg">{firewallCommand}</code>
-        <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={`${buttonClass} inline-flex items-center gap-1`}><Copy size={13} />{t('复制防火墙命令')}</button>
+        <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={buttonClass}><Copy size={14} />{t('复制防火墙命令')}</button>
       </>}
     </div>
     {api.firewallPlan && api.firewallApply && <div className="min-w-0 space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-2.5">
       {sshConnection ? <>
         {renderSshAuth(sshConnection, candidates)}
         <p className="break-all text-fg-muted">{t('SSH 授权仅用于配置远端防火墙，日常 Server 通信继续使用独立端口。')}</p>
-        <button type="button" disabled={anyBusy} onClick={() => void authorizeFirewall()} className={`${buttonClass} inline-flex items-center gap-1`}>{busy?.startsWith('firewall') ? <LoaderCircle size={13} className={spinClass} aria-hidden="true" /> : <ShieldCheck size={13} />}{firewallButtonLabel}</button>
+        <button type="button" disabled={anyBusy} onClick={() => void authorizeFirewall()} className={buttonClass}>{busy?.startsWith('firewall') ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <ShieldCheck size={14} />}{firewallButtonLabel}</button>
       </> : <p className="text-fg-muted">{t('未找到此主机的 SSH 连接。请先在远程连接中添加并确认 SSH 主机指纹，或使用下方命令手动放行。')}</p>}
     </div>}
   </div>
@@ -536,7 +536,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const renderSshRow = (saved: DirectAgentInfo | null) => <SettingRow id="ssh" title={t('SSH 配置')} summary={sshSection?.summary ?? t('可切回 SSH')} dirty={sshSection?.dirty} open={expandedRow === 'ssh'} disabled={firewallApplying} onToggle={toggleRow}>
     {sshSection?.form}
     <div className="flex flex-wrap items-center gap-2">
-      {saved && <button type="button" disabled={anyBusy} onClick={() => void save(false)} aria-busy={busy === 'saving' && !savingEnabled} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'saving' && !savingEnabled && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'saving' && !savingEnabled ? '正在恢复 SSH 连接…' : '恢复 SSH 连接')}</button>}
+      {saved && <button type="button" disabled={anyBusy} onClick={() => void save(false)} aria-busy={busy === 'saving' && !savingEnabled} className={buttonClass}>{busy === 'saving' && !savingEnabled && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'saving' && !savingEnabled ? '正在恢复 SSH 连接…' : '恢复 SSH 连接')}</button>}
       {sshSection?.actions && <div className="ml-auto flex flex-wrap items-center gap-2">{sshSection.actions}</div>}
     </div>
   </SettingRow>
@@ -549,7 +549,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           <span className="rounded bg-dialog-active px-1.5 text-ui-xs text-fg-muted">TLS</span>
         </p>
         {managedInfo.certificateFingerprint && <p className="flex items-center gap-1 text-ui-sm text-fg-muted">
-          <ShieldCheck size={13} className="shrink-0" aria-hidden="true" />
+          <ShieldCheck size={14} className="shrink-0" aria-hidden="true" />
           {t('指纹')}
           <span className="font-mono text-fg">{shortFingerprint(managedInfo.certificateFingerprint)}</span>
           <Tooltip label={t('复制证书指纹')}>
@@ -557,7 +557,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           </Tooltip>
         </p>}
       </div>
-      {serverSsh && api.manage && <button type="button" disabled={anyBusy} onClick={() => void runServerAction(true)} className={`${buttonClass} inline-flex items-center gap-1.5`}>{server.busy ? <LoaderCircle size={13} className={spinClass} aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}{t('通过 SSH 启动 Server')}</button>}
+      {serverSsh && api.manage && <button type="button" disabled={anyBusy} onClick={() => void runServerAction(true)} className={buttonClass}>{server.busy ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}{t('通过 SSH 启动 Server')}</button>}
     </div>
 
     <div className="rounded border border-dialog-border">
@@ -599,7 +599,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       <StepHeading index={1}>{t('准备服务')}</StepHeading>
       <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />
       <div className="flex flex-wrap items-center gap-2">
-        {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'provisioning' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
+        {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={buttonClass}>{busy === 'provisioning' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
         <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
       </div>
       {manualOpen && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">{pairingForm}</div>}

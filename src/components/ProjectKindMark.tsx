@@ -8,7 +8,7 @@ import SshPreparationIcon from './SshPreparationIcon'
 
 export function ProjectKindIcon({
   project,
-  size = 13,
+  size = 14,
   className,
   open = false,
   preparation = false,

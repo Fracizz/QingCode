@@ -65,9 +65,9 @@ const SOURCE_MENU_WIDTH = 256
 const SOURCE_MENU_GAP = 6
 
 const fieldClass =
-  'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+  'w-full rounded-md border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
 const menuItemClass =
-  'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-ui text-fg hover:bg-bg-hover'
+  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui text-fg hover:bg-bg-hover'
 
 function baseName(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
@@ -507,7 +507,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         <button
           type="button"
           onClick={() => void pickLocalFolder()}
-          className="flex-shrink-0 rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
+          className="btn btn-secondary btn-sm"
         >
           {t('更换')}
         </button>
@@ -517,9 +517,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         <button
           type="button"
           onClick={() => void pickLocalFolder()}
-          className="inline-flex max-w-full items-center gap-1.5 truncate rounded px-2 py-1 text-ui-lg text-fg hover:bg-bg-hover"
+          className="inline-flex max-w-full items-center gap-1.5 truncate rounded-md px-2 py-1 text-ui-lg text-fg hover:bg-bg-hover"
         >
-          <Plus size={15} className="flex-shrink-0 text-fg-muted" />
+          <Plus size={16} className="flex-shrink-0 text-fg-muted" />
           <span className="truncate">
             {t('在此电脑上选择文件夹')}
           </span>
@@ -537,7 +537,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
       return (
         <div className="flex flex-col gap-3 px-3 py-4">
           <div className="flex items-center gap-2 font-mono text-ui-sm text-fg-muted">
-            <Globe size={13} className="flex-shrink-0 text-fg-dim" />
+            <Globe size={14} className="flex-shrink-0 text-fg-dim" />
             <span className="min-w-0 truncate">{sshConnectionTarget(connection)}</span>
           </div>
           {connecting ? (
@@ -569,7 +569,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90"
+                  className="btn btn-primary"
                 >
                   {t('连接')}
                 </button>
@@ -588,7 +588,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
               disabled={browsing || browsePath === '/'}
               aria-label={t('上级目录')}
               onClick={() => void loadDirectory(connection.id, parentRemotePath(browsePath))}
-              className="inline-flex h-[32px] w-[32px] flex-shrink-0 items-center justify-center rounded border border-border-strong text-fg hover:bg-bg-hover disabled:opacity-40"
+              className="inline-flex h-[32px] w-[32px] flex-shrink-0 items-center justify-center rounded-md border border-border-strong text-fg hover:bg-bg-hover disabled:opacity-40"
             >
               <ArrowUp size={14} />
             </button>
@@ -608,7 +608,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         <div
           role="listbox"
           aria-label={t('远程文件夹')}
-          className="overflow-y-auto rounded border border-border-strong bg-bg"
+          className="overflow-y-auto rounded-md border border-border-strong bg-bg"
           style={{ height: 220 }}
         >
           {browsing ? (
@@ -636,7 +636,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
                     selected ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'
                   }`}
                 >
-                  <Folder size={13} className="flex-shrink-0 text-fg-dim" />
+                  <Folder size={14} className="flex-shrink-0 text-fg-dim" />
                   <span className="min-w-0 truncate">{entry.name}</span>
                 </button>
               )
@@ -657,7 +657,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-project-title"
-        className="ui-font-scaled modal-content-enter relative flex max-h-[85vh] w-full max-w-[620px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter flex max-h-[85vh] flex-col"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-5 pt-4 pb-3">
@@ -669,9 +669,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
               type="button"
               onClick={onClose}
               aria-label={t('关闭')}
-              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+              className="icon-btn"
             >
-              <X size={18} />
+              <X size={16} />
             </button>
           </Tooltip>
         </div>
@@ -679,7 +679,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-5 pb-4">
           <label className="flex items-stretch overflow-hidden rounded-md border border-border-strong bg-bg focus-within:border-accent">
             <span className="flex w-10 flex-shrink-0 items-center justify-center border-r border-border-strong text-fg-muted">
-              <Folder size={15} />
+              <Folder size={16} />
             </span>
             <input
               ref={nameRef}
@@ -718,7 +718,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
           <button
             type="button"
             onClick={onClose}
-            className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
+            className="btn btn-secondary"
           >
             {t('取消')}
           </button>
@@ -726,7 +726,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
             type="button"
             disabled={!canCreate}
             onClick={() => void create()}
-            className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
+            className="btn btn-primary"
           >
             {submitting ? t('正在创建…') : t('创建项目')}
           </button>

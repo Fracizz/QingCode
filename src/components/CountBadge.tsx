@@ -5,11 +5,11 @@ function badgeLabel(count: number): string {
 }
 
 function sizeClass(size: CountBadgeSize, count: number): string {
-  if (size === 'scm') return 'h-4 min-w-4 px-1 text-[9px]'
+  if (size === 'scm') return 'h-4 min-w-4 px-1 text-ui-2xs'
   const label = badgeLabel(count)
-  if (label.length === 1) return 'size-3.5 px-0 text-[9px]'
-  if (label.length === 2) return 'h-3.5 min-w-3.5 px-0.5 text-[9px]'
-  return 'h-3.5 min-w-[1.375rem] px-0.5 text-[9px]'
+  if (label.length === 1) return 'size-3.5 px-0 text-ui-2xs'
+  if (label.length === 2) return 'h-3.5 min-w-3.5 px-0.5 text-ui-2xs'
+  return 'h-3.5 min-w-[1.375rem] px-0.5 text-ui-2xs'
 }
 
 function toneClass(size: CountBadgeSize, count: number): string {

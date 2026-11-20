@@ -232,7 +232,7 @@ export default function TitleBar({
         {standaloneFiles ? (
           <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden px-1">
             <span className="inline-flex max-w-[180px] items-center gap-1.5 truncate rounded bg-bg-active px-2 py-1 text-ui-sm text-fg">
-              <FileText size={13} className="flex-shrink-0 text-brand" />
+              <FileText size={14} className="flex-shrink-0 text-brand" />
               {t('独立文件')}
             </span>
           </div>
@@ -240,9 +240,10 @@ export default function TitleBar({
           <ProjectPicker />
         )}
         {/* Modern WebView2 uses native non-client regions only; older runtimes
-            receive the Tauri JS/IPC fallback attribute instead. */}
+            receive the Tauri JS/IPC fallback attribute instead.
+            左侧应用图标已表明产品身份，右侧只留拖拽区，不再重复显示产品名。 */}
         <div
-          className={`title-drag-spacer flex-shrink-0 h-full w-[140px] ${
+          className={`title-drag-spacer flex-shrink-0 h-full w-[220px] ${
             nativeWindowDrag ? 'window-drag-region' : ''
           }`}
           data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
@@ -251,18 +252,6 @@ export default function TitleBar({
             void toggleMaximize()
           } : undefined}
         />
-        <span
-          className={`title-product-name flex h-full flex-shrink-0 items-center truncate px-3 text-ui font-semibold tracking-[0.01em] text-brand ${
-            nativeWindowDrag ? 'window-drag-region' : ''
-          }`}
-          data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
-          onDoubleClick={inTauri ? event => {
-            event.stopPropagation()
-            void toggleMaximize()
-          } : undefined}
-        >
-          QingCode
-        </span>
       </div>
 
       <div

@@ -294,7 +294,7 @@ export default function CommandPalette() {
         aria-modal="true"
         aria-labelledby="command-palette-title"
         aria-describedby="command-palette-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elevated/95 backdrop-blur-md [box-shadow:var(--shadow-elevation-3)]"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter flex flex-col overflow-hidden bg-bg-elevated/95 backdrop-blur-md"
       >
         <h2 id="command-palette-title" className="sr-only">
           {commandMode ? t('命令面板') : t('快速打开')}
@@ -331,7 +331,7 @@ export default function CommandPalette() {
         </div>
         {!commandMode && (searching || failedProjects.length > 0 || truncated) && (
           <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-ui-sm text-fg-muted" role="status">
-            {searching && <LoaderCircle size={13} className="animate-spin shrink-0" aria-hidden />}
+            {searching && <LoaderCircle size={14} className="animate-spin shrink-0" aria-hidden />}
             <span className="min-w-0 flex-1 break-words">
               {searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('部分项目未能完成搜索') : t('结果已达搜索上限，请细化关键词')}
               {failedProjects.length > 0 && ` · ${failedProjects.join('、')}`}
@@ -403,7 +403,7 @@ export default function CommandPalette() {
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => void runItem(item)}
                 >
-                  <Icon size={15} className="flex-shrink-0 opacity-80" />
+                  <Icon size={16} className="flex-shrink-0 opacity-80" />
                   <span className="min-w-0 flex-1 truncate">
                     <span>{highlightMatch(item.entry.label, fileQuery)}</span>
                     <span className="text-ui-sm ml-2 text-fg-dim">

@@ -71,7 +71,7 @@ export function SearchResultRow(props: {
         ) : row.hasMore ? (
           <button
             type="button"
-            className="flex h-full w-full items-center justify-center gap-1 rounded text-accent transition-colors hover:bg-bg-hover hover:text-fg"
+            className="flex h-full w-full items-center justify-center gap-1 rounded-md text-accent transition-colors hover:bg-bg-hover hover:text-fg"
             onClick={onLoadMore}
           >
             <ChevronDown size={12} />
@@ -100,10 +100,10 @@ export function SearchResultRow(props: {
           }
         >
           <ChevronRight
-            size={13}
+            size={14}
             className={`text-fg-dim flex-shrink-0 chevron-transition ${!row.collapsed ? 'rotate-90 text-fg' : ''}`}
           />
-          <FileIcon size={13} className="text-fg-muted flex-shrink-0" />
+          <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
           <span className="truncate font-medium">{row.name}</span>
           {row.dir && (
             <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 ml-1">

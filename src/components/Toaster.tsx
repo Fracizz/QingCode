@@ -62,7 +62,7 @@ export default function Toaster() {
               {t.action ? (
                 <button
                   type="button"
-                  className="mt-2.5 inline-flex items-center rounded-md border border-border-strong bg-bg px-2.5 py-1 text-ui-sm font-medium text-fg shadow-sm transition-colors hover:bg-bg-hover hover:text-fg active:translate-y-[0.5px]"
+                  className="btn btn-secondary btn-sm mt-2.5"
                   onClick={() => {
                     dismiss(t.id)
                     void t.action?.onAction()

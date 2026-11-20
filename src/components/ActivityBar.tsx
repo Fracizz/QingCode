@@ -60,76 +60,82 @@ export default function ActivityBar({
 
   return (
     <div
+      data-activity-bar=""
       className={`ui-font-scaled h-full w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-activity border-r border-divider flex flex-col items-center py-2`}
     >
-      {terminalWorkbench && (
+      {/* 视图：切换侧栏内容 */}
+      <div data-activity-group="views" className="flex flex-col items-center">
+        {terminalWorkbench && (
+          <Item
+            icon={<SquareTerminal size={22} strokeWidth={1.5} />}
+            label={t('终端列表')}
+            active={active === 'terminals' && sidebarOpen}
+            onClick={() => onActiveChange('terminals')}
+          />
+        )}
         <Item
-          icon={<SquareTerminal size={22} />}
-          label={t('终端列表')}
-          active={active === 'terminals' && sidebarOpen}
-          onClick={() => onActiveChange('terminals')}
+          icon={<FolderCode size={22} strokeWidth={1.5} />}
+          label={t('资源管理器')}
+          active={active === 'explorer' && sidebarOpen}
+          onClick={() => onActiveChange('explorer')}
         />
-      )}
-      <Item
-        icon={<FolderCode size={22} />}
-        label={t('资源管理器')}
-        active={active === 'explorer' && sidebarOpen}
-        onClick={() => onActiveChange('explorer')}
-      />
-      <Item
-        icon={<Search size={22} />}
-        label={t('搜索')}
-        active={active === 'search' && sidebarOpen}
-        onClick={() => onActiveChange('search')}
-      />
-      <Item
-        icon={<GitBranch size={22} />}
-        label={t('源代码管理')}
-        active={active === 'sourceControl' && (sidebarOpen || !terminalWorkbench)}
-        badge={gitChanges > 0 ? gitChanges : undefined}
-        onClick={() => onActiveChange('sourceControl')}
-      />
-      <Item
-        icon={<BugPlay size={22} />}
-        label={t('运行配置')}
-        active={active === 'run' && sidebarOpen}
-        onClick={() => onActiveChange('run')}
-      />
-      <Item
-        icon={<Settings size={22} />}
-        label={t('设置')}
-        active={active === 'settings' && (sidebarOpen || !terminalWorkbench)}
-        onClick={() => onActiveChange('settings')}
-      />
+        <Item
+          icon={<Search size={22} strokeWidth={1.5} />}
+          label={t('搜索')}
+          active={active === 'search' && sidebarOpen}
+          onClick={() => onActiveChange('search')}
+        />
+        <Item
+          icon={<GitBranch size={22} strokeWidth={1.5} />}
+          label={t('源代码管理')}
+          active={active === 'sourceControl' && (sidebarOpen || !terminalWorkbench)}
+          badge={gitChanges > 0 ? gitChanges : undefined}
+          onClick={() => onActiveChange('sourceControl')}
+        />
+        <Item
+          icon={<BugPlay size={22} strokeWidth={1.5} />}
+          label={t('运行配置')}
+          active={active === 'run' && sidebarOpen}
+          onClick={() => onActiveChange('run')}
+        />
+      </div>
 
-      <Tooltip
-        label={t('向左收起活动栏')}
-        side="right"
-        wrapperClassName="w-full flex justify-center"
+      {/* 动作：打开弹窗或面板，与视图之间用细线分开 */}
+      <div
+        data-activity-group="actions"
+        className="mt-1 flex flex-col items-center border-t border-divider pt-2"
       >
-        <button
-          type="button"
-          aria-label={t('向左收起活动栏')}
-          aria-expanded={true}
-          onClick={() => setActivityBarHidden(true)}
-          className="my-2 flex h-5 w-10 items-center justify-center rounded border-y border-border/70 text-fg-dim hover:text-fg transition-colors"
-        >
-          <span className="relative flex w-6 items-center justify-center">
-            <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
-            <ChevronLeft size={12} className="relative bg-bg-activity text-fg-muted" />
-          </span>
-        </button>
-      </Tooltip>
+        <Item icon={<FolderPlus size={22} strokeWidth={1.5} />} label={t('新建项目')} onClick={onAddProject} />
+        <Item icon={<ListChecks size={22} strokeWidth={1.5} />} label={t('项目管理')} onClick={onManageProjects} />
+        <Item icon={<Cloud size={22} strokeWidth={1.5} />} label={t('远程连接')} onClick={openRemoteConnections} />
+        <Item
+          icon={<Terminal size={22} strokeWidth={1.5} />}
+          label={t('显示或隐藏终端')}
+          active={terminalOpen}
+          onClick={onToggleTerminal}
+        />
+      </div>
 
-      <Item icon={<FolderPlus size={22} />} label={t('新建项目')} onClick={onAddProject} />
-      <Item icon={<ListChecks size={22} />} label={t('项目管理')} onClick={onManageProjects} />
-      <Item icon={<Cloud size={22} />} label={t('远程连接')} onClick={openRemoteConnections} />
-      <Item
-        icon={<Terminal size={22} />}
-        label={t('显示或隐藏终端')}
-        active={terminalOpen}
-        onClick={onToggleTerminal}
-      />
+      {/* 底部：设置与收起活动栏 */}
+      <div data-activity-group="footer" className="mt-auto flex flex-col items-center">
+        <Item
+          icon={<Settings size={22} strokeWidth={1.5} />}
+          label={t('设置')}
+          active={active === 'settings' && (sidebarOpen || !terminalWorkbench)}
+          onClick={() => onActiveChange('settings')}
+        />
+        <Tooltip label={t('向左收起活动栏')} side="right">
+          <button
+            type="button"
+            aria-label={t('向左收起活动栏')}
+            aria-expanded={true}
+            onClick={() => setActivityBarHidden(true)}
+            className="flex h-5 w-10 items-center justify-center rounded-md text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        </Tooltip>
+      </div>
     </div>
   )
 }
@@ -162,7 +168,7 @@ function Item({
         {badge !== undefined && (
           <span
             aria-hidden="true"
-            className="absolute bottom-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full bg-action text-on-action text-[9px] font-semibold leading-[15px] text-center"
+            className="absolute bottom-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full bg-action text-on-action text-ui-2xs font-semibold leading-[15px] text-center"
           >
             {badge > 99 ? '99+' : badge}
           </span>

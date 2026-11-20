@@ -213,12 +213,12 @@ function RunPanelContent() {
         <span className="text-fg-dim">{t('（项目根目录相对路径）')}</span>
         {projectTrusted ? (
           <span className="ml-2 inline-flex items-center gap-1 text-ok">
-            <ShieldCheck size={11} />
+            <ShieldCheck size={12} />
             {t('已信任此项目')}
           </span>
         ) : projectRestricted ? (
           <span className="ml-2 inline-flex items-center gap-1 text-warn">
-            <ShieldOff size={11} />
+            <ShieldOff size={12} />
             {t('受限模式：无法运行任务')}
           </span>
         ) : (
@@ -251,16 +251,16 @@ function RunPanelContent() {
                 type="button"
                 disabled={removing}
                 onClick={() => void requestRemove(selectedConfigs)}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-danger hover:bg-bg-hover disabled:opacity-50"
+                className="btn btn-danger-outline btn-sm"
               >
-                <Trash2 size={13} />
+                <Trash2 size={14} />
                 {t('批量删除')}
               </button>
               <button
                 type="button"
                 disabled={removing}
                 onClick={() => setSelectedIds(new Set())}
-                className="rounded px-1.5 py-1 text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-50"
+                className="btn btn-ghost btn-sm"
               >
                 {t('取消选择')}
               </button>
@@ -276,7 +276,7 @@ function RunPanelContent() {
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="btn btn-secondary"
             >
               <Plus size={14} /> {t('新建配置')}
             </button>
@@ -369,10 +369,10 @@ function RunPanelContent() {
                       <button
                         type="button"
                         aria-label={t('编辑运行配置「{name}」', { name: config.name })}
-                        className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"
+                        className="icon-btn"
                         onClick={() => setEditing(config)}
                       >
-                        <Pencil size={13} />
+                        <Pencil size={14} />
                       </button>
                     </Tooltip>
                     <Tooltip label={t('删除')} side="bottom">
@@ -380,10 +380,10 @@ function RunPanelContent() {
                         type="button"
                         aria-label={t('删除运行配置「{name}」', { name: config.name })}
                         disabled={removing}
-                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover disabled:opacity-50"
+                        className="icon-btn hover:text-danger"
                         onClick={() => void requestRemove([config])}
                       >
-                        <Trash2 size={13} />
+                        <Trash2 size={14} />
                       </button>
                     </Tooltip>
                   </div>
@@ -399,7 +399,7 @@ function RunPanelContent() {
                             onClick={() => setActiveTerminal(tid)}
                             className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
                           >
-                            <FileCode2 size={11} className="text-accent" />
+                            <FileCode2 size={12} className="text-accent" />
                             <span className="truncate max-w-[160px]">{term.name}</span>
                           </button>
                         </Tooltip>
@@ -450,14 +450,14 @@ function Header({
   return (
     <div className="px-4 h-9 flex items-center justify-between text-ui-xs font-semibold tracking-wide text-fg-muted flex-shrink-0">
       <span className="flex items-center gap-2 min-w-0">
-        <BugPlay size={13} className="flex-shrink-0 text-brand" />
+        <BugPlay size={14} className="flex-shrink-0 text-brand" />
         <span className="truncate">{title}</span>
       </span>
       <span className="flex items-center gap-0.5 flex-shrink-0">
         {onDiscover && (
           <Tooltip label={t('发现运行配置')} side="bottom">
             <button type="button" aria-label={t('发现运行配置')} onClick={onDiscover}
-              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"><Search size={14} /></button>
+              className="icon-btn"><Search size={14} /></button>
           </Tooltip>
         )}
         {trusted && onRestrict && (
@@ -465,7 +465,7 @@ function Header({
             <button
               type="button"
               onClick={onRestrict}
-              className="text-fg-dim hover:text-warn p-1 rounded hover:bg-bg-hover"
+              className="icon-btn hover:text-warn"
               aria-label={t('切换为受限模式')}
             >
               <ShieldOff size={14} />
@@ -477,7 +477,7 @@ function Header({
             <button
               type="button"
               onClick={onTrust}
-              className="text-fg-dim hover:text-ok p-1 rounded hover:bg-bg-hover"
+              className="icon-btn hover:text-ok"
               aria-label={t('信任此项目')}
             >
               <ShieldCheck size={14} />
@@ -490,7 +490,7 @@ function Header({
               type="button"
               aria-label={t('新建运行配置')}
               onClick={onAdd}
-              className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
+              className="icon-btn"
             >
               <Plus size={14} />
             </button>

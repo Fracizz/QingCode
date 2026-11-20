@@ -440,12 +440,12 @@ function App() {
     <div className="h-screen flex flex-col bg-bg text-fg">
       <TitleBar terminalOpen={terminalOpen} />
       {isWebTest() && (
-        <div className="flex-shrink-0 px-4 py-2 text-[12px] bg-brand/10 border-b border-border text-fg" role="status">
+        <div className="flex-shrink-0 px-4 py-2 text-ui-sm bg-brand/10 border-b border-border text-fg" role="status">
           {t('Web 测试环境 · 文件：模拟 · 数据库：浏览器 SQLite · 终端：模拟 · SSH：模拟')}
         </div>
       )}
       {!inTauri && !isWebTest() && (
-        <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-warn/10 border-b border-warn/30 text-warn">
+        <div className="flex-shrink-0 px-4 py-2 text-ui-sm leading-relaxed bg-warn/10 border-b border-warn/30 text-warn">
           {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
           <code className="px-1 py-0.5 rounded bg-black/20">pnpm tauri dev</code>{' '}
           {t('启动，并在弹出的桌面窗口中操作。')}
@@ -545,13 +545,13 @@ function App() {
                 <EditorTabs />
                 <EditorBreadcrumbs />
                 {projectRestricted && currentProject && (
-                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-warn/10 border-b border-warn/30 text-warn">
+                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-ui-sm bg-warn/10 border-b border-warn/30 text-warn">
                     <span className="min-w-0 flex-1">
                       {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
                     </span>
                     <button
                       type="button"
-                      className="flex-shrink-0 px-2 py-0.5 rounded bg-action/90 hover:bg-action text-on-action text-[12px]"
+                      className="btn btn-primary btn-sm"
                       onClick={() => {
                         trustProject(currentProject)
                         void pushTrustedRootsToNative(projects)

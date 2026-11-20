@@ -114,7 +114,7 @@ export default function EditorOpenError({ tab }: Props) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg px-8 py-10 text-center">
-      <AlertTriangle size={48} strokeWidth={1.25} className="text-warn opacity-90" aria-hidden />
+      <AlertTriangle size={28} strokeWidth={1.5} className="text-warn opacity-90" aria-hidden />
       <div className="max-w-xl space-y-2">
         <p className="text-ui-lg leading-relaxed text-fg">{title}</p>
         {kind === 'binary' ? (

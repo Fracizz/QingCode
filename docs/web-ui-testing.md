@@ -39,6 +39,8 @@ README 手机版截图：先启动 `pnpm test:web`，运行 `node scripts/web-te
 
 安卓界面动效：先启动 `pnpm test:web`，运行 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/mobile-motion.ego.mjs`（窗口被节流时动画时间不走，所以用无头 Chrome）。覆盖弹层退出时 `close` 语义不变且不挡点击、退出途中重新打开、抽屉与返回键、页面和浮层入场、页面按导航方向滑入与分区依次上浮（结束后不残留 transform）、导航指示块从中心展开、列表行只叠柔和状态层（不缩放、无涟漪）、进入终端时标题原位上浮、设置等全屏工作页关闭时保持全屏且无黑色遮罩、应用内「界面动效 → 减少动效」、按压缩放、发送回执、延迟探测闪烁（失败不闪）、虚拟鼠标从尖端长出、会话行原地收起、图标对齐首行，以及减少动画时全部关闭。脚本固定了 `prefers-reduced-motion`，因为测试机系统可能开着减少动画，此时其他脚本走不到动画路径。截图与 JSON 位于 `.dev/web-tests/mobile-motion/`；流畅度须真机确认。
 
+电脑端界面打磨验收：先启动 `pnpm dev:web-test`（38419），运行 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/desktop-polish.ego.mjs`。复用完整 App 与业务 Store，按深色 / 浅色截取经典布局、设置、四终端、终端工作台、项目管理与远程连接弹窗，并断言活动栏视图 / 动作 / 底部三组、标题栏不重复产品名、设置工具条同一行且下拉等宽、多格终端只有聚焦格显示快捷键栏（其他格保留高度）且格首只留图标、弹窗使用四档宽度与 `btn-primary`。传 `'{"baseline":true}'` 只截图不断言，用于改动前后对比；截图与 JSON 位于 `.dev/web-tests/desktop-polish/`（基线在 `desktop-polish-baseline/`）。
+
 电脑端浮层动效验收先启动 `pnpm test:web`，再运行 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/desktop-motion.ego.mjs`。页面 `web-tests/desktop-motion.html` 复用真实侧栏、弹窗、菜单、通知和终端浮条。覆盖同宽换页只淡入正文、分隔线开合与裁切、浮层固定位置淡入淡出、退出残影保留输入值与滚动位置、弹窗和菜单交接、减少动效与重载。截图与 JSON 位于 `.dev/web-tests/desktop-motion/`。原生窗口的流畅度在 `pnpm tauri:dev` 中确认。
 
 安卓多端共享标签：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-share-chip.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖其他端加入后标题副行出现短标签且终端高度、行数不变，对方输入 / 跟随对方尺寸 / 本机独占 / 多端数量四种状态，点标签与「…」菜单打开同一弹层、改用本机尺寸与独占请求、返回键先收起弹层、只剩本机时隐藏，以及 320px 与横屏布局。截图与 JSON 位于 `.dev/web-tests/mobile-share-chip/`；内存桥模拟共享状态，不替代电脑与真机多端联调。

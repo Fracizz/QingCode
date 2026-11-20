@@ -1,6 +1,4 @@
-import { CONNECTION_PREWARM_PREFIX, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
-import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Project } from '../types'
@@ -12,16 +10,16 @@ import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminal
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
-function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: { cwd: string; profileId: string; command: string; shell: string }) {
+function configure(cwd: string | null, shell: string | null, count: 'auto' | number) {
   backendSequence = backendSequence.then(() =>
-    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }) }),
+    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count }),
   ).then(() => {}, () => {})
   return backendSequence
 }
 
 /**
  * 最近聚焦的原生窗口同步每条连接及本机的预热数量；配置串行，撤销信任、改设置立即使旧项失效。
- * 本机项目只在 Windows 客户端预热；SSH 项目交给后端判断远端是否为 Windows 且走 Server 模式。
+ * 本机项目只在 Windows 客户端预热；SSH 项目交给后端判断是否走 Server 模式（Windows 与 Linux/macOS 远端都可预热）。
  * 预热项按主机复用：切换项目只复查条件，同一主机上已就绪的 Shell 保留，领取时再切到目标目录。
  */
 export function useShellPrewarm(project: Project | null) {
@@ -52,11 +50,7 @@ export function useShellPrewarm(project: Project | null) {
         ])
         const shell = getPrewarmShell()
         if (stale()) return
-        const connectionId = active && sshConnectionIdFromUri(active.path)
-        const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmProfile(connectionId)
-        const profile = active && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
-          command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
-        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile)
+        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count)
       })().catch(() => {})
     }
     const invalidate = () => refresh(true)
@@ -67,7 +61,7 @@ export function useShellPrewarm(project: Project | null) {
     const onTrustSynced = () => { if (document.hasFocus()) recheck() }
     recheckRef.current = recheck
     const storage = (event: StorageEvent) => {
-      if (!event.key || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
+      if (!event.key || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
     let unlisten: (() => void) | undefined

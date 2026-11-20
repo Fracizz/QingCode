@@ -1163,7 +1163,7 @@ export default function SearchPanel() {
     <>
       <div className="h-full min-h-0 flex flex-col bg-bg-sidebar text-fg">
         <div className="px-3 h-9 flex items-center gap-2 text-ui-xs font-semibold tracking-wide text-fg-muted">
-          <Search size={13} className="text-brand flex-shrink-0" />
+          <Search size={14} className="text-brand flex-shrink-0" />
           <span className="min-w-0 truncate">{t('搜索')}</span>
           <Tooltip
             label={t('搜索范围')}
@@ -1189,7 +1189,7 @@ export default function SearchPanel() {
             >
               <span className="truncate">{scopeLabel}</span>
               <Caret
-                size={11}
+                size={12}
                 className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
               />
             </button>
@@ -1202,7 +1202,7 @@ export default function SearchPanel() {
               ref={scopeMenuExitRef}
               role="listbox"
               aria-label={t('搜索范围')}
-              className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+              className="menu-enter ui-font-scaled fixed z-[100] flex flex-col gap-[3px] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
               style={scopeMenuStyle}
               onPointerDown={event => event.stopPropagation()}
             >
@@ -1219,7 +1219,7 @@ export default function SearchPanel() {
                     type="button"
                     role="option"
                     aria-selected={selected}
-                    className={`w-full px-2 py-1 text-left text-ui-sm rounded transition-colors
+                    className={`w-full px-2 py-1 text-left text-ui-sm rounded-md transition-colors
                     ${
                       selected
                         ? 'bg-bg-active text-fg'
@@ -1240,7 +1240,7 @@ export default function SearchPanel() {
                 type="button"
                 role="option"
                 aria-selected={Boolean(searchRoot)}
-                className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-ui-sm transition-colors
+                className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-ui-sm transition-colors
                 ${
                   searchRoot
                     ? 'bg-bg-active text-fg'
@@ -1248,7 +1248,7 @@ export default function SearchPanel() {
                 }`}
                 onClick={() => void chooseSearchDirectory()}
               >
-                <Folder size={13} className="shrink-0" />
+                <Folder size={14} className="shrink-0" />
                 <span>{t('选择目录…')}</span>
               </button>
             </div>,
@@ -1306,7 +1306,7 @@ export default function SearchPanel() {
                   type="button"
                   aria-label={replaceOpen ? t('隐藏替换') : t('显示替换')}
                   aria-expanded={replaceOpen}
-                  className="flex-shrink-0 mt-1 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+                  className="icon-btn mt-1"
                   onClick={() => setReplaceOpen(v => !v)}
                 >
                   {replaceOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1318,13 +1318,13 @@ export default function SearchPanel() {
                 <div className="relative min-w-0 flex-1">
                   {loading ? (
                     <LoaderCircle
-                      size={13}
+                      size={14}
                       className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
                       aria-label={t('搜索中')}
                     />
                   ) : (
                     <Search
-                      size={13}
+                      size={14}
                       className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
                     />
                   )}
@@ -1367,7 +1367,7 @@ export default function SearchPanel() {
                         setExplicitSearchCommitted(false)
                       }}
                     >
-                      <X size={13} />
+                      <X size={14} />
                     </button>
                   )}
                 </div>
@@ -1375,7 +1375,7 @@ export default function SearchPanel() {
                   type="button"
                   aria-label={t('查询')}
                   disabled={!canSubmitSearch || (loading && !searchDirty)}
-                  className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-ui-sm text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                  className="btn btn-secondary btn-sm h-[30px]"
                   onClick={submitSearch}
                 >
                   <Search size={12} />
@@ -1391,7 +1391,7 @@ export default function SearchPanel() {
                 <div className="flex items-center gap-1.5">
                   <div className="relative flex-1 min-w-0">
                     <Replace
-                      size={13}
+                      size={14}
                       className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
                     />
                     <input
@@ -1411,7 +1411,7 @@ export default function SearchPanel() {
                         searchDirty ||
                         loading
                       }
-                      className="flex-shrink-0 px-2 py-1.5 text-ui-xs rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                      className="btn btn-secondary btn-sm h-[30px]"
                       onClick={() => {
                         if (!contentResults || !queryTrimmed || searchDirty) return
                         setReplacePreview(
@@ -1439,7 +1439,7 @@ export default function SearchPanel() {
               active={ignoreCase}
               onClick={() => setIgnoreCase(v => !v)}
               tooltip={t('忽略大小写')}
-              icon={<CaseSensitive size={13} />}
+              icon={<CaseSensitive size={12} />}
               label="Aa"
             />
             {wantsFilename && (
@@ -1448,7 +1448,7 @@ export default function SearchPanel() {
                   active={fuzzy}
                   onClick={() => setFuzzy(v => !v)}
                   tooltip={t('模糊匹配（子序列）')}
-                  icon={<Type size={13} />}
+                  icon={<Type size={12} />}
                   label={t('模糊')}
                   locked={useGlob}
                 />
@@ -1456,7 +1456,7 @@ export default function SearchPanel() {
                   active={matchSuffix}
                   onClick={toggleSuffix}
                   tooltip={t('按后缀/扩展名匹配')}
-                  icon={<Regex size={13} />}
+                  icon={<Regex size={12} />}
                   label={t('后缀')}
                   locked={typeFilter !== null || useGlob}
                 />
@@ -1484,7 +1484,7 @@ export default function SearchPanel() {
                 }`}
               >
                 <Caret
-                  size={11}
+                  size={12}
                   className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`}
                 />
                 <span>{t(typeFilterLabel(typeFilter))}</span>
@@ -1506,14 +1506,14 @@ export default function SearchPanel() {
                 <div
                   ref={extPickerExitRef}
                   role="listbox"
-                  className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
+                  className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
                   style={extPickerStyle}
                   onPointerDown={event => event.stopPropagation()}
                 >
                   <div className="mb-1 flex items-center justify-between gap-2 px-1">
                     <span className="text-ui-2xs text-fg-dim">{t('当前项目')}</span>
                     {projectExtsLoading && (
-                      <LoaderCircle size={10} className="animate-spin text-accent" />
+                      <LoaderCircle size={12} className="animate-spin text-accent" />
                     )}
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -1607,7 +1607,7 @@ export default function SearchPanel() {
                         type="button"
                         disabled={!normalizedCustomExtension}
                         onClick={applyCustomExtension}
-                        className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-ui-xs text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                        className="btn btn-secondary btn-sm"
                       >
                         {t('确定')}
                       </button>
@@ -1634,7 +1634,7 @@ export default function SearchPanel() {
                 type="button"
                 disabled={loading}
                 onClick={submitSearch}
-                className="mt-1 rounded border border-border-strong px-2 py-1 text-fg hover:bg-bg-hover disabled:opacity-50"
+                className="btn btn-secondary btn-sm mt-1"
               >
                 {t('重试搜索')}
               </button>
@@ -1642,16 +1642,16 @@ export default function SearchPanel() {
           )}
           {!searchRoots.length ? (
             <EmptyState
-              icon={<Folder size={28} strokeWidth={1.2} />}
+              icon={<Folder size={28} strokeWidth={1.5} />}
               title={t('请先选择或添加项目')}
             />
           ) : error && rows.length === 0 ? (
             <EmptyState
-              icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
+              icon={<AlertCircle size={28} strokeWidth={1.5} className="text-danger" />}
               title={t('未能完成搜索')}
             />
           ) : !hasQuery ? (
-            <EmptyState icon={<Search size={28} strokeWidth={1.2} />} title={emptyHint} />
+            <EmptyState icon={<Search size={28} strokeWidth={1.5} />} title={emptyHint} />
           ) : rows.length === 0 && loading ? (
             <EmptyState
               icon={<LoaderCircle size={24} className="animate-spin text-accent" />}
@@ -1659,7 +1659,7 @@ export default function SearchPanel() {
             />
           ) : rows.length === 0 ? (
             <EmptyState
-              icon={<SearchX size={28} strokeWidth={1.2} />}
+              icon={<SearchX size={28} strokeWidth={1.5} />}
               title={t('无匹配结果')}
               hint={t('可尝试放宽筛选条件，或检查包含/排除规则与大小写匹配')}
             />
@@ -1691,7 +1691,7 @@ export default function SearchPanel() {
                         type="button"
                         aria-label={t('展开全部')}
                         disabled={allContentExpanded}
-                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-35"
+                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-50"
                         onClick={expandAll}
                       >
                         <ChevronDown size={12} />
@@ -1702,7 +1702,7 @@ export default function SearchPanel() {
                         type="button"
                         aria-label={t('折叠全部')}
                         disabled={allContentCollapsed}
-                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-35"
+                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-50"
                         onClick={collapseAll}
                       >
                         <ChevronRight size={12} />

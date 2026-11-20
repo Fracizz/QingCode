@@ -499,6 +499,7 @@ export default function TerminalPanel({
     return (
       <div
         data-terminal-pane={pane}
+        data-terminal-pane-shell=""
         data-terminal-active={focused ? 'true' : undefined}
         className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${paneFrameClass(focused)} ${
           options.className ?? ''

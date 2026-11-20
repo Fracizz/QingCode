@@ -93,7 +93,7 @@ function BranchMenuRowView({
           onMouseEnter={() => onHover(row.name)}
           onClick={() => onSwitch(row.name)}
           className={`flex w-full items-start gap-2 px-3 py-1.5 text-left ${
-            active ? 'bg-accent/15 text-fg' : 'text-fg hover:bg-bg-hover disabled:opacity-40'
+            active ? 'bg-accent/15 text-fg' : 'text-fg hover:bg-bg-hover disabled:opacity-50'
           }`}
         >
           <span className="inline-flex w-3.5 shrink-0" />
@@ -119,7 +119,7 @@ function BranchMenuRowView({
             ? 'bg-bg-active text-fg'
             : active
               ? 'bg-accent/15 text-fg'
-              : 'text-fg hover:bg-bg-hover disabled:opacity-40'
+              : 'text-fg hover:bg-bg-hover disabled:opacity-50'
         }`}
       >
         <span className="mt-0.5 inline-flex w-3.5 shrink-0 justify-center">
@@ -309,7 +309,7 @@ export default function ScmBranchMenu({
     <div
       ref={menuExitRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-md border border-border-strong bg-bg-elevated shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => {
@@ -317,8 +317,8 @@ export default function ScmBranchMenu({
       }}
     >
       <div className="shrink-0 border-b border-border px-2 py-1.5">
-        <div className="flex items-center gap-2 rounded border border-border bg-bg/60 px-2 py-1">
-          <Search size={13} className="shrink-0 text-fg-dim" aria-hidden />
+        <div className="flex items-center gap-2 rounded-md border border-border bg-bg/60 px-2 py-1">
+          <Search size={14} className="shrink-0 text-fg-dim" aria-hidden />
           <input
             ref={inputRef}
             type="search"

@@ -61,7 +61,7 @@ export default function InlineCreateRow({
     >
       <span className="w-[14px] flex-shrink-0" />
       {directory ? (
-        <Folder size={15} className="text-accent flex-shrink-0" />
+        <Folder size={16} className="text-accent flex-shrink-0" />
       ) : (
         <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
       )}

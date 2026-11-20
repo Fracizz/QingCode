@@ -22,10 +22,10 @@ export default function TerminalExitNotice({ exitCode, restoreUnavailable = fals
         {restoreUnavailable ? t('暂时无法接回终端，输出已保留。') : exitCode === null ? t('终端会话已结束，输出已保留。')
           : t('终端进程已结束（退出码 {code}），输出已保留。', { code: exitCode })}
       </span>
-      <button type="button" disabled={busy} onClick={() => void run(onReopen)} className="rounded px-2 py-1 hover:bg-bg-hover disabled:opacity-50">
+      <button type="button" disabled={busy} onClick={() => void run(onReopen)} className="btn btn-ghost btn-sm">
         {restoreUnavailable ? t('重试接回') : t('重新打开终端')}
       </button>
-      <button type="button" disabled={busy} onClick={() => void run(onExport)} className="rounded px-2 py-1 hover:bg-bg-hover disabled:opacity-50">
+      <button type="button" disabled={busy} onClick={() => void run(onExport)} className="btn btn-ghost btn-sm">
         {t('导出终端诊断')}
       </button>
     </div>

@@ -1,4 +1,3 @@
-import { connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { connectionDefaultProfileId } from '../lib/terminal/connectionDefaultProfile'
 import { recordShellOpen } from '../lib/terminal/shellOpenDiagnostics'
 import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
@@ -651,12 +650,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const shell = normalizeTerminalShell(profile.shell)
     const startup = profile.command.trim().replace(/\s*\n+\s*/g, '; ')
     const remote = projectPath.startsWith('ssh://')
-    // 远端带命令的配置也可领取：仅远端 Windows 的 PowerShell 预热项支持，其余由后端按未命中返回。
+    // 远端带命令的配置也可领取：远端 PowerShell 与 POSIX Shell 预热项支持，其余由后端按未命中返回。
     const canReserve = remote || getTerminalPersistLocalSessions()
-    const selected = connection && connectionPrewarmProfile(connection)
-    const requestedProfile = selected && selected.id === profile.id ? { profileId: profile.id, command: startup } : undefined
     const reservation = canReserve
-      ? await reservePrewarmedShell(projectPath, shell, !!startup, undefined, requestedProfile)
+      ? await reservePrewarmedShell(projectPath, shell, !!startup)
       : { reason: 'persistence_disabled' }
     if (terminalExitInProgress) return null
     const id = 'id' in reservation ? reservation.id : crypto.randomUUID()
@@ -685,7 +682,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       cwd: projectPath,
       openRequestedAt,
       prewarm: 'id' in reservation
-        ? { outcome: 'reserved', ...(reservation.profileHit && { kind: 'profile' as const }) }
+        ? { outcome: 'reserved' }
         : { outcome: 'miss', reason: reservation.reason },
       profileId: profile.id,
       shell,
@@ -1748,7 +1745,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             ? {
                 ...terminal,
                 status: 'running',
-                prewarm: spawnResult?.prewarmHit ? { outcome: 'hit', kind: terminal.prewarm?.kind }
+                prewarm: spawnResult?.prewarmHit ? { outcome: 'hit' }
                   : terminal.prewarm?.outcome === 'reserved' ? { outcome: 'miss', reason: 'claim_fallback' }
                   : terminal.prewarm,
                 awaitingRestoreSpawn: false,

@@ -64,7 +64,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         aria-modal="true"
         aria-labelledby="replace-preview-title"
         aria-describedby="replace-preview-description"
-        className="modal-content-enter relative flex h-[min(78vh,620px)] w-full max-w-[640px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter modal-panel modal-lg flex h-[min(78vh,620px)] flex-col"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Replace size={16} className="text-accent" />
@@ -91,7 +91,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
 
         <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
           {preview.files.map(file => (
-            <div key={file.path} className="mb-2 rounded border border-border bg-bg px-2 py-1.5">
+            <div key={file.path} className="mb-2 rounded-md border border-border bg-bg px-2 py-1.5">
               <div className="text-ui-sm flex items-baseline gap-2">
                 <span className="font-medium text-fg truncate">{file.name}</span>
                 <span className="text-fg-dim truncate">{file.relative}</span>
@@ -127,7 +127,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
               ref={cancelRef}
               type="button"
               disabled={applying}
-              className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+              className="btn btn-secondary"
               onClick={onClose}
             >
               {t('取消')}
@@ -135,7 +135,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
             <button
               type="button"
               disabled={applying || preview.files.length === 0}
-              className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors disabled:opacity-50"
+              className="btn btn-primary"
               onClick={() => void apply()}
             >
               {applying ? t('正在替换…') : t('确认替换')}

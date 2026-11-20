@@ -142,7 +142,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   return (
     <ModalOverlay onDismiss={() => void requestClose()}>
       <div
-        className="modal-content-enter relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
+        className="modal-content-enter modal-panel modal-lg max-h-[85vh] flex flex-col bg-bg-sidebar"
         onClick={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
         role="dialog"
@@ -160,7 +160,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             aria-label={t('关闭运行配置编辑器')}
             onClick={() => void requestClose()}
             disabled={saving}
-            className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
+            className="icon-btn"
           >
             <X size={16} />
           </button>
@@ -181,16 +181,16 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('如：前后端')}
-              className="flex-1 px-2 py-1 text-ui rounded bg-bg-deep border border-border focus:border-accent outline-none"
+              className="flex-1 px-2 py-1 text-ui rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
             />
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
                 type="button"
                 onClick={() => void loadTemplate()}
                 disabled={saving}
-                className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
+                className="btn btn-secondary btn-sm"
               >
-                <Wand2 size={13} /> {t('模板')}
+                <Wand2 size={14} /> {t('模板')}
               </button>
             </Tooltip>
           </div>
@@ -207,7 +207,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               aria-label={t('跟随项目会话恢复')}
               value={restoreWithProjectSession ? 'on' : 'off'}
               onChange={event => setRestoreWithProjectSession(event.target.value === 'on')}
-              className="rounded border border-border bg-bg-deep px-2 py-1 text-ui-sm outline-none focus:border-accent"
+              className="rounded-md border border-border bg-bg-deep px-2 py-1 text-ui-sm outline-none focus:border-accent"
             >
               <option value="on">{t('开启')}</option>
               <option value="off">{t('关闭')}</option>
@@ -224,12 +224,12 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               onClick={addTask}
               className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded text-accent hover:bg-bg-hover"
             >
-              <Plus size={13} /> {t('添加任务')}
+              <Plus size={14} /> {t('添加任务')}
             </button>
           </div>
 
           {tasks.length === 0 ? (
-            <div className="text-ui-sm text-fg-dim py-3 text-center border border-dashed border-border rounded">
+            <div className="text-ui-sm text-fg-dim py-3 text-center border border-dashed border-border rounded-md">
               {t('点击“添加任务”或“模板”快速开始')}
             </div>
           ) : (
@@ -272,7 +272,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               type="button"
               onClick={() => void requestClose()}
               disabled={saving}
-              className="text-ui px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
+              className="btn btn-secondary"
             >
               {t('取消')}
             </button>
@@ -280,7 +280,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               type="button"
               onClick={handleSave}
               disabled={saving || hasInvalidOs || !name.trim() || !tasks.some(hasRunTaskTarget)}
-              className="text-ui px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
+              className="btn btn-primary"
             >
               {saving ? t('正在保存…') : t('保存')}
             </button>
@@ -334,13 +334,13 @@ function TaskEditor({
           value={task.name ?? ''}
           onChange={e => onChange({ name: e.target.value })}
           placeholder={t('任务名（可选，如：后端）')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
         />
         <select
           aria-label={t('任务类型')}
           value={task.type}
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
-          className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
         >
           {typeOptions.map(taskType => (
             <option key={taskType} value={taskType}>
@@ -355,7 +355,7 @@ function TaskEditor({
             onClick={onRemove}
             className="p-0.5 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} />
           </button>
         </Tooltip>
       </div>
@@ -365,7 +365,7 @@ function TaskEditor({
             <label className="text-ui-sm text-fg-muted">{t('命令')} *</label>
             <Tooltip label={commandHelp} side="bottom" wrapperClassName="inline-flex">
               <span className="text-fg-dim hover:text-fg-muted cursor-default" aria-hidden>
-                <CircleHelp size={11} />
+                <CircleHelp size={12} />
               </span>
             </Tooltip>
           </div>
@@ -385,7 +385,7 @@ function TaskEditor({
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
             placeholder={remote ? 'scripts/run_backend.py' : 'scripts/run_backend.ps1'}
-            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
           />
         </div>
       )}
@@ -396,7 +396,7 @@ function TaskEditor({
           value={task.cwd ?? ''}
           onChange={e => onChange({ cwd: e.target.value })}
           placeholder={t('留空=项目根；可相对，如 backend/')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
       {unsupported && !task.os?.linux && !task.os?.macos ? (
@@ -414,7 +414,7 @@ function TaskEditor({
             onClick={() => setEnv([...envEntries, ['', '']])}
             className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
           >
-            <Plus size={11} /> {t('添加')}
+            <Plus size={12} /> {t('添加')}
           </button>
         </div>
         {envEntries.map(([k, v], i) => (
@@ -428,7 +428,7 @@ function TaskEditor({
                 )
               }
               placeholder="KEY"
-              className="w-28 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="w-28 px-1.5 py-0.5 text-ui-xs rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <span className="text-fg-dim">=</span>
             <input
@@ -440,7 +440,7 @@ function TaskEditor({
                 )
               }
               placeholder="value"
-              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <button
               type="button"
@@ -448,7 +448,7 @@ function TaskEditor({
               onClick={() => setEnv(envEntries.filter((_, idx) => idx !== i))}
               className="p-0.5 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
             >
-              <X size={11} />
+              <X size={12} />
             </button>
           </div>
         ))}
@@ -558,7 +558,7 @@ function CommandTextarea({
       aria-label={ariaLabel}
       onChange={e => onChange(e.target.value)}
       onInput={resize}
-      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
+      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
     />
   )
 }

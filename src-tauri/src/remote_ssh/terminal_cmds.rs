@@ -488,7 +488,7 @@ pub(crate) async fn ssh_create_terminal_unchecked(
         let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
         launch.name = name;
         let size = (cols.unwrap_or(80), rows.unwrap_or(24));
-        // 远端 Windows 预热命中时直接领取；未命中、过期或失败都走正常新建。
+        // 远端预热命中时直接领取；未命中、过期或失败都走正常新建。
         if let Some(pool) = super::local_terminal::pool_for_cwd(&app, &cwd) {
             if let Some(result) = pool
                 .take_remote(
@@ -688,24 +688,13 @@ pub(crate) async fn ssh_spawn_script_unchecked(
     if server_mode {
         let working_directory =
             persistent_cwd.expect("server mode validates the task working directory");
-        // 远端 Windows 配置终端：预热的 PowerShell 命中时接回后交付命令；带额外环境变量的
+        // 远端配置终端：预热的 PowerShell / POSIX Shell 命中时接回后交付命令；带额外环境变量的
         // 配置与预热项启动条件不同，照常新建。未命中或过期走正常新建。
-        if shell_kind == "interactive"
-            && env.is_empty()
-            && windows_native_path(&parsed.path).is_some()
-        {
+        if shell_kind == "interactive" && env.is_empty() {
             let mut launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
             launch.name = name.clone();
             let size = (cols.unwrap_or(80), rows.unwrap_or(24));
-            let profile_pool = app
-                .state::<super::local_terminal::ConnectionShellPools>()
-                .profile_pool();
-            let pool = if profile_pool.has_entry(&id) {
-                Some(profile_pool)
-            } else {
-                super::local_terminal::pool_for_cwd(&app, &cwd)
-            };
-            if let Some(pool) = pool {
+            if let Some(pool) = super::local_terminal::pool_for_cwd(&app, &cwd) {
                 if let Some(result) = pool
                     .take_remote(
                         &id,

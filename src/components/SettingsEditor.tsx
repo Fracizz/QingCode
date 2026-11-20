@@ -248,46 +248,24 @@ export default function SettingsEditor() {
         </div>
       </div>
 
-      {/* Header: scope + search + actions */}
-      <div className="flex-shrink-0 border-b border-border bg-bg pt-3 pb-3">
-        <div className="flex flex-wrap items-center gap-2 mb-3 px-4">
-          <SegmentedControl
-            ariaLabel={t('设置范围')}
-            options={[
-              { value: 'user', label: t('用户'), disabled: transferBusy },
-              { value: 'workspace', label: t('当前项目'), disabled: transferBusy || !currentProject },
-            ]}
-            value={scope}
-            onChange={value => {
-              if (value === 'workspace' && !currentProject) return
-              setScope(value)
-            }}
-          />
-          <div className="min-w-0 flex-1" />
-          <Tooltip label={t('管理设置')} side="bottom">
-            <button type="button" aria-label={t('管理设置')} aria-haspopup="menu" aria-expanded={Boolean(managementMenu)}
-              disabled={transferBusy || openingJson}
-              onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setManagementMenu({ x: rect.right - 200, y: rect.bottom + 4 }) }}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg">
-              <MoreHorizontal size={16} />
-            </button>
-          </Tooltip>
-          <Tooltip label={t('帮助文档')} side="bottom">
-            <button
-              type="button"
-              onClick={() => setHelpOpen(true)}
-              className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
-              aria-label={t('帮助文档')}
-            >
-              <CircleHelp size={15} />
-            </button>
-          </Tooltip>
-        </div>
-
-        {/* Search aligns with the content column (TOC is 200px; content uses px-6 + max-w-[800px]). */}
-        <div className="flex min-w-0">
-          <div className="settings-search-spacer w-[200px] flex-shrink-0" aria-hidden />
-          <div className="settings-content-padding flex-1 min-w-0 px-6">
+      {/* 工具条：范围切换对齐分类目录，搜索对齐内容列，管理与帮助靠右，同一行放下。 */}
+      <div data-settings-toolbar="" className="settings-toolbar flex-shrink-0 border-b border-border bg-bg py-3">
+        <div className="settings-toolbar-row flex min-w-0 items-center">
+          <div className="settings-toolbar-scope flex w-[200px] flex-shrink-0 items-center px-4">
+            <SegmentedControl
+              ariaLabel={t('设置范围')}
+              options={[
+                { value: 'user', label: t('用户'), disabled: transferBusy },
+                { value: 'workspace', label: t('当前项目'), disabled: transferBusy || !currentProject },
+              ]}
+              value={scope}
+              onChange={value => {
+                if (value === 'workspace' && !currentProject) return
+                setScope(value)
+              }}
+            />
+          </div>
+          <div className="settings-content-padding min-w-0 flex-1 px-6">
             <div className="relative max-w-[800px]">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
               <input
@@ -302,21 +280,47 @@ export default function SettingsEditor() {
                   type="button"
                   aria-label={t('清除搜索')}
                   onClick={() => { setQuery(''); searchRef.current?.focus() }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                  className="icon-btn absolute right-1 top-1/2 -translate-y-1/2"
                 >
                   <X size={14} />
                 </button>
               )}
             </div>
+          </div>
+          <div className="settings-toolbar-actions flex flex-shrink-0 items-center gap-1 pr-3">
+            <Tooltip label={t('管理设置')} side="bottom">
+              <button type="button" aria-label={t('管理设置')} aria-haspopup="menu" aria-expanded={Boolean(managementMenu)}
+                disabled={transferBusy || openingJson}
+                onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setManagementMenu({ x: rect.right - 200, y: rect.bottom + 4 }) }}
+                className="icon-btn icon-btn-md">
+                <MoreHorizontal size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('帮助文档')} side="bottom">
+              <button
+                type="button"
+                onClick={() => setHelpOpen(true)}
+                className="icon-btn icon-btn-md"
+                aria-label={t('帮助文档')}
+              >
+                <CircleHelp size={16} />
+              </button>
+            </Tooltip>
+          </div>
+        </div>
 
-            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm text-fg-muted">
+        {/* 范围说明对齐搜索框，作为搜索下方的一行辅助信息。 */}
+        <div className="flex min-w-0">
+          <div className="settings-search-spacer w-[200px] flex-shrink-0" aria-hidden />
+          <div className="settings-content-padding min-w-0 flex-1 px-6">
+            <div className="mt-1.5 flex min-w-0 max-w-[800px] flex-wrap items-center gap-x-1 gap-y-1 text-ui-sm text-fg-muted">
               <span className="min-w-0 break-words">{scope === 'user' ? t('作用于所有项目') : t('当前项目：{name}', { name: currentProject?.name ?? '' })}</span>
-              <button type="button" aria-expanded={scopeDetails} onClick={() => setScopeDetails(value => !value)} className="rounded px-1 text-accent hover:bg-bg-hover">{t(scopeDetails ? '收起说明' : '范围说明')}</button>
+              <span aria-hidden>·</span>
+              <button type="button" aria-expanded={scopeDetails} onClick={() => setScopeDetails(value => !value)} className="rounded px-1 text-fg-muted underline decoration-dotted underline-offset-2 hover:bg-bg-hover hover:text-fg">{t(scopeDetails ? '收起说明' : '范围说明')}</button>
             </div>
-            {scopeDetails && <p className="mt-1 text-ui-sm text-fg-muted break-words">{scope === 'user'
+            {scopeDetails && <p className="mt-1 max-w-[800px] text-ui-sm text-fg-muted break-words">{scope === 'user'
               ? t('导出用户设置、界面偏好和本地项目列表；导入按键合并，保留已有项目，不导入信任授权。')
               : t('当前项目设置覆盖用户设置；未设置的选项继续继承。多项目工作区仅用于组织项目和保存会话。')}</p>}
-
           </div>
         </div>
       </div>
@@ -346,7 +350,7 @@ export default function SettingsEditor() {
           <div className="max-w-[800px] flex flex-col gap-6">
             {visibleCategories.length === 0 && <div role="status" className="py-8 text-ui text-fg-muted">
               <p>{t('没有匹配的设置：{query}', { query })}</p>
-              <button type="button" className="mt-3 rounded px-2 py-1 text-accent hover:bg-bg-hover" onClick={() => { setQuery(''); searchRef.current?.focus() }}>{t('清除搜索')}</button>
+              <button type="button" className="btn btn-secondary btn-sm mt-3" onClick={() => { setQuery(''); searchRef.current?.focus() }}>{t('清除搜索')}</button>
             </div>}
 
             {sectionVisible('appearance') && (

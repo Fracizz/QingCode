@@ -85,7 +85,7 @@ export default function AboutSettingsSection({ match, workspaceLocked, settings 
             <button
               type="button"
               disabled={updateCheckBusy || !isTauri() || workspaceLocked}
-              className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+              className="btn btn-secondary btn-sm"
               onClick={() => {
                 if (!isTauri()) {
                   pushToast('error', t('检查更新需要 Tauri 桌面环境'))
@@ -138,7 +138,7 @@ export default function AboutSettingsSection({ match, workspaceLocked, settings 
             {ABOUT_REMOTES.map(remote => (
               <div
                 key={remote.id}
-                className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
+                className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5"
               >
                 <span className="text-ui-sm font-medium text-fg flex-shrink-0 w-14">
                   {remote.label}
@@ -165,7 +165,7 @@ export default function AboutSettingsSection({ match, workspaceLocked, settings 
                           )
                           .finally(() => setAboutCopyBusy(null))
                       }}
-                      className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                      className="btn btn-ghost btn-sm"
                       aria-label={t('复制克隆地址')}
                     >
                       {aboutCopyBusy === remote.id ? '…' : t('复制')}
@@ -182,7 +182,7 @@ export default function AboutSettingsSection({ match, workspaceLocked, settings 
                           ),
                         )
                       }}
-                      className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
+                      className="btn btn-ghost btn-sm"
                     >
                       {t('打开')}
                     </button>
@@ -206,7 +206,7 @@ export default function AboutSettingsSection({ match, workspaceLocked, settings 
                 error => pushToast('error', t('打开链接失败: {error}', { error: String(error) })),
               )
             }}
-            className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
+            className="btn btn-secondary btn-sm"
           >
             {t('查看 LICENSE')}
           </button>

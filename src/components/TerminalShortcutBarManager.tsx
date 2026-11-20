@@ -188,7 +188,7 @@ function ManagerDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="modal-content-enter relative w-full max-w-[480px] rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-panel modal-md modal-content-enter"
         onSubmit={event => {
           event.preventDefault()
           saveDraft()
@@ -249,14 +249,14 @@ function ManagerDialog() {
         <div className="flex justify-end gap-2 rounded-b-lg border-t border-border bg-bg-deep/20 px-5 py-3.5">
           <button
             type="button"
-            className="rounded-md border border-border-strong bg-bg px-3.5 py-1.5 text-ui font-medium text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+            className="btn btn-secondary"
             onClick={() => setDraft(null)}
           >
             {t('取消')}
           </button>
           <button
             type="submit"
-            className="rounded-md bg-action px-3.5 py-1.5 text-ui font-medium text-on-action shadow-sm transition-all duration-150 hover:bg-action/90"
+            className="btn btn-primary"
           >
             {draft.id ? t('保存') : t('添加')}
           </button>
@@ -271,7 +271,7 @@ function ManagerDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby={managerTitleId}
-        className="ui-font-scaled modal-content-enter relative flex max-h-[85vh] w-full max-w-[720px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-panel modal-lg ui-font-scaled modal-content-enter flex max-h-[85vh] flex-col"
       >
         <div className="flex items-center gap-3 border-b border-border px-5 py-3.5">
           <h2 id={managerTitleId} className="text-ui-lg font-semibold text-fg">{t('管理快捷键栏')}</h2>
@@ -285,7 +285,7 @@ function ManagerDialog() {
           </label>
           <Tooltip label={t('关闭')} side="bottom">
             <button type="button" aria-label={t('关闭')} className="terminal-profile-icon ml-auto" onClick={state.closeManager}>
-              <X size={15} />
+              <X size={16} />
             </button>
           </Tooltip>
         </div>
@@ -300,7 +300,7 @@ function ManagerDialog() {
               disabled={builtinCount === 0}
               onClick={() => void removeAllBuiltins()}
             >
-              <Trash2 size={13} />{t('删除全部内置键')}
+              <Trash2 size={14} />{t('删除全部内置键')}
             </button>
             <button
               type="button"
@@ -308,7 +308,7 @@ function ManagerDialog() {
               disabled={isDefaultShortcutLayout(layout)}
               onClick={() => state.resetLayout()}
             >
-              <RotateCcw size={13} />{t('恢复默认')}
+              <RotateCcw size={14} />{t('恢复默认')}
             </button>
             <button
               type="button"
@@ -316,15 +316,15 @@ function ManagerDialog() {
               disabled={state.custom.length >= CUSTOM_KEY_LIMIT}
               onClick={() => openDraft(null)}
             >
-              <Plus size={13} />{t('添加自定义键')}
+              <Plus size={14} />{t('添加自定义键')}
             </button>
           </div>
           {state.order.length === 0 && (
-            <p className="rounded border border-dashed border-border px-3 py-6 text-center text-ui-sm text-fg-muted">
+            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-ui-sm text-fg-muted">
               {t('快捷键栏是空的。可以添加自定义键，或从下方加回内置键。')}
             </p>
           )}
-          <div className={`overflow-hidden rounded border border-border ${state.order.length === 0 ? 'hidden' : ''}`}>
+          <div className={`overflow-hidden rounded-md border border-border ${state.order.length === 0 ? 'hidden' : ''}`}>
             {state.order.map((key, index) => {
               const def = findCustomKey(layout, key)
               const name = keyName(key)
@@ -356,7 +356,7 @@ function ManagerDialog() {
                     />
                   )}
                   <div className="terminal-profile-summary">
-                    <GripVertical size={13} aria-hidden className="ml-1 shrink-0 cursor-grab text-fg-dim active:cursor-grabbing" />
+                    <GripVertical size={14} aria-hidden className="ml-1 shrink-0 cursor-grab text-fg-dim active:cursor-grabbing" />
                     <label className="terminal-profile-toggle cursor-pointer">
                       <input
                         type="checkbox"
@@ -378,7 +378,7 @@ function ManagerDialog() {
                       {def && (
                         <Tooltip label={t('编辑')} side="top">
                           <button type="button" aria-label={t('编辑 {name}', { name })} className="terminal-profile-icon" onClick={() => openDraft(def)}>
-                            <Pencil size={13} />
+                            <Pencil size={14} />
                           </button>
                         </Tooltip>
                       )}
@@ -389,17 +389,17 @@ function ManagerDialog() {
                           className="terminal-profile-icon hover:!text-danger"
                           onClick={() => (def ? void removeKey(def) : state.removeBuiltinKey(key))}
                         >
-                          <Trash2 size={13} />
+                          <Trash2 size={14} />
                         </button>
                       </Tooltip>
                       <Tooltip label={t('上移')} side="top">
                         <button type="button" aria-label={t('上移 {name}', { name })} className="terminal-profile-icon disabled:opacity-30" disabled={index === 0} onClick={() => state.move(key, -1)}>
-                          <ArrowUp size={13} />
+                          <ArrowUp size={14} />
                         </button>
                       </Tooltip>
                       <Tooltip label={t('下移')} side="top">
                         <button type="button" aria-label={t('下移 {name}', { name })} className="terminal-profile-icon disabled:opacity-30" disabled={index === state.order.length - 1} onClick={() => state.move(key, 1)}>
-                          <ArrowDown size={13} />
+                          <ArrowDown size={14} />
                         </button>
                       </Tooltip>
                     </div>

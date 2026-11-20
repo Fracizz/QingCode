@@ -57,12 +57,12 @@ export default function RunConfigDiscovery({ project, onClose }: { project: Proj
   return (
     <ModalOverlay onDismiss={() => { if (!saving) onClose() }}>
       <div role="dialog" aria-modal="true" aria-labelledby={titleId}
-        className="modal-content-enter flex max-h-[85vh] w-full max-w-[680px] flex-col rounded-lg border border-border-strong bg-bg-sidebar text-fg shadow-2xl">
+        className="modal-content-enter modal-panel modal-lg flex max-h-[85vh] flex-col bg-bg-sidebar text-fg">
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
           <h2 id={titleId} className="min-w-0 truncate text-ui font-medium">{t('发现运行配置')} · {project.name}</h2>
           <Tooltip label={t('关闭')} side="bottom">
             <button type="button" aria-label={t('关闭发现运行配置')} disabled={saving} onClick={onClose}
-              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-50"><X size={16} /></button>
+              className="icon-btn"><X size={16} /></button>
           </Tooltip>
         </div>
         <div className="flex-1 overflow-auto px-4 py-3">
@@ -80,7 +80,7 @@ export default function RunConfigDiscovery({ project, onClose }: { project: Proj
               <div className="flex flex-col gap-2">
                 {result.tasks.map(task => {
                   const imported = isDiscoveredTaskImported(task, configs)
-                  return <label key={task.key} className="flex items-start gap-2 rounded border border-border bg-bg-deep/50 p-2">
+                  return <label key={task.key} className="flex items-start gap-2 rounded-md border border-border bg-bg-deep/50 p-2">
                     <input type="checkbox" aria-label={t('选择发现的任务「{name}」', { name: task.name })}
                       disabled={saving || imported} checked={imported || selected.has(task.key)} className="mt-1 shrink-0"
                       onChange={() => setSelected(previous => {
@@ -110,9 +110,9 @@ export default function RunConfigDiscovery({ project, onClose }: { project: Proj
           <label className="inline-flex items-center gap-2"><input type="checkbox" disabled={saving} checked={combined}
             onChange={event => setCombined(event.target.checked)} />{t('合并为一个配置（每项独立终端）')}</label>
           <div className="flex items-center gap-2">
-            <button type="button" disabled={saving} onClick={onClose} className="rounded px-2 py-1 hover:bg-bg-hover">{t('取消')}</button>
+            <button type="button" disabled={saving} onClick={onClose} className="btn btn-secondary btn-sm">{t('取消')}</button>
             <button type="button" disabled={saving || !chosen.length} onClick={() => void save()}
-              className="rounded border border-border-strong bg-bg-elevated px-3 py-1 text-accent hover:bg-bg-active disabled:opacity-50">
+              className="btn btn-primary btn-sm">
               {t('导入选中（{count}）', { count: chosen.length })}
             </button>
           </div>

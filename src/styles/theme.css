@@ -103,7 +103,7 @@
   --tooltip-arrow-shadow: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
   --shadow-find-widget: var(--shadow-elevation-2);
 
-  /* Standardized corner radius tokens: Controls(4px) / Surfaces(6px) / Modals(8px) */
+  /* 圆角三档（DESIGN.md「控件基准」）：行内小按钮与徽标 4px / 按钮、输入框、列表行 6px / 菜单与弹窗等浮层 8px */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -272,12 +272,6 @@ html[data-theme="ink"] [data-terminal-session-list] {
   --color-bg-sidebar: var(--color-term-list-bg);
   --color-bg-hover: var(--color-term-list-hover);
   --color-bg-active: var(--color-term-list-selected);
-}
-
-/* 石墨灰为纯中性灰，标题栏加粗的 QingCode 若用高饱和品牌色会整屏最抢眼；
-   仅标题文字改用低饱和青绿（与护眼绿品牌色一致），下划线 / 图标等当前项标识仍用 --color-brand。 */
-html[data-theme="ink"] .title-product-name {
-  color: #7fb3a5;
 }
 
 /* 护眼绿主题（id 仍为 'olive'，兼容旧 'forest'）：色相保持柔和中绿（约 140°），饱和度约 12%，

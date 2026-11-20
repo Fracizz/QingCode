@@ -38,10 +38,10 @@ import { useI18n } from '../lib/i18n'
 import { shouldSkipSearchMatchCount } from '../lib/editorSession'
 
 const ICON_BTN =
-  'inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40 disabled:pointer-events-none'
+  'inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40 disabled:pointer-events-none'
 
 const TOGGLE_BTN =
-  'inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] border border-transparent'
+  'inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-transparent'
 
 type PanelProps = {
   view: EditorView

@@ -20,7 +20,7 @@ export default function TerminalShortcutBarSettings() {
           </label>
         </div>
         <button type="button" className="terminal-profile-add" onClick={openManager}>
-          <Keyboard size={13} />{t('管理快捷键栏…')}
+          <Keyboard size={14} />{t('管理快捷键栏…')}
         </button>
       </div>
       <p className="mt-1.5 text-ui-sm leading-relaxed text-fg-muted">

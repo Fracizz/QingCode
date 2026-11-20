@@ -113,7 +113,7 @@ export default function TerminalControlNotice({ terminalId, offsetForSearch = fa
             onClick={openMenu}
             className={`inline-flex max-w-[12em] items-center gap-1 rounded-md border border-border bg-bg-deep/90 px-1.5 py-0.5 text-ui-sm shadow-sm hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50 ${TONE_CLASS[chip.tone]}`}
           >
-            <Eye size={13} aria-hidden="true" className="shrink-0" />
+            <Eye size={12} aria-hidden="true" className="shrink-0" />
             <span className="truncate">{chip.label}</span>
           </button>
         </Tooltip>

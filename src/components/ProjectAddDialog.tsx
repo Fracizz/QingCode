@@ -24,7 +24,7 @@ function sortProjects(projects: Project[]): Project[] {
 }
 
 const footerActionClass =
-  'inline-flex w-full min-w-0 flex-col items-center justify-center gap-0.5 rounded px-0.5 py-1 text-ui-xs leading-tight text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50'
+  'inline-flex w-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-0.5 py-1 text-ui-xs leading-tight text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50'
 
 interface Props {
   open: boolean
@@ -173,7 +173,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         aria-modal="true"
         aria-labelledby="project-add-title"
         aria-describedby="project-add-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter flex flex-col overflow-hidden"
         onPointerDown={event => event.stopPropagation()}
       >
         <h2 id="project-add-title" className="sr-only">
@@ -236,13 +236,13 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                       {unavailable ? (
-                        <AlertTriangle size={13} className="text-warn" />
+                        <AlertTriangle size={14} className="text-warn" />
                       ) : isCurrent ? (
                         <Check size={12} className="text-accent" />
                       ) : (
                         <ProjectKindIcon
                           project={project}
-                          size={13}
+                          size={14}
                           className="text-accent"
                         />
                       )}

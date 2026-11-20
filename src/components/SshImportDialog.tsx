@@ -135,7 +135,7 @@ export default function SshImportDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="ssh-import-title"
-        className="modal-content-enter flex max-h-[80vh] w-[680px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+        className="modal-panel modal-lg modal-content-enter flex max-h-[80vh] flex-col overflow-hidden border-dialog-border bg-dialog text-fg"
       >
         <div className="flex items-center gap-2 border-b border-dialog-separator bg-dialog-chrome px-4 py-3">
           <Download size={16} className="text-fg-muted" />
@@ -148,7 +148,7 @@ export default function SshImportDialog({
               aria-label={t('关闭')}
               disabled={saving}
               onClick={close}
-              className="rounded p-1 hover:bg-bg-hover disabled:opacity-40"
+              className="icon-btn"
             >
               <X size={16} />
             </button>
@@ -168,7 +168,7 @@ export default function SshImportDialog({
             value={query}
             onChange={event => setQuery(event.target.value)}
             disabled={saving}
-            className="w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui outline-none focus:border-accent"
+            className="w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui outline-none focus:border-accent"
           />
           <div className="flex items-center justify-between text-ui-sm">
             <label className="flex items-center gap-2">
@@ -193,7 +193,7 @@ export default function SshImportDialog({
               type="button"
               disabled={loading || saving}
               onClick={() => void load()}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-bg-hover disabled:opacity-40"
+              className="btn btn-ghost btn-sm"
             >
               <RefreshCw size={12} />
               {t('重新读取')}
@@ -202,7 +202,7 @@ export default function SshImportDialog({
         </div>
         <div
           aria-busy={loading || saving}
-          className="mx-4 my-3 min-h-24 overflow-y-auto rounded border border-dialog-border"
+          className="mx-4 my-3 min-h-24 overflow-y-auto rounded-md border border-dialog-border"
         >
           {loading ? (
             <p className="p-4 text-ui-sm text-fg-muted">{t('正在读取…')}</p>
@@ -281,7 +281,7 @@ export default function SshImportDialog({
               type="button"
               onClick={close}
               disabled={saving}
-              className="rounded border border-dialog-border px-3 py-1.5 text-ui hover:bg-bg-hover disabled:opacity-40"
+              className="btn btn-secondary border-dialog-border"
             >
               {t('取消')}
             </button>
@@ -289,7 +289,7 @@ export default function SshImportDialog({
               type="button"
               onClick={() => void importSelected()}
               disabled={loading || saving || pending.length === 0}
-              className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
+              className="btn btn-primary"
             >
               {t(saving ? '正在导入…' : '确认导入')}
             </button>

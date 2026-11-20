@@ -108,7 +108,7 @@ export default function HelpDialog({ onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="help-dialog-title"
-        className="modal-content-enter relative flex max-h-[min(72vh,680px)] w-full max-w-[min(90vw,960px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-sidebar shadow-2xl shadow-black/50"
+        className="modal-panel modal-xl modal-content-enter flex max-h-[min(72vh,680px)] flex-col overflow-hidden bg-bg-sidebar"
         onMouseDown={event => event.stopPropagation()}
       >
         <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4">
@@ -120,7 +120,7 @@ export default function HelpDialog({ onClose }: Props) {
               type="button"
               aria-label={t('关闭帮助文档')}
               onClick={onClose}
-              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+              className="icon-btn"
             >
               <X size={16} />
             </button>
@@ -163,7 +163,7 @@ export default function HelpDialog({ onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90"
+            className="btn btn-primary"
           >
             {t('关闭')}
           </button>

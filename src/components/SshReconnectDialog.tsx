@@ -123,7 +123,7 @@ export default function SshReconnectDialog() {
   }
 
   const fieldClass =
-    'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+    'w-full rounded-md border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
 
   return (
     <ModalOverlay onDismiss={close} zIndex="z-[125]">
@@ -131,11 +131,11 @@ export default function SshReconnectDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="ssh-reconnect-title"
-        className="ui-font-scaled modal-content-enter w-full max-w-[560px] max-h-[90vh] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-panel modal-md ui-font-scaled modal-content-enter max-h-[90vh] flex flex-col overflow-hidden"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <Server size={17} className="text-accent" />
+          <Server size={16} className="text-accent" />
           <h2 id="ssh-reconnect-title" className="flex-1 text-ui-lg font-semibold text-fg">
             {directInfo?.enabled ? t('重新连接 Server 项目') : '重新连接 SSH 项目'}
           </h2>
@@ -144,10 +144,10 @@ export default function SshReconnectDialog() {
               type="button"
               onClick={close}
               disabled={loading}
-              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+              className="icon-btn"
               aria-label="关闭"
             >
-              <X size={15} />
+              <X size={16} />
             </button>
           </Tooltip>
         </div>
@@ -189,9 +189,9 @@ export default function SshReconnectDialog() {
                   <button
                     type="button"
                     onClick={() => void choosePrivateKey()}
-                    className="inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded border border-border-strong px-2.5 py-1.5 text-ui-sm text-fg hover:bg-bg-hover"
+                    className="btn btn-secondary"
                   >
-                    <KeyRound size={13} className="shrink-0" />
+                    <KeyRound size={14} className="shrink-0" />
                     {t('选择')}
                   </button>
                 </div>
@@ -247,7 +247,7 @@ export default function SshReconnectDialog() {
             type="button"
             onClick={close}
             disabled={loading}
-            className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover disabled:opacity-50"
+            className="btn btn-secondary"
           >
             取消
           </button>
@@ -255,9 +255,9 @@ export default function SshReconnectDialog() {
             type="button"
             disabled={!connection || loading || checkingProfile}
             onClick={() => void reconnect()}
-            className="inline-flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
+            className="btn btn-primary"
           >
-            <RefreshCw size={13} className={loading ? 'animate-spin' : undefined} />
+            <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
             {loading ? '正在连接…' : '重新连接'}
           </button>
         </div>

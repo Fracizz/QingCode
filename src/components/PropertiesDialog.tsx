@@ -188,11 +188,11 @@ export default function PropertiesDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="properties-title"
-        className="ui-font-scaled modal-content-enter relative w-full max-w-[440px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter modal-panel modal-sm"
       >
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-bg-active text-accent">
-            <KindIcon size={18} aria-hidden />
+            <KindIcon size={16} aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
             <h2
@@ -225,7 +225,7 @@ export default function PropertiesDialog() {
           <button
             ref={okRef}
             type="button"
-            className="rounded bg-action px-3 py-1.5 text-ui text-on-action transition-colors hover:bg-action/90"
+            className="btn btn-primary"
             onClick={close}
           >
             {t('确定')}

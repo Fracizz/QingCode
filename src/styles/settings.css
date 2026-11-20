@@ -2,7 +2,7 @@
    font-size) stays on Tailwind classes at the call site so icon slots still work. */
 .setting-input {
   min-height: var(--ui-control-height);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-md, 6px);
   border: 1px solid var(--color-border-strong);
   background-color: var(--color-bg-input);
   color: var(--color-fg);
@@ -26,7 +26,7 @@
   min-width: 120px;
   max-width: 100%;
   height: var(--ui-control-height);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-md, 6px);
   border: 1px solid var(--color-border-strong);
   background-color: var(--color-bg-input);
   color: var(--color-fg);
@@ -102,29 +102,30 @@ html[data-theme='forest'] .setting-control {
   max-width: 320px;
 }
 
+/* 原生下拉与 SettingSelect 用同一个细线 V 形箭头（对齐 Lucide ChevronDown 12px 的位置与线宽），
+   两段对角细线由渐变画出，颜色跟随主题变量。 */
 .setting-select {
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 24px;
+  padding-right: 28px;
+  --setting-select-chevron: var(--color-fg-muted);
   background-image:
-    linear-gradient(45deg, transparent 50%, var(--color-fg-muted) 50%),
-    linear-gradient(135deg, var(--color-fg-muted) 50%, transparent 50%);
+    linear-gradient(45deg, transparent calc(50% - 0.5px), var(--setting-select-chevron) calc(50% - 0.5px), var(--setting-select-chevron) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    linear-gradient(135deg, transparent calc(50% - 0.5px), var(--setting-select-chevron) calc(50% - 0.5px), var(--setting-select-chevron) calc(50% + 0.5px), transparent calc(50% + 0.5px));
   background-position:
-    calc(100% - 14px) center,
-    calc(100% - 9px) center;
-  background-size: 5px 5px, 5px 5px;
+    right 14px center,
+    right 10px center;
+  background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
 }
 
 .setting-select:hover:not(:disabled) {
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--color-fg) 50%),
-    linear-gradient(135deg, var(--color-fg) 50%, transparent 50%);
+  --setting-select-chevron: var(--color-fg);
 }
 
-/* Custom SettingSelect trigger — chevron via Lucide, not CSS triangles. */
-button.setting-select-trigger,
-button.setting-select-trigger:hover:not(:disabled) {
+/* Custom SettingSelect trigger — chevron via Lucide, not CSS triangles.
+   不要在这里加 :hover 选择器：它的优先级会压过布局里给触发按钮设的宽度，悬停时按钮缩成内容宽。 */
+button.setting-select-trigger {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -202,7 +203,7 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
   gap: 8px;
   min-width: 0;
   padding: 4px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-md, 6px);
 }
 .terminal-profile-toggle:hover:not(:disabled) {
   background: var(--color-bg-hover);
@@ -221,7 +222,7 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
   justify-content: center;
   gap: 4px;
   min-height: var(--ui-control-height);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-md, 6px);
   padding: 0 6px;
   font-size: var(--ui-font-size-sm);
 }

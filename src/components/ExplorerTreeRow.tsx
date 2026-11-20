@@ -181,9 +181,9 @@ export default function ExplorerTreeRow({
             <ChevronRight size={14} className={`chevron-transition ${expanded ? 'rotate-90 text-fg' : ''}`} />
           </button>
           {expanded ? (
-            <FolderOpen size={15} className="text-accent flex-shrink-0" />
+            <FolderOpen size={16} className="text-accent flex-shrink-0" />
           ) : (
-            <Folder size={15} className="text-accent flex-shrink-0" />
+            <Folder size={16} className="text-accent flex-shrink-0" />
           )}
         </>
       ) : (

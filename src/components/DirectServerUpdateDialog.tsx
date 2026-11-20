@@ -17,7 +17,7 @@ import { beginServerOperation, finishServerOperation, reportServerOperation, use
 import ModalOverlay from './ModalOverlay'
 import ServerOperationProgress from './ServerOperationProgress'
 
-const field = 'mt-1 w-full min-w-0 rounded border border-dialog-border bg-dialog-input px-3 py-1.5 text-fg'
+const field = 'mt-1 w-full min-w-0 rounded-md border border-dialog-border bg-dialog-input px-3 py-1.5 text-fg'
 
 const updatePhaseSteps: Record<UpdatePhase, number> = {
   connecting: 1,
@@ -241,7 +241,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-impact`}
         aria-busy={busy}
-        className="flex max-h-[min(85dvh,48rem)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-ui text-fg shadow-elevation-3"
+        className="modal-panel modal-lg flex max-h-[min(85dvh,48rem)] flex-col overflow-hidden border-dialog-border bg-dialog text-ui text-fg"
       >
         <h2
           id={`${id}-title`}
@@ -326,7 +326,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
                     type="button"
                     disabled={busy || (mode === 'offline' && !directory)}
                     onClick={() => { setStartedAt(Date.now()); void prepare() }}
-                    className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
+                    className="btn btn-secondary border-dialog-border"
                   >
                     {t('检查并准备服务包')}
                   </button>
@@ -347,7 +347,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
                       type="button"
                       disabled={busy}
                       onClick={() => void chooseDirectory()}
-                      className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
+                      className="btn btn-secondary border-dialog-border"
                     >
                       {t('选择离线目录')}
                     </button>
@@ -406,7 +406,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
             type="button"
             disabled={working !== null}
             onClick={close}
-            className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
+            className="btn btn-secondary border-dialog-border"
           >
             {t(backgroundUpdate ? '关闭' : '取消')}
           </button>
@@ -414,7 +414,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
             <button
               type="button"
               onClick={sendToBackground}
-              className="rounded border border-dialog-border px-3 py-1.5 text-accent hover:bg-bg-hover"
+              className="btn btn-secondary border-dialog-border text-accent"
             >
               {t('后台运行')}
             </button>
@@ -423,7 +423,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
             type="button"
             disabled={busy || !ssh || !validPackage(info)}
             onClick={() => { setStartedAt(Date.now()); void update() }}
-            className="rounded bg-action px-3 py-1.5 text-on-action disabled:opacity-40"
+            className="btn btn-primary"
           >
             {t(working === 'update' || backgroundUpdate ? '正在更新…' : '更新并重新连接')}
           </button>

@@ -150,12 +150,11 @@ const SCM_TOOLBAR_H = 'h-8'
 const SCM_SECTION_PAD_X = 'px-3'
 /** Tighter than toolbar icon slot so labels sit closer to the left like the tab text. */
 const SCM_SECTION_ICON_SLOT = 'inline-flex h-4 w-4 shrink-0 items-center justify-center'
-const SCM_SECTION_ICON_SIZE = 13
+const SCM_SECTION_ICON_SIZE = 14
 /** File rows nest under the section label; reserve space for the absolute action rail. */
 const SCM_ROW_PAD = 'pl-5 pr-9'
-const SCM_ICON_SIZE = 13
-const SCM_ICON_BUTTON =
-  'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
+const SCM_ICON_SIZE = 14
+const SCM_ICON_BUTTON = 'icon-btn'
 /**
  * Fixed-width right rail for bulk arrows and per-row +/-.
  * Positioned with `right: var(--scm-scrollbar-width)` on headers and `right: 0` on rows
@@ -166,7 +165,7 @@ const SCM_ACTION_COLUMN =
 const SCM_ROW_ACTION_COLUMN = 'absolute inset-y-0 right-0 flex w-9 items-center justify-center'
 const SCM_ACTION_TOOLTIP = 'flex h-full w-full items-center justify-center'
 const STATUS_BADGE =
-  'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
+  'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-ui-2xs font-bold leading-none'
 
 function GitScmStatusBadge({ status, group }: { status: string; group: GitChangeGroup }) {
   const tone = scmStatusBadgeTone(status, group)
@@ -202,7 +201,7 @@ function ScmOperationAlert({
       className="flex shrink-0 flex-col gap-1.5 border-y border-danger/20 bg-danger/5 px-3 py-2"
     >
       <div className="flex items-start gap-2 text-danger">
-        <AlertCircle size={14} className="mt-0.5 shrink-0" strokeWidth={2} />
+        <AlertCircle size={14} className="mt-0.5 shrink-0" />
         <p className="text-ui-sm min-w-0 flex-1 leading-[var(--ui-line-height)]">
           {display.literal
             ? display.summaryKey
@@ -212,7 +211,7 @@ function ScmOperationAlert({
           type="button"
           aria-label={t('关闭')}
           onClick={onDismiss}
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-dim transition-colors hover:bg-danger/10 hover:text-danger"
+          className="icon-btn text-fg-dim hover:bg-danger/10 hover:text-danger"
         >
           <X size={14} />
         </button>
@@ -379,7 +378,7 @@ function ChangeRowComponent(
               actionBusy
                 ? 'opacity-100'
                 : 'opacity-0 group-hover/scm-row:opacity-100 focus-visible:opacity-100'
-            }`}
+            } disabled:opacity-50`}
           >
             {actionBusy ? (
               <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
@@ -527,9 +526,9 @@ function ChangeGroupSection({
               {bulkBusy ? (
                 <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
               ) : group === 'staged' ? (
-                <ArrowUp size={SCM_ICON_SIZE} strokeWidth={2} />
+                <ArrowUp size={SCM_ICON_SIZE} />
               ) : (
-                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2} />
+                <ArrowDown size={SCM_ICON_SIZE} />
               )}
             </button>
           </Tooltip>
@@ -2202,19 +2201,19 @@ export default function SourceControlPanel() {
   let body: ReactNode
   if (!currentProject) {
     body = (
-      <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
+      <EmptyState icon={<Folder size={28} strokeWidth={1.5} />} title={t('请先选择或添加项目')} />
     )
   } else if (error && !status) {
     body = (
       <EmptyState
-        icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
+        icon={<AlertCircle size={28} strokeWidth={1.5} className="text-danger" />}
         title={error}
       />
     )
   } else if (status && !status.is_repository) {
     body = (
       <EmptyState
-        icon={<GitBranch size={28} strokeWidth={1.2} />}
+        icon={<GitBranch size={28} strokeWidth={1.5} />}
         title={t('当前项目不是 Git 仓库')}
       />
     )
@@ -2300,18 +2299,18 @@ export default function SourceControlPanel() {
               }
               aria-label={t('提交信息')}
               aria-invalid={commitError ? true : undefined}
-              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-[var(--ui-line-height)] text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
+              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded-md border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-[var(--ui-line-height)] text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
             />
             <button
               type="button"
               disabled={!canCommitStagedChanges(commitMessage, groups.staged.length, writeDisabled)}
               onClick={() => void commitStaged()}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui-sm font-medium text-on-action transition-colors hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="btn btn-primary mt-2 w-full"
             >
               {operation?.kind === 'commit' || operation?.kind === 'push' ? (
-                <LoaderCircle size={13} className="animate-spin" />
+                <LoaderCircle size={14} className="animate-spin" />
               ) : (
-                <GitCommitHorizontal size={13} />
+                <GitCommitHorizontal size={14} />
               )}
               {operation?.kind === 'commit'
                 ? t('正在提交…')
@@ -2332,7 +2331,7 @@ export default function SourceControlPanel() {
             />
           ) : inlineDiffError ? (
             <EmptyState
-              icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
+              icon={<AlertCircle size={28} strokeWidth={1.5} className="text-danger" />}
               title={inlineDiffError}
             />
           ) : inlineDiff ? (
@@ -2355,7 +2354,7 @@ export default function SourceControlPanel() {
             </div>
           ) : (
             <EmptyState
-              icon={<GitCompare size={28} strokeWidth={1.2} />}
+              icon={<GitCompare size={28} strokeWidth={1.5} />}
               title={t('选择一个更改查看差异')}
             />
           )}
@@ -2410,7 +2409,7 @@ export default function SourceControlPanel() {
               <button
                 type="button"
                 onClick={() => void copyCommitHash(selectedCommit.short_hash)}
-                className="rounded border border-border px-2 py-0.5 text-ui-xs text-fg hover:bg-bg-hover"
+                className="btn btn-secondary btn-sm"
               >
                 {t('复制哈希')}
               </button>
@@ -2432,7 +2431,7 @@ export default function SourceControlPanel() {
             onChange={event => setCommitFileFilter(event.target.value)}
             placeholder={commitFileFilterRegex ? t('支持正则表达式') : t('筛选文件路径')}
             aria-label={t('筛选文件路径')}
-            className="text-ui-sm min-w-0 flex-1 rounded border border-border bg-bg-deep/60 px-2 py-1 text-fg outline-none placeholder:text-fg-dim focus:border-accent"
+            className="text-ui-sm min-w-0 flex-1 rounded-md border border-border bg-bg-deep/60 px-2 py-1 text-fg outline-none placeholder:text-fg-dim focus:border-accent"
           />
           <Tooltip label={commitFileFilterRegex ? t('关闭正则') : t('使用正则')} side="bottom">
             <button
@@ -2489,7 +2488,7 @@ export default function SourceControlPanel() {
                 <button
                   type="button"
                   onClick={closeCommitDiff}
-                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-fg hover:bg-bg-hover"
+                  className="btn btn-ghost btn-sm text-fg"
                 >
                   <ChevronLeft size={14} />
                   {t('返回提交列表')}
@@ -2561,7 +2560,7 @@ export default function SourceControlPanel() {
                 <div className="min-h-0 flex-1 overflow-hidden bg-bg-deep/15">
                   {commits.length === 0 ? (
                     <EmptyState
-                      icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
+                      icon={<GitCommitHorizontal size={28} strokeWidth={1.5} />}
                       title={t('暂无提交记录')}
                     />
                   ) : (
@@ -2585,7 +2584,7 @@ export default function SourceControlPanel() {
         {historyDetailPane ?? (
           <div className="scm-empty-history-detail flex min-h-0 w-[min(40%,520px)] flex-shrink-0 flex-col border-l border-border bg-bg-sidebar">
             <EmptyState
-              icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
+              icon={<GitCommitHorizontal size={28} strokeWidth={1.5} />}
               title={t('暂无提交记录')}
             />
           </div>
@@ -2618,7 +2617,7 @@ export default function SourceControlPanel() {
                 type="button"
                 onClick={() => void retryPush()}
                 disabled={Boolean(operation) || loading || backgroundFetching}
-                className="rounded border border-danger/50 px-2 py-1 text-ui-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+                className="btn btn-danger-outline btn-sm"
               >
                 {t('重试推送')}
               </button>

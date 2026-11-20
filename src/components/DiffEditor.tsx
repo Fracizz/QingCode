@@ -234,7 +234,7 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
         </div>
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="flex flex-col items-center gap-3 text-fg-muted">
-            <AlertTriangle size={32} className="text-warn" />
+            <AlertTriangle size={28} strokeWidth={1.5} className="text-warn" />
             <p className="text-ui-lg font-medium">{t('文件过大，无法显示差异对比')}</p>
             <p className="text-ui-sm">
               {t('差异对比支持的最大文件大小为 {size}', { size: '5MB' })}

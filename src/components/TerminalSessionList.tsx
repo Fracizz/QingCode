@@ -106,10 +106,8 @@ import Tooltip from './Tooltip'
 import { TooltipSuppressionContext } from './tooltipContext'
 import type { TerminalTab } from '../types'
 
-const HEADER_BUTTON =
-  'flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
-const BAR_BUTTON =
-  'rounded px-1.5 py-0.5 text-ui-xs text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40'
+const HEADER_BUTTON = 'icon-btn'
+const BAR_BUTTON = 'btn btn-ghost btn-sm'
 // 行内和组头按钮都不用 ui-chip：它的高度随字号变大且优先级高于 h-*，大字号时底色会撑满甚至超出固定高度的行。
 const ROW_BUTTON = 'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded'
 const GROUP_ACTION = 'text-fg-muted hover:bg-bg-active hover:text-fg'
@@ -121,13 +119,13 @@ function PickBox({ state, ...rest }: { state: PickState } & Record<`data-${strin
   return (
     <span
       aria-hidden="true"
-      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[4px] border ${
+      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
         state === 'off' ? 'border-border-strong' : 'border-fg bg-fg text-bg'
       }`}
       {...rest}
     >
-      {state === 'on' && <Check size={11} strokeWidth={3} />}
-      {state === 'mixed' && <Minus size={11} strokeWidth={3} />}
+      {state === 'on' && <Check size={12} />}
+      {state === 'mixed' && <Minus size={12} />}
     </span>
   )
 }
@@ -688,7 +686,7 @@ export default function TerminalSessionList() {
                 void reloadTerminal(term)
               }}
             >
-              <RotateCcw size={13} />
+              <RotateCcw size={12} />
             </button>
           </Tooltip>
         )}
@@ -732,7 +730,7 @@ export default function TerminalSessionList() {
                 }`}
                 onClick={event => handleCloseClick(event, term.id)}
               >
-                {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={13} />}
+                {isCloseArmed ? <Circle size={9} fill="currentColor" /> : <X size={12} />}
               </button>
             </Tooltip>
           </span>
@@ -908,7 +906,7 @@ export default function TerminalSessionList() {
                   setProjectMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id })
                 }}
               >
-                <MoreHorizontal size={15} />
+                <MoreHorizontal size={14} />
               </button>
             </Tooltip>
             <Tooltip
@@ -933,7 +931,7 @@ export default function TerminalSessionList() {
                   setProfileMenu({ x: event.clientX, y: event.clientY, projectId: project.id, trigger: event.currentTarget })
                 }}
               >
-                <Plus size={15} />
+                <Plus size={14} />
               </button>
             </Tooltip>
             <Tooltip label={translate('选择终端配置')} side="top">
@@ -952,7 +950,7 @@ export default function TerminalSessionList() {
                   setProfileMenu({ x: rect.left, y: rect.bottom + 4, projectId: project.id, trigger: event.currentTarget })
                 }}
               >
-                <ChevronDown size={13} />
+                <ChevronDown size={12} />
               </button>
             </Tooltip>
           </span>
@@ -1013,7 +1011,7 @@ export default function TerminalSessionList() {
             className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
           <span className={`flex flex-shrink-0 ${SOURCE_TEXT[section.kind]}`}>
-            <HostKindIcon kind={section.kind} size={13} />
+            <HostKindIcon kind={section.kind} size={12} />
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
           <span
@@ -1101,7 +1099,7 @@ export default function TerminalSessionList() {
             aria-haspopup="menu"
             aria-expanded={listMenu !== null}
             data-terminal-list-menu
-            className={`${HEADER_BUTTON} aria-expanded:bg-bg-active aria-expanded:text-fg`}
+            className={HEADER_BUTTON}
             onClick={event => {
               if (listMenu) {
                 setListMenu(null)
@@ -1111,7 +1109,7 @@ export default function TerminalSessionList() {
               setListMenu({ x: rect.left, y: rect.bottom + 4 })
             }}
           >
-            <MoreHorizontal size={15} />
+            <MoreHorizontal size={14} />
           </button>
         </Tooltip>
         <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="bottom">
@@ -1121,14 +1119,14 @@ export default function TerminalSessionList() {
             className={HEADER_BUTTON}
             onClick={() => requestToggleTerminal()}
           >
-            <ChevronLeft size={15} />
+            <ChevronLeft size={14} />
           </button>
         </Tooltip>
       </div>
 
       <div data-terminal-list-search className="flex flex-shrink-0 items-center gap-1 pb-1.5 pl-3 pr-1.5">
         <label className="flex ui-chip min-w-0 flex-1 items-center gap-1 rounded-md border border-transparent bg-bg-hover px-1.5 transition-colors focus-within:border-accent/60">
-          <Search size={13} className="flex-shrink-0 text-fg-dim" />
+          <Search size={14} className="flex-shrink-0 text-fg-dim" />
           <input
             ref={searchRef}
             value={query}
@@ -1155,7 +1153,7 @@ export default function TerminalSessionList() {
                   searchRef.current?.focus()
                 }}
               >
-                <X size={13} />
+                <X size={12} />
               </button>
             </Tooltip>
           )}
@@ -1178,7 +1176,7 @@ export default function TerminalSessionList() {
               setScopeMenu({ x: rect.left, y: rect.bottom + 4 })
             }}
           >
-            <ListFilter size={15} />
+            <ListFilter size={14} />
           </button>
         </Tooltip>
         <Tooltip
@@ -1195,7 +1193,7 @@ export default function TerminalSessionList() {
               setRunningFirst(value => !value)
             }}
           >
-            <Bell size={15} />
+            <Bell size={14} />
           </button>
         </Tooltip>
       </div>
@@ -1248,7 +1246,7 @@ export default function TerminalSessionList() {
       {allGroups.length === 0 ? (
         <EmptyState
           className="min-h-0 flex-1"
-          icon={<TerminalIcon size={28} strokeWidth={1.2} />}
+          icon={<TerminalIcon size={28} strokeWidth={1.5} />}
           title={translate('请先选择或添加项目，终端将默认基于当前项目创建')}
         />
       ) : (
@@ -1267,14 +1265,14 @@ export default function TerminalSessionList() {
           {(searching || scopeFiltering) && groups.length === 0 && (
             <EmptyState
               className="min-h-0 flex-1"
-              icon={<Search size={28} strokeWidth={1.2} />}
+              icon={<Search size={28} strokeWidth={1.5} />}
               title={translate('没有匹配的终端')}
             />
           )}
           {totalTerminals === 0 && currentProject && !searching && !scopeFiltering && (
             <EmptyState
               className="min-h-0 flex-1"
-              icon={<TerminalIcon size={28} strokeWidth={1.2} />}
+              icon={<TerminalIcon size={28} strokeWidth={1.5} />}
               title={translate('当前项目「{name}」暂无终端，点击上方 + 新建', { name: currentProject.name })}
             />
           )}

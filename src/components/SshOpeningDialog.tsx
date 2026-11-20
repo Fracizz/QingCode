@@ -40,8 +40,8 @@ export function SshOpeningProgress({ attempt, operation, status, onBackground }:
     <ServerOperationProgress name={project.name} rootUri={project.path} status={status}
       label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
       actions={<>
-        <button type="button" onClick={onBackground} className="shrink-0 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t('后台运行')}</button>
-        <button type="button" onClick={() => cancelSshOpening(attempt.key)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>
+        <button type="button" onClick={onBackground} className="btn btn-ghost btn-sm text-accent">{t('后台运行')}</button>
+        <button type="button" onClick={() => cancelSshOpening(attempt.key)} className="btn btn-ghost btn-sm">{t('取消打开')}</button>
       </>} />
   )
 }
@@ -75,10 +75,10 @@ export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttem
         aria-labelledby="ssh-opening-title"
         aria-describedby="ssh-opening-description"
         aria-busy={!error}
-        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-[480px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-panel modal-md modal-content-enter flex max-h-[85vh] flex-col overflow-hidden"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          {error ? <AlertTriangle size={17} className="text-danger" /> : <Server size={17} className="text-accent" />}
+          {error ? <AlertTriangle size={16} className="text-danger" /> : <Server size={16} className="text-accent" />}
           <h2 id="ssh-opening-title" className="text-ui-lg font-semibold text-fg">
             {error ? t('无法打开远程项目') : t('正在打开远程项目')}
           </h2>
@@ -124,19 +124,19 @@ export default function SshOpeningDialog({ attempt }: { attempt: SshOpeningAttem
           )}
         </div>
         <div className="flex flex-wrap justify-end gap-2 whitespace-nowrap border-t border-border px-4 py-3">
-          <button type="button" onClick={cancel} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
+          <button type="button" onClick={cancel} className="btn btn-secondary">
             {error ? t('关闭') : t('取消打开')}
           </button>
           {error && <>
-            {direct && sshServerVersionMismatch(error) && <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
+            {direct && sshServerVersionMismatch(error) && <button type="button" className="btn btn-secondary" onClick={() => {
               cancel()
               useUIStore.setState({ serverUpdateRootUri: project.path })
             }}>{t('通过 SSH 更新远端服务')}</button>}
-            <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
+            <button type="button" className="btn btn-secondary" onClick={() => {
               cancel()
               useUIStore.getState().openRemoteConnections()
             }}>{t('远程连接')}</button>
-            <button type="button" disabled={retryBusy || recoveryBusy} className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50" onClick={async () => {
+            <button type="button" disabled={retryBusy || recoveryBusy} className="btn btn-primary" onClick={async () => {
               const opening = attempt.controller
               if (retryRef.current?.opening === opening) return
               retryRef.current?.controller.abort()

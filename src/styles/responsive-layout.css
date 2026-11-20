@@ -30,6 +30,9 @@
   .settings-item-row { flex-direction: row; align-items: flex-start; gap: 24px; }
   .settings-item-copy { min-width: 12rem; }
   .settings-item-control { width: auto; max-width: 320px; flex-shrink: 0; }
+  /* 设置行右侧的下拉统一宽度，原生下拉与 SettingSelect 对齐成一列。 */
+  .settings-item-control > select.setting-control,
+  .settings-item-control > button.setting-select-trigger { width: 240px; min-width: 0; max-width: 100%; }
 }
 
 /* Multi-part settings need the full content column, including on wide screens. */
@@ -39,6 +42,7 @@
 
 @container settings (max-width: 680px) {
   .settings-search-spacer { display: none; }
+  .settings-toolbar-scope { width: auto; padding-right: 0; }
   /* Keep categories vertical when terminal splits narrow the settings column. */
   .settings-nav {
     width: 140px;
@@ -61,6 +65,10 @@
 
 /* 终端工作台把设置放进左侧侧栏：分类改为顶部横向滚动条，内容占满宽度。 */
 @container settings (max-width: 480px) {
+  /* 侧栏中的设置：范围切换与管理按钮一行，搜索框换到下一行占满。 */
+  .settings-toolbar-row { flex-wrap: wrap; row-gap: 8px; }
+  .settings-toolbar-scope { flex: 1 1 auto; }
+  .settings-toolbar-row > .settings-content-padding { order: 3; flex-basis: 100%; }
   .settings-body { flex-direction: column; }
   .settings-nav {
     display: flex;
@@ -117,12 +125,11 @@
 
 .title-bar-shell { container: title-bar / inline-size; }
 @container title-bar (max-width: 1050px) {
-  .title-drag-spacer { width: 28px; }
+  .title-drag-spacer { width: 96px; }
   .title-layout-detail { display: none; }
 }
 @container title-bar (max-width: 760px) {
-  .title-product-name { display: none; }
-  .title-drag-spacer { width: 16px; }
+  .title-drag-spacer { width: 40px; }
 }
 
 .status-bar-shell { container: status-bar / inline-size; }

@@ -43,7 +43,7 @@ export default function SegmentedControl<T extends string>({
             onClick={() => onChange(option.value)}
             className={`flex-1 px-2 py-0.5 text-ui-sm rounded transition-colors whitespace-nowrap
               ${active ? 'bg-bg-elevated text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}
-              disabled:opacity-40 disabled:cursor-not-allowed`}
+              disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {option.label}
           </button>

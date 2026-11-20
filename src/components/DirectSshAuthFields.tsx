@@ -1,7 +1,7 @@
 import { useI18n } from '../lib/i18n'
 import type { SshConnection } from '../types'
 
-const fieldClass = 'mt-1 min-w-0 w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+const fieldClass = 'mt-1 min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
 const labelClass = 'block min-w-0 text-ui-sm text-dialog-label'
 
 interface Props {

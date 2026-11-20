@@ -166,7 +166,7 @@ export default function AppearanceSettingsSection({
             <button
               type="button"
               disabled={workspaceLocked || !isTauri()}
-              className="setting-control px-2.5 py-1 text-ui-sm"
+              className="btn btn-secondary btn-sm"
               onClick={() => {
                 void (async () => {
                   try {
@@ -188,7 +188,7 @@ export default function AppearanceSettingsSection({
             <button
               type="button"
               disabled={workspaceLocked || !isTauri()}
-              className="setting-control px-2.5 py-1 text-ui-sm"
+              className="btn btn-secondary btn-sm"
               onClick={() => {
                 void (async () => {
                   try {
