@@ -1093,7 +1093,7 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 .session-group-head .session-group-icon { flex: none; align-self: center; width: 15px; height: 15px; }
 .session-group[data-current-project="true"] .session-group-icon { color: var(--accent); }
 .session-group-head span { flex: none; }
-.session-group-head .session-group-source { display: inline-flex; flex: 0 1 auto; align-items: baseline; min-width: 0; overflow: hidden; white-space: nowrap; }
+.session-group-head .session-group-source { display: inline-flex; flex: 0 1 auto; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 /* 来源小标签：淡底细边框都取文字色，与电脑端终端列表组头同款。 */
 .session-group-head .project-source-chip { flex: none; max-width: 12em; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 4px; background: color-mix(in srgb, currentColor 7%, transparent); color: var(--source-local); font-size: 11.5px; line-height: 1.5; }
 .session-group-head .project-source-chip[data-kind="ssh"] { color: var(--source-ssh); }
