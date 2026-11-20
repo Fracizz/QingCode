@@ -158,6 +158,28 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       assert.equal(motion.remaining, 0)
     })
 
+    await step('连续切换三个终端只保留最近一轮交接', async () => {
+      const state = await page.evaluate(async () => {
+        const tabs = document.querySelectorAll('[data-terminal-session-list] [role="tab"]')
+        const focus = () => document.querySelector('[data-terminal-pane-body="primary"]')
+        const afterFrame = () => new Promise(resolve => requestAnimationFrame(resolve))
+        const oldest = focus()
+        tabs[0].click()
+        await afterFrame()
+        const previous = focus()
+        tabs[2].click()
+        await afterFrame()
+        const latest = focus()
+        return {
+          oldest: getComputedStyle(oldest).visibility,
+          previous: getComputedStyle(previous).visibility,
+          newDuration: latest.getAnimations()[0]?.effect.getTiming().duration,
+          visible: [...document.querySelectorAll('[data-terminal-view]')].filter(el => getComputedStyle(el).visibility === 'visible').length,
+        }
+      })
+      assert.deepEqual(state, { oldest: 'hidden', previous: 'visible', newDuration: 120, visible: 2 })
+    })
+
     await step('方向键沿列表移动选中项', async () => {
       await page.focus(rowSelector(1))
       await page.keyboard.press('ArrowDown')

@@ -1,3 +1,6 @@
+import { CONNECTION_PREWARM_PREFIX, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
+import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Project } from '../types'
@@ -9,9 +12,9 @@ import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminal
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
-function configure(cwd: string | null, shell: string | null, count: 'auto' | number) {
+function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: { cwd: string; profileId: string; command: string; shell: string }) {
   backendSequence = backendSequence.then(() =>
-    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count }),
+    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }) }),
   ).then(() => {}, () => {})
   return backendSequence
 }
@@ -49,7 +52,11 @@ export function useShellPrewarm(project: Project | null) {
         ])
         const shell = getPrewarmShell()
         if (stale()) return
-        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count)
+        const connectionId = active && sshConnectionIdFromUri(active.path)
+        const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmProfile(connectionId)
+        const profile = active && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
+          command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
+        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile)
       })().catch(() => {})
     }
     const invalidate = () => refresh(true)
@@ -60,7 +67,7 @@ export function useShellPrewarm(project: Project | null) {
     const onTrustSynced = () => { if (document.hasFocus()) recheck() }
     recheckRef.current = recheck
     const storage = (event: StorageEvent) => {
-      if (!event.key || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
+      if (!event.key || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
     let unlisten: (() => void) | undefined
@@ -87,6 +94,7 @@ export function useShellPrewarm(project: Project | null) {
     window.addEventListener(SHELL_PREWARM_CHANGED_EVENT, onSettingsChanged)
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
     window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
+    window.addEventListener(TERMINAL_PROFILE_TRUST_CHANGED_EVENT, invalidate)
     window.addEventListener('storage', storage)
     return () => {
       disposed = true
@@ -97,6 +105,7 @@ export function useShellPrewarm(project: Project | null) {
       window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, invalidate)
       window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
       unlisten?.()
+      window.removeEventListener(TERMINAL_PROFILE_TRUST_CHANGED_EVENT, invalidate)
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)
     }

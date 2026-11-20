@@ -12,23 +12,23 @@ import { heldRowOffset, heldTerminalRows, keyboardLikelyOpen } from '../../mobil
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('touch swipes become whole wheel ticks for mouse-reporting programs', () => {
-  it('accumulates pixels by cell height instead of xterm’s damped pixel wheel', () => {
+  it('responds after half a row, then sends one tick per row on a slow drag', () => {
     const state = { remainder: 0 }
-    // 每滑过两行发一格：20px 行高下 40px 正好一格。
-    expect(wheelTicks(state, 30, 20)).toBe(0)
-    expect(wheelTicks(state, 10, 20)).toBe(1)
-    expect(state.remainder).toBeCloseTo(0)
-    expect(wheelTicks(state, -80, 20)).toBe(-2)
+    for (let pixel = 1; pixel <= 70; pixel++) {
+      const tick = wheelTicks(state, 1, 20)
+      expect(tick).toBe(pixel % 20 === 10 ? 1 : 0)
+    }
   })
 
-  it('drops the leftover fraction when the finger reverses', () => {
+  it('requires half a row to reverse, even after landing exactly on a tick', () => {
     const state = { remainder: 0 }
-    wheelTicks(state, 30, 20)
-    expect(wheelTicks(state, -40, 20)).toBe(-1)
+    expect(wheelTicks(state, 10, 20)).toBe(1)
+    expect(Math.abs(wheelTicks(state, -8, 20))).toBe(0)
+    expect(wheelTicks(state, -3, 20)).toBe(-1)
   })
 
   it('speeds up fast flicks and caps each frame', () => {
-    expect(wheelTicks({ remainder: 0 }, 80, 20, 0)).toBe(2)
+    expect(wheelTicks({ remainder: 0 }, 80, 20, 0)).toBe(4)
     expect(wheelTicks({ remainder: 0 }, 80, 20, 2)).toBe(5)
     expect(wheelTicks({ remainder: 0 }, 5000, 20, 3)).toBe(MAX_WHEEL_TICKS_PER_FRAME)
     expect(wheelTicks({ remainder: 0 }, 80, 0)).toBe(0)

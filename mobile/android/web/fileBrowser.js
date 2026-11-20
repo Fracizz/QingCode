@@ -6,6 +6,7 @@ import { createFilePositions, createFileRequestScope, folderDirection, formatFil
 export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () => {} }) {
   const dialog = get('files-dialog');
   const detail = get('file-detail-dialog');
+  const list = get('files-list');
   const positions = createFilePositions(localStorage);
   const requests = createFileRequestScope();
   const scrolls = new Map();
@@ -33,7 +34,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   }
 
   function savePosition() {
-    if (!context || searching()) return;
+    if (!context || !supported || listAbort || searching()) return;
     const scroll = get('files-scroll').scrollTop;
     scrolls.set(path, scroll);
     positions.write(context.host.id, context.project.id, path, scroll);
@@ -108,7 +109,6 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   }
 
   function renderEntries() {
-    const list = get('files-list');
     const query = searching();
     if (!entries.length) get('files-count').textContent = '';
     list.replaceChildren(...entries.map(entry => {
@@ -144,7 +144,7 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
   }
 
   function setLoading(value) {
-    get('files-list').setAttribute('aria-busy', String(value));
+    list.setAttribute('aria-busy', String(value));
     get('files-refresh').disabled = !supported;
     get('files-cancel-query').hidden = !value || !searching();
   }
@@ -159,9 +159,13 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     listAbort = controller;
     const query = get('files-query').value.trim();
     const args = { profile: target.host.id, project: target.project.id, path: query && get('files-scope').value === 'project' ? '' : path, hidden: get('files-hidden').checked };
+    // 用静态占位行接住列表高度，避免新目录的面包屑下露出旧目录的交互项。
+    list.style.setProperty('--file-loading-rows', String(Math.min(6, entries.length || 4)));
+    delete list.dataset.slide;
     entries = [];
-    renderEntries();
     setLoading(true);
+    renderEntries();
+    if (slide) get('files-scroll').scrollTop = 0;
     get('files-count').textContent = '';
     get('files-status').textContent = t(query ? '正在查询文件…' : '正在读取目录…');
     get('files-status').dataset.error = 'false';
@@ -199,8 +203,6 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
 
   // 新目录内容到达后按层级方向轻移淡入（见 app.css #files-list[data-slide]）；先移除再写回属性，同方向连续进入也会重播。
   function slideList(direction) {
-    const list = get('files-list');
-    delete list.dataset.slide;
     void list.offsetWidth;
     list.dataset.slide = direction;
   }
@@ -227,6 +229,9 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     invalidate();
     clearTimeout(timer);
     entries = [];
+    list.style.removeProperty('--file-loading-rows');
+    delete list.dataset.slide;
+    setLoading(true);
     renderEntries();
     setLoading(false);
     timer = setTimeout(() => load({ restore: searching() ? 0 : scrolls.get(path) || 0 }), 300);
@@ -327,7 +332,6 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
     renderSort();
     renderTransfer();
     dialog.showModal();
-    setLoading(false);
     try {
       const info = await capabilities(host);
       if (!currentContext(target)) return;
@@ -335,7 +339,11 @@ export function createFileBrowser({ rpc, capabilities, profile, beforeOpen = () 
       supported = true;
       await load({ restore: saved.scroll });
     } catch (error) {
-      if (currentContext(target)) { get('files-status').textContent = t(error.message); get('files-status').dataset.error = 'true'; }
+      if (currentContext(target)) {
+        setLoading(false);
+        get('files-status').textContent = t(error.message);
+        get('files-status').dataset.error = 'true';
+      }
     }
   }
 

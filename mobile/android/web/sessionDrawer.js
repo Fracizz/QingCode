@@ -28,6 +28,7 @@ import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove, setText } from './dom.js';
 import { t } from './i18n.js';
+import { reducedMotion } from './motion.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
 
 const REFRESH_INTERVAL = 1500;
@@ -50,6 +51,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
   let actionSession = null;
   let renamingSession = null;
   let docked = false;
+  let dockMotion = null;
   const scopeKey = prefix + 'session-scope';
   let scope = localStorage.getItem(scopeKey) === 'all' ? 'all' : 'project';
   // null：尚未确认电脑端是否支持；切换连接后重新确认。
@@ -475,13 +477,39 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
    * 平板宽屏常驻：以非模态方式贴在终端左侧，不挡输入；切换会话、打开设置等不再收起。
    * 模态与非模态不能原地切换，变化时先关再按新方式打开。
    */
-  function dock(enabled) {
+  function dock(enabled, animate = false) {
     if (enabled === docked) return;
+    const root = document.documentElement;
+    const main = get('terminal-screen').parentElement;
+    const moving = animate && !reducedMotion() && !document.hidden && !(drawer.open && !docked)
+      && typeof main.getAnimations === 'function' && CSS.supports('transition-behavior', 'allow-discrete');
+    dockMotion = null;
+    root.toggleAttribute('data-session-dock-motion', moving);
     docked = enabled;
-    drawer.dataset.docked = String(enabled);
-    document.documentElement.dataset.sessionsDocked = String(enabled);
+    // 收回期间保留常驻栏的定位和宽度，直到侧栏和终端都过渡完成。
+    if (enabled) drawer.dataset.docked = 'true';
+    root.dataset.sessionsDocked = String(enabled);
     if (drawer.open) drawer.close();
     if (enabled) void open();
+    if (!moving) {
+      if (!enabled) {
+        // 提交关闭样式后再恢复手机抽屉样式，避免退回工作台时闪出手机抽屉。
+        void getComputedStyle(drawer).display;
+        drawer.dataset.docked = 'false';
+      }
+      return;
+    }
+
+    const transitions = [...main.getAnimations(), ...drawer.getAnimations()]
+      .filter(animation => ['padding-left', 'transform', 'display'].includes(animation.transitionProperty));
+    const finished = Promise.allSettled(transitions.map(transition => transition.finished));
+    dockMotion = finished;
+    void finished.then(() => {
+      if (dockMotion !== finished) return;
+      dockMotion = null;
+      root.removeAttribute('data-session-dock-motion');
+      drawer.dataset.docked = String(docked);
+    });
   }
 
   /** 收起侧栏；常驻时保持显示。 */

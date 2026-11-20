@@ -222,6 +222,26 @@ describe('SettingsEditor', () => {
     expect(screen.getByText('Android 移动连接')).toBeInTheDocument()
   })
 
+  it('fades the settings body on a category change and switches search results immediately', () => {
+    const { container } = render(<SettingsEditor />)
+    const content = container.querySelector<HTMLElement>('.settings-content')!
+    const cancel = vi.fn()
+    const animate = vi.fn(() => ({ cancel }))
+    Object.defineProperty(content, 'animate', { value: animate })
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑器与文件', exact: true }))
+    expect(animate).toHaveBeenCalledWith(
+      [{ opacity: 0 }, { opacity: 1 }],
+      expect.objectContaining({ duration: 120 }),
+    )
+    const search = screen.getByPlaceholderText('搜索设置')
+    fireEvent.change(search, { target: { value: '字体' } })
+    expect(cancel).toHaveBeenCalledOnce()
+    fireEvent.change(search, { target: { value: '终端' } })
+    fireEvent.change(search, { target: { value: '' } })
+    expect(animate).toHaveBeenCalledOnce()
+  })
+
   it('saves an independent terminal font and restores the terminal system default', () => {
     render(<SettingsEditor />)
     fireEvent.change(screen.getByPlaceholderText('搜索设置'), { target: { value: '终端字体' } })

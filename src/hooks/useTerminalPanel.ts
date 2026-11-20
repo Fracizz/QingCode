@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   clampTerminalWidth,
   getDefaultSideTerminalWidth,
@@ -12,6 +12,7 @@ import {
 } from '../lib/panelLayoutTemplate'
 import { SIDE_WORKSPACE_CHANGED_EVENT } from '../lib/sideWorkspaceLayout'
 import { loadSidebarWidth } from '../lib/sidebarLayout'
+import { canAnimateLayout, cssDuration, guardAnimation } from '../lib/layoutMotion'
 import {
   beginPanelResize,
   settlePanelResize,
@@ -71,6 +72,7 @@ function loadTerminalPanelState() {
 
 export interface UseTerminalPanelReturn {
   terminalOpen: boolean
+  terminalSlotOpen: boolean
   setTerminalOpen: React.Dispatch<React.SetStateAction<boolean>>
   terminalHeight: number
   setTerminalHeight: React.Dispatch<React.SetStateAction<number>>
@@ -92,6 +94,12 @@ export interface UseTerminalPanelReturn {
 export function useTerminalPanel(): UseTerminalPanelReturn {
   const [initialTerminalPanel] = useState(loadTerminalPanelState)
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
+  const [previousOpen, setPreviousOpen] = useState(terminalOpen)
+  const [terminalClosing, setTerminalClosing] = useState(false)
+  if (previousOpen !== terminalOpen) {
+    setPreviousOpen(terminalOpen)
+    setTerminalClosing(!terminalOpen)
+  }
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
   const [terminalWidth, setTerminalWidth] = useState(initialTerminalPanel.width)
   const [sideSplit, setSideSplit] = useState<SideTerminalSplitMode>(initialTerminalPanel.sideSplit)
@@ -105,6 +113,24 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   const targetSizeRef = useRef(0)
   const lastAppliedPxRef = useRef(0)
   const sizeRafRef = useRef(0)
+
+  useLayoutEffect(() => {
+    if (!terminalClosing) return
+    const dock = terminalPanelRef.current
+    const fade = canAnimateLayout(dock)
+      ? dock.getAnimations?.().find(animation => 'transitionProperty' in animation && animation.transitionProperty === 'opacity')
+      : undefined
+    let current = true
+    const collapse = () => { if (current) setTerminalClosing(false) }
+    // 退场时保留原来的宽高，到透明度过渡结束再一次收起。
+    if (fade) {
+      guardAnimation(fade, cssDuration('--motion-enter', 160))
+      void fade.finished.then(collapse, collapse)
+    } else {
+      queueMicrotask(collapse)
+    }
+    return () => { current = false }
+  }, [terminalClosing])
 
   useEffect(() => {
     dragHeightRef.current = terminalHeight
@@ -343,6 +369,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
 
   return {
     terminalOpen,
+    terminalSlotOpen: terminalOpen || terminalClosing,
     setTerminalOpen,
     terminalHeight,
     setTerminalHeight,

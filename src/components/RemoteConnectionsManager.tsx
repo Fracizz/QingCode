@@ -1,3 +1,4 @@
+import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -1235,6 +1236,8 @@ export default function RemoteConnectionsManager() {
                           }}
                         />}
                         {!editing && <>
+                        {(directEnabled || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') &&
+                          <ConnectionPrewarmProfile connectionId={selected.id} />}
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
                             {t(allProjects ? '远程项目' : '最近项目')}

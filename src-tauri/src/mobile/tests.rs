@@ -33,6 +33,25 @@ fn project() -> Project {
     }
 }
 
+#[test]
+fn output_coalescing_shortens_only_during_recent_input() {
+    let mut session = Session::new(project(), "phone".into(), 1);
+    assert_eq!(
+        session.output_coalesce_delay(Instant::now()),
+        OUTPUT_COALESCE
+    );
+    session.note_user_input("\x1b[<64;1;1M");
+    let input = session.last_input.unwrap();
+    assert_eq!(
+        session.output_coalesce_delay(input),
+        Duration::from_millis(6)
+    );
+    assert_eq!(
+        session.output_coalesce_delay(input + OUTPUT_QUIET_AFTER_INPUT),
+        OUTPUT_COALESCE
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn local_image_path_uses_wsl_repository_instead_of_windows_cache() {

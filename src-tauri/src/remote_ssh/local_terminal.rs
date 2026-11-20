@@ -6,7 +6,7 @@ use super::terminal_exit::TerminalExitAction;
 use super::*;
 use crate::path_guard::PathAllowlist;
 use crate::terminal::{hosted_local_launch, HostedLaunchRequest, TerminalManager};
-pub(crate) use local_terminal::prewarm::{ConnectionShellPools, ShellPrewarmPool};
+pub(crate) use local_terminal::prewarm::{ConnectionShellPools, PrewarmProfile, ShellPrewarmPool};
 use tauri::Manager;
 
 pub(crate) fn pool_for_cwd(app: &AppHandle, cwd: &str) -> Option<ShellPrewarmPool> {
@@ -261,24 +261,34 @@ pub async fn configure_shell_prewarm(
     cwd: Option<String>,
     shell: Option<String>,
     count: serde_json::Value,
+    profile: Option<PrewarmProfile>,
     window: tauri::Window,
     app: AppHandle,
     pool: State<'_, ShellPrewarmPool>,
 ) -> Result<usize, String> {
-    let result = pool.configure(&app, window.label(), cwd, shell, count);
+    let result = pool.configure(&app, window.label(), cwd, shell, count, profile);
     if result.is_err() {
         pool.clear_window(window.label());
     }
     result
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RequestedProfile {
+    profile_id: String,
+    command: String,
+}
+
 /// 只保留已就绪项；无命中立即返回，由正常新建链路兜底。
 /// 传入 `id`（重启已有标签）时预留后改按该 id 领取，Shell 内的 `QINGCODE_TERMINAL_ID` 仍是预热时的值。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn reserve_prewarmed_shell(
     cwd: String,
     shell: Option<String>,
     has_startup: Option<bool>,
+    profile: Option<RequestedProfile>,
     id: Option<String>,
     allowlist: State<'_, PathAllowlist>,
     manager: State<'_, SshManager>,
@@ -289,6 +299,15 @@ pub async fn reserve_prewarmed_shell(
     }
     if cwd.starts_with(SSH_URI_PREFIX) {
         manager.root_for_uri(&cwd, true)?;
+        if let Some(p) = profile.filter(|_| id.is_none() && has_startup == Some(true)) {
+            if let Some(id) = app
+                .state::<ConnectionShellPools>()
+                .profile_pool()
+                .reserve_profile(&cwd, shell.as_deref(), &p.profile_id, &p.command)
+            {
+                return Ok(serde_json::json!({"id": id, "profileHit": true}));
+            }
+        }
     } else {
         allowlist.ensure_executable(&cwd)?;
     }
@@ -322,7 +341,15 @@ pub fn shell_prewarm_status(cwd: String, app: AppHandle) -> serde_json::Value {
             _ => {}
         }
     }
-    pool_for_cwd(&app, &cwd)
+    let mut status = pool_for_cwd(&app, &cwd)
         .map(|pool| pool.status(&cwd))
-        .unwrap_or_else(|| inactive("no_target"))
+        .unwrap_or_else(|| inactive("no_target"));
+    let profile = app
+        .state::<ConnectionShellPools>()
+        .profile_pool()
+        .status(&cwd);
+    if profile["target"] != 0 {
+        status["profile"] = profile;
+    }
+    status
 }

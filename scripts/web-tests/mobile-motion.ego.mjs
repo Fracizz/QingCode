@@ -91,6 +91,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       assert.equal(await page.evaluate(() => document.querySelector('#dashboard').dataset.direction), 'forward')
       assert.ok(entrance.some(item => item.name === 'nav-pop'), JSON.stringify(entrance))
       assert.ok(entrance.filter(item => item.name === 'rise-in').length >= 2, JSON.stringify(entrance))
+      const delays = await page.evaluate(() => ['#project-filters', '#project-list'].map(
+        selector => Number.parseFloat(getComputedStyle(document.querySelector(selector)).animationDelay) * 1000,
+      ))
+      assert.ok(delays.every(delay => delay <= 60), JSON.stringify(delays))
       await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).some(animation => animation.animationName === 'rise-in' || animation.animationName === 'page-in'))
       // 分区入场只用 backwards 填充，结束后不残留 transform（否则吸顶搜索与固定元素会以它为容器）。
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#project-filters')).transform), 'none')
@@ -179,11 +183,11 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await gone('terminal-menu-dialog')
     })
 
-    await step('the drawer leaves sideways, and the back key closes it the same way', async () => {
+    await step('the phone drawer fades in place, and the back key closes it the same way', async () => {
       await page.click('#show-sessions')
       await page.waitForFunction(() => document.querySelector('#session-drawer').open && !document.querySelector('#session-drawer').getAnimations().length)
       const state = await closing('session-drawer')
-      assert.ok(state.properties.includes('transform'), JSON.stringify(state))
+      assert.ok(state.properties.includes('opacity') && !state.properties.includes('transform'), JSON.stringify(state))
       await gone('session-drawer')
       await page.click('#show-sessions')
       await page.waitForFunction(() => document.querySelector('#session-drawer').open)
@@ -420,8 +424,19 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#menu-files')
       await page.waitForFunction(() => document.querySelector('#files-list [data-path="src"]'))
       await page.waitForFunction(() => window.__started.some(item => item.name === 'workspace-in' && item.id === 'files-dialog'))
-      await page.click('#files-list [data-path="src"]')
+      await page.evaluate(() => {
+        window.__mobileFixture.state.fileDelay = 650
+        document.querySelector('#files-list [data-path="src"]').click()
+      })
+      const loading = await page.evaluate(() => {
+        const list = document.querySelector('#files-list')
+        return { busy: list.getAttribute('aria-busy'), height: list.getBoundingClientRect().height, rows: list.children.length }
+      })
+      assert.equal(loading.busy, 'true')
+      assert.ok(loading.height >= 180, JSON.stringify(loading))
+      assert.equal(loading.rows, 0, '旧目录的文件应立即移除')
       await page.waitForFunction(() => document.querySelector('#files-list').dataset.slide === 'forward' && document.querySelector('#files-list [data-path="src/中文说明.txt"]'))
+      await page.evaluate(() => { window.__mobileFixture.state.fileDelay = 0 })
       await page.waitForFunction(() => window.__started.some(item => item.name === 'folder-in'))
       await page.evaluate(() => window.qingBack())
       await page.waitForFunction(() => document.querySelector('#files-list').dataset.slide === 'back' && document.querySelector('#files-list [data-path="src"]'))

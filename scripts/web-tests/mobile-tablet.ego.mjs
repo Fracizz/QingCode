@@ -107,6 +107,33 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#show-sessions', { label: 'expand again' })
       await page.waitForFunction(() => document.querySelector('#session-drawer').open)
       assert.equal(await docked(), true)
+      await settle()
+    })
+
+    await step('the docked drawer and terminal edge move together on open and close', async () => {
+      const motion = await page.evaluate(async () => {
+        const drawer = document.getElementById('session-drawer')
+        const terminal = document.getElementById('viewport')
+        const root = document.documentElement
+        const button = document.getElementById('show-sessions')
+        const width = drawer.getBoundingClientRect().width
+        const toggle = async () => {
+          const samples = []
+          button.click()
+          do {
+            await new Promise(resolve => requestAnimationFrame(resolve))
+            samples.push({ drawer: drawer.getBoundingClientRect().right, terminal: terminal.getBoundingClientRect().left })
+          } while (root.hasAttribute('data-session-dock-motion') && samples.length < 90)
+          return samples
+        }
+        return { width, closing: await toggle(), opening: await toggle() }
+      })
+      for (const samples of [motion.closing, motion.opening]) {
+        const intermediate = samples.filter(({ terminal }) => terminal > 5 && terminal < motion.width - 5)
+        assert.ok(intermediate.length >= 2, JSON.stringify(samples))
+        assert.ok(intermediate.every(({ drawer, terminal }) => Math.abs(drawer - terminal) <= 2), JSON.stringify(samples))
+      }
+      assert.equal(await docked(), true)
     })
 
     await step('Back leaves the terminal instead of closing the docked list, and undocks on the dashboard', async () => {

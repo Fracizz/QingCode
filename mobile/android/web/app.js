@@ -580,8 +580,8 @@ document.addEventListener('visibilitychange', syncHomeSessions);
 let sessionsDockPreferred = localStorage.getItem(prefix + 'sessions-docked') === 'true';
 
 /** 平板宽屏、在终端页且用户选择展开时常驻会话侧栏，其余情况恢复为可收起的抽屉。 */
-function syncSessionDock() {
-  drawer.dock(tabletLayout() && sessionsDockPreferred && !terminalScreen.hidden && !!project);
+function syncSessionDock(animate = false) {
+  drawer.dock(tabletLayout() && sessionsDockPreferred && !terminalScreen.hidden && !!project, animate);
   get('show-sessions').setAttribute('aria-label', drawer.isDocked() ? t('收起会话侧栏') : t('打开会话侧栏'));
 }
 
@@ -591,7 +591,7 @@ function toggleSessions({ expandOnly = false } = {}) {
   const next = expandOnly || !drawer.isDocked();
   sessionsDockPreferred = next;
   try { localStorage.setItem(prefix + 'sessions-docked', String(next)); } catch { /* 仅为显示偏好。 */ }
-  syncSessionDock();
+  syncSessionDock(true);
 }
 
 /**
@@ -601,7 +601,7 @@ function toggleSessions({ expandOnly = false } = {}) {
 function tabletLayout() {
   return wideLayout.matches && Math.min(screen.width, screen.height) >= 600;
 }
-window.addEventListener('resize', syncSessionDock);
+window.addEventListener('resize', () => syncSessionDock());
 
 const shortcutBar = createShortcutBar({
   prefix,

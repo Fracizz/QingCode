@@ -27,9 +27,15 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).animate
 })
 
-function Slot(props: { leaving: boolean; animateOpen: boolean; onExited: () => void }) {
+function Slot(props: {
+  leaving: boolean
+  animateOpen: boolean
+  onExited: () => void
+  width?: number
+  widthMode?: 'sidebar' | 'page'
+}) {
   return (
-    <SidebarSlot freezeTerminals={false} {...props}>
+    <SidebarSlot freezeTerminals={false} {...props} width={props.width ?? 260}>
       <div data-testid="content">侧栏</div>
     </SidebarSlot>
   )
@@ -77,5 +83,20 @@ describe('SidebarSlot', () => {
     const { rerender } = render(<Slot leaving={false} animateOpen={false} onExited={onExited} />)
     rerender(<Slot leaving animateOpen={false} onExited={onExited} />)
     expect(onExited).toHaveBeenCalledTimes(1)
+  })
+
+  it('工作台整页与窄栏共享左缘，连切时从当前宽度反向', () => {
+    const calls = installFakeAnimate(420)
+    const props = { leaving: false, animateOpen: false, onExited: vi.fn() }
+    const { container, rerender } = render(<Slot {...props} widthMode="sidebar" />)
+    rerender(<Slot {...props} widthMode="page" width={620} />)
+    expect(calls[0].animation.keyframes).toEqual([{ width: '260px' }, { width: '620px' }])
+    expect((container.firstElementChild as HTMLElement).style.justifyContent).toBe('flex-start')
+    rerender(<Slot {...props} widthMode="sidebar" />)
+    expect(calls[0].animation.cancel).toHaveBeenCalledOnce()
+    expect(calls[1].animation.keyframes).toEqual([{ width: '420px' }, { width: '260px' }])
+    calls[1].animation.onfinish?.()
+    rerender(<Slot {...props} widthMode="sidebar" width={280} />)
+    expect(calls).toHaveLength(2)
   })
 })

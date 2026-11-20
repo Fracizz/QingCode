@@ -27,6 +27,7 @@ type Props = {
   disabled?: boolean
   /** Extra classes on the trigger (e.g. `setting-control-wide`). */
   className?: string
+  menuZIndex?: number
   'aria-label'?: string
 }
 
@@ -40,6 +41,7 @@ export default function SettingSelect({
   onChange,
   disabled = false,
   className = '',
+  menuZIndex,
   'aria-label': ariaLabel,
 }: Props) {
   const listId = useId()
@@ -219,7 +221,7 @@ export default function SettingSelect({
             tabIndex={-1}
             aria-activedescendant={`${listId}-opt-${activeIndex}`}
             className="menu-enter ui-font-scaled fixed z-[80] flex flex-col gap-[3px] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 outline-none"
-            style={menuStyle}
+            style={{ ...menuStyle, zIndex: menuZIndex }}
             onKeyDown={onMenuKeyDown}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {

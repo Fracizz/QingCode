@@ -68,8 +68,8 @@ export async function run({ spaceId, finish = true } = {}) {
       await page.waitForTimeout(300)
       const count = await wheels()
       console.log('swipe 10 rows', count)
-      // 慢滑每两行一格：约 5 格；旧实现只有 1–3 格。
-      assert.ok(count.up >= 4, `expected >= 4 wheel-up ticks, got ${count.up}`)
+      // 慢滑每行一格，留出少量事件合并和行高取整误差。
+      assert.ok(count.up >= 8, `expected >= 8 wheel-up ticks, got ${count.up}`)
       assert.equal(count.down, 0)
       assert.equal(await page.evaluate(() => document.querySelector('#terminal-history').hidden), true)
     })

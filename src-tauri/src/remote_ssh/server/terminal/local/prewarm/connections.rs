@@ -8,6 +8,8 @@ struct Connections {
     count: usize,
     running: bool,
     pools: BTreeMap<String, ShellPrewarmPool>,
+    profile: Option<(String, PrewarmProfile)>,
+    profile_pool: ShellPrewarmPool,
 }
 
 #[derive(Clone, Default)]
@@ -16,6 +18,36 @@ pub(crate) struct ConnectionShellPools(Arc<Mutex<Connections>>, Arc<Notify>);
 impl ConnectionShellPools {
     pub(crate) fn changed(&self) {
         self.1.notify_one();
+    }
+
+    pub(crate) fn set_profile(&self, window: &str, profile: Option<PrewarmProfile>) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let next = profile.map(|p| (window.to_owned(), p));
+        if state.profile != next {
+            state.profile_pool.stop();
+            state.profile = next;
+            self.changed();
+        }
+    }
+
+    pub(crate) fn close_window(&self, window: &str) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state
+            .profile
+            .as_ref()
+            .is_some_and(|(owner, _)| owner == window)
+        {
+            state.profile_pool.stop();
+            state.profile = None;
+        }
+    }
+
+    pub(crate) fn profile_pool(&self) -> ShellPrewarmPool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .profile_pool
+            .clone()
     }
 
     pub(crate) fn configure(&self, app: &AppHandle, shell: &str, count: usize) {
@@ -52,6 +84,13 @@ impl ConnectionShellPools {
                     return;
                 }
                 let manager = app.state::<SshManager>();
+                if let Some((window, profile)) = &state.profile {
+                    if let Some(target) = profile.target(&manager, window) {
+                        state.profile_pool.configure_target(&app, target);
+                    } else {
+                        state.profile_pool.stop();
+                    }
+                }
                 let eligible = connected_targets(&manager);
                 state.pools.retain(|id, pool| {
                     if eligible.contains_key(id) {
@@ -88,6 +127,28 @@ impl ConnectionShellPools {
                 _ = tokio::time::sleep(Duration::from_millis(1500)) => {},
             }
         }
+    }
+}
+
+impl PrewarmProfile {
+    fn target(&self, manager: &SshManager, window: &str) -> Option<Target> {
+        let root = manager
+            .registered_root(&self.cwd)
+            .ok()
+            .filter(|r| r.trusted)?;
+        let connection = remote_windows_connection(manager, &self.cwd)?;
+        let remote = RemoteTarget::connected(manager, &connection, &root)?;
+        let (launch, mut key) = remote_launch_key(&self.cwd, Some(&self.shell)).ok()?;
+        key.profile = Some(self.clone());
+        Some(Target {
+            project_path: self.cwd.clone(),
+            cwd: self.cwd.clone(),
+            key,
+            launch,
+            count: 1,
+            window: window.to_owned(),
+            remote: Some(remote),
+        })
     }
 }
 

@@ -681,7 +681,16 @@ pub(super) async fn poll_reply(
         .await
         .is_ok()
     {
-        tokio::time::sleep(OUTPUT_COALESCE).await;
+        // 按唤醒时的输入状态选窗口，滚轮常在这次长轮询挂起之后才到。
+        let delay = hub
+            .inner
+            .lock()
+            .unwrap()
+            .live(id)
+            .map_or(OUTPUT_COALESCE, |session| {
+                session.output_coalesce_delay(Instant::now())
+            });
+        tokio::time::sleep(delay).await;
     }
     read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into())
 }

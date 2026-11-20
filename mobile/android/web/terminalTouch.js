@@ -1,18 +1,19 @@
 // 全屏程序开启鼠标上报时，xterm 会把小于 50px 的像素滚动打 3 折，且每个滚轮事件最多只发 1 格，
 // 手机上每帧只有几像素位移，导致上滑很费劲。这里自己按「格」换算，每格派发一个按行的滚轮事件。
 
-/** 手指每滑过一个字符行发几格滚轮（程序通常一格滚 1–3 行）。 */
-export const PROGRAM_WHEEL_GAIN = .5;
 /** 每帧最多派发的格数；超出部分丢弃，避免把输入和画面重绘堆积在电脑端。 */
 export const MAX_WHEEL_TICKS_PER_FRAME = 6;
 
-/** 把像素位移累计成整格滚轮；speed 为手指速度（px/ms），快甩时最多放大到 2.5 倍。 */
+/** 慢拖每行一格，快甩最多每行 1.25 格。起步和反向只需半行，避免细读时手指已动、画面仍不动。 */
 export function wheelTicks(state, deltaPx, cellHeight, speed = 0) {
   if (!(cellHeight > 0) || !deltaPx) return 0;
-  // 换方向时丢掉上一方向的零头，避免回拉第一下没反应。
-  if (state.remainder && Math.sign(state.remainder) !== Math.sign(deltaPx)) state.remainder = 0;
-  const boost = 1 + Math.min(1.5, Math.max(0, Math.abs(speed) - .5));
-  state.remainder += deltaPx / cellHeight * PROGRAM_WHEEL_GAIN * boost;
+  const direction = Math.sign(deltaPx);
+  if (state.direction !== direction) {
+    state.direction = direction;
+    state.remainder = direction * .5;
+  }
+  const gain = 1 + Math.min(.25, Math.max(0, Math.abs(speed) - .5) / 6);
+  state.remainder += deltaPx / cellHeight * gain;
   const ticks = Math.trunc(state.remainder);
   state.remainder -= ticks;
   return Math.max(-MAX_WHEEL_TICKS_PER_FRAME, Math.min(MAX_WHEEL_TICKS_PER_FRAME, ticks));
@@ -98,7 +99,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   let hold = null;
   let point = { x: 0, y: 0 };
   let gestureId = 0;
-  const wheelState = { remainder: 0 };
+  const wheelState = { remainder: 0, direction: 0 };
   const lineState = { remainder: 0 };
 
   function dispatch(deltaY, momentum = false) {
@@ -143,7 +144,7 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     if (coast !== null) view.cancelAnimationFrame(coast);
     frame = coast = null;
     pending = velocity = 0;
-    wheelState.remainder = lineState.remainder = 0;
+    wheelState.direction = wheelState.remainder = lineState.remainder = 0;
     gesture = null;
   }
 

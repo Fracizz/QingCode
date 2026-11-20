@@ -3,6 +3,7 @@ import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
@@ -40,6 +41,7 @@ import ContextMenu from './ContextMenu'
 import { SETTINGS_CATEGORIES, matchesSettingsCategory, matchesSettingsTerms } from '../lib/settingsSearch'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { useSubpageFade } from '../hooks/useSubpageFade'
 import {
   loadEffectiveSshServerEnabled,
   pushSshServerSettingsToNative,
@@ -202,9 +204,10 @@ export default function SettingsEditor() {
   const sectionVisible = (id: CategoryId) =>
     categoryMatches(id) && (Boolean(q) || activeCategory === id)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0
   }, [activeCategory, q, scope])
+  useSubpageFade(contentRef, `${scope}:${activeCategory}`, !q)
 
   useEffect(() => {
     categoryNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]')

@@ -185,6 +185,18 @@ impl Session {
         self.program_busy_at(now) || self.output_busy_at(now)
     }
 
+    /// 交互回显只短暂合并同一帧的分片；持续的后台输出仍按普通窗口合并。
+    pub(super) fn output_coalesce_delay(&self, now: Instant) -> Duration {
+        if self
+            .last_input
+            .is_some_and(|at| now.saturating_duration_since(at) < OUTPUT_QUIET_AFTER_INPUT)
+        {
+            Duration::from_millis(6)
+        } else {
+            OUTPUT_COALESCE
+        }
+    }
+
     /// 键盘输入：既算会话活动，也让随后的回显不计入输出活跃；结束重绘段。
     pub(super) fn note_input(&mut self) {
         self.touch();

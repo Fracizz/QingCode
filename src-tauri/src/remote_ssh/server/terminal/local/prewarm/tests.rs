@@ -641,6 +641,7 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
             target.remote.as_ref().unwrap(),
             SessionTransport::Local,
             session,
+            None,
         )
         .await
         .unwrap();
@@ -752,5 +753,117 @@ async fn remote_shells_enter_each_claiming_project_before_running_commands() {
         .await
         .unwrap();
     session.shutdown();
+    daemon.abort();
+}
+
+#[test]
+fn profile_requires_same_connection_project_profile_shell_and_command() {
+    let cwd = "ssh://win/D:/work/a";
+    let pool = ShellPrewarmPool::default();
+    let mut entry = remote_shell("prepared", cwd, true);
+    entry.key.profile = Some(PrewarmProfile {
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+    });
+    assert!(!entry.can_rebind());
+    pool.0.lock().unwrap().shells.push(entry);
+    for (path, shell, id, cmd) in [
+        ("ssh://other/D:/work/a", "auto", "agent", "claude"),
+        ("ssh://win/D:/work/b", "auto", "agent", "claude"),
+        (cwd, "cmd", "agent", "claude"),
+        (cwd, "auto", "other", "claude"),
+        (cwd, "auto", "agent", "claude --resume"),
+    ] {
+        assert!(pool.reserve_profile(path, Some(shell), id, cmd).is_none());
+    }
+    assert!(pool.reserve(cwd, Some("auto"), true).is_err());
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("prepared")
+    );
+    assert!(pool
+        .reserve_profile(cwd, Some("auto"), "agent", "claude")
+        .is_none());
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn profile_runs_before_claim_and_its_screen_is_replayed() {
+    use qingcode_server::daemon::{DaemonOptions, RunDir};
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = RunDir::resolve(Some(dir.path())).unwrap();
+    let daemon = tokio::spawn(qingcode_server::daemon::run_async(DaemonOptions {
+        state_dir: Some(dir.path().into()),
+        ..Default::default()
+    }));
+    let (stream, token) = tokio::time::timeout(READY_TIMEOUT, async {
+        loop {
+            if let Ok(token) = run_dir.read_token() {
+                if let Ok(stream) =
+                    qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir())).await
+                {
+                    return (stream, token);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let session = DaemonSession::open_local(stream, "test:preset", token)
+        .await
+        .unwrap();
+    let path = dir.path().join("preset project");
+    std::fs::create_dir(&path).unwrap();
+    let directory = path.to_str().unwrap();
+    let uri = format!("ssh://test/{}", directory.replace('\\', "/"));
+    let mut target = target_for(&remote_shell("fixture", &uri, true), 1);
+    let command = "[Console]::WriteLine('QC-PROFILE-READY'); [IO.File]::AppendAllText((Join-Path $PWD 'once.txt'), 'X')";
+    target.key.profile = Some(PrewarmProfile {
+        cwd: uri,
+        shell: "powershell".into(),
+        profile_id: "fixture".into(),
+        command: command.into(),
+    });
+    let entry = prepare_remote_shell(
+        &target,
+        target.remote.as_ref().unwrap(),
+        SessionTransport::Local,
+        session,
+        Some(directory.into()),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(READY_TIMEOUT, async {
+        while !path.join("once.txt").is_file() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("profile must run in project cwd before the tab is opened");
+    let session = entry.session.as_ref().unwrap();
+    session
+        .request("pty.claim", &serde_json::json!({"id":entry.pty_id}))
+        .await
+        .unwrap();
+    let output = session
+        .attach(&entry.pty_id, entry.from_seq, true)
+        .await
+        .unwrap();
+    let bytes = output
+        .chunks
+        .into_iter()
+        .flat_map(|c| c.data)
+        .collect::<Vec<_>>();
+    assert!(String::from_utf8_lossy(&bytes).contains("QC-PROFILE-READY"));
+    assert_eq!(std::fs::read_to_string(path.join("once.txt")).unwrap(), "X");
+    session
+        .request("pty.kill", &serde_json::json!({"id":entry.pty_id}))
+        .await
+        .unwrap();
+    drop(entry);
     daemon.abort();
 }

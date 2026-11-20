@@ -15,6 +15,10 @@ const loaded = `document.querySelector('#files-list').getAttribute('aria-busy')=
 const listed = path => `!!document.querySelector('#files-list [data-path=${JSON.stringify(path)}]')`
 const closeDetail = () => run('click', '#file-detail-dialog [data-close]')
 const fits = `document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('dialog[open]')].every(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth+1 && r.top>=0 && r.bottom<=innerHeight+1})`
+const openProjects = () => {
+  run('click', '#dashboard-nav [data-page="project"]')
+  run('wait', '--fn', '!document.getElementById("project-screen").hidden && !document.documentElement.dataset.screenExit')
+}
 try {
   run('set', 'viewport', '390', '844')
   run('open', process.env.QINGCODE_WEB_TEST_URL || 'http://127.0.0.1:38439/mobile-android/')
@@ -24,7 +28,7 @@ try {
   run('fill', '#pair-code', 'A8z2D3')
   run('click', '#pair-submit')
   check('computer is paired', `document.querySelector('#active-host').dataset.state==='online'`)
-  run('click', '#dashboard-nav [data-page="project"]')
+  openProjects()
   run('click', '#project-list .project-files')
   check('file browsing needs no terminal', `document.querySelector('#files-dialog').open && ${loaded} && ${listed('src')} && window.__mobileFixture.state.creates.length===0`)
   check('root shows its breadcrumb and sort control without a parent button', `document.querySelector('#files-breadcrumbs [aria-current="location"]').textContent==='QingCode' && getComputedStyle(document.getElementById('files-up')).display==='none' && document.getElementById('files-sort').textContent.includes('时间')`)
@@ -132,7 +136,7 @@ try {
   run('fill', '#pair-code', 'A8z2D3')
   run('click', '#pair-submit')
   check('older computer is connected', `!document.querySelector('#pair-dialog').open && window.__mobileFixture.state.profiles.size===2 && document.querySelector('#active-host').dataset.state==='online'`)
-  run('click', '#dashboard-nav [data-page="project"]')
+  openProjects()
   run('click', '#project-list .project-files')
   check('older computers display an update explanation', `document.querySelector('#files-dialog').open && document.querySelector('#files-status').textContent.includes('更新电脑端')`)
   capture('08-older-computer')

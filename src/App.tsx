@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, lazy, Suspense, type ReactNode } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -112,8 +112,26 @@ useEditorStore.subscribe(state => {
   }
 })
 
-function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
-  return <div className={className} aria-hidden="true" />
+function PageLoading({ title }: { title?: string }) {
+  const { t } = useI18n()
+  return (
+    <div className="ui-font-scaled flex min-h-0 flex-1 flex-col bg-bg">
+      {title && (
+        <div className="flex h-[var(--tab-height)] shrink-0 items-center border-b border-border bg-bg-sidebar px-3 text-ui">
+          {title}
+        </div>
+      )}
+      <div role="status" className="px-4 py-3 text-ui-sm text-fg-muted">{t('加载中…')}</div>
+    </div>
+  )
+}
+
+function PageEntrance({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Suspense fallback={<PageLoading title={title} />}>
+      <div className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+    </Suspense>
+  )
 }
 
 /** Run after first paint / idle so project switch is not blocked by heavy work (e.g. PTY). */
@@ -204,6 +222,7 @@ function App() {
 
   const {
     terminalOpen,
+    terminalSlotOpen,
     setTerminalOpen,
     terminalHeight,
     setTerminalHeight,
@@ -223,7 +242,7 @@ function App() {
   const terminalPosition = terminalPositionForTemplate(panelLayout)
   // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
   const sideEditorSlotVisible =
-    terminalPosition !== 'side' || sideEditorVisible || !terminalOpen
+    terminalPosition !== 'side' || sideEditorVisible || !terminalSlotOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const terminalWorkbench = panelLayout === 'terminalWorkbench'
@@ -256,6 +275,8 @@ function App() {
     })
   }
   const renderedSidebar = sidebarKind ?? sidebarTrack.leaving
+  const wideSidebar = renderedSidebar === 'settings' || renderedSidebar === 'sourceControl'
+  const renderedSidebarWidth = wideSidebar ? workbenchPageWidth : sidebarWidth
   const finishSidebarExit = useCallback(() => {
     setSidebarTrack(track => (track.kind === null ? { ...track, leaving: null } : track))
   }, [])
@@ -441,7 +462,7 @@ function App() {
           data-editor-slot={sideEditorSlotVisible ? 'visible' : 'collapsed'}
           data-terminal-dual={sideDualActive ? 'true' : undefined}
           data-terminal-quad={sideQuadActive ? 'true' : undefined}
-          data-terminal-slot={terminalOpen ? 'visible' : 'collapsed'}
+          data-terminal-slot={terminalSlotOpen ? 'visible' : 'collapsed'}
           data-terminal-split={
             terminalPosition === 'side' && sideEditorSlotVisible ? sideSplit : undefined
           }
@@ -460,63 +481,39 @@ function App() {
 
           {renderedSidebar && (
             <SidebarSlot
+              width={renderedSidebarWidth}
+              widthMode={terminalWorkbench ? (wideSidebar ? 'page' : 'sidebar') : undefined}
               leaving={sidebarKind === null}
               onExited={finishSidebarExit}
               animateOpen={sidebarTrack.animateOpen}
               freezeTerminals={terminalPosition === 'side' && terminalOpen}
             >
-              {/* 侧栏内切换视图：带 key 的内层重新挂载以播放入场；展开 / 收起的宽度过渡由 SidebarSlot 负责。 */}
-              <div key={renderedSidebar} className="view-enter flex min-h-0 flex-shrink-0">
+              <ResizableSidebar
+                key={renderedSidebar}
+                width={renderedSidebarWidth}
+                onWidthChange={wideSidebar ? setWorkbenchPageWidth : setSidebarWidth}
+                bounds={wideSidebar ? {
+                  min: WORKBENCH_PAGE_MIN_WIDTH,
+                  max: getWorkbenchPageMaxWidth(),
+                  defaultWidth: getDefaultWorkbenchPageWidth(),
+                  clamp: clampWorkbenchPageWidth,
+                } : undefined}
+                className={renderedSidebar === 'explorer' || wideSidebar ? 'bg-bg-sidebar' : 'ui-font-scaled bg-bg-sidebar'}
+              >
                 {renderedSidebar === 'explorer' ? (
-                  <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
-                    <Sidebar />
-                  </ResizableSidebar>
+                  <PageEntrance title={t('资源管理器')}><Sidebar /></PageEntrance>
                 ) : renderedSidebar === 'search' ? (
-                  <ResizableSidebar
-                    width={sidebarWidth}
-                    onWidthChange={setSidebarWidth}
-                    className="ui-font-scaled"
-                  >
-                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                      <SearchPanel />
-                    </Suspense>
-                  </ResizableSidebar>
+                  <PageEntrance title={t('搜索')}><SearchPanel /></PageEntrance>
                 ) : renderedSidebar === 'run' ? (
-                  <ResizableSidebar
-                    width={sidebarWidth}
-                    onWidthChange={setSidebarWidth}
-                    className="ui-font-scaled bg-bg-sidebar"
-                  >
-                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                      <RunPanel />
-                    </Suspense>
-                  </ResizableSidebar>
+                  <PageEntrance title={t('运行配置')}><RunPanel /></PageEntrance>
                 ) : renderedSidebar === 'terminals' ? (
-                  <ResizableSidebar
-                    width={sidebarWidth}
-                    onWidthChange={setSidebarWidth}
-                    className="ui-font-scaled bg-bg-sidebar"
-                  >
-                    <TerminalSessionList />
-                  </ResizableSidebar>
+                  <PageEntrance title={t('终端列表')}><TerminalSessionList /></PageEntrance>
+                ) : renderedSidebar === 'settings' ? (
+                  <PageEntrance title={t('设置')}><SettingsEditor /></PageEntrance>
                 ) : (
-                  <ResizableSidebar
-                    width={workbenchPageWidth}
-                    onWidthChange={setWorkbenchPageWidth}
-                    bounds={{
-                      min: WORKBENCH_PAGE_MIN_WIDTH,
-                      max: getWorkbenchPageMaxWidth(),
-                      defaultWidth: getDefaultWorkbenchPageWidth(),
-                      clamp: clampWorkbenchPageWidth,
-                    }}
-                    className="bg-bg-sidebar"
-                  >
-                    <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                      {renderedSidebar === 'settings' ? <SettingsEditor /> : <SourceControlPanel />}
-                    </Suspense>
-                  </ResizableSidebar>
+                  <PageEntrance title={t('源代码管理')}><SourceControlPanel /></PageEntrance>
                 )}
-              </div>
+              </ResizableSidebar>
             </SidebarSlot>
           )}
 
@@ -524,6 +521,7 @@ function App() {
             <TerminalPanel
               position={terminalPosition}
               terminalOpen={terminalOpen}
+              terminalSlotOpen={terminalSlotOpen}
               terminalHeight={terminalHeight}
               terminalWidth={terminalWidth}
               sideSplit={sideSplit}
@@ -551,20 +549,11 @@ function App() {
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
             data-editor-column
           >
-            {/* 整页切换（设置 / 源代码管理 / 编辑器）：各分支用带 key 的外层，切换时重新挂载以播放入场。
-                编辑器分支的 key 不随文件变化，切换标签不会重播。 */}
+            {/* 设置、源代码管理的入场在加载边界内；编辑器分支的 key 不随文件变化。 */}
             {view === 'settings' && !terminalWorkbench ? (
-              <div key="settings" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <Suspense fallback={<LazyFallback />}>
-                  <SettingsEditor />
-                </Suspense>
-              </div>
+              <PageEntrance key="settings" title={t('设置')}><SettingsEditor /></PageEntrance>
             ) : view === 'sourceControl' && !terminalWorkbench ? (
-              <div key="sourceControl" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                  <SourceControlPanel />
-                </Suspense>
-              </div>
+              <PageEntrance key="sourceControl" title={t('源代码管理')}><SourceControlPanel /></PageEntrance>
             ) : (
               <div key="editor" className="view-enter flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <EditorTabs />
@@ -587,7 +576,7 @@ function App() {
                   </div>
                 )}
                 {editorBody === 'editor' ? (
-                  <Suspense fallback={<LazyFallback />}>
+                  <Suspense fallback={<PageLoading />}>
                     <Editor />
                   </Suspense>
                 ) : editorBody === 'welcome' ? (

@@ -210,6 +210,8 @@ pub(super) async fn serve(
         let mut stopped = stop.clone();
         tauri::async_runtime::spawn(async move {
             let _permit = permit;
+            // 小的 TUI 增量帧连续走同一条 TLS 连接，立即发出，不等前一段的 TCP ACK。
+            let _ = stream.set_nodelay(true);
             let Ok(Ok(stream)) =
                 tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await
             else {

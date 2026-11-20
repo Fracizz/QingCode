@@ -1232,12 +1232,29 @@ dialog.session-drawer[data-docked="true"] {
   width: var(--dock-width);
   border-radius: 0;
   box-shadow: none;
+  transition: none;
 }
 dialog.session-drawer[data-docked="true"] [data-close="session-drawer"] { display: none; }
-/* 平板常驻：终端同时让出宽度，侧栏仍整块滑入以衔接布局变化。 */
-dialog.session-drawer[data-docked="true"][open] { animation: drawer-dock-in var(--motion-long) var(--ease-emphasized); }
-@keyframes drawer-dock-in { from { transform: translateX(-100%); } }
+dialog.session-drawer[data-docked="true"][open] { animation: none; }
 :root[data-sessions-docked="true"] main { padding-left: var(--dock-width); }
+/* 两条边用同一节奏移动。关闭 dialog 后由 display 的离散过渡保留侧栏画面。 */
+:root[data-session-dock-motion] main { transition: padding-left var(--motion-exit) var(--ease-exit); }
+:root[data-session-dock-motion] dialog.session-drawer[data-docked="true"] {
+  transition: transform var(--motion-exit) var(--ease-exit), display var(--motion-exit) allow-discrete;
+}
+:root[data-session-dock-motion][data-sessions-docked="true"] :is(main, dialog.session-drawer[data-docked="true"]) {
+  transition-duration: var(--motion-long);
+  transition-timing-function: var(--ease-emphasized);
+}
+:root[data-session-dock-motion] dialog.session-drawer[data-docked="true"]:not([open]) {
+  opacity: 1;
+  transform: translateX(calc(var(--safe-left) - 100%));
+}
+@starting-style {
+  :root[data-session-dock-motion] dialog.session-drawer[data-docked="true"][open] {
+    transform: translateX(calc(var(--safe-left) - 100%));
+  }
+}
 /* 常驻侧栏组头两行：项目名独占首行（最多两行），来源标签与数量放第二行；「+」「⋯」与首行对齐。 */
 .session-group-meta { display: contents; }
 dialog.session-drawer[data-docked="true"] .session-group-head-tools { align-items: flex-start; }
@@ -1279,7 +1296,6 @@ dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
 /* 收回：原地淡出不位移，ease-out 让透明度在前几帧就降下去，缩短面板与终端叠字的时间，遮罩随后淡出。
    点会话切换时 app.js 写 data-handoff，面板直接消失（见下条），不和正在重建的终端交叠成拖影。 */
 dialog.session-drawer:not([open]) { transform: none; transition-duration: 120ms, 0s, 180ms, 180ms; transition-timing-function: ease-out; }
-dialog.session-drawer[data-docked="true"]:not([open]) { opacity: 1; transform: translateX(-100%); transition-duration: var(--motion-exit); }
 @media (max-width: 599px) { dialog.sheet:not([open]) { opacity: 1; transform: translateY(100%); } }
 /* 终端操作菜单交给子页或另一个弹层时（app.js 写 data-handoff）：面板本身立即消失，只让遮罩照常淡出，与下一层的入场交叠而不是一下一上两段位移。 */
 dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; opacity: 0; }
@@ -1287,14 +1303,11 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 .dashboard-page:not([hidden]) { animation: page-in var(--motion-long) var(--ease-emphasized); }
 .dashboard[data-direction="forward"] { --page-shift: 28px; }
 .dashboard[data-direction="back"] { --page-shift: -28px; }
-/* 页面内的各分区（大标题、主卡片、会话分组、搜索…）依次上浮，前 6 块各错开 50ms，其余随最后一块；
-   只在分区从隐藏变为显示时播放，列表刷新复用分区节点，不会重播。只用 backwards 填充，结束后不残留 transform。 */
-.dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: rise-in var(--motion-long) var(--ease-emphasized) backwards; }
-.dashboard-page:not([hidden]) > :nth-child(2) { animation-delay: 50ms; }
-.dashboard-page:not([hidden]) > :nth-child(3) { animation-delay: 100ms; }
-.dashboard-page:not([hidden]) > :nth-child(4) { animation-delay: 150ms; }
-.dashboard-page:not([hidden]) > :nth-child(5) { animation-delay: 200ms; }
-.dashboard-page:not([hidden]) > :nth-child(n+6) { animation-delay: 250ms; }
+/* 首屏分区轻微错开，搜索和主要列表提前到同一拍。刷新复用分区节点，动画结束后不保留 transform。 */
+.dashboard-page:not([hidden]) > :not(.pull-indicator) { animation: rise-in var(--motion-medium) var(--ease-emphasized) backwards; }
+.dashboard-page:not([hidden]) > :nth-child(n+3) { animation-delay: 30ms; }
+.dashboard-page:not([hidden]) > :nth-child(n+5) { animation-delay: 60ms; }
+.dashboard-page:not([hidden]) > :is(#project-list, #connection-list, #home-sessions, #home-pending) { animation-delay: 30ms; }
 @keyframes rise-in { from { opacity: 0; transform: translateY(14px); } }
 #terminal-screen:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
 /* 进入终端：顶栏标题与副行在原位从下方 6px 淡入上浮，不跨屏飞行、不缩放；切换项目时终端页一直显示，不重播。 */
@@ -1320,6 +1333,7 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop { transition: none; }
+  :root[data-session-dock-motion] :is(main, dialog.session-drawer[data-docked="true"]) { transition-property: none; }
   dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
@@ -1570,6 +1584,16 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 #files-status { margin: 4px 4px 10px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 #files-status:empty { display: none; }
 #files-status[data-error="true"], #files-transfer-status[data-error="true"] { color: var(--error); }
+#files-list[aria-busy="true"]:empty { display: block; }
+#files-list[aria-busy="true"]:empty::before {
+  content: '';
+  display: block;
+  height: calc(61px * var(--file-loading-rows, 4));
+  background:
+    linear-gradient(transparent 19px, var(--divider) 19px 25px, transparent 25px 34px, var(--divider) 34px 39px, transparent 39px) 60px 0 / 34% 61px repeat-y,
+    radial-gradient(circle at 30px 30px, var(--surface-high) 16px, transparent 17px) 0 0 / 60px 61px repeat-y,
+    repeating-linear-gradient(var(--surface) 0 60px, var(--divider) 60px 61px);
+}
 #files-truncated { margin: 4px 4px 10px; color: var(--warning); font-size: 12px; }
 .file-entry { display: flex; align-items: center; min-width: 0; }
 .file-entry > .row { flex: 1; min-width: 0; grid-template-columns: 36px minmax(0, 1fr) 18px; gap: 12px; min-height: 60px; padding: 10px 12px; }

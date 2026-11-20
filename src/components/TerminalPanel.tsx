@@ -27,7 +27,7 @@ import {
   terminalWidthResizerHint,
 } from '../lib/panelLayout'
 import { beginPanelResize, isPanelResizing, settlePanelResize } from '../lib/panelResize'
-import { crossfadeRegion } from '../lib/layoutMotion'
+import { crossfadeRegion, type RegionCrossfade } from '../lib/layoutMotion'
 import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
 const DUAL_RATIO_KEY = 'qingcode:dual-terminal-ratio'
@@ -37,7 +37,7 @@ const DUAL_RATIO_MIN = 0.1
 const DUAL_RATIO_MAX = 0.9
 /** Fixed sash width between terminal panes (no negative margin overlap). */
 const DUAL_RESIZER_PX = 8
-/** 终端面板开合只淡入淡出：宽 / 高直接到位，避免逐帧重排和 xterm 反复测量（DESIGN.md「动效一览」）。 */
+/** 终端面板开合只淡入淡出，尺寸一次到位（见 DESIGN.md「动效一览」）。 */
 const DOCK_FADE = 'transition-opacity duration-[var(--motion-enter)] ease-out'
 
 type QuadRatios = { col: number; row: number }
@@ -79,6 +79,7 @@ export type TerminalPanelPosition = 'bottom' | 'side'
 export interface TerminalPanelProps {
   position?: TerminalPanelPosition
   terminalOpen: boolean
+  terminalSlotOpen: boolean
   terminalHeight: number
   terminalWidth: number
   sideSplit?: 'equal' | 'custom'
@@ -106,6 +107,7 @@ export interface TerminalPanelProps {
 export default function TerminalPanel({
   position = 'bottom',
   terminalOpen,
+  terminalSlotOpen,
   terminalHeight,
   terminalWidth,
   sideSplit = 'equal',
@@ -186,10 +188,10 @@ export default function TerminalPanel({
     }
   }
 
-  // 从终端列表、标签或快捷键换到另一个终端时交叉淡化：单终端下旧终端留在下层直到新终端淡入完成；
-  // 双 / 田字窗格的旧终端节点已被移走，只淡入新内容。
-  // 首次挂载、切换单 / 双 / 田字布局新出现的窗格、只移动焦点不换内容时都不播。
   const paneTerminalsRef = useRef<Record<TerminalFocusPane, string | null> | null>(null)
+  const paneFades = useRef(new Map<TerminalFocusPane, RegionCrossfade>())
+  const projectId = currentProject?.id
+  const fadeContext = useRef({ projectId, position, multiPane, quadMode })
   useLayoutEffect(() => {
     const next: Record<TerminalFocusPane, string | null> = {
       primary: activeTerminalId,
@@ -199,18 +201,41 @@ export default function TerminalPanel({
     }
     const previous = paneTerminalsRef.current
     paneTerminalsRef.current = next
-    if (!previous || !terminalOpen || isPanelResizing()) return
+    const context = fadeContext.current
+    fadeContext.current = { projectId, position, multiPane, quadMode }
+    const changedLayout = context.position !== position || context.multiPane !== multiPane || context.quadMode !== quadMode
+    if (!previous || !terminalOpen || layoutSwitching || isPanelResizing() || changedLayout || context.projectId !== projectId) {
+      for (const fade of paneFades.current.values()) fade.cancel()
+      paneFades.current.clear()
+      return
+    }
+    const panel = terminalPanelRef.current
     for (const pane of TERMINAL_FOCUS_PANES) {
       const before = previous[pane]
       const after = next[pane]
-      if (!before || !after || before === after) continue
-      const panel = terminalPanelRef.current
-      crossfadeRegion(
-        panel?.querySelector(`[data-terminal-pane-body="${pane}"]`),
-        multiPane ? null : panel?.querySelector(`[data-terminal-view="${CSS.escape(before)}"]`),
+      if (before === after) continue
+      const fade = crossfadeRegion(
+        before && after ? panel?.querySelector(`[data-terminal-pane-body="${pane}"]`) : null,
+        !multiPane && before ? panel?.querySelector(`[data-terminal-view="${CSS.escape(before)}"]`) : null,
+        paneFades.current.get(pane),
       )
+      if (!fade) {
+        paneFades.current.delete(pane)
+        continue
+      }
+      paneFades.current.set(pane, fade)
+      void fade.finished.then(() => {
+        if (paneFades.current.get(pane) === fade) paneFades.current.delete(pane)
+      })
     }
-  }, [activeTerminalId, secondaryTerminalId, blTerminalId, brTerminalId, multiPane, quadMode, terminalOpen, terminalPanelRef])
+  }, [
+    activeTerminalId, secondaryTerminalId, blTerminalId, brTerminalId, multiPane, quadMode,
+    projectId, position, terminalOpen, terminalPanelRef, layoutSwitching, isTerminalResizing,
+  ])
+  useLayoutEffect(() => () => {
+    for (const fade of paneFades.current.values()) fade.cancel()
+    paneFades.current.clear()
+  }, [])
 
   useEffect(() => {
     if (!dualMode || !currentProject) return
@@ -506,6 +531,7 @@ export default function TerminalPanel({
         data-terminal-pane={pane ?? undefined}
         data-terminal-pane-body={isFocused ? 'primary' : undefined}
         data-terminal-view={term.id}
+        inert={!isFocused || undefined}
         className={`absolute inset-0 min-w-0 ${
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}
@@ -634,7 +660,7 @@ export default function TerminalPanel({
   // 宿主固定在片段首位：侧边/底部切换只换外层 div，常驻终端视图不受影响。
   if (isSide) {
     const atEnd = widthResizerEdge === 'end'
-    const widthResizer = terminalOpen && editorVisible && (
+    const widthResizer = terminalSlotOpen && editorVisible && (
       <PanelResizer
         orientation="vertical"
         active={isTerminalResizing}
@@ -659,13 +685,14 @@ export default function TerminalPanel({
         data-terminal-position="side"
         data-terminal-dual={dualMode ? 'true' : undefined}
         data-terminal-quad={quadMode ? 'true' : undefined}
+        inert={!terminalOpen || undefined}
         className={`flex h-full min-h-0 overflow-hidden ${
           sideWidthEqual ? 'min-w-0 w-full' : 'flex-shrink-0'
         } ${
           skipDockTransition ? '' : DOCK_FADE
         } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         style={{
-          width: terminalOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
+          width: terminalSlotOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
         }}
       >
         {widthResizerEdge === 'start' && widthResizer}
@@ -692,12 +719,13 @@ export default function TerminalPanel({
       data-terminal-panel
       data-terminal-dock="bottom"
       data-terminal-position="bottom"
+      inert={!terminalOpen || undefined}
       className={`flex flex-col flex-shrink-0 min-h-0 overflow-hidden ${
         skipDockTransition ? '' : DOCK_FADE
-      } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none h-0'}`}
-      style={{ height: terminalOpen ? terminalHeight : 0 }}
+      } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      style={{ height: terminalSlotOpen ? terminalHeight : 0 }}
     >
-      {terminalOpen && (
+      {terminalSlotOpen && (
         <PanelResizer
           orientation="horizontal"
           active={isTerminalResizing}

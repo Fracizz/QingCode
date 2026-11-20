@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { useId, useRef, type ReactNode } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
+import { useSubpageFade } from '../hooks/useSubpageFade'
 import {
   parseSshServerTimings,
   sshServerVersionMismatch,
@@ -66,6 +67,8 @@ export default function SshServerDialog({
 }: Props) {
   const { t } = useI18n()
   const id = useId()
+  const content = useRef<HTMLDivElement>(null)
+  useSubpageFade(content, view)
   const agent = state.transport === 'agent'
   const compatibility = !agent && state.connectionMode === 'ssh'
   const mismatch = sshServerVersionMismatch(state.reason)
@@ -152,6 +155,7 @@ export default function SshServerDialog({
         </div>
 
         <div
+          ref={content}
           id={`${id}-panel`}
           role="tabpanel"
           aria-labelledby={`${id}-${view}-tab`}

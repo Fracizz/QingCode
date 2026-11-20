@@ -192,6 +192,44 @@ describe('SourceControlPanel', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
   })
 
+  it('copies Git remote URLs while history and the automatic fetch are loading', async () => {
+    sessionStorage.clear()
+    const primaryUrl = 'https://example.com/team/long-primary-repository.git'
+    const mirrorUrl = 'https://example.com/team/long-mirror-repository.git'
+    mockGit({ is_repository: true, branch: 'main', upstream: 'origin/main', changes: [] })
+    const baseImpl = mocks.safeInvoke.getMockImplementation()!
+    mocks.safeInvoke.mockImplementation((label: string, command: string, args?: unknown) => {
+      if (command === 'git_log' || command === 'git_fetch') return new Promise(() => {})
+      if (command === 'git_remotes') {
+        return Promise.resolve([
+          { name: 'origin', fetch_url: primaryUrl, push_urls: [primaryUrl] },
+          { name: 'mirror', fetch_url: mirrorUrl, push_urls: [mirrorUrl] },
+        ])
+      }
+      return baseImpl(label, command, args)
+    })
+    render(<SourceControlPanel />)
+
+    await screen.findByText(primaryUrl)
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('获取远程更新', 'git_fetch', { path: project.path })
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
+
+    const copy = screen.getByRole('button', { name: '复制 GIT 地址' })
+    expect(copy).toBeEnabled()
+    fireEvent.click(copy)
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('写入剪贴板', 'clipboard_write_text', {
+      text: primaryUrl,
+    })
+
+    const more = screen.getByRole('button', { name: '更多远程地址' })
+    expect(more).toBeEnabled()
+    fireEvent.click(more)
+    fireEvent.click(screen.getByRole('menuitem', { name: name => name.includes(mirrorUrl) }))
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('写入剪贴板', 'clipboard_write_text', {
+      text: mirrorUrl,
+    })
+  })
+
   it('shows a quiet toolbar hint when the automatic fetch fails and throttles retries', async () => {
     sessionStorage.clear()
     mockGit({

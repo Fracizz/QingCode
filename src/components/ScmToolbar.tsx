@@ -281,7 +281,7 @@ export default function ScmToolbar({
             <button
               type="button"
               aria-label={t('复制 GIT 地址')}
-              disabled={!primary || writeDisabled}
+              disabled={!primary}
               onClick={() => {
                 if (primary) onCopyRemoteUrl(primary.url)
               }}
@@ -304,7 +304,6 @@ export default function ScmToolbar({
                 aria-label={t('更多远程地址')}
                 aria-haspopup="menu"
                 aria-expanded={remotesMenuOpen}
-                disabled={writeDisabled}
                 onClick={onOpenRemotesMenu}
                 className={menuBtn}
               >

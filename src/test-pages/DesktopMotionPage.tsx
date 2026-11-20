@@ -71,6 +71,7 @@ function PageSwitchFixture() {
       </div>
       {sidebarMounted && (
         <SidebarSlot
+          width={200}
           leaving={!sidebarOpen}
           onExited={() => setSidebarMounted(false)}
           animateOpen={animateOpen}

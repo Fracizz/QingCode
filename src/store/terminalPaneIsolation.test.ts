@@ -118,7 +118,7 @@ describe('terminal pane isolation', () => {
     expect(await store.addTerminal('D:/proj', 'p1')).toBeNull()
     expect(reservePrewarmedShell).not.toHaveBeenCalled()
     expect(await store.addTerminal('D:/proj', 'p1')).toBe('warm-claude')
-    expect(reservePrewarmedShell).toHaveBeenCalledWith('D:/proj', expect.any(String), true)
+    expect(reservePrewarmedShell).toHaveBeenCalledWith('D:/proj', expect.any(String), true, undefined, undefined)
     expect(useTerminalStore.getState().terminals[0]).toMatchObject({
       id: 'warm-claude', profileId: 'assistant', launchCommand: 'claude',
     })
@@ -132,7 +132,7 @@ describe('terminal pane isolation', () => {
     vi.mocked(ensureTerminalProfileTrust).mockResolvedValueOnce(true)
     const path = 'ssh://conn/C:/work/proj'
     expect(await useTerminalStore.getState().addTerminal(path, 'p1')).toBe('warm-remote')
-    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), !!command)
+    expect(reservePrewarmedShell).toHaveBeenCalledWith(path, expect.any(String), !!command, undefined, undefined)
     await useTerminalStore.getState().closeTerminal('warm-remote')
   })
 

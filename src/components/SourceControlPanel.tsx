@@ -699,7 +699,11 @@ export default function SourceControlPanel() {
   const [inlineDiffError, setInlineDiffError] = useState<string | null>(null)
   const [branchMenuOpen, setBranchMenuOpen] = useState(false)
   const [branchList, setBranchList] = useState<GitBranchList | null>(null)
-  const [remotes, setRemotes] = useState<GitRemote[] | null>(null)
+  const [remoteSnapshot, setRemoteSnapshot] = useState<{
+    path: string
+    remotes: GitRemote[]
+  } | null>(null)
+  const remotes = remoteSnapshot?.path === projectPath ? remoteSnapshot.remotes : null
   const [remotesLoading, setRemotesLoading] = useState(false)
   const remotesSequenceRef = useRef(0)
   /** Independent of refreshSequenceRef so soft status refresh cannot discard history loads. */
@@ -772,7 +776,7 @@ export default function SourceControlPanel() {
 
   const loadRemotes = useCallback(async (path: string) => {
     if (!hasBackend()) {
-      setRemotes([])
+      setRemoteSnapshot({ path, remotes: [] })
       setRemotesLoading(false)
       return
     }
@@ -784,14 +788,14 @@ export default function SourceControlPanel() {
         remotesSequenceRef.current === sequence &&
         useProjectStore.getState().currentProject?.path === path
       ) {
-        setRemotes(next)
+        setRemoteSnapshot({ path, remotes: next })
       }
     } catch {
       if (
         remotesSequenceRef.current === sequence &&
         useProjectStore.getState().currentProject?.path === path
       ) {
-        setRemotes([])
+        setRemoteSnapshot({ path, remotes: [] })
       }
     } finally {
       if (remotesSequenceRef.current === sequence) {
@@ -961,15 +965,16 @@ export default function SourceControlPanel() {
         // History uses commitsSequenceRef — still load even if a soft refresh
         // advanced refreshSequenceRef while git_status was in flight.
         if (next.is_repository) {
-          await loadCommits(path)
           if (isCurrentRequest()) void loadRemotes(path)
+          await loadCommits(path)
         } else if (isCurrentRequest()) {
           commitsSequenceRef.current += 1
           setCommits([])
           commitsRef.current = []
           setCommitsHasMore(false)
           commitsHasMoreRef.current = false
-          setRemotes([])
+          remotesSequenceRef.current += 1
+          setRemoteSnapshot(null)
           setRemotesLoading(false)
         }
       } catch (reason) {
@@ -1000,7 +1005,7 @@ export default function SourceControlPanel() {
       setBranchList(null)
       setRemotesMenuOpen(false)
       remotesSequenceRef.current += 1
-      setRemotes(null)
+      setRemoteSnapshot(null)
       setRemotesLoading(false)
       // Drop previous project's history immediately so soft status refresh cannot leave
       // a stale 0–1 commit list while a hard load is still in flight.
@@ -1034,9 +1039,7 @@ export default function SourceControlPanel() {
         // 之前两条都发，同一次打开会跑两遍 git_log。
         const soft = !gitStatusNeedsTrackingMetadata(seeded)
         void refresh({ soft, reuseInFlight: true })
-        if (!seeded.is_repository) {
-          setRemotes([])
-        } else if (soft) {
+        if (seeded.is_repository && soft) {
           const cached = readScmCommitsCache(projectPath)
           if (cached) {
             commitsRef.current = cached.commits
@@ -2757,7 +2760,7 @@ export default function SourceControlPanel() {
           />,
           document.body,
         )}
-      {remotesMenuOpen &&
+      {remotesMenuOpen && remoteRows.length > 0 &&
         createPortal(
           <ScmRemotesMenu
             open={remotesMenuOpen}

@@ -1112,7 +1112,12 @@ pub fn run() {
             let pool = window.state::<remote_ssh::local_terminal::ShellPrewarmPool>();
             match event {
                 tauri::WindowEvent::Focused(true) => pool.focus_window(window.label()),
-                tauri::WindowEvent::Destroyed => pool.close_window(window.label()),
+                tauri::WindowEvent::Destroyed => {
+                    pool.close_window(window.label());
+                    window
+                        .state::<remote_ssh::local_terminal::ConnectionShellPools>()
+                        .close_window(window.label());
+                }
                 _ => {}
             }
         })

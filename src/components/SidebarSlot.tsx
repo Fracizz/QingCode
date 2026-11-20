@@ -3,6 +3,9 @@ import { canAnimateLayout, cssDuration, EASE_SOFT, guardAnimation } from '../lib
 import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
 
 interface Props {
+  width: number
+  /** 工作台的普通侧栏和整页各有宽度，切换类别时才播宽度过渡。 */
+  widthMode?: 'sidebar' | 'page'
   /** 侧栏正在收起：收拢动画播完后调用 onExited，由父组件卸载。 */
   leaving: boolean
   onExited: () => void
@@ -14,15 +17,17 @@ interface Props {
 }
 
 /**
- * 工作区网格的侧栏槽：展开 / 收起时宽度在 0 与侧栏宽度之间过渡，编辑区随之平移，不再瞬间跳动。
- * 动画期间内容贴右对齐并裁切，看起来像抽屉从活动栏一侧滑出；中途反向（快速连点）从当前宽度接着播。
+ * 开合时内容贴右裁切；工作台的窄栏与整页互换时从同一个左缘裁切。
+ * 连点从当前宽度接着播，拖动和窗口缩放直接使用新宽度。
  */
-export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerminals, children }: Props) {
+export default function SidebarSlot({
+  width, widthMode, leaving, onExited, animateOpen, freezeTerminals, children,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const slotAnimation = useRef<Animation | null>(null)
   const contentAnimation = useRef<Animation | null>(null)
   const frozen = useRef(false)
-  const mounted = useRef(false)
+  const previousLayout = useRef<{ width: number; widthMode: Props['widthMode']; leaving: boolean } | null>(null)
   const onExitedRef = useRef(onExited)
   const freezeRef = useRef(freezeTerminals)
 
@@ -33,22 +38,10 @@ export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerm
 
   useLayoutEffect(() => {
     const slot = ref.current
-    const first = !mounted.current
-    mounted.current = true
-    if (!slot || (first && !leaving && !animateOpen)) return
+    const previous = previousLayout.current
+    previousLayout.current = { width, widthMode, leaving }
+    if (!slot) return
 
-    const content = slot.firstElementChild instanceof HTMLElement ? slot.firstElementChild : null
-    // 取消前先读当前（可能还在动画中的）宽度和透明度，反向时从这里接着播。
-    const fromWidth = first ? 0 : slot.getBoundingClientRect().width
-    const computedOpacity = content ? parseFloat(getComputedStyle(content).opacity) : 1
-    const fromOpacity = Number.isFinite(computedOpacity) ? computedOpacity : 1
-    slotAnimation.current?.cancel()
-    contentAnimation.current?.cancel()
-    slotAnimation.current = null
-    contentAnimation.current = null
-
-    const fullWidth = content?.getBoundingClientRect().width ?? 0
-    const toWidth = leaving ? 0 : fullWidth
     const settle = (keepClip = false) => {
       if (!keepClip) {
         slot.style.removeProperty('overflow')
@@ -60,24 +53,53 @@ export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerm
       }
     }
 
-    if (!canAnimateLayout(slot) || !fullWidth || Math.abs(fromWidth - toWidth) < 1) {
+    const widthModeChanged = widthMode && previous?.widthMode && previous.widthMode !== widthMode
+    const toggled = previous ? previous.leaving !== leaving : animateOpen || leaving
+    const cancel = () => {
+      slotAnimation.current?.cancel()
+      contentAnimation.current?.cancel()
+      slotAnimation.current = null
+      contentAnimation.current = null
+    }
+    if (!toggled && !widthModeChanged) {
+      if (!leaving && previous?.width !== width && slotAnimation.current) {
+        cancel()
+        settle()
+      }
+      return
+    }
+
+    const content = slot.firstElementChild instanceof HTMLElement ? slot.firstElementChild : null
+    const fromWidth = slotAnimation.current ? slot.getBoundingClientRect().width :
+      previous && !previous.leaving ? previous.width : 0
+    const computedOpacity = content ? parseFloat(getComputedStyle(content).opacity) : 1
+    const fromOpacity = Number.isFinite(computedOpacity) ? computedOpacity : 1
+    cancel()
+
+    const toWidth = leaving ? 0 : width
+    const distance = Math.abs(toWidth - fromWidth)
+    if (!canAnimateLayout(slot) || !width || distance < 1) {
       settle()
       if (leaving) onExitedRef.current()
       return
     }
 
-    const base = leaving ? cssDuration('--motion-view-exit', 200) : cssDuration('--motion-view', 260)
-    const duration = Math.max(60, base * (Math.abs(toWidth - fromWidth) / fullWidth))
-    const timing: KeyframeAnimationOptions = { duration, easing: EASE_SOFT, fill: 'forwards' }
+    const span = widthModeChanged && !toggled ? Math.abs(width - previous.width) : width
+    const base = toWidth < fromWidth ? cssDuration('--motion-view-exit', 200) : cssDuration('--motion-view', 260)
+    const duration = Math.max(60, base * Math.min(1, distance / Math.max(1, span)))
+    const timing: KeyframeAnimationOptions = { duration, easing: EASE_SOFT, fill: 'both' }
 
     slot.style.overflow = 'hidden'
-    slot.style.justifyContent = 'flex-end'
+    slot.style.justifyContent = toggled ? 'flex-end' : 'flex-start'
     if (freezeRef.current && !frozen.current) {
       frozen.current = true
+      // DOM 已提交新视图，先恢复过渡起点的几何再截取终端。
+      slot.style.width = `${fromWidth}px`
       beginPanelResize('vertical', { cursor: false })
     }
 
     const animation = slot.animate([{ width: `${fromWidth}px` }, { width: `${toWidth}px` }], timing)
+    slot.style.removeProperty('width')
     slotAnimation.current = animation
     guardAnimation(animation, duration)
     if (content && (leaving || fromOpacity < 1)) {
@@ -94,20 +116,25 @@ export default function SidebarSlot({ leaving, onExited, animateOpen, freezeTerm
         onExitedRef.current()
         return
       }
-      animation.cancel()
+      cancel()
+      settle()
+    }
+  }, [leaving, animateOpen, width, widthMode])
+
+  useLayoutEffect(() => {
+    const slot = ref.current
+    return () => {
+      previousLayout.current = null
+      slotAnimation.current?.cancel()
       contentAnimation.current?.cancel()
       slotAnimation.current = null
       contentAnimation.current = null
-      settle()
-    }
-  }, [leaving, animateOpen])
-
-  useLayoutEffect(() => () => {
-    slotAnimation.current?.cancel()
-    contentAnimation.current?.cancel()
-    if (frozen.current) {
-      frozen.current = false
-      settlePanelResize('vertical')
+      slot?.style.removeProperty('overflow')
+      slot?.style.removeProperty('justify-content')
+      if (frozen.current) {
+        frozen.current = false
+        settlePanelResize('vertical')
+      }
     }
   }, [])
 

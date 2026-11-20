@@ -33,21 +33,67 @@ export function guardAnimation(animation: Animation, duration: number) {
   }, duration + 300)
 }
 
+function fadeIn(element: HTMLElement, duration: number, easing: string, fromOpacity = 0) {
+  const animation = element.animate([{ opacity: fromOpacity }, { opacity: 1 }], { duration, easing })
+  guardAnimation(animation, duration)
+  return animation
+}
+
+export interface RegionCrossfade {
+  incoming: HTMLElement
+  outgoing: Element | null | undefined
+  fade: Animation
+  finished: Promise<unknown>
+  cancel: () => void
+}
+
 /**
- * 原地换内容的交叉淡化（如切换终端）：新内容在上层从透明淡入，旧内容在下层保持完全显示直到淡入结束，
- * 合成亮度始终不掉，没有「旧的先消失、露出空底再出新的」那一下；不位移，避免整屏文字滑动显得生硬。
- * outgoing 已被样式隐藏（visibility: hidden）时，动画期间临时保持可见。
+ * 同一窗格只保留最近一轮交接。反向切换时交换上、下层，从当前的混合比例接着播；
+ * 连切到第三个会话时只留下紧邻的上一会话，缩短下一轮淡入。
  */
-export function crossfadeRegion(incoming: Element | null | undefined, outgoing?: Element | null) {
-  if (!canAnimateLayout(incoming)) return
-  const duration = cssDuration('--motion-view', 260)
-  guardAnimation(incoming.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: EASE_SOFT }), duration)
-  if (outgoing instanceof HTMLElement && outgoing !== incoming) {
-    guardAnimation(
-      outgoing.animate([{ visibility: 'visible' }, { visibility: 'visible' }], { duration }),
-      duration,
-    )
+export function crossfadeRegion(
+  incoming: Element | null | undefined,
+  outgoing?: Element | null,
+  previous?: RegionCrossfade,
+): RegionCrossfade | undefined {
+  if (!canAnimateLayout(incoming)) {
+    previous?.cancel()
+    return
   }
+  const interrupted = previous && (previous.fade.pending || previous.fade.playState === 'running')
+  let fromOpacity = 0
+  const reversing = interrupted && previous.outgoing === incoming && previous.incoming === outgoing
+  if (reversing) {
+    fromOpacity = 1 - Number(getComputedStyle(previous.incoming).opacity)
+  } else if (interrupted && !outgoing && previous.incoming === incoming) {
+    // 分屏在同一个容器里直接换内容，沿用容器当前的透明度。
+    fromOpacity = Number(getComputedStyle(incoming).opacity)
+  }
+  previous?.cancel()
+  if (fromOpacity >= 1) return
+
+  const base = interrupted && !reversing ? cssDuration('--motion-fast', 120) : cssDuration('--motion-view', 260)
+  const duration = Math.max(60, base * (1 - fromOpacity))
+  const fade = fadeIn(incoming, duration, EASE_SOFT, fromOpacity)
+  const reveal = outgoing instanceof HTMLElement && outgoing !== incoming
+    ? outgoing.animate([{ visibility: 'visible' }, { visibility: 'visible' }], { duration })
+    : undefined
+  if (reveal) guardAnimation(reveal, duration)
+  const finished = Promise.allSettled(reveal ? [fade.finished, reveal.finished] : [fade.finished])
+  return {
+    incoming, outgoing, fade, finished,
+    cancel: () => {
+      fade.cancel()
+      reveal?.cancel()
+    },
+  }
+}
+
+/** 同级子页只淡入正文，时长和缓动与 .view-fade 一致。 */
+export function fadeInSubpage(element: Element | null) {
+  if (!canAnimateLayout(element)) return
+  const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease-out').trim()
+  return fadeIn(element, cssDuration('--motion-fast', 120), easing || 'cubic-bezier(0.16, 1, 0.3, 1)')
 }
 
 /** 面板布局切换（经典 / 侧边终端 / 终端工作台）后，让换了位置的区域整体淡入，只变透明度不位移。 */
@@ -55,6 +101,6 @@ export function fadeInLayoutRegions(elements: (Element | null | undefined)[]) {
   const duration = cssDuration('--motion-view', 260)
   for (const element of elements) {
     if (!canAnimateLayout(element)) continue
-    guardAnimation(element.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: EASE_SOFT }), duration)
+    fadeIn(element, duration, EASE_SOFT)
   }
 }
