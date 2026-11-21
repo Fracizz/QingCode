@@ -1,3 +1,4 @@
+import { isPrewarmCli } from './localCodexPrewarm'
 import { useProjectStore } from '../../store/projectStore'
 import { translate } from '../i18n'
 import { sshConnectionIdFromUri } from '../sshWorkspace'
@@ -32,7 +33,7 @@ const notified = new Set<string>()
 
 export function notifyCliPrewarmBlocked(payload: { cwd?: unknown; command?: unknown; reason?: unknown }) {
   const { command, cwd, reason } = payload
-  if (typeof cwd !== 'string' || (command !== 'codex' && command !== 'claude' && command !== 'opencode') || typeof reason !== 'string') return
+  if (typeof cwd !== 'string' || typeof command !== 'string' || !isPrewarmCli(command) || typeof reason !== 'string') return
   const detail = details.get(reason)
   if (!detail) return
   const connectionId = sshConnectionIdFromUri(cwd)

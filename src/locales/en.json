@@ -4,7 +4,7 @@
   "messages": {
     "本机 CLI 预热": "Local CLI prewarming",
     "CLI 预热配置": "CLI prewarm profile",
-    "选择运行 claude、opencode 或 codex 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。": "Choose a trusted PowerShell profile that runs claude, opencode, or codex. QingCode starts the selected tool in a dedicated directory and switches to the project when you open a terminal.",
+    "选择运行 claude、opencode、codex 或 pi 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。": "Choose a trusted PowerShell profile that runs claude, opencode, codex, or pi. QingCode starts the selected tool in a dedicated directory and switches to the project when you open a terminal.",
     "终端 › 集成: 粘贴附件保留天数": "Terminal › Integrated: Paste attachment retention",
     "仅打开项目后在后台清理过期粘贴附件，不影响打开速度。适用于本机、WSL 和已连接的 SSH 项目；历史附件路径会失效。默认关闭。": "Clean up expired paste attachments in the background only after opening a project. Supports local, WSL and connected SSH projects without blocking opening. Historical attachment paths will stop working. Off by default.",
     "保留 {days} 天": "Keep for {days} days",

@@ -34,10 +34,10 @@ it('preserves an older profile selection and discards its saved project director
 })
 
 it('only prestarts fresh CLI sessions', () => {
-  for (const command of ['codex', 'claude', 'opencode']) {
+  for (const command of ['codex', 'claude', 'opencode', 'pi']) {
     expect(supportsCodexPrewarm({ ...profile, command })).toBe(true)
   }
-  for (const command of ['codex resume', 'codex; whoami', 'echo codex', 'claude --continue', 'opencode attach', 'opencode; whoami']) {
+  for (const command of ['codex resume', 'codex; whoami', 'echo codex', 'claude --continue', 'opencode attach', 'opencode; whoami', 'pi --continue', 'pip']) {
     expect(supportsCodexPrewarm({ ...profile, command })).toBe(false)
   }
   expect(supportsCodexPrewarm({ ...profile, shell: 'cmd' })).toBe(false)

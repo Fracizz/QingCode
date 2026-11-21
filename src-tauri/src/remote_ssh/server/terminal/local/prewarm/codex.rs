@@ -266,14 +266,30 @@ pub(super) fn launch_script(agent: &str, powershell: bool) -> String {
     let script = match (agent, powershell) {
         ("opencode", true) => include_str!("start-opencode.ps1"),
         ("opencode", false) => include_str!("start-opencode.sh"),
+        ("pi", true) => return pi_script(include_str!("start-pi.ps1")),
+        ("pi", false) => return pi_script(include_str!("start-pi.sh")),
         (_, true) => include_str!("start-codex.ps1"),
         (_, false) => include_str!("start-agent.sh"),
     };
     script.replace("\r\n", "\n")
 }
 
+/// pi 的启动脚本内嵌 Node 预加载器（PowerShell here-string / sh heredoc）。
+fn pi_script(script: &str) -> String {
+    let preload = include_str!("pi-preload.mjs").replace("\r\n", "\n");
+    script
+        .replace("\r\n", "\n")
+        .replace("__QINGCODE_PI_PRELOAD__", preload.trim_end())
+}
+
 pub(super) fn supported(command: &str) -> bool {
-    matches!(command, "codex" | "claude" | "opencode")
+    matches!(command, "codex" | "claude" | "opencode" | "pi")
+}
+
+/// 这些 CLI 无法在会话内换目录：启动脚本自己读取一行目标目录、切换后再运行，
+/// 并负责 CLI 退出后 Shell 的目录，不使用交接文件或远端 `pty.claimCwdFile`。
+fn shell_handoff(agent: &str) -> bool {
+    matches!(agent, "opencode" | "pi")
 }
 
 const PROMPT: &str = "Ask Codex to do anything";
@@ -547,17 +563,19 @@ impl CodexSession {
                 serde_json::json!({"agent": agent, "ms": started.elapsed().as_millis() as u64}),
             );
         };
-        if self.agent == "opencode" {
+        if shell_handoff(&self.agent) {
             validate()?;
             let nonce = self.nonce.clone();
             send_input_to_session(session, id, &self.input_seq, remote_input_line(cwd))
                 .await
                 .map_err(|error| error.0)?;
             session.wait_shell_marker(id, &nonce, "cwd").await?;
-            self.wait_for(session, id, |view| {
-                view.screen.screen().contents().contains("Ask anything…")
-            })
-            .await?;
+            if self.agent == "opencode" {
+                self.wait_for(session, id, |view| {
+                    view.screen.screen().contents().contains("Ask anything…")
+                })
+                .await?;
+            }
             return validate();
         }
         if self.agent == "claude" {
@@ -731,12 +749,12 @@ pub(super) async fn prepare_at(
     if !entry.claim_cwd {
         return Err("本机宿主不支持领取时更新目录".into());
     }
-    let handoff = (!remote && agent != "opencode")
+    let handoff = (!remote && !shell_handoff(agent))
         .then(tempfile::NamedTempFile::new)
         .transpose()
         .map_err(|e| e.to_string())?;
     let mut env = target.launch.env.clone();
-    let cwd_file = remote && agent != "opencode";
+    let cwd_file = remote && !shell_handoff(agent);
     if cwd_file
         && !entry
             .session
@@ -794,7 +812,7 @@ pub(super) async fn prepare_at(
         anchor: cwd.into(),
     };
     let ready = tokio::time::timeout(READY_TIMEOUT, async {
-        if agent == "opencode" {
+        if shell_handoff(agent) {
             return session
                 .wait_shell_marker(&entry.pty_id, &nonce, "ready")
                 .await

@@ -52,7 +52,7 @@ const project = (id: string, path: string, last_opened_at: number, ephemeral = f
   ({ id, name: id, path, created_at: 0, last_opened_at, ephemeral })
 
 it('authorizes other connections with their latest trusted project; the active connection uses the current project', () => {
-  for (const command of ['claude', 'codex', 'opencode']) {
+  for (const command of ['claude', 'codex', 'opencode', 'pi']) {
     localStorage.clear()
     const profile: TerminalProfile = { id: 'ai', name: 'AI', shell: 'pwsh', command }
     saveTerminalProfileSettings({ profiles: [profile], defaultProfileId: null, defaultShell: profile.shell })

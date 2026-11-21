@@ -5,7 +5,7 @@ import { loadTerminalProfileSettings, type TerminalProfile } from './terminalPro
 export const LOCAL_CODEX_PREWARM_KEY = 'qingcode:local-codex-prewarm'
 
 export function isPrewarmCli(command: string) {
-  return ['codex', 'claude', 'opencode'].includes(command.trim())
+  return ['codex', 'claude', 'opencode', 'pi'].includes(command.trim())
 }
 
 export function supportsCodexPrewarm(profile: TerminalProfile) {

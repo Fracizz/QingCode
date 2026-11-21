@@ -4,7 +4,7 @@
   "messages": {
     "本机 CLI 预热": "本机 CLI 预热",
     "CLI 预热配置": "CLI 预热配置",
-    "选择运行 claude、opencode 或 codex 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。": "选择运行 claude、opencode 或 codex 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。",
+    "选择运行 claude、opencode、codex 或 pi 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。": "选择运行 claude、opencode、codex 或 pi 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。",
     "终端 › 集成: 粘贴附件保留天数": "终端 › 集成: 粘贴附件保留天数",
     "仅打开项目后在后台清理过期粘贴附件，不影响打开速度。适用于本机、WSL 和已连接的 SSH 项目；历史附件路径会失效。默认关闭。": "仅打开项目后在后台清理过期粘贴附件，不影响打开速度。适用于本机、WSL 和已连接的 SSH 项目；历史附件路径会失效。默认关闭。",
     "保留 {days} 天": "保留 {days} 天",

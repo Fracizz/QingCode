@@ -179,6 +179,13 @@ async fn real_opencode_switches_project_and_returns_to_powershell() -> Result<()
 }
 
 #[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires pi (npm) and node on PATH"]
+async fn real_pi_switches_project_and_returns_to_powershell() -> Result<(), String> {
+    real_cli_switch("pi").await
+}
+
+#[cfg(windows)]
 async fn real_cli_switch(agent: &str) -> Result<(), String> {
     use qingcode_server::daemon::{DaemonOptions, RunDir};
     // Claude renders slash-command results as Markdown; a backslash before
@@ -290,6 +297,12 @@ trust_level = "trusted"
         }
         env.insert("OPENCODE_DISABLE_AUTOUPDATE".into(), "true".into());
         env.insert("OPENCODE_DISABLE_MODELS_FETCH".into(), "true".into());
+    } else if agent == "pi" {
+        env.insert("PI_OFFLINE".into(), "1".into());
+        env.insert(
+            "PI_CODING_AGENT_DIR".into(),
+            home.join("pi").display().to_string(),
+        );
     }
     let started = Instant::now();
     prepare(&mut entry, &target).await?;
@@ -353,6 +366,17 @@ trust_level = "trusted"
         if agent == "codex" {
             codex
                 .submit(session, &entry.pty_id, "/exit", || Ok(()))
+                .await
+                .unwrap();
+        } else if agent == "pi" {
+            // pi 的首屏文案随版本变化：等界面稳定后用 Ctrl+D（空输入时退出）。
+            let _ = tokio::time::timeout(
+                Duration::from_secs(8),
+                codex.wait_for(session, &entry.pty_id, |_| false),
+            )
+            .await;
+            println!("pi screen: {}", codex.screen.screen().contents());
+            send_input_to_session(session, &entry.pty_id, &codex.input_seq, vec![4])
                 .await
                 .unwrap();
         } else {
@@ -588,6 +612,8 @@ fn launch_scripts_never_carry_carriage_returns() {
         ("opencode", false),
         ("codex", true),
         ("opencode", true),
+        ("pi", false),
+        ("pi", true),
     ] {
         let script = launch_script(agent, powershell);
         assert!(!script.contains('\r'), "{agent} powershell={powershell}");
@@ -616,4 +642,19 @@ fn claude_composer_ignores_dim_placeholder_suggestion() {
     typed.process(format!("{rule}\r\n❯ /cd\x1b[2m <path>\x1b[22m\r\n{rule}").as_bytes());
     assert!(claude_composer(&claude_input_rows(typed.screen()), "/cd"));
     assert!(!claude_composer(&claude_input_rows(typed.screen()), ""));
+}
+
+#[test]
+fn pi_launch_scripts_embed_the_preload_loader() {
+    for powershell in [false, true] {
+        let script = launch_script("pi", powershell);
+        assert!(!script.contains("__QINGCODE_PI_PRELOAD__"));
+        assert!(script.contains("await preload(target.entry)"));
+        // 嵌入的加载器不能提前结束 here-string 或 heredoc。
+        let loader = include_str!("../pi-preload.mjs");
+        assert!(!loader
+            .lines()
+            .any(|line| line.starts_with("'@") || line.trim() == "QC_PI_PRELOAD"));
+    }
+    assert!(supported("pi") && shell_handoff("pi") && !shell_handoff("claude"));
 }
