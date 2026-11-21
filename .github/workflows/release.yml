@@ -82,45 +82,36 @@ jobs:
           echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
-  check:
-    runs-on: windows-latest
+  # 不再重复跑 pnpm check：同一提交推送时 Verify 工作流已完整检查，这里只等它的结果。
+  verify-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          # Match package.json "packageManager" (do not pin a different major here).
-          version: 11.0.8
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check (tsc, vitest, rustfmt, clippy, cargo test)
-        env:
-          # Clipboard integration tests share Windows' process-wide clipboard.
-          RUST_TEST_THREADS: '1'
-        run: pnpm check
-
+      - name: Wait for Verify on this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 同一提交可能因推送 tag / master / test 触发多次 Verify，任一成功即可。
+          for i in $(seq 1 90); do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --commit "$SHA" \
+              --json status,conclusion --limit 20)
+            if [[ $(jq '[.[] | select(.conclusion=="success")] | length' <<<"$runs") -gt 0 ]]; then
+              echo "Verify passed for $SHA"; exit 0
+            fi
+            total=$(jq 'length' <<<"$runs")
+            done_failed=$(jq '[.[] | select(.status=="completed" and .conclusion!="success")] | length' <<<"$runs")
+            if [[ $total -gt 0 && $total -eq $done_failed ]]; then
+              echo "::error::Verify failed for $SHA; fix it before releasing."; exit 1
+            fi
+            echo "Waiting for Verify ($total run(s) found)..."; sleep 30
+          done
+          echo "::error::Timed out waiting for Verify on $SHA"; exit 1
   build-windows-x64:
-    needs: [meta, check]
+    needs: [meta, verify-gate]
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -145,7 +136,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: windows-x64
+          # 与 warm-release-cache.yml 共用缓存；tag 作用域的缓存别的 tag 读不到，因此不保存。
+          shared-key: release-windows-x64
+          save-if: false
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -180,7 +173,7 @@ jobs:
           if-no-files-found: error
 
   build-windows-arm64:
-    needs: [meta, check]
+    needs: [meta, verify-gate]
     # Public repos only (GitHub-hosted Windows ARM preview).
     runs-on: windows-11-arm
     steps:
@@ -208,7 +201,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: windows-arm64
+          # 与 warm-release-cache.yml 共用缓存；tag 作用域的缓存别的 tag 读不到，因此不保存。
+          shared-key: release-windows-arm64
+          save-if: false
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -241,7 +236,7 @@ jobs:
           if-no-files-found: error
 
   build-macos-arm64:
-    needs: [meta, check]
+    needs: [meta, verify-gate]
     # macos-14 is retired by GitHub; macos-15 is the current Apple Silicon image.
     runs-on: macos-15
     steps:
@@ -269,7 +264,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: macos-arm64
+          # 与 warm-release-cache.yml 共用缓存；tag 作用域的缓存别的 tag 读不到，因此不保存。
+          shared-key: release-macos-arm64
+          save-if: false
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -298,7 +295,7 @@ jobs:
           if-no-files-found: error
 
   build-android:
-    needs: [meta, check]
+    needs: [meta, verify-gate]
     runs-on: windows-latest
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
