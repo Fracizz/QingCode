@@ -42,13 +42,13 @@ describe('formFromConnection / formEqualsConnection', () => {
     expect(formEqualsConnection(form, base)).toBe(false)
   })
 
-  it('empty form is a blank private-key connection', () => {
+  it('empty form is a password connection defaulting to root', () => {
     expect(emptyConnectionForm()).toEqual({
       name: '',
       host: '',
       port: '22',
-      username: '',
-      authKind: 'privateKey',
+      username: 'root',
+      authKind: 'password',
       privateKeyPath: '',
     })
   })
@@ -69,7 +69,7 @@ describe('targetChanged', () => {
 
 describe('validateConnectionForm', () => {
   it('requires host and username', () => {
-    expect(validateConnectionForm(emptyConnectionForm())).toBe('请填写主机和用户名。')
+    expect(validateConnectionForm({ ...emptyConnectionForm(), username: '' })).toBe('请填写主机和用户名。')
   })
 
   it('bounds the port', () => {

@@ -90,7 +90,18 @@ describe('remote connection compatibility settings', () => {
     useUIStore.setState({ remoteConnectionsCreating: true })
   })
 
-  async function testNewConnection() {
+  /** 新建连接默认密码认证；需要私钥字段的用例先切到私钥，否则补一个测试密码。 */
+  function fillNewAuth(auth: 'password' | 'privateKey' = 'password') {
+    if (auth === 'privateKey') {
+      fireEvent.change(screen.getByLabelText('认证方式'), { target: { value: 'privateKey' } })
+      return
+    }
+    const field = screen.queryByLabelText('密码（加密保存在本机）') as HTMLInputElement | null
+    if (field && !field.value) fireEvent.change(field, { target: { value: 'secret' } })
+  }
+
+  async function testNewConnection(auth: 'password' | 'privateKey' = 'password') {
+    fillNewAuth(auth)
     fireEvent.change(screen.getByLabelText('主机'), { target: { value: 'example.test' } })
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'dev' } })
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
@@ -575,7 +586,7 @@ describe('remote connection compatibility settings', () => {
 
   it.each(['主机','端口','用户名','私钥文件（可选）'])('invalidates a new connection verification when %s changes', async label => {
     render(<RemoteConnectionsManager />)
-    await testNewConnection()
+    await testNewConnection(label === '私钥文件（可选）' ? 'privateKey' : 'password')
     const value = label === '端口' ? '2222' : 'changed'
     fireEvent.change(screen.getByLabelText(label),{target:{value}})
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
@@ -607,6 +618,7 @@ describe('remote connection compatibility settings', () => {
     let finish!: (value: {fingerprint:string,homePath:string}) => void
     testConnection.mockImplementationOnce(() => new Promise(resolve => {finish=resolve}))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
@@ -664,6 +676,7 @@ describe('remote connection compatibility settings', () => {
   it('does not allow a confirmed fingerprint to authorize saving after authentication fails', async () => {
     testConnection.mockRejectedValueOnce(new Error('authentication failed'))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
@@ -674,12 +687,12 @@ describe('remote connection compatibility settings', () => {
 
   it.each(['认证方式','密码（加密保存在本机）','私钥口令（如有，加密保存在本机）','兼容模式（SSH 直连）'])('invalidates verified configuration after editing %s', async label => {
     render(<RemoteConnectionsManager />)
-    await testNewConnection()
+    await testNewConnection(label === '私钥口令（如有，加密保存在本机）' ? 'privateKey' : 'password')
     if (label === '兼容模式（SSH 直连）') {
       fireEvent.click(screen.getByRole('button',{name:'高级'}))
       fireEvent.click(screen.getByLabelText(label))
     } else {
-      fireEvent.change(screen.getByLabelText(label),{target:{value:label === '认证方式' ? 'password' : 'new-secret'}})
+      fireEvent.change(screen.getByLabelText(label),{target:{value:label === '认证方式' ? 'privateKey' : 'new-secret'}})
     }
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
     expect(saveConnection).not.toHaveBeenCalled()
@@ -692,6 +705,7 @@ describe('remote connection compatibility settings', () => {
     testConnection.mockImplementationOnce(() => new Promise((_resolve,reject) => {failOld=reject}))
       .mockImplementationOnce(() => new Promise(resolve => {finishNew=resolve}))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))

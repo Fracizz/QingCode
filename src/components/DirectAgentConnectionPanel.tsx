@@ -395,7 +395,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       const plan = await api.firewallPlan(target)
       if (request !== requestRef.current) return
       if (!plan.canApply) {
-        setError(plan.reason ? t(directAgentErrorKey(plan.reason)) : t('此 SSH 账户无法放行该端口，请检查远端管理员权限。'))
+        setError(plan.reason ? directAgentErrorText(plan.reason) : t('此 SSH 账户无法放行该端口，请检查远端管理员权限。'))
         return
       }
       if (!plan.alreadyEnabled) {
@@ -432,7 +432,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
         if (request === requestRef.current) setNotice(t('防火墙规则已写入，但 Server 连接尚未验证。请检查服务监听、网关映射和其他防火墙，再测试直连。'))
       }
     } catch (reason) {
-      if (request === requestRef.current) setError(t(directAgentErrorKey(reason)))
+      if (request === requestRef.current) setError(directAgentErrorText(reason))
     } finally {
       if (request === requestRef.current) setBusy(null)
     }
