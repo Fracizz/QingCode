@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
+  activeLabel,
   createdLabel,
   formatTerminalQuote,
   formatDuration,
@@ -714,14 +715,19 @@ describe('Android 会话纵览', () => {
     expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
     // 没有编号时用调用方给的序号。
     expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
-    // 空闲时长紧跟状态，创建时间其次；当天只显示时分。「电脑终端」表示来源，仍在最前。
+    // 空闲时长紧跟状态；已有空闲时长时不重复活动时间。「电脑终端」表示来源，仍在最前。
     const now = new Date(2026, 10, 14, 15, 30).getTime()
     expect(sessionStatusLine({
       ...base, createdAt: new Date(2026, 10, 14, 9, 5).getTime(), lastActiveAt: now - 12 * 60000, idleDeadline: now + 3600000,
-    }, { last: true, now })).toBe('上次使用 · 空闲 12 分钟 · 创建于 09:05 · 终端 3')
+    }, { last: true, now })).toBe('上次使用 · 空闲 12 分钟 · 终端 3')
+    // 没有空闲时长的电脑终端、已结束会话显示活动时间（列表只到分钟），不再显示创建时间。
     expect(sessionStatusLine({
-      ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑', createdAt: new Date(2026, 10, 3, 18, 30).getTime(),
-    }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 创建于 11-03 18:30')
+      ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑',
+      createdAt: new Date(2026, 10, 3, 18, 30).getTime(), lastActiveAt: new Date(2026, 10, 3, 18, 45, 12).getTime(),
+    }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 活动于 11-03 18:45')
+    expect(sessionStatusLine({
+      ...base, exit: { code: 0 }, lastActiveAt: new Date(2026, 10, 14, 15, 20, 5).getTime(),
+    }, { now })).toBe('已结束 · 活动于 15:20 · 终端 3')
   })
 
   it('组内新创建的在上，运行中优先时仍先排运行中', () => {
@@ -843,6 +849,17 @@ describe('session created time and running order', () => {
     expect(createdLabel({ createdAt: new Date(2026, 0, 3, 18, 30).getTime() }, now)).toBe('创建于 01-03 18:30')
     expect(createdLabel({ createdAt: new Date(2025, 11, 31, 8, 0).getTime() }, now)).toBe('创建于 2025-12-31 08:00')
     expect(createdLabel({}, now)).toBe('')
+  })
+
+  it('labels the last activity time, with seconds only when asked', () => {
+    const now = new Date(2026, 10, 7, 23, 40).getTime()
+    const today = new Date(2026, 10, 7, 23, 33, 7).getTime()
+    expect(activeLabel({ lastActiveAt: today }, now)).toBe('活动于 23:33')
+    expect(activeLabel({ lastActiveAt: today }, now, { seconds: true })).toBe('活动于 23:33:07')
+    expect(activeLabel({ lastActiveAt: new Date(2026, 0, 3, 18, 30, 9).getTime() }, now, { seconds: true })).toBe('活动于 01-03 18:30:09')
+    expect(activeLabel({ lastActiveAt: new Date(2025, 11, 31, 8, 0).getTime() }, now)).toBe('活动于 2025-12-31 08:00')
+    expect(activeLabel({ lastActiveAt: 0 }, now)).toBe('')
+    expect(activeLabel({}, now)).toBe('')
   })
 
   it('puts running sessions first after pins only when the running-first option is on', () => {

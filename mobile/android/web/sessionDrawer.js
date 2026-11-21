@@ -1,6 +1,7 @@
 // 左侧会话抽屉：按项目列出手机会话、置顶、重命名、结束；打开且在前台时定时刷新元数据。
 // 「全部」范围显示这台电脑上所有项目的手机会话纵览（按项目分组、筛选、搜索）。
 import {
+  activeLabel,
   createdLabel,
   joinProjectIds,
   mergeSessionActivity,
@@ -541,7 +542,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const index = Math.max(state.sessions().indexOf(session), 0);
     const pinned = pins(project.id).includes(session.id);
     get('session-actions-title').textContent = sessionName(session, index + 1);
-    get('session-actions-context').textContent = [state.profile().name + ' / ' + (project.name ?? project.id), createdLabel(session)].filter(Boolean).join(' · ');
+    get('session-actions-context').textContent = [state.profile().name + ' / ' + (project.name ?? project.id), activeLabel(session, Date.now(), { seconds: true }), createdLabel(session)].filter(Boolean).join(' · ');
     get('session-action-pin').querySelector('span').textContent = pinned ? t('取消置顶') : t('置顶');
     // 电脑上开的终端不在手机会话表里，只能结束。
     const desktop = session.origin === 'desktop';

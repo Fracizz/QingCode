@@ -45,7 +45,7 @@ describe('Android touch mouse guard', () => {
 })
 
 describe('Android touch scrolling goes to the raw terminal', () => {
-  function fixture({ mouse = 'any', available = true, type = 'alternate', viewportY = 0, baseY = 0 } = {}) {
+  function fixture({ mouse = 'any', available = true, type = 'alternate', viewportY = 0, baseY = 0, pageScroll = undefined as ((direction: number) => void) | undefined } = {}) {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
     document.body.innerHTML = `<section id="terminal-history" hidden><div id="history-scroll"><button id="history-more"></button><p id="history-status"></p><pre id="history-content"></pre></div></section>
       <button id="scroll-bottom" hidden><span></span></button><div id="term"><div class="xterm-screen"></div></div>`
@@ -59,7 +59,7 @@ describe('Android touch scrolling goes to the raw terminal', () => {
     const unsupported = vi.fn()
     const loadPage = vi.fn(() => new Promise(() => {}))
     const history = attachTerminalHistory({
-      term, get: (id: string) => document.getElementById(id), onUnsupportedScroll: unsupported, loadPage,
+      term, get: (id: string) => document.getElementById(id), onUnsupportedScroll: unsupported, loadPage, pageScroll,
     })
     history.update(10, available)
     disposers.push(() => history.dispose())
@@ -91,6 +91,25 @@ describe('Android touch scrolling goes to the raw terminal', () => {
     expect(historyOpen()).toBe(false)
     expect(unsupported).toHaveBeenCalledTimes(1)
     expect(unsupported).toHaveBeenCalledWith(3)
+  })
+
+  it('pages a full-screen program without mouse reporting (pi on Windows) instead of sending arrows', () => {
+    const pageScroll = vi.fn()
+    const { swipe, program, historyOpen, unsupported } = fixture({ mouse: 'none', pageScroll })
+    // 测不到高度时按 120px 一页：新手势先预支 90px，短滑一下即上翻一页。
+    swipe(-40, { qingGesture: 1 })
+    expect(pageScroll.mock.calls).toEqual([[-1]])
+    swipe(-100, { qingGesture: 1 })
+    expect(pageScroll.mock.calls).toEqual([[-1]])
+    swipe(-30, { qingGesture: 1 })
+    expect(pageScroll.mock.calls).toEqual([[-1], [-1]])
+    // 惯性不翻页；反向立即下翻。
+    swipe(-500, { qingGesture: 1, qingMomentum: true })
+    swipe(40, { qingGesture: 1 })
+    expect(pageScroll.mock.calls).toEqual([[-1], [-1], [1]])
+    expect(program).not.toHaveBeenCalled()
+    expect(historyOpen()).toBe(false)
+    expect(unsupported).not.toHaveBeenCalled()
   })
 
   it('scrolls the local normal buffer first and opens desktop history only at its top', () => {

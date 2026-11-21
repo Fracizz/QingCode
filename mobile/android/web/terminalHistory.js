@@ -36,7 +36,31 @@ export function applyTerminalColors(panel, theme = {}) {
  * 上滑即原始终端：普通终端滚手机 xterm 的滚动记录，滑到顶后接电脑端保留的更早输出（只读面板）；
  * 全屏程序开启鼠标时滚轮交给程序自己滚动。
  */
-export function attachTerminalHistory({ term, get, loadPage, readOnly = () => false, fontSize = () => term.options.fontSize, onClose = () => {}, onUnsupportedScroll = () => {} }) {
+/** 触摸翻页最多每帧翻的页数，快甩时不把翻页键堆积到电脑端。 */
+export const MAX_TOUCH_PAGES = 2;
+
+/**
+ * 把一次触摸手势的像素位移换成翻页次数（负数上翻）。新手势或反向时先预支 3/4 页，
+ * 短促一滑就翻一页；之后每滑过 threshold 像素再翻一页。
+ */
+export function touchPageTicks(state, deltaPx, gesture, threshold) {
+  if (!deltaPx || !(threshold > 0)) return 0;
+  const direction = Math.sign(deltaPx);
+  if (state.gesture !== gesture || state.direction !== direction) {
+    state.gesture = gesture;
+    state.direction = direction;
+    state.remainder = direction * threshold * .75;
+  }
+  state.remainder += deltaPx;
+  const ticks = Math.trunc(state.remainder / threshold);
+  state.remainder -= ticks * threshold;
+  return Math.max(-MAX_TOUCH_PAGES, Math.min(MAX_TOUCH_PAGES, ticks));
+}
+
+export function attachTerminalHistory({ term, get, loadPage, readOnly = () => false, fontSize = () => term.options.fontSize, onClose = () => {}, onUnsupportedScroll = () => {}, pageScroll }) {
+  const pageState = { gesture: undefined, direction: 0, remainder: 0 };
+  // 约三分之一屏翻一页；测不到高度时按 120px。
+  const pageThreshold = () => (term.element?.getBoundingClientRect().height || 0) / 3 || 120;
   const panel = get('terminal-history');
   const scroll = get('history-scroll');
   const content = get('history-content');
@@ -223,10 +247,14 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
       return;
     }
     // 全屏程序没有开启鼠标时，xterm 会把滚轮转成方向键（Codex 里会翻出输入历史），手指滑动不发给程序。
+    // 能翻页时（pageScroll）按手指位移发 PageUp / PageDown：pi 在 Windows 上收不到鼠标上报时也能翻会话。
     if (event.qingTouch && buffer.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (event.deltaY && !event.qingMomentum) onUnsupportedScroll(event.qingGesture);
+      if (!event.deltaY || event.qingMomentum) return;
+      if (!pageScroll) { onUnsupportedScroll(event.qingGesture); return; }
+      const ticks = touchPageTicks(pageState, event.deltaY, event.qingGesture, pageThreshold());
+      for (let index = 0; index < Math.abs(ticks); index += 1) pageScroll(Math.sign(ticks));
       return;
     }
     // 其余情况交给 xterm：开了鼠标的程序收到滚轮，普通终端滚本地记录；只在本地记录到顶后接电脑端历史。

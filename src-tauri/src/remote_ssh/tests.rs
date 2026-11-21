@@ -1552,7 +1552,7 @@ fn direct_terminal_identity_is_exported_only_on_posix_hosts() {
             command,
             format!(
                 "export TERM_PROGRAM='QingCode' TERM_PROGRAM_VERSION='{}' QINGCODE_TERMINAL_ID={}; exec bash -l",
-                env!("CARGO_PKG_VERSION"),
+                crate::APP_VERSION,
                 shell_quote("it's"),
             )
         );

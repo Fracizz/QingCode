@@ -229,6 +229,7 @@ export function isDirectAgentConnectionCancelled(error: unknown): boolean {
 }
 
 const GENERIC_DIRECT_AGENT_ERROR = 'Server 操作失败。请检查服务状态后重试。'
+const FIREWALL_DIRECT_AGENT_ERROR = 'SSH 防火墙操作失败。请检查远端权限、现有规则和连接状态后重试。'
 
 export function directAgentErrorKey(error: unknown): string {
   const text = String(error)
@@ -238,7 +239,7 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:firewall-admin]')) return '当前 SSH 账户没有修改防火墙的权限。请使用远端管理员账户授权。'
   if (text.includes('[direct:firewall-unsupported]')) return '此主机不支持通过 SSH 自动放行。请按下方说明手动配置防火墙。'
   if (text.includes('[direct:firewall-stale]')) return '防火墙配置或连接目标已变化。请重新检查并确认放行范围。'
-  if (text.includes('[direct:firewall]')) return 'SSH 防火墙操作失败。请检查远端权限、现有规则和连接状态后重试。'
+  if (text.includes('[direct:firewall]')) return FIREWALL_DIRECT_AGENT_ERROR
   if (text.includes('[direct:record]')) return '直连已验证，但本机连接记录保存失败。请保持此窗口打开并重试保存。'
   if (text.includes('[direct:identity]')) return 'Server 证书指纹不匹配。请核对远端身份后重新确认。'
   if (text.includes('[direct:auth]')) return 'Server 认证失败。请重新导入该服务的配对信息。'
@@ -246,7 +247,7 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:unreachable]')) return '无法连接 Server。请确认服务正在监听，并开放显示的 TCP 端口。'
   if (text.includes('[direct:tls]') || (text.includes('[direct:protocol]') && text.includes('TLS 握手失败'))) return 'Server TLS 握手失败。请检查服务是否已启动，以及目标端口是否运行 QingCode HTTPS Server。'
   if (text.includes('[direct:version]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
-  if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。'
+  if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限后重试。'
   if (text.includes('[direct:protocol]')) return 'Server 响应无效。请检查目标端口的服务和协议。'
   return GENERIC_DIRECT_AGENT_ERROR
 }
@@ -254,7 +255,8 @@ export function directAgentErrorKey(error: unknown): string {
 /** 已分类的错误显示固定提示；未分类时附上后端原因，避免只剩一句「操作失败」。 */
 export function directAgentErrorText(error: unknown): string {
   const key = directAgentErrorKey(error)
-  if (key !== GENERIC_DIRECT_AGENT_ERROR) return translate(key)
+  // 防火墙失败分类笼统，同样附上远端原因，便于区分权限、规则或脚本问题。
+  if (key !== GENERIC_DIRECT_AGENT_ERROR && key !== FIREWALL_DIRECT_AGENT_ERROR) return translate(key)
   const detail = String(error instanceof Error ? error.message : error)
     .replace(/^Error:\s*/, '')
     .replace(/\[direct:[a-z-]+\]\s*/g, '')

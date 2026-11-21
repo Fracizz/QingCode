@@ -59,13 +59,13 @@ describe('direct Agent connection panel', () => {
     expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
   })
 
-  it('passes the default-on startup preference to installation and lets users turn it off', async () => {
+  it('always enables boot startup during installation without exposing a switch', async () => {
     const api = apiMock(null)
     await openPanel(api)
-    expect(screen.getByRole('switch')).toBeChecked()
-    fireEvent.click(screen.getByRole('switch'))
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText('Server 默认开机自启。')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
-    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, false, expect.objectContaining({ onProgress: expect.any(Function) })))
+    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, true, expect.objectContaining({ onProgress: expect.any(Function) })))
   })
 
   it('shows a spinner while provisioning and restores the button after failure', async () => {
@@ -147,7 +147,8 @@ describe('direct Agent connection panel', () => {
     expect(screen.getByRole('status')).toHaveTextContent('已启用 Server 端口直连。')
     expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /启动与开机自启/ }))
-    expect(screen.getByRole('switch', { name: '开机自启 Server' })).toBeChecked()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText(/^Server 默认开机自启。通过 SSH/)).toBeVisible()
   })
 
   it('keeps native requests lazy and uses an editable fixed default port', async () => {
@@ -242,6 +243,64 @@ describe('direct Agent connection panel', () => {
     fireEvent.click(screen.getByRole('button', { name: /SSH 配置/ }))
     fireEvent.click(screen.getByRole('button', { name: '恢复 SSH 连接' }))
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ port: 48763, enabled: false })))
+  })
+
+  describe('one-click enable', () => {
+    const oneClickApi = (saved: DirectAgentInfo | null = null) => ({ ...apiMock(saved), firewallPlan: vi.fn().mockResolvedValue(firewallPlan), firewallApply: vi.fn().mockResolvedValue({ changed: true, ruleName: firewallPlan.ruleName, port: 48763, clientAddress: firewallPlan.clientAddress, profiles: firewallPlan.profiles }) })
+
+    it('asks for authorization once, then installs, allows the port, verifies and enables', async () => {
+      const api = oneClickApi()
+      const onUpdated = vi.fn()
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} onUpdated={onUpdated} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, port: 48763, certificateFingerprint: info.certificateFingerprint })))
+      // 只有一次授权确认；证书与 SSH 读取的一致，不再弹身份确认。
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: '授权一键启用 Server 直连' }))
+      expect(api.provision).toHaveBeenCalledWith('c1', 48763, true, expect.anything())
+      expect(api.firewallApply).toHaveBeenCalledWith(expect.objectContaining({ expectedPlanSha256: 'plan-digest', port: 48763 }))
+      expect(api.test).toHaveBeenCalledWith(expect.objectContaining({ certificateFingerprint: info.certificateFingerprint }))
+      expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }))
+      expect(await screen.findByRole('status')).toHaveTextContent('已一键启用 Server 端口直连（服务 0.1.test）。')
+    })
+
+    it('allows the port while the service is still being installed', async () => {
+      const api = oneClickApi()
+      let finish!: (value: DirectAgentInfo) => void
+      vi.mocked(api.provision).mockReturnValue(new Promise(resolve => { finish = resolve }))
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      await waitFor(() => expect(api.provision).toHaveBeenCalled())
+      // 安装尚未完成时防火墙规则已在并行写入。
+      expect(api.firewallApply).toHaveBeenCalledTimes(1)
+      await act(async () => { finish(info) })
+      await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true })))
+      expect(api.firewallApply).toHaveBeenCalledTimes(1)
+    })
+
+    it('changes nothing on the remote when authorization is declined', async () => {
+      const api = oneClickApi()
+      confirm.mockResolvedValue(false)
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      expect(await screen.findByText('已取消一键启用，未修改远端。')).toBeVisible()
+      expect(api.provision).not.toHaveBeenCalled()
+      expect(api.firewallApply).not.toHaveBeenCalled()
+    })
+
+    it('stops before sending credentials when the certificate differs from the SSH-read one', async () => {
+      const api = oneClickApi()
+      vi.mocked(api.probe).mockResolvedValue({ certificateFingerprint: 'SHA256:intruder' })
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Server 证书与通过 SSH 读取的不一致')
+      expect(api.test).not.toHaveBeenCalled()
+      expect(api.save).not.toHaveBeenCalled()
+    })
   })
 
   describe('enabled connection layout', () => {
@@ -417,7 +476,7 @@ describe('direct Agent connection panel', () => {
     expect(screen.queryByRole('button', { name: '复制防火墙命令' })).toBeNull()
   })
 
-  it('finishes installation with autostart off and the remote reason when enabling startup fails', async () => {
+  it('finishes installation and shows the remote reason when enabling startup fails', async () => {
     const api = apiMock(null)
     vi.mocked(api.provision).mockResolvedValue({ ...info, autoStart: false, startupWarning: 'Could not enable linger: Access denied' })
     await openPanel(api)
@@ -425,7 +484,7 @@ describe('direct Agent connection panel', () => {
     expect(await screen.findByText(/未能配置开机自启.*Could not enable linger: Access denied/)).toBeVisible()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByText('服务已准备。请开放显示的 TCP 端口，再测试直连。')).toBeVisible()
-    expect(screen.getByRole('switch', { name: '开机自启 Server' })).not.toBeChecked()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
   it('uses the locally saved SSH password when the field is left blank', async () => {

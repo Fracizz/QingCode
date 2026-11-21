@@ -6,7 +6,17 @@ import {
   dispatchLineWheel,
   wheelTicks,
 } from '../../mobile/android/web/terminalTouch.js'
-import { JOG_MAX_RATE, JOG_MIN_RATE, attachTerminalJog, jogRate, jogTicks } from '../../mobile/android/web/terminalJog.js'
+import {
+  AUTO_BOTTOM_MAX_MS,
+  AUTO_BOTTOM_SETTLE_MS,
+  AUTO_BOTTOM_TICKS,
+  JOG_MAX_RATE,
+  JOG_MIN_RATE,
+  attachTerminalJog,
+  autoBottomDone,
+  jogRate,
+  jogTicks,
+} from '../../mobile/android/web/terminalJog.js'
 import { heldRowOffset, heldTerminalRows, keyboardLikelyOpen } from '../../mobile/android/web/terminalHold.js'
 
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -119,6 +129,61 @@ describe('spring-back jog slider', () => {
     expect(root.hidden).toBe(true)
     jog.dispose()
     expect(host.querySelector('.terminal-jog')).toBeNull()
+    vi.useRealTimers()
+  })
+})
+
+describe('jog auto-scroll to bottom', () => {
+  it('stops once the top of the screen stops changing, or at the time limit', () => {
+    const state = { startAt: 0, changedAt: 0, snapshot: 'a' }
+    expect(autoBottomDone(state, 'b', 100)).toBe(false)
+    expect(autoBottomDone(state, 'b', 100 + AUTO_BOTTOM_SETTLE_MS - 1)).toBe(false)
+    expect(autoBottomDone(state, 'b', 100 + AUTO_BOTTOM_SETTLE_MS)).toBe(true)
+    // 画面一直在变（如持续刷新）时靠最长时间兜底；没有快照时也只按时间停。
+    expect(autoBottomDone({ startAt: 0, changedAt: 0, snapshot: 'x' }, 'y', AUTO_BOTTOM_MAX_MS)).toBe(true)
+    expect(autoBottomDone({ startAt: 0, changedAt: 0, snapshot: null }, null, AUTO_BOTTOM_MAX_MS - 1)).toBe(false)
+  })
+
+  it('wheels down until the screen settles, toggles off on a second tap, and yields to any touch on the terminal', () => {
+    vi.useFakeTimers()
+    vi.spyOn(window.performance, 'now').mockImplementation(() => Date.now())
+    const host = document.createElement('div')
+    const screen = document.createElement('div')
+    host.append(screen)
+    document.body.append(host)
+    const scroll = vi.fn()
+    let frame = 0
+    // 前 10 批每批画面都在变，之后滚不动。
+    const snapshot = () => String(Math.min(scroll.mock.calls.length, 10) + frame)
+    const jog = attachTerminalJog(host, { scroll, page: vi.fn(), snapshot, idleMs: 1000 })
+    const root = host.querySelector<HTMLElement>('.terminal-jog')!
+    const bottom = host.querySelector<HTMLButtonElement>('.terminal-jog-bottom')!
+    jog.setActive(true)
+    bottom.click()
+    expect(jog.autoScrolling()).toBe(true)
+    expect(bottom.getAttribute('aria-pressed')).toBe('true')
+    vi.advanceTimersByTime(AUTO_BOTTOM_SETTLE_MS + 2000)
+    expect(jog.autoScrolling()).toBe(false)
+    expect(scroll.mock.calls.every(([ticks]) => ticks === AUTO_BOTTOM_TICKS)).toBe(true)
+    const sent = scroll.mock.calls.length
+    expect(sent).toBeGreaterThan(10)
+    expect(sent).toBeLessThan(10 + AUTO_BOTTOM_SETTLE_MS / 10)
+    // 自动下滑期间保持显示，停止后照常自动隐藏。
+    vi.advanceTimersByTime(1100)
+    expect(root.hidden).toBe(true)
+
+    jog.reveal()
+    frame = 1000
+    bottom.click()
+    bottom.click()
+    expect(jog.autoScrolling()).toBe(false)
+    bottom.click()
+    screen.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(jog.autoScrolling()).toBe(false)
+    bottom.click()
+    jog.setActive(false)
+    expect(jog.autoScrolling()).toBe(false)
+    jog.dispose()
     vi.useRealTimers()
   })
 })

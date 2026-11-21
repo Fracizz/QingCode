@@ -165,8 +165,32 @@ async fn read_gateway(
     root: &RegisteredRoot,
     bin: &str,
 ) -> Result<Option<qingcode_server::direct::DirectInfo>, String> {
+    // 先经 SFTP 读同一组描述文件，免一次远端进程（Windows 上每次约 2 秒 PowerShell
+    // 冷启动）；读不出且不能确定「从未启动」时才回退到 `direct-info`。
+    if let Ok(parsed) = parse_remote_uri(&root.uri) {
+        if let Some(info) = read_gateway_files(manager, &parsed.connection_id).await {
+            return Ok(Some(info));
+        }
+        if gateway_descriptor_missing(manager, &parsed.connection_id).await {
+            return Ok(None);
+        }
+    }
     let output = run(manager, root, direct_update::read_commands(bin)).await?;
     Ok(parse_descriptor(&output))
+}
+
+/// 默认运行目录里确定没有网关描述（从未启动过）；任何读取错误都不算确定。
+async fn gateway_descriptor_missing(manager: &SshManager, connection_id: &str) -> bool {
+    let Ok(sftp) = manager.open_sftp(connection_id).await else {
+        return false;
+    };
+    let Ok(home) = sftp.canonicalize(".".to_string()).await else {
+        return false;
+    };
+    let path = [".qingcode", "server", "run", "direct", "endpoint.json"]
+        .iter()
+        .fold(home, |path, name| join_remote_path(&path, name));
+    matches!(sftp.try_exists(path).await, Ok(false))
 }
 
 async fn start_gateway(

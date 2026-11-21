@@ -1439,6 +1439,8 @@ function makeTerminal() {
       unsupportedScrollGesture = gesture;
       showTerminalToast(t('此全屏程序未开启鼠标滚动，可用 PgUp / PgDn 翻页'), 2200);
     },
+    // 全屏程序没开鼠标上报（如 Windows 上的 pi）：手指滑动改发翻页键，raw 避免叠加修饰键。
+    pageScroll: direction => { sendInput(direction < 0 ? '\x1b[5~' : '\x1b[6~', { raw: true }); },
     loadPage: async before => {
       // formatted：新版电脑端返回带基本颜色的历史；旧版忽略该参数，仍返回纯文本。
       const data = await remote('history', { id: historySession, before, formatted: true });
@@ -1509,6 +1511,7 @@ function makeTerminal() {
     scroll: ticks => sendProgramWheel(ticks),
     // 一页约等于三分之一屏的格数（程序一格通常滚 1–3 行）。
     page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3)), dispatchLineWheel),
+    snapshot: programScreenSnapshot,
     onLongPress: toggleMouseMode,
   });
   const mouseKey = selected && draftKey(selected);
@@ -1706,6 +1709,16 @@ function dispatchContinuousWheel(screen, ticks, point, extra) {
 }
 
 /** 变速滑块和翻页按钮：在终端画面偏左上处派发按行滚轮（opencode 等按指针所在面板滚动）。 */
+/** 全屏程序画面上部约六成行的文字：自动到底据此判断是否已滚不动，避开底部持续刷新的状态行。 */
+function programScreenSnapshot() {
+  const buffer = term?.buffer.active;
+  if (!buffer) return null;
+  const rows = Math.max(1, Math.floor(term.rows * .6));
+  const lines = [];
+  for (let row = 0; row < rows; row += 1) lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+  return lines.join('\n');
+}
+
 function sendProgramWheel(ticks, dispatch = dispatchContinuousWheel) {
   const screen = term?.element?.querySelector('.xterm-screen');
   if (!screen || !ticks || !terminalReady || !programMouse()) return;

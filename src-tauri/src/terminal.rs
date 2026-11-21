@@ -354,6 +354,8 @@ impl TerminalManager {
         wsl_task: Option<wsl::WslTask>,
     ) -> Result<(), String> {
         apply_terminal_identity(&mut cmd, &id, program);
+        // 与本机宿主一致使用随程序携带的新版 ConPTY，须在 portable-pty 首次加载前。
+        qingcode_server::prefer_bundled_conpty();
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
             .openpty(clamp_pty_size(cols, rows))
@@ -1066,10 +1068,7 @@ fn mobile_wsl_args(distro: &str, cwd: &str, startup: Option<&str>) -> Vec<String
 pub(crate) fn terminal_identity_env(id: &str) -> [(&'static str, String); 3] {
     [
         ("TERM_PROGRAM", "QingCode".to_string()),
-        (
-            "TERM_PROGRAM_VERSION",
-            env!("CARGO_PKG_VERSION").to_string(),
-        ),
+        ("TERM_PROGRAM_VERSION", crate::APP_VERSION.to_string()),
         ("QINGCODE_TERMINAL_ID", id.to_string()),
     ]
 }

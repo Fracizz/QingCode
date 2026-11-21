@@ -28,9 +28,6 @@ function withPackage(run) {
     mkdirSync(path.join(root, 'src-tauri', 'qingcode-server'))
     writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version }))
     writeFileSync(path.join(root, 'src-tauri', 'tauri.conf.json'), JSON.stringify({ version }))
-    for (const cargo of ['Cargo.toml', 'qingcode-server/Cargo.toml']) {
-      writeFileSync(path.join(root, 'src-tauri', cargo), `[package]\nversion = "${version}"\n`)
-    }
     const artifacts = {}
     for (const name of ['qingcode-server-x86_64', 'qingcode-server-aarch64', 'qingcode-server-windows-x86_64.exe']) {
       const contents = Buffer.from(`current binary: ${name}`)
@@ -158,13 +155,14 @@ test('rejects missing manifests, incomplete architecture sets and unsafe artifac
   })
 })
 
-test('rejects client / tauri / Rust version drift even with a current server manifest', options, () => {
+test('rejects client / tauri version drift even with a current server manifest', options, () => {
   withPackage(({ root, invoke }) => {
     const tauri = path.join(root, 'src-tauri', 'tauri.conf.json')
     writeFileSync(tauri, '{"version":"old"}')
     assert.throws(() => invoke(), /Server\/client version mismatch/)
     writeFileSync(tauri, JSON.stringify({ version }))
-    writeFileSync(path.join(root, 'src-tauri', 'qingcode-server', 'Cargo.toml'), '[package]\nversion = "old"\n')
-    assert.throws(() => invoke(), /version mismatch in src-tauri\/qingcode-server\/Cargo.toml/)
+    // Cargo.toml 版本固定 0.0.0，不参与校验
+    writeFileSync(path.join(root, 'src-tauri', 'qingcode-server', 'Cargo.toml'), '[package]\nversion = "0.0.0"\n')
+    assert.doesNotThrow(() => invoke())
   })
 })

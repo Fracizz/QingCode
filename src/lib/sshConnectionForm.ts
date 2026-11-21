@@ -27,8 +27,10 @@ export function emptyConnectionForm(): SshConnectionForm {
     name: '',
     host: '',
     port: '22',
-    username: '',
-    authKind: 'privateKey',
+    // 新建连接默认 root，可直接改。
+    username: 'root',
+    // 新建连接默认密码认证，可改为私钥。
+    authKind: 'password',
     privateKeyPath: '',
   }
 }

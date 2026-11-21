@@ -16,22 +16,21 @@ interface Options {
   ssh: SshConnection | undefined
   password: string
   passphrase: string
-  autoStart: boolean
   api: DirectAgentApi
   onManaged?: (info: DirectAgentInfo) => void | Promise<void>
   onStarted?: () => void | Promise<void>
   onBusyChange?: (busy: boolean) => void
 }
 
-/** 通过 SSH 启动已配对的 Server 或应用开机自启；过期请求返回 null，调用方不得更新界面。 */
-export function useDirectServerManage({ connectionId, info, ssh, password, passphrase, autoStart, api, onManaged, onStarted, onBusyChange }: Options) {
+/** 通过 SSH 启动已配对的 Server，并始终配置开机自启；过期请求返回 null，调用方不得更新界面。 */
+export function useDirectServerManage({ connectionId, info, ssh, password, passphrase, api, onManaged, onStarted, onBusyChange }: Options) {
   const [busy, setBusy] = useState(false)
   const request = useRef(0)
   const host = info?.host
   const port = info?.port
   useEffect(() => () => { request.current += 1 }, [connectionId, host, port])
 
-  const manage = async (start: boolean): Promise<DirectServerManageOutcome | null> => {
+  const manage = async (): Promise<DirectServerManageOutcome | null> => {
     if (!ssh || !info || busy || !api.manage) return null
     const current = ++request.current
     setBusy(true)
@@ -40,16 +39,16 @@ export function useDirectServerManage({ connectionId, info, ssh, password, passp
       await hydrateSshSecrets(ssh.id)
       if (current !== request.current) return null
       const result = await api.manage({
-        connectionId, sshConnectionId: ssh.id, agentHost: info.host, port: info.port, autoStart, start,
+        connectionId, sshConnectionId: ssh.id, agentHost: info.host, port: info.port, autoStart: true, start: true,
         config: sshRuntimeConfig(ssh, { ...sshSecretsFor(ssh.id), ...(password ? { password } : {}), ...(passphrase ? { passphrase } : {}) }),
       })
       if (current !== request.current) return null
       await onManaged?.(result)
       if (current !== request.current) return null
-      if (start) await onStarted?.()
+      await onStarted?.()
       if (current !== request.current) return null
       const warning = result.startupWarning || undefined
-      return { warning, notice: start ? 'Server 已启动，正在重新连接…' : warning ? undefined : '开机自启设置已应用。' }
+      return { warning, notice: 'Server 已启动，正在重新连接…' }
     } catch (reason) {
       return current === request.current ? { error: directAgentErrorKey(reason) } : null
     } finally {

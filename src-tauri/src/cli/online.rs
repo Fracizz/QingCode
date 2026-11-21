@@ -74,7 +74,7 @@ pub fn version() -> i32 {
 
 fn cli_identity() -> Value {
     json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::APP_VERSION,
         "protocol": ipc::PROTOCOL_VERSION,
         "debug": cfg!(debug_assertions),
     })

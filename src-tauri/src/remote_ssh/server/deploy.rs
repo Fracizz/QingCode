@@ -15,8 +15,8 @@ use super::scripts::{
     prepare_private_server_dirs_command, remote_sha256_command, self_check_then_deploy_command,
     sha256_of_file_async, windows_deploy_for, windows_prepare_server_dirs_script,
     windows_remote_sha256_script, windows_remove_for, windows_self_check_then_deploy_script,
-    windows_stop_for, PREPARE_HOME_INVALID_EXIT, REMOTE_BINARY_MISSING_EXIT,
-    SELF_CHECK_FAILED_EXIT,
+    windows_stop_for, windows_verify_digest_then_self_check_script, PREPARE_HOME_INVALID_EXIT,
+    REMOTE_BINARY_MISSING_EXIT, REMOTE_DIGEST_MISMATCH_EXIT, SELF_CHECK_FAILED_EXIT,
 };
 use super::serve::ping_server;
 use super::*;
@@ -159,11 +159,33 @@ pub(crate) async fn stage_direct_gateway(
         }
     }
     let remote_bin = format!("{content_dir}/{}", server_binary_file_name(windows, &arch));
-    if sftp
+    let exists = sftp
         .try_exists(remote_bin.clone())
         .await
-        .map_err(|error| format!("检查 Server 程序失败：{error}"))?
+        .map_err(|error| format!("检查 Server 程序失败：{error}"))?;
+    // Windows 每次远端命令都要冷启动一次 PowerShell（约 2 秒）。已存在的程序把
+    // 独立摘要校验（由 PowerShell 计算，不信任程序自报）与 self-check 合成一次往返。
+    if let Some(script) = exists
+        .then(|| windows_host_path(&remote_bin))
+        .flatten()
+        .map(|path| windows_verify_digest_then_self_check_script(&path, &sha256))
     {
+        let checked = exec_on_root(manager, root, "", &script).await?;
+        return match checked.exit_code {
+            0 => Ok(remote_bin),
+            REMOTE_DIGEST_MISMATCH_EXIT => {
+                Err("内容寻址 Server 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into())
+            }
+            SELF_CHECK_FAILED_EXIT => Err(format!(
+                "Server 程序自检未通过：{}",
+                self_check_failure_detail(&checked.stderr, checked.exit_code)
+            )),
+            code => Err(format!(
+                "读取远端服务摘要失败（退出码 {code}），已保留运行中的服务"
+            )),
+        };
+    }
+    if exists {
         if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
             return Err(
                 "内容寻址 Server 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into(),

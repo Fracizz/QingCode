@@ -291,10 +291,22 @@ async function main(args) {
       if (retention.keptVersions.length > 0) {
         console.log(`Kept release versions (${RETAINED_VERSIONS}): ${retention.keptVersions.join(', ')}`)
       }
+      pruneRustTarget()
     }
     console.log(`Packaging ${state.status}. Status: ${path.join(directory, 'status.json')}`)
     process.exitCode = state.status === 'succeeded' ? 0 : state.status === 'cancelled' ? 130 : 1
   } finally { rmSync(lock, { force: true }) }
+}
+
+// 打包依赖 release 增量编译，缓存需要保留；但旧哈希目录会堆积，打包成功后按
+// prune-rust-target.ps1 的策略只清增量缓存（每 crate 保留 3 份、7 天未用、总量 10GB）。失败只告警。
+function pruneRustTarget() {
+  if (process.platform !== 'win32') return
+  try {
+    execFileSync('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/prune-rust-target.ps1'), '-IncrementalOnly'], { cwd: root, stdio: 'inherit' })
+  } catch (error) {
+    console.warn(`Rust target prune skipped: ${error.message}`)
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

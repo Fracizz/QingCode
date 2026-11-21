@@ -59,7 +59,7 @@ Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.
 
 Codex / OpenCode 全屏只读历史：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-tui-history.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。覆盖备用屏、鼠标上报和内联 TUI 的上下连续手势、进入历史后不立即退出、Claude 风格普通终端保持自然滚动、无缓存提示、读取失败重试及显式程序模式；只读模式断言没有终端输入。截图与 JSON 位于 `.dev/web-tests/mobile-tui-history/`。Rust `mobile_screen` 测试补充验证真实重绘的纯文本采样、频率、缓存上限、分片转义与 OSC 排除；浏览器模拟程序输出，不能代替 Android WebView 和实际 Codex / OpenCode 验收。
 
-全屏程序滚动与软键盘行数：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-program-scroll.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；Ego 窗口不渲染时 rAF 被节流，改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖程序开启鼠标上报后右侧回弹变速滑块的显示与隐藏、手指慢滑每两行一格的整格滚轮（绕开 xterm 对小像素滚动的 0.3 倍折扣）、按住滑块按速度持续发送且松手即停、上下箭头翻约三分之一屏，以及软键盘弹出时保持 PTY 行数、画面上移露出光标行（避免 Claude Code / Codex 重绘把旧状态栏挤进历史造成重复）。截图与 JSON 位于 `.dev/web-tests/mobile-program-scroll/`；使用内存 RPC，不替代 Android 真机手感与实际 Codex / OpenCode 验收。
+全屏程序滚动与软键盘行数：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-program-scroll.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`；Ego 窗口不渲染时 rAF 被节流，改用 `node scripts/web-tests/headless-task-space.mjs <脚本绝对路径>`）。覆盖程序开启鼠标上报后右侧回弹变速滑块的显示与隐藏、手指慢滑每两行一格的整格滚轮（绕开 xterm 对小像素滚动的 0.3 倍折扣）、按住滑块按速度持续发送且松手即停、上下箭头翻约三分之一屏、▼ 下方「到底」按钮连续下滑并在画面上部不再变化时自动停止（再点或触摸终端即中止），以及软键盘弹出时保持 PTY 行数、画面上移露出光标行（避免 Claude Code / Codex 重绘把旧状态栏挤进历史造成重复）。截图与 JSON 位于 `.dev/web-tests/mobile-program-scroll/`；使用内存 RPC，不替代 Android 真机手感与实际 Codex / OpenCode 验收。
 
 Android 终端长按选字运行 `node scripts/web-tests/mobile-selection.agent-browser.mjs`，复用真实 xterm、触摸手势与页面。覆盖中文宽字符长按、双端手柄跨行拖动、全选、手机剪贴板桥、失败重试、鼠标上报 TUI 不发输入、返回取消、旋转清理及会话切换；截图与结果在 `.dev/web-tests/mobile-selection/`。剪贴板写入由内存桥模拟，Android 原生剪贴板和真实触屏手感仍需真机验收。
 
@@ -266,7 +266,7 @@ Web 验收证明 React 界面、布局和交互行为；真实文件读写、SQL
 仍需各自的集成测试。内存操作通过不等于真实原生能力通过。
 
 Server 启动与自启恢复复用 `/web-tests/direct-agent.html` 的「打开启动与自启」入口。
-使用真实 `DirectServerRecoveryPanel`，断言开关默认开启、关闭后仅应用自启设置、显式 SSH 启动后自动重连、
+使用真实 `DirectServerRecoveryPanel`，断言无自启开关仅显示简短提示、显式 SSH 启动时始终开启自启并自动重连、
 权限失败不重连、无同主机 SSH 时显示配置入口及手动命令；覆盖英文浅色与窄屏，产物放入 `.dev/web-tests/server-startup/`。
 页面的操作均为内存适配器，不注册真实计划任务。真实 Windows 验收另需核对 S4U/当前用户/Limited/开机触发器、
 从计划任务启动 HTTPS 服务、关闭自启不终止服务及重启后的服务恢复。

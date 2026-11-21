@@ -3,13 +3,15 @@
   按策略清理 src-tauri/target，防止 Rust 构建缓存无限增长。
 
 .DESCRIPTION
-  1. 增量编译缓存（各配置下的 incremental/<crate>-<hash>）：超过 -MaxAgeDays 天未更新的删除；
+  1. 增量编译缓存（各配置下的 incremental/<crate>-<hash>）：同一 crate 只保留最近更新的
+     -KeepPerCrate 份（旧版本号、旧特性组合留下的哈希目录不会再被复用）；超过 -MaxAgeDays 天未更新的删除；
      剩余总量仍超过 -MaxIncrementalGB 时，从最久未更新的开始删到上限以内。
   2. 整个 target 仍超过 -MaxTargetGB 时，从最久未用的构建配置（如 debug、server-release、
      <triple>/debug）开始清掉 deps / build / .fingerprint / incremental，相当于对该配置 cargo clean。
   删除只影响下次编译速度，不影响源码。有 rustc 正在往该 target 输出时跳过（-Force 例外）。
 
   tauri-dev.ps1 每次启动先跑一次；-RegisterDailyTask 另注册每日计划任务（当前用户，登录时运行）。
+  package-local.mjs 打包成功后以 -IncrementalOnly 运行。
 
 .EXAMPLE
   pwsh -File scripts/prune-rust-target.ps1 -DryRun
@@ -19,9 +21,12 @@
 param(
   [string]$TargetDir,
   [int]$MaxAgeDays = 7,
+  [int]$KeepPerCrate = 3,
   [double]$MaxIncrementalGB = 10,
   [double]$MaxTargetGB = 50,
   [switch]$DryRun,
+  # 只清增量缓存，不按总量上限清整个构建配置（打包后调用，避免误删 debug 依赖）。
+  [switch]$IncrementalOnly,
   [switch]$Force,
   [switch]$RegisterDailyTask,
   [switch]$UnregisterDailyTask
@@ -44,7 +49,7 @@ if ($RegisterDailyTask) {
   $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)?.Source
   if (-not $pwsh) { $pwsh = (Get-Command powershell).Source }
   $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -TargetDir `"$TargetDir`" " +
-    "-MaxAgeDays $MaxAgeDays -MaxIncrementalGB $MaxIncrementalGB -MaxTargetGB $MaxTargetGB"
+    "-MaxAgeDays $MaxAgeDays -KeepPerCrate $KeepPerCrate -MaxIncrementalGB $MaxIncrementalGB -MaxTargetGB $MaxTargetGB"
   $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arguments -WorkingDirectory $projectRoot
   $trigger = New-ScheduledTaskTrigger -Daily -At 4am
   # 错过时间（关机、未登录）后尽快补跑；单次最多 1 小时。
@@ -103,9 +108,19 @@ $incrementalRoots = Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -D
 $entries = foreach ($root in $incrementalRoots) {
   Get-ChildItem -LiteralPath $root.FullName -Directory -Force -ErrorAction SilentlyContinue
 }
+# 同一配置目录下按 crate 名（去掉 -<hash> 后缀）分组，只留最新 KeepPerCrate 份。
+$stale = @{}
+if ($KeepPerCrate -gt 0) {
+  $entries | Group-Object { (Split-Path $_.FullName -Parent) + '|' + ($_.Name -replace '-[^-]+$', '') } | ForEach-Object {
+    $_.Group | Sort-Object LastWriteTime -Descending | Select-Object -Skip $KeepPerCrate | ForEach-Object { $stale[$_.FullName] = $true }
+  }
+}
 $kept = [System.Collections.Generic.List[object]]::new()
 foreach ($entry in $entries) {
-  if ($entry.LastWriteTime -lt $cutoff) {
+  if ($stale.ContainsKey($entry.FullName)) {
+    [void](Remove-Entry $entry.FullName "同一 crate 仅保留最近 $KeepPerCrate 份")
+  }
+  elseif ($entry.LastWriteTime -lt $cutoff) {
     [void](Remove-Entry $entry.FullName "超过 $MaxAgeDays 天未使用")
   }
   else {
@@ -124,7 +139,7 @@ if ($incrementalBytes -gt $capBytes) {
 # 2. 总量上限：按构建配置从最久未用的开始清。
 $totalCap = [long]($MaxTargetGB * 1GB)
 $total = $before - $script:removedBytes
-if ($total -gt $totalCap) {
+if (-not $IncrementalOnly -and $total -gt $totalCap) {
   $profiles = Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -Depth 2 -Filter deps -ErrorAction SilentlyContinue |
     ForEach-Object { $_.Parent } | Sort-Object LastWriteTime
   foreach ($profileDir in $profiles) {

@@ -318,6 +318,27 @@ pub(crate) fn windows_self_check_then_deploy_script(
 /// 只有明确不存在才允许按首次安装处理；读取失败不能触发替换正在运行的服务。
 pub(super) const REMOTE_BINARY_MISSING_EXIT: u32 = 44;
 
+/// 远端程序摘要与本地可信文件不一致（与读取失败区分）。
+pub(super) const REMOTE_DIGEST_MISMATCH_EXIT: u32 = 45;
+
+/// Windows：一次 PowerShell 往返内先由 PowerShell 独立计算摘要（不信任程序自报），
+/// 一致后再 self-check。读不到摘要以 1 退出，不一致以 [`REMOTE_DIGEST_MISMATCH_EXIT`] 退出。
+pub(super) fn windows_verify_digest_then_self_check_script(
+    bin: &str,
+    expected_sha256: &str,
+) -> String {
+    format!(
+        "$ErrorActionPreference = 'Stop'
+try {{ $actual = (Get-FileHash -LiteralPath '{bin}' -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() }} catch {{ exit 1 }}
+if ($actual -cne '{sha}') {{ exit {mismatch} }}
+{check}",
+        bin = powershell_literal(bin),
+        sha = powershell_literal(&expected_sha256.trim().to_ascii_lowercase()),
+        mismatch = REMOTE_DIGEST_MISMATCH_EXIT,
+        check = windows_self_check_script(bin, expected_sha256),
+    )
+}
+
 /// 保留 sha256sum 的失败退出码；不能用管道把工具缺失/权限错误变成成功。
 pub(super) fn remote_sha256_command(remote_bin: &str) -> String {
     let parent = remote_bin
@@ -537,6 +558,26 @@ mod tests {
         assert!(remote_sha256_matches(&sha.to_ascii_uppercase(), &sha));
         assert!(!remote_sha256_matches("", &sha));
         assert!(!remote_sha256_matches(&sha, &"b".repeat(64)));
+    }
+
+    #[test]
+    fn windows_digest_check_runs_before_self_check_in_one_script() {
+        let sha = "AB".repeat(32);
+        let script = windows_verify_digest_then_self_check_script(r"C:\Users\o'neil\qc.exe", &sha);
+        // PowerShell 独立计算摘要并区分不一致与读取失败；一致后才执行程序自检。
+        let digest = script
+            .find("Get-FileHash -LiteralPath 'C:\\Users\\o''neil\\qc.exe'")
+            .unwrap();
+        let mismatch = script
+            .find(&format!(
+                "if ($actual -cne '{}') {{ exit 45 }}",
+                "ab".repeat(32)
+            ))
+            .unwrap();
+        let check = script.find("self-check --expect-sha256").unwrap();
+        assert!(digest < mismatch && mismatch < check);
+        assert!(script.contains("catch { exit 1 }"));
+        assert!(script.contains("if ($LASTEXITCODE -ne 0) { exit 41 }"));
     }
 
     #[test]

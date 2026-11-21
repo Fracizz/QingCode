@@ -96,7 +96,7 @@ import {
   validateConnectionForm,
   type SshConnectionForm,
 } from '../lib/sshConnectionForm'
-import type { Project, SshConnectionMode } from '../types'
+import type { Project, SshConnection, SshConnectionMode } from '../types'
 
 const fieldClass =
   'min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none placeholder:text-fg-dim focus:border-accent'
@@ -177,6 +177,13 @@ export default function RemoteConnectionsManager() {
   const [saving, setSaving] = useState(false)
   const [directDraft, setDirectDraft] = useState({ dirty: false, busy: false })
   const updateDirectDraft = useCallback((value: { dirty: boolean; busy: boolean }) => setDirectDraft(value), [])
+  /** 概览中点「配置 Server 直连」后，在概览内直接展开直连面板并滚动到它（不进入编辑连接）。 */
+  const [directPanelRequested, setDirectPanelRequested] = useState(false)
+  const directPanelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => { setDirectPanelRequested(false) }, [editing, selectedId])
+  useEffect(() => {
+    if (!editing && directPanelRequested) directPanelRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [editing, directPanelRequested])
   const [actionMenu, setActionMenu] = useState<{ x: number; y: number } | null>(null)
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null)
   const navigationPending = useRef(false)
@@ -218,6 +225,11 @@ export default function RemoteConnectionsManager() {
   const connectionModeLabel = directEnabled || standaloneAgent || selected?.agentEndpoint ? 'Server 端口直连'
     : selected && resolveSshConnectionMode(selected, getSshServerEnabled()) === 'ssh' ? 'SSH 直连（兼容模式）' : 'SSH + 远端服务'
   const serverStates = selected ? statesByConnection[selected.id] ?? [] : []
+  // 多个项目原因完全相同时只在列表上方显示一次，避免每行重复「原因」
+  const sharedServerReason =
+    serverStates.length > 1 && serverStates[0].reason && serverStates.every(state => state.reason === serverStates[0].reason)
+      ? serverStates[0].reason
+      : null
   const groupedProjects = useMemo(() => groupConnectionProjects(projects), [projects])
   const status = connectionStatus(selected ? aliveMap[selected.id] : null, serverStates, selected ? statusErrors[selected.id] : undefined)
   const statusError = selected && statusErrors[selected.id]
@@ -303,7 +315,11 @@ export default function RemoteConnectionsManager() {
     if (conn) {
       void refreshDetail(conn.id, false)
       void loadSavedSshSecrets(conn.id).then(value => {
-        if (!cancelled) setSavedSecrets(value)
+        if (cancelled) return
+        setSavedSecrets(value)
+        // 已保存的密码默认回填（以圆点遮挡），点眼睛即可查看。
+        setPassword(prev => prev || value?.password || '')
+        setPassphrase(prev => prev || value?.passphrase || '')
       })
     }
     return () => {
@@ -437,7 +453,7 @@ export default function RemoteConnectionsManager() {
   const revealSecret = (kind: 'password' | 'passphrase') => {
     const next = !showSecret[kind]
     setShowSecret(prev => ({ ...prev, [kind]: next }))
-    // 显示时若输入框为空，回填本机已保存的值供查看。
+    // 显示时若输入框被清空，回填本机已保存的值供查看。
     if (!next) return
     if (kind === 'password' && !password && reusableSecrets?.password) setPassword(reusableSecrets.password)
     if (kind === 'passphrase' && !passphrase && reusableSecrets?.passphrase) setPassphrase(reusableSecrets.passphrase)
@@ -445,8 +461,9 @@ export default function RemoteConnectionsManager() {
   const secretToggle = (kind: 'password' | 'passphrase') => {
     const shown = showSecret[kind]
     const label = shown ? t('隐藏密码') : t('显示密码')
+    // 只保留眼睛图标，不弹出「显示密码」提示；aria-label 供读屏使用。
     return (
-      <Tooltip label={label} wrapperClassName="absolute inset-y-0 right-1 flex items-center">
+      <div className="absolute inset-y-0 right-1 flex items-center">
         <button
           type="button"
           aria-label={label}
@@ -456,7 +473,7 @@ export default function RemoteConnectionsManager() {
         >
           {shown ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
         </button>
-      </Tooltip>
+      </div>
     )
   }
   const dirty = selected
@@ -468,7 +485,9 @@ export default function RemoteConnectionsManager() {
     navigationPending.current = true
     try {
       const sshChanged = selected ? dirty : JSON.stringify(form) !== JSON.stringify(emptyConnectionForm()) || mode !== 'server'
-      const hasChanges = (editing || isNew) && (sshChanged || typedSecrets || directDraft.dirty)
+      // 概览中展开的直连面板同样要保护未保存的修改。
+      const hasChanges = ((editing || isNew) && (sshChanged || typedSecrets || directDraft.dirty)) ||
+        (directPanelRequested && directDraft.dirty)
       if (hasChanges && !await confirmDialog({
         title: t('放弃连接修改'), message: t('离开当前连接将放弃尚未保存的修改。'),
         kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('继续编辑'),
@@ -480,8 +499,8 @@ export default function RemoteConnectionsManager() {
         setForm(formFromConnection(selected))
         setMode(resolveSshConnectionMode(selected, getSshServerEnabled()))
       }
-      setPassword('')
-      setPassphrase('')
+      setPassword(savedSecrets?.password ?? '')
+      setPassphrase(savedSecrets?.passphrase ?? '')
       setActionMenu(null)
       navigate()
     } finally {
@@ -490,18 +509,36 @@ export default function RemoteConnectionsManager() {
   }
   const alive = selected ? aliveMap[selected.id] ?? false : false
 
-  const testConnection = async () => {
-    if (testing) return
+  /** 直连配置保存后同步连接行与直连状态（编辑连接与概览中的直连面板共用）。 */
+  const handleDirectUpdated = async (connection: SshConnection, info: DirectAgentInfo) => {
+    // A standalone row carries the accepted TLS identity as its
+    // compatibility fingerprint. Keep that marker after re-pairing.
+    if (standaloneAgent) {
+      try {
+        await saveSshConnection({ ...connection, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
+      } catch {
+        throw new Error('[direct:record] Server connection row could not be saved')
+      }
+    } else {
+      await loadSshConnections()
+    }
+    setDirectInfos(prev => ({ ...prev, [connection.id]: info }))
+    void refreshDetail(connection.id)
+  }
+
+  /** 探测指纹并认证；成功返回已确认的主机指纹，失败/取消返回 null。silent 时不弹成功提示（供保存流程内部调用）。 */
+  const testConnection = async ({ silent = false }: { silent?: boolean } = {}): Promise<string | null> => {
+    if (testing) return null
     const invalid = validateConnectionForm(form)
     if (invalid) {
       setError(t(invalid))
-      return
+      return null
     }
     const id = crypto.randomUUID()
     const secrets = effectiveSecrets
     if (form.authKind === 'password' && !secrets.password) {
       setError(t('请输入 SSH 密码以测试连接。'))
-      return
+      return null
     }
     setTesting(true)
     setVerification(null)
@@ -514,7 +551,7 @@ export default function RemoteConnectionsManager() {
     try {
       const runtimeConfig = { ...runtimeConfigFromForm(form, id, secrets), mode }
       const probed = await probeSshHost(runtimeConfig)
-      if (!isCurrent()) return
+      if (!isCurrent()) return null
       const status = fingerprintStatus(selected?.host_key_fingerprint, probed)
       if (status !== 'match') {
         const accepted = await confirmDialog({
@@ -535,17 +572,19 @@ export default function RemoteConnectionsManager() {
           cancelLabel: t('取消'),
           signal: controller.signal,
         })
-        if (!isCurrent() || !accepted) return
+        if (!isCurrent() || !accepted) return null
       }
       await testSshConnection({
         ...runtimeConfig,
         hostKeyFingerprint: probed,
       })
-      if (!isCurrent()) return
+      if (!isCurrent()) return null
       setVerification({ key: verificationKey, fingerprint: probed })
-      pushToast('success', t('SSH 连接成功'))
+      if (!silent) pushToast('success', t('SSH 连接成功'))
+      return probed
     } catch (reason) {
       if (isCurrent()) setError(String(reason))
+      return null
     } finally {
       if (isCurrent()) setTesting(false)
     }
@@ -558,20 +597,19 @@ export default function RemoteConnectionsManager() {
       setError(t(invalid))
       return
     }
-    if (selected && (targetChanged(form, selected) || authenticationChanged || typedSecrets) && !verified) {
-      setError(t('主机目标已变化，请先「测试连接」确认新的主机指纹。'))
-      return
-    }
-    if (!effectiveFingerprint || (isNew && !verified)) {
-      setError(t('请先「测试连接」确认主机指纹后再保存。'))
-      return
-    }
+    // 需要确认主机指纹但尚未测试（或测试已因修改失效）时，先自动测试，通过后继续保存。
+    const needsTest = !verified && (
+      isNew || !effectiveFingerprint ||
+      Boolean(selected && (targetChanged(form, selected) || authenticationChanged || typedSecrets))
+    )
+    const fingerprint = needsTest ? await testConnection({ silent: true }) : effectiveFingerprint
+    if (!fingerprint || !mountedRef.current) return
     const modeChanged = Boolean(
       selected && mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
     )
     const configChanged = Boolean(selected && (
       targetChanged(form, selected) || authenticationChanged || typedSecrets ||
-      effectiveFingerprint !== selected.host_key_fingerprint
+      fingerprint !== selected.host_key_fingerprint
     ))
     const reconnectNeeded = (modeChanged || configChanged) && alive
     if (reconnectNeeded && selected) {
@@ -597,7 +635,7 @@ export default function RemoteConnectionsManager() {
         id: crypto.randomUUID(),
         created_at: Date.now(),
       }
-      const saved = connectionFromForm(form, base, effectiveFingerprint)
+      const saved = connectionFromForm(form, base, fingerprint)
       if (reconnectNeeded && selected && modeChanged) {
         // 先保存其他字段并保留旧模式，再由切换逻辑写新模式并断开重连。
         await saveSshConnection({
@@ -628,8 +666,10 @@ export default function RemoteConnectionsManager() {
       }
       pushToast('success', t('已保存 SSH 连接'))
       setVerification(null)
-      setPassword('')
-      setPassphrase('')
+      // 记住凭据时保留回填，否则清空。
+      const kept = remember && hasSecrets ? effectiveSecrets : null
+      setPassword(kept?.password ?? '')
+      setPassphrase(kept?.passphrase ?? '')
       setShowSecret({ password: false, passphrase: false })
       if (isNew && creatingForProject) {
         closeRemoteConnections()
@@ -654,18 +694,18 @@ export default function RemoteConnectionsManager() {
       project =>
         project.connection_id === selected.id || sshConnectionIdFromUri(project.path) === selected.id
     )
-    if (refs.length > 0) {
-      setError(
-        t('该连接仍被 {count} 个远程项目使用（{names}），请先在项目管理中删除或改绑这些项目。', {
-          count: refs.length,
-          names: refs.map(project => project.name).join('、'),
-        })
-      )
-      return
-    }
+    // 不再阻止删除被项目引用的连接，仅在确认框中提示受影响的项目
+    const label = sshConnectionLabel(selected)
     const accepted = await confirmDialog({
       title: t('删除 SSH 连接'),
-      message: t('删除连接 {label}？此操作不可撤销。', { label: sshConnectionLabel(selected) }),
+      message:
+        refs.length > 0
+          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），删除后这些项目将无法连接，需要重新绑定连接。此操作不可撤销。', {
+              label,
+              count: refs.length,
+              names: refs.map(project => project.name).join('、'),
+            })
+          : t('删除连接 {label}？此操作不可撤销。', { label }),
       kind: 'warning',
       confirmLabel: t('删除'),
       cancelLabel: t('取消'),
@@ -834,8 +874,8 @@ export default function RemoteConnectionsManager() {
     const savedMode = resolveSshConnectionMode(selected, getSshServerEnabled())
     setMode(savedMode)
     setAdvancedOpen(savedMode === 'ssh')
-    setPassword('')
-    setPassphrase('')
+    setPassword(savedSecrets?.password ?? '')
+    setPassphrase(savedSecrets?.passphrase ?? '')
     setError('')
     setEditing(false)
     })
@@ -1182,7 +1222,7 @@ export default function RemoteConnectionsManager() {
                       </div>
                       {!isNew && selected && (
                         <div className="flex flex-wrap items-center gap-2">
-                          {!editing && <button type="button" onClick={() => setEditing(true)} className={primaryButtonClass}><Pencil size={14} />{t('编辑连接')}</button>}
+                          {!editing && <button type="button" disabled={directDraft.busy} onClick={() => setEditing(true)} className={primaryButtonClass}><Pencil size={14} />{t('编辑连接')}</button>}
                           <button type="button" disabled={detailLoading} onClick={() => void refreshDetail(selected.id)} className={secondaryButtonClass}>{t('刷新状态')}</button>
                           <Tooltip label={t('更多连接操作')} side="left">
                             <button
@@ -1274,7 +1314,9 @@ export default function RemoteConnectionsManager() {
 
                     {!isNew && selected && (
                       <>
-                        {editing && <DirectAgentConnectionPanel
+                        {/* 已启用直连（或纯 Server 连接）时直连设置承载 SSH 配置，仍在「编辑连接」中；
+                            尚未启用时由概览的「配置 Server 直连」在下方直接展开，不进入编辑。 */}
+                        {editing && (directEnabled || standaloneAgent) && <DirectAgentConnectionPanel
                           onDraftStateChange={updateDirectDraft}
                           key={selected.id}
                           connectionId={selected.id}
@@ -1287,22 +1329,20 @@ export default function RemoteConnectionsManager() {
                             form: renderForm(),
                             actions: sshFormActions,
                           } : undefined}
-                          onUpdated={async info => {
-                            // A standalone row carries the accepted TLS identity as its
-                            // compatibility fingerprint. Keep that marker after re-pairing.
-                            if (standaloneAgent) {
-                              try {
-                                await saveSshConnection({ ...selected, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
-                              } catch {
-                                throw new Error('[direct:record] Server connection row could not be saved')
-                              }
-                            } else {
-                              await loadSshConnections()
-                            }
-                            setDirectInfos(prev => ({ ...prev, [selected.id]: info }))
-                            void refreshDetail(selected.id)
-                          }}
+                          onUpdated={info => handleDirectUpdated(selected, info)}
                         />}
+                        {!editing && directPanelRequested && !directEnabled && !standaloneAgent && <div ref={directPanelRef} className="scroll-mt-3"><DirectAgentConnectionPanel
+                          onDraftStateChange={updateDirectDraft}
+                          key={selected.id}
+                          connectionId={selected.id}
+                          defaultHost={selected.host}
+                          initiallyOpen
+                          onUpdated={async info => {
+                            await handleDirectUpdated(selected, info)
+                            // 启用后概览切换为直连视图，面板随之收起，用提示告知结果。
+                            if (info.enabled) pushToast('success', t('已启用 Server 端口直连。'))
+                          }}
+                        /></div>}
                         {!editing && <>
                         <ConnectionDefaultProfile connectionId={selected.id} />
                         {(directEnabled || standaloneAgent || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') && (
@@ -1408,10 +1448,27 @@ export default function RemoteConnectionsManager() {
                                 <CircleHelp size={14} aria-hidden />
                               </button>
                             </Tooltip>
+                            {!directEnabled && !standaloneAgent && (
+                              <Tooltip
+                                label={t('通过此 SSH 连接部署并配对 Server，之后改用 TLS 端口直连。')}
+                                side="top"
+                                wrapperClassName="ml-auto inline-flex shrink-0"
+                              >
+                                <button
+                                  type="button"
+                                  aria-expanded={directPanelRequested}
+                                  disabled={directDraft.busy}
+                                  onClick={() => setDirectPanelRequested(value => !value)}
+                                  className="btn btn-secondary btn-sm border-dialog-border"
+                                >
+                                  <Server size={14} />{t('配置 Server 直连')}
+                                </button>
+                              </Tooltip>
+                            )}
                             <Tooltip
                               label={t('设置本机如何获取远端服务包：缺失时在线下载或使用离线目录。不会修改远程主机。')}
                               side="top"
-                              wrapperClassName="ml-auto inline-flex shrink-0"
+                              wrapperClassName={`${!directEnabled && !standaloneAgent ? '' : 'ml-auto '}inline-flex shrink-0`}
                             >
                               <button
                                 type="button"
@@ -1432,6 +1489,13 @@ export default function RemoteConnectionsManager() {
                               {t('当前会话没有可查询的项目。重新打开远程项目后会显示服务状态。')}
                             </p>
                           ) : (
+                            <>
+                            {/* 顶部状态区已展示同一原因时不再重复 */}
+                            {sharedServerReason && (sharedServerReason !== statusReason || forceRunning) && (
+                              <p className="mb-2 break-words text-ui-sm text-warn">
+                                {t('原因：{reason}', { reason: sharedServerReason })}
+                              </p>
+                            )}
                             <ul className="overflow-hidden rounded-md border border-dialog-border">
                               {serverStates.map(state => (
                                 <li
@@ -1462,7 +1526,7 @@ export default function RemoteConnectionsManager() {
                                       </span>
                                     </Tooltip>
                                   ) : null}
-                                  {state.reason ? (
+                                  {state.reason && !sharedServerReason ? (
                                     <Tooltip label={state.reason} side="left">
                                       <span className="flex-shrink-0 text-ui-sm text-warn">
                                         {t('原因')}
@@ -1519,6 +1583,7 @@ export default function RemoteConnectionsManager() {
                                 </li>
                               ))}
                             </ul>
+                            </>
                           )}
                         </div>
                         </>}

@@ -699,20 +699,30 @@ export function formatDuration(ms, ceil = false) {
 }
 
 /**
- * 会话创建时间：当天只显示「HH:mm」，同年为「MM-DD HH:mm」，跨年带年份。
- * 没有 `createdAt`（旧版电脑端）时返回空字符串。
+ * 列表里的时间戳：当天只显示「HH:mm」，同年为「MM-DD HH:mm」，跨年带年份；`seconds` 时补上秒。
+ * 无效时间返回空字符串。
  */
-export function createdLabel(item, now = Date.now()) {
-  const at = item?.createdAt;
+function formatStamp(at, now, seconds = false) {
   if (!Number.isFinite(at) || at <= 0) return '';
   const date = new Date(at);
   const today = new Date(now);
   const pad = value => String(value).padStart(2, '0');
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}` + (seconds ? `:${pad(date.getSeconds())}` : '');
   const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  const text = date.toDateString() === today.toDateString() ? time
+  return date.toDateString() === today.toDateString() ? time
     : date.getFullYear() === today.getFullYear() ? `${day} ${time}` : `${date.getFullYear()}-${day} ${time}`;
-  return t('创建于 {time}', { time: text });
+}
+
+/** 会话创建时间；没有 `createdAt`（旧版电脑端）时返回空字符串。 */
+export function createdLabel(item, now = Date.now()) {
+  const text = formatStamp(item?.createdAt, now);
+  return text ? t('创建于 {time}', { time: text }) : '';
+}
+
+/** 会话最后活动时间（输入或输出）；`seconds` 用于会话操作面板等详情处。没有记录时返回空字符串。 */
+export function activeLabel(item, now = Date.now(), { seconds = false } = {}) {
+  const text = formatStamp(item?.lastActiveAt, now, seconds);
+  return text ? t('活动于 {time}', { time: text }) : '';
 }
 
 /**
@@ -754,10 +764,12 @@ export function sessionStatusLine(session, { fallback = 1, running = false, acti
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
   const named = sessionName(session, fallback) === identity ? '' : identity;
-  // 窄屏时行尾会被省略：状态与空闲时长最常用，排在前面；创建时间其次；
+  // 窄屏时行尾会被省略：状态与空闲时长最常用，排在前面；活动时间其次；
   // 「终端 N」编号只用于区分，放到最后。「电脑终端」表示来源，仍放在前面。
+  // 已显示「空闲 N 分钟 / 刚刚有活动」时不再重复活动时间，只给电脑终端、已结束会话等补上。
   const desktop = session.origin === 'desktop';
-  return [pinned ? t('已置顶') : '', desktop ? named : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, createdLabel(session, now), desktop ? '' : named]
+  const activity = idle.text ? '' : activeLabel(session, now);
+  return [pinned ? t('已置顶') : '', desktop ? named : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, activity, desktop ? '' : named]
     .filter(Boolean).join(' · ');
 }
 

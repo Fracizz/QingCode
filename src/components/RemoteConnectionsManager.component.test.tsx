@@ -90,7 +90,18 @@ describe('remote connection compatibility settings', () => {
     useUIStore.setState({ remoteConnectionsCreating: true })
   })
 
-  async function testNewConnection() {
+  /** 新建连接默认密码认证；需要私钥字段的用例先切到私钥，否则补一个测试密码。 */
+  function fillNewAuth(auth: 'password' | 'privateKey' = 'password') {
+    if (auth === 'privateKey') {
+      fireEvent.change(screen.getByLabelText('认证方式'), { target: { value: 'privateKey' } })
+      return
+    }
+    const field = screen.queryByLabelText('密码（加密保存在本机）') as HTMLInputElement | null
+    if (field && !field.value) fireEvent.change(field, { target: { value: 'secret' } })
+  }
+
+  async function testNewConnection(auth: 'password' | 'privateKey' = 'password') {
+    fillNewAuth(auth)
     fireEvent.change(screen.getByLabelText('主机'), { target: { value: 'example.test' } })
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'dev' } })
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
@@ -372,11 +383,13 @@ describe('remote connection compatibility settings', () => {
     await act(async () => { render(<RemoteConnectionsManager />) })
     fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     const input = await screen.findByLabelText('密码（加密保存在本机）')
-    await waitFor(() => expect(input).toHaveAttribute('placeholder', '已保存在本机，留空则沿用'))
+    // 已保存的密码默认回填并以圆点遮挡。
+    await waitFor(() => expect(input).toHaveValue('saved-secret'))
+    expect(input).toHaveAttribute('type', 'password')
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
     await waitFor(() => expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: 'saved-secret' })))
     await waitFor(() => expect(screen.getByRole('button', { name: '测试连接' })).not.toBeDisabled())
-    // 点眼睛回显已保存的密码；与已保存值相同，不算修改。
+    // 点眼睛显示已保存的密码；与已保存值相同，不算修改。
     fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
     expect(input).toHaveAttribute('type', 'text')
     expect(input).toHaveValue('saved-secret')
@@ -541,6 +554,19 @@ describe('remote connection compatibility settings', () => {
     expect(await screen.findByText('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')).toBeVisible()
     expect(screen.queryByLabelText('用户名')).toBeNull()
   })
+  it('opens the Server direct panel in the overview instead of the connection editor', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '配置 Server 直连' }))
+    expect(await screen.findByRole('region', { name: 'Server 端口直连' })).toBeVisible()
+    // 仍停留在概览：编辑按钮可见，SSH 表单未出现。
+    expect(screen.getByRole('button', { name: '编辑连接' })).toBeVisible()
+    expect(screen.queryByLabelText('用户名')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '编辑连接' }))
+    await screen.findByDisplayValue('example.test')
+    expect(screen.queryByRole('region', { name: 'Server 端口直连' })).toBeNull()
+  })
   it('persists revocation as restricted so subsequent trust synchronization cannot regrant it', async () => {
     const project = {id:'p1',name:'app',path:'ssh://c1/home/app',kind:'ssh' as const,created_at:1,last_opened_at:1}
     trustProject(project)
@@ -573,14 +599,15 @@ describe('remote connection compatibility settings', () => {
     expect(openSshSession).not.toHaveBeenCalled()
   })
 
-  it.each(['主机','端口','用户名','私钥文件（可选）'])('invalidates a new connection verification when %s changes', async label => {
+  it.each(['主机','端口','用户名','私钥文件（可选）'])('re-tests a new connection on save after %s changes', async label => {
     render(<RemoteConnectionsManager />)
-    await testNewConnection()
+    await testNewConnection(label === '私钥文件（可选）' ? 'privateKey' : 'password')
     const value = label === '端口' ? '2222' : 'changed'
     fireEvent.change(screen.getByLabelText(label),{target:{value}})
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
-    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
-    expect(saveConnection).not.toHaveBeenCalled()
+    await waitFor(() => expect(saveConnection).toHaveBeenCalled())
+    expect(testConnection).toHaveBeenCalledTimes(2)
+    expect(testConnection.mock.invocationCallOrder[1]).toBeLessThan(saveConnection.mock.invocationCallOrder[0])
   })
 
   it('keeps verified authentication valid when only its display name changes', async () => {
@@ -607,6 +634,7 @@ describe('remote connection compatibility settings', () => {
     let finish!: (value: {fingerprint:string,homePath:string}) => void
     testConnection.mockImplementationOnce(() => new Promise(resolve => {finish=resolve}))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
@@ -615,8 +643,9 @@ describe('remote connection compatibility settings', () => {
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     await act(async () => finish({fingerprint:'SHA256:known',homePath:'/home/dev'}))
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
-    expect(saveConnection).not.toHaveBeenCalled()
-    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
+    // 过期的测试结果不可复用：保存会重新测试当前配置后再写入。
+    await waitFor(() => expect(saveConnection).toHaveBeenCalled())
+    expect(testConnection).toHaveBeenCalledTimes(2)
   })
 
   it('does not confirm or authenticate a probe that finished after switching connections', async () => {
@@ -662,28 +691,31 @@ describe('remote connection compatibility settings', () => {
   })
 
   it('does not allow a confirmed fingerprint to authorize saving after authentication fails', async () => {
-    testConnection.mockRejectedValueOnce(new Error('authentication failed'))
+    testConnection.mockRejectedValue(new Error('authentication failed'))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
     await screen.findByText('Error: authentication failed')
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('button',{name:'保存'})).not.toBeDisabled())
     expect(saveConnection).not.toHaveBeenCalled()
   })
 
-  it.each(['认证方式','密码（加密保存在本机）','私钥口令（如有，加密保存在本机）','兼容模式（SSH 直连）'])('invalidates verified configuration after editing %s', async label => {
+  it.each(['认证方式','密码（加密保存在本机）','私钥口令（如有，加密保存在本机）','兼容模式（SSH 直连）'])('re-tests verified configuration on save after editing %s', async label => {
     render(<RemoteConnectionsManager />)
-    await testNewConnection()
+    await testNewConnection(label === '私钥口令（如有，加密保存在本机）' ? 'privateKey' : 'password')
     if (label === '兼容模式（SSH 直连）') {
       fireEvent.click(screen.getByRole('button',{name:'高级'}))
       fireEvent.click(screen.getByLabelText(label))
     } else {
-      fireEvent.change(screen.getByLabelText(label),{target:{value:label === '认证方式' ? 'password' : 'new-secret'}})
+      fireEvent.change(screen.getByLabelText(label),{target:{value:label === '认证方式' ? 'privateKey' : 'new-secret'}})
     }
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
-    expect(saveConnection).not.toHaveBeenCalled()
-    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
+    await waitFor(() => expect(saveConnection).toHaveBeenCalled())
+    expect(testConnection).toHaveBeenCalledTimes(2)
   })
 
   it('keeps a newer test busy when an older invalidated test fails', async () => {
@@ -692,6 +724,7 @@ describe('remote connection compatibility settings', () => {
     testConnection.mockImplementationOnce(() => new Promise((_resolve,reject) => {failOld=reject}))
       .mockImplementationOnce(() => new Promise(resolve => {finishNew=resolve}))
     render(<RemoteConnectionsManager />)
+    fillNewAuth()
     fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))

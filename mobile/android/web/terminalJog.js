@@ -1,7 +1,9 @@
 // 全屏程序（Codex、opencode 等）开启鼠标上报时的回弹变速滑块。
 // 程序内部的滚动位置手机端无从得知，所以滑块不表示位置，只表示速度：
 // 按住往上 / 往下拖，离中心越远滚得越快；松手弹回中间并停止。上下箭头各翻一页。
+// 「到底」按钮自动连续下滑，画面不再变化（视为到底）、超时、再点一次或触摸终端时停止。
 import { t } from './i18n.js';
+import { icon } from './dom.js';
 import { createLongPress } from './mouseMode.js';
 
 /** 中心附近不滚动的比例，避免按下时手抖就开始滚。 */
@@ -11,6 +13,29 @@ export const JOG_MIN_RATE = 3;
 export const JOG_MAX_RATE = 36;
 /** 按住时检查速度并发送滚动的间隔。 */
 export const JOG_INTERVAL_MS = 30;
+
+/** 自动到底：每批滚轮格数与间隔（滚轮队列最多积压 6 格，按批补发不堆积）。 */
+export const AUTO_BOTTOM_TICKS = 6;
+export const AUTO_BOTTOM_INTERVAL_MS = 30;
+/** 画面连续这么久没变化视为已到底；需覆盖一次往返延迟。 */
+export const AUTO_BOTTOM_SETTLE_MS = 600;
+/** 最长自动下滑时间：程序有持续刷新的区域时靠它兜底。 */
+export const AUTO_BOTTOM_MAX_MS = 10000;
+
+/**
+ * 自动到底的停止判定（纯逻辑）。state 记录开始时间、上次画面与上次变化时间；
+ * 返回 true 表示应停止。snapshot 为 null 时不判定画面，只按最长时间停止。
+ */
+export function autoBottomDone(state, snapshot, now) {
+  if (now - state.startAt >= AUTO_BOTTOM_MAX_MS) return true;
+  if (snapshot === null || snapshot === undefined) return false;
+  if (snapshot !== state.snapshot) {
+    state.snapshot = snapshot;
+    state.changedAt = now;
+    return false;
+  }
+  return now - state.changedAt >= AUTO_BOTTOM_SETTLE_MS;
+}
 
 /** 偏移比例（-1..1，负为向上）换算成每秒滚动格数（负为向上），平方曲线：小幅度精确、拉满很快。 */
 export function jogRate(ratio) {
@@ -31,7 +56,11 @@ export function jogTicks(state, ratio, elapsedMs) {
   return ticks;
 }
 
-export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 2500 } = {}) {
+/**
+ * snapshot：可选，返回终端画面上部的文字，用于判断自动到底是否已滚不动；
+ * 只取上部是为了避开底部持续刷新的状态行（如 Codex 的 Working）。
+ */
+export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, idleMs = 2500 } = {}) {
   const doc = host.ownerDocument;
   const view = doc.defaultView;
   const root = doc.createElement('div');
@@ -54,7 +83,13 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
   down.dataset.direction = 'down';
   down.textContent = '▼';
   down.setAttribute('aria-label', t('向下翻一页'));
-  root.append(up, track, down);
+  const bottom = doc.createElement('button');
+  bottom.type = 'button';
+  bottom.className = 'terminal-jog-page terminal-jog-bottom';
+  bottom.append(icon('to-bottom'));
+  bottom.setAttribute('aria-label', t('自动下滑到底'));
+  bottom.setAttribute('aria-pressed', 'false');
+  root.append(up, track, down, bottom);
   host.append(root);
 
   let active = false;
@@ -63,6 +98,7 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
   let hideTimer = null;
   const state = { remainder: 0 };
   let pinned = false;
+  let auto = null;
   // 按住滑块不动约半秒：不滚动，交给调用方切换鼠标模式。
   const longPress = createLongPress(view, () => {
     release();
@@ -71,7 +107,7 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
 
   function scheduleHide() {
     view.clearTimeout(hideTimer);
-    hideTimer = drag || pinned ? null : view.setTimeout(() => { if (!drag && !pinned) root.hidden = true; }, idleMs);
+    hideTimer = drag || pinned || auto ? null : view.setTimeout(() => { if (!drag && !pinned && !auto) root.hidden = true; }, idleMs);
   }
 
   /** 显示一段时间后自动隐藏；只有程序开了鼠标上报时才显示。 */
@@ -92,6 +128,33 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
     pump = view.setTimeout(tick, JOG_INTERVAL_MS);
   }
 
+  function autoTick() {
+    if (!auto) return;
+    const now = view.performance.now();
+    if (autoBottomDone(auto.state, snapshot ? snapshot() : null, now)) { stopAuto(); return; }
+    scroll?.(AUTO_BOTTOM_TICKS);
+    auto.timer = view.setTimeout(autoTick, AUTO_BOTTOM_INTERVAL_MS);
+  }
+
+  function startAuto() {
+    if (auto || !active) return;
+    const now = view.performance.now();
+    auto = { state: { startAt: now, changedAt: now, snapshot: snapshot ? snapshot() : null }, timer: null };
+    root.classList.add('auto');
+    bottom.setAttribute('aria-pressed', 'true');
+    view.clearTimeout(hideTimer);
+    autoTick();
+  }
+
+  function stopAuto() {
+    if (!auto) return;
+    view.clearTimeout(auto.timer);
+    auto = null;
+    root.classList.remove('auto');
+    bottom.setAttribute('aria-pressed', 'false');
+    scheduleHide();
+  }
+
   function setKnob(offset) {
     knob.style.transform = offset ? `translateY(${offset}px)` : '';
   }
@@ -100,6 +163,7 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
     if (root.hidden || (event.pointerType === 'mouse' && event.button !== 0)) return;
     event.preventDefault();
     event.stopPropagation();
+    stopAuto();
     // 可拖动距离：轨道半高减去滑块半高。
     const travel = Math.max(1, (track.clientHeight - knob.offsetHeight) / 2);
     drag = { id: event.pointerId, y: event.clientY, travel, ratio: 0, at: view.performance.now() };
@@ -135,9 +199,17 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
   }
   function pageClick(event) {
     event.stopPropagation();
+    stopAuto();
     page?.(event.currentTarget.dataset.direction === 'up' ? -1 : 1);
     reveal();
   }
+  function bottomClick(event) {
+    event.stopPropagation();
+    if (auto) stopAuto();
+    else startAuto();
+  }
+  // 自动下滑时手指碰到终端任何位置（滑块之外）即停止，把控制交还给用户。
+  const interrupt = event => { if (!root.contains(event.target)) stopAuto(); };
   // 不让滑块上的触摸落到终端手势（滑动、长按选字、双指缩放）。
   const stop = event => event.stopPropagation();
 
@@ -147,6 +219,8 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
   track.addEventListener('pointercancel', release);
   up.addEventListener('click', pageClick);
   down.addEventListener('click', pageClick);
+  bottom.addEventListener('click', bottomClick);
+  host.addEventListener('pointerdown', interrupt, true);
   for (const type of ['touchstart', 'touchmove', 'touchend']) root.addEventListener(type, stop, { passive: true });
   for (const type of ['mousedown', 'mouseup', 'click']) root.addEventListener(type, stop);
 
@@ -157,7 +231,7 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
       if (next === active) return;
       active = next;
       if (active) reveal();
-      else { release(); view.clearTimeout(hideTimer); root.hidden = true; }
+      else { stopAuto(); release(); view.clearTimeout(hideTimer); root.hidden = true; }
     },
     reveal,
     /** 鼠标模式：程序开着鼠标上报时常驻显示。 */
@@ -168,7 +242,11 @@ export function attachTerminalJog(host, { scroll, page, onLongPress, idleMs = 25
       else scheduleHide();
     },
     dragging: () => !!drag,
+    autoScrolling: () => !!auto,
+    stopAuto,
     dispose() {
+      stopAuto();
+      host.removeEventListener('pointerdown', interrupt, true);
       longPress.cancel();
       release();
       view.clearTimeout(hideTimer);
