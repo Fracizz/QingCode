@@ -109,9 +109,10 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
     }
   }, [reserved])
 
+  // 小写拉丁名（如 codex）在中文字体行盒里视觉重心偏上，图标几何居中会显得“下沉”，上移 1.5px 与文字对齐。
   if (prewarm?.outcome === 'hit') {
     return (
-      <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0 items-center">
+      <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0 items-center -translate-y-[1.5px]">
         <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-fg-muted">
           <Zap size={12} aria-hidden="true" />
         </span>
@@ -120,7 +121,7 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
   }
   if (reserved && pendingVisible) {
     return (
-      <Tooltip label={t('正在接管预热终端…')} side="top" wrapperClassName="inline-flex shrink-0 items-center">
+      <Tooltip label={t('正在接管预热终端…')} side="top" wrapperClassName="inline-flex shrink-0 items-center -translate-y-[1.5px]">
         <LoaderCircle
           size={12}
           aria-label={t('正在接管预热终端…')}
@@ -457,6 +458,7 @@ export default function TerminalTabs({
                     <Tooltip
                       label={translate('正在重新连接…')}
                       side="top"
+                      wrapperClassName="inline-flex shrink-0 -translate-y-[1.5px]"
                     >
                       <LoaderCircle
                         size={12}
