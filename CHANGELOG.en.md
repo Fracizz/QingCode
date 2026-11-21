@@ -6,6 +6,34 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-11-20
+
+The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and coding-CLI prewarming, three-way terminal sharing, Windows SSH run tasks, a redesigned terminal list, and desktop and Android polish.
+
+### Added
+
+- Shells are prewarmed per host and reused across project switches, covering local Windows and remote Windows and Linux/macOS in Server mode; Claude Code, Codex, and OpenCode can be prewarmed to open trusted projects faster; prewarming pauses when the remote daemon is outdated and the reason is shown in settings and terminal tabs.
+- Run tasks in Windows SSH projects: `command` runs through `cmd` like local Windows, and `ps1`, `bat`, `sh`, and `script` are dispatched by type, in both direct SSH and Server mode.
+- Computer, phone, and tablet can view the same terminal at once and take over input explicitly; terminals can follow the exclusive device's size; "disconnect other devices" and shared-state badges; the desktop can view mobile terminal session history.
+- Default terminal profiles per connection; the CLI can list and select terminal profiles.
+- Clearing pending input works with AI CLI multi-line composers, and selected text can be brought into a long-text editor; `Ctrl`+click resolves `%TEMP%`-style variables and Git Bash drive paths, including files outside the project.
+- Android: project file browsing with background downloads, continuous terminal output push from the computer, custom and reorderable shortcut keys, dark and graphite themes, and untrusted desktop projects listed greyed out.
+- New Graphite theme; image viewer wheel zoom, drag pan, and rotation; Markdown preview context menu; remote file and project properties with creation time.
+- New [Offline Server update](./docs/server-offline-update.md) guide.
+
+### Changed
+
+- Terminal list redesign: fixed status column, color-coded source labels, grouping and drag-reordering by host, a "More" menu for low-frequency actions, and creation times.
+- Smooth transitions for the sidebar, pages, and terminal switching, exit animations for overlays, and a motion setting; smoother terminal wheel scrolling.
+- Remote services prewarm and update concurrently per connection, updates can be confirmed with active terminals, and Windows server package uploads use larger chunks.
+- Softened terminal palettes for dark, graphite, and light themes; the light theme accent is now the brand teal.
+
+### Fixed
+
+- Recovery of interrupted remote Server upgrades, Linux remote CLI prewarm scripts exiting immediately due to line endings, and Claude prewarm timing out on the empty-composer placeholder.
+- Idle terminals marked "needs attention" after a resize, stale attention markers after viewing, and delayed new terminals while the window is in the background.
+- New local terminals strip agent-injected variables such as `CI` / `NO_COLOR` and advertise color support.
+
 ## [0.1.17] - 2026-11-10
 
 The stable release after v0.1.16, rolling up 0.1.17-beta.1–beta.43: the terminal workbench and cross-device reattach, multi-device Git sync, SSH direct-connect and tunnel improvements, the Android companion, and interface polish.
