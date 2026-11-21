@@ -184,7 +184,6 @@
     "终端已按普通 Shell 预热照常打开；远端仍有运行中的终端时升级会被推迟。": "终端已按普通 Shell 预热照常打开；远端仍有运行中的终端时升级会被推迟。",
     "远端 CLI 预热": "远端 CLI 预热",
     "为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。": "为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。",
-    "与本机相同，CLI 在 QingCode 专用的空目录（远端 ~/.qingcode/cli-prewarm）启动，不会停在目录信任确认。": "与本机相同，CLI 在 QingCode 专用的空目录（远端 ~/.qingcode/cli-prewarm）启动，不会停在目录信任确认。",
     "仅预热普通 Shell": "仅预热普通 Shell",
     "终端 › 集成: Shell 预热数量": "终端 › 集成: Shell 预热数量",
     "每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。": "每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。",
