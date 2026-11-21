@@ -111,6 +111,25 @@ export async function run({ spaceId, finish = true } = {}) {
       assert.equal(count.down, Math.max(3, Math.round(rows / 3)))
     })
 
+    await step('the to-bottom button wheels down until the screen settles, and a touch on the terminal stops it', async () => {
+      await clearInputs()
+      const started = Date.now()
+      await page.click('.terminal-jog-bottom', { label: 'auto scroll to bottom' })
+      await page.waitForFunction(() => document.querySelector('.terminal-jog').classList.contains('auto'))
+      await page.screenshot({ path: resolve(output, 'jog-auto-bottom.png') }).catch(() => {})
+      // 内存桥画面不变：约 0.6 秒判定滚不动后自动停止，远早于 5 秒上限。
+      await page.waitForFunction(() => !document.querySelector('.terminal-jog').classList.contains('auto'), { timeout: 4000 })
+      const elapsed = Date.now() - started
+      const count = await wheels()
+      console.log('auto bottom', count, elapsed + 'ms')
+      assert.ok(count.down > 0, 'sent wheel-down ticks')
+      assert.equal(count.up, 0)
+      assert.ok(elapsed < 3000, `stopped after the screen settled, took ${elapsed}ms`)
+      await page.click('.terminal-jog-bottom', { label: 'auto scroll to bottom again' })
+      await page.evaluate(() => window.__tuiTerm.element.querySelector('.xterm-screen').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' })))
+      assert.equal(await page.evaluate(() => document.querySelector('.terminal-jog').classList.contains('auto')), false)
+    })
+
     await step('soft keyboard keeps PTY rows and lifts the cursor row into view', async () => {
       const metrics = height => page.cdp('Emulation.setDeviceMetricsOverride', { width: 390, height, deviceScaleFactor: 1, mobile: true })
       await metrics(844)
