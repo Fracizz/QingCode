@@ -71,13 +71,13 @@ it('authorizes other connections with their latest trusted project; the active c
   }
 })
 
-it('explains that the CLI starts in the dedicated empty directory', () => {
+it('does not describe the CLI launch directory', () => {
   const profile: TerminalProfile = { id: 'cc', name: 'CC', shell: 'pwsh', command: 'claude' }
   saveTerminalProfileSettings({ profiles: [profile], defaultProfileId: null, defaultShell: profile.shell })
   trustTerminalProfile(profile)
   saveConnectionPrewarmProfile('c', profile)
   render(<ConnectionPrewarmProfile connectionId="c" />)
-  expect(screen.getByText(/~\/\.qingcode\/cli-prewarm/)).toBeInTheDocument()
+  expect(screen.queryByText(/~\/\.qingcode\/cli-prewarm/)).toBeNull()
   expect(screen.queryByRole('button', { name: 'CLI 启动目录' })).toBeNull()
 })
 
