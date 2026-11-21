@@ -7,6 +7,9 @@
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Typical Workflow](#typical-workflow)
+- [AI CLIs and Agents](#ai-clis-and-agents)
+- [Continue on Android](#continue-on-android)
 - [Interface Language](#interface-language)
 - [Project Management](#project-management)
 - [Editor](#editor)
@@ -30,6 +33,38 @@
 3. **Open a file**: Single-click a file in the left file tree to open it (folders expand/collapse on single-click). Use `Ctrl`/`Shift`+click for multi-select; `Enter` also opens/expands the selection.
 4. **Open a terminal**: Press `` Ctrl+` `` to show the terminal panel; the terminal starts in the project root by default.
 5. **Save a file**: Press `Ctrl+S` to save the current file.
+
+---
+
+## Typical Workflow
+
+1. Add several local folders, SSH projects, or Server direct-connection projects and pin them in the title bar.
+2. Create [run configurations](#run-configurations) for common stacks (for example `dev` = API + web).
+3. Start services in one click, one terminal per task; switch to dual terminals or the 2×2 quad-terminal grid from the title-bar layout menu to watch several outputs.
+4. Enter an AI CLI via a [terminal profile](#terminal-profiles), or give the QingCode CLI Skill to your agent (see [AI CLIs and Agents](#ai-clis-and-agents)).
+5. Switch projects from the title bar — editor and terminal state remain.
+6. Away from the desk, pair QingCode Android and continue in the same terminal (see [Continue on Android](#continue-on-android)).
+
+---
+
+## AI CLIs and Agents
+
+QingCode bundles no model and proxies no AI requests; Claude Code, Codex, OpenCode, etc. run as their official CLIs.
+
+- **Run AI CLIs in terminals**: In **Settings → Terminal**, add `claude`, `codex`, `opencode`, etc. as terminal profiles and pick them from the dropdown next to the terminal panel's「+」. Service terminals started by run configurations can also be handed to an assistant.
+- **Copy into a chat**: Right-click in the explorer or editor to copy a path, relative path, or a line-numbered "file reference" to paste into an AI conversation.
+- **Let agents drive QingCode**: **Settings → Tools and Integrations → "Copy skills text"**, then install it the way your agent expects (for example as `SKILL.md`). Agents can then use `QingCode.exe` subcommands to list/add projects, read/write and start/stop run configurations, grant trust, and open files, with JSON output. QingCode never registers itself with any agent automatically.
+- **Terminals survive exit**: Windows local PowerShell / CMD terminals are hosted by a background host by default (**Settings → Terminal › Integrated: Reattachable Local Terminals**). Choose "Keep Local Terminals and Quit" when quitting so AI CLI sessions keep running and reattach on next launch. See [terminal tools](./docs/terminal-tools.md).
+
+---
+
+## Continue on Android
+
+1. On Windows, open **Settings → Mobile connection**, set a port and password, and enable it.
+2. Install QingCode Android (Android 8.0+) and scan the QR code, or paste the pairing link under "Connect". Phone and PC must reach each other (LAN or a virtual network such as Tailscale).
+3. Pick a project that is already added and trusted on the PC to reattach its terminals: read output, type, upload images, and scroll history.
+
+Terminals are hosted on the PC, so going offline or reopening the app does not interrupt tasks. If the PC port changes, the phone migrates its existing pairing. See [Android mobile](./mobile/README.md) for details.
 
 ---
 
@@ -59,6 +94,8 @@
 Saved SSH connections can be reused to open other projects on the same host. SSH projects support remote file operations, PTY terminals, Git, run configurations, local/remote file transfer, and search mixed with local projects. QingCode prompts for reconnection after a disconnect. If a known host fingerprint changes, verify that the server was intentionally reinstalled or replaced instead of bypassing the warning.
 
 Remote extensions, port forwarding, and SSH agent forwarding are not currently supported. Both local and SSH workspaces provide file search, text search, and a current file outline; semantic definition navigation, find usages, and workspace symbol search are unavailable. For WSL, enable an SSH service inside the distribution and connect through the same SSH-project flow. See [SSH workspaces](./docs/ssh-workspaces.md) for details.
+
+To skip the SSH tunnel, use **Remote connections → New Server connection** to connect straight to a remote `qingcode-server` TLS port; see [Server direct connection](./docs/direct-agent.md).
 
 ### Temporary Project
 

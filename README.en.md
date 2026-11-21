@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/Fracizz/QingCode/releases/latest"><strong>Download</strong></a> ·
   <a href="#get-the-app">Install</a> ·
+  <a href="./HELP.md"><strong>Help</strong></a> ·
   <a href="#screenshots">Screenshots</a> ·
   <a href="./docs/ssh-workspaces.md">SSH workspaces</a> ·
   <a href="./mobile/README.md">Android</a>
@@ -300,6 +301,8 @@ A typical pairing: start API, web, and workers in QingCode and keep the scene wh
 4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent
 5. Switch projects from the title bar — editor and terminal state remain
 6. Away from the desk, pair QingCode Android and continue typing or reading in the same terminal
+
+Step-by-step usage, shortcuts, and FAQ: [Help](./HELP.md).
 
 ## Who it is for
 

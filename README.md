@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/Fracizz/QingCode/releases/latest"><strong>下载</strong></a> ·
   <a href="#获取应用">安装</a> ·
+  <a href="./帮助文档.md"><strong>使用说明</strong></a> ·
   <a href="#界面预览">界面预览</a> ·
   <a href="./docs/ssh-workspaces.md">SSH 工作区</a> ·
   <a href="./mobile/README.md">Android</a>
@@ -304,6 +305,8 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 4. 用终端配置进入 AI CLI，或从设置复制 CLI Skill 给 Agent  
 5. 在标题栏切到下一个项目——编辑与终端状态仍在  
 6. 离开电脑时用 QingCode Android 扫码接回，继续同一终端里的输入与输出
+
+逐步操作、快捷键与常见问题见 [使用说明（帮助文档）](./帮助文档.md)。
 
 ## 适合谁
 
