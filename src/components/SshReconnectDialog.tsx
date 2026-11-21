@@ -163,7 +163,7 @@ export default function SshReconnectDialog() {
           </div>
           {checkingProfile ? <p className="text-ui-sm text-fg-muted">{t('正在检查连接方式…')}</p> : directInfo?.enabled ? <p className="text-ui-sm text-fg-muted">{t('使用已保存的 Server 配对凭据连接，无需 SSH 密码。请确认远端服务正在运行，并开放 TCP {port}。', { port: directInfo.port })}</p> : connection?.auth_kind === 'password' ? (
             <label className="block text-ui-sm text-fg-muted">
-              {t('密码（仅本次会话）')}
+              {remember ? t('密码（加密保存在本机）') : t('密码（仅本次会话）')}
               <input
                 autoFocus
                 type="password"

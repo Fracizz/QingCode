@@ -365,6 +365,18 @@ describe('remote connection compatibility settings', () => {
     forgetSshSessionSecrets(savedId)
   })
 
+  it('reuses the locally saved password when testing an existing connection', async () => {
+    invoke.mockImplementation(async (_label, command) => command === 'ssh_secret_load' ? { password: 'saved-secret' } : undefined)
+    useProjectStore.setState({ sshConnections: [{ ...connection('server'), auth_kind: 'password' }] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    await act(async () => { render(<RemoteConnectionsManager />) })
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
+    const input = await screen.findByLabelText('密码（加密保存在本机）')
+    await waitFor(() => expect(input).toHaveAttribute('placeholder', '已保存在本机，留空则沿用'))
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: 'saved-secret' })))
+  })
+
   it('requires an explicit advanced choice to create a compatibility connection', async () => {
     render(<RemoteConnectionsManager />)
     fireEvent.click(screen.getByRole('button', { name: '高级' }))

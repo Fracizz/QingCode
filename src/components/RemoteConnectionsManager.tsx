@@ -46,6 +46,7 @@ import {
   disconnectSshSession,
   forgetSshSessionSecrets,
   deleteSavedSshSecrets,
+  loadSavedSshSecrets,
   saveSshSecrets,
   isSshConnectionAlive,
   isSshBackgroundSuspended,
@@ -158,6 +159,8 @@ export default function RemoteConnectionsManager() {
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [remember, setRemember] = useState(true)
+  /** 当前选中连接在本机已加密保存的凭据；输入框留空时沿用。 */
+  const [savedSecrets, setSavedSecrets] = useState<SshSessionSecrets | null>(null)
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean | null>>({})
@@ -286,12 +289,22 @@ export default function RemoteConnectionsManager() {
     setPassword('')
     setPassphrase('')
     setRemember(true)
+    setSavedSecrets(null)
     setVerification(null)
     setTesting(false)
     setError('')
     setAllProjects(false)
     setRoots([])
-    if (conn) void refreshDetail(conn.id, false)
+    let cancelled = false
+    if (conn) {
+      void refreshDetail(conn.id, false)
+      void loadSavedSshSecrets(conn.id).then(value => {
+        if (!cancelled) setSavedSecrets(value)
+      })
+    }
+    return () => {
+      cancelled = true
+    }
   }, [selectedId, refreshDetail])
 
   useEffect(() => {
@@ -405,6 +418,13 @@ export default function RemoteConnectionsManager() {
     form.authKind !== selected.auth_kind ||
     form.privateKeyPath.trim() !== (selected.private_key_path ?? '').trim()
   )
+  // 目标与认证方式未变时，留空的输入框沿用本机已保存的凭据。
+  const reusableSecrets = selected && savedSecrets && !targetChanged(form, selected) && !authenticationChanged
+    ? savedSecrets : null
+  const effectiveSecrets: SshSessionSecrets = password || passphrase
+    ? { password: password || undefined, passphrase: passphrase || undefined }
+    : { password: reusableSecrets?.password || undefined, passphrase: reusableSecrets?.passphrase || undefined }
+  const typedSecrets = Boolean(password || passphrase)
   const dirty = selected
     ? !formEqualsConnection(form, selected) ||
       mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
@@ -444,10 +464,7 @@ export default function RemoteConnectionsManager() {
       return
     }
     const id = crypto.randomUUID()
-    const secrets: SshSessionSecrets = {
-      password: password || undefined,
-      passphrase: passphrase || undefined,
-    }
+    const secrets = effectiveSecrets
     if (form.authKind === 'password' && !secrets.password) {
       setError(t('请输入 SSH 密码以测试连接。'))
       return
@@ -559,16 +576,17 @@ export default function RemoteConnectionsManager() {
       // 新建连接同样要记住刚通过测试的凭据，否则创建项目时还会再次要求输入。
       if (!selected || configChanged) {
         if (selected) forgetSshSessionSecrets(selected.id)
-        rememberSshSessionSecrets(saved.id, {
-          password: password || undefined,
-          passphrase: passphrase || undefined,
-        })
+        rememberSshSessionSecrets(saved.id, effectiveSecrets)
       }
-      if (remember && (password || passphrase)) {
-        await saveSshSecrets(saved.id, { password, passphrase })
+      const hasSecrets = Boolean(effectiveSecrets.password || effectiveSecrets.passphrase)
+      if (remember && hasSecrets) {
+        // 新输入的凭据覆盖保存；未输入时仅在沿用已保存凭据的前提下保持不变。
+        if (typedSecrets) await saveSshSecrets(saved.id, effectiveSecrets)
+        setSavedSecrets(effectiveSecrets)
       } else if (!remember || configChanged) {
         // 取消勾选，或目标/认证已变化且没有新凭据：旧的加密凭据不再可信，直接清除。
         await deleteSavedSshSecrets(saved.id)
+        setSavedSecrets(null)
       }
       if (reconnectNeeded && selected) {
         if (modeChanged) await switchSshConnectionMode(selected.id, mode)
@@ -910,6 +928,7 @@ export default function RemoteConnectionsManager() {
             type="password"
             value={password}
             onChange={event => { invalidateVerification(); setPassword(event.target.value) }}
+            placeholder={reusableSecrets?.password ? t('已保存在本机，留空则沿用') : undefined}
             className={`${fieldClass} mt-1`}
           />
         </label>
@@ -924,6 +943,7 @@ export default function RemoteConnectionsManager() {
               type="password"
               value={passphrase}
               onChange={event => { invalidateVerification(); setPassphrase(event.target.value) }}
+              placeholder={reusableSecrets?.passphrase ? t('已保存在本机，留空则沿用') : undefined}
               className={`${fieldClass} mt-1`}
             />
           </label>
