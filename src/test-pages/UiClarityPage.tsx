@@ -166,7 +166,7 @@ export default function UiClarityPage() {
           </SettingItem>
           <div className="mt-5">
             <SettingItem
-              title={t('服务安装设置')}
+              title={t('服务包来源')}
               description={t('准备完成后会自动更新状态，无需重复操作。')}
               locked
               lockHint={t('请先信任该工作区，再切换到远端服务')}

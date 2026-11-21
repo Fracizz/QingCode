@@ -11,8 +11,10 @@ import ServerAutoStartSwitch from './ServerAutoStartSwitch'
 import Tooltip from './Tooltip'
 import type { SshConnection } from '../types'
 import {
+  DIRECT_AGENT_PROVISION_STAGE_LABELS,
   directAgentApi,
   directAgentErrorKey,
+  directAgentErrorText,
   directAgentFirewallCommand,
   directAgentFirewallHintKey,
   directAgentSshCandidates,
@@ -23,6 +25,7 @@ import {
   type DirectAgentApi,
   type DirectAgentFirewallPlatform,
   type DirectAgentInfo,
+  type DirectAgentProvisionStage,
 } from '../lib/directAgent'
 
 const fieldClass = 'mt-1 min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
@@ -113,6 +116,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [firewallPlatformDetected, setFirewallPlatformDetected] = useState(false)
   const firewallPlatformPicked = useRef(false)
   const [activity, setActivity] = useState('')
+  const [provisionStage, setProvisionStage] = useState<DirectAgentProvisionStage | null>(null)
   const [savingEnabled, setSavingEnabled] = useState(true)
   const [verified, setVerified] = useState<string | null>(null)
   const requestRef = useRef(0)
@@ -247,19 +251,27 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     if (invalid) { setError(t(invalid)); return }
     const request = ++requestRef.current
     setBusy('provisioning')
+    setProvisionStage(null)
     setError('')
     setNotice('')
     setStartupWarning('')
     try {
-      const result = await api.provision(connectionId, Number(port), autoStart)
+      // 未打开该连接的项目时，后端用已保存的 SSH 配置临时连接并安装，无需先手动连接。
+      const own = allSshConnections.find(connection => connection.id === connectionId)
+      if (own) await hydrateSshSecrets(own.id)
+      if (request !== requestRef.current) return
+      const result = await api.provision(connectionId, Number(port), autoStart, {
+        config: own ? sshRuntimeConfig(own, sshSecretsFor(own.id)) : undefined,
+        onProgress: stage => { if (request === requestRef.current) setProvisionStage(stage) },
+      })
       if (request !== requestRef.current) return
       fill(result)
       setStartupWarning(result.startupWarning ?? '')
       setNotice(t('服务已准备。请开放显示的 TCP 端口，再测试直连。'))
     } catch (reason) {
-      if (request === requestRef.current) setError(t(directAgentErrorKey(reason)))
+      if (request === requestRef.current) setError(directAgentErrorText(reason))
     } finally {
-      if (request === requestRef.current) setBusy(null)
+      if (request === requestRef.current) { setBusy(null); setProvisionStage(null) }
     }
   }
 
@@ -476,7 +488,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   const busyLabel = server.busy ? t('正在通过 SSH 管理 Server…')
     : busy === 'loading' ? t('正在读取 Server 配置…')
-    : busy === 'provisioning' ? t('正在通过 SSH 准备 Server 服务，请稍候…')
+    : busy === 'provisioning' ? t(provisionStage ? DIRECT_AGENT_PROVISION_STAGE_LABELS[provisionStage] : '正在通过 SSH 准备 Server 服务，请稍候…')
       : busy === 'testing' ? activity
         : busy === 'saving' ? t(savingEnabled ? '正在保存并启用 Server 直连…' : '正在恢复 SSH 连接…')
           : busy ? firewallButtonLabel : ''
@@ -636,7 +648,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           <span className="flex h-[1lh] shrink-0 items-center">
             {anyBusy ? <LoaderCircle size={16} className={`${spinClass} text-accent`} aria-hidden="true" /> : error ? <CircleAlert size={16} aria-hidden="true" /> : <CircleCheck size={16} className="text-ok" aria-hidden="true" />}
           </span>
-          <span className="min-w-0 break-words">{feedback}</span>
+          <span className="min-w-0 whitespace-pre-line break-words">{feedback}</span>
         </div>}
         {startupWarning && !anyBusy && <p role="status" className="break-words rounded border border-warn/40 bg-warn/5 p-3 text-ui-sm text-fg">{t(managedInfo ? '未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}' : '服务已可用，但未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}', { reason: startupWarning })}</p>}
         {busy !== 'loading' && (managedView || setupView)}

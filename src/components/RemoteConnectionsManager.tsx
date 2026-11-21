@@ -10,6 +10,8 @@ import {
   ChevronRight,
   CircleHelp,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   FolderOpen,
   Globe,
@@ -161,6 +163,7 @@ export default function RemoteConnectionsManager() {
   const [remember, setRemember] = useState(true)
   /** 当前选中连接在本机已加密保存的凭据；输入框留空时沿用。 */
   const [savedSecrets, setSavedSecrets] = useState<SshSessionSecrets | null>(null)
+  const [showSecret, setShowSecret] = useState({ password: false, passphrase: false })
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean | null>>({})
@@ -290,6 +293,7 @@ export default function RemoteConnectionsManager() {
     setPassphrase('')
     setRemember(true)
     setSavedSecrets(null)
+    setShowSecret({ password: false, passphrase: false })
     setVerification(null)
     setTesting(false)
     setError('')
@@ -406,14 +410,6 @@ export default function RemoteConnectionsManager() {
   const connectionProjects = selected ? groupedProjects.get(selected.id) ?? [] : []
   const visibleProjects = allProjects ? connectionProjects : connectionProjects.slice(0, 5)
 
-  const verificationKey = JSON.stringify([
-    selectedId, form.host.trim(), Number.parseInt(form.port, 10), form.username.trim(),
-    form.authKind, form.privateKeyPath.trim(), mode, password, passphrase,
-  ])
-  const verified = verification?.key === verificationKey ? verification : null
-  const fingerprintOverride = verified && verified.fingerprint !== selected?.host_key_fingerprint
-    ? verified.fingerprint : null
-  const effectiveFingerprint = verified?.fingerprint || selected?.host_key_fingerprint || null
   const authenticationChanged = selected && (
     form.authKind !== selected.auth_kind ||
     form.privateKeyPath.trim() !== (selected.private_key_path ?? '').trim()
@@ -421,10 +417,48 @@ export default function RemoteConnectionsManager() {
   // 目标与认证方式未变时，留空的输入框沿用本机已保存的凭据。
   const reusableSecrets = selected && savedSecrets && !targetChanged(form, selected) && !authenticationChanged
     ? savedSecrets : null
-  const effectiveSecrets: SshSessionSecrets = password || passphrase
-    ? { password: password || undefined, passphrase: passphrase || undefined }
-    : { password: reusableSecrets?.password || undefined, passphrase: reusableSecrets?.passphrase || undefined }
-  const typedSecrets = Boolean(password || passphrase)
+  const effectiveSecrets: SshSessionSecrets = {
+    password: password || reusableSecrets?.password || undefined,
+    passphrase: passphrase || reusableSecrets?.passphrase || undefined,
+  }
+  // 与已保存值相同（例如点眼睛回显）不算新凭据，无需重新测试。
+  const typedSecrets = Boolean(
+    (password && password !== reusableSecrets?.password) ||
+    (passphrase && passphrase !== reusableSecrets?.passphrase)
+  )
+  const verificationKey = JSON.stringify([
+    selectedId, form.host.trim(), Number.parseInt(form.port, 10), form.username.trim(),
+    form.authKind, form.privateKeyPath.trim(), mode, effectiveSecrets.password ?? '', effectiveSecrets.passphrase ?? '',
+  ])
+  const verified = verification?.key === verificationKey ? verification : null
+  const fingerprintOverride = verified && verified.fingerprint !== selected?.host_key_fingerprint
+    ? verified.fingerprint : null
+  const effectiveFingerprint = verified?.fingerprint || selected?.host_key_fingerprint || null
+  const revealSecret = (kind: 'password' | 'passphrase') => {
+    const next = !showSecret[kind]
+    setShowSecret(prev => ({ ...prev, [kind]: next }))
+    // 显示时若输入框为空，回填本机已保存的值供查看。
+    if (!next) return
+    if (kind === 'password' && !password && reusableSecrets?.password) setPassword(reusableSecrets.password)
+    if (kind === 'passphrase' && !passphrase && reusableSecrets?.passphrase) setPassphrase(reusableSecrets.passphrase)
+  }
+  const secretToggle = (kind: 'password' | 'passphrase') => {
+    const shown = showSecret[kind]
+    const label = shown ? t('隐藏密码') : t('显示密码')
+    return (
+      <Tooltip label={label} wrapperClassName="absolute inset-y-0 right-1 flex items-center">
+        <button
+          type="button"
+          aria-label={label}
+          aria-pressed={shown}
+          onClick={event => { event.preventDefault(); revealSecret(kind) }}
+          className="inline-flex h-full w-8 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
+        >
+          {shown ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
+        </button>
+      </Tooltip>
+    )
+  }
   const dirty = selected
     ? !formEqualsConnection(form, selected) ||
       mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
@@ -434,7 +468,7 @@ export default function RemoteConnectionsManager() {
     navigationPending.current = true
     try {
       const sshChanged = selected ? dirty : JSON.stringify(form) !== JSON.stringify(emptyConnectionForm()) || mode !== 'server'
-      const hasChanges = (editing || isNew) && (sshChanged || password || passphrase || directDraft.dirty)
+      const hasChanges = (editing || isNew) && (sshChanged || typedSecrets || directDraft.dirty)
       if (hasChanges && !await confirmDialog({
         title: t('放弃连接修改'), message: t('离开当前连接将放弃尚未保存的修改。'),
         kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('继续编辑'),
@@ -524,7 +558,7 @@ export default function RemoteConnectionsManager() {
       setError(t(invalid))
       return
     }
-    if (selected && (targetChanged(form, selected) || authenticationChanged || password || passphrase) && !verified) {
+    if (selected && (targetChanged(form, selected) || authenticationChanged || typedSecrets) && !verified) {
       setError(t('主机目标已变化，请先「测试连接」确认新的主机指纹。'))
       return
     }
@@ -536,7 +570,7 @@ export default function RemoteConnectionsManager() {
       selected && mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
     )
     const configChanged = Boolean(selected && (
-      targetChanged(form, selected) || authenticationChanged || password || passphrase ||
+      targetChanged(form, selected) || authenticationChanged || typedSecrets ||
       effectiveFingerprint !== selected.host_key_fingerprint
     ))
     const reconnectNeeded = (modeChanged || configChanged) && alive
@@ -596,6 +630,7 @@ export default function RemoteConnectionsManager() {
       setVerification(null)
       setPassword('')
       setPassphrase('')
+      setShowSecret({ password: false, passphrase: false })
       if (isNew && creatingForProject) {
         closeRemoteConnections()
         return
@@ -924,13 +959,18 @@ export default function RemoteConnectionsManager() {
           {remember
             ? t('密码（加密保存在本机）')
             : isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
-          <input
-            type="password"
-            value={password}
-            onChange={event => { invalidateVerification(); setPassword(event.target.value) }}
-            placeholder={reusableSecrets?.password ? t('已保存在本机，留空则沿用') : undefined}
-            className={`${fieldClass} mt-1`}
-          />
+          <div className="relative mt-1">
+            <input
+              type={showSecret.password ? 'text' : 'password'}
+              value={password}
+              onChange={event => { invalidateVerification(); setPassword(event.target.value) }}
+              placeholder={reusableSecrets?.password ? t('已保存在本机，留空则沿用') : undefined}
+              autoComplete="new-password"
+              spellCheck={false}
+              className={`${fieldClass} pr-10`}
+            />
+            {secretToggle('password')}
+          </div>
         </label>
         <label className={`col-span-full flex items-center gap-2 ${labelClass}`}>
           <input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} />
@@ -939,13 +979,18 @@ export default function RemoteConnectionsManager() {
         {form.authKind === 'privateKey' ? (
           <label className={labelClass}>
             {remember ? t('私钥口令（如有，加密保存在本机）') : t('私钥口令（如有，仅本次会话）')}
-            <input
-              type="password"
-              value={passphrase}
-              onChange={event => { invalidateVerification(); setPassphrase(event.target.value) }}
-              placeholder={reusableSecrets?.passphrase ? t('已保存在本机，留空则沿用') : undefined}
-              className={`${fieldClass} mt-1`}
-            />
+            <div className="relative mt-1">
+              <input
+                type={showSecret.passphrase ? 'text' : 'password'}
+                value={passphrase}
+                onChange={event => { invalidateVerification(); setPassphrase(event.target.value) }}
+                placeholder={reusableSecrets?.passphrase ? t('已保存在本机，留空则沿用') : undefined}
+                autoComplete="new-password"
+                spellCheck={false}
+                className={`${fieldClass} pr-10`}
+              />
+              {secretToggle('passphrase')}
+            </div>
           </label>
         ) : null}
         {selected ? (
@@ -1363,16 +1408,22 @@ export default function RemoteConnectionsManager() {
                                 <CircleHelp size={14} aria-hidden />
                               </button>
                             </Tooltip>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                closeRemoteConnections()
-                                useUIStore.getState().requestSettings('ssh.server')
-                              }}
-                              className="btn btn-secondary btn-sm ml-auto border-dialog-border"
+                            <Tooltip
+                              label={t('设置本机如何获取远端服务包：缺失时在线下载或使用离线目录。不会修改远程主机。')}
+                              side="top"
+                              wrapperClassName="ml-auto inline-flex shrink-0"
                             >
-                              <Settings size={14} />{t('服务安装设置')}
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  closeRemoteConnections()
+                                  useUIStore.getState().requestSettings('ssh.server')
+                                }}
+                                className="btn btn-secondary btn-sm border-dialog-border"
+                              >
+                                <Settings size={14} />{t('服务包来源')}
+                              </button>
+                            </Tooltip>
                           </div>
                           {detailLoading && serverStates.length === 0 ? (
                             <p className={helpClass}>{t('正在读取…')}</p>

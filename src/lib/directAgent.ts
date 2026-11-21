@@ -1,4 +1,6 @@
+import { listen } from '@tauri-apps/api/event'
 import { safeInvoke } from './tauri'
+import { translate } from './i18n'
 import type { SshConnection } from '../types'
 import type { SshRuntimeConfig } from './sshWorkspace'
 
@@ -67,9 +69,25 @@ export interface DirectAgentFirewallResult {
   profiles: string[]
 }
 
+/** 安装进度阶段：连接 SSH、准备服务包（离线目录优先，缺失时按设置在线下载）、启动、配置自启。 */
+export type DirectAgentProvisionStage = 'ssh' | 'package' | 'start' | 'startup'
+
+export const DIRECT_AGENT_PROVISION_STAGE_LABELS: Record<DirectAgentProvisionStage, string> = {
+  ssh: '正在连接 SSH…',
+  package: '正在准备服务包（优先使用离线目录，缺失时按设置在线下载）…',
+  start: '正在上传并启动 Server…',
+  startup: '正在配置开机自启…',
+}
+
+export interface DirectAgentProvisionOptions {
+  /** 未打开该连接的项目时，后端用此 SSH 配置建立临时会话完成安装。 */
+  config?: SshRuntimeConfig
+  onProgress?: (stage: DirectAgentProvisionStage) => void
+}
+
 export interface DirectAgentApi {
   info(connectionId: string): Promise<DirectAgentInfo | null>
-  provision(connectionId: string, port?: number, autoStart?: boolean): Promise<DirectAgentInfo>
+  provision(connectionId: string, port?: number, autoStart?: boolean, options?: DirectAgentProvisionOptions): Promise<DirectAgentInfo>
   manage?(target: DirectAgentFirewallTarget & { autoStart: boolean; start: boolean }): Promise<DirectAgentInfo>
   probe(host: string, port: number): Promise<{ certificateFingerprint: string }>
   test(target: DirectAgentTarget): Promise<{ version: string; protocol: number }>
@@ -81,7 +99,24 @@ export interface DirectAgentApi {
 
 export const directAgentApi: DirectAgentApi = {
   info: connectionId => safeInvoke('读取 Server 直连配置', 'direct_agent_info', { connectionId }),
-  provision: (connectionId, port, autoStart = true) => safeInvoke('安装 Server 直连服务', 'direct_agent_provision', { connectionId, port, autoStart }),
+  provision: async (connectionId, port, autoStart = true, options = {}) => {
+    const { config, onProgress } = options
+    let unlisten: (() => void) | undefined
+    if (onProgress) {
+      try {
+        unlisten = await listen<{ connectionId: string; stage: DirectAgentProvisionStage }>('direct-agent-provision-progress', event => {
+          if (event.payload.connectionId === connectionId) onProgress(event.payload.stage)
+        })
+      } catch {
+        // 浏览器预览没有事件通道；只是不显示分步进度。
+      }
+    }
+    try {
+      return await safeInvoke('安装 Server 直连服务', 'direct_agent_provision', { connectionId, port, autoStart, ...(config ? { config } : {}) })
+    } finally {
+      unlisten?.()
+    }
+  },
   manage: target => safeInvoke('通过 SSH 管理 Server', 'direct_agent_manage', { ...target }),
   probe: (host, port) => safeInvoke('检查 Server 服务器身份', 'direct_agent_probe', { host, port }),
   test: target => safeInvoke('测试 Server 直连', 'direct_agent_test', { ...target }),
@@ -193,6 +228,8 @@ export function isDirectAgentConnectionCancelled(error: unknown): boolean {
   return text.includes('[direct:cancelled]') || text.includes('Server 连接已由当前连接配置关闭')
 }
 
+const GENERIC_DIRECT_AGENT_ERROR = 'Server 操作失败。请检查服务状态后重试。'
+
 export function directAgentErrorKey(error: unknown): string {
   const text = String(error)
   if (isDirectAgentConnectionCancelled(error)) return 'Server 连接在本机被取消。请重试；若刚修改连接配置，请等待保存完成后再打开项目。'
@@ -211,5 +248,17 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:version]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
   if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。'
   if (text.includes('[direct:protocol]')) return 'Server 响应无效。请检查目标端口的服务和协议。'
-  return 'Server 操作失败。请检查服务状态后重试。'
+  return GENERIC_DIRECT_AGENT_ERROR
+}
+
+/** 已分类的错误显示固定提示；未分类时附上后端原因，避免只剩一句「操作失败」。 */
+export function directAgentErrorText(error: unknown): string {
+  const key = directAgentErrorKey(error)
+  if (key !== GENERIC_DIRECT_AGENT_ERROR) return translate(key)
+  const detail = String(error instanceof Error ? error.message : error)
+    .replace(/^Error:\s*/, '')
+    .replace(/\[direct:[a-z-]+\]\s*/g, '')
+    .trim()
+  return detail ? `${translate(key)}
+${translate(detail)}` : translate(key)
 }

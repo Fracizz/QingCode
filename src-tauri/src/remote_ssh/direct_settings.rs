@@ -525,15 +525,22 @@ pub(super) fn provision_commands(bin: &str, port: u16) -> (String, String) {
     (unix, windows)
 }
 
+/// 安装进度事件：stage 为 ssh / package / start / startup，前端据此显示当前步骤。
+pub(crate) const DIRECT_PROVISION_PROGRESS_EVENT: &str = "direct-agent-provision-progress";
+
 async fn provision_over_ssh(
     manager: &SshManager,
     root: &RegisteredRoot,
     port: u16,
     startup: &str,
+    progress: &(dyn Fn(&str) + Sync),
 ) -> Result<(qingcode_server::direct::DirectInfo, Option<String>), String> {
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
+    // 服务包按「离线目录优先，缺失时按设置在线下载」取得。
+    progress("package");
     let staged = server::stage_direct_gateway(manager, root).await?;
+    progress("start");
     let (unix, windows) = provision_commands(&staged, port);
     let result = manager
         .exec_remote_shell(&root.uri, &unix, &windows, true, Duration::from_secs(40))
@@ -548,6 +555,7 @@ async fn provision_over_ssh(
         .find_map(|line| serde_json::from_str(line).ok())
         .ok_or_else(|| "未取得 Server 配对信息，请手动启动服务并导入".to_string())?;
     // 单独执行：自启失败时网关已运行，配对信息也要照常返回。
+    progress("startup");
     let (start_unix, start_windows) = startup_commands(&staged, startup);
     let configured = manager
         .exec_remote_shell(
@@ -561,11 +569,78 @@ async fn provision_over_ssh(
     Ok((descriptor, startup_outcome(startup, configured)?))
 }
 
+/// 校验未连接时由前端提供的 SSH 配置：只能是本连接、且主机指纹已确认。
+fn temporary_provision_config(
+    connection_id: &str,
+    config: Option<SshConnectionConfig>,
+) -> Result<SshConnectionConfig, String> {
+    let mut config = config.ok_or("当前未连接该 SSH 主机，请先保存并测试 SSH 连接后重试")?;
+    if config.id != connection_id {
+        return Err("[direct:ssh-identity] SSH 连接与当前远程连接不一致".into());
+    }
+    if config
+        .host_key_fingerprint
+        .as_deref()
+        .is_none_or(|p| p.trim().is_empty())
+    {
+        return Err("[direct:ssh-identity] 请先测试 SSH 连接并确认主机指纹".into());
+    }
+    config.mode = None;
+    Ok(config)
+}
+
+/// 没有已打开的信任项目时，用临时 SSH 会话把服务装到该用户的私有目录；
+/// 与 `direct_agent_manage` 相同，只以家目录为安装锚点，不授予任何项目信任。
+async fn provision_with_temporary_session(
+    manager: &SshManager,
+    config: SshConnectionConfig,
+    port: u16,
+    startup: &str,
+    progress: &(dyn Fn(&str) + Sync),
+) -> Result<(qingcode_server::direct::DirectInfo, Option<String>), String> {
+    progress("ssh");
+    let maintenance = manager.maintenance_manager();
+    let id = config.id.clone();
+    let (session, _) = store_authenticated_session(&maintenance, config)
+        .await
+        .map_err(|error| {
+            if error.contains("指纹") || error.contains("host key") {
+                format!("[direct:ssh-identity] {error}")
+            } else {
+                format!("[direct:ssh-auth] {error}")
+            }
+        })?;
+    let result = async {
+        let sftp = maintenance.open_sftp(&id).await?;
+        let home = sftp.canonicalize(".").await.map_err(|e| e.to_string())?;
+        reject_windows_sftp_links(&sftp, &home).await?;
+        let root = RegisteredRoot {
+            uri: format!("ssh://{id}{home}"),
+            canonical_path: home,
+            trusted: true,
+        };
+        maintenance
+            .roots
+            .write()
+            .map_err(|_| "SSH 状态不可用")?
+            .insert(root.uri.clone(), root.clone());
+        provision_over_ssh(&maintenance, &root, port, startup, progress).await
+    }
+    .await;
+    let _ = session
+        .handle
+        .disconnect(Disconnect::ByApplication, "Server provision finished", "en")
+        .await;
+    result
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn direct_agent_provision(
     connection_id: String,
     port: Option<u16>,
     auto_start: Option<bool>,
+    config: Option<SshConnectionConfig>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<DirectAgentInfo, String> {
@@ -582,32 +657,53 @@ pub async fn direct_agent_provision(
     if port == 0 {
         return Err("监听端口必须为 1–65535".into());
     }
-    let root = manager
-        .roots_for_connection(&connection_id)
-        .into_iter()
-        .find(|r| r.trusted)
-        .ok_or("请先连接一个已信任的 SSH 项目，或手动启动 Server 后导入配对信息")?;
     let startup = if auto_start.unwrap_or(true) {
         "enable"
     } else {
         "disable"
     };
-    let (descriptor, startup_warning) = if tunneled {
-        tunnel::expose_gateway(&manager, &root, port, startup).await?
-    } else {
-        provision_over_ssh(&manager, &root, port, startup).await?
+    let progress = |stage: &str| {
+        let _ = app.emit(
+            DIRECT_PROVISION_PROGRESS_EVENT,
+            json!({ "connectionId": connection_id, "stage": stage }),
+        );
     };
-    let session = if tunneled {
-        tunnel::sessions().session(&connection_id)?
-    } else {
-        manager.session(&connection_id)?
+    let root = manager
+        .roots_for_connection(&connection_id)
+        .into_iter()
+        .find(|r| r.trusted);
+    let (descriptor, startup_warning, host) = match root {
+        Some(root) => {
+            let (descriptor, warning) = if tunneled {
+                tunnel::expose_gateway(&manager, &root, port, startup).await?
+            } else {
+                provision_over_ssh(&manager, &root, port, startup, &progress).await?
+            };
+            let session = if tunneled {
+                tunnel::sessions().session(&connection_id)?
+            } else {
+                manager.session(&connection_id)?
+            };
+            let host = session
+                .config
+                .lock()
+                .map_err(|_| "SSH 配置不可用")?
+                .host
+                .clone();
+            (descriptor, warning, host)
+        }
+        None if tunneled => {
+            return Err("请先连接一个已信任的 SSH 项目，或手动启动 Server 后导入配对信息".into())
+        }
+        None => {
+            let config = temporary_provision_config(&connection_id, config)?;
+            let host = config.host.clone();
+            let (descriptor, warning) =
+                provision_with_temporary_session(&manager, config, port, startup, &progress)
+                    .await?;
+            (descriptor, warning, host)
+        }
     };
-    let host = session
-        .config
-        .lock()
-        .map_err(|_| "SSH 配置不可用")?
-        .host
-        .clone();
     let records = read(&app)?;
     let mut previous = records
         .get(&connection_id)
@@ -640,6 +736,36 @@ mod tests {
             stderr: stderr.into(),
             exit_code,
         })
+    }
+    #[test]
+    fn temporary_provision_requires_own_confirmed_ssh_config() {
+        let config = SshConnectionConfig {
+            id: "c1".into(),
+            host: "server.example".into(),
+            port: 22,
+            username: "dev".into(),
+            auth_kind: "password".into(),
+            password: Some("secret".into()),
+            private_key_path: None,
+            passphrase: None,
+            host_key_fingerprint: Some("SHA256:confirmed".into()),
+            mode: Some(RemoteMode::Server),
+        };
+        assert!(temporary_provision_config("c1", None)
+            .unwrap_err()
+            .contains("测试 SSH 连接"));
+        assert!(temporary_provision_config("other", Some(config.clone()))
+            .unwrap_err()
+            .contains("[direct:ssh-identity]"));
+        let unconfirmed = SshConnectionConfig {
+            host_key_fingerprint: Some(" ".into()),
+            ..config.clone()
+        };
+        assert!(temporary_provision_config("c1", Some(unconfirmed))
+            .unwrap_err()
+            .contains("[direct:ssh-identity]"));
+        let accepted = temporary_provision_config("c1", Some(config)).unwrap();
+        assert_eq!(accepted.mode, None);
     }
     #[test]
     fn enabling_startup_warns_with_the_remote_reason_instead_of_failing() {

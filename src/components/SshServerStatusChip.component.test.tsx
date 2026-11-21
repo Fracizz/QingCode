@@ -24,6 +24,9 @@ vi.mock('../lib/sshWorkspace', () => ({
   sshConnectionLabel: () => 'WSL（root@localhost）',
   sshRemotePathFromUri: (path: string) => path.replace(/^ssh:\/\/[^/]+/, '') || '/',
   sshRemoteDisplayPath: (path: string) => path,
+  hydrateSshSecrets: async () => {},
+  sshSecretsFor: () => ({}),
+  sshRuntimeConfig: (connection: { id: string; host: string }) => ({ id: connection.id, host: connection.host }),
 }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog }))
 
@@ -304,7 +307,7 @@ describe('SshServerStatusChip', () => {
   it('opens installation settings from Server details and closes the dialog', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
-    fireEvent.click(screen.getByRole('button', { name: '服务安装设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '服务包来源' }))
     expect(requestSettings).toHaveBeenCalledWith('ssh.server')
     expect(screen.queryByRole('dialog')).toBeNull()
   })

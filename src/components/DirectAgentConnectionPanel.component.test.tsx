@@ -65,7 +65,7 @@ describe('direct Agent connection panel', () => {
     expect(screen.getByRole('switch')).toBeChecked()
     fireEvent.click(screen.getByRole('switch'))
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
-    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, false))
+    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, false, expect.objectContaining({ onProgress: expect.any(Function) })))
   })
 
   it('shows a spinner while provisioning and restores the button after failure', async () => {
@@ -81,6 +81,32 @@ describe('direct Agent connection panel', () => {
     await act(async () => { reject(new Error('failed')) })
     expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).not.toBeDisabled()
     expect(screen.getByRole('alert')).toBeVisible()
+  })
+
+  it('provisions without an open project using the saved SSH config and shows each stage', async () => {
+    const api = apiMock(null)
+    const own: SshConnection = { ...ssh, id: 'c1' }
+    let finish!: (value: DirectAgentInfo) => void
+    vi.mocked(api.provision).mockImplementation((_id, _port, _autoStart, options) => {
+      options?.onProgress?.('package')
+      return new Promise(resolve => { finish = resolve })
+    })
+    await openPanel(api, [own])
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    await screen.findByText('正在准备服务包（优先使用离线目录，缺失时按设置在线下载）…')
+    expect(vi.mocked(api.provision).mock.calls[0][3]?.config).toEqual(expect.objectContaining({ id: 'c1', host: own.host, hostKeyFingerprint: own.host_key_fingerprint }))
+    await act(async () => { finish(info) })
+    expect(await screen.findByText('服务已准备。请开放显示的 TCP 端口，再测试直连。')).toBeVisible()
+  })
+
+  it('shows the backend reason when provisioning fails with an unclassified error', async () => {
+    const api = apiMock(null)
+    vi.mocked(api.provision).mockRejectedValue(new Error('远端服务包缺失：未找到离线服务包且已关闭自动下载'))
+    await openPanel(api)
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Server 操作失败。请检查服务状态后重试。')
+    expect(alert).toHaveTextContent('远端服务包缺失：未找到离线服务包且已关闭自动下载')
   })
 
   it('shows each test phase and never reports success before authentication finishes', async () => {

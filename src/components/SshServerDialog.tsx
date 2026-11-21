@@ -262,7 +262,7 @@ export default function SshServerDialog({
             onClick={onSettings}
           >
             <Settings2 size={14} aria-hidden />
-            {t(agent ? '直连设置' : '服务安装设置')}
+            {t(agent ? '直连设置' : '服务包来源')}
           </button>
           {compatibility ? (
             <button
@@ -328,7 +328,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
         ? t(agent ? '文件、搜索与终端通过独立 HTTPS / WSS 端口连接远端服务，不经过 SSH。' : '文件监控、内容搜索等功能由远端服务提供，所有通信均通过 SSH。')
         : pending
           ? t('准备完成后会自动更新状态，无需重复操作。')
-          : t('请查看诊断信息，检查服务安装设置后重试。')
+          : t('请查看诊断信息，检查服务包来源后重试。')
   const Icon = mismatch ? AlertCircle : pending
     ? LoaderCircle
     : ready || (compatibility && !offline)

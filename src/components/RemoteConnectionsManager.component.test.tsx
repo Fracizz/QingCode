@@ -375,6 +375,13 @@ describe('remote connection compatibility settings', () => {
     await waitFor(() => expect(input).toHaveAttribute('placeholder', '已保存在本机，留空则沿用'))
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
     await waitFor(() => expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: 'saved-secret' })))
+    await waitFor(() => expect(screen.getByRole('button', { name: '测试连接' })).not.toBeDisabled())
+    // 点眼睛回显已保存的密码；与已保存值相同，不算修改。
+    fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
+    expect(input).toHaveAttribute('type', 'text')
+    expect(input).toHaveValue('saved-secret')
+    fireEvent.click(screen.getByRole('button', { name: '隐藏密码' }))
+    expect(input).toHaveAttribute('type', 'password')
   })
 
   it('requires an explicit advanced choice to create a compatibility connection', async () => {
@@ -437,7 +444,7 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({ sshConnections: [connection('server')] })
     useUIStore.setState({ remoteConnectionsCreating: false, remoteConnectionsOpen: true })
     render(<RemoteConnectionsManager />)
-    fireEvent.click(await screen.findByRole('button', { name: '服务安装设置' }))
+    fireEvent.click(await screen.findByRole('button', { name: '服务包来源' }))
     expect(useUIStore.getState().remoteConnectionsOpen).toBe(false)
     expect(useUIStore.getState().settingsFocusQuery).toBe('ssh.server')
   })
