@@ -167,7 +167,7 @@ const SCM_ACTION_TOOLTIP = 'flex h-full w-full items-center justify-center'
 // 尺寸用 em 跟随界面字号缩放（默认字号下仍为 14px），避免大字号时字母撑出方块；
 // 等宽字体让 M/+/D 等字形左右对称。
 const STATUS_BADGE =
-  'inline-flex h-[1.4em] w-[1.4em] shrink-0 items-center justify-center rounded-[3px] font-mono text-ui-2xs font-bold'
+  'inline-flex h-[1.4em] w-[1.4em] shrink-0 items-center justify-center rounded font-mono text-ui-2xs font-bold'
 // 裁掉字体上下留白，按大写字母高度垂直居中，避免字形偏上或偏下。
 const STATUS_BADGE_GLYPH = 'block leading-none [text-box:trim-both_cap_alphabetic]'
 

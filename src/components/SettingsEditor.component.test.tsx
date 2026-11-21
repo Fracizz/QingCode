@@ -231,8 +231,8 @@ describe('SettingsEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '编辑器与文件', exact: true }))
     expect(animate).toHaveBeenCalledWith(
-      [{ opacity: 0 }, { opacity: 1 }],
-      expect.objectContaining({ duration: 120 }),
+      [{ opacity: 0.35 }, { opacity: 1 }],
+      expect.objectContaining({ duration: 140 }),
     )
     const search = screen.getByPlaceholderText('搜索设置')
     fireEvent.change(search, { target: { value: '字体' } })
