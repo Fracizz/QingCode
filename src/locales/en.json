@@ -94,6 +94,8 @@
     "客户端需要的版本": "Required client version",
     "服务包版本": "Package version",
     "服务包来源": "Package source",
+    "配置 Server 直连": "Set up Server connection",
+    "通过此 SSH 连接部署并配对 Server，之后改用 TLS 端口直连。": "Deploy and pair the Server over this SSH connection, then connect directly over the TLS port.",
     "正在准备服务包（优先使用离线目录，缺失时按设置在线下载）…": "Preparing the service package (offline directory first, otherwise downloading per settings)…",
     "正在上传并启动 Server…": "Uploading and starting Server…",
     "正在配置开机自启…": "Configuring start at boot…",

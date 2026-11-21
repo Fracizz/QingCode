@@ -190,12 +190,38 @@ fn remote_os(uname: &str) -> Result<RemoteOs, String> {
     }
 }
 
+struct ChannelOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    code: Option<u32>,
+}
+
+/// 远端输出不是 JSON 时附上 stderr 末行，便于定位脚本或环境问题（已去控制字符并限长）。
+fn stderr_hint(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let line: String = text
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!("：{line}")
+    }
+}
+
 async fn run_channel(
     session: &ConnectedSession,
     command: &str,
     input: &[u8],
     timeout: Duration,
-) -> Result<(Vec<u8>, Option<u32>), String> {
+) -> Result<ChannelOutput, String> {
     let mut channel = open_session_channel_once(session, "Server 防火墙授权")
         .await
         .map_err(|error| error.message)?;
@@ -234,18 +260,22 @@ async fn run_channel(
     .map_err(|_| "[direct:firewall] SSH 防火墙授权操作超时，规则状态未知，请重新检查".to_string());
     let _ = channel.close().await;
     result??;
-    Ok((stdout, code))
+    Ok(ChannelOutput {
+        stdout,
+        stderr,
+        code,
+    })
 }
 
-fn parse_result(stdout: &[u8], code: Option<u32>, os: RemoteOs) -> Result<Value, String> {
+fn parse_result(output: &ChannelOutput, os: RemoteOs) -> Result<Value, String> {
     // Linux 的 sudo 失败兜底行可能跟在其他输出后，取最后一行 JSON。
-    let text = String::from_utf8_lossy(stdout);
+    let text = String::from_utf8_lossy(&output.stdout);
     let value: Value = text
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str(line.trim()).ok())
         .ok_or_else(|| {
-            if code == Some(127) {
+            if output.code == Some(127) {
                 match os {
                     RemoteOs::Windows => {
                         "[direct:firewall-unsupported] 该主机不支持 Windows PowerShell 防火墙授权"
@@ -256,7 +286,10 @@ fn parse_result(stdout: &[u8], code: Option<u32>, os: RemoteOs) -> Result<Value,
                 }
                 .to_string()
             } else {
-                "[direct:firewall] 远端未返回有效的防火墙检查结果".to_string()
+                format!(
+                    "[direct:firewall] 远端未返回有效的防火墙检查结果{}",
+                    stderr_hint(&output.stderr)
+                )
             }
         })?;
     if value.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -288,9 +321,9 @@ async fn execute(
             }
         })?;
     let action = async {
-        let (uname, _) = run_channel(&session, "uname -s", &[], Duration::from_secs(10)).await?;
-        let os = remote_os(&String::from_utf8_lossy(&uname))?;
-        let (stdout, code) = match os {
+        let uname = run_channel(&session, "uname -s", &[], Duration::from_secs(10)).await?;
+        let os = remote_os(&String::from_utf8_lossy(&uname.stdout))?;
+        let output = match os {
             RemoteOs::Windows => {
                 let (command, input) = command(port, expected, &identity)?;
                 run_channel(
@@ -316,7 +349,7 @@ async fn execute(
                 .await?
             }
         };
-        parse_result(&stdout, code, os)
+        parse_result(&output, os)
     }
     .await;
     let _ = session
@@ -651,20 +684,44 @@ mod tests {
     }
     #[test]
     fn parse_result_uses_last_json_line() {
-        let out =
-            b"noise\n{\"ok\":false,\"code\":\"[direct:firewall-admin]\",\"message\":\"sudo\"}\n";
-        assert!(parse_result(out, Some(1), RemoteOs::Linux)
+        let output = |stdout: &[u8], stderr: &[u8], code| ChannelOutput {
+            stdout: stdout.to_vec(),
+            stderr: stderr.to_vec(),
+            code,
+        };
+        let denied = output(
+            b"noise\n{\"ok\":false,\"code\":\"[direct:firewall-admin]\",\"message\":\"sudo\"}\n",
+            b"",
+            Some(1),
+        );
+        assert!(parse_result(&denied, RemoteOs::Linux)
             .unwrap_err()
             .starts_with("[direct:firewall-admin]"));
-        assert_eq!(
-            parse_result(
-                b"{\"ok\":true,\"value\":{\"port\":1}}",
-                Some(0),
-                RemoteOs::Linux
-            )
-            .unwrap()["port"],
-            1
+        let ok = output(b"{\"ok\":true,\"value\":{\"port\":1}}", b"", Some(0));
+        assert_eq!(parse_result(&ok, RemoteOs::Linux).unwrap()["port"], 1);
+        let broken = output(
+            b"",
+            b"sh: line 1: $'\\r': command not found\n\x1b[0m\n",
+            Some(2),
         );
+        let error = parse_result(&broken, RemoteOs::Linux).unwrap_err();
+        assert!(error.contains("command not found"), "{error}");
+        assert!(!error.contains('\x1b'));
+    }
+    #[test]
+    fn linux_script_is_sent_with_lf_line_endings() {
+        let command = linux_command(48763, None, &management_identity(&sample())).unwrap();
+        let encoded = command
+            .split("printf %s ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .unwrap();
+        let script = String::from_utf8(
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded).unwrap(),
+        )
+        .unwrap();
+        assert!(!script.contains('\r'));
+        assert!(script.contains("plan()"));
     }
     #[test]
     fn rule_plan_is_scoped_and_does_not_restart_or_delete_services() {

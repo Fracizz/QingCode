@@ -1439,6 +1439,8 @@ function makeTerminal() {
       unsupportedScrollGesture = gesture;
       showTerminalToast(t('此全屏程序未开启鼠标滚动，可用 PgUp / PgDn 翻页'), 2200);
     },
+    // 全屏程序没开鼠标上报（如 Windows 上的 pi）：手指滑动改发翻页键，raw 避免叠加修饰键。
+    pageScroll: direction => { sendInput(direction < 0 ? '\x1b[5~' : '\x1b[6~', { raw: true }); },
     loadPage: async before => {
       // formatted：新版电脑端返回带基本颜色的历史；旧版忽略该参数，仍返回纯文本。
       const data = await remote('history', { id: historySession, before, formatted: true });

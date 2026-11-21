@@ -177,6 +177,13 @@ export default function RemoteConnectionsManager() {
   const [saving, setSaving] = useState(false)
   const [directDraft, setDirectDraft] = useState({ dirty: false, busy: false })
   const updateDirectDraft = useCallback((value: { dirty: boolean; busy: boolean }) => setDirectDraft(value), [])
+  /** 从概览「配置 Server 直连」进入编辑时，直接展开直连面板并滚动到它。 */
+  const [directPanelRequested, setDirectPanelRequested] = useState(false)
+  const directPanelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => { if (!editing) setDirectPanelRequested(false) }, [editing])
+  useEffect(() => {
+    if (editing && directPanelRequested) directPanelRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [editing, directPanelRequested])
   const [actionMenu, setActionMenu] = useState<{ x: number; y: number } | null>(null)
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null)
   const navigationPending = useRef(false)
@@ -1274,13 +1281,13 @@ export default function RemoteConnectionsManager() {
 
                     {!isNew && selected && (
                       <>
-                        {editing && <DirectAgentConnectionPanel
+                        {editing && <div ref={directPanelRef} className="scroll-mt-3"><DirectAgentConnectionPanel
                           onDraftStateChange={updateDirectDraft}
                           key={selected.id}
                           connectionId={selected.id}
                           defaultHost={selected.host}
                           standalone={standaloneAgent}
-                          initiallyOpen={directEnabled}
+                          initiallyOpen={directEnabled || directPanelRequested}
                           sshSection={directEnabled && !standaloneAgent ? {
                             summary: `${sshConnectionTarget(selected)} · ${t('可切回 SSH')}`,
                             dirty,
@@ -1302,7 +1309,7 @@ export default function RemoteConnectionsManager() {
                             setDirectInfos(prev => ({ ...prev, [selected.id]: info }))
                             void refreshDetail(selected.id)
                           }}
-                        />}
+                        /></div>}
                         {!editing && <>
                         <ConnectionDefaultProfile connectionId={selected.id} />
                         {(directEnabled || standaloneAgent || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') && (
@@ -1408,10 +1415,28 @@ export default function RemoteConnectionsManager() {
                                 <CircleHelp size={14} aria-hidden />
                               </button>
                             </Tooltip>
+                            {!directEnabled && !standaloneAgent && (
+                              <Tooltip
+                                label={t('通过此 SSH 连接部署并配对 Server，之后改用 TLS 端口直连。')}
+                                side="top"
+                                wrapperClassName="ml-auto inline-flex shrink-0"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDirectPanelRequested(true)
+                                    setEditing(true)
+                                  }}
+                                  className="btn btn-secondary btn-sm border-dialog-border"
+                                >
+                                  <Server size={14} />{t('配置 Server 直连')}
+                                </button>
+                              </Tooltip>
+                            )}
                             <Tooltip
                               label={t('设置本机如何获取远端服务包：缺失时在线下载或使用离线目录。不会修改远程主机。')}
                               side="top"
-                              wrapperClassName="ml-auto inline-flex shrink-0"
+                              wrapperClassName={`${!directEnabled && !standaloneAgent ? '' : 'ml-auto '}inline-flex shrink-0`}
                             >
                               <button
                                 type="button"
