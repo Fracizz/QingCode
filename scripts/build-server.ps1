@@ -213,12 +213,10 @@ try {
         }
     }
 
-    # 版本号与 SERVER_VERSION 同源：直接从 qingcode-server/Cargo.toml 读取
-    # （lib.rs 的 SERVER_VERSION = CARGO_PKG_VERSION = 该文件 version 字段）。
-    $versionLine = Select-String -Path (Join-Path (Get-Location) "qingcode-server\Cargo.toml") `
-        -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
-    if (-not $versionLine) { throw "无法从 qingcode-server/Cargo.toml 读取版本号" }
-    $serverVersion = $versionLine.Matches[0].Groups[1].Value
+    # 版本号与 SERVER_VERSION 同源：读取 tauri.conf.json 的 version
+    # （qingcode-server/build.rs 同样读取该文件写入 OUT_DIR）。
+    $serverVersion = [string](Get-Content -LiteralPath (Join-Path (Get-Location) "tauri.conf.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
+    if (-not $serverVersion) { throw "无法从 src-tauri/tauri.conf.json 读取版本号" }
 
     $manifest = [ordered]@{
         version   = $serverVersion

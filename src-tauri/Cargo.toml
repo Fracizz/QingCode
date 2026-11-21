@@ -1,7 +1,10 @@
 [package]
 name = "qingcode"
 default-run = "qingcode"
-version = "0.1.19"
+# 固定为 0.0.0，不随发版 bump：Cargo 把包版本算进 crate 哈希，版本一变主 crate 的
+# 增量编译缓存全部作废（打包冷编译 ~110s，增量仅 ~15s）。真实版本唯一来源是
+# tauri.conf.json，由 build.rs 写入 OUT_DIR，代码经 include_str! 读取。
+version = "0.0.0"
 description = "QingCode — a lightweight multi-project code editor"
 authors = ["Franciz"]
 license = "MIT"
@@ -31,6 +34,8 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "~2.6", features = [] }
+# build.rs 读取 tauri.conf.json 的 version（tauri-build 已依赖它，不增加编译量）。
+serde_json = "1"
 
 [dependencies]
 base64 = "0.22"

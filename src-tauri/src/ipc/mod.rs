@@ -254,7 +254,7 @@ fn handle_client(app: AppHandle, stream: TcpStream, token: &str) -> Result<(), S
         let ui_ready = preferred_window(&app).is_some_and(|label| is_bridge_ready(&label));
         let data = serde_json::json!({
             "pid": std::process::id(),
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::APP_VERSION,
             "protocol": PROTOCOL_VERSION,
             "uiReady": ui_ready,
         });

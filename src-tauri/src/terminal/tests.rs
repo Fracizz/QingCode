@@ -87,10 +87,7 @@ fn terminal_identity_overrides_inherited_values() {
     super::apply_terminal_identity(&mut cmd, "tab-1", r"C:\Windows\System32\cmd.exe");
     let value = |name: &str| cmd.get_env(name).and_then(|value| value.to_str());
     assert_eq!(value("TERM_PROGRAM"), Some("QingCode"));
-    assert_eq!(
-        value("TERM_PROGRAM_VERSION"),
-        Some(env!("CARGO_PKG_VERSION"))
-    );
+    assert_eq!(value("TERM_PROGRAM_VERSION"), Some(crate::APP_VERSION));
     assert_eq!(value("QINGCODE_TERMINAL_ID"), Some("tab-1"));
 }
 

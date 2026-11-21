@@ -97,7 +97,7 @@ fn current_build() -> Result<&'static CurrentBuild, String> {
                 .map_or(0, |elapsed| elapsed.as_secs());
             let len = metadata.len();
             Ok(CurrentBuild {
-                stamp: copy_stamp(env!("CARGO_PKG_VERSION"), len, modified_secs),
+                stamp: copy_stamp(crate::APP_VERSION, len, modified_secs),
                 source,
                 len,
             })

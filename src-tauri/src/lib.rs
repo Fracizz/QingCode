@@ -1,3 +1,7 @@
+/// 应用版本，唯一来源 tauri.conf.json（build.rs 写入 OUT_DIR）。Cargo.toml 版本固定 0.0.0。
+pub(crate) const APP_VERSION: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/qingcode_version.txt"));
+
 mod app_memory;
 mod app_paths;
 mod binary_ext;

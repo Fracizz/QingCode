@@ -40,16 +40,10 @@ jobs:
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          CARGO=$(grep -E '^version\s*=\s*"' src-tauri/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-          # 远端 server 的 SERVER_VERSION 取自该 crate 版本；漏 bump 会导致远端 server
-          # 版本漂移、每次连接都重新部署，因此一并校验。
-          SERVER=$(grep -E '^version\s*=\s*"' src-tauri/qingcode-server/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-          if [[ "$VERSION" != "$CONF" || "$VERSION" != "$CARGO" ]]; then
-            echo "Version mismatch: package=$VERSION tauri=$CONF cargo=$CARGO" >&2
-            exit 1
-          fi
-          if [[ "$VERSION" != "$SERVER" ]]; then
-            echo "Version mismatch: package=$VERSION qingcode-server=$SERVER" >&2
+          # Cargo.toml 版本固定为 0.0.0；Rust 侧（含远端 SERVER_VERSION）由 build.rs
+          # 从 tauri.conf.json 注入，因此只需校验 package.json 与 tauri.conf.json。
+          if [[ "$VERSION" != "$CONF" ]]; then
+            echo "Version mismatch: package=$VERSION tauri=$CONF" >&2
             exit 1
           fi
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
