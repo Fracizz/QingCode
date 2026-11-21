@@ -1,10 +1,17 @@
 [package]
 name = "qingcode-server"
-version = "0.1.19"
+# 固定为 0.0.0，不随发版 bump：Cargo 把包版本算进 crate 哈希，版本一变主 crate 的
+# 增量编译缓存全部作废（打包冷编译 ~110s，增量仅 ~15s）。真实版本唯一来源是
+# tauri.conf.json，由 build.rs 写入 OUT_DIR，代码经 include_str! 读取。
+version = "0.0.0"
 description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
 authors = ["Franciz"]
 license = "MIT"
 edition = "2021"
+
+[build-dependencies]
+# build.rs 读取 ../tauri.conf.json 的 version 注入 SERVER_VERSION。
+serde_json = "1"
 
 [lib]
 name = "qingcode_server"

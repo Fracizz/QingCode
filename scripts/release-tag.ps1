@@ -16,24 +16,15 @@ function Get-JsonVersion([string]$Path) {
   return [string]$json.version
 }
 
-function Get-CargoVersion([string]$Path) {
-  $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
-  $m = [regex]::Match($raw, '(?m)^version\s*=\s*"([^"]+)"')
-  if (-not $m.Success) { throw "version not found in $Path" }
-  return $m.Groups[1].Value
-}
-
 Push-Location $projectRoot
 try {
   $pkg = Get-JsonVersion (Join-Path $projectRoot 'package.json')
-  $cargo = Get-CargoVersion (Join-Path $projectRoot 'src-tauri\Cargo.toml')
   $tauri = Get-JsonVersion (Join-Path $projectRoot 'src-tauri\tauri.conf.json')
 
-  if ($pkg -ne $Version -or $cargo -ne $Version -or $tauri -ne $Version) {
+  if ($pkg -ne $Version -or $tauri -ne $Version) {
     throw @"
 Version mismatch. Expected $Version in all manifests:
   package.json          = $pkg
-  src-tauri/Cargo.toml  = $cargo
   src-tauri/tauri.conf  = $tauri
 Run: pnpm bump:version $Version
 "@

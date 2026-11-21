@@ -115,7 +115,7 @@ fn prepare_host_executable() -> Result<PathBuf, String> {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |elapsed| elapsed.as_secs());
     let bin_root = base_dir().join("bin");
-    let stamp = copy_stamp(env!("CARGO_PKG_VERSION"), metadata.len(), modified_secs);
+    let stamp = copy_stamp(crate::APP_VERSION, metadata.len(), modified_secs);
     let dir = bin_root.join(&stamp);
     let target = dir.join(format!("{HOST_EXE_STEM}.exe"));
     let current = std::fs::metadata(&target).is_ok_and(|meta| meta.len() == metadata.len());

@@ -1066,10 +1066,7 @@ fn mobile_wsl_args(distro: &str, cwd: &str, startup: Option<&str>) -> Vec<String
 pub(crate) fn terminal_identity_env(id: &str) -> [(&'static str, String); 3] {
     [
         ("TERM_PROGRAM", "QingCode".to_string()),
-        (
-            "TERM_PROGRAM_VERSION",
-            env!("CARGO_PKG_VERSION").to_string(),
-        ),
+        ("TERM_PROGRAM_VERSION", crate::APP_VERSION.to_string()),
         ("QINGCODE_TERMINAL_ID", id.to_string()),
     ]
 }

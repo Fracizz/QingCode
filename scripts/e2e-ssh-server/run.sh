@@ -199,8 +199,9 @@ command -v python3 >/dev/null || die "缺少 python3"
 [ -f "$QC_E2E_BINARY" ] || die "找不到 server 二进制：$QC_E2E_BINARY（先跑 scripts/build-server.ps1 -Targets x86_64）"
 info "本地二进制：$QC_E2E_BINARY ($(du -h "$QC_E2E_BINARY" | cut -f1))"
 
-EXPECT_VERSION=$(tr -d '\r' <"$REPO_ROOT/src-tauri/qingcode-server/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
-[ -n "$EXPECT_VERSION" ] || die "无法从 qingcode-server/Cargo.toml 解析版本号"
+# SERVER_VERSION 由 qingcode-server/build.rs 从 tauri.conf.json 注入（Cargo.toml 固定 0.0.0）。
+EXPECT_VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$REPO_ROOT/src-tauri/tauri.conf.json")
+[ -n "$EXPECT_VERSION" ] || die "无法从 src-tauri/tauri.conf.json 解析版本号"
 info "仓库期望版本：$EXPECT_VERSION"
 
 setup_askpass

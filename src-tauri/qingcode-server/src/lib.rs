@@ -44,10 +44,10 @@ use tokio::net::TcpStream;
 
 /// 与 qingcode 主程序版本保持一致：客户端用它判断远端代理是否需要重新部署。
 ///
-/// 单一来源：直接取 `CARGO_PKG_VERSION`（即 qingcode-server/Cargo.toml 的
-/// `version` 字段），不得另设常量副本，避免两处漂移。构建脚本
-/// `scripts/build-server.ps1` 生成 manifest.json 时也从同一个 Cargo.toml
-/// 读取版本号。
+/// 单一来源：build.rs 把 `src-tauri/tauri.conf.json` 的 `version` 写入
+/// `OUT_DIR/qingcode_version.txt`（Cargo.toml 的 version 固定为 0.0.0，避免 bump 让增量
+/// 编译缓存失效），不得另设常量副本。构建脚本 `scripts/build-server.ps1`
+/// 生成 manifest.json 时也从同一个 tauri.conf.json 读取版本号。
 ///
 /// 与 [`proto::PROTOCOL_VERSION`] 的关系（两个常量各管一摊，不要混用）：
 /// `SERVER_VERSION` 是发版粒度，每次发布都会变，对应部署在
@@ -58,7 +58,7 @@ use tokio::net::TcpStream;
 ///
 /// 客户端按 SERVER_VERSION 决定是否重新部署，按 PROTOCOL_VERSION 判定
 /// 能否互通；协议向后兼容/降级协商策略由客户端负责，代理侧本期不实现。
-pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SERVER_VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/qingcode_version.txt"));
 
 /// 单帧上限。内容搜索原始行不超过 2MB；serve 另按最终 JSON 字节数
 /// 限制转义文本与高亮区间，保证完整记录和结束帧均可发送。

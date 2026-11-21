@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing server-v* tag to (re)build. Leave empty to use qingcode-server/Cargo.toml version and create/update the release.'
+        description: 'Existing server-v* tag to (re)build. Leave empty to use src-tauri/tauri.conf.json version and create/update the release.'
         required: false
         type: string
 
@@ -154,7 +154,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(grep -m1 '^version' src-tauri/qingcode-server/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          # SERVER_VERSION 由 qingcode-server/build.rs 从 tauri.conf.json 注入（Cargo.toml 固定 0.0.0）。
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           TAG="${{ inputs.tag }}"
           if [ -z "$TAG" ]; then
             TAG="server-v$VERSION"

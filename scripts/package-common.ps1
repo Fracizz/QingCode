@@ -125,26 +125,18 @@ function Invoke-ForceQingcodeEmbedRebuild {
     [string]$Target = ''
   )
 
-  # Frontend Dist changes are easy for Cargo to miss (dir mtime). Clean the
-  # release package so the next --release build re-runs build.rs / re-embeds assets.
-  # Use --release only: a full clean also deletes target/debug and fails while
-  # `tauri dev` still holds qingcode.exe (Windows error 5).
-  Write-Host '  frontend updated - forcing qingcode rebuild to re-embed dist/' -ForegroundColor DarkGray
-  $manifest = Join-Path $ProjectRoot 'src-tauri\Cargo.toml'
-  $cleanArgs = @('clean', '-p', 'qingcode', '--release', '--manifest-path', $manifest, '--quiet')
-  if ($Target) {
-    $cleanArgs += @('--target', $Target)
+  # 不再 `cargo clean -p qingcode`：它会连同增量编译缓存一起删掉，让每次打包都
+  # 冷编译主 crate（~110s）。build.rs 声明了 rerun-if-changed=../dist/index.html，
+  # 刷新它的 mtime 即可让 build.rs 重跑、tauri 重新嵌入 dist/ 与图标，主 crate 走
+  # 增量编译（~15s）。$Target 保留仅为兼容调用方。
+  $null = $Target
+  Write-Host '  frontend/icons updated - touching dist/index.html to re-embed (incremental)' -ForegroundColor DarkGray
+  $distIndex = Join-Path $ProjectRoot 'dist\index.html'
+  if (Test-Path -LiteralPath $distIndex) {
+    (Get-Item -LiteralPath $distIndex).LastWriteTimeUtc = [DateTime]::UtcNow
   }
-
+  # 仍需结束占用 target/release/qingcode.exe 的进程，否则链接写出 exe 会失败。
   Stop-LockingQingcodeProcesses -ProjectRoot $ProjectRoot
-  & cargo @cleanArgs
-  if ($LASTEXITCODE -ne 0) {
-    Stop-LockingQingcodeProcesses -ProjectRoot $ProjectRoot
-    & cargo @cleanArgs
-  }
-  if ($LASTEXITCODE -ne 0) {
-    throw "cargo clean -p qingcode --release failed with exit code $LASTEXITCODE. Close QingCode or tauri dev and retry."
-  }
 }
 
 # --- SSH 远端 server 二进制（qingcode-server）打包支持 ---
@@ -217,12 +209,7 @@ function Get-ServerBinaryFiles {
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
   $clientVersion = (Get-Content (Join-Path $ProjectRoot 'package.json') -Raw | ConvertFrom-Json).version
   $tauriVersion = (Get-Content (Join-Path $ProjectRoot 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json).version
-  foreach ($cargoFile in @('src-tauri/Cargo.toml', 'src-tauri/qingcode-server/Cargo.toml')) {
-    $versionLine = Select-String -LiteralPath (Join-Path $ProjectRoot $cargoFile) -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
-    if (-not $versionLine -or $versionLine.Matches[0].Groups[1].Value -cne $clientVersion) {
-      throw "Server/client version mismatch in $cargoFile (expected $clientVersion)"
-    }
-  }
+  # Cargo.toml 版本固定为 0.0.0（见其注释），Rust 侧版本由 build.rs 读 tauri.conf.json 写入 OUT_DIR。
   if (-not $clientVersion -or $manifest.version -cne $clientVersion -or $tauriVersion -cne $clientVersion) {
     throw "Server/client version mismatch: manifest=$($manifest.version), client=$clientVersion, tauri=$tauriVersion (rebuild server; drop -SkipServer)"
   }
