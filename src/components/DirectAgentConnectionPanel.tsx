@@ -524,7 +524,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   const firewallBody = <div className="grid grid-cols-1 items-start gap-3 text-ui-sm @min-[48rem]/direct-agent:grid-cols-2">
     <div className="min-w-0 space-y-2">
-      <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口（仅支持 Windows 远端）；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
+      <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口（支持 Windows 与 Linux firewalld/ufw 远端；Linux 需 root 或 sudo 权限）；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
       <label className="block text-dialog-label">{t('远端系统')}<select value={firewallPlatform} onChange={event => { firewallPlatformPicked.current = true; setFirewallPlatformDetected(false); setFirewallPlatform(event.target.value as DirectAgentFirewallPlatform | '') }} className={fieldClass}>
         <option value="">{t('请选择')}</option>
         {FIREWALL_PLATFORMS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}

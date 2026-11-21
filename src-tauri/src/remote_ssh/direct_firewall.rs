@@ -4,6 +4,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const SCRIPT: &str = include_str!("direct_firewall.ps1");
+const LINUX_SCRIPT: &str = include_str!("direct_firewall.sh");
 const LIMIT: usize = 256 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,12 +154,128 @@ fn command(port: u16, expected: Option<&str>, identity: &str) -> Result<(String,
     Ok((command, input))
 }
 
+/// Linux：脚本经 base64 放在命令行里，stdin 只留给 sudo 读密码；非 root 时用
+/// `sudo -S`，免密 sudo 不读 stdin，密码行原样丢弃，不会被当作命令执行。
+fn linux_command(port: u16, expected: Option<&str>, identity: &str) -> Result<String, String> {
+    validate_port(port)?;
+    validate_hash(identity)?;
+    if let Some(hash) = expected {
+        validate_hash(hash)?;
+    }
+    let script = encode_terminal_data(LINUX_SCRIPT.as_bytes());
+    let args = format!(
+        "qc {port} \"{}\" {} {identity} \"$C\" \"$U\"",
+        expected.unwrap_or(""),
+        u8::from(expected.is_some())
+    );
+    Ok(format!(
+        "sh -c 'S=$(printf %s {script} | base64 -d) || exit 127; C=$SSH_CONNECTION; U=$(id -un); if [ \"$(id -u)\" = 0 ]; then sh -c \"$S\" {args}; else sudo -S -p \"\" sh -c \"$S\" {args} || printf \"%s\\n\" \"{{\\\"ok\\\":false,\\\"code\\\":\\\"[direct:firewall-admin]\\\",\\\"message\\\":\\\"sudo\\\"}}\"; fi'"
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteOs {
+    Windows,
+    Linux,
+}
+
+/// `uname -s` 只在类 Unix shell 下有输出；Windows 的 cmd/PowerShell 报错，
+/// Git Bash 输出 MINGW*，都按 Windows 处理。macOS 暂不支持自动放行。
+fn remote_os(uname: &str) -> Result<RemoteOs, String> {
+    match uname.trim() {
+        "Linux" => Ok(RemoteOs::Linux),
+        "Darwin" => Err("[direct:firewall-unsupported] macOS 暂不支持通过 SSH 自动放行".into()),
+        _ => Ok(RemoteOs::Windows),
+    }
+}
+
+async fn run_channel(
+    session: &ConnectedSession,
+    command: &str,
+    input: &[u8],
+    timeout: Duration,
+) -> Result<(Vec<u8>, Option<u32>), String> {
+    let mut channel = open_session_channel_once(session, "Server 防火墙授权")
+        .await
+        .map_err(|error| error.message)?;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut code = None;
+    let result = tokio::time::timeout(timeout, async {
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|_| "[direct:firewall] 无法执行 SSH 授权检查")?;
+        if !input.is_empty() {
+            channel
+                .data(input)
+                .await
+                .map_err(|_| "[direct:firewall] 无法发送 SSH 授权检查脚本")?;
+        }
+        channel
+            .eof()
+            .await
+            .map_err(|_| "[direct:firewall] 无法结束 SSH 授权请求")?;
+        while let Some(message) = channel.wait().await {
+            match message {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
+                _ => {}
+            }
+            if stdout.len() + stderr.len() > LIMIT {
+                return Err("[direct:firewall] 远端响应过大".to_string());
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "[direct:firewall] SSH 防火墙授权操作超时，规则状态未知，请重新检查".to_string());
+    let _ = channel.close().await;
+    result??;
+    Ok((stdout, code))
+}
+
+fn parse_result(stdout: &[u8], code: Option<u32>, os: RemoteOs) -> Result<Value, String> {
+    // Linux 的 sudo 失败兜底行可能跟在其他输出后，取最后一行 JSON。
+    let text = String::from_utf8_lossy(stdout);
+    let value: Value = text
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str(line.trim()).ok())
+        .ok_or_else(|| {
+            if code == Some(127) {
+                match os {
+                    RemoteOs::Windows => {
+                        "[direct:firewall-unsupported] 该主机不支持 Windows PowerShell 防火墙授权"
+                    }
+                    RemoteOs::Linux => {
+                        "[direct:firewall-unsupported] 该主机缺少 base64/sh，无法自动放行"
+                    }
+                }
+                .to_string()
+            } else {
+                "[direct:firewall] 远端未返回有效的防火墙检查结果".to_string()
+            }
+        })?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        let code = value["code"].as_str().unwrap_or("[direct:firewall]");
+        let message = value["message"].as_str().unwrap_or("远端防火墙操作失败");
+        return Err(format!("{code} {message}"));
+    }
+    Ok(value["value"].clone())
+}
+
 async fn execute(
     config: SshConnectionConfig,
     port: u16,
     expected: Option<&str>,
 ) -> Result<(Value, String), String> {
-    let (command, input) = command(port, expected, &management_identity(&config))?;
+    let identity = management_identity(&config);
+    // 只有密码登录时才把同一密码交给 sudo；私钥口令不是系统密码。
+    let sudo_password = (config.auth_kind == "password")
+        .then(|| config.password.clone())
+        .flatten();
     let (session, fingerprint) = authenticate_session(config, ConnectionPurpose::Main)
         .await
         .map_err(|error| {
@@ -170,57 +287,35 @@ async fn execute(
             }
         })?;
     let action = async {
-        let mut channel = open_session_channel_once(&session, "Server 防火墙授权")
-            .await
-            .map_err(|error| error.message)?;
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let mut code = None;
-        let result = tokio::time::timeout(Duration::from_secs(35), async {
-            channel
-                .exec(true, command.as_bytes())
-                .await
-                .map_err(|_| "[direct:firewall] 无法执行 SSH 授权检查")?;
-            channel
-                .data(input.as_bytes())
-                .await
-                .map_err(|_| "[direct:firewall] 无法发送 SSH 授权检查脚本")?;
-            channel
-                .eof()
-                .await
-                .map_err(|_| "[direct:firewall] 无法结束 SSH 授权请求")?;
-            while let Some(message) = channel.wait().await {
-                match message {
-                    ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
-                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                    ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
-                    _ => {}
-                }
-                if stdout.len() + stderr.len() > LIMIT {
-                    return Err("[direct:firewall] 远端响应过大".into());
-                }
+        let (uname, _) = run_channel(&session, "uname -s", &[], Duration::from_secs(10)).await?;
+        let os = remote_os(&String::from_utf8_lossy(&uname))?;
+        let (stdout, code) = match os {
+            RemoteOs::Windows => {
+                let (command, input) = command(port, expected, &identity)?;
+                run_channel(
+                    &session,
+                    &command,
+                    input.as_bytes(),
+                    Duration::from_secs(35),
+                )
+                .await?
             }
-            let value: Value = serde_json::from_slice(&stdout).map_err(|_| {
-                if code == Some(127) {
-                    "[direct:firewall-unsupported] 该主机不支持 Windows PowerShell 防火墙授权"
-                        .to_string()
-                } else {
-                    "[direct:firewall] 远端未返回有效的防火墙检查结果".to_string()
-                }
-            })?;
-            if value.get("ok").and_then(Value::as_bool) != Some(true) {
-                let code = value["code"].as_str().unwrap_or("[direct:firewall]");
-                let message = value["message"].as_str().unwrap_or("远端防火墙操作失败");
-                return Err(format!("{code} {message}"));
+            RemoteOs::Linux => {
+                let command = linux_command(port, expected, &identity)?;
+                let input = sudo_password
+                    .as_deref()
+                    .map(|password| format!("{password}\n"))
+                    .unwrap_or_default();
+                run_channel(
+                    &session,
+                    &command,
+                    input.as_bytes(),
+                    Duration::from_secs(35),
+                )
+                .await?
             }
-            Ok::<Value, String>(value["value"].clone())
-        })
-        .await
-        .map_err(|_| {
-            "[direct:firewall] SSH 防火墙授权操作超时，规则状态未知，请重新检查".to_string()
-        })?;
-        let _ = channel.close().await;
-        result
+        };
+        parse_result(&stdout, code, os)
     }
     .await;
     let _ = session
@@ -514,6 +609,61 @@ mod tests {
         changed.password = Some("changed-secret".into());
         assert_eq!(expected, management_identity(&changed));
         assert!(SCRIPT.contains("$identity + \"`n\""));
+    }
+    #[test]
+    fn remote_os_detection_defaults_to_windows_and_rejects_macos() {
+        assert_eq!(remote_os("Linux\n"), Ok(RemoteOs::Linux));
+        assert_eq!(remote_os(""), Ok(RemoteOs::Windows));
+        assert_eq!(remote_os("MINGW64_NT-10.0"), Ok(RemoteOs::Windows));
+        assert!(remote_os("Darwin")
+            .unwrap_err()
+            .contains("[direct:firewall-unsupported]"));
+    }
+    #[test]
+    fn linux_command_keeps_secrets_out_and_quotes_safely() {
+        let identity = management_identity(&sample());
+        let command = linux_command(48763, Some(&"b".repeat(64)), &identity).unwrap();
+        assert!(!command.contains("secret-not-in-script"));
+        assert!(command.starts_with("sh -c '") && command.ends_with('\''));
+        // 外层单引号内不得再出现单引号，否则会提前结束字符串。
+        assert_eq!(command.matches('\'').count(), 2);
+        assert!(command.contains("sudo -S -p"));
+        assert!(linux_command(48763, Some("x; rm -rf /"), &identity).is_err());
+        assert!(linux_command(0, None, &identity).is_err());
+    }
+    #[test]
+    fn linux_script_only_adds_scoped_rules() {
+        assert!(LINUX_SCRIPT
+            .contains("source address=\\\"$client\\\" destination address=\\\"$local\\\""));
+        assert!(LINUX_SCRIPT
+            .contains("ufw allow proto tcp from \"$client\" to \"$local\" port \"$port\""));
+        for forbidden in [
+            "--remove-",
+            "ufw delete",
+            "--reload",
+            "ufw disable",
+            "iptables -F",
+        ] {
+            assert!(!LINUX_SCRIPT.contains(forbidden), "{forbidden}");
+        }
+        assert!(LINUX_SCRIPT.contains("[ \"$hash\" = \"$expected\" ]"));
+    }
+    #[test]
+    fn parse_result_uses_last_json_line() {
+        let out =
+            b"noise\n{\"ok\":false,\"code\":\"[direct:firewall-admin]\",\"message\":\"sudo\"}\n";
+        assert!(parse_result(out, Some(1), RemoteOs::Linux)
+            .unwrap_err()
+            .starts_with("[direct:firewall-admin]"));
+        assert_eq!(
+            parse_result(
+                b"{\"ok\":true,\"value\":{\"port\":1}}",
+                Some(0),
+                RemoteOs::Linux
+            )
+            .unwrap()["port"],
+            1
+        );
     }
     #[test]
     fn rule_plan_is_scoped_and_does_not_restart_or_delete_services() {

@@ -525,6 +525,24 @@ async fn rebind_gateway(
     }
 }
 
+/// 未经隧道时准备端口直连监听，返回带凭据的配对信息。`direct --detach` 对同端口
+/// 运行中的网关是幂等的、不会改监听地址，Server 模式遗留的回环网关因此须换绑到
+/// 通配地址，否则防火墙放行后外部仍连不上。端口不同仍按原样报错，不暗中迁移端口。
+pub(super) async fn start_public_gateway(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    staged: &str,
+    port: u16,
+) -> Result<qingcode_server::direct::DirectInfo, String> {
+    let current = read_gateway(manager, root, staged).await?;
+    let target = port_direct_target(current.as_ref(), port);
+    let info = start_gateway(manager, root, staged, &target).await?;
+    if listens_at(&info, &target) {
+        return Ok(info);
+    }
+    move_gateway(manager, root, staged, &info, &target).await
+}
+
 /// 在已建立隧道的连接上准备端口直连：换绑网关并配置开机自启，返回配对信息。
 pub(super) async fn expose_gateway(
     manager: &SshManager,

@@ -513,6 +513,8 @@ pub(super) fn startup_outcome(
 }
 
 // SFTP returns /C:/... on Windows; PowerShell requires a native drive path.
+// 正式安装改走 `tunnel::start_public_gateway`；这里只供真机验收测试拼命令。
+#[cfg(test)]
 pub(super) fn provision_commands(bin: &str, port: u16) -> (String, String) {
     let unix = format!(
         "{} direct --port {port} --detach && {} direct-info --include-secret",
@@ -541,19 +543,11 @@ async fn provision_over_ssh(
     progress("package");
     let staged = server::stage_direct_gateway(manager, root).await?;
     progress("start");
-    let (unix, windows) = provision_commands(&staged, port);
-    let result = manager
-        .exec_remote_shell(&root.uri, &unix, &windows, true, Duration::from_secs(40))
-        .await?;
-    if result.exit_code != 0 {
-        return Err("启动直连服务失败，请查看远端 direct 日志或检查监听端口是否被占用".into());
+    // 同端口已有仅回环监听的网关（如曾用 Server 模式）时换绑到通配地址。
+    let descriptor = tunnel::start_public_gateway(manager, root, &staged, port).await?;
+    if descriptor.token.is_none() {
+        return Err("未取得 Server 配对信息，请手动启动服务并导入".into());
     }
-    let descriptor = result
-        .stdout
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str(line).ok())
-        .ok_or_else(|| "未取得 Server 配对信息，请手动启动服务并导入".to_string())?;
     // 单独执行：自启失败时网关已运行，配对信息也要照常返回。
     progress("startup");
     let (start_unix, start_windows) = startup_commands(&staged, startup);

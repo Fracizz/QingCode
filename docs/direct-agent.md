@@ -58,7 +58,7 @@ New-NetFirewallRule -DisplayName 'QingCode Server TCP 48763' -Direction Inbound 
 
 不要直接复制 `<客户端IP>` 占位符。界面展示当前端口及历史端口，便于核对已有规则；应用不会自动放开所有来源或删除旧规则。
 
-面板按远端系统生成手动放行命令（Windows、Linux firewalld、Linux ufw；macOS 按程序放行，只给操作说明）。已有信任的 SSH 会话时只读识别系统并预选，识别不了时不显示命令，由用户选择。「通过 SSH 授权放行」目前只支持 Windows。
+面板按远端系统生成手动放行命令（Windows、Linux firewalld、Linux ufw；macOS 按程序放行，只给操作说明）。已有信任的 SSH 会话时只读识别系统并预选，识别不了时不显示命令，由用户选择。「通过 SSH 授权放行」支持 Windows（NetSecurity，需管理员）和 Linux（运行中的 firewalld 或已启用的 ufw，需 root 或 sudo；密码登录时同一密码用于 sudo，仅经 stdin 传递）。Linux 只新增限定来源 IP、接收地址和 TCP 端口的规则（firewalld rich rule 同时写入永久与运行时配置，不重载）；firewalld/ufw 均未启用时视为无需放行，直接探测端口。macOS 不支持。
 
 面板支持「通过 SSH 授权放行」。选择同一主机已保存且已确认指纹的 SSH 连接，可为本次操作填写密码或私钥口令；本次填写的凭据不会持久保存。即使 Server 已启用，该操作也会独立建立 SSH 管理连接，不改变日常 HTTPS/WSS 通信。
 
@@ -80,7 +80,7 @@ New-NetFirewallRule -DisplayName 'QingCode Server TCP 48763' -Direction Inbound 
 
 界面显示当前端口和历史端口，并按当前有效端口和所选远端系统生成可复制的防火墙命令。Windows 命令只放行专用与域网络，Linux 命令对所有来源放行；公共网络、来源 IP 限制和上层网络映射由管理员按实际环境调整。历史端口只供核对，不参与连接失败后的自动尝试；用户确认旧端口不再使用后，自行清理对应规则。
 
-通过 SSH 授权放行则使用接收 SSH 连接网卡的实际网络配置文件，并限制为本次 SSH 来源 IP 和接收地址。修改端口后须为新端口重新授权，旧端口记录及旧规则保留，不自动删除或复用。
+通过 SSH 授权放行则使用接收 SSH 连接网卡的实际网络配置文件（Linux 为该网卡所属 firewalld 区域），并限制为本次 SSH 来源 IP 和接收地址。修改端口后须为新端口重新授权，旧端口记录及旧规则保留，不自动删除或复用。
 
 ## 通信与会话
 
@@ -156,3 +156,5 @@ Windows SFTP 返回的 `/C:/...` 不能直接交给 PowerShell 执行。准备�
 QC_SSHCTL=/path/to/sshctl QC_DIRECT_HOST=<authorized-host> QC_DIRECT_BIN=<staged-server> \
   cargo test --manifest-path src-tauri/Cargo.toml --lib live_provision_and_native_direct_connection -- --ignored --nocapture
 ```
+
+通过 SSH 安装或读取服务时，若同端口已有仅监听回环地址的网关（例如曾使用 Server 模式经 SSH 隧道连接），会停止并改为监听通配地址后再返回配对信息；端口不同则照常报错，不自动迁移端口。
