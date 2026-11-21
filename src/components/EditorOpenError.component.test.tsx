@@ -86,7 +86,7 @@ describe('EditorOpenError', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /下载到本地并打开/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^下载到本地$/ })).toBeInTheDocument()
     // No local handler for an ssh:// path, and retrying a binary read always fails.
     expect(screen.queryByRole('button', { name: /在关联的应用程序中打开/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^重试$/ })).not.toBeInTheDocument()
@@ -103,22 +103,23 @@ describe('EditorOpenError', () => {
 
     expect(screen.getByRole('button', { name: /在关联的应用程序中打开/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^重试$/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /下载到本地并打开/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^下载到本地$/ })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /在关联的应用程序中打开/ }))
     await waitFor(() => expect(mocks.openPath).toHaveBeenCalledWith('D:/code/app/shot.png'))
   })
 
-  it('downloads a remote file to the chosen folder and opens the local copy', async () => {
+  it('downloads a remote file to the chosen folder without opening it, toast offers open', async () => {
     mocks.openDialog.mockResolvedValue('C:\\Users\\me\\Downloads')
     mocks.startSshTransfer.mockResolvedValue({ status: 'completed', completedPaths: [remotePngPath] })
+    const pushToast = vi.spyOn(useProjectStore.getState(), 'pushToast')
 
     render(
       <EditorOpenError
         tab={tab({ openError: '远程文件包含二进制内容，不是文本文件', openErrorKind: 'binary' })}
       />,
     )
-    fireEvent.click(screen.getByRole('button', { name: /下载到本地并打开/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^下载到本地$/ }))
 
     await waitFor(() =>
       expect(mocks.startSshTransfer).toHaveBeenCalledWith({
@@ -128,9 +129,22 @@ describe('EditorOpenError', () => {
         ephemeral: true,
       }),
     )
+    const localPath = 'C:\\Users\\me\\Downloads\\paste-e641.png'
     await waitFor(() =>
-      expect(mocks.openPath).toHaveBeenCalledWith('C:\\Users\\me\\Downloads\\paste-e641.png'),
+      expect(pushToast).toHaveBeenCalledWith(
+        'success',
+        '已下载到本地',
+        localPath,
+        expect.objectContaining({ label: '打开' }),
+      ),
     )
+    // 默认仅下载，不自动打开
+    expect(mocks.openPath).not.toHaveBeenCalled()
+
+    const action = pushToast.mock.calls.find(call => call[0] === 'success')?.[3]
+    await action?.onAction()
+    expect(mocks.openPath).toHaveBeenCalledWith(localPath)
+    pushToast.mockRestore()
   })
 
   it('keeps the read-only preview escape hatch for remote decode failures', () => {

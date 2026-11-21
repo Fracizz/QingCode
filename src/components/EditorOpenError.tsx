@@ -82,8 +82,11 @@ export default function EditorOpenError({ tab }: Props) {
     }
   }
 
-  /** Remote files have no local handler — fetch a copy first, then open it. */
-  const downloadAndOpen = async () => {
+  /**
+   * Remote files have no local handler — fetch a copy to a chosen folder.
+   * Download only by default; the success toast offers opening the local copy.
+   */
+  const downloadToLocal = async () => {
     const destination = await openDialog({
       directory: true,
       multiple: false,
@@ -102,11 +105,23 @@ export default function EditorOpenError({ tab }: Props) {
       if (result.status !== 'completed') {
         throw new Error(result.error ?? t('传输未完成'))
       }
-      await openPath(joinLocalPath(destination, baseName(tab.path)))
+      const localPath = joinLocalPath(destination, baseName(tab.path))
+      useProjectStore.getState().pushToast('success', t('已下载到本地'), localPath, {
+        label: t('打开'),
+        onAction: async () => {
+          try {
+            await openPath(localPath)
+          } catch (error) {
+            useProjectStore
+              .getState()
+              .pushToast('error', t('下载后打开失败：{error}', { error: String(error) }))
+          }
+        },
+      })
     } catch (error) {
       useProjectStore
         .getState()
-        .pushToast('error', t('下载后打开失败：{error}', { error: String(error) }))
+        .pushToast('error', t('下载失败：{error}', { error: String(error) }))
     } finally {
       setDownloading(false)
     }
@@ -146,9 +161,9 @@ export default function EditorOpenError({ tab }: Props) {
         {remote ? (
           <ActionButton
             icon={<Download size={14} />}
-            label={t('下载到本地并打开')}
+            label={t('下载到本地')}
             busy={downloading}
-            onClick={() => void downloadAndOpen()}
+            onClick={() => void downloadToLocal()}
           />
         ) : (
           <ActionButton
