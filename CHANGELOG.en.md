@@ -12,7 +12,7 @@ The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and 
 
 ### Added
 
-- Shells are prewarmed per host and reused across project switches, covering local Windows and remote Windows and Linux/macOS in Server mode; Claude Code, Codex, and OpenCode can be prewarmed to open trusted projects faster; prewarming pauses when the remote daemon is outdated and the reason is shown in settings and terminal tabs.
+- Shells are prewarmed per host and reused across project switches, covering local Windows and remote Windows and Linux/macOS in Server mode; Claude Code, Codex, OpenCode, and pi can be prewarmed (pi preloads its dependencies in a dedicated empty directory and switches to the project when claimed; without node or a non-npm install only the shell is prewarmed) to open trusted projects faster; prewarming pauses when the remote daemon is outdated and the reason is shown in settings and terminal tabs.
 - Run tasks in Windows SSH projects: `command` runs through `cmd` like local Windows, and `ps1`, `bat`, `sh`, and `script` are dispatched by type, in both direct SSH and Server mode.
 - Computer, phone, and tablet can view the same terminal at once and take over input explicitly; terminals can follow the exclusive device's size; "disconnect other devices" and shared-state badges; the desktop can view mobile terminal session history.
 - Default terminal profiles per connection; the CLI can list and select terminal profiles.
@@ -23,7 +23,7 @@ The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and 
 
 ### Changed
 
-- Terminal list redesign: fixed status column, color-coded source labels, grouping and drag-reordering by host, a "More" menu for low-frequency actions, and creation times.
+- Terminal list redesign: fixed status column, color-coded source labels, grouping and drag-reordering by host, a "More" menu for low-frequency actions, and creation times; prewarm and reconnect icons in terminal tabs now align with the tab text.
 - Smooth transitions for the sidebar, pages, and terminal switching, exit animations for overlays, and a motion setting; smoother terminal wheel scrolling.
 - Remote services prewarm and update concurrently per connection, updates can be confirmed with active terminals, and Windows server package uploads use larger chunks.
 - Softened terminal palettes for dark, graphite, and light themes; the light theme accent is now the brand teal.
