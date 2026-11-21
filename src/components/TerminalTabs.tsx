@@ -109,10 +109,9 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
     }
   }, [reserved])
 
-  // 小写拉丁名（如 codex）在中文字体行盒里视觉重心偏上，图标几何居中会显得“下沉”，上移 1.5px 与文字对齐。
   if (prewarm?.outcome === 'hit') {
     return (
-      <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0 items-center -translate-y-[1.5px]">
+      <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0">
         <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-fg-muted">
           <Zap size={12} aria-hidden="true" />
         </span>
@@ -121,7 +120,7 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
   }
   if (reserved && pendingVisible) {
     return (
-      <Tooltip label={t('正在接管预热终端…')} side="top" wrapperClassName="inline-flex shrink-0 items-center -translate-y-[1.5px]">
+      <Tooltip label={t('正在接管预热终端…')} side="top" wrapperClassName="inline-flex shrink-0">
         <LoaderCircle
           size={12}
           aria-label={t('正在接管预热终端…')}
@@ -138,7 +137,8 @@ export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTa
   return (
     <TerminalPaneHeader>
       {terminal?.name && (
-        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden px-2">
+        // 名称与状态图标按文字基线对齐（图标底边落在基线上），整组再在头部内垂直居中。
+        <div className="flex min-w-0 items-baseline gap-1.5 overflow-hidden px-2">
           <span className="min-w-0 truncate text-ui text-fg">{formatTerminalName(terminal.name)}</span>
           <TerminalPrewarmIndicator prewarm={terminal.prewarm} />
         </div>
@@ -431,42 +431,44 @@ export default function TerminalTabs({
                       )}
                     </button>
                   </Tooltip>
-                  {renamingId === t.id ? (
-                    <TerminalRenameInput
-                      terminalId={t.id}
-                      draft={renameDraft}
-                      inputRef={renameInputRef}
-                      committingRef={renameCommittingRef}
-                      onDraftChange={setRenameDraft}
-                      onCommit={commitRename}
-                      onCancel={cancelRename}
-                      className="min-w-[5rem] max-w-[14rem] h-[var(--ui-chip-height)] px-1.5 text-ui bg-bg border border-accent rounded-sm outline-none text-fg"
-                    />
-                  ) : (
-                    <Tooltip
-                      label={tooltipLines}
-                      side="top"
-                      wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
-                    >
-                      <span className={`text-ui truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
-                        {formatTerminalName(t.name)}
-                      </span>
-                    </Tooltip>
-                  )}
-                  {renamingId !== t.id && <TerminalPrewarmIndicator prewarm={t.prewarm} />}
-                  {t.status === 'reconnecting' && renamingId !== t.id && (
-                    <Tooltip
-                      label={translate('正在重新连接…')}
-                      side="top"
-                      wrapperClassName="inline-flex shrink-0 -translate-y-[1.5px]"
-                    >
-                      <LoaderCircle
-                        size={12}
-                        aria-label={translate('正在重新连接…')}
-                        className="flex-shrink-0 animate-spin text-warn"
+                  {/* 名称与状态图标按文字基线对齐，整组在标签内垂直居中。 */}
+                  <span className="flex min-w-0 items-baseline gap-1">
+                    {renamingId === t.id ? (
+                      <TerminalRenameInput
+                        terminalId={t.id}
+                        draft={renameDraft}
+                        inputRef={renameInputRef}
+                        committingRef={renameCommittingRef}
+                        onDraftChange={setRenameDraft}
+                        onCommit={commitRename}
+                        onCancel={cancelRename}
+                        className="min-w-[5rem] max-w-[14rem] h-[var(--ui-chip-height)] px-1.5 text-ui bg-bg border border-accent rounded-sm outline-none text-fg"
                       />
-                    </Tooltip>
-                  )}
+                    ) : (
+                      <Tooltip
+                        label={tooltipLines}
+                        side="top"
+                        wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
+                      >
+                        <span className={`text-ui truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
+                          {formatTerminalName(t.name)}
+                        </span>
+                      </Tooltip>
+                    )}
+                    {renamingId !== t.id && <TerminalPrewarmIndicator prewarm={t.prewarm} />}
+                    {t.status === 'reconnecting' && renamingId !== t.id && (
+                      <Tooltip
+                        label={translate('正在重新连接…')}
+                        side="top"
+                      >
+                        <LoaderCircle
+                          size={12}
+                          aria-label={translate('正在重新连接…')}
+                          className="flex-shrink-0 animate-spin text-warn"
+                        />
+                      </Tooltip>
+                    )}
+                  </span>
                   {t.status === 'exited' && renamingId !== t.id && (
                     <Tooltip
                       label={
