@@ -181,7 +181,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('如：前后端')}
-              className="flex-1 px-2 py-1 text-ui rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
+              className="flex-1 px-2 py-1 text-ui setting-input"
             />
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
@@ -207,7 +207,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               aria-label={t('跟随项目会话恢复')}
               value={restoreWithProjectSession ? 'on' : 'off'}
               onChange={event => setRestoreWithProjectSession(event.target.value === 'on')}
-              className="rounded-md border border-border bg-bg-deep px-2 py-1 text-ui-sm outline-none focus:border-accent"
+              className="setting-control w-auto text-ui-sm"
             >
               <option value="on">{t('开启')}</option>
               <option value="off">{t('关闭')}</option>
@@ -326,7 +326,7 @@ function TaskEditor({
   const unsupported = remote && (task.type === 'ps1' || task.type === 'bat')
 
   return (
-    <div className="rounded-md border border-border bg-bg/40 p-2 flex flex-col gap-1.5">
+    <div className="rounded-md border border-border p-2 flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <span className="text-ui-xs text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
         <input
@@ -334,13 +334,13 @@ function TaskEditor({
           value={task.name ?? ''}
           onChange={e => onChange({ name: e.target.value })}
           placeholder={t('任务名（可选，如：后端）')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm setting-input"
         />
         <select
           aria-label={t('任务类型')}
           value={task.type}
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
-          className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none"
+          className="max-w-[9.5rem] text-ui-sm setting-control"
         >
           {typeOptions.map(taskType => (
             <option key={taskType} value={taskType}>
@@ -385,7 +385,7 @@ function TaskEditor({
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
             placeholder={remote ? 'scripts/run_backend.py' : 'scripts/run_backend.ps1'}
-            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm setting-input font-mono"
           />
         </div>
       )}
@@ -396,7 +396,7 @@ function TaskEditor({
           value={task.cwd ?? ''}
           onChange={e => onChange({ cwd: e.target.value })}
           placeholder={t('留空=项目根；可相对，如 backend/')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm setting-input font-mono"
         />
       </div>
       {unsupported && !task.os?.linux && !task.os?.macos ? (
@@ -428,7 +428,7 @@ function TaskEditor({
                 )
               }
               placeholder="KEY"
-              className="w-28 px-1.5 py-0.5 text-ui-xs rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="w-28 px-1.5 py-0.5 text-ui-xs setting-input font-mono"
             />
             <span className="text-fg-dim">=</span>
             <input
@@ -440,7 +440,7 @@ function TaskEditor({
                 )
               }
               placeholder="value"
-              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs setting-input font-mono"
             />
             <button
               type="button"
@@ -558,7 +558,7 @@ function CommandTextarea({
       aria-label={ariaLabel}
       onChange={e => onChange(e.target.value)}
       onInput={resize}
-      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] rounded-md bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
+      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] setting-input font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
     />
   )
 }

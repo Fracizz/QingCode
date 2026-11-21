@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProjectStore } from '../../store/projectStore'
 import { useUIStore } from '../../store/uiStore'
 import { notifyCliPrewarmServerOutdated, resetCliPrewarmServerOutdatedNotices } from './cliPrewarmServerOutdated'
-import { notifyCliPrewarmBlocked } from './cliPrewarmBlocked'
+import { cliPrewarmPauseDetail, notifyCliPrewarmBlocked } from './cliPrewarmBlocked'
 
 describe('notifyCliPrewarmServerOutdated', () => {
   const pushToast = vi.fn()
@@ -39,5 +39,17 @@ describe('notifyCliPrewarmServerOutdated', () => {
     expect(pushToast).toHaveBeenCalledExactlyOnceWith('info', expect.stringContaining('windev'), expect.stringContaining('PowerShell 7'))
     notifyCliPrewarmBlocked({ ...payload, reason: 'cli_upgrade_required' })
     expect(pushToast).toHaveBeenCalledTimes(2)
+  })
+
+  it('CLI 未安装时提示命令名，OpenCode 同样提示', () => {
+    notifyCliPrewarmBlocked({ cwd: 'ssh://c1/D:/code/a', command: 'opencode', reason: 'cli_not_installed' })
+    expect(pushToast).toHaveBeenCalledExactlyOnceWith('info', expect.stringContaining('windev'), expect.stringContaining('未找到 opencode 命令'))
+  })
+
+  it('设置页只说明 CLI 相关的暂停原因', () => {
+    expect(cliPrewarmPauseDetail('cli_not_installed', 'codex')).toContain('未找到 codex 命令')
+    expect(cliPrewarmPauseDetail('profile_exited', 'codex')).toContain('已退出')
+    expect(cliPrewarmPauseDetail('remote_unavailable', 'codex')).toBeNull()
+    expect(cliPrewarmPauseDetail(null, 'codex')).toBeNull()
   })
 })

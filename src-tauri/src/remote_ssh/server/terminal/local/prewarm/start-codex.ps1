@@ -18,6 +18,11 @@
             if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
                 @(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop).Count) { exit 1 }
         }
+        # CLI 不在 PATH 上时报告「未安装」，预热暂停并提示，而不是笼统地启动失败。
+        if (!(Get-Command -Name $agent -ErrorAction SilentlyContinue)) {
+            [Console]::WriteLine("QC-${env:QINGCODE_PREWARM_NONCE}-cli_not_installed!")
+            exit 1
+        }
         if ($agent -eq 'codex' -and $anchor) {
             if ($anchor.Contains("'")) {
                 $key = ConvertTo-Json -InputObject $anchor -Compress

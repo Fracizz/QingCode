@@ -1994,6 +1994,7 @@ async function openProject(item, resumeOnly = false, target = null) {
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
+  get('terminal-prewarm').hidden = true;
   // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
   get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
   // 从工作台进入时工作台以快照往左退出，终端原地淡入；切换项目时已在终端页，直接摆放。

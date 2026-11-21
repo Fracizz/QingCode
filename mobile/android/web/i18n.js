@@ -246,6 +246,7 @@ export const EN = Object.freeze({
   '草稿': 'Draft',
   '直发': 'Direct',
   '手机到电脑往返延迟': 'Phone-to-computer round trip',
+  '已领取预热终端': 'Opened from a prewarmed terminal',
   '电脑 --': 'PC --',
   '终端列数和行数': 'Terminal columns and rows',
   '收起按键': 'Hide keys',

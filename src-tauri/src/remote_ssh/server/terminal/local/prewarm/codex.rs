@@ -196,6 +196,8 @@ const LOGIN_REQUIRED: &str = "cli_login_required";
 const TRUST_REQUIRED: &str = "cli_trust_required";
 const SCRIPT_BLOCKED: &str = "cli_script_blocked";
 const HANDOFF_UNAVAILABLE: &str = "cli_handoff_unavailable";
+/// 启动脚本在 PATH 上找不到所选 CLI。
+pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
 
 pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
     match error {
@@ -204,6 +206,7 @@ pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
         TRUST_REQUIRED => Some(TRUST_REQUIRED),
         SCRIPT_BLOCKED => Some(SCRIPT_BLOCKED),
         HANDOFF_UNAVAILABLE => Some(HANDOFF_UNAVAILABLE),
+        CLI_NOT_INSTALLED => Some(CLI_NOT_INSTALLED),
         _ => None,
     }
 }
@@ -213,6 +216,10 @@ fn startup_blocker(agent: &str, screen: &str, anchor: &str, nonce: &str) -> Opti
     let marker = format!("QC-{nonce}-script_blocked!");
     if screen.lines().any(|line| line.trim() == marker) {
         return Some(SCRIPT_BLOCKED);
+    }
+    let missing = format!("QC-{nonce}-cli_not_installed!");
+    if screen.lines().any(|line| line.trim() == missing) {
+        return Some(CLI_NOT_INSTALLED);
     }
     if agent == "codex" {
         if has("Update available") && has("Update now") && has("Skip until next version") {

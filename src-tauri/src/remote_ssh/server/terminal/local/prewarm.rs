@@ -1390,7 +1390,8 @@ impl DaemonSession {
     ) -> Result<u64, String> {
         let expected = format!("QC-{nonce}-{phase}!");
         let failed = format!("QC-{nonce}-error!");
-        let keep = expected.len().max(failed.len()) - 1;
+        let missing = format!("QC-{nonce}-cli_not_installed!");
+        let keep = expected.len().max(failed.len()).max(missing.len()) - 1;
         let mut tail = Vec::new();
         let events = self.events_mut().ok_or("预热会话没有事件流")?;
         while let Some(event) = events.recv().await {
@@ -1399,6 +1400,9 @@ impl DaemonSession {
                     tail.extend(data);
                     if tail.windows(failed.len()).any(|s| s == failed.as_bytes()) {
                         return Err("远端 Shell 无法进入已校验的项目目录".into());
+                    }
+                    if tail.windows(missing.len()).any(|s| s == missing.as_bytes()) {
+                        return Err(codex::CLI_NOT_INSTALLED.into());
                     }
                     if tail
                         .windows(expected.len())

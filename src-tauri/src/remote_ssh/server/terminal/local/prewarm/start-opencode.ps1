@@ -11,6 +11,10 @@
     }
     $nonce = $env:QINGCODE_PREWARM_NONCE
     Remove-Item Env:QINGCODE_PREWARM_NONCE
+    if (!(Get-Command -Name opencode -ErrorAction SilentlyContinue)) {
+        [Console]::Write("QC-$nonce-cli_not_installed!")
+        exit 1
+    }
     $previousUser = $env:OPENCODE_SERVER_USERNAME
     $previousPassword = $env:OPENCODE_SERVER_PASSWORD
     $env:OPENCODE_SERVER_USERNAME = 'qingcode'

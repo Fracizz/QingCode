@@ -218,6 +218,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
     setText(get('terminal-name'), current ? sessionName(current) : project?.name ?? t('终端'));
+    get('terminal-prewarm').hidden = current?.prewarm !== true;
     // 顶栏副行空间有限：只留项目名和连接名（如 qingcode · WinDev），完整来源在会话侧栏里。
     setText(get('terminal-host'), project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '');
     setText(get('session-context'), project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '');

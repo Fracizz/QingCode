@@ -161,13 +161,14 @@ pub(super) async fn create(
         .and_then(|result| result)
     };
     let kept = hub.finish_create(&id, result.is_ok());
-    result?;
+    let prewarm_hit = result?.prewarm_hit;
     if !kept {
         let _ = end(app, id, project.kind).await;
         return Err("移动连接已停止或设备已移除。".into());
     }
-    let inner = hub.inner.lock().unwrap();
-    let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
+    let mut inner = hub.inner.lock().unwrap();
+    let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
+    session.prewarm_hit = prewarm_hit;
     Ok(session.metadata(&id))
 }
 

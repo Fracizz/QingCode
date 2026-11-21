@@ -8,6 +8,12 @@ unset QINGCODE_PREWARM_AGENT QINGCODE_CODEX_HANDOFF QINGCODE_CODEX_ANCHOR
 [ -n "$anchor" ] && [ ! -L "$anchor" ] || exit 1
 mkdir -p -- "$anchor" && cd -P -- "$anchor" || exit 1
 [ -z "$(ls -A .)" ] || exit 1
+# CLI 不在 PATH 上时报告「未安装」，预热暂停并提示，而不是笼统地启动失败。
+if ! command -v -- "$agent" >/dev/null 2>&1; then
+    printf 'QC-%s-cli_not_installed!
+' "$QINGCODE_PREWARM_NONCE"
+    exit 1
+fi
 if [ "$agent" = codex ]; then
     # Trust only this directory and only for this process; config.toml is untouched.
     case $PWD in *[\"\\]*) exit 1 ;; esac

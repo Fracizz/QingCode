@@ -687,6 +687,11 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .terminal-sub .dot { width: 6px; height: 6px; }
 #terminal-host { min-width: 0; }
 .terminal-heading h1 { font-size: 16px; font-weight: 650; }
+/* 标题行：会话名后跟预热标识（领取了电脑端预热终端时显示的灰色闪电）。 */
+.terminal-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.terminal-title h1 { min-width: 0; }
+.prewarm-mark { flex: none; width: 14px; height: 14px; color: var(--muted); }
+.prewarm-mark[hidden] { display: none; }
 #terminal-latency { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #terminal-host:not(:empty) + #terminal-latency::before { content: '·'; margin-right: 6px; }
 #new-session { color: var(--accent); }
@@ -1224,7 +1229,7 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
   /* 矮屏顶栏只留一行：标题后跟状态点和延迟。 */
   #terminal-host { display: none; }
   .terminal-heading { display: flex; align-items: center; gap: 8px; }
-  .terminal-heading h1 { min-width: 0; }
+  .terminal-title { flex: 0 1 auto; }
   .terminal-sub { flex: none; margin-top: 0; }
   #terminal-host:not(:empty) + #terminal-latency::before { content: none; }
   #terminal-tools { padding-top: 4px; padding-bottom: max(4px, var(--safe-bottom), var(--corner-bottom-inset)); }

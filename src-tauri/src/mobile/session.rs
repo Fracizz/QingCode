@@ -75,6 +75,8 @@ pub(super) struct Session {
     pub(super) lease: u64,
     /// 串行化写入与改尺寸：一条输入整体写完，才处理下一条或改尺寸。
     pub(super) control_gate: Arc<tokio::sync::Mutex<()>>,
+    /// 新建时领取了电脑端的预热终端；手机在标题旁显示 ⚡。
+    pub(super) prewarm_hit: bool,
     /// 电脑终端镜像已通过电脑端检查（已信任项目里的交互式终端），手机可以接入。
     pub(super) approved: bool,
     /// 电脑终端镜像从终端启动或整屏快照开始记录，画面完整；否则接入时向电脑要一次当前画面。
@@ -110,6 +112,7 @@ impl Session {
             sharing,
             lease: 1,
             control_gate: Arc::default(),
+            prewarm_hit: false,
             approved: false,
             complete: false,
             presence_signature: 0,
@@ -431,7 +434,8 @@ impl Session {
             "programTitle": self.screen.title(), "programBusy": self.display_busy(),
             "name": self.name(), "customName": self.custom_name, "nameRevision": self.name_revision,
             "lastActiveAt": self.last_active_ms, "createdAt": self.created_at_ms,
-            "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64) })
+            "idleDeadline": self.exit.is_none().then(|| self.last_active_ms + TERMINAL_IDLE.as_millis() as u64),
+            "prewarm": self.prewarm_hit })
     }
 
     /// 后台提醒只需要状态：名称用于通知标题，不返回程序标题之外的终端内容。

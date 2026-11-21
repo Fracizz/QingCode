@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '@/types'
 
@@ -138,7 +138,8 @@ describe('TerminalTabs', () => {
 
     mocks.state.terminals = [terminal({ prewarm: { outcome: 'hit', kind: 'profile' } })]
     view.rerender(<TerminalTabs />)
-    expect(within(screen.getByRole('tab')).getByRole('img', { name: '已领取预热终端' })).toHaveTextContent('预热')
+    expect(within(screen.getByRole('tab')).getByRole('img', { name: '已领取预热终端' })).toBeInTheDocument()
+    expect(document.querySelector('[data-tooltip="已领取预热终端"]')).toBeInTheDocument()
     expect(document.querySelector('[data-tab-measure-id="t1"] [data-terminal-prewarm]')).toBeInTheDocument()
 
     mocks.state.terminals = [terminal({ prewarm: { outcome: 'miss', reason: 'claim_fallback' } })]
@@ -146,9 +147,22 @@ describe('TerminalTabs', () => {
     expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
   })
 
+  it('shows a delayed spinner while a reserved prewarm terminal is being claimed', () => {
+    vi.useFakeTimers()
+    try {
+      mocks.state.terminals = [terminal({ prewarm: { outcome: 'reserved' } })]
+      render(<TerminalTabs />)
+      expect(screen.queryByLabelText('正在接管预热终端…')).toBeNull()
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(screen.getByLabelText('正在接管预热终端…')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows a confirmed Shell hit next to the workbench session title', () => {
     const view = render(<TerminalSessionHeader terminal={terminal({ prewarm: { outcome: 'hit' } })} />)
-    expect(screen.getByText('Remote').nextElementSibling).toBe(screen.getByRole('img', { name: '已领取预热终端' }))
+    expect(screen.getByText('Remote').nextElementSibling).toContainElement(screen.getByRole('img', { name: '已领取预热终端' }))
     view.rerender(<TerminalSessionHeader terminal={terminal()} />)
     expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
   })

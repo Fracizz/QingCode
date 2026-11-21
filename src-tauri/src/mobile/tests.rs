@@ -1586,6 +1586,14 @@ fn program_busy_handles_osc_and_unicode_split_across_chunks() {
 }
 
 #[test]
+fn metadata_reports_prewarm_hit_for_the_phone_badge() {
+    let mut session = Session::new(project(), "phone".into(), 1);
+    assert_eq!(session.metadata("mobile-1")["prewarm"], false);
+    session.prewarm_hit = true;
+    assert_eq!(session.metadata("mobile-1")["prewarm"], true);
+}
+
+#[test]
 fn activity_revisions_order_responses_without_changing_original_titles() {
     let mut session = Session::new(project(), "phone".into(), 1);
     session.push(OutputChunk::Bytes(

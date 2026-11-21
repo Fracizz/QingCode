@@ -10,6 +10,8 @@ import SettingSelect from './SettingSelect'
 import { useProjectStore } from '../store/projectStore'
 import { isWindowsSshRoot } from '../lib/sshWindowsRepair'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
+import { cliPrewarmPauseDetail } from '../lib/terminal/cliPrewarmBlocked'
+import { useCliPrewarmPause } from '../hooks/useCliPrewarmPause'
 
 export default function ConnectionPrewarmProfile({ connectionId }: { connectionId: string }) {
   const { t } = useI18n()
@@ -24,6 +26,7 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
   // 由已注册项目的根路径判断远端系统；没有项目时不提示。
   const roots = useProjectStore(s => s.projects).map(p => p.path).filter(path => sshConnectionIdFromUri(path) === connectionId)
   const posixRemote = roots.length > 0 && !roots.some(isWindowsSshRoot)
+  const pause = cliPrewarmPauseDetail(useCliPrewarmPause(roots, !!selected), selected?.command ?? '')
   return <div className="space-y-2">
     <h3 className="text-ui font-semibold text-fg">{t('远端 CLI 预热')}</h3>
     <p className="text-ui-sm text-fg-muted">{t('为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。')}</p>
@@ -36,5 +39,6 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
       }))]}
       onChange={id => saveConnectionPrewarmProfile(connectionId, profiles.find(p => p.id === id) ?? null)}
     /></div>
+    {pause && <p role="status" className="text-ui-sm text-warn">{pause}</p>}
   </div>
 }

@@ -38,6 +38,24 @@ fn startup_blockers_require_a_dialog_or_this_terminal_marker() {
 }
 
 #[test]
+fn startup_blocker_reports_a_missing_cli_only_for_this_terminal() {
+    for agent in ["codex", "claude"] {
+        assert_eq!(
+            startup_blocker(agent, "QC-nonce-cli_not_installed!", "/anchor", "nonce"),
+            Some(CLI_NOT_INSTALLED)
+        );
+        assert_eq!(
+            startup_blocker(agent, "QC-stale-cli_not_installed!", "/anchor", "nonce"),
+            None
+        );
+    }
+    assert_eq!(
+        interaction_blocker(CLI_NOT_INSTALLED),
+        Some(CLI_NOT_INSTALLED)
+    );
+}
+
+#[test]
 fn claude_only_confirms_the_selected_trust_choice_in_the_managed_directory() {
     let prompt = "Accessing workspace:\nD:/Test/codex-prewarm\nQuick safety check: Is this a project you created or one you trust?\n❯ No, exit\nYes, I trust this folder\nEnter to confirm · Esc to cancel";
     assert_eq!(
@@ -574,6 +592,11 @@ fn launch_scripts_never_carry_carriage_returns() {
         let script = launch_script(agent, powershell);
         assert!(!script.contains('\r'), "{agent} powershell={powershell}");
         assert!(!script.trim().is_empty());
+        // 每个启动脚本都要在运行 CLI 前检查命令是否存在。
+        assert!(
+            script.contains("-cli_not_installed!"),
+            "{agent} powershell={powershell}"
+        );
     }
 }
 

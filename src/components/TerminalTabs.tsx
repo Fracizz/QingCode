@@ -88,19 +88,49 @@ function TerminalPaneHeader({
   )
 }
 
-function TerminalPrewarmBadge() {
+/** 预留中的加载指示延迟显示，命中通常很快，避免一闪而过。 */
+const PREWARM_PENDING_DELAY_MS = 300
+
+/** 预热状态是否需要在标题旁占位（命中图标或接管中的加载指示）。 */
+function hasPrewarmIndicator(prewarm: TerminalTab['prewarm']): boolean {
+  return prewarm?.outcome === 'hit' || prewarm?.outcome === 'reserved'
+}
+
+function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm'] }) {
   const { t } = useI18n()
-  return (
-    <span
-      role="img"
-      aria-label={t('已领取预热终端')}
-      data-terminal-prewarm=""
-      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-ok/25 bg-ok/10 px-1 py-0.5 text-ui-xs font-medium leading-none text-ok"
-    >
-      <Zap size={10} aria-hidden="true" />
-      {t('预热')}
-    </span>
-  )
+  const reserved = prewarm?.outcome === 'reserved'
+  const [pendingVisible, setPendingVisible] = useState(false)
+  useEffect(() => {
+    if (!reserved) return
+    const timer = window.setTimeout(() => setPendingVisible(true), PREWARM_PENDING_DELAY_MS)
+    return () => {
+      window.clearTimeout(timer)
+      setPendingVisible(false)
+    }
+  }, [reserved])
+
+  if (prewarm?.outcome === 'hit') {
+    return (
+      <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0 items-center">
+        <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-fg-muted">
+          <Zap size={12} aria-hidden="true" />
+        </span>
+      </Tooltip>
+    )
+  }
+  if (reserved && pendingVisible) {
+    return (
+      <Tooltip label={t('正在接管预热终端…')} side="top" wrapperClassName="inline-flex shrink-0 items-center">
+        <LoaderCircle
+          size={12}
+          aria-label={t('正在接管预热终端…')}
+          data-terminal-prewarm-pending=""
+          className="shrink-0 animate-spin text-fg-muted"
+        />
+      </Tooltip>
+    )
+  }
+  return null
 }
 
 export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTab, 'name' | 'prewarm'> }) {
@@ -109,7 +139,7 @@ export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTa
       {terminal?.name && (
         <div className="flex min-w-0 items-center gap-1.5 overflow-hidden px-2">
           <span className="min-w-0 truncate text-ui text-fg">{formatTerminalName(terminal.name)}</span>
-          {terminal.prewarm?.outcome === 'hit' && <TerminalPrewarmBadge />}
+          <TerminalPrewarmIndicator prewarm={terminal.prewarm} />
         </div>
       )}
     </TerminalPaneHeader>
@@ -422,7 +452,7 @@ export default function TerminalTabs({
                       </span>
                     </Tooltip>
                   )}
-                  {showPrewarm && <TerminalPrewarmBadge />}
+                  {renamingId !== t.id && <TerminalPrewarmIndicator prewarm={t.prewarm} />}
                   {t.status === 'reconnecting' && renamingId !== t.id && (
                     <Tooltip
                       label={translate('正在重新连接…')}
@@ -603,7 +633,9 @@ export default function TerminalTabs({
             >
               <span className="ui-chip ui-chip-compact h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
-              {term.prewarm?.outcome === 'hit' && renamingId !== term.id && <TerminalPrewarmBadge />}
+              {hasPrewarmIndicator(term.prewarm) && renamingId !== term.id && (
+                <span data-terminal-prewarm="" className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+              )}
               {term.status === 'reconnecting' && (
                 <span className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
               )}
