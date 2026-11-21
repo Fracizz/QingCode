@@ -218,8 +218,117 @@ exit $process.ExitCode
     ))
 }
 
+/// Windows 远端运行任务的 PowerShell 启动参数（daemon 直接启动时使用）。
+pub(super) const WINDOWS_TASK_POWERSHELL_ARGS: [&str; 5] = [
+    "-NoLogo",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+];
+
+/// 运行任务交给 cmd 的命令行变量名；值由 PowerShell 写入，cmd 展开后再解析，
+/// 引号、`&&`、管道等与本地 Windows 的 `cmd /d /s /c <target>` 语义一致。
+const WINDOWS_TASK_COMMAND_ENV: &str = "QINGCODE_RUN_TASK_COMMAND";
+
+/// 任务脚本路径：SFTP 风格 `/D:/x`、`D:/x`、`D:\x` 或相对路径，统一成 Windows 原生写法。
+fn windows_task_path(target: &str) -> String {
+    windows_native_path(target).unwrap_or_else(|| target.replace('/', "\\"))
+}
+
+fn windows_task_path_is_absolute(native: &str) -> bool {
+    windows_native_path(native).is_some() || native.starts_with("\\\\")
+}
+
+/// 生成 Windows 远端一次性运行任务的 PowerShell 脚本。
+///
+/// - `command`：与本地 Windows 一致，用 `cmd.exe /d /s /c` 执行；
+/// - `ps1`：当前 PowerShell 直接调用（外层已 `-ExecutionPolicy Bypass`）；
+/// - `bat`：`cmd.exe /d /s /c "<path>"`；
+/// - `sh`：与本地 Windows 一致交给 `bash`（如 Git Bash）；
+/// - `script`：按扩展名选择上述方式，`.py` / `.js` 交给 python / node，其余按文件关联执行。
+pub(super) fn windows_task_script(
+    native_cwd: &str,
+    shell_kind: &str,
+    target: &str,
+    env: &HashMap<String, String>,
+) -> Result<String, String> {
+    if target.trim().is_empty() {
+        return Err("运行任务 target 不能为空".to_string());
+    }
+    if target.contains(['\0', '\r', '\n']) || native_cwd.contains(['\0', '\r', '\n']) {
+        return Err("运行任务包含无效字符".to_string());
+    }
+    let kind = if shell_kind == "script" {
+        let lower = target.to_ascii_lowercase();
+        let extension = lower
+            .rsplit(['/', '\\'])
+            .next()
+            .and_then(|name| name.rsplit_once('.').map(|(_, ext)| ext.to_string()))
+            .unwrap_or_default();
+        match extension.as_str() {
+            "ps1" => "ps1",
+            "bat" | "cmd" => "bat",
+            "sh" | "bash" => "sh",
+            "py" => "py",
+            "js" | "mjs" | "cjs" => "node",
+            _ => "file",
+        }
+    } else {
+        shell_kind
+    };
+    let path = || {
+        let native = windows_task_path(target.trim());
+        if native.contains('"') {
+            return Err("运行任务路径不能包含双引号".to_string());
+        }
+        Ok(native)
+    };
+    let cmd_line = |line: String| -> String {
+        format!(
+            "$env:{WINDOWS_TASK_COMMAND_ENV} = '{}'; & cmd.exe /d /s /c '%{WINDOWS_TASK_COMMAND_ENV}%'; exit $LASTEXITCODE",
+            powershell_literal(&line)
+        )
+    };
+    let run = match kind {
+        "command" => cmd_line(target.to_string()),
+        "bat" | "file" => cmd_line(format!("\"{}\"", path()?)),
+        "sh" => cmd_line(format!("bash \"{}\"", path()?)),
+        "py" => cmd_line(format!("python \"{}\"", path()?)),
+        "node" => cmd_line(format!("node \"{}\"", path()?)),
+        "ps1" => {
+            let native = path()?;
+            let invoked = if windows_task_path_is_absolute(&native) || native.starts_with(".\\") {
+                native
+            } else {
+                format!(".\\{native}")
+            };
+            format!(
+                "$global:LASTEXITCODE = 0; & '{}'; if (-not $?) {{ if ($LASTEXITCODE) {{ exit $LASTEXITCODE }}; exit 1 }}; exit $LASTEXITCODE",
+                powershell_literal(&invoked)
+            )
+        }
+        other => return Err(format!("Windows SSH 项目不支持的运行任务类型：{other}")),
+    };
+    let mut keys = env.keys().collect::<Vec<_>>();
+    keys.sort();
+    let mut script =
+        format!("{WINDOWS_POWERSHELL_UTF8_SETUP}; $ProgressPreference = 'SilentlyContinue'; ");
+    for key in keys {
+        script.push_str(&format!(
+            "$env:{key} = '{}'; ",
+            powershell_literal(&env[key])
+        ));
+    }
+    script.push_str(&format!(
+        "Set-Location -LiteralPath '{}'; {run}",
+        powershell_literal(native_cwd)
+    ));
+    Ok(script)
+}
+
 pub(super) const WINDOWS_REMOTE_COMMAND_ERROR: &str =
-    "Windows SSH 项目暂不支持远程命令、搜索、格式化和运行任务";
+    "Windows SSH 项目暂不支持远程命令、搜索和格式化";
 
 pub(super) fn reject_windows_remote_command(path: &str) -> Result<(), String> {
     if windows_native_path(path).is_some() {

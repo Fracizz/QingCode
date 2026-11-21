@@ -408,6 +408,30 @@ pub(super) fn persistent_task_launch(
     }
 }
 
+/// Windows 远端一次性运行任务交给 daemon：直接启动 PowerShell 执行编码脚本。
+pub(super) fn windows_persistent_task_launch(
+    script: &str,
+    name: Option<String>,
+) -> server::PersistentLaunch {
+    let utf16 = script
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let mut args = WINDOWS_TASK_POWERSHELL_ARGS
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect::<Vec<_>>();
+    args.push(encode_terminal_data(&utf16));
+    server::PersistentLaunch {
+        shell: Some("powershell".to_string()),
+        args,
+        env: std::collections::BTreeMap::new(),
+        name,
+        resolved_shell: "powershell".to_string(),
+        fallback_from: None,
+    }
+}
+
 pub(super) fn direct_windows_profile_command(
     path: &str,
     target: &str,
@@ -623,10 +647,11 @@ pub(crate) async fn ssh_spawn_script_unchecked(
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
-    if matches!(shell_kind.as_str(), "ps1" | "bat") {
+    let parsed = parse_remote_uri(&cwd)?;
+    let windows_cwd = windows_native_path(&parsed.path);
+    if windows_cwd.is_none() && matches!(shell_kind.as_str(), "ps1" | "bat") {
         return Err("SSH Linux 项目暂不支持 PowerShell 或 BAT 任务".to_string());
     }
-    let parsed = parse_remote_uri(&cwd)?;
     let root_uri = project_root.as_deref().unwrap_or(&cwd);
     if parse_remote_uri(root_uri)?.connection_id != parsed.connection_id {
         return Err("任务工作目录必须使用当前项目的 SSH 连接".into());
@@ -637,9 +662,6 @@ pub(crate) async fn ssh_spawn_script_unchecked(
         let sftp = manager.open_sftp(&parsed.connection_id).await?;
         Some(ensure_existing_path_within(&sftp, &parsed.path, &root).await?)
     };
-    if shell_kind != "interactive" {
-        reject_windows_remote_command(&parsed.path)?;
-    }
     let target = if target.starts_with(SSH_URI_PREFIX) {
         let script = parse_remote_uri(&target)?;
         if script.connection_id != parsed.connection_id {
@@ -649,8 +671,16 @@ pub(crate) async fn ssh_spawn_script_unchecked(
     } else {
         target
     };
-    if matches!(shell_kind.as_str(), "sh" | "script") {
-        let path = if target.starts_with('/') {
+    if matches!(shell_kind.as_str(), "sh" | "script" | "ps1" | "bat") {
+        let path = if windows_cwd.is_some() {
+            // Windows 远端：`D:\x`、`D:/x` 转成 SFTP 的 `/D:/x`，相对路径按项目目录拼接。
+            let normalized = target.trim().replace('\\', "/");
+            if windows_native_path(&normalized).is_some() {
+                format!("/{}", normalized.trim_start_matches('/'))
+            } else {
+                join_remote_path(&parsed.path, normalized.trim_start_matches("./"))
+            }
+        } else if target.starts_with('/') {
             target.clone()
         } else {
             join_remote_path(&parsed.path, &target)
@@ -679,7 +709,27 @@ pub(crate) async fn ssh_spawn_script_unchecked(
         ),
         _ => format!("{env_prefix}exec /bin/sh -lc {}", shell_quote(&target)),
     };
-    let command = if shell_kind == "interactive" && windows_native_path(&parsed.path).is_some() {
+    // Windows 远端的一次性运行任务：整段 PowerShell 脚本走 -EncodedCommand，与默认 shell 无关。
+    let windows_task = match (&windows_cwd, shell_kind.as_str()) {
+        (Some(native), kind) if kind != "interactive" => {
+            Some(windows_task_script(native, kind, &target, &env)?)
+        }
+        _ => None,
+    };
+    let command = if let Some(script) = &windows_task {
+        let command = windows_encoded_powershell(
+            &format!(
+                "powershell.exe {}",
+                WINDOWS_TASK_POWERSHELL_ARGS[..WINDOWS_TASK_POWERSHELL_ARGS.len() - 1].join(" ")
+            ),
+            script,
+            true,
+        );
+        if command.len() > WINDOWS_INLINE_COMMAND_LIMIT {
+            return Err("运行任务命令过长，Windows 远端无法启动，请改用脚本文件".to_string());
+        }
+        command
+    } else if shell_kind == "interactive" && windows_cwd.is_some() {
         direct_windows_profile_command(&parsed.path, &target, &env, shell.as_deref())?
     } else {
         format!("cd -- {} && {invocation}", shell_quote(&parsed.path))
@@ -719,7 +769,9 @@ pub(crate) async fn ssh_spawn_script_unchecked(
                 }
             }
         }
-        let launch = if shell_kind == "interactive" {
+        let launch = if let Some(script) = &windows_task {
+            windows_persistent_task_launch(script, name)
+        } else if shell_kind == "interactive" {
             persistent_profile_launch(&parsed.path, &target, &env, shell.as_deref(), name)?
         } else {
             persistent_task_launch(&invocation, name)

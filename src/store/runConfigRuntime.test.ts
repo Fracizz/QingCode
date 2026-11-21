@@ -143,6 +143,55 @@ describe('run config runtime helpers', () => {
     expect(add).not.toHaveBeenCalled()
   })
 
+  it('resolves Windows SSH absolute task working directories', () => {
+    const project = { path: 'ssh://windev/D:/code/app' }
+    expect(resolveRunTaskCwd(project, 'backend\\')).toBe('ssh://windev/D:/code/app/backend')
+    expect(resolveRunTaskCwd(project, 'E:\\svc\\')).toBe('ssh://windev/E:/svc')
+    expect(resolveRunTaskCwd(project, 'E:/svc')).toBe('ssh://windev/E:/svc')
+  })
+
+  it('runs Windows SSH tasks with Windows overrides, including PowerShell', async () => {
+    vi.mocked(getRunEnvironment).mockResolvedValue({ os: 'windows', kind: 'ssh' })
+    const add = vi.fn().mockResolvedValue('new-terminal')
+    useTerminalStore.setState({ addScriptTerminal: add })
+    const project = {
+      id: 'p1',
+      name: 'app',
+      path: 'ssh://windev/D:/code/app',
+      ephemeral: true,
+      created_at: 1,
+      last_opened_at: 1,
+    }
+    const config: RunConfig = {
+      id: 'dev',
+      name: 'dev',
+      tasks: [
+        { id: 'cmd', type: 'command', target: 'claude -p "hi"' },
+        { id: 'ps', type: 'ps1', target: 'scripts\\build.ps1' },
+      ],
+    }
+    const result = await runConfig(project, config, { throwOnError: true })
+    expect(result?.tasks).toHaveLength(2)
+    expect(add).toHaveBeenCalledWith(
+      'p1',
+      project.path,
+      'command',
+      'claude -p "hi"',
+      {},
+      'dev',
+      { runConfigId: 'dev', runTaskId: 'cmd' }
+    )
+    expect(add).toHaveBeenCalledWith(
+      'p1',
+      project.path,
+      'ps1',
+      'scripts\\build.ps1',
+      {},
+      'dev',
+      { runConfigId: 'dev', runTaskId: 'ps' }
+    )
+  })
+
   it('treats awaitingRestoreSpawn as active even when status is exited', () => {
     expect(isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: true })).toBe(true)
     expect(isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: false })).toBe(false)

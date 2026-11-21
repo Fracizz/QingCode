@@ -105,7 +105,8 @@ Ctrl+C（POSIX 另发 SIGTERM），程序仍在运行时 0.5 秒后再发一次 
 按进程启动时间校验，避免误杀 PID 被复用的无关进程。退出应用时所有终端共享同一宽限期。
 内联命令依然是受信任的任意用户命令，目录检查不构成 Shell 命令沙箱。
 
-Windows SSH 运行任务仍受现有平台限制，会明确提示不支持。macOS SSH 需使用已具备
+Windows SSH 运行任务按 `windows` 覆盖解析：`command` 与本地 Windows 一致经 `cmd.exe /d /s /c`
+执行，`ps1` 由远端 PowerShell 执行，`bat` 经 cmd，`sh` 交给远端 PATH 中的 `bash`。macOS SSH 需使用已具备
 POSIX 执行能力的连接；远端服务的可用平台与部署资产仍以 [SSH 工作区文档](ssh-workspaces.md) 为准。
 
 ## CLI 与服务验证

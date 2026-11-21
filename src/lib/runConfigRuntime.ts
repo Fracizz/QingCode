@@ -178,6 +178,10 @@ export function resolveRunTaskCwd(project: Pick<Project, 'path'>, cwd?: string):
     if (!connection) return project.path
     const normalized = value.replace(/\\/g, '/')
     if (normalized.startsWith('/')) return `${connection}${normalized.replace(/\/+$/, '') || '/'}`
+    // Windows 远端的绝对路径（D:\x 或 D:/x）
+    if (/^[A-Za-z]:(\/|$)/.test(normalized)) {
+      return `${connection}/${normalized.replace(/\/+$/, '')}`
+    }
     return `${project.path.replace(/\/+$/, '')}/${normalized
       .replace(/^\.\//, '')
       .replace(/\/+$/, '')}`
@@ -232,15 +236,10 @@ export async function runConfig(
     }
 
     const environment = await getRunEnvironment(project.path)
-    if (environment.kind === 'ssh' && environment.os === 'windows') {
-      throw new Error(
-        'Windows SSH 项目暂不支持运行任务，请使用 Linux/macOS SSH 项目或本地 Windows 项目'
-      )
-    }
     // Resolve every task before creating tabs; a missing OS command cannot start half a config.
     const tasks = config.tasks.map(task => {
       const resolved = resolveRunTask(task, environment.os)
-      if (environment.kind === 'ssh' && resolved.type === 'ps1') {
+      if (environment.kind === 'ssh' && environment.os !== 'windows' && resolved.type === 'ps1') {
         throw new Error('SSH POSIX 项目不支持 PowerShell 任务，请配置 os 覆盖')
       }
       return resolved

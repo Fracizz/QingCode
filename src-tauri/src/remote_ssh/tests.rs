@@ -1211,6 +1211,61 @@ fn windows_terminal_starts_powershell_in_project() {
 }
 
 #[test]
+fn windows_task_script_runs_commands_through_cmd_like_local_windows() {
+    let env = HashMap::from([("MODE".to_string(), "it's".to_string())]);
+    let script = windows_task_script(
+        r"D:\code\nem-panel",
+        "command",
+        r#"claude --model Sonnet -p "/commit-push all，更新到 prod" && echo ok"#,
+        &env,
+    )
+    .unwrap();
+    assert!(script.starts_with(WINDOWS_POWERSHELL_UTF8_SETUP));
+    assert!(script.contains("$env:MODE = 'it''s'; "));
+    assert!(script.contains(r"Set-Location -LiteralPath 'D:\code\nem-panel'"));
+    assert!(script.contains(
+        r#"$env:QINGCODE_RUN_TASK_COMMAND = 'claude --model Sonnet -p "/commit-push all，更新到 prod" && echo ok'"#
+    ));
+    assert!(script.contains("& cmd.exe /d /s /c '%QINGCODE_RUN_TASK_COMMAND%'; exit $LASTEXITCODE"));
+}
+
+#[test]
+fn windows_task_script_resolves_script_kinds_and_paths() {
+    let env = HashMap::new();
+    let ps1 = windows_task_script(r"D:\app", "ps1", "scripts/build.ps1", &env).unwrap();
+    assert!(ps1.contains(r"& '.\scripts\build.ps1'"));
+    let abs = windows_task_script(r"D:\app", "script", "/E:/tools/run.ps1", &env).unwrap();
+    assert!(abs.contains(r"& 'E:\tools\run.ps1'"));
+    let bat = windows_task_script(r"D:\app", "script", r"bin\start.cmd", &env).unwrap();
+    assert!(bat.contains(r#"$env:QINGCODE_RUN_TASK_COMMAND = '"bin\start.cmd"'"#));
+    let py = windows_task_script(r"D:\app", "script", "tool.py", &env).unwrap();
+    assert!(py.contains(r#"'python "tool.py"'"#));
+    let sh = windows_task_script(r"D:\app", "sh", "run.sh", &env).unwrap();
+    assert!(sh.contains(r#"'bash "run.sh"'"#));
+
+    assert!(windows_task_script(r"D:\app", "command", "a\nb", &env).is_err());
+    assert!(windows_task_script(r"D:\app", "bat", "a\"b.bat", &env).is_err());
+    assert!(windows_task_script(r"D:\app", "command", "  ", &env).is_err());
+}
+
+#[test]
+fn windows_persistent_task_launch_uses_encoded_powershell() {
+    let launch = windows_persistent_task_launch("Write-Output 1", Some("task".into()));
+    assert_eq!(launch.shell.as_deref(), Some("powershell"));
+    assert_eq!(
+        &launch.args[..5],
+        &[
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand"
+        ]
+    );
+    assert_eq!(launch.args.len(), 6);
+}
+
+#[test]
 fn persistent_windows_shell_forces_utf8_console_and_file_reading() {
     // `cat` 是 Get-Content 的别名；只设置控制台编码不够，必须固定文件读取编码。
     assert!(WINDOWS_POWERSHELL_UTF8_SETUP.contains("Get-Content:Encoding"));
