@@ -20,7 +20,7 @@ export const AUTO_BOTTOM_INTERVAL_MS = 30;
 /** 画面连续这么久没变化视为已到底；需覆盖一次往返延迟。 */
 export const AUTO_BOTTOM_SETTLE_MS = 600;
 /** 最长自动下滑时间：程序有持续刷新的区域时靠它兜底。 */
-export const AUTO_BOTTOM_MAX_MS = 5000;
+export const AUTO_BOTTOM_MAX_MS = 10000;
 
 /**
  * 自动到底的停止判定（纯逻辑）。state 记录开始时间、上次画面与上次变化时间；

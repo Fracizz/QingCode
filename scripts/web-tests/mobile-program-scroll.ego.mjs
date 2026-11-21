@@ -117,7 +117,7 @@ export async function run({ spaceId, finish = true } = {}) {
       await page.click('.terminal-jog-bottom', { label: 'auto scroll to bottom' })
       await page.waitForFunction(() => document.querySelector('.terminal-jog').classList.contains('auto'))
       await page.screenshot({ path: resolve(output, 'jog-auto-bottom.png') }).catch(() => {})
-      // 内存桥画面不变：约 0.6 秒判定滚不动后自动停止，远早于 5 秒上限。
+      // 内存桥画面不变：约 0.6 秒判定滚不动后自动停止，远早于 10 秒上限。
       await page.waitForFunction(() => !document.querySelector('.terminal-jog').classList.contains('auto'), { timeout: 4000 })
       const elapsed = Date.now() - started
       const count = await wheels()
