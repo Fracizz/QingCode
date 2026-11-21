@@ -158,8 +158,11 @@ class TestApp {
         }
         const sentinel = path.join(root, 'target', 'user-data.json')
         writeFileSync(sentinel, '{"keep":true}')
+        // graceful 要等窗口句柄出现、关窗并释放 exe，CI 机器较慢时 2 秒偶发不够；
+        // 其余模式预期超时退出，保持 2 秒以免拖慢测试。
+        const timeoutSeconds = mode === 'graceful' ? '10' : '2'
         const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
-          '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2']
+          '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', timeoutSeconds]
         if (mode === 'check') args.push('-CheckOnly')
         if (mode === 'force') args.push('-Force')
         const staysRunning = ['cancel', 'check', 'installer-no', 'installer-silent', 'uninstaller-no', 'uninstaller-silent'].includes(mode)

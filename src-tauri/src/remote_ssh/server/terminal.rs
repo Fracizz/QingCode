@@ -826,7 +826,8 @@ enum ConnectedEnd {
 }
 
 enum ReconnectEnd {
-    Connected(ActiveSession),
+    // 装箱：ActiveSession 很大，避免 Result<_, ReconnectEnd> 触发 clippy::result_large_err。
+    Connected(Box<ActiveSession>),
     Exited(u32),
     Terminated(String),
     Retry(String),
@@ -1686,7 +1687,7 @@ async fn run_persistent_terminal_inner(
                     match reconnect_terminal(&terminal, &host, &app, &manager, prefer_screen).await
                     {
                         ReconnectEnd::Connected(connected) => {
-                            *active = connected;
+                            *active = *connected;
                             break;
                         }
                         ReconnectEnd::Terminated(reason) => {
@@ -2007,7 +2008,7 @@ async fn reconnect_terminal(
         RestoreKind::None | RestoreKind::Exit => Some("none"),
     };
     emit_connection(app, &terminal.id, "attached", None, None, restore_name);
-    ReconnectEnd::Connected(active)
+    ReconnectEnd::Connected(Box::new(active))
 }
 
 /// 快照不清空前端：断线前的输出留作滚动历史，前端只把当前屏幕换成快照（见 Terminal.tsx 的 onScreen）。
