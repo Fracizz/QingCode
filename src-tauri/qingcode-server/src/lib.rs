@@ -10,8 +10,10 @@
 //! 推送事件记录，直到客户端断开。
 
 // 实现层：文件系统操作、文件监视与 PTY 宿主，协议契约全部在本文件内定义。
+mod conpty;
 mod ops;
 mod pty;
+pub use conpty::prefer_bundled_conpty;
 pub use pty::{is_console_noise_process, INTERRUPT_SECOND_DELAY, INTERRUPT_TOTAL};
 mod watch;
 

@@ -23,7 +23,9 @@ import {
   shortFingerprint,
   validateDirectAgentTarget,
   type DirectAgentApi,
+  type DirectAgentFirewallPlan,
   type DirectAgentFirewallPlatform,
+  type DirectAgentFirewallTarget,
   type DirectAgentInfo,
   type DirectAgentProvisionStage,
 } from '../lib/directAgent'
@@ -104,7 +106,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [manualOpen, setManualOpen] = useState(false)
   const [expandedRow, setExpandedRow] = useState<SettingRowId | null>(null)
   const [autoStart, setAutoStart] = useState(true)
-  const [busy, setBusy] = useState<'loading' | 'provisioning' | 'testing' | 'saving' | 'firewallPlan' | 'firewallConfirm' | 'firewallApply' | 'firewallProbe' | null>(standalone || initiallyOpen ? 'loading' : null)
+  const [busy, setBusy] = useState<'loading' | 'provisioning' | 'testing' | 'saving' | 'firewallPlan' | 'firewallConfirm' | 'firewallApply' | 'firewallProbe' | 'oneClick' | null>(standalone || initiallyOpen ? 'loading' : null)
   const [sshConnectionId, setSshConnectionId] = useState('')
   const [sshSecretsConnectionId, setSshSecretsConnectionId] = useState('')
   const [sshPassword, setSshPassword] = useState('')
@@ -130,7 +132,8 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const serverCandidates = directAgentSshCandidates(allSshConnections, info?.host ?? host)
   const serverSsh = serverCandidates.find(connection => connection.id === sshConnectionId) ??
     serverCandidates.find(connection => connection.id === connectionId) ?? serverCandidates[0]
-  const firewallApplying = busy === 'firewallApply'
+  // 远端写入进行中：锁定输入，避免中途改目标。
+  const firewallApplying = busy === 'firewallApply' || busy === 'oneClick'
   const firewallSshId = sshConnection?.id
   const secretFor = (connection: SshConnection) => sshSecretsConnectionId === connection.id
     ? (connection.auth_kind === 'password' ? sshPassword : sshPassphrase)
@@ -164,9 +167,9 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     onDraftStateChange?.({
       dirty: connectionDirty || Boolean(pairing || sshPassword || sshPassphrase) || autoStartDirty,
       // Reads and connection tests can be abandoned; protect remote writes in flight.
-      busy: busy === 'saving' || busy === 'provisioning' || busy === 'firewallApply' || server.busy,
+      busy: busy === 'saving' || busy === 'provisioning' || firewallApplying || server.busy,
     })
-  }, [onDraftStateChange, connectionDirty, autoStartDirty, pairing, sshPassword, sshPassphrase, busy, server.busy])
+  }, [onDraftStateChange, connectionDirty, autoStartDirty, pairing, sshPassword, sshPassphrase, busy, firewallApplying, server.busy])
 
   useEffect(() => {
     if (!open || !api.firewallPlatform) return
@@ -372,6 +375,54 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     }
   }
 
+  /** 组装通过 SSH 配置防火墙的目标；优先使用面板内刚填写的凭据。 */
+  const buildFirewallTarget = (connection: SshConnection, agentHost: string, agentPort: number): DirectAgentFirewallTarget => ({
+    connectionId, sshConnectionId: connection.id, agentHost, port: agentPort,
+    config: sshRuntimeConfig(connection, {
+      ...sshSecretsFor(connection.id),
+      ...(sshSecretsConnectionId === connection.id && sshPassword ? { password: sshPassword } : {}),
+      ...(sshSecretsConnectionId === connection.id && sshPassphrase ? { passphrase: sshPassphrase } : {}),
+    }),
+  })
+
+  /**
+   * 检查 SSH 防火墙权限并请求用户授权。
+   * 返回 plan 表示可继续（已放行或已授权）；null 表示无法放行、已取消或请求已过期（提示已写入）。
+   */
+  const planAndConfirmFirewall = async (target: DirectAgentFirewallTarget, request: number, oneClick: boolean): Promise<DirectAgentFirewallPlan | null> => {
+    if (!api.firewallPlan) return null
+    const plan = await api.firewallPlan(target)
+    if (request !== requestRef.current) return null
+    if (!plan.canApply) {
+      setError(plan.reason ? directAgentErrorText(plan.reason) : t('此 SSH 账户无法放行该端口，请检查远端管理员权限。'))
+      return null
+    }
+    if (plan.alreadyEnabled) return plan
+    const controller = new AbortController()
+    confirmationRef.current = controller
+    if (oneClick) setActivity(t('等待授权…'))
+    else setBusy('firewallConfirm')
+    const scope = t(plan.profiles.includes('Public')
+      ? '当前 SSH 接口使用公用网络。仅授权当前客户端访问所示 TCP 端口；不会放行其他来源、修改 SSH 或清理历史端口规则。'
+      : '仅授权当前客户端访问所示 TCP 端口和网络范围。不会放行其他来源、修改 SSH 或清理历史端口规则。')
+    const accepted = await confirmDialog({
+      title: t(oneClick ? '授权一键启用 Server 直连' : '授权通过 SSH 放行端口'),
+      message: oneClick
+        ? `${t('授权后将通过 SSH 自动安装并启动 Server、放行端口、验证直连并启用，中途无需再次确认。')}\n${scope}`
+        : scope,
+      detail: t('SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}', {
+        username: plan.username, host: plan.host, sshPort: plan.sshPort, account: plan.account, port: plan.port, source: plan.clientAddress, localAddress: plan.localAddress, profiles: plan.profiles.join(', '), interfaceAlias: plan.interfaceAlias, networkCategory: plan.networkCategory, rule: plan.ruleName,
+      }),
+      kind: 'warning', confirmLabel: t(oneClick ? '授权并启用' : '授权放行'), cancelLabel: t('取消'), signal: controller.signal,
+    })
+    if (request !== requestRef.current) return null
+    if (!accepted) {
+      setNotice(t(oneClick ? '已取消一键启用，未修改远端。' : '已取消端口放行，未修改防火墙。'))
+      return null
+    }
+    return plan
+  }
+
   const authorizeFirewall = async () => {
     const invalid = validateDirectAgentTarget(host, port)
     if (invalid) { setError(t(invalid)); return }
@@ -384,36 +435,10 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       // 应用重启后内存里没有凭据，需先载入本机加密保存的密码或口令。
       await hydrateSshSecrets(sshConnection.id)
       if (request !== requestRef.current) return
-      const target = {
-        connectionId, sshConnectionId: sshConnection.id, agentHost: host.trim(), port: Number(port),
-        config: sshRuntimeConfig(sshConnection, {
-          ...sshSecretsFor(sshConnection.id),
-          ...(sshSecretsConnectionId === sshConnection.id && sshPassword ? { password: sshPassword } : {}),
-          ...(sshSecretsConnectionId === sshConnection.id && sshPassphrase ? { passphrase: sshPassphrase } : {}),
-        }),
-      }
-      const plan = await api.firewallPlan(target)
-      if (request !== requestRef.current) return
-      if (!plan.canApply) {
-        setError(plan.reason ? directAgentErrorText(plan.reason) : t('此 SSH 账户无法放行该端口，请检查远端管理员权限。'))
-        return
-      }
+      const target = buildFirewallTarget(sshConnection, host.trim(), Number(port))
+      const plan = await planAndConfirmFirewall(target, request, false)
+      if (!plan) return
       if (!plan.alreadyEnabled) {
-        const controller = new AbortController()
-        confirmationRef.current = controller
-        setBusy('firewallConfirm')
-        const accepted = await confirmDialog({
-          title: t('授权通过 SSH 放行端口'),
-          message: t(plan.profiles.includes('Public')
-            ? '当前 SSH 接口使用公用网络。仅授权当前客户端访问所示 TCP 端口；不会放行其他来源、修改 SSH 或清理历史端口规则。'
-            : '仅授权当前客户端访问所示 TCP 端口和网络范围。不会放行其他来源、修改 SSH 或清理历史端口规则。'),
-          detail: t('SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}', {
-            username: plan.username, host: plan.host, sshPort: plan.sshPort, account: plan.account, port: plan.port, source: plan.clientAddress, localAddress: plan.localAddress, profiles: plan.profiles.join(', '), interfaceAlias: plan.interfaceAlias, networkCategory: plan.networkCategory, rule: plan.ruleName,
-          }),
-          kind: 'warning', confirmLabel: t('授权放行'), cancelLabel: t('取消'), signal: controller.signal,
-        })
-        if (request !== requestRef.current) return
-        if (!accepted) { setNotice(t('已取消端口放行，未修改防火墙。')); return }
         setBusy('firewallApply')
         await api.firewallApply({ ...target, expectedPlanSha256: plan.planSha256 })
         if (request !== requestRef.current) return
@@ -435,6 +460,107 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       if (request === requestRef.current) setError(directAgentErrorText(reason))
     } finally {
       if (request === requestRef.current) setBusy(null)
+    }
+  }
+
+  /**
+   * 一键启用：先请求一次防火墙授权，之后依次安装/读取服务、放行端口、
+   * 核对证书（与经 SSH 读取的指纹一致即视为可信）、验证凭据并保存启用。
+   */
+  const enableInOneClick = async () => {
+    const invalid = validateDirectAgentTarget(host, port)
+    if (invalid) { setError(t(invalid)); return }
+    if (!sshConnection || !api.firewallPlan || !api.firewallApply) return
+    const request = ++requestRef.current
+    const stale = () => request !== requestRef.current
+    setBusy('oneClick')
+    setActivity(t('正在检查 SSH 权限…'))
+    setError('')
+    setNotice('')
+    setStartupWarning('')
+    setVerified(null)
+    try {
+      const own = allSshConnections.find(connection => connection.id === connectionId)
+      await hydrateSshSecrets(sshConnection.id)
+      if (own && own.id !== sshConnection.id) await hydrateSshSecrets(own.id)
+      if (stale()) return
+      let target = buildFirewallTarget(sshConnection, host.trim(), Number(port))
+      let plan = await planAndConfirmFirewall(target, request, true)
+      if (!plan) return
+
+      // 放行端口与安装服务互不依赖（规则只按端口、来源和本机地址），并行执行；
+      // Windows 上两者各要冷启动 PowerShell 并加载防火墙/计划任务模块，串行要多等约 6 秒。
+      setActivity(t('正在通过 SSH 准备 Server 服务，请稍候…'))
+      const firewallTarget = target
+      const firewallPlan = plan
+      let applied = firewallPlan.alreadyEnabled
+      const applying = firewallPlan.alreadyEnabled
+        ? Promise.resolve()
+        : api.firewallApply({ ...firewallTarget, expectedPlanSha256: firewallPlan.planSha256 }).then(() => { applied = true })
+      // 安装先失败时放行结果仍会落地，这里只防止未处理的拒绝。
+      applying.catch(() => {})
+      const result = await api.provision(connectionId, Number(port), autoStart, {
+        config: own ? sshRuntimeConfig(own, sshSecretsFor(own.id)) : undefined,
+        onProgress: stage => { if (!stale()) setActivity(t(DIRECT_AGENT_PROVISION_STAGE_LABELS[stage])) },
+      })
+      if (stale()) return
+      const agentHost = result.host && result.host !== '0.0.0.0' && result.host !== '::' ? result.host : host.trim()
+      const agentPort = result.port > 0 ? result.port : Number(port)
+      setHost(agentHost)
+      setPort(String(agentPort))
+      setFingerprint(result.certificateFingerprint || '')
+      setStartupWarning(result.startupWarning ?? '')
+      if (!applied) setActivity(t('正在放行端口…'))
+      await applying
+      if (stale()) return
+
+      // 已有服务沿用了其他端口时，授权范围变了，需重新确认一次。
+      if (agentPort !== firewallTarget.port) {
+        setActivity(t('正在检查 SSH 权限…'))
+        target = buildFirewallTarget(sshConnection, agentHost, agentPort)
+        plan = await planAndConfirmFirewall(target, request, true)
+        if (!plan) return
+        if (!plan.alreadyEnabled) {
+          setActivity(t('正在放行端口…'))
+          await api.firewallApply({ ...target, expectedPlanSha256: plan.planSha256 })
+          if (stale()) return
+        }
+      }
+      setSshPassword('')
+      setSshPassphrase('')
+
+      setActivity(t('正在检查 Server 端口和服务器证书…'))
+      let observed: { certificateFingerprint: string }
+      try {
+        observed = await api.probe(agentHost, agentPort)
+      } catch {
+        if (!stale()) setError(t('服务已安装、端口已放行，但 Server 端口仍不可达。请检查服务监听、网关映射和其他防火墙，再测试直连。'))
+        return
+      }
+      if (stale()) return
+      if (!result.certificateFingerprint || observed.certificateFingerprint !== result.certificateFingerprint) {
+        setError(t('Server 证书与通过 SSH 读取的不一致，已停止启用。请测试直连并核对服务器身份。'))
+        return
+      }
+
+      setActivity(t('正在验证 Server 认证凭据…'))
+      const directTarget = { connectionId, host: agentHost, port: agentPort, certificateFingerprint: observed.certificateFingerprint }
+      const tested = await api.test(directTarget)
+      if (stale()) return
+
+      setActivity(t('正在保存并启用 Server 直连…'))
+      await api.save({ ...directTarget, enabled: true })
+      if (stale()) return
+      const previousPorts = [...new Set([...(result.previousPorts ?? []), ...(info?.port && info.port !== agentPort ? [info.port] : [])])].filter(value => value !== agentPort)
+      const saved: DirectAgentInfo = { ...directTarget, enabled: true, autoStart: result.autoStart ?? autoStart, tokenSaved: true, previousPorts }
+      await onUpdated?.(saved)
+      if (stale()) return
+      fill(saved)
+      setNotice(t('已一键启用 Server 端口直连（服务 {version}）。', { version: tested.version }))
+    } catch (reason) {
+      if (!stale()) setError(directAgentErrorText(reason))
+    } finally {
+      if (!stale()) setBusy(null)
     }
   }
 
@@ -489,7 +615,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const busyLabel = server.busy ? t('正在通过 SSH 管理 Server…')
     : busy === 'loading' ? t('正在读取 Server 配置…')
     : busy === 'provisioning' ? t(provisionStage ? DIRECT_AGENT_PROVISION_STAGE_LABELS[provisionStage] : '正在通过 SSH 准备 Server 服务，请稍候…')
-      : busy === 'testing' ? activity
+      : busy === 'testing' || busy === 'oneClick' ? activity
         : busy === 'saving' ? t(savingEnabled ? '正在保存并启用 Server 直连…' : '正在恢复 SSH 连接…')
           : busy ? firewallButtonLabel : ''
   const feedback = busyLabel || error || notice
@@ -522,7 +648,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     {fingerprint && <div className="rounded border border-dialog-border bg-dialog-input p-2 text-ui-sm"><p className="mb-1 flex items-center gap-1 text-fg-muted"><ShieldCheck size={14} />{t('服务器证书指纹')}</p><p className="break-all font-mono text-fg">{fingerprint}</p></div>}
   </>
 
-  const firewallBody = <div className="grid grid-cols-1 items-start gap-3 text-ui-sm @min-[48rem]/direct-agent:grid-cols-2">
+  const renderFirewallBody = (withSshAuth: boolean) => <div className="grid grid-cols-1 items-start gap-3 text-ui-sm @min-[48rem]/direct-agent:grid-cols-2">
     <div className="min-w-0 space-y-2">
       <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口（支持 Windows 与 Linux firewalld/ufw 远端；Linux 需 root 或 sudo 权限）；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
       <label className="block text-dialog-label">{t('远端系统')}<select value={firewallPlatform} onChange={event => { firewallPlatformPicked.current = true; setFirewallPlatformDetected(false); setFirewallPlatform(event.target.value as DirectAgentFirewallPlatform | '') }} className={fieldClass}>
@@ -538,7 +664,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     </div>
     {api.firewallPlan && api.firewallApply && <div className="min-w-0 space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-2.5">
       {sshConnection ? <>
-        {renderSshAuth(sshConnection, candidates)}
+        {withSshAuth ? renderSshAuth(sshConnection, candidates) : <p className="text-fg-muted">{t('使用上方「一键启用直连」中的 SSH 授权连接。')}</p>}
         <p className="break-all text-fg-muted">{t('SSH 授权仅用于配置远端防火墙，日常 Server 通信继续使用独立端口。')}</p>
         <button type="button" disabled={anyBusy} onClick={() => void authorizeFirewall()} className={buttonClass}>{busy?.startsWith('firewall') ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <ShieldCheck size={14} />}{firewallButtonLabel}</button>
       </> : <p className="text-fg-muted">{t('未找到此主机的 SSH 连接。请先在远程连接中添加并确认 SSH 主机指纹，或使用下方命令手动放行。')}</p>}
@@ -597,7 +723,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
         </details>
       </SettingRow>
       {validPort && <SettingRow id="firewall" title={t('端口放行')} summary={[`TCP ${port}`, FIREWALL_PLATFORMS.find(item => item.value === firewallPlatform)?.label].filter(Boolean).join(' · ')} open={expandedRow === 'firewall'} disabled={firewallApplying} onToggle={toggleRow}>
-        {firewallBody}
+        {renderFirewallBody(true)}
       </SettingRow>}
       <SettingRow id="pairing" title={t('重新配对')} summary={t('导入新的配对信息')} dirty={Boolean(pairing)} open={expandedRow === 'pairing'} disabled={firewallApplying} onToggle={toggleRow}>
         {pairingForm}
@@ -606,9 +732,17 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     </div>
   </>
 
+  const oneClickAvailable = !standalone && Boolean(sshConnection && api.firewallPlan && api.firewallApply)
+  const oneClickCard = oneClickAvailable && sshConnection && <div className="space-y-3 rounded border border-accent/40 bg-accent/5 p-3">
+    <p className="text-ui-sm text-fg-muted">{t('通过 SSH 授权一次，自动完成安装或读取服务、放行端口、验证直连并启用。')}</p>
+    <div className="grid min-w-0 grid-cols-1 gap-3 @min-[32rem]/direct-agent:grid-cols-2">{renderSshAuth(sshConnection, candidates)}</div>
+    <button type="button" disabled={anyBusy} onClick={() => void enableInOneClick()} aria-busy={busy === 'oneClick'} className="btn btn-primary">{busy === 'oneClick' ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <ShieldCheck size={14} aria-hidden="true" />}{t(busy === 'oneClick' ? '正在一键启用…' : '一键启用直连')}</button>
+  </div>
+
   const setupView = <>
+    {oneClickCard}
     <div className="space-y-3">
-      <StepHeading index={1}>{t('准备服务')}</StepHeading>
+      <StepHeading index={1}>{t(oneClickAvailable ? '或分步配置：准备服务' : '准备服务')}</StepHeading>
       <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />
       <div className="flex flex-wrap items-center gap-2">
         {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={buttonClass}>{busy === 'provisioning' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
@@ -624,7 +758,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       <StepHeading index={3}>{t('放行端口')}</StepHeading>
       <details className="rounded border border-warn/40 bg-warn/5 text-ui-sm">
         <summary className="cursor-pointer px-3 py-2 font-medium text-warn">{t('远端需要开放 TCP {port}', { port })}</summary>
-        <div className="border-t border-warn/20 p-3">{firewallBody}</div>
+        <div className="border-t border-warn/20 p-3">{renderFirewallBody(!oneClickAvailable)}</div>
       </details>
     </div>}
     <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t border-dialog-separator bg-dialog py-3">

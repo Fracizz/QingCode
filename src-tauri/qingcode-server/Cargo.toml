@@ -72,6 +72,8 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Diagnostics_ToolHelp",
   # 本机宿主：判断调用方作业对象是否会连带结束子进程。
   "Win32_System_JobObjects",
+  # 预加载随程序携带的新版 conpty.dll（conpty.rs）。
+  "Win32_System_LibraryLoader",
   "Win32_System_Pipes",
   "Win32_System_Threading",
   # 本机宿主：以 Shell 为父进程拉起以脱离 cargo 等作业对象。

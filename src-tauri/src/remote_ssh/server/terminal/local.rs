@@ -9,19 +9,63 @@ fn local_client_id(manager: &SshManager) -> String {
     manager.daemon_client_id(LOCAL_CONNECTION_ID)
 }
 
-/// 确保宿主在运行并完成握手。
+async fn handshake(
+    access: local_pty_host::LocalHostAccess,
+    manager: &SshManager,
+) -> Result<DaemonSession, String> {
+    let stream = qingcode_server::connect::connect_async(&access.endpoint)
+        .await
+        .map_err(|error| format!("连接本地终端宿主失败：{error}"))?;
+    DaemonSession::open_local(stream, &local_client_id(manager), access.token).await
+}
+
+/// 确保当前构建的宿主在运行并完成握手。新建终端只走这里。
 pub(in crate::remote_ssh::server) async fn open_local_session(
     manager: &SshManager,
 ) -> Result<(SessionTransport, DaemonSession), String> {
     let access = tauri::async_runtime::spawn_blocking(local_pty_host::ensure_running)
         .await
         .map_err(|error| format!("启动本地终端宿主失败：{error}"))??;
-    let stream = qingcode_server::connect::connect_async(&access.endpoint)
+    Ok((SessionTransport::Local, handshake(access, manager).await?))
+}
+
+async fn session_hosts(session: &DaemonSession, pty_id: &str) -> bool {
+    let Ok(response) = session.request("pty.list", &serde_json::json!({})).await else {
+        return false;
+    };
+    serde_json::from_value::<PtyListResponse>(response)
+        .is_ok_and(|listed| listed.ptys.iter().any(|info| info.id == pty_id))
+}
+
+/// 打开托管 `pty_id` 的宿主会话：先当前构建，再找其他构建仍在运行的宿主（升级前
+/// 开的终端留在旧宿主里）。都没有时返回当前宿主的会话，由调用方按「终端不存在」处理。
+pub(in crate::remote_ssh::server) async fn open_local_session_for(
+    manager: &SshManager,
+    pty_id: &str,
+) -> Result<(SessionTransport, DaemonSession), String> {
+    let current = open_local_session(manager).await;
+    if let Ok((_, session)) = &current {
+        if session_hosts(session, pty_id).await {
+            return current;
+        }
+    }
+    let others = tauri::async_runtime::spawn_blocking(local_pty_host::running_other_hosts)
         .await
-        .map_err(|error| format!("连接本地终端宿主失败：{error}"))?;
-    let session =
-        DaemonSession::open_local(stream, &local_client_id(manager), access.token).await?;
-    Ok((SessionTransport::Local, session))
+        .unwrap_or_default();
+    for access in others {
+        let Ok(session) = handshake(access, manager).await else {
+            continue;
+        };
+        if session_hosts(&session, pty_id).await {
+            if let Ok((transport, session)) = &current {
+                session.shutdown();
+                transport.release();
+            }
+            return Ok((SessionTransport::Local, session));
+        }
+        session.shutdown();
+    }
+    current
 }
 
 pub(crate) async fn spawn_local_terminal(
@@ -64,7 +108,7 @@ pub(crate) async fn attach_local_terminal(
     if size.is_some_and(|(cols, rows)| cols == 0 || rows == 0) {
         return Err("终端尺寸必须大于 0".to_string());
     }
-    let (transport, session) = open_local_session(manager).await?;
+    let (transport, session) = open_local_session_for(manager, &pty_id).await?;
     attach_terminal_on_session(
         id,
         pty_id,
@@ -100,7 +144,7 @@ pub(crate) async fn kill_owned(
     manager: &SshManager,
 ) -> Result<(), String> {
     let client_id = local_client_id(manager);
-    let (transport, session) = open_local_session(manager).await?;
+    let (transport, session) = open_local_session_for(manager, pty_id).await?;
     let _cleanup = ExitSessionCleanup {
         transport: &transport,
         session: &session,
@@ -125,7 +169,7 @@ pub(crate) async fn kill_owned(
 
 /// 终端里是否有前台子进程（关闭标签前的确认用）。
 pub(crate) async fn has_children(pty_id: &str, manager: &SshManager) -> Result<bool, String> {
-    let (transport, session) = open_local_session(manager).await?;
+    let (transport, session) = open_local_session_for(manager, pty_id).await?;
     let _cleanup = ExitSessionCleanup {
         transport: &transport,
         session: &session,

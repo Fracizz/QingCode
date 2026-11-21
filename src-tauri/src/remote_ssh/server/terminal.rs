@@ -1886,7 +1886,7 @@ async fn open_host_session(
             // the file-operation fast path, reconnect must acquire a healthy host runtime.
             open_reconnect_daemon_session(manager, root, Some(app)).await
         }
-        TerminalHost::Local => local::open_local_session(manager).await,
+        TerminalHost::Local => local::open_local_session_for(manager, terminal.pty_id()).await,
     };
     // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
     // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」

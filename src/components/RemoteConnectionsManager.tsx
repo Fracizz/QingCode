@@ -225,6 +225,11 @@ export default function RemoteConnectionsManager() {
   const connectionModeLabel = directEnabled || standaloneAgent || selected?.agentEndpoint ? 'Server 端口直连'
     : selected && resolveSshConnectionMode(selected, getSshServerEnabled()) === 'ssh' ? 'SSH 直连（兼容模式）' : 'SSH + 远端服务'
   const serverStates = selected ? statesByConnection[selected.id] ?? [] : []
+  // 多个项目原因完全相同时只在列表上方显示一次，避免每行重复「原因」
+  const sharedServerReason =
+    serverStates.length > 1 && serverStates[0].reason && serverStates.every(state => state.reason === serverStates[0].reason)
+      ? serverStates[0].reason
+      : null
   const groupedProjects = useMemo(() => groupConnectionProjects(projects), [projects])
   const status = connectionStatus(selected ? aliveMap[selected.id] : null, serverStates, selected ? statusErrors[selected.id] : undefined)
   const statusError = selected && statusErrors[selected.id]
@@ -310,7 +315,11 @@ export default function RemoteConnectionsManager() {
     if (conn) {
       void refreshDetail(conn.id, false)
       void loadSavedSshSecrets(conn.id).then(value => {
-        if (!cancelled) setSavedSecrets(value)
+        if (cancelled) return
+        setSavedSecrets(value)
+        // 已保存的密码默认回填（以圆点遮挡），点眼睛即可查看。
+        setPassword(prev => prev || value?.password || '')
+        setPassphrase(prev => prev || value?.passphrase || '')
       })
     }
     return () => {
@@ -444,7 +453,7 @@ export default function RemoteConnectionsManager() {
   const revealSecret = (kind: 'password' | 'passphrase') => {
     const next = !showSecret[kind]
     setShowSecret(prev => ({ ...prev, [kind]: next }))
-    // 显示时若输入框为空，回填本机已保存的值供查看。
+    // 显示时若输入框被清空，回填本机已保存的值供查看。
     if (!next) return
     if (kind === 'password' && !password && reusableSecrets?.password) setPassword(reusableSecrets.password)
     if (kind === 'passphrase' && !passphrase && reusableSecrets?.passphrase) setPassphrase(reusableSecrets.passphrase)
@@ -452,8 +461,9 @@ export default function RemoteConnectionsManager() {
   const secretToggle = (kind: 'password' | 'passphrase') => {
     const shown = showSecret[kind]
     const label = shown ? t('隐藏密码') : t('显示密码')
+    // 只保留眼睛图标，不弹出「显示密码」提示；aria-label 供读屏使用。
     return (
-      <Tooltip label={label} wrapperClassName="absolute inset-y-0 right-1 flex items-center">
+      <div className="absolute inset-y-0 right-1 flex items-center">
         <button
           type="button"
           aria-label={label}
@@ -463,7 +473,7 @@ export default function RemoteConnectionsManager() {
         >
           {shown ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
         </button>
-      </Tooltip>
+      </div>
     )
   }
   const dirty = selected
@@ -487,8 +497,8 @@ export default function RemoteConnectionsManager() {
         setForm(formFromConnection(selected))
         setMode(resolveSshConnectionMode(selected, getSshServerEnabled()))
       }
-      setPassword('')
-      setPassphrase('')
+      setPassword(savedSecrets?.password ?? '')
+      setPassphrase(savedSecrets?.passphrase ?? '')
       setActionMenu(null)
       navigate()
     } finally {
@@ -635,8 +645,10 @@ export default function RemoteConnectionsManager() {
       }
       pushToast('success', t('已保存 SSH 连接'))
       setVerification(null)
-      setPassword('')
-      setPassphrase('')
+      // 记住凭据时保留回填，否则清空。
+      const kept = remember && hasSecrets ? effectiveSecrets : null
+      setPassword(kept?.password ?? '')
+      setPassphrase(kept?.passphrase ?? '')
       setShowSecret({ password: false, passphrase: false })
       if (isNew && creatingForProject) {
         closeRemoteConnections()
@@ -661,18 +673,18 @@ export default function RemoteConnectionsManager() {
       project =>
         project.connection_id === selected.id || sshConnectionIdFromUri(project.path) === selected.id
     )
-    if (refs.length > 0) {
-      setError(
-        t('该连接仍被 {count} 个远程项目使用（{names}），请先在项目管理中删除或改绑这些项目。', {
-          count: refs.length,
-          names: refs.map(project => project.name).join('、'),
-        })
-      )
-      return
-    }
+    // 不再阻止删除被项目引用的连接，仅在确认框中提示受影响的项目
+    const label = sshConnectionLabel(selected)
     const accepted = await confirmDialog({
       title: t('删除 SSH 连接'),
-      message: t('删除连接 {label}？此操作不可撤销。', { label: sshConnectionLabel(selected) }),
+      message:
+        refs.length > 0
+          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），删除后这些项目将无法连接，需要重新绑定连接。此操作不可撤销。', {
+              label,
+              count: refs.length,
+              names: refs.map(project => project.name).join('、'),
+            })
+          : t('删除连接 {label}？此操作不可撤销。', { label }),
       kind: 'warning',
       confirmLabel: t('删除'),
       cancelLabel: t('取消'),
@@ -841,8 +853,8 @@ export default function RemoteConnectionsManager() {
     const savedMode = resolveSshConnectionMode(selected, getSshServerEnabled())
     setMode(savedMode)
     setAdvancedOpen(savedMode === 'ssh')
-    setPassword('')
-    setPassphrase('')
+    setPassword(savedSecrets?.password ?? '')
+    setPassphrase(savedSecrets?.passphrase ?? '')
     setError('')
     setEditing(false)
     })
@@ -1457,6 +1469,13 @@ export default function RemoteConnectionsManager() {
                               {t('当前会话没有可查询的项目。重新打开远程项目后会显示服务状态。')}
                             </p>
                           ) : (
+                            <>
+                            {/* 顶部状态区已展示同一原因时不再重复 */}
+                            {sharedServerReason && (sharedServerReason !== statusReason || forceRunning) && (
+                              <p className="mb-2 break-words text-ui-sm text-warn">
+                                {t('原因：{reason}', { reason: sharedServerReason })}
+                              </p>
+                            )}
                             <ul className="overflow-hidden rounded-md border border-dialog-border">
                               {serverStates.map(state => (
                                 <li
@@ -1487,7 +1506,7 @@ export default function RemoteConnectionsManager() {
                                       </span>
                                     </Tooltip>
                                   ) : null}
-                                  {state.reason ? (
+                                  {state.reason && !sharedServerReason ? (
                                     <Tooltip label={state.reason} side="left">
                                       <span className="flex-shrink-0 text-ui-sm text-warn">
                                         {t('原因')}
@@ -1544,6 +1563,7 @@ export default function RemoteConnectionsManager() {
                                 </li>
                               ))}
                             </ul>
+                            </>
                           )}
                         </div>
                         </>}

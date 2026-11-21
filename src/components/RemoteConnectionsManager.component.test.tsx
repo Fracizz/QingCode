@@ -383,11 +383,13 @@ describe('remote connection compatibility settings', () => {
     await act(async () => { render(<RemoteConnectionsManager />) })
     fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     const input = await screen.findByLabelText('密码（加密保存在本机）')
-    await waitFor(() => expect(input).toHaveAttribute('placeholder', '已保存在本机，留空则沿用'))
+    // 已保存的密码默认回填并以圆点遮挡。
+    await waitFor(() => expect(input).toHaveValue('saved-secret'))
+    expect(input).toHaveAttribute('type', 'password')
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
     await waitFor(() => expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: 'saved-secret' })))
     await waitFor(() => expect(screen.getByRole('button', { name: '测试连接' })).not.toBeDisabled())
-    // 点眼睛回显已保存的密码；与已保存值相同，不算修改。
+    // 点眼睛显示已保存的密码；与已保存值相同，不算修改。
     fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
     expect(input).toHaveAttribute('type', 'text')
     expect(input).toHaveValue('saved-secret')

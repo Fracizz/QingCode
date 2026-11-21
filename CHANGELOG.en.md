@@ -6,6 +6,17 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Server direct connection gains "One-click enable": after a single SSH authorization it installs or reads the service, allows the firewall port, checks the certificate, verifies credentials and enables the connection. Step-by-step setup is still available.
+- One-click Server direct connection is much faster on Windows remotes: the firewall rule is applied while the service installs, the digest check and self-check of an installed binary run in one remote call, and pairing info is read over SFTP, saving about four PowerShell cold starts.
+- The remote connection editor now pre-fills the locally saved SSH password (masked); click the eye icon to reveal it.
+
+### Fixed
+
+- Windows terminals now use the bundled newer ConPTY (Microsoft `conpty.dll` + `OpenConsole.exe`, for local terminals and remote Windows in Server mode). Programs that request mouse reporting before switching input modes, such as pi in fullscreen mode, now scroll their conversation with the wheel instead of cycling input history. Set `QINGCODE_INBOX_CONPTY=1` to fall back to the system ConPTY.
+- The local terminal host is now separated per build: after an upgrade, new terminals start in the new host (so fixes such as the bundled ConPTY take effect immediately), while terminals opened before the upgrade stay in the old host and can still be reattached and closed; the old host exits once they all end. Previously the long-lived old host kept serving new terminals, so the pi wheel issue persisted after installing the update.
+
 ## [0.1.19] - 2026-11-20
 
 The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and coding-CLI prewarming, three-way terminal sharing, Windows SSH run tasks, a redesigned terminal list, and desktop and Android polish.

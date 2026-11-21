@@ -354,6 +354,8 @@ impl TerminalManager {
         wsl_task: Option<wsl::WslTask>,
     ) -> Result<(), String> {
         apply_terminal_identity(&mut cmd, &id, program);
+        // 与本机宿主一致使用随程序携带的新版 ConPTY，须在 portable-pty 首次加载前。
+        qingcode_server::prefer_bundled_conpty();
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
             .openpty(clamp_pty_size(cols, rows))

@@ -555,6 +555,8 @@ impl PtyHost {
             ));
         }
 
+        // Windows 先换上随程序携带的新版 ConPTY（见 conpty.rs），须在 portable-pty 首次加载前。
+        crate::conpty::prefer_bundled_conpty();
         let pair = native_pty_system()
             .openpty(pty_size(cols, rows))
             .map_err(|err| format!("无法创建 PTY：{err}"))?;

@@ -244,6 +244,64 @@ describe('direct Agent connection panel', () => {
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ port: 48763, enabled: false })))
   })
 
+  describe('one-click enable', () => {
+    const oneClickApi = (saved: DirectAgentInfo | null = null) => ({ ...apiMock(saved), firewallPlan: vi.fn().mockResolvedValue(firewallPlan), firewallApply: vi.fn().mockResolvedValue({ changed: true, ruleName: firewallPlan.ruleName, port: 48763, clientAddress: firewallPlan.clientAddress, profiles: firewallPlan.profiles }) })
+
+    it('asks for authorization once, then installs, allows the port, verifies and enables', async () => {
+      const api = oneClickApi()
+      const onUpdated = vi.fn()
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} onUpdated={onUpdated} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, port: 48763, certificateFingerprint: info.certificateFingerprint })))
+      // 只有一次授权确认；证书与 SSH 读取的一致，不再弹身份确认。
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: '授权一键启用 Server 直连' }))
+      expect(api.provision).toHaveBeenCalledWith('c1', 48763, true, expect.anything())
+      expect(api.firewallApply).toHaveBeenCalledWith(expect.objectContaining({ expectedPlanSha256: 'plan-digest', port: 48763 }))
+      expect(api.test).toHaveBeenCalledWith(expect.objectContaining({ certificateFingerprint: info.certificateFingerprint }))
+      expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }))
+      expect(await screen.findByRole('status')).toHaveTextContent('已一键启用 Server 端口直连（服务 0.1.test）。')
+    })
+
+    it('allows the port while the service is still being installed', async () => {
+      const api = oneClickApi()
+      let finish!: (value: DirectAgentInfo) => void
+      vi.mocked(api.provision).mockReturnValue(new Promise(resolve => { finish = resolve }))
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      await waitFor(() => expect(api.provision).toHaveBeenCalled())
+      // 安装尚未完成时防火墙规则已在并行写入。
+      expect(api.firewallApply).toHaveBeenCalledTimes(1)
+      await act(async () => { finish(info) })
+      await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true })))
+      expect(api.firewallApply).toHaveBeenCalledTimes(1)
+    })
+
+    it('changes nothing on the remote when authorization is declined', async () => {
+      const api = oneClickApi()
+      confirm.mockResolvedValue(false)
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      expect(await screen.findByText('已取消一键启用，未修改远端。')).toBeVisible()
+      expect(api.provision).not.toHaveBeenCalled()
+      expect(api.firewallApply).not.toHaveBeenCalled()
+    })
+
+    it('stops before sending credentials when the certificate differs from the SSH-read one', async () => {
+      const api = oneClickApi()
+      vi.mocked(api.probe).mockResolvedValue({ certificateFingerprint: 'SHA256:intruder' })
+      render(<DirectAgentConnectionPanel connectionId="c1" defaultHost={info.host} api={api} sshConnections={[ssh]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
+      fireEvent.click(await screen.findByRole('button', { name: '一键启用直连' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Server 证书与通过 SSH 读取的不一致')
+      expect(api.test).not.toHaveBeenCalled()
+      expect(api.save).not.toHaveBeenCalled()
+    })
+  })
+
   describe('enabled connection layout', () => {
     const enabled: DirectAgentInfo = { ...info, enabled: true, certificateFingerprint: 'c28d09052919aae17d79b86beaa29486fe119f48d19ca6a00aeae66c555c0153' }
     const managedApi = () => ({ ...apiMock(enabled), manage: vi.fn().mockResolvedValue({ ...enabled, autoStart: true }), firewallPlan: vi.fn().mockResolvedValue(firewallPlan), firewallApply: vi.fn() })

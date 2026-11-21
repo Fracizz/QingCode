@@ -24,6 +24,7 @@ vi.mock('../lib/sshWorkspace', () => ({
   sshConnectionLabel: () => 'WSL（root@localhost）',
   sshRemotePathFromUri: (path: string) => path.replace(/^ssh:\/\/[^/]+/, '') || '/',
   sshRemoteDisplayPath: (path: string) => path,
+  hasSshSessionSecrets: () => false,
   hydrateSshSecrets: async () => {},
   sshSecretsFor: () => ({}),
   sshRuntimeConfig: (connection: { id: string; host: string }) => ({ id: connection.id, host: connection.host }),

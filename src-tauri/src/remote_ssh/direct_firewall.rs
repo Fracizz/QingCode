@@ -701,7 +701,7 @@ mod tests {
         assert_eq!(parse_result(&ok, RemoteOs::Linux).unwrap()["port"], 1);
         let broken = output(
             b"",
-            b"sh: line 1: $'\\r': command not found\n\x1b[0m\n",
+            b"\nsh: line 1: \x1b$'\\r': command not found\n\n",
             Some(2),
         );
         let error = parse_result(&broken, RemoteOs::Linux).unwrap_err();
