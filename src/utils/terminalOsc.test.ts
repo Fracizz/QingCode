@@ -3,6 +3,7 @@ import {
   parseProgramStateOsc,
   parseShellIntegrationOsc,
   registerTerminalOscHandlers,
+  sanitizeOscTitle,
   SUPPRESSED_OSC_IDENTS,
   type TerminalOscRegistry,
 } from './terminalOsc'
@@ -20,6 +21,18 @@ function fakeRegistry() {
     (handlers.get(ident) ?? []).map(callback => callback(data))
   return { registry, handlers, disposed, emit }
 }
+
+describe('sanitizeOscTitle', () => {
+  it('keeps real non-ASCII title prefixes such as the pi symbol', () => {
+    expect(sanitizeOscTitle('π - QingCode')).toBe('π - QingCode')
+    expect(sanitizeOscTitle('π - 会话 - 项目 A')).toBe('π - 会话 - 项目 A')
+  })
+
+  it('strips emoji and Windows-1252 mojibake prefixes', () => {
+    expect(sanitizeOscTitle('✳ Claude Code')).toBe('Claude Code')
+    expect(sanitizeOscTitle('âœ³ Claude Code')).toBe('Claude Code')
+  })
+})
 
 describe('parseShellIntegrationOsc', () => {
   it('detects FinalTerm and VS Code markers', () => {

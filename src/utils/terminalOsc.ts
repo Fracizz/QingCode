@@ -7,8 +7,10 @@ export function sanitizeOscTitle(title: string): string {
     .replace(/^[\s\p{Extended_Pictographic}\p{So}\uFE0F\u200D]+/u, '')
     .trim()
 
+  // \u53EA\u8BA4 UTF-8 \u88AB\u6309 Windows-1252 \u89E3\u7801\u51FA\u7684\u4E71\u7801\u5B57\u7B26\uFF08\u5982 \u2733 \u53D8\u6210 \u00E2\u0153\u00B3\uFF09\uFF0C
+  // \u4E0D\u80FD\u6CDB\u6307\u6240\u6709\u975E ASCII\uFF1Api \u7684\u6807\u9898\u662F\u300C\u03C0 - \u9879\u76EE\u540D\u300D\uFF0C\u03C0 \u662F\u6B63\u5E38\u6587\u5B57\u3002
   const mojibakePrefix = cleaned.match(
-    /^[^\x20-\x7E\u4E00-\u9FFF]{1,12}\s+([\x20-\x7E\u4E00-\u9FFF].*)$/
+    /^[\u0080-\u00FF\u0152\u0153\u0160\u0161\u0178\u017D\u017E\u0192\u02C6\u02DC\u2013\u2014\u2018-\u201A\u201C-\u201E\u2020-\u2022\u2026\u2030\u2039\u203A\u20AC\u2122]{1,12}\s+([\x20-\x7E\u4E00-\u9FFF].*)$/
   )
   if (mojibakePrefix?.[1]) return mojibakePrefix[1].trim()
 
