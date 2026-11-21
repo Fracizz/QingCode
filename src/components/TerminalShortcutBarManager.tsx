@@ -283,8 +283,8 @@ function ManagerDialog() {
             />
             {t('在终端底部显示')}
           </label>
-          <Tooltip label={t('关闭')} side="bottom">
-            <button type="button" aria-label={t('关闭')} className="terminal-profile-icon ml-auto" onClick={state.closeManager}>
+          <Tooltip label={t('关闭')} side="bottom" wrapperClassName="ml-auto inline-flex shrink-0">
+            <button type="button" aria-label={t('关闭')} className="terminal-profile-icon" onClick={state.closeManager}>
               <X size={16} />
             </button>
           </Tooltip>
