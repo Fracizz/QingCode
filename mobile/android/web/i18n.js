@@ -379,6 +379,7 @@ export const EN = Object.freeze({
   '自动结束': 'auto-ends',
   '刚刚有活动': 'Active just now',
   '创建于 {time}': 'Created {time}',
+  '活动于 {time}': 'Active {time}',
   '空闲 {time}': 'Idle {time}',
   '即将{action}': '{action} soon',
   '{time}后{action}': '{action} in {time}',
