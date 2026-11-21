@@ -11,6 +11,11 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Server direct connection gains "One-click enable": after a single SSH authorization it installs or reads the service, allows the firewall port, checks the certificate, verifies credentials and enables the connection. Step-by-step setup is still available.
 - One-click Server direct connection is much faster on Windows remotes: the firewall rule is applied while the service installs, the digest check and self-check of an installed binary run in one remote call, and pairing info is read over SFTP, saving about four PowerShell cold starts.
 - The remote connection editor now pre-fills the locally saved SSH password (masked); click the eye icon to reveal it.
+- Mobile: the fullscreen-program slider gains a "Bottom" button that scrolls down automatically until the screen stops changing (at most 10 seconds).
+
+### Changed
+
+- Mobile: session list timestamps now show "active at" instead of "created at".
 
 ### Fixed
 
