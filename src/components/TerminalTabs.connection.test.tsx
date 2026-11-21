@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '@/types'
 
@@ -87,7 +87,7 @@ vi.mock('./Tooltip', () => ({
   }) => <span data-tooltip={label}>{children}</span>,
 }))
 
-import TerminalTabs from './TerminalTabs'
+import TerminalTabs, { TerminalSessionHeader } from './TerminalTabs'
 
 function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -129,6 +129,28 @@ describe('TerminalTabs', () => {
       document.querySelector('[data-tooltip="正在重新连接…"]'),
     ).toBeInTheDocument()
     expect(document.querySelector('[title]')).toBeNull()
+  })
+
+  it('adds the prewarm badge next to the tab title after the backend confirms a hit', () => {
+    mocks.state.terminals = [terminal({ prewarm: { outcome: 'reserved', kind: 'profile' } })]
+    const view = render(<TerminalTabs />)
+    expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
+
+    mocks.state.terminals = [terminal({ prewarm: { outcome: 'hit', kind: 'profile' } })]
+    view.rerender(<TerminalTabs />)
+    expect(within(screen.getByRole('tab')).getByRole('img', { name: '已领取预热终端' })).toHaveTextContent('预热')
+    expect(document.querySelector('[data-tab-measure-id="t1"] [data-terminal-prewarm]')).toBeInTheDocument()
+
+    mocks.state.terminals = [terminal({ prewarm: { outcome: 'miss', reason: 'claim_fallback' } })]
+    view.rerender(<TerminalTabs />)
+    expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
+  })
+
+  it('shows a confirmed Shell hit next to the workbench session title', () => {
+    const view = render(<TerminalSessionHeader terminal={terminal({ prewarm: { outcome: 'hit' } })} />)
+    expect(screen.getByText('Remote').nextElementSibling).toBe(screen.getByRole('img', { name: '已领取预热终端' }))
+    view.rerender(<TerminalSessionHeader terminal={terminal()} />)
+    expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
   })
 
   it('warns when a non-persistent SSH process will end on disconnect', () => {

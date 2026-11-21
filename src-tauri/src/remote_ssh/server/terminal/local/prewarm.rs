@@ -17,6 +17,7 @@ use tauri::{Emitter, Manager};
 
 /// 远端 daemon 过旧导致 CLI 预热无法启动时发给所属窗口的事件，载荷 `{ cwd }`。
 const CLI_PREWARM_SERVER_OUTDATED_EVENT: &str = "cli-prewarm-server-outdated";
+const CLI_PREWARM_BLOCKED_EVENT: &str = "cli-prewarm-blocked";
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -1202,7 +1203,7 @@ impl ShellPrewarmPool {
                     }
                 }
                 if paused_reason.is_none()
-                    && matches!(
+                    && (matches!(
                         state.paused_reason,
                         Some(
                             "profile_exited"
@@ -1210,7 +1211,10 @@ impl ShellPrewarmPool {
                                 | "cli_not_ready"
                                 | "server_outdated"
                         )
-                    )
+                    ) || state
+                        .paused_reason
+                        .and_then(codex::interaction_blocker)
+                        .is_some())
                 {
                     continue;
                 }
@@ -1274,6 +1278,20 @@ impl ShellPrewarmPool {
                                 target.window.as_str(),
                                 CLI_PREWARM_SERVER_OUTDATED_EVENT,
                                 serde_json::json!({"cwd": target.project_path}),
+                            );
+                            continue;
+                        }
+                        if let Some(reason) = codex::interaction_blocker(&error) {
+                            state.paused_reason = Some(reason);
+                            drop(state);
+                            let _ = app.emit_to(
+                                target.window.as_str(),
+                                CLI_PREWARM_BLOCKED_EVENT,
+                                serde_json::json!({
+                                    "cwd": target.project_path,
+                                    "command": target.key.profile.as_ref().map(|profile| &profile.command),
+                                    "reason": reason
+                                }),
                             );
                             continue;
                         }

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProjectStore } from '../../store/projectStore'
 import { useUIStore } from '../../store/uiStore'
 import { notifyCliPrewarmServerOutdated, resetCliPrewarmServerOutdatedNotices } from './cliPrewarmServerOutdated'
+import { notifyCliPrewarmBlocked } from './cliPrewarmBlocked'
 
 describe('notifyCliPrewarmServerOutdated', () => {
   const pushToast = vi.fn()
@@ -28,5 +29,15 @@ describe('notifyCliPrewarmServerOutdated', () => {
     notifyCliPrewarmServerOutdated('D:/code/a')
     notifyCliPrewarmServerOutdated(undefined)
     expect(pushToast).not.toHaveBeenCalled()
+  })
+
+  it('按连接和原因提示 CLI 启动阻塞', () => {
+    const payload = { cwd: 'ssh://c1/D:/code/a', command: 'codex', reason: 'cli_script_blocked' }
+    notifyCliPrewarmBlocked({ ...payload, reason: 'unknown' })
+    notifyCliPrewarmBlocked(payload)
+    notifyCliPrewarmBlocked({ ...payload, cwd: 'ssh://c1/D:/code/b' })
+    expect(pushToast).toHaveBeenCalledExactlyOnceWith('info', expect.stringContaining('windev'), expect.stringContaining('PowerShell 7'))
+    notifyCliPrewarmBlocked({ ...payload, reason: 'cli_upgrade_required' })
+    expect(pushToast).toHaveBeenCalledTimes(2)
   })
 })

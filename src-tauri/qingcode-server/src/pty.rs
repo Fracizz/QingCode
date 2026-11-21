@@ -444,6 +444,8 @@ struct TermState {
 struct ProcHandles {
     pid: Option<u32>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
+    #[cfg(windows)]
+    job: Option<std::os::windows::io::OwnedHandle>,
 }
 
 struct PtyTerm {
@@ -581,6 +583,21 @@ impl PtyHost {
             .spawn_command(cmd)
             .map_err(|err| format!("无法启动终端程序「{}」：{err}", shell.program))?;
         let pid = child.process_id();
+        #[cfg(windows)]
+        let job = child.as_raw_handle().and_then(|process| {
+            match crate::winproc::assign_pty_job(process) {
+                Ok(job) => Some(job),
+                Err(error) => {
+                    crate::diagnostics::record(
+                        "pty.job_assignment_failed",
+                        serde_json::json!({"shellPid":pid,"osError":error.raw_os_error()}),
+                        true,
+                        false,
+                    );
+                    None
+                }
+            }
+        });
         let killer = child.clone_killer();
         // 关掉从端：主端读到 EOF/EIO 就等价于「shell 及其所有子进程都退出了」。
         drop(pair.slave);
@@ -616,6 +633,8 @@ impl PtyHost {
             proc: Mutex::new(ProcHandles {
                 pid,
                 killer: Some(killer),
+                #[cfg(windows)]
+                job,
             }),
             state: Mutex::new(TermState {
                 parser: TermScreen::new(rows, cols, parser_scrollback_lines(ring_capacity, cols)),
@@ -671,6 +690,9 @@ impl PtyHost {
                     }), true, code != Some(0) && !term_for_waiter.termination_requested.load(Ordering::Acquire));
                     let _ = code_tx.send(code);
                     wait_for_console_clients(&term_for_waiter);
+                    // A detached grandchild may outlive both the shell and its
+                    // parent. Job membership provides a handle to that process tree.
+                    drop(lock(&term_for_waiter.proc).job.take());
                     crate::diagnostics::record("pty.console_closing", serde_json::json!({"ptyId":term_for_waiter.id}), true, false);
                     let master = lock(&term_for_waiter.master).take();
                     drop(master);
@@ -1949,7 +1971,10 @@ fn force_kill(term: &PtyTerm) {
             return;
         }
     }
-    if let Some(killer) = lock(&term.proc).killer.as_mut() {
+    let mut proc = lock(&term.proc);
+    #[cfg(windows)]
+    drop(proc.job.take());
+    if let Some(killer) = proc.killer.as_mut() {
         let _ = killer.kill();
     }
 }
@@ -3289,6 +3314,60 @@ mod tests {
         .expect("宽限结束后应强制结束");
         assert!(started.elapsed() >= INTERRUPT_TOTAL - Duration::from_millis(500));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_close_reaps_grandchild_after_its_parent_exits() {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+            PROCESS_TERMINATE,
+        };
+
+        let (dir, script) = windows_script_fixture(
+            "orphan-grandchild",
+            "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'spawn.ps1')\n\
+             Write-Output 'GRANDCHILD_READY'\n",
+        );
+        std::fs::write(
+            dir.join("spawn.ps1"),
+            "$child = Start-Process powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -WindowStyle Hidden -PassThru\n\
+             Set-Content -LiteralPath (Join-Path $PSScriptRoot 'pid.txt') -Value $child.Id\n",
+        ).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let info = host
+            .create(windows_program_options(&["/d", "/k"], &script))
+            .unwrap();
+        wait_for_text(&mut rx, &info.id, "GRANDCHILD_READY").await;
+        let pid = std::fs::read_to_string(dir.join("pid.txt"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: this opens a new handle to the test's child and transfers ownership below.
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+        assert!(!handle.is_null());
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        host.detach(&info.id, "windows-test").unwrap();
+        // SAFETY: the handle is valid and carries synchronize access.
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
+            WAIT_TIMEOUT
+        );
+        host.attach_with(&info.id, 0, "windows-test", AttachScreenPolicy::Replay)
+            .unwrap();
+        host.kill(&info.id).unwrap();
+        wait_for_exit(&mut rx, &info.id).await;
+        let waited = unsafe { WaitForSingleObject(handle.as_raw_handle(), 3000) };
+        if waited != WAIT_OBJECT_0 {
+            // Clean up the fixture even when replaying against an old host.
+            unsafe { TerminateProcess(handle.as_raw_handle(), 1) };
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(waited, WAIT_OBJECT_0, "detached child survived PTY close");
     }
 
     /// shell 先退出时，ConPTY 必须等仍在收尾的后代写完才关闭。

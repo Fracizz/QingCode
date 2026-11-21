@@ -4,11 +4,13 @@ import { mockIPC } from '@tauri-apps/api/mocks'
 import TerminalSettingsSection from '../components/settings/TerminalSettingsSection'
 import { useTerminalIntegrationSettings } from '../components/settings/useSettingsSectionState'
 import ConfirmDialog from '../components/ConfirmDialog'
+import TerminalTabs, { TerminalSessionHeader } from '../components/TerminalTabs'
 import { DEFAULT_FONT_SETTINGS } from '../lib/fontSettings'
 import { trustTerminalProfile } from '../lib/terminal/terminalProfileTrust'
 import { loadTerminalProfileSettings, saveTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
 import { useLocaleStore } from '../lib/i18n'
-import type { Project } from '../types'
+import type { Project, TerminalTab } from '../types'
+import { useProjectStore, useTerminalStore } from './projectManagerAdapters'
 import '../App.css'
 
 const projects: Project[] = [
@@ -18,6 +20,20 @@ const projects: Project[] = [
 ]
 const disk = new Map<string, string>()
 const cleanups: unknown[] = []
+
+function TerminalTitlePreview() {
+  const session = useTerminalStore(state => state.terminals[0])
+  return (
+    <main className="mx-auto flex max-w-xl flex-col gap-3 px-3 py-5">
+      <div data-preview-terminal-title className="min-w-0 rounded border border-border">
+        <TerminalSessionHeader terminal={session} />
+      </div>
+      <div data-preview-terminal-tabs className="min-w-0 rounded border border-border">
+        <TerminalTabs showPanelActions={false} />
+      </div>
+    </main>
+  )
+}
 
 export function Settings({ project, workspace }: { project: Project; workspace: boolean }) {
   const settings = useTerminalIntegrationSettings(workspace ? 'workspace' : 'user', project, 0)
@@ -85,5 +101,18 @@ if (import.meta.env.MODE === 'web-test') {
     }
     throw new Error(`Unexpected fixture command: ${command}`)
   })
-  createRoot(document.getElementById('root')!).render(<Page />)
+  const titles = new URLSearchParams(location.search).has('titles')
+  if (titles) {
+    const warm: TerminalTab = {
+      id: 'warm', name: 'Claude · 很长的工作区与终端会话标题', projectId: 'local',
+      cwd: projects[0].path, launchCommand: 'claude', status: 'running', exitCode: null,
+      prewarm: { outcome: 'hit', kind: 'profile' },
+    }
+    const cold: TerminalTab = {
+      ...warm, id: 'cold', name: '普通启动', prewarm: { outcome: 'miss', reason: 'claim_fallback' },
+    }
+    useProjectStore.setState({ currentProject: projects[0] })
+    useTerminalStore.setState({ terminals: [warm, cold], activeTerminalId: warm.id })
+  }
+  createRoot(document.getElementById('root')!).render(titles ? <TerminalTitlePreview /> : <Page />)
 }

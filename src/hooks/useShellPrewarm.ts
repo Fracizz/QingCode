@@ -5,6 +5,7 @@ import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { CLI_PREWARM_SERVER_OUTDATED_EVENT, notifyCliPrewarmServerOutdated } from '../lib/terminal/cliPrewarmServerOutdated'
+import { CLI_PREWARM_BLOCKED_EVENT, notifyCliPrewarmBlocked } from '../lib/terminal/cliPrewarmBlocked'
 import type { Project } from '../types'
 import { useProjectStore } from '../store/projectStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
@@ -79,6 +80,7 @@ export function useShellPrewarm(project: Project | null) {
       if (!event.key || event.key === LOCAL_CODEX_PREWARM_KEY || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
+    const initiallyFocused = document.hasFocus()
     let unlisten: (() => void) | undefined
     void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused && !disposed) recheck()
@@ -86,12 +88,16 @@ export function useShellPrewarm(project: Project | null) {
       if (disposed) stop()
       else unlisten = stop
     }).finally(() => {
-      if (!disposed) recheck()
+      if (!disposed && !initiallyFocused) recheck()
     }).catch(() => {})
     // 远端 daemon 过旧时原生池暂停 CLI 预热并只通知所属窗口；提示自动消失，不阻塞新建终端。
     let unlistenOutdated: (() => void) | undefined
     void getCurrentWindow().listen<{ cwd?: unknown }>(CLI_PREWARM_SERVER_OUTDATED_EVENT, event => notifyCliPrewarmServerOutdated(event.payload?.cwd))
       .then(stop => { if (disposed) stop(); else unlistenOutdated = stop })
+      .catch(() => {})
+    let unlistenBlocked: (() => void) | undefined
+    void getCurrentWindow().listen<Parameters<typeof notifyCliPrewarmBlocked>[0]>(CLI_PREWARM_BLOCKED_EVENT, event => notifyCliPrewarmBlocked(event.payload))
+      .then(stop => { if (disposed) stop(); else unlistenBlocked = stop })
       .catch(() => {})
     // CLI 设置导入可由主窗口处理，预算却在另一个窗口。接收方只重读，不再次广播。
     const settingsChannel = new BroadcastChannel(SHELL_PREWARM_CHANGED_EVENT)
@@ -110,6 +116,7 @@ export function useShellPrewarm(project: Project | null) {
     window.addEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
     window.addEventListener(TERMINAL_PROFILE_TRUST_CHANGED_EVENT, invalidate)
     window.addEventListener('storage', storage)
+    if (initiallyFocused) recheck()
     return () => {
       disposed = true
       revision++
@@ -120,13 +127,14 @@ export function useShellPrewarm(project: Project | null) {
       window.removeEventListener(WORKSPACE_TRUST_SYNCED_EVENT, onTrustSynced)
       unlisten?.()
       unlistenOutdated?.()
+      unlistenBlocked?.()
       window.removeEventListener(TERMINAL_PROFILE_TRUST_CHANGED_EVENT, invalidate)
       window.removeEventListener('storage', storage)
       void configure(null, null, 0)
     }
   }, [])
 
-  // 首次挂载已在焦点监听建立后复查；之后换项目只复查，不先清空。
+  // 首次挂载由已有焦点或焦点监听触发；之后换项目只复查，不先清空。
   useEffect(() => {
     if (projectRef.current === project) return
     projectRef.current = project

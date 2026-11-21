@@ -43,6 +43,19 @@ beforeEach(() => {
 })
 
 describe('Windows prewarm coordinator', () => {
+  it('starts the initial prewarm without waiting for focus listener registration', async () => {
+    let finishRegistration!: (unlisten: () => void) => void
+    mocks.onFocusChanged.mockImplementationOnce(() => new Promise(resolve => { finishRegistration = resolve }))
+    const hook = renderHook(() => useShellPrewarm(project))
+    await waitFor(() => expect(configuredPaths()).toContain(project.path))
+    const unlisten = vi.fn()
+    await act(async () => { finishRegistration(unlisten) })
+    expect(configuredPaths()).not.toContain(null)
+    hook.unmount()
+    expect(unlisten).toHaveBeenCalledOnce()
+    await act(async () => {})
+  })
+
   it('prepares the trusted project and invalidates it on trust revocation and hosting opt-out', async () => {
     const hook = renderHook(() => useShellPrewarm(project))
     await waitFor(() => expect(configuredPaths()).toContain(project.path))

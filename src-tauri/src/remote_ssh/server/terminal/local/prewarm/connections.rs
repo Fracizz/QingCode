@@ -40,11 +40,16 @@ impl ConnectionShellPools {
             }
         }
         state.profiles.retain(|id, (owner, profile, pool)| {
-            let keep = owner == window && next.get(id) == Some(profile);
-            if !keep {
-                pool.stop()
+            if let Some(replacement) = next
+                .get(id)
+                .filter(|next| owner == window && profile.same_cli(next))
+            {
+                profile.clone_from(replacement);
+                true
+            } else {
+                pool.stop();
+                false
             }
-            keep
         });
         for (id, profile) in next {
             state
@@ -114,6 +119,9 @@ impl ConnectionShellPools {
                 }
                 let manager = app.state::<SshManager>();
                 for (window, profile, pool) in state.profiles.values() {
+                    if pool.keeps_trusted_anchor(&manager, profile) {
+                        continue;
+                    }
                     if let Some(target) = profile.target(&manager, window) {
                         pool.configure_target(&app, target);
                     } else {
@@ -166,7 +174,30 @@ impl ConnectionShellPools {
     }
 }
 
+impl ShellPrewarmPool {
+    fn keeps_trusted_anchor(&self, manager: &SshManager, profile: &PrewarmProfile) -> bool {
+        let anchor = {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.target.as_ref().and_then(|target| {
+                target
+                    .key
+                    .profile
+                    .as_ref()
+                    .filter(|old| old.same_cli(profile))?;
+                target.remote.clone()
+            })
+        };
+        anchor.is_some_and(|remote| remote_target_valid(manager, &remote))
+    }
+}
+
 impl PrewarmProfile {
+    fn same_cli(&self, other: &Self) -> bool {
+        self.profile_id == other.profile_id
+            && self.shell == other.shell
+            && self.command == other.command
+    }
+
     pub(super) fn target(&self, manager: &SshManager, window: &str) -> Option<Target> {
         let root = manager
             .registered_root(&self.cwd)
@@ -264,6 +295,20 @@ mod tests {
         assert_eq!(initial.len(), 3);
         assert_eq!(initial["linux"].root.uri, "ssh://linux/home/work");
         assert_eq!(initial["windev"].root.uri, "ssh://windev/D:/a");
+        let original = PrewarmProfile {
+            cwd: "ssh://windev/D:/a".into(),
+            cross_project: true,
+            profile_id: "claude".into(),
+            shell: "auto".into(),
+            command: "claude".into(),
+        };
+        let next_project = PrewarmProfile {
+            cwd: "ssh://windev/D:/b".into(),
+            ..original.clone()
+        };
+        let pool = ShellPrewarmPool::default();
+        pool.0.lock().unwrap().target = original.target(&manager, "main");
+        assert!(pool.keeps_trusted_anchor(&manager, &next_project));
         manager
             .roots
             .write()
@@ -274,6 +319,7 @@ mod tests {
         manager.direct_active.write().unwrap().remove("other");
         manager.direct_active.write().unwrap().remove("linux");
         let next = connected_targets(&manager);
+        assert!(!pool.keeps_trusted_anchor(&manager, &next_project));
         assert_eq!(next.len(), 1);
         assert_eq!(next["windev"].root.uri, "ssh://windev/D:/b");
         assert!(initial["windev"].same_connection(&next["windev"]));
@@ -311,12 +357,9 @@ mod tests {
         );
         let original = registry.profile_pool("ssh://one/home/other").unwrap();
         assert!(registry.profile_pool("ssh://other/home/other").is_none());
-        registry.set_profiles(
-            "main",
-            Some(profile("one", "claude")),
-            vec![profile("one", "claude")],
-            true,
-        );
+        let mut switched = profile("one", "claude");
+        switched.cwd = "ssh://one/home/new-project".into();
+        registry.set_profiles("main", Some(switched), vec![], true);
         assert!(Arc::ptr_eq(
             &original.0,
             &registry.profile_pool("ssh://one/home/next").unwrap().0

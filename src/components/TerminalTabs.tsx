@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LoaderCircle,
+  Zap,
 } from 'lucide-react'
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore, type TerminalFocusPane } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
@@ -87,10 +88,30 @@ function TerminalPaneHeader({
   )
 }
 
-export function TerminalSessionHeader({ name }: { name?: string }) {
+function TerminalPrewarmBadge() {
+  const { t } = useI18n()
+  return (
+    <span
+      role="img"
+      aria-label={t('已领取预热终端')}
+      data-terminal-prewarm=""
+      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-ok/25 bg-ok/10 px-1 py-0.5 text-ui-xs font-medium leading-none text-ok"
+    >
+      <Zap size={10} aria-hidden="true" />
+      {t('预热')}
+    </span>
+  )
+}
+
+export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTab, 'name' | 'prewarm'> }) {
   return (
     <TerminalPaneHeader>
-      {name && <span className="min-w-0 truncate px-2 text-ui text-fg">{formatTerminalName(name)}</span>}
+      {terminal?.name && (
+        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden px-2">
+          <span className="min-w-0 truncate text-ui text-fg">{formatTerminalName(terminal.name)}</span>
+          {terminal.prewarm?.outcome === 'hit' && <TerminalPrewarmBadge />}
+        </div>
+      )}
     </TerminalPaneHeader>
   )
 }
@@ -169,7 +190,7 @@ export default function TerminalTabs({
 
   // Stable deps for overflow measure (avoid new-array identity loops).
   const projectTerminalMeasureKey = projectTerminals
-    .map(term => `${term.id}:${term.name}:${term.status}`)
+    .map(term => `${term.id}:${term.name}:${term.status}:${term.prewarm?.outcome === 'hit'}`)
     .join('|')
 
   useLayoutEffect(() => {
@@ -291,6 +312,7 @@ export default function TerminalTabs({
               if (!t) return null
               const isCloseArmed = closeArmId === t.id
               const isActive = t.id === paneActiveId
+              const showPrewarm = t.prewarm?.outcome === 'hit' && renamingId !== t.id
               const tooltipLines = terminalTabTooltip(t, translate)
               return (
                 <div
@@ -299,7 +321,8 @@ export default function TerminalTabs({
                   tabIndex={isActive ? 0 : -1}
                   aria-selected={isActive}
                   draggable={renamingId !== t.id}
-                  className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded ${terminalTabPaddingClass(t.status)} text-ui transition-colors
+                  className={`group relative flex ui-chip h-6 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded ${terminalTabPaddingClass(t.status)} text-ui transition-colors
+                    ${showPrewarm && visibleTabIndices.length === 1 ? 'min-w-0 shrink' : 'shrink-0'}
                     ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                     ${draggedTerminalId === t.id ? 'opacity-45' : ''}`}
                   onDragStart={event => handleTabDragStart(event, t.id)}
@@ -359,7 +382,7 @@ export default function TerminalTabs({
                       type="button"
                       aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
                       data-terminal-close={t.id}
-                      className={`flex items-center justify-center w-5 ui-chip ui-chip-compact h-6 rounded transition-colors ${
+                      className={`flex shrink-0 items-center justify-center w-5 ui-chip ui-chip-compact h-6 rounded transition-colors ${
                         isCloseArmed
                           ? 'bg-danger/15 text-danger'
                           : 'hover:bg-bg-active'
@@ -399,6 +422,7 @@ export default function TerminalTabs({
                       </span>
                     </Tooltip>
                   )}
+                  {showPrewarm && <TerminalPrewarmBadge />}
                   {t.status === 'reconnecting' && renamingId !== t.id && (
                     <Tooltip
                       label={translate('正在重新连接…')}
@@ -579,6 +603,7 @@ export default function TerminalTabs({
             >
               <span className="ui-chip ui-chip-compact h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
+              {term.prewarm?.outcome === 'hit' && renamingId !== term.id && <TerminalPrewarmBadge />}
               {term.status === 'reconnecting' && (
                 <span className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
               )}

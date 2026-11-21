@@ -14,7 +14,41 @@
 #![cfg(windows)]
 
 use std::ffi::OsStr;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
+
+/// One job per PTY keeps ownership of descendants even after their parents exit.
+pub(crate) fn assign_pty_job(process: RawHandle) -> std::io::Result<OwnedHandle> {
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    // SAFETY: A nameless job with default security returns a new owned handle.
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: job is non-null and has not been transferred.
+    let job = unsafe { OwnedHandle::from_raw_handle(job) };
+    // SAFETY: this C structure permits zero for unused limits.
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: both handles are live and limits points to the structure type requested.
+    if unsafe {
+        SetInformationJobObject(
+            job.as_raw_handle(),
+            JobObjectExtendedLimitInformation,
+            (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of_val(&limits) as u32,
+        )
+    } == 0
+        || unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(job)
+}
 
 /// 脱离进程的核心参数：真实 argv（不经 shell）、要精确继承的句柄、
 /// 可选的 stdio 接管句柄。

@@ -52,14 +52,31 @@ try {
   click('Windows')
   check('Linux clients can configure prewarming for Windows SSH hosts', `navigator.userAgent === 'Linux' && ${control}?.disabled === false && ${control}.textContent.includes('自动')`)
   click('Linux')
-  run('eval', `(async () => {
-    const { ensureBuiltinLocaleLoaded, useLocaleStore } = await import('/src/lib/i18n.ts')
-    await ensureBuiltinLocaleLoaded('en'); useLocaleStore.setState({ language: 'en' })
-    document.documentElement.dataset.theme = 'light'; return true
-  })()`)
+  click('English / light')
   run('set', 'viewport', '420', '760')
   check('English light setting fits narrow windows', `document.querySelector('button[aria-label="Terminal › Integrated: Prewarmed Shells"]') && document.documentElement.scrollWidth <= innerWidth`)
   run('screenshot', resolve(output, 'light-en-narrow.png'))
+  run('set', 'viewport', '680', '350')
+  run('open', 'http://127.0.0.1:38439/web-tests/shell-prewarm.html?titles')
+  const title = `document.querySelector('[data-preview-terminal-title]')`
+  const badge = `${title}?.querySelector('[data-terminal-prewarm]')`
+  const tabBadge = `document.querySelector('[role="tab"] [data-terminal-prewarm]')`
+  check('confirmed prewarm hit follows the session title and its tab', `
+    ${badge}?.previousElementSibling?.textContent.includes('Claude') &&
+    [...document.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.includes('Claude'))?.querySelector('[data-terminal-prewarm]')?.textContent === '预热'
+  `)
+  check('a fallback tab has no prewarm badge', `
+    [...document.querySelectorAll('[role="tab"]')].some(tab => tab.textContent.includes('普通启动') && !tab.querySelector('[data-terminal-prewarm]'))
+  `)
+  run('screenshot', resolve(output, 'terminal-prewarm-badge.png'))
+  run('set', 'viewport', '310', '350')
+  check('the session badge stays visible when the title truncates', `
+    ${badge} && ${badge}.previousElementSibling.scrollWidth > ${badge}.previousElementSibling.clientWidth &&
+      ${badge}.getBoundingClientRect().right <= ${title}.getBoundingClientRect().right &&
+      ${tabBadge}?.getBoundingClientRect().right <= document.querySelector('[role="tablist"]').getBoundingClientRect().right &&
+      document.documentElement.scrollWidth <= innerWidth
+  `)
+  run('screenshot', resolve(output, 'terminal-prewarm-badge-narrow.png'))
 } catch (error) {
   results.push({ name: String(error), passed: false })
   try { writeFileSync(resolve(output, 'failure-snapshot.txt'), run('snapshot', '-i')) } catch { /* best effort */ }

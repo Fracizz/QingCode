@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn startup_blockers_require_a_dialog_or_this_terminal_marker() {
+    let update = "Update available · 0.170.0 → 0.171.0\n› 1. Update now\n2. Skip\n3. Skip until next version";
+    assert_eq!(
+        startup_blocker("codex", update, "/anchor", "nonce"),
+        Some(UPGRADE_REQUIRED)
+    );
+    assert_eq!(
+        startup_blocker("codex", "Update available", "/anchor", "nonce"),
+        None
+    );
+    assert_eq!(
+        startup_blocker("codex", "QC-nonce-script_blocked!", "/anchor", "nonce"),
+        Some(SCRIPT_BLOCKED)
+    );
+    assert_eq!(
+        startup_blocker("codex", "QC-stale-script_blocked!", "/anchor", "nonce"),
+        None
+    );
+    let login = "Welcome to Codex\n1. Sign in with ChatGPT\n2. Use an API key";
+    assert_eq!(
+        startup_blocker("codex", login, "/anchor", "nonce"),
+        Some(LOGIN_REQUIRED)
+    );
+    let trust = "Accessing workspace:\n/anchor\nIs this a project you created or one you trust?\n❯ Yes, I trust this folder\nNo, exit\nEnter to confirm";
+    assert_eq!(startup_blocker("claude", trust, "/anchor", "nonce"), None);
+    assert_eq!(
+        startup_blocker("claude", trust, "/different", "nonce"),
+        Some(TRUST_REQUIRED)
+    );
+    let moving = "Moving to a new directory:\n/work/project\n❯ No, stay put\nYes, move here\nEnter to confirm";
+    assert_eq!(
+        startup_blocker("claude", moving, "/anchor", "nonce"),
+        Some(TRUST_REQUIRED)
+    );
+}
+
+#[test]
 fn claude_only_confirms_the_selected_trust_choice_in_the_managed_directory() {
     let prompt = "Accessing workspace:\nD:/Test/codex-prewarm\nQuick safety check: Is this a project you created or one you trust?\n❯ No, exit\nYes, I trust this folder\nEnter to confirm · Esc to cancel";
     assert_eq!(

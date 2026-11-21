@@ -191,6 +191,66 @@ impl LocalCodexPool {
 
 /// 远端 daemon 版本过旧、不支持 `pty.claimCwdFile` 时的错误；预热循环据此暂停并提示升级。
 pub(super) const SERVER_OUTDATED: &str = "远端服务需要更新以交付 CLI 工作目录";
+const UPGRADE_REQUIRED: &str = "cli_upgrade_required";
+const LOGIN_REQUIRED: &str = "cli_login_required";
+const TRUST_REQUIRED: &str = "cli_trust_required";
+const SCRIPT_BLOCKED: &str = "cli_script_blocked";
+const HANDOFF_UNAVAILABLE: &str = "cli_handoff_unavailable";
+
+pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
+    match error {
+        UPGRADE_REQUIRED => Some(UPGRADE_REQUIRED),
+        LOGIN_REQUIRED => Some(LOGIN_REQUIRED),
+        TRUST_REQUIRED => Some(TRUST_REQUIRED),
+        SCRIPT_BLOCKED => Some(SCRIPT_BLOCKED),
+        HANDOFF_UNAVAILABLE => Some(HANDOFF_UNAVAILABLE),
+        _ => None,
+    }
+}
+
+fn startup_blocker(agent: &str, screen: &str, anchor: &str, nonce: &str) -> Option<&'static str> {
+    let has = |text| screen.contains(text);
+    let marker = format!("QC-{nonce}-script_blocked!");
+    if screen.lines().any(|line| line.trim() == marker) {
+        return Some(SCRIPT_BLOCKED);
+    }
+    if agent == "codex" {
+        if has("Update available") && has("Update now") && has("Skip until next version") {
+            return Some(UPGRADE_REQUIRED);
+        }
+        if has("Sign in with ChatGPT") && has("Use an API key") {
+            return Some(LOGIN_REQUIRED);
+        }
+        if has("Do you trust the contents") && has("Yes, continue") && has("No, quit") {
+            return Some(TRUST_REQUIRED);
+        }
+    }
+    if agent == "claude" {
+        if has("Select login method") && has("Claude account") && has("Anthropic Console") {
+            return Some(LOGIN_REQUIRED);
+        }
+        if has("Moving to a new directory:")
+            && has("No, stay put")
+            && has("Yes, move here")
+            && has("Enter to confirm")
+        {
+            return Some(TRUST_REQUIRED);
+        }
+        let mut lines = screen
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty());
+        if lines.any(|line| line == "Accessing workspace:")
+            && lines
+                .next()
+                .is_some_and(|shown| claude_trust_choice(screen, shown).is_some())
+            && claude_trust_choice(screen, anchor).is_none()
+        {
+            return Some(TRUST_REQUIRED);
+        }
+    }
+    None
+}
 
 /// CLI 启动脚本统一为 LF 换行。Windows 检出（core.autocrlf=true）会把脚本变成 CRLF
 /// 编进二进制；远端 dash 把 `\r` 当作参数的一部分（如 `unset NAME\r` 报
@@ -296,6 +356,14 @@ impl CodexSession {
         loop {
             if matches(self) {
                 return Ok(());
+            }
+            if let Some(reason) = startup_blocker(
+                &self.agent,
+                &claude_rows(self.screen.screen()),
+                &self.anchor,
+                &self.nonce,
+            ) {
+                return Err(reason.into());
             }
             match events.recv().await {
                 Some(Event::PtyData {
@@ -466,6 +534,12 @@ impl CodexSession {
         anchor: &str,
         validate: impl Fn() -> Result<(), String>,
     ) -> Result<(), String> {
+        let record_stage = |stage, agent: &str, started: Instant| {
+            trace(
+                stage,
+                serde_json::json!({"agent": agent, "ms": started.elapsed().as_millis() as u64}),
+            );
+        };
         if self.agent == "opencode" {
             validate()?;
             let nonce = self.nonce.clone();
@@ -481,12 +555,18 @@ impl CodexSession {
         }
         if self.agent == "claude" {
             if cwd != crate::terminal::strip_windows_verbatim_prefix(anchor) {
+                let started = Instant::now();
                 self.claude_cd(session, id, cwd, true, &validate).await?;
+                record_stage("cli_cwd_switch", &self.agent, started);
             }
-            return self.claude_cd(session, id, cwd, false, &validate).await;
+            let started = Instant::now();
+            self.claude_cd(session, id, cwd, false, &validate).await?;
+            record_stage("cli_cwd_verify", &self.agent, started);
+            return Ok(());
         }
         let anchor = crate::terminal::strip_windows_verbatim_prefix(anchor);
         if cwd != anchor {
+            let started = Instant::now();
             self.submit(
                 session,
                 id,
@@ -503,10 +583,14 @@ impl CodexSession {
             .await?;
             self.wait_for(session, id, |view| view.directory_confirmed(CHANGED, cwd))
                 .await?;
+            record_stage("cli_cwd_switch", &self.agent, started);
         }
+        let started = Instant::now();
         self.submit(session, id, "/pwd", validate).await?;
         self.wait_for(session, id, |view| view.directory_confirmed(PWD, cwd))
-            .await
+            .await?;
+        record_stage("cli_cwd_verify", &self.agent, started);
+        Ok(())
     }
 }
 
@@ -727,7 +811,16 @@ pub(super) async fn prepare_at(
             .await
     })
     .await
-    .map_err(|_| "等待 CLI 输入界面或目录确认超时".to_string())
+    .map_err(|_| {
+        if agent == "codex"
+            && !codex.screen.callbacks().idle
+            && idle(&codex.screen.screen().contents())
+        {
+            HANDOFF_UNAVAILABLE.to_string()
+        } else {
+            "等待 CLI 输入界面或目录确认超时".to_string()
+        }
+    })
     .and_then(|result| result);
     #[cfg(test)]
     if ready.is_err() {

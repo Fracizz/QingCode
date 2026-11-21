@@ -71,6 +71,8 @@ QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打�
 
 远端沿用 SSH 终端的 Shell 解析规则。Windows 需要实际解析到 Windows PowerShell 或 PowerShell 7。POSIX 使用 `/bin/sh` 运行启动脚本，退出 CLI 后接回用户的登录 Shell。OpenCode 的 POSIX 目录校验还会调用远端 Python。Claude Code 和 Codex 通过远端服务的 `pty.claimCwdFile` 能力，把领取时验证过的目录交给退出后的 Shell；旧服务走普通启动。OpenCode 服务只监听终端所在主机的回环地址。首次登录或目标项目信任确认在正常交互终端中完成。连接断开、身份变化、撤销项目信任或停用配置后，空闲会话失效。
 
+同一连接切换项目时，只要原登记项目仍受信任且 CLI 配置相同，已准备和正在准备的会话都可继续使用。识别到 CLI 升级、登录、目录信任提示或 PowerShell 脚本拦截时，预热暂停并在所属窗口显示原因。使用 `terminal prewarm status` 可查看对应的 `profile.reason`。Windows PowerShell 5.1 拦截 npm 启动脚本时，可在终端配置中选择已安装的 PowerShell 7。CLI 目录切换和二次验证分别记录耗时。
+
 ## Android 移动连接
 
 手机新建终端与电脑端共用同一个池，条件与电脑端新建一致：本机 Windows 项目（含 PowerShell 配置命令）、SSH Server 模式项目（含 PowerShell / POSIX Shell 配置命令）；WSL 和 CMD 配置命令不领取。
@@ -89,6 +91,7 @@ QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打�
 - 本机内存压力判断只约束本机项目；远端预热不受本机内存影响。
 - 远端目录确认与接回各限 5 秒（本机接回 2 秒），失败回退正常新建，并通过 `kill_detached_terminal` 后台清理已转为 detached 的 PTY。
 - 远端旧版 daemon 不认识 `pty.createTransient` 时预热失败并退避重试，终端照常新建。
+- Windows daemon 为每个 PTY 建立独立的 Job Object，终端结束时一并回收其子进程。若系统拒绝分配 Job，沿用原有关闭流程，并写入 `pty.job_assignment_failed` 诊断。
 
 ### Linux / macOS 远端
 

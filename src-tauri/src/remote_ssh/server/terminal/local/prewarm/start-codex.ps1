@@ -35,6 +35,9 @@
         $destination = $reader.ReadToEnd()
         if (!$destination) { exit 1 }
         Set-Location -LiteralPath $destination -ErrorAction Stop
+    } catch [System.Management.Automation.PSSecurityException] {
+        [Console]::WriteLine("QC-${env:QINGCODE_PREWARM_NONCE}-script_blocked!")
+        exit 1
     } catch {
         exit 1
     } finally {

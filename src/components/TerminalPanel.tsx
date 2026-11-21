@@ -643,7 +643,7 @@ export default function TerminalPanel({
   ) : (
     <>
       {sessionListVisible ? (
-        <TerminalSessionHeader name={projectTerminals.find(term => term.id === activeTerminalId)?.name} />
+        <TerminalSessionHeader terminal={projectTerminals.find(term => term.id === activeTerminalId)} />
       ) : (
         <TerminalTabs />
       )}
