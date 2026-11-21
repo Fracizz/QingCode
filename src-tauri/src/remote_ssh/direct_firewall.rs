@@ -162,16 +162,8 @@ fn linux_command(port: u16, expected: Option<&str>, identity: &str) -> Result<St
     if let Some(hash) = expected {
         validate_hash(hash)?;
     }
-    // Windows 检出（autocrlf）可能把脚本转成 CRLF，sh 会把  当作命令的一部分。
-    let script = encode_terminal_data(
-        LINUX_SCRIPT
-            .replace(
-                "
-", "
-",
-            )
-            .as_bytes(),
-    );
+    // Windows 检出（autocrlf）可能把脚本转成 CRLF，sh 会把 CR 当作命令的一部分。
+    let script = encode_terminal_data(LINUX_SCRIPT.replace("\r\n", "\n").as_bytes());
     let args = format!(
         "qc {port} \"{}\" {} {identity} \"$C\" \"$U\"",
         expected.unwrap_or(""),
