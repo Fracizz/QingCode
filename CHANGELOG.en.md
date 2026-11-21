@@ -20,6 +20,7 @@ The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and 
 - Android: project file browsing with background downloads, continuous terminal output push from the computer, custom and reorderable shortcut keys, dark and graphite themes, and untrusted desktop projects listed greyed out.
 - New Graphite theme; image viewer wheel zoom, drag pan, and rotation; Markdown preview context menu; remote file and project properties with creation time.
 - New [Offline Server update](./docs/server-offline-update.md) guide.
+- "Authorize port access via SSH" now supports Linux (running firewalld or active ufw, root or sudo required); one-click Server direct install no longer requires opening a project first, fetches packages per the package source setting, and shows step progress.
 
 ### Changed
 
@@ -27,12 +28,14 @@ The stable release after v0.1.17, rolling up the 0.1.18 beta line: terminal and 
 - Smooth transitions for the sidebar, pages, and terminal switching, exit animations for overlays, and a motion setting; smoother terminal wheel scrolling.
 - Remote services prewarm and update concurrently per connection, updates can be confirmed with active terminals, and Windows server package uploads use larger chunks.
 - Softened terminal palettes for dark, graphite, and light themes; the light theme accent is now the brand teal.
+- Remote binary files are downloaded locally by default instead of being opened; the remote connection editor reuses locally saved SSH credentials.
 
 ### Fixed
 
 - Recovery of interrupted remote Server upgrades, Linux remote CLI prewarm scripts exiting immediately due to line endings, and Claude prewarm timing out on the empty-composer placeholder.
 - Idle terminals marked "needs attention" after a resize, stale attention markers after viewing, and delayed new terminals while the window is in the background.
 - New local terminals strip agent-injected variables such as `CI` / `NO_COLOR` and advertise color support.
+- Server direct install no longer reuses a loopback-only gateway left by Server mode, which kept the port unreachable after the firewall was opened; the shortcut bar manager uses pointer-based reordering so rows can be dropped on desktop, and its close button moved to the top right.
 
 ## [0.1.17] - 2026-11-10
 
