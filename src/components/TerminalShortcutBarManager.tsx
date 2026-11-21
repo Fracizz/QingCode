@@ -1,5 +1,6 @@
-import { useId, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useI18n } from '../lib/i18n'
 import {
   canonicalizeShortcut,
@@ -29,7 +30,6 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 
 type Draft = { id: string | null; name: string; text: string; enter: boolean; shortcut: string }
-type DropTarget = { key: string; position: 'before' | 'after' }
 
 const EMPTY_DRAFT: Draft = { id: null, name: '', text: '', enter: true, shortcut: '' }
 
@@ -49,11 +49,10 @@ function ManagerDialog() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [shortcutHint, setShortcutHint] = useState<string | null>(null)
-  const [dragged, setDragged] = useState<string | null>(null)
-  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const titleId = useId()
   const managerTitleId = useId()
   const shortcutInputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const layout = { order: state.order, hidden: state.hidden, custom: state.custom }
 
   const keyName = (key: string) => {
@@ -119,41 +118,16 @@ function ManagerDialog() {
     setDraft(null)
   }
 
-  /**
-   * 在整个弹窗内容区上按指针纵坐标计算插入点：落在某行上半部 → 该行之前，否则顺延；
-   * 指针在首行之上（如拖到列表顶边、说明文字区）时夹到首行之前，在末行之下时夹到末行之后。
-   * 不依赖指针必须压在某一行内部，避免「把第二行拖到第一行」时因越出首行而无法放下。
-   */
-  const computeDropTarget = (container: HTMLElement, clientY: number): DropTarget | null => {
-    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-shortcut-row]'))
-    if (rows.length === 0) return null
-    for (const row of rows) {
-      const rect = row.getBoundingClientRect()
-      if (clientY < rect.top + rect.height / 2) return { key: row.dataset.shortcutRow!, position: 'before' }
-    }
-    return { key: rows[rows.length - 1].dataset.shortcutRow!, position: 'after' }
-  }
-
-  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!dragged) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const next = computeDropTarget(event.currentTarget, event.clientY)
-    setDropTarget(current => (current?.key === next?.key && current?.position === next?.position ? current : next))
-  }
-
-  const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!dragged) return
-    event.preventDefault()
-    const target = computeDropTarget(event.currentTarget, event.clientY)
-    if (target && target.key !== dragged) state.reorder(dragged, target.key, target.position)
-    clearDrag()
-  }
-
-  const clearDrag = () => {
-    setDragged(null)
-    setDropTarget(null)
-  }
+  // Tauri 接管原生拖放后 WebView2 收不到 dragover / drop（光标显示禁止、放不下），改用指针拖动。
+  // 落点按纵坐标取最近一行，指针越过首行顶边时仍落在首行之前。
+  const { draggedId: dragged, drop: dropTarget, start: startDrag } = useVerticalPointerReorder({
+    targetSelector: '[data-shortcut-row]',
+    targetIdOf: element => element.dataset.shortcutRow,
+    ignoreSelector: 'button, input',
+    listRef,
+    canDrop: () => true,
+    onDrop: (source, drop) => state.reorder(source, drop.id, drop.position),
+  })
 
   const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (!draft) return
@@ -308,9 +282,8 @@ function ManagerDialog() {
           </Tooltip>
         </div>
         <div
+          ref={listRef}
           className="terminal-profiles min-h-0 flex-1 overflow-y-auto px-5 py-4"
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
         >
           <p className="mb-3 text-ui-sm leading-relaxed text-fg-muted">
             {t('点击按钮直接发送到所在终端。拖动行可调整顺序；取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。')}
@@ -357,16 +330,10 @@ function ManagerDialog() {
                 <div
                   key={key}
                   data-shortcut-row={key}
-                  draggable
-                  className={`terminal-profile-row relative border-b border-border last:border-b-0 hover:bg-bg-hover ${dragged === key ? 'opacity-40' : ''}`}
-                  onDragStart={event => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData('text/plain', key)
-                    setDragged(key)
-                  }}
-                  onDragEnd={clearDrag}
+                  className={`terminal-profile-row relative cursor-grab border-b border-border last:border-b-0 hover:bg-bg-hover ${dragged === key ? 'cursor-grabbing opacity-40' : ''}`}
+                  onPointerDown={event => startDrag(event, key)}
                 >
-                  {dropTarget?.key === key && dragged !== key && (
+                  {dropTarget?.id === key && dragged !== key && (
                     <span
                       aria-hidden="true"
                       className={`pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded bg-accent ${dropTarget.position === 'before' ? 'top-0' : 'bottom-0'}`}
