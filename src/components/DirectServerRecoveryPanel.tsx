@@ -7,7 +7,6 @@ import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import type { SshConnection } from '../types'
 import DirectSshAuthFields from './DirectSshAuthFields'
-import ServerAutoStartSwitch from './ServerAutoStartSwitch'
 
 interface Props {
   connectionId: string
@@ -29,12 +28,11 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
   const ssh = candidates.find(c => c.id === sshId) ?? candidates.find(c => c.id === connectionId) ?? candidates[0]
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
-  const [autoStart, setAutoStart] = useState(info.autoStart ?? true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [warning, setWarning] = useState('')
   const { busy, manage } = useDirectServerManage({
-    connectionId, info, ssh, password, passphrase, autoStart, api, onStarted, onBusyChange,
+    connectionId, info, ssh, password, passphrase, api, onStarted, onBusyChange,
     onManaged: async result => {
       setPassword('')
       setPassphrase('')
@@ -42,16 +40,13 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     },
   })
 
-  const run = async (start: boolean) => {
+  const run = async () => {
     setError('')
     setNotice('')
     setWarning('')
-    const outcome = await manage(start)
+    const outcome = await manage()
     if (!outcome) return
-    if (outcome.warning) {
-      setAutoStart(false)
-      setWarning(outcome.warning)
-    }
+    if (outcome.warning) setWarning(outcome.warning)
     setError(outcome.error ?? '')
     setNotice(outcome.notice ?? '')
   }
@@ -59,10 +54,8 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
   const button = 'btn btn-secondary border-dialog-border'
 
   return <section aria-label={t('启动与开机自启')} className="@container/recovery min-w-0 space-y-2.5 rounded border border-dialog-border bg-dialog-sidebar p-3">
-    <ServerAutoStartSwitch checked={autoStart} disabled={busy} onChange={setAutoStart} />
-    <p className="text-ui-sm text-fg-muted">{t('默认开启。通过 SSH 应用设置；关闭只取消开机自启，不停止当前服务。')}</p>
+    <p className="text-ui-sm text-fg-muted">{t('Server 默认开机自启。可通过 SSH 启动已配对的 Server，随后使用原配对凭据直连。')}</p>
     {ssh ? <>
-      <p className="text-ui-sm text-fg-muted">{t('此操作通过 SSH 启动已配对的 Server，随后使用原配对凭据直连。')}</p>
       <div className="grid min-w-0 grid-cols-1 gap-2.5 @min-[32rem]/recovery:grid-cols-2">
         <DirectSshAuthFields
           candidates={candidates}
@@ -74,8 +67,7 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
         />
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy} onClick={() => void run(true)} className={button}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
-        <button type="button" disabled={busy} onClick={() => void run(false)} className={button}>{t('应用自启设置')}</button>
+        <button type="button" disabled={busy} onClick={() => void run()} className={button}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
       </div>
     </> : <>
       <p className="text-ui-sm text-fg-muted">{t('未找到此主机的 SSH 连接。可配置 SSH 后启动，或在远端手动运行以下命令。')}</p>
@@ -83,10 +75,10 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
     </>}
     <details className="text-ui-sm text-fg-muted"><summary className="cursor-pointer">{t('远端手动启动命令')}</summary>
       <p className="my-2">{t('使用原安装账户和原 Server 程序运行，保留配对信息。Windows 自启需管理员权限，Linux 需 systemd。')}</p>
-      <code className="block whitespace-pre-wrap break-all rounded bg-dialog-input p-2 font-mono">{`qingcode-server direct --port ${info.port} --detach\nqingcode-server startup ${autoStart ? 'enable' : 'disable'}`}</code>
+      <code className="block whitespace-pre-wrap break-all rounded bg-dialog-input p-2 font-mono">{`qingcode-server direct --port ${info.port} --detach\nqingcode-server startup enable`}</code>
     </details>
     {error && <p role="alert" className="text-ui-sm text-danger">{t(error)}</p>}
-    {warning && !busy && <p role="status" className="break-words text-ui-sm text-warn">{t('未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}', { reason: warning })}</p>}
+    {warning && !busy && <p role="status" className="break-words text-ui-sm text-warn">{t('未能配置开机自启，远端重启后需手动启动。原因：{reason}', { reason: warning })}</p>}
     {(busy || notice) && <p role="status" className="text-ui-sm text-fg-muted">{busy ? t('正在通过 SSH 管理 Server…') : t(notice)}</p>}
   </section>
 }

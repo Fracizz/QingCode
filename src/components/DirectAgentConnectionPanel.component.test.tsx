@@ -59,13 +59,13 @@ describe('direct Agent connection panel', () => {
     expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
   })
 
-  it('passes the default-on startup preference to installation and lets users turn it off', async () => {
+  it('always enables boot startup during installation without exposing a switch', async () => {
     const api = apiMock(null)
     await openPanel(api)
-    expect(screen.getByRole('switch')).toBeChecked()
-    fireEvent.click(screen.getByRole('switch'))
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText('Server 默认开机自启。')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
-    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, false, expect.objectContaining({ onProgress: expect.any(Function) })))
+    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, true, expect.objectContaining({ onProgress: expect.any(Function) })))
   })
 
   it('shows a spinner while provisioning and restores the button after failure', async () => {
@@ -147,7 +147,8 @@ describe('direct Agent connection panel', () => {
     expect(screen.getByRole('status')).toHaveTextContent('已启用 Server 端口直连。')
     expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /启动与开机自启/ }))
-    expect(screen.getByRole('switch', { name: '开机自启 Server' })).toBeChecked()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText(/^Server 默认开机自启。通过 SSH/)).toBeVisible()
   })
 
   it('keeps native requests lazy and uses an editable fixed default port', async () => {
@@ -475,7 +476,7 @@ describe('direct Agent connection panel', () => {
     expect(screen.queryByRole('button', { name: '复制防火墙命令' })).toBeNull()
   })
 
-  it('finishes installation with autostart off and the remote reason when enabling startup fails', async () => {
+  it('finishes installation and shows the remote reason when enabling startup fails', async () => {
     const api = apiMock(null)
     vi.mocked(api.provision).mockResolvedValue({ ...info, autoStart: false, startupWarning: 'Could not enable linger: Access denied' })
     await openPanel(api)
@@ -483,7 +484,7 @@ describe('direct Agent connection panel', () => {
     expect(await screen.findByText(/未能配置开机自启.*Could not enable linger: Access denied/)).toBeVisible()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByText('服务已准备。请开放显示的 TCP 端口，再测试直连。')).toBeVisible()
-    expect(screen.getByRole('switch', { name: '开机自启 Server' })).not.toBeChecked()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
   it('uses the locally saved SSH password when the field is left blank', async () => {

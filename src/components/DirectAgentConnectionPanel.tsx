@@ -7,7 +7,6 @@ import { useUIStore } from '../store/uiStore'
 import { hydrateSshSecrets, sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
 import { useDirectServerManage } from '../hooks/useDirectServerManage'
 import DirectSshAuthFields from './DirectSshAuthFields'
-import ServerAutoStartSwitch from './ServerAutoStartSwitch'
 import Tooltip from './Tooltip'
 import type { SshConnection } from '../types'
 import {
@@ -105,7 +104,6 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [pairing, setPairing] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
   const [expandedRow, setExpandedRow] = useState<SettingRowId | null>(null)
-  const [autoStart, setAutoStart] = useState(true)
   const [busy, setBusy] = useState<'loading' | 'provisioning' | 'testing' | 'saving' | 'firewallPlan' | 'firewallConfirm' | 'firewallApply' | 'firewallProbe' | 'oneClick' | null>(standalone || initiallyOpen ? 'loading' : null)
   const [sshConnectionId, setSshConnectionId] = useState('')
   const [sshSecretsConnectionId, setSshSecretsConnectionId] = useState('')
@@ -144,7 +142,6 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     ssh: serverSsh,
     password: serverSsh?.auth_kind === 'password' ? secretFor(serverSsh) : '',
     passphrase: serverSsh && serverSsh.auth_kind !== 'password' ? secretFor(serverSsh) : '',
-    autoStart,
     api,
     onManaged: async value => {
       setSshPassword('')
@@ -156,7 +153,6 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const anyBusy = Boolean(busy) || server.busy
   const connectionDirty = host !== (info?.host || defaultHost) || port !== String(info?.port || 48763) ||
     fingerprint !== (info?.certificateFingerprint || '') || Boolean(token)
-  const autoStartDirty = autoStart !== (info?.autoStart ?? true)
 
   // 草稿只属于当前面板；保存或切回概览卸载后，不得留下离开确认/忙碌状态。
   useEffect(() => () => {
@@ -165,11 +161,11 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   useEffect(() => {
     onDraftStateChange?.({
-      dirty: connectionDirty || Boolean(pairing || sshPassword || sshPassphrase) || autoStartDirty,
+      dirty: connectionDirty || Boolean(pairing || sshPassword || sshPassphrase),
       // Reads and connection tests can be abandoned; protect remote writes in flight.
       busy: busy === 'saving' || busy === 'provisioning' || firewallApplying || server.busy,
     })
-  }, [onDraftStateChange, connectionDirty, autoStartDirty, pairing, sshPassword, sshPassphrase, busy, firewallApplying, server.busy])
+  }, [onDraftStateChange, connectionDirty, pairing, sshPassword, sshPassphrase, busy, firewallApplying, server.busy])
 
   useEffect(() => {
     if (!open || !api.firewallPlatform) return
@@ -185,7 +181,6 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   const fill = (value: DirectAgentInfo) => {
     setInfo(value)
-    setAutoStart(value.autoStart ?? true)
     setHost(value.host || defaultHost)
     setPort(value.port > 0 ? String(value.port) : '48763')
     setFingerprint(value.certificateFingerprint || '')
@@ -203,7 +198,6 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       if (request !== requestRef.current) return
       if (value) {
         setInfo(value)
-        setAutoStart(value.autoStart ?? true)
         setHost(value.host || defaultHost)
         setPort(value.port > 0 ? String(value.port) : '48763')
         setFingerprint(value.certificateFingerprint || '')
@@ -263,7 +257,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       const own = allSshConnections.find(connection => connection.id === connectionId)
       if (own) await hydrateSshSecrets(own.id)
       if (request !== requestRef.current) return
-      const result = await api.provision(connectionId, Number(port), autoStart, {
+      const result = await api.provision(connectionId, Number(port), true, {
         config: own ? sshRuntimeConfig(own, sshSecretsFor(own.id)) : undefined,
         onProgress: stage => { if (request === requestRef.current) setProvisionStage(stage) },
       })
@@ -385,6 +379,13 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     }),
   })
 
+  const firewallScopeText = (plan: DirectAgentFirewallPlan) => t(plan.profiles.includes('Public')
+    ? '当前 SSH 接口使用公用网络。仅授权当前客户端访问所示 TCP 端口；不会放行其他来源、修改 SSH 或清理历史端口规则。'
+    : '仅授权当前客户端访问所示 TCP 端口和网络范围。不会放行其他来源、修改 SSH 或清理历史端口规则。')
+  const firewallPlanDetail = (plan: DirectAgentFirewallPlan) => t('SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}', {
+    username: plan.username, host: plan.host, sshPort: plan.sshPort, account: plan.account, port: plan.port, source: plan.clientAddress, localAddress: plan.localAddress, profiles: plan.profiles.join(', '), interfaceAlias: plan.interfaceAlias, networkCategory: plan.networkCategory, rule: plan.ruleName,
+  })
+
   /**
    * 检查 SSH 防火墙权限并请求用户授权。
    * 返回 plan 表示可继续（已放行或已授权）；null 表示无法放行、已取消或请求已过期（提示已写入）。
@@ -402,17 +403,13 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     confirmationRef.current = controller
     if (oneClick) setActivity(t('等待授权…'))
     else setBusy('firewallConfirm')
-    const scope = t(plan.profiles.includes('Public')
-      ? '当前 SSH 接口使用公用网络。仅授权当前客户端访问所示 TCP 端口；不会放行其他来源、修改 SSH 或清理历史端口规则。'
-      : '仅授权当前客户端访问所示 TCP 端口和网络范围。不会放行其他来源、修改 SSH 或清理历史端口规则。')
+    // 一键启用只在此确认一次（要开放端口），授权后安装、放行、验证、启用全自动完成。
     const accepted = await confirmDialog({
       title: t(oneClick ? '授权一键启用 Server 直连' : '授权通过 SSH 放行端口'),
       message: oneClick
-        ? `${t('授权后将通过 SSH 自动安装并启动 Server、放行端口、验证直连并启用，中途无需再次确认。')}\n${scope}`
-        : scope,
-      detail: t('SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}', {
-        username: plan.username, host: plan.host, sshPort: plan.sshPort, account: plan.account, port: plan.port, source: plan.clientAddress, localAddress: plan.localAddress, profiles: plan.profiles.join(', '), interfaceAlias: plan.interfaceAlias, networkCategory: plan.networkCategory, rule: plan.ruleName,
-      }),
+        ? `${t('授权后将通过 SSH 自动安装并启动 Server、放行端口、验证直连并启用，中途无需再次确认。')}\n${firewallScopeText(plan)}`
+        : firewallScopeText(plan),
+      detail: firewallPlanDetail(plan),
       kind: 'warning', confirmLabel: t(oneClick ? '授权并启用' : '授权放行'), cancelLabel: t('取消'), signal: controller.signal,
     })
     if (request !== requestRef.current) return null
@@ -499,7 +496,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
         : api.firewallApply({ ...firewallTarget, expectedPlanSha256: firewallPlan.planSha256 }).then(() => { applied = true })
       // 安装先失败时放行结果仍会落地，这里只防止未处理的拒绝。
       applying.catch(() => {})
-      const result = await api.provision(connectionId, Number(port), autoStart, {
+      const result = await api.provision(connectionId, Number(port), true, {
         config: own ? sshRuntimeConfig(own, sshSecretsFor(own.id)) : undefined,
         onProgress: stage => { if (!stale()) setActivity(t(DIRECT_AGENT_PROVISION_STAGE_LABELS[stage])) },
       })
@@ -552,7 +549,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       await api.save({ ...directTarget, enabled: true })
       if (stale()) return
       const previousPorts = [...new Set([...(result.previousPorts ?? []), ...(info?.port && info.port !== agentPort ? [info.port] : [])])].filter(value => value !== agentPort)
-      const saved: DirectAgentInfo = { ...directTarget, enabled: true, autoStart: result.autoStart ?? autoStart, tokenSaved: true, previousPorts }
+      const saved: DirectAgentInfo = { ...directTarget, enabled: true, autoStart: result.autoStart ?? true, tokenSaved: true, previousPorts }
       await onUpdated?.(saved)
       if (stale()) return
       fill(saved)
@@ -564,19 +561,16 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     }
   }
 
-  const runServerAction = async (start: boolean) => {
+  const startServer = async () => {
     setError('')
     setNotice('')
     setStartupWarning('')
-    const outcome = await server.manage(start)
+    const outcome = await server.manage()
     if (!outcome) return
-    if (outcome.warning) {
-      setAutoStart(false)
-      setStartupWarning(outcome.warning)
-    }
+    if (outcome.warning) setStartupWarning(outcome.warning)
     if (outcome.error) {
       setError(t(outcome.error))
-      // 失败多半要改 SSH 授权或自启，展开对应设置行。
+      // 失败多半要改 SSH 授权，展开对应设置行。
       setExpandedRow('startup')
     } else if (outcome.notice) {
       setNotice(t(outcome.notice))
@@ -629,7 +623,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   const pairingForm = <>
     <p className="text-ui-sm text-fg-muted">{t('也可在远端手动启动服务，将 direct-info --include-secret 输出的配对 JSON 粘贴到此处。配对信息包含凭据，请勿分享。')}</p>
-    <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {validPort ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
+    <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {validPort ? Number(port) : 48763}<br />qingcode-server startup enable<br />qingcode-server direct-info --include-secret</code>
     <label className="block text-ui-sm text-dialog-label">{t('配对 JSON')}<textarea value={pairing} onChange={event => setPairing(event.target.value)} spellCheck={false} autoComplete="off" rows={3} className={`${fieldClass} font-mono`} /></label>
     <button type="button" disabled={Boolean(busy) || !pairing.trim()} onClick={importPairing} className={buttonClass}>{t('应用配对信息')}</button>
   </>
@@ -695,7 +689,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           </Tooltip>
         </p>}
       </div>
-      {serverSsh && api.manage && <button type="button" disabled={anyBusy} onClick={() => void runServerAction(true)} className={buttonClass}>{server.busy ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}{t('通过 SSH 启动 Server')}</button>}
+      {serverSsh && api.manage && <button type="button" disabled={anyBusy} onClick={() => void startServer()} className={buttonClass}>{server.busy ? <LoaderCircle size={14} className={spinClass} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}{t('通过 SSH 启动 Server')}</button>}
     </div>
 
     <div className="rounded border border-dialog-border">
@@ -707,19 +701,15 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           {connectionDirty && verifyHint}
         </div>
       </SettingRow>
-      <SettingRow id="startup" title={t('启动与开机自启')} summary={t(autoStart ? '开机自启已开启' : '开机自启已关闭')} dirty={autoStartDirty} open={expandedRow === 'startup'} disabled={firewallApplying} onToggle={toggleRow}>
-        <ServerAutoStartSwitch checked={autoStart} disabled={anyBusy} onChange={setAutoStart} />
-        <p className="text-ui-sm text-fg-muted">{t('默认开启。通过 SSH 应用设置；关闭只取消开机自启，不停止当前服务。')}</p>
-        {serverSsh && api.manage ? <>
-          <div className="grid min-w-0 grid-cols-1 gap-3 @min-[32rem]/direct-agent:grid-cols-2">{renderSshAuth(serverSsh, serverCandidates)}</div>
-          <button type="button" disabled={anyBusy} onClick={() => void runServerAction(false)} className={buttonClass}>{t('应用自启设置')}</button>
-        </> : <>
+      <SettingRow id="startup" title={t('启动与开机自启')} summary={t(managedInfo.autoStart === false ? '开机自启未生效' : '已默认开机自启')} open={expandedRow === 'startup'} disabled={firewallApplying} onToggle={toggleRow}>
+        <p className="text-ui-sm text-fg-muted">{t('Server 默认开机自启。通过 SSH 启动 Server 时使用以下授权。')}</p>
+        {serverSsh && api.manage ? <div className="grid min-w-0 grid-cols-1 gap-3 @min-[32rem]/direct-agent:grid-cols-2">{renderSshAuth(serverSsh, serverCandidates)}</div> : <>
           <p className="text-ui-sm text-fg-muted">{t('未找到此主机的 SSH 连接。可配置 SSH 后启动，或在远端手动运行以下命令。')}</p>
           <button type="button" onClick={() => useUIStore.getState().openRemoteConnections()} className={buttonClass}>{t('配置 SSH 连接')}</button>
         </>}
         <details className="text-ui-sm text-fg-muted"><summary className="cursor-pointer">{t('远端手动启动命令')}</summary>
           <p className="my-2">{t('使用原安装账户和原 Server 程序运行，保留配对信息。Windows 自启需管理员权限，Linux 需 systemd。')}</p>
-          <code className="block whitespace-pre-wrap break-all rounded bg-dialog-input p-2 font-mono">{`qingcode-server direct --port ${managedInfo.port} --detach\nqingcode-server startup ${autoStart ? 'enable' : 'disable'}`}</code>
+          <code className="block whitespace-pre-wrap break-all rounded bg-dialog-input p-2 font-mono">{`qingcode-server direct --port ${managedInfo.port} --detach\nqingcode-server startup enable`}</code>
         </details>
       </SettingRow>
       {validPort && <SettingRow id="firewall" title={t('端口放行')} summary={[`TCP ${port}`, FIREWALL_PLATFORMS.find(item => item.value === firewallPlatform)?.label].filter(Boolean).join(' · ')} open={expandedRow === 'firewall'} disabled={firewallApplying} onToggle={toggleRow}>
@@ -743,7 +733,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     {oneClickCard}
     <div className="space-y-3">
       <StepHeading index={1}>{t(oneClickAvailable ? '或分步配置：准备服务' : '准备服务')}</StepHeading>
-      <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />
+      <p className="text-ui-sm text-fg-muted">{t('Server 默认开机自启。')}</p>
       <div className="flex flex-wrap items-center gap-2">
         {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={buttonClass}>{busy === 'provisioning' && <LoaderCircle size={14} className={spinClass} aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
         <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
@@ -784,7 +774,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           </span>
           <span className="min-w-0 whitespace-pre-line break-words">{feedback}</span>
         </div>}
-        {startupWarning && !anyBusy && <p role="status" className="break-words rounded border border-warn/40 bg-warn/5 p-3 text-ui-sm text-fg">{t(managedInfo ? '未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}' : '服务已可用，但未能配置开机自启，已将其关闭，远端重启后需手动启动。原因：{reason}', { reason: startupWarning })}</p>}
+        {startupWarning && !anyBusy && <p role="status" className="break-words rounded border border-warn/40 bg-warn/5 p-3 text-ui-sm text-fg">{t(managedInfo ? '未能配置开机自启，远端重启后需手动启动。原因：{reason}' : '服务已可用，但未能配置开机自启，远端重启后需手动启动。原因：{reason}', { reason: startupWarning })}</p>}
         {busy !== 'loading' && (managedView || setupView)}
       </fieldset>}
     </section>

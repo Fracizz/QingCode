@@ -247,7 +247,7 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:unreachable]')) return '无法连接 Server。请确认服务正在监听，并开放显示的 TCP 端口。'
   if (text.includes('[direct:tls]') || (text.includes('[direct:protocol]') && text.includes('TLS 握手失败'))) return 'Server TLS 握手失败。请检查服务是否已启动，以及目标端口是否运行 QingCode HTTPS Server。'
   if (text.includes('[direct:version]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
-  if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。'
+  if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限后重试。'
   if (text.includes('[direct:protocol]')) return 'Server 响应无效。请检查目标端口的服务和协议。'
   return GENERIC_DIRECT_AGENT_ERROR
 }

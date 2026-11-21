@@ -266,7 +266,7 @@ Web 验收证明 React 界面、布局和交互行为；真实文件读写、SQL
 仍需各自的集成测试。内存操作通过不等于真实原生能力通过。
 
 Server 启动与自启恢复复用 `/web-tests/direct-agent.html` 的「打开启动与自启」入口。
-使用真实 `DirectServerRecoveryPanel`，断言开关默认开启、关闭后仅应用自启设置、显式 SSH 启动后自动重连、
+使用真实 `DirectServerRecoveryPanel`，断言无自启开关仅显示简短提示、显式 SSH 启动时始终开启自启并自动重连、
 权限失败不重连、无同主机 SSH 时显示配置入口及手动命令；覆盖英文浅色与窄屏，产物放入 `.dev/web-tests/server-startup/`。
 页面的操作均为内存适配器，不注册真实计划任务。真实 Windows 验收另需核对 S4U/当前用户/Limited/开机触发器、
 从计划任务启动 HTTPS 服务、关闭自启不终止服务及重启后的服务恢复。

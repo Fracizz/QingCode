@@ -3,7 +3,9 @@ import { useI18n } from '../lib/i18n'
 import { hasSshSessionSecrets, hydrateSshSecrets } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
 
-const fieldClass = 'mt-1 min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+// 控件高度显式固定（行高 + 上下内边距 + 边框）：原生 select 不遵循 line-height，会比右侧提示文字更高导致错位。
+const controlHeight = 'h-[calc(var(--ui-line-height)+14px)]'
+const fieldClass = `mt-1 ${controlHeight} min-w-0 w-full rounded-md border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent`
 const labelClass = 'block min-w-0 text-ui-sm text-dialog-label'
 
 interface Props {
@@ -43,9 +45,10 @@ export default function DirectSshAuthFields({ candidates, connection, secret, di
     </select></label>
     {showField
       ? <label className={labelClass}>{t(password ? 'SSH 密码' : 'SSH 私钥口令（可选）')}<input disabled={disabled} type="password" value={secret} onChange={event => onSecretChange(event.target.value)} autoComplete="new-password" placeholder={t(saved ? '留空使用已保存或当前会话中的 SSH 凭据' : password ? '填写此 SSH 账户的密码' : '私钥未设口令时留空')} className={fieldClass} /></label>
-      : <p className="flex min-w-0 flex-wrap items-center gap-x-2 text-ui-sm text-fg-muted">
-        <span>{t(saved ? '将使用已保存的 SSH 凭据。' : '将使用私钥登录。')}</span>
-        <button type="button" disabled={disabled} onClick={() => setEditing(true)} className="text-accent hover:underline disabled:opacity-40">{t(saved ? '改用其他凭据' : '填写私钥口令')}</button>
+      // 与左侧下拉框同高并贴底，flex 居中，双列时文字与下拉框垂直居中对齐。
+      : <p className={`flex min-w-0 flex-wrap items-center self-end min-h-[calc(var(--ui-line-height)+14px)] text-ui text-fg-muted`}>
+        <span className="mr-2 text-ui-sm">{t(saved ? '将使用已保存的 SSH 凭据。' : '将使用私钥登录。')}</span>
+        <button type="button" disabled={disabled} onClick={() => setEditing(true)} className="text-ui-sm text-accent hover:underline disabled:opacity-40">{t(saved ? '改用其他凭据' : '填写私钥口令')}</button>
       </p>}
   </>
 }
