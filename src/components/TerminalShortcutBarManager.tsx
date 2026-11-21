@@ -119,17 +119,35 @@ function ManagerDialog() {
     setDraft(null)
   }
 
-  const dropPosition = (event: ReactDragEvent<HTMLElement>): DropTarget['position'] => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  /**
+   * 在整个弹窗内容区上按指针纵坐标计算插入点：落在某行上半部 → 该行之前，否则顺延；
+   * 指针在首行之上（如拖到列表顶边、说明文字区）时夹到首行之前，在末行之下时夹到末行之后。
+   * 不依赖指针必须压在某一行内部，避免「把第二行拖到第一行」时因越出首行而无法放下。
+   */
+  const computeDropTarget = (container: HTMLElement, clientY: number): DropTarget | null => {
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-shortcut-row]'))
+    if (rows.length === 0) return null
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect()
+      if (clientY < rect.top + rect.height / 2) return { key: row.dataset.shortcutRow!, position: 'before' }
+    }
+    return { key: rows[rows.length - 1].dataset.shortcutRow!, position: 'after' }
   }
 
-  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>, key: string) => {
-    if (!dragged || dragged === key) return
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dragged) return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-    const position = dropPosition(event)
-    setDropTarget(current => (current?.key === key && current.position === position ? current : { key, position }))
+    const next = computeDropTarget(event.currentTarget, event.clientY)
+    setDropTarget(current => (current?.key === next?.key && current?.position === next?.position ? current : next))
+  }
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dragged) return
+    event.preventDefault()
+    const target = computeDropTarget(event.currentTarget, event.clientY)
+    if (target && target.key !== dragged) state.reorder(dragged, target.key, target.position)
+    clearDrag()
   }
 
   const clearDrag = () => {
@@ -289,7 +307,11 @@ function ManagerDialog() {
             </button>
           </Tooltip>
         </div>
-        <div className="terminal-profiles min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div
+          className="terminal-profiles min-h-0 flex-1 overflow-y-auto px-5 py-4"
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
           <p className="mb-3 text-ui-sm leading-relaxed text-fg-muted">
             {t('点击按钮直接发送到所在终端。拖动行可调整顺序；取消勾选的键收进栏右侧的「⋯」菜单；栏宽不够时，排在后面的键也会收进去。自定义键可发送一段文本（如 /compact），并可绑定只在终端内生效的快捷键。')}
           </p>
@@ -342,12 +364,6 @@ function ManagerDialog() {
                     event.dataTransfer.setData('text/plain', key)
                     setDragged(key)
                   }}
-                  onDragOver={event => handleDragOver(event, key)}
-                  onDrop={event => {
-                    event.preventDefault()
-                    if (dragged && dragged !== key) state.reorder(dragged, key, dropPosition(event))
-                    clearDrag()
-                  }}
                   onDragEnd={clearDrag}
                 >
                   {dropTarget?.key === key && dragged !== key && (
@@ -357,9 +373,9 @@ function ManagerDialog() {
                     />
                   )}
                   <div className="terminal-profile-summary">
-                    <GripVertical size={14} aria-hidden className="ml-1 shrink-0 cursor-grab text-fg-dim active:cursor-grabbing" />
+                    <GripVertical size={14} aria-hidden className="ml-1 shrink-0 text-fg-dim" />
                     {/* 整行悬停高亮（见 className），label 自身不再单独出现半截底色 */}
-                    <label className="terminal-profile-toggle cursor-pointer hover:!bg-transparent">
+                    <label className="terminal-profile-toggle hover:!bg-transparent">
                       <input
                         type="checkbox"
                         checked={visible}
