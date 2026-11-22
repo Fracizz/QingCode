@@ -179,6 +179,13 @@ impl WarmShell {
             })
     }
 
+    /// 远端预热项所在的 daemon 连接已关闭；此时 PTY 随连接失效，并非命令自行退出。
+    fn session_lost(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.closed_reason().is_some())
+    }
+
     fn has_startup_channel(&self) -> bool {
         self.startup_pipe.is_some()
             || self.startup_input
@@ -398,8 +405,9 @@ impl PoolState {
         let before = self.shells.len();
         self.shells.retain_mut(|entry| {
             if !entry.alive() {
-                if entry.key.profile.is_some() {
-                    // An opted-in command may deliberately exit. Never relaunch it on a timer.
+                // CLI 自己退出可能是有意的，不按定时重启；daemon 连接断开（Server 重启、
+                // 网络中断）不是 CLI 退出，照常按退避补充，否则 CLI 预热会一直停在 profile_exited。
+                if entry.key.profile.is_some() && !entry.session_lost() {
                     self.paused_reason = Some("profile_exited");
                 }
                 return false;

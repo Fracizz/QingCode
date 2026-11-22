@@ -70,7 +70,7 @@ QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打�
 在「远程连接 → 远端 CLI 预热」选择已信任的裸命令 `claude`、`opencode`、`codex` 或 `pi` 即可，不需要选目录。逻辑与本机相同：CLI 在 QingCode 专用的空目录启动，远端为 `~/.qingcode/cli-prewarm`（Windows 为 `%USERPROFILE%\.qingcode\cli-prewarm`），不在任何用户项目里。启动脚本首次使用时创建该目录，每次启动前确认它不是链接且为空，否则拒绝启动。Codex 带 `-c projects={"<该目录>"={trust_level="trusted"}}` 只对本进程临时信任它，不写 `config.toml`；Claude 只在该目录出现首次信任提示时自动确认；OpenCode 和 pi 没有目录信任。当前项目所在连接用当前项目、其他连接用最近打开的已信任项目授权建立连接，这个项目只决定能否连接，不是 CLI 的工作目录。
 要切换的目标项目也须已注册并受信任。每条已认证的 Server 连接按该连接的「同时预热的 CLI 数量」（1–4，默认 1）保留所选 CLI，连续新建多个同配置终端时每个都能领取已就绪的 CLI；领取后立即补充，切换标签或项目后仍可领取。只改数量时保留已就绪的 CLI，调小时裁掉多出的空闲项。这个数量与全局「Shell 预热数量」相互独立，后者只决定普通 Shell，设为零时 CLI 预热也停止。
 
-远端沿用 SSH 终端的 Shell 解析规则。Windows 需要实际解析到 Windows PowerShell 或 PowerShell 7。POSIX 使用 `/bin/sh` 运行启动脚本，退出 CLI 后接回用户的登录 Shell。OpenCode 的 POSIX 目录校验还会调用远端 Python；pi 的模块预加载需要远端 `node`。Claude Code 和 Codex 通过远端服务的 `pty.claimCwdFile` 能力，把领取时验证过的目录交给退出后的 Shell；旧服务走普通启动。OpenCode 服务只监听终端所在主机的回环地址。首次登录或目标项目信任确认在正常交互终端中完成。连接断开、身份变化、撤销项目信任或停用配置后，空闲会话失效。
+远端沿用 SSH 终端的 Shell 解析规则。Windows 需要实际解析到 Windows PowerShell 或 PowerShell 7。POSIX 使用 `/bin/sh` 运行启动脚本，退出 CLI 后接回用户的登录 Shell。OpenCode 的 POSIX 目录校验还会调用远端 Python；pi 的模块预加载需要远端 `node`。Claude Code 和 Codex 通过远端服务的 `pty.claimCwdFile` 能力，把领取时验证过的目录交给退出后的 Shell；旧服务走普通启动。OpenCode 服务只监听终端所在主机的回环地址。首次登录或目标项目信任确认在正常交互终端中完成。连接断开、身份变化、撤销项目信任或停用配置后，空闲会话失效。预热的 CLI 自行退出后暂停补充（`profile_exited`），直到配置变化；仅因 daemon 连接断开（Server 重启、网络中断）失效时照常按退避重新预热。
 
 同一连接切换项目时，只要原登记项目仍受信任且 CLI 配置相同，已准备和正在准备的会话都可继续使用。识别到 CLI 升级、登录、目录信任提示或 PowerShell 脚本拦截时，预热暂停并在所属窗口显示原因。使用 `terminal prewarm status` 可查看对应的 `profile.reason`。Windows PowerShell 5.1 拦截 npm 启动脚本时，可在终端配置中选择已安装的 PowerShell 7。CLI 目录切换和二次验证分别记录耗时。
 
