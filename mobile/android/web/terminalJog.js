@@ -60,7 +60,7 @@ export function jogTicks(state, ratio, elapsedMs) {
  * snapshot：可选，返回终端画面上部的文字，用于判断自动到底是否已滚不动；
  * 只取上部是为了避开底部持续刷新的状态行（如 Codex 的 Working）。
  */
-export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, idleMs = 2500 } = {}) {
+export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, onAutoChange, idleMs = 2500 } = {}) {
   const doc = host.ownerDocument;
   const view = doc.defaultView;
   const root = doc.createElement('div');
@@ -87,7 +87,9 @@ export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, i
   bottom.type = 'button';
   bottom.className = 'terminal-jog-page terminal-jog-bottom';
   bottom.append(icon('to-bottom'));
-  bottom.setAttribute('aria-label', t('自动下滑到底'));
+  // 文案提示最长时长，避免持续刷新的程序停在中途时被误以为失灵；改 AUTO_BOTTOM_MAX_MS 时同步文案。
+  bottom.setAttribute('aria-label', t('自动下滑到底（最多 10 秒，再点停止）'));
+  bottom.title = bottom.getAttribute('aria-label');
   bottom.setAttribute('aria-pressed', 'false');
   root.append(up, track, down, bottom);
   host.append(root);
@@ -143,6 +145,7 @@ export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, i
     root.classList.add('auto');
     bottom.setAttribute('aria-pressed', 'true');
     view.clearTimeout(hideTimer);
+    onAutoChange?.(true);
     autoTick();
   }
 
@@ -153,6 +156,7 @@ export function attachTerminalJog(host, { scroll, page, snapshot, onLongPress, i
     root.classList.remove('auto');
     bottom.setAttribute('aria-pressed', 'false');
     scheduleHide();
+    onAutoChange?.(false);
   }
 
   function setKnob(offset) {

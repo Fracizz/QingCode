@@ -1513,6 +1513,12 @@ function makeTerminal() {
     page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3)), dispatchLineWheel),
     snapshot: programScreenSnapshot,
     onLongPress: toggleMouseMode,
+    // 自动到底期间常驻提示最长时长；结束时只收起自己的提示，不误关期间弹出的其他提示。
+    onAutoChange: active => {
+      const text = t('正在滚动到底，最多 10 秒');
+      if (active) showTerminalToast(text);
+      else if (get('font-toast').textContent === text) hideFontToast();
+    },
   });
   const mouseKey = selected && draftKey(selected);
   terminalMouse = attachMouseMode(get('viewport').parentElement, get('viewport'), {
