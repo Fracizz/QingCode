@@ -188,6 +188,22 @@ pwsh -NoProfile -File scripts/build-android.ps1 -SdkPlatform 'C:\Android\Sdk\pla
 - 发布构建使用 `-Release` 和固定发布密钥库：`-Keystore`（或 `QINGCODE_ANDROID_KEYSTORE`）、`QINGCODE_ANDROID_KEYSTORE_PASSWORD`、`QINGCODE_ANDROID_KEY_ALIAS`，可选 `QINGCODE_ANDROID_KEY_PASSWORD`。口令通过环境变量传给 `apksigner`。
 - Release CI 在配置了仓库 Secrets `ANDROID_KEYSTORE_BASE64`（发布密钥库的 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`（可选 `ANDROID_KEY_PASSWORD`）时构建 `QingCode_<版本>-android.apk` 并随 Release 发布、同步到 Gitee；未配置时跳过 APK 并给出警告，其余平台照常发布。密钥库一旦用于发布不可更换，否则已安装的手机无法覆盖升级。
 
+### 发布签名密钥（当前在用，长期复用）
+
+| 项 | 值 |
+| --- | --- |
+| keyAlias | `qingcode` |
+| 证书主体 | `CN=QingCode Release, OU=Android, O=QingCode, C=CN` |
+| 算法 / 有效期 | RSA 2048 · SHA256withRSA，2026-11-23 → 2054-04-10 |
+| 证书 SHA-256 | `00:01:0D:E4:BE:06:DF:70:F7:F9:BB:13:3E:29:28:C0:9A:D9:B8:E7:D3:27:25:11:9B:0F:A5:4B:FF:E0:A0:02` |
+| 证书 SHA-1 | `C3:B2:3B:9E:FD:99:B9:8A:AD:29:AD:61:90:2B:15:91:94:80:D2:A4` |
+
+- 首次用于 `0.1.21-beta.7`。此前用调试密钥侧载的包必须卸载重装，之后所有版本可覆盖升级。
+- 密钥库只以 base64 存在仓库 Secrets，仓库里不放密钥文件；口令只存在密码管理器与拥有者本机的备份里，不要写进仓库、Issue 或日志。
+- CI 侧还原方式：`base64 -w0 qingcode-release.jks | gh secret set ANDROID_KEYSTORE_BASE64`，再设 `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS=qingcode`（口令与别名同 key 用同一口令时再设 `ANDROID_KEY_PASSWORD`），最后 `gh workflow run release.yml --ref v<版本> -f tag=v<版本>` 重出该版本。
+- 密钥丢失或泄露只能换密钥，已安装用户必须卸载重装；若确需平滑轮换，可用 `apksigner rotate --out lineage --old-signer … --new-signer …` 生成签名谱系并让后续 APK 携带 `--lineage`，谱系文件必须与密钥一起备份。
+- 因此密钥库与口令至少要有一份仓库之外的加密备份（密码管理器/离线介质），`.dev/` 与本机临时目录都会被清理。
+
 系统需为 Android 8.0 或以上，并使用支持当前 xterm.js 的 Android System WebView。扫码需要相机权限，仅在点「扫码添加」时申请。Windows 配套版可用现有 `pnpm package:exe` 流程构建。
 
 ## 测试
