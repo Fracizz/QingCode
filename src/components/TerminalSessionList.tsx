@@ -99,6 +99,8 @@ import EmptyState from './EmptyState'
 import InfoTipCard from './InfoTipCard'
 import { ProjectKindIcon } from './ProjectKindMark'
 import TerminalRowTime from './TerminalRowTime'
+import PrewarmPoolBadge from './PrewarmPoolBadge'
+import { usePrewarmStatuses } from '../hooks/usePrewarmStatuses'
 import { terminalLastActiveAt } from '@/lib/terminal/terminalLastActive'
 import TerminalRenameInput from './TerminalRenameInput'
 import TerminalStatusMark from './TerminalStatusMark'
@@ -333,6 +335,14 @@ export default function TerminalSessionList() {
   const hostSections = byHost
     ? groupTerminalSessionsByHost(groups, sshConnections, translate, runningTerminal, hostOrder)
     : []
+  // 主机标题的预热徽标：当前项目排最前，普通 Shell 池只跟随当前项目。
+  const prewarmStatuses = usePrewarmStatuses(
+    hostSections.map(section => {
+      const projects = section.groups.map(group => group.project)
+      const current = projects.filter(project => project.id === currentProjectId)
+      return { key: section.key, projects: [...current, ...projects.filter(project => project.id !== currentProjectId)] }
+    }),
+  )
   // 主机拖动只在显示的是保存的顺序、且列出了全部主机时可用（与项目拖动的条件一致）。
   const hostSortable = byHost && !manageMode && !searching && !scopeFiltering && !runningFirst && hostSections.length > 1
   // 搜索时展开命中的主机和分组，否则结果藏在折叠的分组里。
@@ -1014,6 +1024,7 @@ export default function TerminalSessionList() {
             <HostKindIcon kind={section.kind} size={12} />
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+          <PrewarmPoolBadge hostKey={section.key} scoped={prewarmStatuses.get(section.key)} translate={translate} />
           <span
             role="img"
             aria-label={translate('{count} 个终端', { count: section.terminalCount })}

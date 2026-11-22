@@ -2222,6 +2222,20 @@
     "删除全部 {n} 个内置键？": "Delete all {n} built-in keys?",
     "自定义键保留；删除后可单独加回，或点「恢复默认」。": "Custom keys are kept. You can add keys back one by one or use \"Restore defaults\".",
     "快捷键栏是空的。可以添加自定义键，或从下方加回内置键。": "The shortcut bar is empty. Add a custom key, or add built-in keys back below.",
-    "终端底部的一排按钮，点击直接发送到所在终端；当前 {n} 个键。可排序、隐藏、删除，或添加发送文本的自定义键。": "A row of buttons at the bottom of terminals that send keys to that terminal; {n} keys now. Reorder, hide, or delete them, or add custom keys that send text."
+    "终端底部的一排按钮，点击直接发送到所在终端；当前 {n} 个键。可排序、隐藏、删除，或添加发送文本的自定义键。": "A row of buttons at the bottom of terminals that send keys to that terminal; {n} keys now. Reorder, hide, or delete them, or add custom keys that send text.",
+    "终端预热": "Terminal prewarm",
+    "Shell 预热": "Shell prewarm",
+    "CLI 预热": "CLI prewarm",
+    "Shell 预热 {ready}/{target}": "Shell prewarm {ready}/{target}",
+    "CLI 预热 {ready}/{target}": "CLI prewarm {ready}/{target}",
+    "就绪 {ready}/{target}": "Ready {ready}/{target}",
+    "准备中": "Preparing",
+    "已预留 {count}": "Reserved {count}",
+    "暂停：{reason}": "Paused: {reason}",
+    "最近新建": "Recent opens",
+    "命中 {hit} · 未命中 {miss}": "Hits {hit} · Misses {miss}",
+    "已就绪": "Ready",
+    "补充中": "Refilling",
+    "已暂停": "Paused"
   }
 }

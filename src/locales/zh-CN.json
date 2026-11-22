@@ -205,6 +205,20 @@
     "连续新建多个同配置终端时，每个都能领取已就绪的 CLI；每个预热的 CLI 都会占用远端内存。": "连续新建多个同配置终端时，每个都能领取已就绪的 CLI；每个预热的 CLI 都会占用远端内存。",
     "终端 › 集成: Shell 预热数量": "终端 › 集成: Shell 预热数量",
     "每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。": "每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。",
-    "自动（1 个）": "自动（1 个）"
+    "自动（1 个）": "自动（1 个）",
+    "终端预热": "终端预热",
+    "Shell 预热": "Shell 预热",
+    "CLI 预热": "CLI 预热",
+    "Shell 预热 {ready}/{target}": "Shell 预热 {ready}/{target}",
+    "CLI 预热 {ready}/{target}": "CLI 预热 {ready}/{target}",
+    "就绪 {ready}/{target}": "就绪 {ready}/{target}",
+    "准备中": "准备中",
+    "已预留 {count}": "已预留 {count}",
+    "暂停：{reason}": "暂停：{reason}",
+    "最近新建": "最近新建",
+    "命中 {hit} · 未命中 {miss}": "命中 {hit} · 未命中 {miss}",
+    "已就绪": "已就绪",
+    "补充中": "补充中",
+    "已暂停": "已暂停"
   }
 }
