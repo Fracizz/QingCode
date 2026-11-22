@@ -218,6 +218,21 @@ const HANDOFF_UNAVAILABLE: &str = "cli_handoff_unavailable";
 pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
 /// 专用启动目录里仍有文件（多为已领取的 CLI 会话正在使用），不是需要用户处理的阻塞，稍后自动重试。
 pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
+/// 预热途中 daemon 会话断开（如远端服务升级重启 daemon）：与 CLI 本身无关，稍后自动重试。
+const SESSION_LOST: &str = "cli_session_lost";
+
+/// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
+pub(super) fn retry_later(error: &str) -> bool {
+    error == ANCHOR_BUSY || error.starts_with(SESSION_LOST)
+}
+
+/// 会话已关闭时，把超时等表象错误归为 [`SESSION_LOST`]，保留关闭原因便于诊断。
+fn session_error(session: &DaemonSession, error: String) -> String {
+    match session.closed_reason() {
+        Some(reason) => format!("{SESSION_LOST}: {reason}"),
+        None => error,
+    }
+}
 
 pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
     match error {
@@ -820,7 +835,7 @@ pub(super) async fn prepare_at(
     let session = entry.session.as_mut().ok_or("CLI 预热会话不可用")?;
     let created = session.request("pty.createTransient", &serde_json::json!({
         "cwd": launch_dir, "claimCwdFile": cwd_file, "shell": shell, "args": args, "env": env, "cols": 120, "rows": 30
-    })).await?;
+    })).await.map_err(|error| session_error(session, error))?;
     entry.pty_id = created["id"].as_str().ok_or("预热应答缺少 id")?.into();
     let mut codex = CodexSession {
         screen: vt100::Parser::new_with_callbacks(
@@ -870,7 +885,8 @@ pub(super) async fn prepare_at(
             "等待 CLI 输入界面或目录确认超时".to_string()
         }
     })
-    .and_then(|result| result);
+    .and_then(|result| result)
+    .map_err(|error| session_error(session, error));
     #[cfg(test)]
     if ready.is_err() {
         eprintln!("CLI readiness screen: {}", codex.screen.screen().contents());

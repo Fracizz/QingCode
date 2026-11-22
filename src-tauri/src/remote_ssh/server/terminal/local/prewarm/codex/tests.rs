@@ -67,6 +67,17 @@ fn busy_anchor_is_reported_for_this_terminal_and_retried_without_user_action() {
     );
     // 不是交互阻塞：预热池按退避自动重试，不弹「需切换配置」的暂停。
     assert_eq!(interaction_blocker(ANCHOR_BUSY), None);
+    assert!(retry_later(ANCHOR_BUSY));
+}
+
+#[test]
+fn lost_daemon_session_is_retried_instead_of_pausing_as_cli_not_ready() {
+    // 远端服务升级会重启 daemon，正在预热的 CLI 随之结束；这与 CLI 是否就绪无关。
+    let lost = format!("{SESSION_LOST}: daemon 连接已关闭");
+    assert!(retry_later(&lost));
+    assert_eq!(interaction_blocker(&lost), None);
+    assert!(!retry_later("等待 CLI 输入界面或目录确认超时"));
+    assert!(!retry_later(LOGIN_REQUIRED));
 }
 
 #[test]

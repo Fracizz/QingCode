@@ -487,6 +487,26 @@ fn route_test_pty_data(state: &SessionState, seq: u64, bytes: usize) {
 }
 
 #[tokio::test]
+async fn session_events_end_after_close_once_queued_events_are_delivered() {
+    let (state, mut events) = test_session_state();
+    let state = Arc::new(state);
+    events.state = Some(Arc::clone(&state));
+    route_test_pty_data(&state, 0, 4);
+    assert!(!events.session_closed());
+    // daemon 重启等导致会话关闭：发送端仍随 state 存活，事件流也必须结束。
+    state.mark_closed("daemon 连接已关闭");
+    assert!(matches!(
+        events.recv().await,
+        Some(Event::PtyData { seq: 0, .. })
+    ));
+    let end = tokio::time::timeout(Duration::from_millis(100), events.recv())
+        .await
+        .expect("会话关闭后等待事件的一方必须立即结束，不能挂到预热超时");
+    assert!(end.is_none());
+    assert!(events.session_closed());
+}
+
+#[tokio::test]
 async fn session_slow_event_consumer_is_byte_bounded_and_fails_pending_rpc() {
     let (state, mut events) = test_session_state();
     let (reply_tx, reply_rx) = oneshot::channel();

@@ -1264,8 +1264,9 @@ impl ShellPrewarmPool {
                         continue;
                     }
                     state.preparing = false;
-                    // 专用目录暂被占用（已领取的会话仍在用）：按普通失败退避重试，不要求用户切换配置。
-                    if error != codex::ANCHOR_BUSY
+                    // 专用目录暂被占用（已领取的会话仍在用）或 daemon 会话中途断开（远端服务升级等）：
+                    // 按普通失败退避重试，不要求用户切换配置。
+                    if !codex::retry_later(&error)
                         && target
                             .key
                             .profile
