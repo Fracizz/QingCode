@@ -690,7 +690,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* 标题行：会话名后跟预热标识（领取了电脑端预热终端时显示的灰色闪电）。 */
 .terminal-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .terminal-title h1 { min-width: 0; }
-.prewarm-mark { flex: none; width: 14px; height: 14px; color: var(--muted); }
+/* 需高于通用 svg:not(.sprite)（20px）规则的优先级，否则闪电会比标题还大。 */
+.terminal-title .prewarm-mark { flex: none; width: 14px; height: 14px; color: var(--muted); }
 .prewarm-mark[hidden] { display: none; }
 #terminal-latency { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #terminal-host:not(:empty) + #terminal-latency::before { content: '·'; margin-right: 6px; }
