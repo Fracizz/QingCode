@@ -37,6 +37,18 @@ it('packages and serves the pre-paint theme script loaded from index.html', () =
   expect(fixture).toContain("'themeBoot.js':")
 })
 
+it('wraps the drawer project source and count in the two-line group meta', () => {
+  const root = resolve(import.meta.dirname, '../..')
+  const html = readFileSync(resolve(root, 'mobile/android/web/index.html'), 'utf8')
+  const css = readFileSync(resolve(root, 'mobile/android/web/app.css'), 'utf8')
+  const start = html.indexOf('id="drawer-project-head"')
+  expect(start).toBeGreaterThan(-1)
+  // 抽屉组头是 15px 图标列 + 内容的网格：来源与数量必须包在 meta 里放到第二行，否则会被排进图标列只露出「本」这样的半个标签。
+  const head = html.slice(start, html.indexOf('id="session-progress"', start))
+  expect(head).toContain('<span class="session-group-meta"><span id="drawer-project-source" class="session-group-source"></span><span id="drawer-project-count" class="session-group-count"></span></span>')
+  expect(css).toContain('dialog.session-drawer .session-group-meta { display: flex; grid-column: 2;')
+})
+
 it('loads the offline symbol font with a matching preload, CSP, MIME type, and bundled license', () => {
   const root = resolve(import.meta.dirname, '../..')
   const html = readFileSync(resolve(root, 'mobile/android/web/index.html'), 'utf8')
