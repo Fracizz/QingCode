@@ -155,15 +155,19 @@ describe('jog auto-scroll to bottom', () => {
     let frame = 0
     // 前 10 批每批画面都在变，之后滚不动。
     const snapshot = () => String(Math.min(scroll.mock.calls.length, 10) + frame)
-    const jog = attachTerminalJog(host, { scroll, page: vi.fn(), snapshot, idleMs: 1000 })
+    const onAutoChange = vi.fn()
+    const jog = attachTerminalJog(host, { scroll, page: vi.fn(), snapshot, onAutoChange, idleMs: 1000 })
     const root = host.querySelector<HTMLElement>('.terminal-jog')!
     const bottom = host.querySelector<HTMLButtonElement>('.terminal-jog-bottom')!
     jog.setActive(true)
     bottom.click()
     expect(jog.autoScrolling()).toBe(true)
     expect(bottom.getAttribute('aria-pressed')).toBe('true')
+    // 开始与结束各通知一次，供界面显示「正在滚动到底」提示。
+    expect(onAutoChange.mock.calls).toEqual([[true]])
     vi.advanceTimersByTime(AUTO_BOTTOM_SETTLE_MS + 2000)
     expect(jog.autoScrolling()).toBe(false)
+    expect(onAutoChange.mock.calls).toEqual([[true], [false]])
     expect(scroll.mock.calls.every(([ticks]) => ticks === AUTO_BOTTOM_TICKS)).toBe(true)
     const sent = scroll.mock.calls.length
     expect(sent).toBeGreaterThan(10)

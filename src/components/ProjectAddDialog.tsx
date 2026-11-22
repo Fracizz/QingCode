@@ -9,7 +9,8 @@ import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
-import ProjectName from './ProjectName'
+import ProjectName, { ProjectSourceBadge } from './ProjectName'
+import { projectSourceLabel } from '../lib/projectLabels'
 import { useProjectLabels } from '../hooks/useProjectLabels'
 import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
 import InfoTipCard from './InfoTipCard'
@@ -53,16 +54,30 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [addingEmpty, setAddingEmpty] = useState(false)
 
+  const localLabel = t('本机')
   const projects = useMemo(() => sortProjects(allProjects), [allProjects])
+  // 远程/WSL 项目的来源标签（SSH 连接名如 WinDev、WSL 发行版），本机项目不显示
+  const sourceTags = useMemo(() => {
+    const tags = new Map<string, string>()
+    for (const p of projects) {
+      const source = projectSourceLabel(p, sshConnections, localLabel)
+      if (source === localLabel || projectLabels.get(p.id)?.source) continue
+      // 未命名连接的来源即「user@host」，已在地址行显示，不再重复
+      if (sshProjectDisplayPath(p, null, sshConnections).startsWith(`${source}:`)) continue
+      tags.set(p.id, source)
+    }
+    return tags
+  }, [projects, sshConnections, localLabel, projectLabels])
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return projects
     return projects.filter(
       p => (projectLabels.get(p.id)?.text ?? p.name).toLowerCase().includes(q)
+        || projectSourceLabel(p, sshConnections, localLabel).toLowerCase().includes(q)
         || sshProjectDisplayPath(p, null, sshConnections).toLowerCase().includes(q)
         || p.path.toLowerCase().includes(q)
     )
-  }, [projects, query, projectLabels, sshConnections])
+  }, [projects, query, projectLabels, sshConnections, localLabel])
 
   useEffect(() => {
     if (!open) return
@@ -215,6 +230,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
               const isCurrent = currentProject?.id === project.id
               const active = index === activeIndex
               const location = sshProjectDisplayPath(project, null, sshConnections)
+              const sourceTag = sourceTags.get(project.id)
               return (
                 <Tooltip
                   key={project.id}
@@ -226,7 +242,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                   <button
                     type="button"
                     role="option"
-                    aria-label={`${projectLabels.get(project.id)?.text ?? project.name} — ${location}`}
+                    aria-label={`${projectLabels.get(project.id)?.text ?? project.name}${sourceTag ? ` [${sourceTag}]` : ''} — ${location}`}
                     aria-selected={active || isCurrent}
                     data-project-index={index}
                     onMouseEnter={() => setActiveIndex(index)}
@@ -251,6 +267,10 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                       {/* self-start：按内容收缩，SSH 徽标紧跟来源标签，与名字同一行对齐 */}
                       <span className="flex min-w-0 max-w-full items-center gap-1.5 self-start">
                         <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                        {/* 与重名项目的来源标签一致：连接名在前，类型徽标在后 */}
+                        {sourceTag ? (
+                          <ProjectSourceBadge source={sourceTag} className="flex-shrink-0" />
+                        ) : null}
                         <ProjectKindBadge project={project} />
                       </span>
                       <span className="block truncate text-ui-sm text-fg-dim">{location}</span>

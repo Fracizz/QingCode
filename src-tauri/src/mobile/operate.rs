@@ -66,6 +66,12 @@ pub(super) enum Operation {
         /// 传 false，得到断开答复而不是悄悄接回。旧版手机不传，沿用接入即恢复。
         #[serde(default)]
         rejoin: Option<bool>,
+        /// 本机终端网格（`attach_size`）：随接入一起记下，这台设备是尺寸方时当场改尺寸并等重绘，
+        /// 手机不必先取旧尺寸画面再改。旧版手机不传。
+        #[serde(default)]
+        cols: Option<u16>,
+        #[serde(default)]
+        rows: Option<u16>,
     },
     /// 打开或解除独占；`force` 抢下其他方的独占。
     Exclusive {
@@ -163,7 +169,7 @@ pub(super) async fn operate(
         Operation::Ping => Ok(json!({ "pong": true })),
         Operation::Capabilities => Ok(json!({
             "protocolVersion": 1,
-            "features": ["project_files", "terminal_profiles", "shortcut_keys", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream"],
+            "features": ["project_files", "terminal_profiles", "shortcut_keys", "session_names", "images", "latest_screen", "history", "attention", "all_sessions", "handoff", "shared_view", "multi_writer", "exclusive", "lock_size", "presence", "output_stream", "attach_size"],
             "sessionScope": "shared",
         })),
         Operation::Projects { all } => {
@@ -226,7 +232,18 @@ pub(super) async fn operate(
             shared,
             observe,
             rejoin,
-        } => attach(app, device, id, take, shared, observe, rejoin).await,
+            cols,
+            rows,
+        } => {
+            let claim = AttachClaim {
+                take,
+                shared,
+                observe,
+                rejoin,
+                size: cols.zip(rows),
+            };
+            attach(app, device, id, claim).await
+        }
         Operation::Exclusive { id, on, force } => {
             let _control = app.state::<MobileState>().lock_control(&id).await;
             let resize = hub.set_exclusive(&id, Controller::Device(device.into()), on, force)?;
@@ -461,16 +478,30 @@ pub(super) async fn apply_resize(
     Ok(())
 }
 
+/// 手机接入请求的参数，`size` 是手机报上的本机网格。
+pub(super) struct AttachClaim {
+    pub(super) take: bool,
+    pub(super) shared: bool,
+    pub(super) observe: Option<bool>,
+    pub(super) rejoin: Option<bool>,
+    pub(super) size: Option<(u16, u16)>,
+}
+
 /// 手机接入终端。电脑终端首次接入时由电脑端检查能否共享；镜像画面不完整时顺带要一份当前画面。
+/// 带了本机网格且这台设备是尺寸方时当场改尺寸，并等程序重绘告一段落再答复。
 pub(super) async fn attach(
     app: &AppHandle,
     device: &str,
     id: String,
-    take: bool,
-    shared: bool,
-    observe: Option<bool>,
-    rejoin: Option<bool>,
+    request: AttachClaim,
 ) -> Result<Value, String> {
+    let AttachClaim {
+        take,
+        shared,
+        observe,
+        rejoin,
+        size,
+    } = request;
     let hub = &app.state::<MobileState>().inner().hub;
     if !hub.is_phone_session(&id) && !hub.mirror_approved(&id) {
         if !hub.desktop_terminals_enabled() {
@@ -491,10 +522,51 @@ pub(super) async fn attach(
             .await?;
         }
     }
-    let _control = app.state::<MobileState>().lock_control(&id).await;
+    let control = app.state::<MobileState>().lock_control(&id).await;
+    // 先记下本机网格：已是尺寸方时直接得到要改的尺寸，接管时 `take_exclusive` 也用这份新尺寸。
+    let fresh = size.and_then(|(cols, rows)| hub.attach_size(&id, device, cols, rows));
     let claim = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
-    finish_device_claim(app, &id, device, claim.resize).await?;
+    let resize = claim.resize.or(fresh);
+    let redraw = resize.is_some_and(|grid| hub.screen_size(&id).is_some_and(|now| now != grid));
+    if redraw {
+        hub.with_session(&id, Session::note_resize);
+    }
+    finish_device_claim(app, &id, device, resize).await?;
+    drop(control);
+    if redraw {
+        settle_redraw(hub, &id).await;
+    }
     Ok(claim.reply)
+}
+
+/// 等接入改尺寸引发的重绘告一段落：手机随后取的最新画面已是新尺寸，
+/// 省去旧流程「取旧尺寸画面 → 改尺寸 → 轮询到安静」的两次往返和约 900ms 的空等。
+async fn settle_redraw(hub: &Hub, id: &str) {
+    let started = Instant::now();
+    let mut seen = None;
+    let mut quiet = ATTACH_REDRAW_FIRST;
+    loop {
+        // 在锁内取游标并登记等待：之后的输出必定唤醒这次等待，不会漏掉。
+        let (next, changed) = {
+            let inner = hub.inner.lock().unwrap();
+            let Some(session) = inner.live(id).filter(|session| session.exit.is_none()) else {
+                return;
+            };
+            (session.next, session.changed.clone().notified_owned())
+        };
+        if seen.is_some_and(|seen| seen != next) {
+            quiet = ATTACH_REDRAW_GAP;
+        }
+        seen = Some(next);
+        let left = ATTACH_REDRAW_MAX.saturating_sub(started.elapsed());
+        if left.is_zero()
+            || tokio::time::timeout(quiet.min(left), changed)
+                .await
+                .is_err()
+        {
+            return;
+        }
+    }
 }
 
 /// 调用方持有终端控制锁。即使 PTY 改尺寸失败也发布已变更的控制权，

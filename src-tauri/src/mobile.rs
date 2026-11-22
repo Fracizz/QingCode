@@ -113,6 +113,13 @@ const REDRAW_GAP: Duration = Duration::from_millis(1000);
 /// 重绘段最长持续时间，之后的输出照常计入。须与前端 REDRAW_MAX_MS 一致。
 const REDRAW_MAX: Duration = Duration::from_millis(10_000);
 
+/// 接入时改了尺寸，等程序按新尺寸重绘：第一块重绘最多等这么久（SSH 远端要多一个往返），
+/// 开始重绘后安静 `ATTACH_REDRAW_GAP` 即认为告一段落，整个等待不超过 `ATTACH_REDRAW_MAX`。
+/// 之后仍在继续的重绘照常随轮询送达手机。
+const ATTACH_REDRAW_FIRST: Duration = Duration::from_millis(400);
+const ATTACH_REDRAW_GAP: Duration = Duration::from_millis(120);
+const ATTACH_REDRAW_MAX: Duration = Duration::from_millis(1200);
+
 /// 标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与常见的圆形/方块转圈。
 fn is_spinner_glyph(character: char) -> bool {
     matches!(

@@ -1513,6 +1513,12 @@ function makeTerminal() {
     page: direction => sendProgramWheel(direction * Math.max(3, Math.round((term?.rows ?? 24) / 3)), dispatchLineWheel),
     snapshot: programScreenSnapshot,
     onLongPress: toggleMouseMode,
+    // 自动到底期间常驻提示最长时长；结束时只收起自己的提示，不误关期间弹出的其他提示。
+    onAutoChange: active => {
+      const text = t('正在滚动到底，最多 10 秒');
+      if (active) showTerminalToast(text);
+      else if (get('font-toast').textContent === text) hideFontToast();
+    },
   });
   const mouseKey = selected && draftKey(selected);
   terminalMouse = attachMouseMode(get('viewport').parentElement, get('viewport'), {
@@ -2252,6 +2258,8 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
   // 否则网络一抖手机就悄悄接回被电脑断开的终端，用户看不到任何提示。
   let rejoin = true;
   let attaching = true;
+  // 接入请求已带上本机网格（电脑端 attach_size）：电脑当场改尺寸并等重绘，第一屏就是本机尺寸，不必再走 redrawAfterAttach。
+  let sizedClaim = false;
   while (active()) {
     if (document.hidden) {
       // 后台不再接收推送，回到前台按游标重新接上。
@@ -2282,7 +2290,10 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
           const claimControl = shared ? explicitTake : take;
           explicitTake = false;
           take = false;
-          const claim = await remote('attach', { id: session.id, take: claimControl, shared, rejoin });
+          // 只读旁观时 xterm 是对方的网格，不能当成本机尺寸报上去。
+          const grid = capabilities.features.includes('attach_size') && !viewerGrid ? dimensions() : null;
+          const claim = await remote('attach', { id: session.id, take: claimControl, shared, rejoin, ...grid });
+          sizedClaim = !!grid;
           if (!active()) return;
           if (leaveIfKicked(claim)) return;
           if (claim.takenOver && !shared) {
@@ -2320,6 +2331,7 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
             clearTakenOver();
             fitTerminal();
             attaching = true;
+            sizedClaim = false;
           }
           currentLease = control.lease;
           // 多写者：可输入，但尺寸方是其他端时按对方行列缩放显示，本机打字后恢复本机尺寸。
@@ -2340,7 +2352,7 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
       }
       if (attaching) {
         attaching = false;
-        if (!takenSession && data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
+        if (!sizedClaim && !takenSession && data.snapshot && !data.exit && attachNeedsRedraw(data.chunks[0], dimensions())) {
           await redrawAfterAttach(session.id, epoch, data.next);
           continue;
         }

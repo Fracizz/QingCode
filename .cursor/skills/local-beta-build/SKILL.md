@@ -59,6 +59,7 @@ pnpm package:local cancel <run-id>    # 取消（--task apk 只取消 APK）
 ```
 
 - 冷构建 Rust 可能超过 10 分钟：优先 `start` 后台模式，或把输出 tee 到 `.dev/` 下的日志。大型任务不要用默认 2 分钟超时的前台命令。
+- 耗时不靠人工计时：`start` 记录的 run-id 里已有 `startedAt` / `finishedAt` 与每个 `tasks[]` 的起止时间，第 4 步据此计算总耗时与分段耗时。只有走前台 `pnpm package:local` 时才需要自己记下开始与结束时间。
 - 同一工作区只允许一个统一打包任务，不要与其他打包脚本（`pnpm package`、`package:exe` 等）并发。
 - 报 `active.lock` 时，先确认其中的 PID 与 Cargo/Java 子进程已退出再删除锁。
 - `release/` 每次成功打包后只保留最近 3 个语义化版本，属正常清理。
@@ -70,6 +71,24 @@ Get-ChildItem release | Sort-Object LastWriteTime -Descending | Select-Object -F
 ```
 
 - 成功依据是**本次时间戳**的 `release/QingCode_<版本>-setup.exe`、`release/QingCode-servers.zip`、`release/QingCode_<版本>-android.apk` + `release/QingCode-Android.apk`；失败/取消阶段的旧文件不算产物。
-- 汇报内容：拉取结果（是否有新提交、是否 up to date）、新版本号、各产物路径与大小/时间；APK 因缺工具链跳过时必须明确说明。
+- 汇报内容：拉取结果（是否有新提交、是否 up to date）、新版本号、**Windows exe 总耗时与 APK 总耗时**、各产物路径与大小/时间；APK 因缺工具链跳过时必须明确说明。
 - 不要运行 `pnpm smoke:start`：它针对无版本号的 `release/QingCode.exe`，本地 beta 打包不生成该别名。
 - 结束后版本号改动仍未提交，告知用户并等待是否提交（提交信息格式：`chore: bump version to <版本> for local beta build`）。
+
+### 打包耗时记录与汇报
+
+每次打包都必须记录耗时，不能只在回复里凭感觉描述：
+
+1. 取数：`pnpm package:local status <run-id>`。分段耗时按各 `tasks[]` 的 `startedAt` / `finishedAt` 计算（`frontend`、`icons`、`server`、`embed`、`installer`、`apk`）；三个汇总口径都要算：
+   - **Windows exe 总耗时** = `installer.finishedAt - run.startedAt`：从开跑到安装版 exe 产物完成，含前置 `frontend` / `icons` / `server` / `embed`（即用户实际等桌面安装版的时间）。
+   - **APK 总耗时** = `apk.finishedAt - run.startedAt`：从开跑到 APK 产物完成（与 exe 并行，通常短于 exe）。
+   - **全流程总耗时** = `run.finishedAt - run.startedAt`。
+   失败或取消时用最后一个时间戳并标注未完成，不要当作成功耗时记录。
+2. 追加一行到 `.dev/beta-build-timings.md`（`.dev` 已在 `.gitignore` 中，只留本地、不提交；文件不存在先写表头；备注列写清 `冷构建` / `增量构建`、失败或取消的阶段、APK 是否因缺工具链跳过；时间用本地时区，同一条记录内格式一致）：
+
+```markdown
+| 完成时间 | 版本 | run-id | Windows exe 总耗时 | APK 总耗时 | 全流程总耗时 | 分段耗时 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-21 21:31 | 0.1.19-beta.5 | mwqg1t10-4eeb7544 | 144s | 13s | 144s | frontend 8s / icons 1s / server 42s / embed 1s / installer 100s / apk 12s | 增量构建 |
+```
+3. 汇报里给出：**Windows exe 总耗时**（桌面安装版从开跑到出包）、APK 总耗时、全流程总耗时、最慢阶段（通常 `installer` 的 Cargo/NSIS 或 `server`）、以及与上一条同类记录的 **Windows exe 总耗时** 差值（例如 `较 beta.4 增量构建 +12s`）。`.dev/beta-build-timings.md` 里没有历史记录时只报本次。
