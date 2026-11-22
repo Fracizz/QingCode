@@ -1359,6 +1359,11 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 :root[data-screen-exit="forward"]::view-transition-old(root) { --screen-shift: -12px; }
 :root[data-screen-exit="back"]::view-transition-old(root) { --screen-shift: 12px; }
 @keyframes screen-out { to { opacity: 0; transform: translateX(var(--screen-shift)); } }
+/* 工作台内切页时顶栏（右上角设置按钮）两页都在同一位置：单独命名移出根快照，不跟旧快照一起平移淡出，
+   否则旧快照里的按钮会在新按钮上方错开 12px 淡出，看起来像抖动。旧图直接隐藏、新图不做动画，原地不动。 */
+:root[data-screen-kind="page"] .app-head { view-transition-name: app-head; }
+::view-transition-group(app-head), ::view-transition-new(app-head) { animation: none; }
+::view-transition-old(app-head) { animation: none; opacity: 0; }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
 #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
