@@ -56,6 +56,20 @@ fn startup_blocker_reports_a_missing_cli_only_for_this_terminal() {
 }
 
 #[test]
+fn busy_anchor_is_reported_for_this_terminal_and_retried_without_user_action() {
+    assert_eq!(
+        startup_blocker("claude", "QC-nonce-anchor_busy!", "/anchor", "nonce"),
+        Some(ANCHOR_BUSY)
+    );
+    assert_eq!(
+        startup_blocker("claude", "QC-stale-anchor_busy!", "/anchor", "nonce"),
+        None
+    );
+    // 不是交互阻塞：预热池按退避自动重试，不弹「需切换配置」的暂停。
+    assert_eq!(interaction_blocker(ANCHOR_BUSY), None);
+}
+
+#[test]
 fn claude_only_confirms_the_selected_trust_choice_in_the_managed_directory() {
     let prompt = "Accessing workspace:\nD:/Test/codex-prewarm\nQuick safety check: Is this a project you created or one you trust?\n❯ No, exit\nYes, I trust this folder\nEnter to confirm · Esc to cancel";
     assert_eq!(
@@ -85,6 +99,21 @@ fn preset_anchor_is_created_and_refuses_existing_content() {
     std::fs::write(path.join("AGENTS.md"), "fixture").unwrap();
     assert!(checked_anchor(temp.path(), true).is_err());
     assert!(path.join("AGENTS.md").is_file());
+}
+
+#[test]
+fn preset_anchor_prunes_empty_directories_left_by_a_cli() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = checked_anchor(temp.path(), true).unwrap();
+    // Claude 会在启动目录留下空的 .claude；它不应让预热一直失败。
+    std::fs::create_dir_all(path.join(".claude").join("nested")).unwrap();
+    assert_eq!(checked_anchor(temp.path(), false).unwrap(), path);
+    assert!(!path.join(".claude").exists());
+    // 仍有文件时保留内容并拒绝。
+    std::fs::create_dir(path.join(".claude")).unwrap();
+    std::fs::write(path.join(".claude").join("settings.local.json"), "{}").unwrap();
+    assert!(checked_anchor(temp.path(), false).is_err());
+    assert!(path.join(".claude").join("settings.local.json").is_file());
 }
 
 #[test]
@@ -447,6 +476,8 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
     for p in [&anchor, &project] {
         std::fs::create_dir(p).unwrap()
     }
+    // 之前的 CLI 会话留下的空目录（如 .claude）不应让预热失败。
+    std::fs::create_dir_all(anchor.join(".claude").join("nested")).unwrap();
     let anchor = anchor.to_str().unwrap();
     let project = project.to_str().unwrap();
     std::fs::write(config.join(".claude.json"),serde_json::json!({
@@ -621,6 +652,11 @@ fn launch_scripts_never_carry_carriage_returns() {
         // 每个启动脚本都要在运行 CLI 前检查命令是否存在。
         assert!(
             script.contains("-cli_not_installed!"),
+            "{agent} powershell={powershell}"
+        );
+        // 专用目录被占用时都要报告可重试的原因，而不是笼统退出。
+        assert!(
+            script.contains("-anchor_busy!"),
             "{agent} powershell={powershell}"
         );
     }

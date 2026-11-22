@@ -1638,6 +1638,17 @@ fn program_busy_handles_osc_and_unicode_split_across_chunks() {
 }
 
 #[test]
+fn phone_badge_marks_a_command_profile_only_when_its_cli_was_prewarmed() {
+    use super::launch::visible_prewarm_hit;
+    // 普通 Shell：领到预热 Shell 即命中。
+    assert!(visible_prewarm_hit(true, false, false));
+    // 带命令（如 claude）只领到预热 Shell：命令冷启动，不显示 ⚡。
+    assert!(!visible_prewarm_hit(true, true, false));
+    assert!(visible_prewarm_hit(true, true, true));
+    assert!(!visible_prewarm_hit(false, false, false));
+}
+
+#[test]
 fn metadata_reports_prewarm_hit_for_the_phone_badge() {
     let mut session = Session::new(project(), "phone".into(), 1);
     assert_eq!(session.metadata("mobile-1")["prewarm"], false);

@@ -21,6 +21,7 @@ const statusOnly = new Map([
   ['codex_not_ready', 'CLI 未能在预热中就绪。请在普通终端中运行一次检查，然后切换一次预热配置重试。'],
   ['profile_exited', 'CLI 预热会话已退出。切换一次预热配置后重试。'],
   ['server_outdated', '远端 QingCode 服务需要更新后才能预热 CLI。'],
+  ['cli_anchor_busy', 'CLI 预热目录暂被已打开的 CLI 会话占用，稍后自动重试。'],
 ])
 
 /** CLI 预热暂停原因的说明；不是 CLI 相关的暂停（如连接未就绪）返回 null。 */

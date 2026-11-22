@@ -66,15 +66,17 @@ pub(super) async fn create(
         .map(str::to_owned);
     let shell = profile.map(|profile| profile.shell);
     // 电脑端为该连接选中的「预热终端配置」已在运行时直接接入，否则退回普通 Shell 池。
+    let profile_hit = reserve_prewarmed_profile(
+        app,
+        &id,
+        &project,
+        shell.as_deref(),
+        profile_id,
+        command.as_deref(),
+    );
+    let has_command = command.is_some();
     let prewarmed =
-        reserve_prewarmed_profile(
-            app,
-            &id,
-            &project,
-            shell.as_deref(),
-            profile_id,
-            command.as_deref(),
-        ) || reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), command.is_some());
+        profile_hit || reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), has_command);
     let result = if project.kind == ProjectKind::Ssh {
         if let Some(command) = command {
             // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
@@ -161,7 +163,7 @@ pub(super) async fn create(
         .and_then(|result| result)
     };
     let kept = hub.finish_create(&id, result.is_ok());
-    let prewarm_hit = result?.prewarm_hit;
+    let prewarm_hit = visible_prewarm_hit(result?.prewarm_hit, has_command, profile_hit);
     if !kept {
         let _ = end(app, id, project.kind).await;
         return Err("移动连接已停止或设备已移除。".into());
@@ -170,6 +172,12 @@ pub(super) async fn create(
     let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
     session.prewarm_hit = prewarm_hit;
     Ok(session.metadata(&id))
+}
+
+/// 手机 ⚡ 与电脑标签同一规则：带启动命令的配置只有领取到 CLI 预热会话才算命中；
+/// 只领到预热 Shell、命令仍冷启动时不标记。
+pub(super) fn visible_prewarm_hit(spawn_hit: bool, has_command: bool, profile_hit: bool) -> bool {
+    spawn_hit && (!has_command || profile_hit)
 }
 
 /// 与电脑端新建相同的预热条件：本机项目（Windows、电脑端开启了「本地终端可接回」才有预热目标）
