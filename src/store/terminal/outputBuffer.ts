@@ -372,7 +372,7 @@ export function persistTerminalOutputNow() {
     outputPersistTimer = null
   }
   if (outputPersistIdle !== null) {
-    if (typeof window.cancelIdleCallback === 'function') {
+    if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
       window.cancelIdleCallback(outputPersistIdle)
     }
     outputPersistIdle = null
@@ -393,6 +393,8 @@ export function scheduleTerminalOutputPersist() {
   if (outputPersistTimer || outputPersistIdle !== null) return
   outputPersistTimer = setTimeout(() => {
     outputPersistTimer = null
+    // 宿主环境已销毁（如 Vitest 拆卸 jsdom 后定时器才触发）时没有可写入的存储，直接放弃。
+    if (typeof window === 'undefined') return
     if (typeof window.requestIdleCallback === 'function') {
       outputPersistIdle = window.requestIdleCallback(
         () => {

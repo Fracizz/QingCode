@@ -172,10 +172,22 @@ fn force_stop_kills_snapshot_descendants_after_deadline() {
         "worker not found"
     );
     force_stop_after(&owned, Instant::now());
-    let system = refresh_owned(&owned);
-    assert!(owned
-        .iter()
-        .all(|process| live_owned(&system, process).is_none()));
+    // TerminateProcess / SIGKILL 是异步完成的：进程对象可能还要片刻才从快照消失，
+    // 只在宽限期内仍存活才算未杀掉（CI 偶发失败即源于立即断言）。
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let survivors = loop {
+        let system = refresh_owned(&owned);
+        let survivors: Vec<u32> = owned
+            .iter()
+            .filter(|process| live_owned(&system, process).is_some())
+            .map(|process| process.pid.as_u32())
+            .collect();
+        if survivors.is_empty() || Instant::now() >= deadline {
+            break survivors;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(survivors.is_empty(), "still alive: {survivors:?}");
     let _ = shell.kill();
     let _ = shell.wait();
 }
