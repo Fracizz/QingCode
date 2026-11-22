@@ -88,9 +88,16 @@ describe('ProjectAddDialog', () => {
     })
     render(<ProjectAddDialog open onClose={vi.fn()} />)
 
-    expect(
-      screen.getByRole('option', { name: '远程仓库 — root@remotehost:/root/.claude' })
-    ).toHaveTextContent('SSH')
+    const option = screen.getByRole('option', {
+      name: '远程仓库 [dev-server] — root@remotehost:/root/.claude',
+    })
+    expect(option).toHaveTextContent('SSH')
+    expect(option).toHaveTextContent('dev-server')
+
+    // 可按连接名筛选
+    fireEvent.change(screen.getByPlaceholderText('选择项目…'), { target: { value: 'dev-ser' } })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option', { name: /远程仓库/ })).toBeInTheDocument()
   })
 
   it('marks SSH projects on a connection named WSL with an SSH badge', () => {
@@ -125,10 +132,11 @@ describe('ProjectAddDialog', () => {
     render(<ProjectAddDialog open onClose={vi.fn()} />)
 
     const wslOption = screen.getByRole('option', {
-      name: 'QingCode — franciz@localhost:/home/code/QingCode',
+      name: 'QingCode [WSL] — franciz@localhost:/home/code/QingCode',
     })
-    expect(wslOption).toHaveTextContent('SSH')
-    expect(wslOption).not.toHaveTextContent('WSL')
+    // 类型徽标仍是 SSH，「WSL」只作为连接名标签出现
+    const badges = [...wslOption.querySelectorAll('[data-project-source]')].map(el => el.textContent)
+    expect(badges).toEqual(['WSL', 'SSH'])
     expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
