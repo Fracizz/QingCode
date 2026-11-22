@@ -6,6 +6,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-11-22
+
+The stable release after v0.1.19: one-click enable for Server direct connections, the bundled ConPTY in Windows terminals (fixing wheel scrolling in pi and similar programs), reliable Ctrl+click on file paths while the terminal keeps redrawing, and faster phone attach and fullscreen browsing.
+
 ### Added
 
 - Server direct connection gains "One-click enable": after a single SSH authorization it installs or reads the service, allows the firewall port, checks the certificate, verifies credentials and enables the connection. Step-by-step setup is still available.
@@ -13,6 +17,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - The remote connection editor now pre-fills the locally saved SSH password (masked); click the eye icon to reveal it.
 - Mobile: the fullscreen-program slider gains a "Bottom" button that scrolls down automatically until the screen stops changing (at most 10 seconds).
 - Attaching to a terminal from the phone is faster: when the phone grid differs from the terminal, the attach request carries the phone grid, and the desktop resizes right away and replies once the redraw settles. This saves two round trips and a ~0.9 s idle wait; a shell that does not redraw now waits at most 0.4 s instead of over 1 s. Requires updating both the desktop app and the Android APK.
+- The project picker shows SSH connection-name tags and can be filtered by connection name.
 
 ### Changed
 
