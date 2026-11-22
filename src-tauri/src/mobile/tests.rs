@@ -585,6 +585,42 @@ fn attach_size_resizes_only_for_the_size_owner_and_feeds_a_take() {
 }
 
 #[test]
+fn attach_take_size_defaults_to_the_phone_grid_unless_locked_or_read_only() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    assert!(hub.desktop_resize("term-1", 160, 48));
+    // 没报过网格时不抢尺寸。
+    hub.claim("term-1", "phone", false, None).unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    // 报上网格接入：默认改用手机尺寸，已是尺寸方时不再重复。
+    assert_eq!(hub.attach_size("term-1", "phone", 50, 30), None);
+    assert_eq!(hub.attach_take_size("term-1", "phone"), Some((50, 30)));
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    assert!(!hub.desktop_resize("term-1", 160, 48));
+    // 电脑打字取回尺寸后，锁定尺寸时重新接入不抢。
+    assert_eq!(
+        hub.desktop_input("term-1", "a").unwrap(),
+        InputDecision::Forward {
+            resize: Some((160, 48))
+        }
+    );
+    hub.set_size_lock("term-1", &Controller::Desktop, true)
+        .unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    hub.set_size_lock("term-1", &Controller::Desktop, false)
+        .unwrap();
+    // 只读旁观、被电脑独占、未知设备都不抢。
+    hub.claim("term-1", "phone", false, Some(true)).unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    hub.claim("term-1", "phone", false, Some(false)).unwrap();
+    hub.set_exclusive("term-1", Controller::Desktop, true, false)
+        .unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    assert_eq!(hub.attach_take_size("term-1", "stranger"), None);
+    assert_eq!(hub.attach_take_size("missing", "phone"), None);
+}
+
+#[test]
 fn attach_requests_parse_an_optional_grid() {
     let operation: Operation = serde_json::from_value(
         json!({"op":"attach", "id":"mobile-1", "shared":true, "cols":46, "rows":32}),

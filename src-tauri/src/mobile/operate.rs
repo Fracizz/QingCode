@@ -526,7 +526,9 @@ pub(super) async fn attach(
     // 先记下本机网格：已是尺寸方时直接得到要改的尺寸，接管时 `take_exclusive` 也用这份新尺寸。
     let fresh = size.and_then(|(cols, rows)| hub.attach_size(&id, device, cols, rows));
     let claim = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
-    let resize = claim.resize.or(fresh);
+    // 手机查看终端时默认改用手机尺寸：可输入且尺寸未锁定就成为尺寸方，电脑打字或「按电脑尺寸」再改回。
+    let taken = size.and_then(|_| hub.attach_take_size(&id, device));
+    let resize = claim.resize.or(fresh).or(taken);
     let redraw = resize.is_some_and(|grid| hub.screen_size(&id).is_some_and(|now| now != grid));
     if redraw {
         hub.with_session(&id, Session::note_resize);

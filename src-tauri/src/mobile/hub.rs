@@ -452,6 +452,28 @@ impl Hub {
             .request_size(Controller::Device(device.into()), cols, rows)
     }
 
+    /// 带网格接入后默认改用这台设备的尺寸：可输入（未被独占、不是只读旁观）且尺寸未锁定时成为尺寸方，
+    /// 返回需要应用的尺寸（即 `attach_size` 记下的网格）；已是尺寸方或不满足条件时返回 None。
+    pub(super) fn attach_take_size(&self, id: &str, device: &str) -> Option<(u16, u16)> {
+        let mut inner = self.inner.lock().unwrap();
+        require_device(&inner, device).ok()?;
+        let session = inner
+            .live_mut(id)
+            .filter(|session| session.ready && session.exit.is_none())?;
+        let me = Controller::Device(device.into());
+        let sharing = &mut session.sharing;
+        if sharing.size_locked
+            || sharing.size_owner == me
+            || sharing.is_kicked(device)
+            || sharing.check_writable(&me).is_err()
+        {
+            return None;
+        }
+        let size = sharing.sizes.get(&me).copied()?;
+        sharing.size_owner = me;
+        Some(size)
+    }
+
     /// 镜像屏幕当前的行列。
     pub(super) fn screen_size(&self, id: &str) -> Option<(u16, u16)> {
         self.inner

@@ -2269,6 +2269,8 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
     if (document.hidden) {
       // 后台不再接收推送，回到前台按游标重新接上。
       feed.close();
+      // 共享会话回到前台时重新接入：后台期间尺寸可能已交还电脑，接入时默认改回本机尺寸。
+      if (shared && claimed && !viewerGrid) claimed = false;
       await new Promise(resolve => setTimeout(resolve, 350));
       continue;
     }
