@@ -6,6 +6,37 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.21-beta.7] - 2026-11-22
+
+A beta after v0.1.20 that makes CLI prewarming configurable per host, adds a per-connection prewarm count, keeps remote prewarming from getting stuck, and polishes the mobile workbench.
+
+### Added
+
+- Prewarming switches are per host: a new "Local prewarming" switch plus a "Remote prewarming" switch on each connection. Turning one off stops only that host's plain-Shell and CLI prewarming, so other hosts keep their warm pools.
+- Remote connections gain "Number of CLIs to prewarm at once" (1–4, default 1), saved with the connection. Opening two terminals with the same profile in a row now gets a warm CLI for both; changing only the count keeps ready CLIs and trims just the extra idle ones.
+- The terminal list host header shows ready/target counts from the CLI pool when CLI prewarming is on, otherwise from the plain-Shell pool. A paused pool is amber, and hovering shows both pools plus the latest claim.
+- The phone now claims the local CLI prewarm pool when creating a CLI-configured terminal in a local project, matching the desktop.
+
+### Changed
+
+- The prewarm badge is green when the pool is full and gray while topping up.
+- The mobile workbench silently refreshes projects and connections once when switching tabs.
+- Attaching from the phone now defaults to the phone size while the terminal size stays unlocked (typing on the desktop or "match desktop size" switches it back).
+
+### Fixed
+
+- Prewarming no longer stalls at "preparing": a single CLI spawn has a 120-second overall limit and retries with backoff.
+- A remote Server restart or a dropped event stream now retries with backoff instead of pausing the pool at `profile_exited` / `cli_not_ready`.
+- Prewarming directories left non-empty by a CLI (for example Claude's `.claude`) are detected and retried automatically, so remote prewarming no longer waits at "not ready".
+- The ⚡ badge appears only when a prewarmed CLI was actually claimed, using the same rule on desktop terminals, the terminal list, and the mobile session list; mobile terminal titles show the badge at 14px again.
+- A remote forced Server update now closes the terminal tabs it ends instead of leaving "exited" windows behind.
+- The mobile workbench's floating top-right buttons no longer look like they jitter during the tab transition.
+- Mobile: the session drawer's "local" source badge is no longer clipped.
+
+## [0.1.20] - 2026-11-22
+
+The stable release after v0.1.19: one-click enable for Server direct connections, the bundled ConPTY in Windows terminals (fixing wheel scrolling in pi and similar programs), reliable Ctrl+click on file paths while the terminal keeps redrawing, and faster phone attach and fullscreen browsing.
+
 ### Added
 
 - Server direct connection gains "One-click enable": after a single SSH authorization it installs or reads the service, allows the firewall port, checks the certificate, verifies credentials and enables the connection. Step-by-step setup is still available.
@@ -13,6 +44,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - The remote connection editor now pre-fills the locally saved SSH password (masked); click the eye icon to reveal it.
 - Mobile: the fullscreen-program slider gains a "Bottom" button that scrolls down automatically until the screen stops changing (at most 10 seconds).
 - Attaching to a terminal from the phone is faster: when the phone grid differs from the terminal, the attach request carries the phone grid, and the desktop resizes right away and replies once the redraw settles. This saves two round trips and a ~0.9 s idle wait; a shell that does not redraw now waits at most 0.4 s instead of over 1 s. Requires updating both the desktop app and the Android APK.
+- The project picker shows SSH connection-name tags and can be filtered by connection name.
 
 ### Changed
 
