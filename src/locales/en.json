@@ -2,6 +2,10 @@
   "locale": "en",
   "label": "English",
   "messages": {
+    "远端预热": "Remote prewarming",
+    "关闭后此连接不预热普通 Shell 和 CLI。本机预热在「设置 → 终端」中单独设置。": "When off, this connection prewarms neither plain shells nor CLIs. Local prewarming is set separately in Settings → Terminal.",
+    "终端 › 集成: 本机预热": "Terminal › Integrated: Local Prewarming",
+    "关闭后本机不预热普通 Shell 和 CLI，远程连接不受影响；各远程连接在「远程连接」中单独设置。": "When off, this machine prewarms neither plain shells nor CLIs. Remote connections are unaffected and are set individually in Remote Connections.",
     "本机 CLI 预热": "Local CLI prewarming",
     "CLI 预热配置": "CLI prewarm profile",
     "选择运行 claude、opencode、codex 或 pi 的已信任 PowerShell 配置。QingCode 在专用目录提前启动所选工具，新建终端时切换到目标项目。": "Choose a trusted PowerShell profile that runs claude, opencode, codex, or pi. QingCode starts the selected tool in a dedicated directory and switches to the project when you open a terminal.",

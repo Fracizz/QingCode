@@ -22,7 +22,7 @@ import type { Project } from '../../types'
 import { useUIStore } from '../../store/uiStore'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
-import LocalCodexPrewarm from './LocalCodexPrewarm'
+import LocalCodexPrewarm, { LocalPrewarmToggle } from './LocalCodexPrewarm'
 import { SettingItem } from '../SettingsLayout'
 import TerminalShortcutBarSettings from '../TerminalShortcutBarSettings'
 import type { TerminalIntegrationSettingsState } from './useSettingsSectionState'
@@ -230,6 +230,7 @@ export default function TerminalSettingsSection({
           </select>
         </SettingItem>
       )}
+      {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('本机预热', '预热', 'Shell') && <LocalPrewarmToggle />}
       {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('Codex', 'Claude Code', 'OpenCode', 'CLI', '预热') && (
         <LocalCodexPrewarm profiles={terminal.profiles} />
       )}

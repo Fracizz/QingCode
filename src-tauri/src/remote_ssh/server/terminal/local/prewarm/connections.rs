@@ -1,11 +1,14 @@
 //! One refill worker per authenticated Server-mode connection (Windows or POSIX). A registered,
 //! trusted root permits opening the transport; the idle shell itself starts at home.
 use super::*;
+use std::collections::BTreeSet;
 
 #[derive(Default)]
 struct Connections {
     shell: Option<String>,
     count: usize,
+    /// 已关闭预热的连接 id。
+    disabled: BTreeSet<String>,
     running: bool,
     pools: BTreeMap<String, ShellPrewarmPool>,
     profiles: BTreeMap<String, (String, PrewarmProfile, ShellPrewarmPool)>,
@@ -84,13 +87,24 @@ impl ConnectionShellPools {
             .map(|(_, _, pool)| pool.clone())
     }
 
-    pub(crate) fn configure(&self, app: &AppHandle, shell: &str, count: usize) {
+    pub(crate) fn configure(
+        &self,
+        app: &AppHandle,
+        shell: &str,
+        count: usize,
+        disabled: impl IntoIterator<Item = String>,
+    ) {
+        let disabled: BTreeSet<String> = disabled.into_iter().collect();
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.shell.as_deref() == Some(shell) && state.count == count {
+        if state.shell.as_deref() == Some(shell)
+            && state.count == count
+            && state.disabled == disabled
+        {
             return;
         }
         state.shell = Some(shell.into());
         state.count = count;
+        state.disabled = disabled;
         if count == 0 {
             for (_, pool) in std::mem::take(&mut state.pools) {
                 pool.stop();
@@ -118,7 +132,11 @@ impl ConnectionShellPools {
                     return;
                 }
                 let manager = app.state::<SshManager>();
-                for (window, profile, pool) in state.profiles.values() {
+                for (id, (window, profile, pool)) in &state.profiles {
+                    if state.disabled.contains(id) {
+                        pool.stop();
+                        continue;
+                    }
                     if pool.keeps_trusted_anchor(&manager, profile) {
                         // 同一 CLI 仍可用：只同步该连接设置的数量，已就绪的 CLI 保留。
                         pool.set_count(profile.pool_count());
@@ -130,7 +148,8 @@ impl ConnectionShellPools {
                         pool.stop();
                     }
                 }
-                let eligible = connected_targets(&manager);
+                let mut eligible = connected_targets(&manager);
+                eligible.retain(|id, _| !state.disabled.contains(id));
                 state.pools.retain(|id, pool| {
                     if eligible.contains_key(id) {
                         true

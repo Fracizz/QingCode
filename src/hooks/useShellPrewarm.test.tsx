@@ -26,7 +26,7 @@ vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
 vi.mock('../lib/terminal/terminalPersistLocalSettings', () => ({ loadEffectiveTerminalPersistLocalSessions: mocks.persist }))
 vi.mock('../lib/terminal/terminalProfiles', () => ({ getPrewarmShell: () => 'auto', TERMINAL_PROFILES_KEY: 'profiles' }))
 vi.mock('../lib/terminal/terminalShell', () => ({ detectTerminalHostPlatform: mocks.platform }))
-import { notifyShellPrewarmChanged, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
+import { notifyShellPrewarmChanged, setConnectionPrewarmEnabled, setLocalPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { useShellPrewarm } from './useShellPrewarm'
 const project: Project = { id: 'one', name: 'One', path: 'D:/work/one' }
 const configuredPaths = () => mocks.invoke.mock.calls.map(call => (call[2] as { cwd: string | null }).cwd)
@@ -194,6 +194,27 @@ describe('Windows prewarm coordinator', () => {
       hook.unmount()
       await act(async () => {})
     }
+  })
+
+  it('manages local and per-connection prewarming independently', async () => {
+    localStorage.clear()
+    mocks.localCodex.mockReturnValue({ id: 'ai', shell: 'pwsh', command: 'codex' })
+    mocks.preset.mockReturnValue({ id: 'cc', shell: 'pwsh', command: 'claude' })
+    const remote = { ...project, path: 'ssh://windev/D:/code/app' }
+    const hook = renderHook(({ value }: { value: Project }) => useShellPrewarm(value), { initialProps: { value: project } })
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ cwd: project.path, localProfile: { profileId: 'ai' } }))
+    // 关闭本机预热：本机池与本机 CLI 都停，远程连接照常。
+    act(() => setLocalPrewarmEnabled(false))
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toEqual({ cwd: null, shell: 'auto', count: 'auto' }))
+    hook.rerender({ value: remote })
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ profile: { cwd: remote.path, profileId: 'cc' } }))
+    // 关闭该连接：不再发送其 CLI 配置，并把连接 id 交给原生池跳过普通 Shell。
+    act(() => setConnectionPrewarmEnabled('windev', false))
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toEqual({ cwd: null, shell: 'auto', count: 'auto', disabledConnections: ['windev'] }))
+    act(() => { setLocalPrewarmEnabled(true); setConnectionPrewarmEnabled('windev', true) })
+    hook.unmount()
+    await act(async () => {})
+    localStorage.clear()
   })
 
   it('keeps ready shells when the same window regains focus', async () => {

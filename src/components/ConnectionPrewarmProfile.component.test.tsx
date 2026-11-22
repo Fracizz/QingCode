@@ -5,6 +5,7 @@ import { connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProf
 import { forgetTerminalProfileTrust, trustTerminalProfile } from '../lib/terminal/terminalProfileTrust'
 import { saveTerminalProfileSettings, type TerminalProfile } from '../lib/terminal/terminalProfiles'
 import { trustProject } from '../lib/workspaceTrust'
+import { connectionPrewarmEnabled, setConnectionPrewarmEnabled } from '../lib/terminal/shellPrewarmSettings'
 import type { Project } from '../types'
 import { useProjectStore } from '../store/projectStore'
 import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
@@ -117,4 +118,27 @@ it('sets the prewarmed CLI count per connection and keeps it when switching the 
     { cwd: 'ssh://a/tmp/p', profileId: 'cx', command: 'codex', shell: 'pwsh', count: 3 },
   ])
   view.unmount()
+})
+
+it('turns prewarming off per connection and hides the CLI choice', () => {
+  const profile: TerminalProfile = { id: 'cc', name: 'CC', shell: 'pwsh', command: 'claude' }
+  saveTerminalProfileSettings({ profiles: [profile], defaultProfileId: null, defaultShell: profile.shell })
+  trustTerminalProfile(profile)
+  saveConnectionPrewarmProfile('a', profile)
+  const view = render(<ConnectionPrewarmProfile connectionId="a" />)
+  expect(screen.getByRole('button', { name: '远端预热' })).toHaveTextContent('开启')
+  fireEvent.click(screen.getByRole('button', { name: '远端预热' }))
+  fireEvent.click(screen.getByRole('option', { name: '关闭' }))
+  expect(connectionPrewarmEnabled('a')).toBe(false)
+  expect(screen.queryByRole('button', { name: '远端 CLI 预热' })).toBeNull()
+  // 只影响该连接；CLI 选择保留，重新开启后恢复。
+  view.rerender(<ConnectionPrewarmProfile connectionId="b" />)
+  expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toBeTruthy()
+  trustProject(project('p', 'ssh://a/tmp/p', 1))
+  expect(connectionPrewarmAnchors([project('p', 'ssh://a/tmp/p', 1)])).toEqual([])
+  act(() => setConnectionPrewarmEnabled('a', true))
+  expect(connectionPrewarmAnchors([project('p', 'ssh://a/tmp/p', 1)])).toHaveLength(1)
+  act(() => setConnectionPrewarmEnabled('a', true))
+  view.rerender(<ConnectionPrewarmProfile connectionId="a" />)
+  expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toHaveTextContent('CC')
 })

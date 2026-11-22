@@ -479,6 +479,8 @@ impl ShellPrewarmPool {
         profile: Option<PrewarmProfile>,
         local_profile: Option<PrewarmProfile>,
         anchored_profiles: Vec<PrewarmProfile>,
+        // 用户在「远程连接」里关闭预热的连接：普通 Shell 与 CLI 都不预热。
+        disabled_connections: Vec<String>,
     ) -> Result<usize, String> {
         let Some(mut state) = self.lock_for_window(window) else {
             return Ok(0);
@@ -494,7 +496,7 @@ impl ShellPrewarmPool {
         );
         if let Some(shell) = &shell {
             app.state::<ConnectionShellPools>()
-                .configure(app, shell, count);
+                .configure(app, shell, count, disabled_connections);
         }
         // A projectless or remote-only window may update the global setting while
         // another window still owns the local project. Keep that project's budget.

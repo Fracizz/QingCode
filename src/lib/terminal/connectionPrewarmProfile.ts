@@ -2,7 +2,7 @@ import type { Project } from '../../types'
 import { sshConnectionIdFromUri } from '../sshWorkspace'
 import { createProjectTrustChecker } from '../workspaceTrust'
 import { isPrewarmCli } from './localCodexPrewarm'
-import { notifyShellPrewarmChanged } from './shellPrewarmSettings'
+import { connectionPrewarmEnabled, notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import { isTerminalProfileTrusted } from './terminalProfileTrust'
 import { loadTerminalProfileSettings, type TerminalProfile } from './terminalProfiles'
 
@@ -64,7 +64,7 @@ export function connectionPrewarmAnchors(projects: readonly Candidate[], activeC
   const latest = new Map<string, Candidate>()
   for (const p of projects) {
     const connection = sshConnectionIdFromUri(p.path)
-    if (!connection || connection === activeConnection || p.ephemeral || !trusted(p)) continue
+    if (!connection || connection === activeConnection || p.ephemeral || !trusted(p) || !connectionPrewarmEnabled(connection)) continue
     const prev = latest.get(connection)
     if (!prev || p.last_opened_at > prev.last_opened_at) latest.set(connection, p)
   }

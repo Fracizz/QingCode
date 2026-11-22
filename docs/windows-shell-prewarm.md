@@ -8,6 +8,8 @@
 
 本机 Windows 的 PowerShell 配置（例如默认配置 `claude`）与普通终端共用空闲 Shell。点击新建并通过配置命令的信任检查后，才在领取的 PowerShell 中运行启动命令。SSH Server 模式项目同样支持远端 PowerShell 与 POSIX Shell 的配置（见下文“SSH 远端”）。带启动命令的 CMD 配置、多行命令的 POSIX 配置、带额外环境变量的远端配置和运行任务沿用原启动方式。
 
+**本机与远程独立开关**：设置 → 终端 → **本机预热**（仅 Windows）控制本机池；「远程连接」中每条连接的 **远端预热** 单独控制该连接。两者默认开启，关闭某处只停止该处的普通 Shell 和 CLI 预热，不影响其他位置。开关保存在本机（localStorage），不写入 `default-settings.json`；全局「Shell 预热数量」设为零时所有位置都停止。
+
 用户 `default-settings.json` 支持以下 JSON5 设置；工作区同名键会被忽略：
 
 ```json5

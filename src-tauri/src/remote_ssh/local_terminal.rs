@@ -284,6 +284,7 @@ pub async fn configure_shell_prewarm(
     profile: Option<PrewarmProfile>,
     local_profile: Option<PrewarmProfile>,
     anchored_profiles: Option<Vec<PrewarmProfile>>,
+    disabled_connections: Option<Vec<String>>,
     window: tauri::Window,
     app: AppHandle,
     pool: State<'_, ShellPrewarmPool>,
@@ -297,6 +298,7 @@ pub async fn configure_shell_prewarm(
         profile,
         local_profile,
         anchored_profiles.unwrap_or_default(),
+        disabled_connections.unwrap_or_default(),
     );
     if result.is_err() {
         pool.clear_window(window.label());

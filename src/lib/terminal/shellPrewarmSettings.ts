@@ -44,3 +44,37 @@ export async function reservePrewarmedShell(
   return safeInvoke<ShellReservation>('领取预热 Shell', 'reserve_prewarmed_shell', { cwd, shell, hasStartup, id: id ?? null, ...(profile && { profile }) })
     .catch(() => ({ reason: 'reserve_unavailable' }))
 }
+
+/** 本机与每条远程连接各自的预热开关（默认开启），关闭后该处的普通 Shell 和 CLI 都不预热。 */
+export const LOCAL_PREWARM_DISABLED_KEY = 'qingcode:local-prewarm-disabled'
+export const CONNECTION_PREWARM_DISABLED_PREFIX = 'qingcode:connection-prewarm-disabled:'
+
+function setFlag(key: string, disabled: boolean) {
+  if (disabled) localStorage.setItem(key, '1')
+  else localStorage.removeItem(key)
+  notifyShellPrewarmChanged()
+}
+
+export function localPrewarmEnabled() {
+  return localStorage.getItem(LOCAL_PREWARM_DISABLED_KEY) !== '1'
+}
+export function setLocalPrewarmEnabled(enabled: boolean) {
+  setFlag(LOCAL_PREWARM_DISABLED_KEY, !enabled)
+}
+export function connectionPrewarmEnabled(connectionId: string) {
+  return localStorage.getItem(CONNECTION_PREWARM_DISABLED_PREFIX + connectionId) !== '1'
+}
+export function setConnectionPrewarmEnabled(connectionId: string, enabled: boolean) {
+  setFlag(CONNECTION_PREWARM_DISABLED_PREFIX + connectionId, !enabled)
+}
+/** 已关闭预热的连接 id，交给原生池跳过这些连接。 */
+export function disabledPrewarmConnections() {
+  const ids: string[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key?.startsWith(CONNECTION_PREWARM_DISABLED_PREFIX) && localStorage.getItem(key) === '1') {
+      ids.push(key.slice(CONNECTION_PREWARM_DISABLED_PREFIX.length))
+    }
+  }
+  return ids.sort()
+}

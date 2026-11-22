@@ -7,7 +7,7 @@ import {
 } from '../lib/terminal/connectionPrewarmProfile'
 import { isTerminalProfileTrusted, TERMINAL_PROFILE_TRUST_CHANGED_EVENT } from '../lib/terminal/terminalProfileTrust'
 import { loadTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
-import { SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
+import { connectionPrewarmEnabled, setConnectionPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import SettingSelect from './SettingSelect'
 import { useProjectStore } from '../store/projectStore'
 import { isWindowsSshRoot } from '../lib/sshWindowsRepair'
@@ -24,12 +24,22 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
     return () => events.forEach(event => window.removeEventListener(event, refresh))
   }, [])
   const profiles = loadTerminalProfileSettings().profiles.filter(p => isPrewarmCli(p.command))
+  const enabled = connectionPrewarmEnabled(connectionId)
   const selected = connectionPrewarmProfile(connectionId)
   // 由已注册项目的根路径判断远端系统；没有项目时不提示。
   const roots = useProjectStore(s => s.projects).map(p => p.path).filter(path => sshConnectionIdFromUri(path) === connectionId)
   const posixRemote = roots.length > 0 && !roots.some(isWindowsSshRoot)
-  const pause = cliPrewarmPauseDetail(useCliPrewarmPause(roots, !!selected), selected?.command ?? '')
-  return <div className="space-y-2">
+  const pause = cliPrewarmPauseDetail(useCliPrewarmPause(roots, enabled && !!selected), selected?.command ?? '')
+  const toggle = <div className="space-y-2">
+    <h3 className="text-ui font-semibold text-fg">{t('远端预热')}</h3>
+    <p className="text-ui-sm text-fg-muted">{t('关闭后此连接不预热普通 Shell 和 CLI。本机预热在「设置 → 终端」中单独设置。')}</p>
+    <div><SettingSelect menuZIndex={135} aria-label={t('远端预热')} value={enabled ? 'on' : 'off'}
+      options={[{ value: 'on', label: t('开启') }, { value: 'off', label: t('关闭') }]}
+      onChange={value => setConnectionPrewarmEnabled(connectionId, value === 'on')}
+    /></div>
+  </div>
+  if (!enabled) return toggle
+  return <div className="space-y-4">{toggle}<div className="space-y-2">
     <h3 className="text-ui font-semibold text-fg">{t('远端 CLI 预热')}</h3>
     <p className="text-ui-sm text-fg-muted">{t('为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。')}</p>
     {posixRemote && <p className="text-ui-sm text-fg">
@@ -50,5 +60,5 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
       <p className="text-ui-sm text-fg-muted">{t('连续新建多个同配置终端时，每个都能领取已就绪的 CLI；每个预热的 CLI 都会占用远端内存。')}</p>
     </div>}
     {pause && <p role="status" className="text-ui-sm text-warn">{pause}</p>}
-  </div>
+  </div></div>
 }
