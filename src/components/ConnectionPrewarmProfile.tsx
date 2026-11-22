@@ -2,7 +2,9 @@ import { useEffect, useReducer } from 'react'
 import { useI18n } from '../lib/i18n'
 import { WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
 import { isPrewarmCli } from '../lib/terminal/localCodexPrewarm'
-import { connectionPrewarmProfile, saveConnectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import {
+  CONNECTION_PREWARM_MAX_COUNT, connectionPrewarmCount, connectionPrewarmProfile, saveConnectionPrewarmCount, saveConnectionPrewarmProfile,
+} from '../lib/terminal/connectionPrewarmProfile'
 import { isTerminalProfileTrusted, TERMINAL_PROFILE_TRUST_CHANGED_EVENT } from '../lib/terminal/terminalProfileTrust'
 import { loadTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
 import { SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
@@ -39,6 +41,14 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
       }))]}
       onChange={id => saveConnectionPrewarmProfile(connectionId, profiles.find(p => p.id === id) ?? null)}
     /></div>
+    {selected && <div className="space-y-1">
+      <div className="text-ui-sm text-fg">{t('同时预热的 CLI 数量')}</div>
+      <SettingSelect menuZIndex={135} aria-label={t('同时预热的 CLI 数量')} value={String(connectionPrewarmCount(connectionId))}
+        options={Array.from({ length: CONNECTION_PREWARM_MAX_COUNT }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))}
+        onChange={value => saveConnectionPrewarmCount(connectionId, Number(value))}
+      />
+      <p className="text-ui-sm text-fg-muted">{t('连续新建多个同配置终端时，每个都能领取已就绪的 CLI；每个预热的 CLI 都会占用远端内存。')}</p>
+    </div>}
     {pause && <p role="status" className="text-ui-sm text-warn">{pause}</p>}
   </div>
 }

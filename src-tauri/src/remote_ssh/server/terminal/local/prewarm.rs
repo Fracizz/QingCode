@@ -29,8 +29,11 @@ const REMOTE_CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
 /// daemon 支持在 `pty.claim` 时改记工作目录。
 const CLAIM_CWD_CAPABILITY: &str = "pty.claimCwd";
 
+/// 远端 CLI 预热每条连接最多常驻的 CLI 数量（每个都是完整的 CLI 进程）。
+const MAX_PROFILE_COUNT: usize = 4;
+
 /// 复用条件：同一主机上启动参数相同。工作目录不在键里，见 [`WarmShell::can_rebind`]。
-#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PrewarmProfile {
     #[serde(default)] // Only remote profiles supply a directory.
@@ -40,6 +43,31 @@ pub(crate) struct PrewarmProfile {
     profile_id: String,
     shell: String,
     command: String,
+    /// 远端连接各自设置的 CLI 预热数量；本机 CLI 预热固定 1 个。只决定池容量，不参与复用判断。
+    #[serde(default = "default_profile_count")]
+    count: usize,
+}
+
+fn default_profile_count() -> usize {
+    1
+}
+
+// 数量不在相等判断里：只改数量时保留已就绪的 CLI，不能因为键变化被整池丢弃。
+impl PartialEq for PrewarmProfile {
+    fn eq(&self, other: &Self) -> bool {
+        self.cwd == other.cwd
+            && self.cross_project == other.cross_project
+            && self.profile_id == other.profile_id
+            && self.shell == other.shell
+            && self.command == other.command
+    }
+}
+impl Eq for PrewarmProfile {}
+
+impl PrewarmProfile {
+    fn pool_count(&self) -> usize {
+        self.count.clamp(1, MAX_PROFILE_COUNT)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -502,6 +530,22 @@ impl ShellPrewarmPool {
     fn configure_target(&self, app: &AppHandle, target: Target) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         self.set_target(app, &mut state, target);
+    }
+
+    /// 只改容量：保留已就绪项（多出的空闲项按新数量裁掉），增加时立即补充。
+    fn set_count(&self, count: usize) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(target) = state.target.as_mut().filter(|t| t.count != count) else {
+            return;
+        };
+        target.count = count;
+        let target = target.clone();
+        state.trim_idle(&target);
+        trace(
+            "resized",
+            serde_json::json!({"count": count, "remote": target.remote.is_some()}),
+        );
+        self.2.notify_one();
     }
 
     fn set_target(&self, app: &AppHandle, state: &mut PoolState, target: Target) {
@@ -1832,6 +1876,7 @@ pub(in crate::remote_ssh::server::terminal) async fn real_host_cli_probe(
         profile_id: command.into(),
         shell: shell.into(),
         command: command.into(),
+        count: 1,
     };
     let mut target = profile
         .target(manager, "stab")

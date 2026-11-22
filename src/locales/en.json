@@ -2162,6 +2162,8 @@
     "远端 CLI 预热": "Remote CLI prewarming",
     "为此连接提前启动所选 CLI，新建同配置终端时切换到受信任的目标项目。": "Start the selected CLI on this connection in advance and switch to the trusted project when its terminal opens.",
     "仅预热普通 Shell": "Plain shell only",
+    "同时预热的 CLI 数量": "Prewarmed CLIs",
+    "连续新建多个同配置终端时，每个都能领取已就绪的 CLI；每个预热的 CLI 都会占用远端内存。": "Several terminals opened in a row can each take a ready CLI. Every prewarmed CLI uses memory on the remote.",
     "终端 › 集成: Shell 预热数量": "Terminal › Integrated: Prewarmed Shells",
     "每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。": "Each connected Server-mode host with a trusted project keeps its own pool of ordinary shells (PowerShell or CMD on Windows; bash, zsh, sh, or the login shell on Linux and macOS). Local Windows terminals have a separate pool and require reconnectable terminals. Auto keeps one per pool and starts refilling on reservation. Choose 0 to disable or 1–8 per pool. Low local memory pauses local prewarming.",
     "自动（1 个）": "Auto (1)",

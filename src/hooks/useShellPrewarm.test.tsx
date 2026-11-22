@@ -14,7 +14,7 @@ vi.mock('../lib/terminal/localCodexPrewarm', () => ({
   LOCAL_CODEX_PREWARM_KEY: 'local-codex', localCodexPrewarm: mocks.localCodex,
 }))
 vi.mock('../lib/terminal/connectionPrewarmProfile', () => ({
-  connectionPrewarmAnchors: () => [], CONNECTION_PREWARM_PREFIX: 'profile:', connectionPrewarmProfile: mocks.preset,
+  connectionPrewarmAnchors: () => [], connectionPrewarmCount: () => 2, CONNECTION_PREWARM_PREFIX: 'profile:', connectionPrewarmProfile: mocks.preset,
 }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged: mocks.onFocusChanged, listen: () => Promise.resolve(() => {}) }) }))
 vi.mock('../lib/tauri', () => ({ isTauri: () => true, safeInvoke: mocks.invoke }))
@@ -127,7 +127,7 @@ describe('Windows prewarm coordinator', () => {
     const hook = renderHook(({ value }) => useShellPrewarm(value), { initialProps: { value: active } })
     const args = () => mocks.invoke.mock.lastCall?.[2]
     await waitFor(() => expect(args()).toMatchObject({ profile: {
-      cwd: active.path, profileId: 'agent', shell: 'powershell', command: 'claude',
+      cwd: active.path, profileId: 'agent', shell: 'powershell', command: 'claude', count: 2,
     } }))
     const other = { ...active, path: 'ssh://other/D:/code/a' }
     hook.rerender({ value: other })

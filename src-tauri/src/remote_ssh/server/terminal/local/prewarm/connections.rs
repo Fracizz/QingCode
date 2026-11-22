@@ -120,6 +120,8 @@ impl ConnectionShellPools {
                 let manager = app.state::<SshManager>();
                 for (window, profile, pool) in state.profiles.values() {
                     if pool.keeps_trusted_anchor(&manager, profile) {
+                        // 同一 CLI 仍可用：只同步该连接设置的数量，已就绪的 CLI 保留。
+                        pool.set_count(profile.pool_count());
                         continue;
                     }
                     if let Some(target) = profile.target(&manager, window) {
@@ -225,7 +227,7 @@ impl PrewarmProfile {
             cwd: self.cwd.clone(),
             key,
             launch,
-            count: 1,
+            count: self.pool_count(),
             window: window.to_owned(),
             remote: Some(remote),
         })
@@ -301,6 +303,7 @@ mod tests {
             profile_id: "claude".into(),
             shell: "auto".into(),
             command: "claude".into(),
+            count: 1,
         };
         let next_project = PrewarmProfile {
             cwd: "ssh://windev/D:/b".into(),
@@ -344,6 +347,7 @@ mod tests {
             shell: "auto".into(),
             command: command.into(),
             cross_project: false,
+            count: 1,
         };
         registry.set_profiles(
             "main",

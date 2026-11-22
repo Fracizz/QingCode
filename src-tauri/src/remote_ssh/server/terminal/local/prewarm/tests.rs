@@ -958,6 +958,7 @@ fn profile_requires_same_connection_project_profile_shell_and_command() {
         shell: "auto".into(),
         profile_id: "agent".into(),
         command: "claude".into(),
+        count: 1,
     });
     assert!(!entry.can_rebind());
     {
@@ -996,6 +997,7 @@ fn phone_claims_prepared_profile_under_its_own_terminal_id() {
         shell: "auto".into(),
         profile_id: "agent".into(),
         command: "claude".into(),
+        count: 1,
     });
     {
         let mut state = pool.0.lock().unwrap();
@@ -1008,4 +1010,69 @@ fn phone_claims_prepared_profile_under_its_own_terminal_id() {
     assert!(pool.has_entry("mobile-1"));
     assert!(!pool.has_entry("prepared"));
     assert!(!pool.reserve_profile_as("mobile-2", cwd, Some("auto"), "agent", "claude"));
+}
+
+#[test]
+fn connection_profile_count_sets_cli_slots_and_resizing_keeps_ready_clis() {
+    let cwd = "ssh://win/D:/work/a";
+    let profile = |count: usize| PrewarmProfile {
+        cross_project: true,
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+        count,
+    };
+    // 数量只决定容量：不同数量的同一配置仍是同一个复用键，越界值收敛到 1..=4。
+    assert!(profile(1) == profile(3));
+    assert_eq!(profile(0).pool_count(), 1);
+    assert_eq!(profile(9).pool_count(), MAX_PROFILE_COUNT);
+    let pool = ShellPrewarmPool::default();
+    let prepared = |id: &str| {
+        let mut entry = remote_shell(id, cwd, true);
+        entry.key.profile = Some(profile(2));
+        entry
+    };
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target_for(&prepared("one"), 2));
+        state.shells.push(prepared("one"));
+        // 两个名额只就绪一个时还要再补一个。
+        assert_eq!(state.refill_slots(2), 1);
+        state.shells.push(prepared("two"));
+        assert_eq!(state.refill_slots(2), 0);
+    }
+    // 连续新建两个同配置终端，两次都领到预热的 CLI。
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("one")
+    );
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("two")
+    );
+    pool.0.lock().unwrap().shells.clear();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state
+            .shells
+            .extend([prepared("a"), prepared("b"), prepared("c")]);
+        state.target.as_mut().unwrap().count = 3;
+    }
+    pool.set_count(3);
+    assert_eq!(pool.0.lock().unwrap().shells.len(), 3);
+    // 调小时只裁掉多出的空闲 CLI，保留的仍是已就绪的那些。
+    pool.set_count(1);
+    let state = pool.0.lock().unwrap();
+    assert_eq!(state.target.as_ref().unwrap().count, 1);
+    assert_eq!(
+        state
+            .shells
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a"]
+    );
 }

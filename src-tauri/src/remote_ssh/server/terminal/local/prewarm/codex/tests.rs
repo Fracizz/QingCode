@@ -295,6 +295,7 @@ trust_level = "trusted"
         profile_id: agent.into(),
         shell: "powershell".into(),
         command: agent.into(),
+        count: 1,
     });
     let mut target = Target {
         project_path: cwd.clone(),
@@ -556,6 +557,7 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
         command: agent.clone(),
         shell: "auto".into(),
         profile_id: agent.clone(),
+        count: 1,
     });
     let mut target = target_for(&entry, 1);
     use std::os::unix::fs::PermissionsExt as _;

@@ -1,5 +1,5 @@
 import { localCodexPrewarm, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
-import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
@@ -16,7 +16,7 @@ import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminal
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
-type PrewarmProfile = { cwd: string; profileId: string; command: string; shell: string }
+type PrewarmProfile = { cwd: string; profileId: string; command: string; shell: string; count?: number }
 function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: PrewarmProfile, localProfile?: Omit<PrewarmProfile, 'cwd'>, anchoredProfiles?: PrewarmProfile[]) {
   backendSequence = backendSequence.then(() =>
     safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }), ...(localProfile && { localProfile }), ...(anchoredProfiles?.length && { anchoredProfiles }) }),
@@ -60,8 +60,8 @@ export function useShellPrewarm(project: Project | null) {
         if (stale()) return
         const connectionId = active && sshConnectionIdFromUri(active.path)
         const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmProfile(connectionId)
-        const profile = active && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
-          command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
+        const profile = active && connectionId && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
+          command: preset.command.trim().replace(/\s*\n+\s*/g, '; '), count: connectionPrewarmCount(connectionId) } : undefined
         const localProfile = persist && codex ? { profileId: codex.id,
           shell: codex.shell, command: codex.command.trim() } : undefined
         // 当前项目不在的连接，用其最近打开的受信任项目授权连接；CLI 都在专用空目录启动。

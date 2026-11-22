@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, expect, it } from 'vitest'
-import { connectionPrewarmAnchors, connectionPrewarmProfile, saveConnectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import { connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProfile, saveConnectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { forgetTerminalProfileTrust, trustTerminalProfile } from '../lib/terminal/terminalProfileTrust'
 import { saveTerminalProfileSettings, type TerminalProfile } from '../lib/terminal/terminalProfiles'
 import { trustProject } from '../lib/workspaceTrust'
@@ -64,7 +64,7 @@ it('authorizes other connections with their latest trusted project; the active c
       project('other', 'ssh://b/tmp/other', 5),
     ]
     for (const p of projects) if (p.id !== 'untrusted') trustProject(p)
-    expect(connectionPrewarmAnchors(projects)).toEqual([{ cwd: 'ssh://a/tmp/new', profileId: 'ai', command, shell: 'pwsh' }])
+    expect(connectionPrewarmAnchors(projects)).toEqual([{ cwd: 'ssh://a/tmp/new', profileId: 'ai', command, shell: 'pwsh', count: 1 }])
     expect(connectionPrewarmAnchors(projects, 'a')).toEqual([])
     forgetTerminalProfileTrust(profile.id)
     expect(connectionPrewarmAnchors(projects)).toEqual([])
@@ -92,4 +92,29 @@ it('hints that prewarming gains less on non-Windows remotes', () => {
   // 没有项目时无法判断远端系统，不提示。
   view.rerender(<ConnectionPrewarmProfile connectionId="none" />)
   expect(screen.queryByText(hint)).toBeNull()
+})
+
+it('sets the prewarmed CLI count per connection and keeps it when switching the CLI', () => {
+  const claude: TerminalProfile = { id: 'cc', name: 'CC', shell: 'pwsh', command: 'claude' }
+  const codex: TerminalProfile = { id: 'cx', name: 'CX', shell: 'pwsh', command: 'codex' }
+  saveTerminalProfileSettings({ profiles: [claude, codex], defaultProfileId: null, defaultShell: 'pwsh' })
+  trustTerminalProfile(claude)
+  trustTerminalProfile(codex)
+  const view = render(<ConnectionPrewarmProfile connectionId="a" />)
+  // 未选 CLI 时不显示数量。
+  expect(screen.queryByRole('button', { name: '同时预热的 CLI 数量' })).toBeNull()
+  act(() => saveConnectionPrewarmProfile('a', claude))
+  expect(screen.getByRole('button', { name: '同时预热的 CLI 数量' })).toHaveTextContent('1')
+  fireEvent.click(screen.getByRole('button', { name: '同时预热的 CLI 数量' }))
+  fireEvent.click(screen.getByRole('option', { name: '3' }))
+  expect(connectionPrewarmCount('a')).toBe(3)
+  expect(connectionPrewarmCount('b')).toBe(1)
+  act(() => saveConnectionPrewarmProfile('a', codex))
+  expect(connectionPrewarmCount('a')).toBe(3)
+  useProjectStore.setState({ projects: [project('p', 'ssh://a/tmp/p', 1)] })
+  trustProject(project('p', 'ssh://a/tmp/p', 1))
+  expect(connectionPrewarmAnchors(useProjectStore.getState().projects)).toEqual([
+    { cwd: 'ssh://a/tmp/p', profileId: 'cx', command: 'codex', shell: 'pwsh', count: 3 },
+  ])
+  view.unmount()
 })
