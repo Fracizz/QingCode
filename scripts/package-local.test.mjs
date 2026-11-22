@@ -115,12 +115,17 @@ test('targeted cancellation kills descendants, cancels dependents and lets indep
       try { childPid = Number(readFileSync(descendant, 'utf8')); break } catch { await delay(50) }
     }
     assert.ok(childPid, 'child process should have started')
-    writeFileSync(path.join(directory, 'cancel-test.json'), JSON.stringify({ task: 'apk' }))
+    // 与真实 cancel 命令一样原子写入，避免调度循环读到写了一半的空文件而 JSON 解析失败。
+    save(path.join(directory, 'cancel-test.json'), { task: 'apk' })
     const state = await running
     assert.equal(state.status, 'cancelled')
     assert.equal(state.tasks.find(task => task.id === 'apk').status, 'cancelled')
     assert.equal(state.tasks.find(task => task.id === 'copy').status, 'cancelled')
     assert.equal(state.tasks.find(task => task.id === 'desktop').status, 'succeeded')
+    // taskkill /F 底层的 TerminateProcess 是异步的，返回后子孙进程可能还在退出中；限时轮询确认它最终消失。
+    const isAlive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+    const exitDeadline = Date.now() + 5_000
+    while (isAlive(childPid) && Date.now() < exitDeadline) await delay(50)
     assert.throws(() => process.kill(childPid, 0), 'descendant must not survive cancellation')
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })

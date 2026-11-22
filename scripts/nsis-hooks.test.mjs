@@ -158,9 +158,10 @@ class TestApp {
         }
         const sentinel = path.join(root, 'target', 'user-data.json')
         writeFileSync(sentinel, '{"keep":true}')
-        // graceful 要等窗口句柄出现、关窗并释放 exe，CI 机器较慢时 2 秒偶发不够；
-        // 其余模式预期超时退出，保持 2 秒以免拖慢测试。
-        const timeoutSeconds = mode === 'graceful' ? '10' : '2'
+        // graceful / force 预期成功退出：要等进程真正结束并释放 exe（TerminateProcess 是异步的，
+        // 杀软扫描也会短暂占用新编译的 exe），机器繁忙时 2 秒偶发不够；成功即提前返回，不拖慢测试。
+        // cancel 等模式预期超时退出，保持 2 秒。
+        const timeoutSeconds = mode === 'graceful' || mode === 'force' ? '10' : '2'
         const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
           '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', timeoutSeconds]
         if (mode === 'check') args.push('-CheckOnly')
