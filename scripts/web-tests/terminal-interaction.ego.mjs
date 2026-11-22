@@ -157,6 +157,33 @@ export async function run({ spaceId, screenshots = true, artifactDir } = {}) {
       await clickCell(2, 0, true)
       assert.deepEqual((await state()).opened, [{ path: '/fixture/src/a.ts', line: 5 }])
     })
+    await step('file path opens once after a Claude-style redraw blanked its line under the pointer', async () => {
+      await send('\x1bc● Bash(pytest)\r\n  ⎿  FAILED src/a.ts::test_x - Error\r\n\r\n| Running…')
+      const point = await cell(14, 1)
+      const away = await cell(14, 7)
+      await page.mouse.move(away.x, away.y, { label: 'leave redrawn link row' })
+      await page.mouse.move(point.x, point.y, { steps: 2, label: 'hover redrawn terminal link' })
+      // 一帧重绘拆成两段写入，中间渲染时链接所在行是空的，xterm 的悬停链接随之丢失，
+      // 且鼠标不动就不会重新识别。停在完整的一帧后再点击。
+      await page.evaluate(async () => {
+        const frame = () => Promise.race([
+          new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+          new Promise(resolve => setTimeout(resolve, 100)),
+        ])
+        for (let spin = 0; spin < 6; spin++) {
+          await window.terminalFixture.output('\x1b[3A\r\x1b[2K● Bash(pytest)\r\n\x1b[2K')
+          await frame()
+          await window.terminalFixture.output(`  ⎿  FAILED src/a.ts::test_x - Error\r\n\x1b[2K\r\n\x1b[2K${'|/-\\'[spin % 4]} Running…`)
+          await frame()
+        }
+      })
+      await resetLinks()
+      await page.keyboard.down('Control')
+      await page.mouse.click(point.x, point.y, { label: 'Ctrl+click link after redraw' })
+      await page.keyboard.up('Control')
+      await page.waitForTimeout(300)
+      assert.deepEqual((await state()).opened, [{ path: '/fixture/src/a.ts' }])
+    })
     await step('OSC 8 file and editor links open in QingCode without a native confirm', async () => {
       await page.evaluate(() => { window.confirm = () => { throw new Error('native confirm must not run') } })
       await send('\x1bc\x1b]8;;file:///fixture/src/a.ts#L7\x07file-label\x1b]8;;\x07 \x1b]8;;vscode://file/fixture/src/a.ts:9:2\x07codex-label\x1b]8;;\x07')

@@ -90,6 +90,7 @@ import {
 } from '@/lib/terminal/terminalProgramActivity'
 import {
   createTerminalOscLinkHandler,
+  markTerminalLinkActivated,
   registerTerminalFileLinks,
 } from '@/lib/terminal/terminalLinkActions'
 import { getTerminalShiftEnterNewline } from '@/lib/terminal/terminalShiftEnterSettings'
@@ -937,7 +938,8 @@ export default function TerminalView({
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
-    const linkAddon = new WebLinksAddon((_event, uri) => {
+    const linkAddon = new WebLinksAddon((event, uri) => {
+      markTerminalLinkActivated(event)
       // Ctrl/Cmd + 点击链接：用系统默认浏览器打开（Tauri opener 插件）。
       void openUrl(uri).catch(e => {
         useProjectStore.getState().pushToast('error', `打开链接失败: ${String(e)}`)
@@ -947,10 +949,10 @@ export default function TerminalView({
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(linkAddon)
-    registerTerminalFileLinks(term, terminalId)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
     term.open(containerRef.current)
+    registerTerminalFileLinks(term, terminalId)
     searchAddonRef.current = searchAddon
     const searchResultsSub = searchAddon.onDidChangeResults(event => {
       setSearchMatchIndex(event.resultIndex)

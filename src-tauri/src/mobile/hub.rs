@@ -431,6 +431,36 @@ impl Hub {
             .request_size(Controller::Device(device.into()), cols, rows))
     }
 
+    /// 接入时随请求报上的本机网格：与 `device_resize` 一样记下，这台设备是尺寸方且尺寸有变时返回要应用的尺寸。
+    /// 已结束、正在启动或被断开的终端只忽略网格，接入本身仍由 `claim_rejoin` 答复。
+    pub(super) fn attach_size(
+        &self,
+        id: &str,
+        device: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Option<(u16, u16)> {
+        let mut inner = self.inner.lock().unwrap();
+        require_device(&inner, device).ok()?;
+        let session = inner
+            .live_mut(id)
+            .filter(|session| session.ready && session.exit.is_none())
+            .filter(|session| !session.sharing.is_kicked(device))?;
+        let (cols, rows) = size(cols, rows);
+        session
+            .sharing
+            .request_size(Controller::Device(device.into()), cols, rows)
+    }
+
+    /// 镜像屏幕当前的行列。
+    pub(super) fn screen_size(&self, id: &str) -> Option<(u16, u16)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .live(id)
+            .map(|session| session.screen.size())
+    }
+
     /// 电脑请求的尺寸。返回 true 表示电脑是尺寸方（或没有共享记录），应当真正改终端尺寸。
     pub(crate) fn desktop_resize(&self, id: &str, cols: u16, rows: u16) -> bool {
         let mut inner = self.inner.lock().unwrap();

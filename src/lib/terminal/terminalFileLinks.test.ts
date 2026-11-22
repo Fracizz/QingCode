@@ -3,6 +3,7 @@ import {
   findTerminalFileLinks,
   isTerminalPathUnderRoot,
   parseTerminalHyperlink,
+  terminalBufferFileLinkAt,
   terminalBufferFileLinks,
   terminalFileCandidates,
   type TerminalBufferLike,
@@ -263,5 +264,20 @@ describe('terminalBufferFileLinks', () => {
     ]
     expect(terminalBufferFileLinks(rows, 0)).toEqual(expected)
     expect(terminalBufferFileLinks(rows, 1)).toEqual(expected)
+  })
+
+  it('finds the link under a cell, including wide characters and wrapped rows', () => {
+    const line = buffer(['⎿ FAILED test/test_upgrade_func.py::test_x - 中文'])
+    expect(terminalBufferFileLinkAt(line, 9, 0)).toEqual({ path: 'test/test_upgrade_func.py' })
+    expect(terminalBufferFileLinkAt(line, 33, 0)).toEqual({ path: 'test/test_upgrade_func.py' })
+    expect(terminalBufferFileLinkAt(line, 8, 0)).toBeUndefined()
+    expect(terminalBufferFileLinkAt(line, 34, 0)).toBeUndefined()
+    expect(terminalBufferFileLinkAt(buffer(['中文 src/a.ts:2']), 5, 0)).toEqual({ path: 'src/a.ts', line: 2 })
+
+    const rows = buffer(['x src/lo', 'ng/a.ts:7 tail'], [false, true])
+    expect(terminalBufferFileLinkAt(rows, 0, 1)).toEqual({ path: 'src/long/a.ts', line: 7 })
+    expect(terminalBufferFileLinkAt(rows, 7, 0)).toEqual({ path: 'src/long/a.ts', line: 7 })
+    expect(terminalBufferFileLinkAt(rows, 1, 0)).toBeUndefined()
+    expect(terminalBufferFileLinkAt(rows, 10, 1)).toBeUndefined()
   })
 })
