@@ -972,7 +972,10 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
       return;
     }
     lastNavigationTap = { page: next, time: event.timeStamp };
+    const changed = page !== next;
     showPage(next);
+    // 底部导航切到另一页时静默刷新一次项目与连接状态（首页会话列表由 showPage 刷新）；连接中或授权失效时不重复发起。
+    if (changed && profile && hostState(profile) !== 'checking' && hostState(profile) !== 'expired') void refreshProjects();
   });
 }
 
