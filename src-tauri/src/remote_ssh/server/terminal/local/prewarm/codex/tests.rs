@@ -707,3 +707,47 @@ fn pi_launch_scripts_embed_the_preload_loader() {
     }
     assert!(supported("pi") && shell_handoff("pi") && !shell_handoff("claude"));
 }
+
+#[cfg(windows)]
+#[test]
+fn phone_claims_local_cli_prewarm_under_its_own_terminal_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().to_str().unwrap();
+    let (cwd, launch, mut key) = local_launch_key(project, Some("powershell")).unwrap();
+    key.profile = Some(PrewarmProfile {
+        cwd: cwd.clone(),
+        cross_project: false,
+        profile_id: "agent".into(),
+        shell: "powershell".into(),
+        command: "codex".into(),
+        count: 1,
+    });
+    let mut entry = super::super::tests::fake_shell();
+    entry.id = "prepared".into();
+    entry.cwd.clone_from(&cwd);
+    entry.key = key.clone();
+    entry.launch = launch.clone();
+    let pool = LocalCodexPool::default();
+    {
+        let mut state = pool.pool.0.lock().unwrap();
+        state.target = Some(Target {
+            project_path: cwd.clone(),
+            cwd: cwd.clone(),
+            key,
+            launch,
+            count: 1,
+            window: "main".into(),
+            remote: None,
+        });
+        state.shells.push(entry);
+    }
+    // 配置、Shell 或命令不一致都按未命中处理，不占用预热项。
+    assert!(!pool.reserve_as("mobile-1", project, Some("powershell"), "other", "codex"));
+    assert!(!pool.reserve_as("mobile-1", project, Some("pwsh"), "agent", "codex"));
+    assert!(!pool.reserve_as("mobile-1", project, Some("powershell"), "agent", "claude"));
+    assert!(!pool.pool.has_entry("mobile-1"));
+    assert!(pool.reserve_as("mobile-1", project, Some("powershell"), "agent", "codex"));
+    assert!(pool.pool.has_entry("mobile-1"));
+    assert!(!pool.pool.has_entry("prepared"));
+    assert!(!pool.reserve_as("mobile-2", project, Some("powershell"), "agent", "codex"));
+}
