@@ -426,11 +426,14 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (id === DEFAULT_TERMINAL_PROFILE.id) throw new Error('the built-in profile cannot be edited')
       const shell = value.shell ?? previous?.shell ?? settings.defaultShell
       if (!isTerminalShellId(shell) || !availableTerminalShells().includes(shell)) throw new Error('unsupported profile shell')
-      const profile = { id, name, command: value.command, shell }
+      if (value.scope !== undefined && value.scope !== null && typeof value.scope !== 'string') throw new Error('invalid profile scope')
+      // 未给 scope 时沿用原分类；空字符串或 null 表示通用。
+      const scope = value.scope === undefined ? previous?.scope : value.scope?.trim() || undefined
+      const profile: TerminalProfile = { id, name, command: value.command, shell, ...(scope && { scope }) }
       if (!previous || previous.shell !== shell || previous.command !== profile.command) forgetTerminalProfileTrust(id)
       saveTerminalProfileSettings({ ...settings, profiles: previous
         ? settings.profiles.map(item => item.id === id ? profile : item) : [...settings.profiles, profile] })
-      return { id, name, shell, trusted: isTerminalProfileTrusted(profile) }
+      return { id, name, shell, scope: scope ?? null, trusted: isTerminalProfileTrusted(profile) }
     }
     case 'terminal.profile.get':
     case 'terminal.profile.default':
@@ -478,7 +481,7 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       return {
         defaultProfileId: getEffectiveDefaultProfileId(settings),
         profiles: settings.profiles.map(profile => ({
-          id: profile.id, name: profile.name, shell: profile.shell, trusted: isTerminalProfileTrusted(profile),
+          id: profile.id, name: profile.name, shell: profile.shell, scope: profile.scope ?? null, trusted: isTerminalProfileTrusted(profile),
         })),
       }
     }

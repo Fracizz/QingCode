@@ -4,7 +4,7 @@ import { createProjectTrustChecker } from '../workspaceTrust'
 import { isPrewarmCli } from './localCodexPrewarm'
 import { connectionPrewarmEnabled, notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import { isTerminalProfileTrusted } from './terminalProfileTrust'
-import { loadTerminalProfileSettings, type TerminalProfile } from './terminalProfiles'
+import { loadTerminalProfileSettings, profilesForConnection, type TerminalProfile } from './terminalProfiles'
 
 export const CONNECTION_PREWARM_PREFIX = 'qingcode:connection-cli-prewarm:'
 
@@ -48,7 +48,7 @@ export function saveConnectionPrewarmCount(connectionId: string, count: number) 
 export function connectionPrewarmProfile(connectionId: string) {
   const saved = readSaved(connectionId)
   if (!saved) return
-  return loadTerminalProfileSettings().profiles.find(p => p.id === saved.id &&
+  return profilesForConnection(loadTerminalProfileSettings(), connectionId).find(p => p.id === saved.id &&
     p.shell === saved.shell && p.command === saved.command && isPrewarmCli(p.command) && isTerminalProfileTrusted(p))
 }
 

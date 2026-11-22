@@ -35,6 +35,7 @@
     ],
     creates: [],
     terminalProfileRequests: 0,
+    terminalProfileProjects: [],
     attaches: [],
     leasedInputs: [],
     capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions', 'project_files'], sessionScope: 'shared' },
@@ -222,6 +223,8 @@
       }
       case 'terminal_profiles':
         state.terminalProfileRequests += 1
+        // 新版手机带目标项目，电脑端据此只返回该项目所属连接可用的配置。
+        state.terminalProfileProjects.push(request.project ?? null)
         return state.terminalProfiles ? { ok: true, data: state.terminalProfiles } : { ok: false, error: '请求格式无效。' }
       case 'create': {
         const chosen = request.terminal_profile && state.terminalProfiles?.find(item => item.id === request.terminal_profile)

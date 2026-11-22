@@ -1809,7 +1809,6 @@
     "确定删除终端配置「{name}」？": "Delete terminal profile \"{name}\"?",
     "删除后将使用普通终端作为默认配置，已打开的终端不受影响。": "New terminals will use the ordinary terminal by default. Open terminals are unaffected.",
     "已打开的终端不受影响。": "Open terminals are unaffected.",
-    "修改自动保存。": "Changes are saved automatically.",
     "已有 {n} 个自定义配置。新建终端时可从下拉菜单选择配置。": "Custom profiles: {n}. Choose a profile from the new terminal menu.",
     "编辑终端配置「{name}」": "Edit terminal profile \"{name}\"",
     "内置": "Built-in",
@@ -2240,6 +2239,22 @@
     "命中 {hit} · 未命中 {miss}": "Hits {hit} · Misses {miss}",
     "已就绪": "Ready",
     "补充中": "Refilling",
-    "已暂停": "Paused"
+    "已暂停": "Paused",
+    "通用": "Common",
+    "所有项目和连接可用": "Available to all projects and connections",
+    "仅本机项目可用": "Local projects only",
+    "未知连接": "Unknown Connection",
+    "在当前分类复制": "Duplicate in This Group",
+    "复制到「{name}」": "Copy to \"{name}\"",
+    "其他分类中没有可导入的配置": "No profiles in other groups to import",
+    "将「{name}」设为此连接的默认终端": "Set \"{name}\" as this connection's default terminal",
+    "此连接默认": "Connection Default",
+    "设为此连接默认": "Set as Connection Default",
+    "适用范围": "Scope",
+    "按远程连接分类，新建终端时只列出通用配置和项目所属分类的配置。修改自动保存。": "Grouped by remote connection. New terminals list common profiles and those of the project's group. Changes save automatically.",
+    "从其他分类导入": "Import from Another Group",
+    "导入终端配置到「{name}」": "Import terminal profile into \"{name}\"",
+    "在「{name}」中添加终端配置": "Add terminal profile to \"{name}\"",
+    "暂无配置，可添加或从其他分类导入。": "No profiles yet. Add one or import from another group."
   }
 }

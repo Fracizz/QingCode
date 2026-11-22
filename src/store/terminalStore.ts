@@ -1,6 +1,6 @@
 import { localCodexPrewarm } from '../lib/terminal/localCodexPrewarm'
 import { connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
-import { connectionDefaultProfileId } from '../lib/terminal/connectionDefaultProfile'
+import { effectiveDefaultProfileIdFor } from '../lib/terminal/connectionDefaultProfile'
 import { recordShellOpen } from '../lib/terminal/shellOpenDiagnostics'
 import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
@@ -646,7 +646,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const connection = sshConnectionIdFromUri(projectPath)
     // 未指定配置时（点「+」），远程连接自己的默认配置优先于全局默认。
-    const profile = getTerminalProfile(profileId ?? connectionDefaultProfileId(connection) ?? undefined)
+    // 归属其他分类的全局默认回落到普通终端。
+    const profile = getTerminalProfile(profileId ?? effectiveDefaultProfileIdFor(connection))
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const openRequestedAt = performance.now()
     const shell = normalizeTerminalShell(profile.shell)

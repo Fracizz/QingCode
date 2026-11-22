@@ -249,6 +249,20 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
 .terminal-profile-command {
   grid-column: 1 / -1;
 }
+.terminal-profile-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.terminal-profile-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  color: var(--color-fg-muted);
+  font-size: var(--ui-font-size-sm, 12px);
+}
 @container (max-width: 420px) {
   .terminal-profile-summary {
     flex-wrap: wrap;

@@ -27,7 +27,7 @@ import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { switchToTerminalProject } from './useTerminalProjectSelection'
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
-import { loadTerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
+import { loadTerminalProfileSettings, profilesForConnection } from '@/lib/terminal/terminalProfiles'
 import { effectiveDefaultProfileIdFor } from '@/lib/terminal/connectionDefaultProfile'
 import { sshConnectionIdFromUri } from '@/lib/sshWorkspace'
 import {
@@ -395,15 +395,14 @@ export function useTerminalTabActions({
       ? useProjectStore.getState().projects.find(project => project.id === targetProjectId)
       : currentProject
     // 与 addTerminal 一致：「（默认）」标记跟随目标项目所属远程连接的默认配置。
-    const effectiveDefaultId = effectiveDefaultProfileIdFor(
-      targetProject ? sshConnectionIdFromUri(targetProject.path) : null,
-      settings,
-    )
+    const targetConnection = targetProject ? sshConnectionIdFromUri(targetProject.path) : null
+    const effectiveDefaultId = effectiveDefaultProfileIdFor(targetConnection, settings)
     const limited = targetProjectId && targetProjectId !== currentProject?.id
       ? terminals.filter(terminal => terminal.projectId === targetProjectId).length >= MAX_TERMINALS_PER_PROJECT
       : atLimit
     return [
-      ...settings.profiles.map(profile => {
+      // 只列出通用配置和目标项目所属连接（或本机）分类的配置。
+      ...profilesForConnection(settings, targetConnection).map(profile => {
         const name = profile.id === 'default'
           ? translate('普通终端')
           : profile.name.trim() || translate('未命名配置')

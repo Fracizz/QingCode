@@ -3,9 +3,10 @@ import { useI18n } from '../lib/i18n'
 import {
   CONNECTION_DEFAULT_PROFILE_CHANGED_EVENT,
   connectionDefaultProfileId,
+  globalDefaultProfileIdFor,
   saveConnectionDefaultProfileId,
 } from '../lib/terminal/connectionDefaultProfile'
-import { DEFAULT_TERMINAL_PROFILE, getEffectiveDefaultProfileId, loadTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
+import { DEFAULT_TERMINAL_PROFILE, loadTerminalProfileSettings, profilesForConnection } from '../lib/terminal/terminalProfiles'
 import { SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import SettingSelect from './SettingSelect'
 
@@ -30,8 +31,8 @@ export default function ConnectionDefaultProfile({ connectionId }: { connectionI
     <SettingSelect menuZIndex={135} aria-label={t('默认终端配置')}
       value={connectionDefaultProfileId(connectionId, settings) ?? ''}
       options={[
-        { value: '', label: t('跟随全局默认（{name}）', { name: nameOf(getEffectiveDefaultProfileId(settings)) }) },
-        ...settings.profiles.map(p => ({ value: p.id, label: nameOf(p.id) })),
+        { value: '', label: t('跟随全局默认（{name}）', { name: nameOf(globalDefaultProfileIdFor(connectionId, settings)) }) },
+        ...profilesForConnection(settings, connectionId).map(p => ({ value: p.id, label: nameOf(p.id) })),
       ]}
       onChange={id => saveConnectionDefaultProfileId(connectionId, id || null)}
     />

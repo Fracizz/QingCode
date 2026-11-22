@@ -163,7 +163,7 @@ let selected = null;
 // 当前接入的会话条目；电脑终端不在本项目会话列表里，顶栏靠它显示预热标志。
 let selectedEntry = null;
 let foreground = true;
-// 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
+// 电脑端终端配置（按电脑和目标项目缓存，配置按项目所属连接分类），弹窗打开时先显示缓存再刷新。
 const terminalProfiles = new Map();
 let terminalProfilesRequest = 0;
 let viewEpoch = 0;
@@ -2109,15 +2109,17 @@ async function openNewSessionDialog(target = null) {
   get('new-session-context').textContent = destination ? destination.name + ' · ' + projectSourceLabel({ ...destination, host: '' }) : '';
   message('terminal-profiles-error', '');
   const address = profile?.id;
-  const cached = terminalProfiles.get(address);
+  // 配置按项目所属连接分类：缓存键带上目标项目。
+  const cacheKey = address + '/' + (destination?.id ?? '');
+  const cached = terminalProfiles.get(cacheKey);
   renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
   dialog.showModal();
   const request = ++terminalProfilesRequest;
   try {
     const capabilities = await desktopProtocol.capabilities(profile);
     const supported = capabilities === null || capabilities.features.includes('terminal_profiles');
-    const choices = terminalProfileChoices(supported ? await remote('terminal_profiles', {}, address) : null);
-    terminalProfiles.set(address, choices);
+    const choices = terminalProfileChoices(supported ? await remote('terminal_profiles', destination ? { project: destination.id } : {}, address) : null);
+    terminalProfiles.set(cacheKey, choices);
     if (request === terminalProfilesRequest && profile?.id === address && dialog.open) renderTerminalProfiles(choices);
   } catch {
     // 旧版电脑端不认识该请求：保留缓存或普通终端。

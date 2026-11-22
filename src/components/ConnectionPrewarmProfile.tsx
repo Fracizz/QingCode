@@ -6,7 +6,7 @@ import {
   CONNECTION_PREWARM_MAX_COUNT, connectionPrewarmCount, connectionPrewarmProfile, saveConnectionPrewarmCount, saveConnectionPrewarmProfile,
 } from '../lib/terminal/connectionPrewarmProfile'
 import { isTerminalProfileTrusted, TERMINAL_PROFILE_TRUST_CHANGED_EVENT } from '../lib/terminal/terminalProfileTrust'
-import { loadTerminalProfileSettings } from '../lib/terminal/terminalProfiles'
+import { loadTerminalProfileSettings, profilesForConnection } from '../lib/terminal/terminalProfiles'
 import { connectionPrewarmEnabled, setConnectionPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import SettingSelect from './SettingSelect'
 import { useProjectStore } from '../store/projectStore'
@@ -23,7 +23,7 @@ export default function ConnectionPrewarmProfile({ connectionId }: { connectionI
     events.forEach(event => window.addEventListener(event, refresh))
     return () => events.forEach(event => window.removeEventListener(event, refresh))
   }, [])
-  const profiles = loadTerminalProfileSettings().profiles.filter(p => isPrewarmCli(p.command))
+  const profiles = profilesForConnection(loadTerminalProfileSettings(), connectionId).filter(p => isPrewarmCli(p.command))
   const enabled = connectionPrewarmEnabled(connectionId)
   const selected = connectionPrewarmProfile(connectionId)
   // 由已注册项目的根路径判断远端系统；没有项目时不提示。

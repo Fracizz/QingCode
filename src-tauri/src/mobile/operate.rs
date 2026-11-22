@@ -92,7 +92,11 @@ pub(super) enum Operation {
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
     /// 电脑端「终端配置」列表（只含 id / 名称 / 是否已信任，不含命令）。
-    TerminalProfiles,
+    /// 带 `project` 时只列出该项目所属连接（或本机）分类和通用配置；旧版手机不传，列出全部。
+    TerminalProfiles {
+        #[serde(default)]
+        project: Option<String>,
+    },
     /// 电脑端终端快捷键栏的自定义键（名称 / 文本 / 是否回车），供手机导入；只读。
     ShortcutKeys,
     Create {
@@ -294,7 +298,9 @@ pub(super) async fn operate(
                 .map(|(id, session)| session.attention(id))
                 .collect::<Vec<_>>()))
         }
-        Operation::TerminalProfiles => desktop_query(app, json!({ "profiles": true })).await,
+        Operation::TerminalProfiles { project } => {
+            desktop_query(app, json!({ "profiles": true, "project": project })).await
+        }
         Operation::ShortcutKeys => desktop_query(app, json!({ "shortcutKeys": true })).await,
         Operation::Create {
             project,

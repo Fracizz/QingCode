@@ -1731,7 +1731,13 @@ fn create_accepts_an_optional_terminal_profile_id() {
         matches!(chosen, Operation::Create { terminal_profile: Some(ref id), .. } if id == "claude")
     );
     let list: Operation = serde_json::from_str(r#"{"op":"terminal_profiles"}"#).unwrap();
-    assert!(matches!(list, Operation::TerminalProfiles));
+    assert!(matches!(
+        list,
+        Operation::TerminalProfiles { project: None }
+    ));
+    let scoped: Operation =
+        serde_json::from_str(r#"{"op":"terminal_profiles","project":"p"}"#).unwrap();
+    assert!(matches!(scoped, Operation::TerminalProfiles { project: Some(ref id) } if id == "p"));
     let keys: Operation = serde_json::from_str(r#"{"op":"shortcut_keys"}"#).unwrap();
     assert!(matches!(keys, Operation::ShortcutKeys));
     // 手机不能直接提交命令：未知字段被忽略，命令只来自电脑端配置。

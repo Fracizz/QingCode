@@ -8,7 +8,7 @@ import {
   type FontSettings,
 } from '../../lib/fontSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
-import { DEFAULT_TERMINAL_PROFILE, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
+import { DEFAULT_TERMINAL_PROFILE, profilesForConnection, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   detectTerminalHostPlatform,
@@ -232,7 +232,7 @@ export default function TerminalSettingsSection({
       )}
       {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('本机预热', '预热', 'Shell') && <LocalPrewarmToggle />}
       {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('Codex', 'Claude Code', 'OpenCode', 'CLI', '预热') && (
-        <LocalCodexPrewarm profiles={terminal.profiles} />
+        <LocalCodexPrewarm profiles={profilesForConnection(terminal, null)} />
       )}
       {match('预热', 'Shell', 'shellPrewarmCount') && (
         <SettingItem
