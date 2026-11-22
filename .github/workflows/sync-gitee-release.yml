@@ -104,6 +104,11 @@ jobs:
             gh release download $tag --repo '${{ github.repository }}' --dir release-assets --pattern $name 2>$null
             if ($LASTEXITCODE -ne 0) { Write-Host "optional asset $name not on GitHub Release $tag" }
           }
+          # Offline Server package: docs/server-offline-update.md points users to both mirrors.
+          foreach ($name in @(Get-OfflineServerReleaseAssetNames -Version $ver)) {
+            gh release download $tag --repo '${{ github.repository }}' --dir release-assets --pattern $name 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Host "optional asset $name not on GitHub Release $tag" }
+          }
           exit 0
 
       - name: Publish to Gitee
