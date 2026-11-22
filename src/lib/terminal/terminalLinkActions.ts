@@ -15,6 +15,7 @@ import {
   isTerminalPathUnderRoot,
   matchTerminalFileHits,
   parseTerminalHyperlink,
+  terminalBufferFileLinkAt,
   terminalBufferFileLinks,
   terminalFileCandidates,
   terminalFileSearchName,
@@ -26,6 +27,13 @@ import {
 /** 文件路径和 OSC 8 链接需按住 Ctrl/Cmd 点击，普通点击留给聚焦、选择和 TUI。 */
 function isLinkActivation(event: MouseEvent | undefined) {
   return !!event && (event.ctrlKey || event.metaKey)
+}
+
+/** 已被 xterm 链接（文件路径、网址、OSC 8）处理的 mouseup，点击兜底不再重复打开。 */
+const activatedLinkEvents = new WeakSet<MouseEvent>()
+
+export function markTerminalLinkActivated(event: MouseEvent | undefined) {
+  if (event) activatedLinkEvents.add(event)
 }
 
 /** 搜索是子串匹配，上限要留出余量；超过上限时不自动打开，交给快速打开选择。 */
@@ -214,6 +222,7 @@ export function createTerminalOscLinkHandler(terminalId: string, getTerm: () => 
     allowNonHttpProtocols: true,
     activate: (event: MouseEvent, uri: string, range: IBufferRange) => {
       if (!isLinkActivation(event)) return
+      markTerminalLinkActivated(event)
       const link = parseTerminalHyperlink(uri)
       if (!link) {
         useProjectStore
@@ -229,7 +238,24 @@ export function createTerminalOscLinkHandler(terminalId: string, getTerm: () => 
   }
 }
 
-/** 注册文件路径识别。随 Terminal 一起销毁，无需单独释放。 */
+/** 鼠标所在单元格（0 起始的列与 buffer 行）；不在字符区内返回 null。 */
+function bufferCellAt(term: Terminal, event: MouseEvent) {
+  const screen = term.element?.querySelector('.xterm-screen')
+  if (!screen || !term.cols || !term.rows) return null
+  const rect = screen.getBoundingClientRect()
+  const col = Math.floor(((event.clientX - rect.left) / rect.width) * term.cols)
+  const row = Math.floor(((event.clientY - rect.top) / rect.height) * term.rows)
+  if (col < 0 || col >= term.cols || row < 0 || row >= term.rows) return null
+  return { x: col, y: term.buffer.active.viewportY + row }
+}
+
+/**
+ * 注册文件路径识别，需在 `term.open()` 之后调用。随 Terminal 一起销毁，无需单独释放。
+ *
+ * xterm 只在悬停时识别链接并缓存：Claude Code 等程序持续重绘时，若某一帧恰好渲染在
+ * 该行被擦除、尚未重写的间隙，悬停链接就会丢失，直到鼠标移到别的格子才重新识别，
+ * 于是 Ctrl+点击没有反应。所以 xterm 未处理的 Ctrl+点击，按松开这一刻的内容再识别一次。
+ */
 export function registerTerminalFileLinks(term: Terminal, terminalId: string) {
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
@@ -240,10 +266,30 @@ export function registerTerminalFileLinks(term: Terminal, terminalId: string) {
           text: target.path,
           decorations: { underline: true, pointerCursor: true },
           activate: (event: MouseEvent) => {
-            if (isLinkActivation(event)) void openTerminalFile(terminalId, target)
+            if (!isLinkActivation(event)) return
+            markTerminalLinkActivated(event)
+            void openTerminalFile(terminalId, target)
           },
         }))
       callback(links.length ? links : undefined)
     },
+  })
+
+  const element = term.element
+  if (!element) return
+  let pressed: { x: number; y: number } | null = null
+  // 冒泡阶段挂在 .xterm 根节点上，晚于 xterm 自己在 .xterm-screen 上的链接处理。
+  element.addEventListener('mousedown', event => {
+    pressed = event.button === 0 ? bufferCellAt(term, event) : null
+  })
+  element.addEventListener('mouseup', event => {
+    const down = pressed
+    pressed = null
+    if (event.button !== 0 || !isLinkActivation(event) || activatedLinkEvents.has(event)) return
+    const cell = bufferCellAt(term, event)
+    // 拖动选择不算点击。
+    if (!cell || !down || down.x !== cell.x || down.y !== cell.y) return
+    const target = terminalBufferFileLinkAt(term.buffer.active, cell.x, cell.y)
+    if (target) void openTerminalFile(terminalId, target)
   })
 }

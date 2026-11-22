@@ -12,6 +12,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - One-click Server direct connection is much faster on Windows remotes: the firewall rule is applied while the service installs, the digest check and self-check of an installed binary run in one remote call, and pairing info is read over SFTP, saving about four PowerShell cold starts.
 - The remote connection editor now pre-fills the locally saved SSH password (masked); click the eye icon to reveal it.
 - Mobile: the fullscreen-program slider gains a "Bottom" button that scrolls down automatically until the screen stops changing (at most 10 seconds).
+- Attaching to a terminal from the phone is faster: when the phone grid differs from the terminal, the attach request carries the phone grid, and the desktop resizes right away and replies once the redraw settles. This saves two round trips and a ~0.9 s idle wait; a shell that does not redraw now waits at most 0.4 s instead of over 1 s. Requires updating both the desktop app and the Android APK.
 
 ### Changed
 
@@ -21,6 +22,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 - Windows terminals now use the bundled newer ConPTY (Microsoft `conpty.dll` + `OpenConsole.exe`, for local terminals and remote Windows in Server mode). Programs that request mouse reporting before switching input modes, such as pi in fullscreen mode, now scroll their conversation with the wheel instead of cycling input history. Set `QINGCODE_INBOX_CONPTY=1` to fall back to the system ConPTY.
 - The local terminal host is now separated per build: after an upgrade, new terminals start in the new host (so fixes such as the bundled ConPTY take effect immediately), while terminals opened before the upgrade stay in the old host and can still be reattached and closed; the old host exits once they all end. Previously the long-lived old host kept serving new terminals, so the pi wheel issue persisted after installing the update.
+- While Claude Code or another program keeps redrawing the terminal, a file path could show its underline yet ignore Ctrl+click: xterm's hover link was lost in the gap between redraw writes and not detected again until the pointer moved. The path under the pointer is now re-detected from the content at mouse release and opened.
 
 ## [0.1.19] - 2026-11-20
 

@@ -415,3 +415,17 @@ export function terminalBufferFileLinks(
     }
   })
 }
+
+/** 单元格 (x, y)（0 起始）处的文件路径；按点击这一刻的 buffer 重新识别，不依赖悬停缓存。 */
+export function terminalBufferFileLinkAt(
+  buffer: TerminalBufferLike,
+  x: number,
+  y: number,
+): TerminalFileTarget | undefined {
+  const col = x + 1
+  const row = y + 1
+  return terminalBufferFileLinks(buffer, y).find(({ range: { start, end } }) =>
+    (row > start.y || (row === start.y && col >= start.x)) &&
+    (row < end.y || (row === end.y && col <= end.x)),
+  )?.target
+}

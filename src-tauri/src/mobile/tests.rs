@@ -560,6 +560,58 @@ fn attach_take_moves_the_locked_grid_only_when_it_takes_exclusive() {
 }
 
 #[test]
+fn attach_size_resizes_only_for_the_size_owner_and_feeds_a_take() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    hub.set_exclusive("term-1", Controller::Desktop, true, false)
+        .unwrap();
+    // 电脑独占且是尺寸方：手机报上的网格只记下，接管时直接用这份新网格。
+    assert_eq!(hub.attach_size("term-1", "phone", 50, 30), None);
+    let taken = hub
+        .claim_rejoin("term-1", "phone", true, None, None)
+        .unwrap();
+    assert_eq!(taken.resize, Some((50, 30)));
+    // 已是尺寸方：网格有变才返回，重复报同样的网格不再改尺寸。
+    assert_eq!(hub.attach_size("term-1", "phone", 60, 20), Some((60, 20)));
+    assert_eq!(hub.attach_size("term-1", "phone", 60, 20), None);
+    assert_eq!(hub.attach_size("term-1", "phone", 1, 999), Some((2, 150)));
+    assert_eq!(hub.attach_size("missing", "phone", 60, 20), None);
+    assert_eq!(hub.attach_size("term-1", "stranger", 60, 20), None);
+    // 被断开的设备只忽略网格，不报错也不改尺寸。
+    hub.kick_devices("term-1").unwrap();
+    assert_eq!(hub.attach_size("term-1", "phone", 70, 20), None);
+    assert!(hub.screen_size("term-1").is_some());
+    assert_eq!(hub.screen_size("missing"), None);
+}
+
+#[test]
+fn attach_requests_parse_an_optional_grid() {
+    let operation: Operation = serde_json::from_value(
+        json!({"op":"attach", "id":"mobile-1", "shared":true, "cols":46, "rows":32}),
+    )
+    .unwrap();
+    assert!(matches!(
+        operation,
+        Operation::Attach {
+            shared: true,
+            cols: Some(46),
+            rows: Some(32),
+            ..
+        }
+    ));
+    let legacy: Operation =
+        serde_json::from_value(json!({"op":"attach", "id":"mobile-1"})).unwrap();
+    assert!(matches!(
+        legacy,
+        Operation::Attach {
+            cols: None,
+            rows: None,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn restore_scan_runs_once_at_a_time_and_is_throttled() {
     let hub = handoff_hub();
     let start = Instant::now();
