@@ -2,7 +2,8 @@ import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 import { choiceDialog } from '../store/choiceStore'
 import { useProjectStore } from '../store/projectStore'
 import { isTauri, safeInvoke } from './tauri'
-import { translate } from './i18n'
+import { translate, useLocaleStore } from './i18n'
+import { localizeReleaseNotes } from './releaseNotes'
 import {
   isVersionSkipped,
   loadUpdateSettings,
@@ -60,7 +61,9 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
       latest: info.latest,
     }),
     info.source ? translate('来源：{source}', { source: info.source }) : null,
-    info.notes?.trim() || null,
+    info.notes?.trim()
+      ? localizeReleaseNotes(info.notes, useLocaleStore.getState().language).trim() || null
+      : null,
   ].filter(Boolean)
 
   const hasDirectDownload = !!info.download_url?.trim()
