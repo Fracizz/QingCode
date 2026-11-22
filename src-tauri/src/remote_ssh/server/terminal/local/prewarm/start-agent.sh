@@ -7,7 +7,11 @@ unset QINGCODE_PREWARM_AGENT QINGCODE_CODEX_HANDOFF QINGCODE_CODEX_ANCHOR
 # or any content so the CLI never loads project files here.
 [ -n "$anchor" ] && [ ! -L "$anchor" ] || exit 1
 mkdir -p -- "$anchor" && cd -P -- "$anchor" || exit 1
-[ -z "$(ls -A .)" ] || exit 1
+# 清掉此前 CLI 会话留下的空目录（如 .claude，find 默认不跟随链接）；
+# 仍有文件（如已领取的会话正在使用）时报告目录被占用，由预热池稍后重试。
+find . -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null
+[ -z "$(ls -A .)" ] || { printf 'QC-%s-anchor_busy!
+' "$QINGCODE_PREWARM_NONCE"; exit 1; }
 # CLI 不在 PATH 上时报告「未安装」，预热暂停并提示，而不是笼统地启动失败。
 if ! command -v -- "$agent" >/dev/null 2>&1; then
     printf 'QC-%s-cli_not_installed!

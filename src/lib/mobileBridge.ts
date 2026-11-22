@@ -19,6 +19,7 @@ import { applyTerminalControlPayload, type TerminalControlPayload } from '@/stor
 import { terminalViewGrids } from '@/store/terminal/ptySizing'
 import { isTerminalProgramBusy } from './terminal/terminalProgramActivity'
 import { terminalLastActiveAt } from './terminal/terminalLastActive'
+import { showsPrewarmHit } from './terminal/prewarmIndicator'
 import { isMobileTerminalId } from './ipc/mobileSessions'
 import type { TerminalTab } from '@/types'
 
@@ -80,6 +81,8 @@ async function listDesktopTerminals() {
       // 手机首页「待处理」据此显示「N 分钟前」；没有记录时给 null，不能给 0（会被算成 1970 年）
       lastActiveAt: terminalLastActiveAt(tab),
       idleDeadline: null,
+      // 领取了预热终端：手机在会话行和顶栏标题旁显示 ⚡，与电脑标签一致。
+      prewarm: showsPrewarmHit(tab),
       project,
     }]
   })

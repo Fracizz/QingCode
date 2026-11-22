@@ -15,8 +15,23 @@
             if (!(Test-Path -LiteralPath $anchor)) { New-Item -ItemType Directory -Path $anchor -ErrorAction Stop | Out-Null }
             Set-Location -LiteralPath $anchor -ErrorAction Stop
             $info = Get-Item -Force -LiteralPath $anchor -ErrorAction Stop
-            if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-                @(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop).Count) { exit 1 }
+            if ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 1 }
+            # 之前的 CLI 会话可能留下空目录（如 Claude 的 .claude），清掉空目录且不进入链接；
+            # 仍有文件（如已领取的会话正在使用）时报告目录被占用，由预热池稍后重试。
+            function Remove-QcEmptyDirectory([string]$dir) {
+                foreach ($child in @(Get-ChildItem -Force -Directory -LiteralPath $dir -ErrorAction Stop)) {
+                    if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                    Remove-QcEmptyDirectory $child.FullName
+                    if (!@(Get-ChildItem -Force -LiteralPath $child.FullName -ErrorAction Stop).Count) {
+                        Remove-Item -Force -LiteralPath $child.FullName -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            Remove-QcEmptyDirectory $anchor
+            if (@(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop).Count) {
+                [Console]::WriteLine("QC-${env:QINGCODE_PREWARM_NONCE}-anchor_busy!")
+                exit 1
+            }
         }
         # CLI 不在 PATH 上时报告「未安装」，预热暂停并提示，而不是笼统地启动失败。
         if (!(Get-Command -Name $agent -ErrorAction SilentlyContinue)) {

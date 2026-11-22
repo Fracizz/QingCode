@@ -18,12 +18,30 @@ fn checked_anchor(parent: &Path, create: bool) -> Result<PathBuf, String> {
             _ => {}
         }
     }
-    if path.canonicalize().map_err(io)? != path
-        || std::fs::read_dir(&path).map_err(io)?.next().is_some()
-    {
+    if path.canonicalize().map_err(io)? != path {
+        return Err("Codex 预热目录必须是 QingCode 的专用空目录".into());
+    }
+    remove_empty_dirs(&path);
+    if std::fs::read_dir(&path).map_err(io)?.next().is_some() {
         return Err("Codex 预热目录必须是 QingCode 的专用空目录".into());
     }
     Ok(path)
+}
+
+/// 此前在专用目录启动的 CLI 会话可能留下空目录（如 Claude 的 `.claude`）。
+/// 只删除空目录、不进入链接；仍有文件时保留，由调用方按非空处理。
+fn remove_empty_dirs(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        // DirEntry::file_type 不跟随链接；Windows 目录联接同样视为链接。
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let path = entry.path();
+            remove_empty_dirs(&path);
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
 }
 
 pub(super) fn validate_anchor(app: &AppHandle, cwd: &str) -> Result<(), String> {
@@ -198,6 +216,8 @@ const SCRIPT_BLOCKED: &str = "cli_script_blocked";
 const HANDOFF_UNAVAILABLE: &str = "cli_handoff_unavailable";
 /// 启动脚本在 PATH 上找不到所选 CLI。
 pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
+/// 专用启动目录里仍有文件（多为已领取的 CLI 会话正在使用），不是需要用户处理的阻塞，稍后自动重试。
+pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
 
 pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
     match error {
@@ -220,6 +240,10 @@ fn startup_blocker(agent: &str, screen: &str, anchor: &str, nonce: &str) -> Opti
     let missing = format!("QC-{nonce}-cli_not_installed!");
     if screen.lines().any(|line| line.trim() == missing) {
         return Some(CLI_NOT_INSTALLED);
+    }
+    let busy = format!("QC-{nonce}-anchor_busy!");
+    if screen.lines().any(|line| line.trim() == busy) {
+        return Some(ANCHOR_BUSY);
     }
     if agent == "codex" {
         if has("Update available") && has("Update now") && has("Skip until next version") {

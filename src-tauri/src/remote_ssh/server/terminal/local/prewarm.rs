@@ -1264,11 +1264,13 @@ impl ShellPrewarmPool {
                         continue;
                     }
                     state.preparing = false;
-                    if target
-                        .key
-                        .profile
-                        .as_ref()
-                        .is_some_and(|p| !remote || p.cross_project)
+                    // 专用目录暂被占用（已领取的会话仍在用）：按普通失败退避重试，不要求用户切换配置。
+                    if error != codex::ANCHOR_BUSY
+                        && target
+                            .key
+                            .profile
+                            .as_ref()
+                            .is_some_and(|p| !remote || p.cross_project)
                     {
                         if remote && error == codex::SERVER_OUTDATED {
                             // 旧 daemon 有运行中的终端时会推迟升级：暂停到配置变化，并提示所属窗口（不阻塞）。
@@ -1310,7 +1312,11 @@ impl ShellPrewarmPool {
                         );
                         continue;
                     }
-                    state.paused_reason = Some("create_failed_backoff");
+                    state.paused_reason = Some(if error == codex::ANCHOR_BUSY {
+                        codex::ANCHOR_BUSY
+                    } else {
+                        "create_failed_backoff"
+                    });
                 }
                 tokio::select! {
                     _ = &mut changed => {},

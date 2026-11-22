@@ -6,8 +6,22 @@
         # Create the remote dedicated directory on first use; it is then checked to be an empty non-link.
         if (!(Test-Path -LiteralPath $anchor)) { New-Item -ItemType Directory -Path $anchor | Out-Null }
         Set-Location -LiteralPath $anchor
-        if (((Get-Item -Force -LiteralPath $anchor).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            @(Get-ChildItem -Force -LiteralPath $anchor).Count) { exit 1 }
+        if ((Get-Item -Force -LiteralPath $anchor).Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 1 }
+        # 清掉此前 CLI 会话留下的空目录（不进入链接）；仍有文件时报告目录被占用，稍后重试。
+        function Remove-QcEmptyDirectory([string]$dir) {
+            foreach ($child in @(Get-ChildItem -Force -Directory -LiteralPath $dir)) {
+                if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                Remove-QcEmptyDirectory $child.FullName
+                if (!@(Get-ChildItem -Force -LiteralPath $child.FullName).Count) {
+                    Remove-Item -Force -LiteralPath $child.FullName -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        Remove-QcEmptyDirectory $anchor
+        if (@(Get-ChildItem -Force -LiteralPath $anchor).Count) {
+            [Console]::WriteLine("QC-${env:QINGCODE_PREWARM_NONCE}-anchor_busy!")
+            exit 1
+        }
     }
     $nonce = $env:QINGCODE_PREWARM_NONCE
     Remove-Item Env:QINGCODE_PREWARM_NONCE

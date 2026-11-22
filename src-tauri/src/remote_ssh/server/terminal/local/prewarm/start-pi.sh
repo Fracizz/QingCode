@@ -6,7 +6,11 @@ unset QINGCODE_PREWARM_NONCE QINGCODE_CODEX_ANCHOR QINGCODE_PREWARM_AGENT
 # Start in the QingCode-owned empty directory, never a user project.
 [ -n "$qc_anchor" ] && [ ! -L "$qc_anchor" ] || exit 1
 mkdir -p -- "$qc_anchor" && cd -P -- "$qc_anchor" || exit 1
-[ -z "$(ls -A .)" ] || exit 1
+# 清掉此前 CLI 会话留下的空目录（如 .claude，find 默认不跟随链接）；
+# 仍有文件（如已领取的会话正在使用）时报告目录被占用，由预热池稍后重试。
+find . -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null
+[ -z "$(ls -A .)" ] || { printf 'QC-%s-anchor_busy!
+' "$qc_nonce"; exit 1; }
 qc_pi=$(command -v pi) || { printf 'QC-%s-cli_not_installed!\n' "$qc_nonce"; exit 1; }
 if qc_node=$(command -v node); then
     qc_base=$(mktemp -d) || exit 1

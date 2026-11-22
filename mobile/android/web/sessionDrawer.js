@@ -27,7 +27,7 @@ import {
 import { attachDragSort, attachLongPress, attachSwipeDismiss, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { createSessionOverview } from './sessionOverview.js';
-import { fillProjectSource, get, message, icon, rowText, button, collapseAndRemove, setText } from './dom.js';
+import { fillProjectSource, get, message, icon, prewarmMark, rowText, button, collapseAndRemove, setText } from './dom.js';
 import { t } from './i18n.js';
 import { reducedMotion } from './motion.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -219,7 +219,8 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const profile = state.profile();
     const current = sessions.find(item => item.id === selected);
     setText(get('terminal-name'), current ? sessionName(current) : project?.name ?? t('终端'));
-    get('terminal-prewarm').hidden = current?.prewarm !== true;
+    // 电脑终端不在本项目列表里，用接入时的条目判断。<svg> 没有 hidden 属性接口，要直接改特性。
+    get('terminal-prewarm').toggleAttribute('hidden', (current ?? state.selectedEntry?.())?.prewarm !== true);
     // 顶栏副行空间有限：只留项目名和连接名（如 qingcode · WinDev），完整来源在会话侧栏里。
     setText(get('terminal-host'), project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '');
     setText(get('session-context'), project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '');
@@ -253,6 +254,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
       existingRows.delete(session.id);
       row.dataset.current = String(session.id === selected);
       row.dataset.pinned = String(pinned.has(session.id));
+      row.dataset.prewarm = String(session.prewarm === true);
       // 置顶的会话固定在最前；「运行中优先」是临时排序，都不参与拖动。
       row.dataset.draggable = String(!busy && !pinned.has(session.id) && !runningFirst());
       // 只影响显示；「运行中优先」排序仍按真实状态。
@@ -374,7 +376,7 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const attention = document.createElement('span');
     attention.className = 'session-attention';
     attention.setAttribute('aria-hidden', 'true');
-    heading.append(icon('loader-circle', 'session-spinner'), attention, icon('pin', 'session-pin'), name);
+    heading.append(icon('loader-circle', 'session-spinner'), attention, icon('pin', 'session-pin'), name, prewarmMark());
     // 空闲 24 小时无输入也无输出时电脑端自动结束会话。
     const idle = document.createElement('small');
     idle.className = 'session-idle';

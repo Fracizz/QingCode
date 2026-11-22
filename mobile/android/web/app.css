@@ -1052,6 +1052,9 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 .session-option .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .session-pin { display: none; flex: none; color: var(--muted); }
 .session-option[data-pinned="true"] .session-pin { display: block; }
+/* 领取了预热终端的会话：标题后跟 ⚡，与电脑标签一致；与标题首行居中。 */
+.session-option .session-prewarm { display: none; flex: none; width: 14px; height: 14px; margin-top: calc((1.45em - 14px) / 2); color: var(--muted); }
+.session-option[data-prewarm="true"] .session-prewarm { display: block; }
 .session-option[data-current="true"] .session-face { background: var(--surface-high); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
 #session-scope { flex: none; margin-top: 0; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); }

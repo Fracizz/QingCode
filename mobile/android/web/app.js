@@ -160,6 +160,8 @@ let page = 'home';
 let shownScreen = 'dashboard';
 let sessions = [];
 let selected = null;
+// 当前接入的会话条目；电脑终端不在本项目会话列表里，顶栏靠它显示预热标志。
+let selectedEntry = null;
 let foreground = true;
 // 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
 const terminalProfiles = new Map();
@@ -416,6 +418,7 @@ const drawer = createSessionDrawer({
     project: () => project,
     sessions: () => sessions,
     selected: () => selected,
+    selectedEntry: () => (selectedEntry?.id === selected ? selectedEntry : null),
     busy: () => busy,
     viewEpoch: () => viewEpoch,
     foreground: () => foreground,
@@ -1387,6 +1390,7 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFra
   fitting = null;
   for (const id of ['share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) get(id).close();
   selected = null;
+  selectedEntry = null;
   composing = false;
   clearModifiers();
   setRawKeyboard(false);
@@ -2013,7 +2017,7 @@ async function openProject(item, resumeOnly = false, target = null) {
   sessions = [];
   compose.value = '';
   get('terminal-name').textContent = item.name;
-  get('terminal-prewarm').hidden = true;
+  get('terminal-prewarm').setAttribute('hidden', '');
   // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
   get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
   // 从工作台进入时工作台以快照往左退出，终端原地淡入；切换项目时已在终端页，直接摆放。
@@ -2133,6 +2137,7 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
   leaveTerminal({ preserveFullscreen: true, keepDrawer, holdFrame: true });
   const epoch = viewEpoch;
   selected = session.id;
+  selectedEntry = session;
   workspace.context(draftKey(selected), project.id, project.name);
   compose.value = drafts.get(draftKey(selected)) ?? '';
   resizeComposer();

@@ -91,6 +91,15 @@ export function icon(name, className) {
   return svg;
 }
 
+/** 会话行标题后的 ⚡：会话领取了电脑端的预热终端，由行的 data-prewarm 控制显示。 */
+export function prewarmMark() {
+  const mark = icon('zap', 'session-prewarm');
+  mark.removeAttribute('aria-hidden');
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', t('已领取预热终端'));
+  return mark;
+}
+
 export function rowText(title, subtitle) {
   const text = document.createElement('span');
   text.className = 'row-text';

@@ -149,7 +149,7 @@
   function sessionMetadata(session) {
     const lastActiveAt = session.lastActiveAt ?? Date.now()
     const basic = { id: session.id, number: session.number, exit: session.exit, createdAt: session.createdAt ?? null,
-      lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3 }
+      lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3, prewarm: session.prewarm === true }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
       programTitle: session.title ?? null,
       ...(typeof session.programBusy === 'boolean' ? { programBusy: session.programBusy, activityRevision: session.activityRevision } : {}),
@@ -619,14 +619,14 @@
       state.sessions.get(id).kicked = true
       for (const wake of state.sessions.get(id).waiters.splice(0)) wake()
     },
-    addDesktopTerminal({ id, project, title, createdAt = null }) {
-      const session = { id, number: 0, project, title, createdAt, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
+    addDesktopTerminal({ id, project, title, createdAt = null, prewarm = false }) {
+      const session = { id, number: 0, project, title, createdAt, prewarm, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
       state.sessions.set(id, session)
       return session
     },
-    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null, createdAt = Date.now() } = {}) {
+    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null, createdAt = Date.now(), prewarm = false } = {}) {
       const number = state.nextSession++
-      const session = { id: 'mobile-' + number, number, project, title, createdAt, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
+      const session = { id: 'mobile-' + number, number, project, title, createdAt, prewarm, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
       state.sessions.set(session.id, session)
       push(session, base64('PS> '))
       return session.id
