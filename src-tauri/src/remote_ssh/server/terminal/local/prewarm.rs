@@ -22,6 +22,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
+/// 单次创建的总时限：SFTP/daemon 连接或 CLI 启动卡住时按失败退避重试，
+/// 否则补充循环会一直停在「准备中」，池子用完后不再补充。
+const CREATE_TIMEOUT: Duration = Duration::from_secs(120);
 const RESERVATION_TTL: Duration = Duration::from_secs(15);
 /// 本机领取只经命名管道；远端领取要经过 SSH 往返，给更宽的上限。
 const LOCAL_CLAIM_TIMEOUT: Duration = Duration::from_secs(2);
@@ -1288,7 +1291,9 @@ impl ShellPrewarmPool {
                     trace("create_cancelled", serde_json::json!({"remote": remote, "ms": started.elapsed().as_millis() as u64}));
                     continue;
                 }
-                entry = create_warm_shell(&manager, &target) => entry,
+                entry = tokio::time::timeout(CREATE_TIMEOUT, create_warm_shell(&manager, &target)) => {
+                    entry.unwrap_or_else(|_| Err(codex::CREATE_TIMED_OUT.to_string()))
+                }
             };
             let ms = started.elapsed().as_millis() as u64;
             if let Ok(entry) = entry {

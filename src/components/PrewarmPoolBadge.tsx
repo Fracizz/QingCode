@@ -7,9 +7,9 @@ import Tooltip from './Tooltip'
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
 const TONE = {
-  // 补满时退成辅助灰，不抢终端数量的注意力；暂停是最需要被看到的状态。
-  full: 'text-term-list-meta',
-  filling: 'text-term-list-fg',
+  // 补满为绿色（可直接用），补充中退成辅助灰，暂停用警示色。
+  full: 'text-ok',
+  filling: 'text-term-list-meta',
   paused: 'text-warn',
 } as const
 

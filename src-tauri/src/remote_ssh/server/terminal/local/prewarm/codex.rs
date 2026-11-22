@@ -220,10 +220,12 @@ pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
 pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
 /// 预热途中 daemon 会话断开（如远端服务升级重启 daemon）：与 CLI 本身无关，稍后自动重试。
 const SESSION_LOST: &str = "cli_session_lost";
+/// 单次创建超过总时限（连接或启动卡住）：属于暂时性失败，退避后重试。
+pub(super) const CREATE_TIMED_OUT: &str = "prewarm_create_timeout";
 
 /// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
 pub(super) fn retry_later(error: &str) -> bool {
-    error == ANCHOR_BUSY || error.starts_with(SESSION_LOST)
+    error == ANCHOR_BUSY || error == CREATE_TIMED_OUT || error.starts_with(SESSION_LOST)
 }
 
 /// 会话已关闭时，把超时等表象错误归为 [`SESSION_LOST`]，保留关闭原因便于诊断。
