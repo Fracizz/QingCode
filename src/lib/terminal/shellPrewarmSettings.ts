@@ -6,6 +6,7 @@ export const SHELL_PREWARM_COUNT_KEY = 'terminal.integrated.shellPrewarmCount'
 export const SHELL_PREWARM_CHANGED_EVENT = 'qingcode:shell-prewarm-changed'
 export type ShellPrewarmCount = 'auto' | number
 
+/** 本机 Windows 普通 Shell 的预热数量；远程连接各自在「远程连接」中设置。 */
 export function parseShellPrewarmCount(value: unknown): ShellPrewarmCount {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 8
     ? value : 'auto'
@@ -67,6 +68,36 @@ export function connectionPrewarmEnabled(connectionId: string) {
 export function setConnectionPrewarmEnabled(connectionId: string, enabled: boolean) {
   setFlag(CONNECTION_PREWARM_DISABLED_PREFIX + connectionId, !enabled)
 }
+/**
+ * 每条远程连接的普通 Shell 预热数量（默认自动 = 1 个），在「远程连接」中按连接设置；
+ * 与本机的 `terminal.integrated.shellPrewarmCount` 相互独立。0 只停普通 Shell，CLI 预热不受影响。
+ */
+export const CONNECTION_SHELL_COUNT_PREFIX = 'qingcode:connection-shell-prewarm-count:'
+
+export function connectionShellPrewarmCount(connectionId: string): ShellPrewarmCount {
+  const raw = localStorage.getItem(CONNECTION_SHELL_COUNT_PREFIX + connectionId)
+  return raw === null ? 'auto' : parseShellPrewarmCount(Number(raw))
+}
+export function setConnectionShellPrewarmCount(connectionId: string, value: ShellPrewarmCount) {
+  const key = CONNECTION_SHELL_COUNT_PREFIX + connectionId
+  const parsed = parseShellPrewarmCount(value)
+  if (parsed === 'auto') localStorage.removeItem(key)
+  else localStorage.setItem(key, String(parsed))
+  notifyShellPrewarmChanged()
+}
+/** 单独设置过数量的连接（自动的不列出，原生池按 1 个处理）。 */
+export function connectionShellPrewarmCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key?.startsWith(CONNECTION_SHELL_COUNT_PREFIX)) continue
+    const id = key.slice(CONNECTION_SHELL_COUNT_PREFIX.length)
+    const count = connectionShellPrewarmCount(id)
+    if (count !== 'auto') counts[id] = count
+  }
+  return counts
+}
+
 /** 已关闭预热的连接 id，交给原生池跳过这些连接。 */
 export function disabledPrewarmConnections() {
   const ids: string[] = []

@@ -29,7 +29,7 @@ import {
 import { DEFAULT_TERMINAL_PROFILE, getEffectiveDefaultProfileId, getPrewarmShell, loadTerminalProfileSettings, saveTerminalProfileSettings, type TerminalProfile } from './terminal/terminalProfiles'
 import { forgetTerminalProfileTrust, isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import type { Project } from '../types'
-import { ensureSshWorkspaceConnected } from './sshWorkspace'
+import { ensureSshWorkspaceConnected, sshConnectionIdFromUri } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
 import { hasRunTaskTarget, parseRunTaskOs } from './runTaskPlatform'
 import { writeTerminal } from './ipc/terminal'
@@ -45,7 +45,7 @@ import {
 import { availableTerminalShells, detectTerminalHostPlatform, isTerminalShellId } from './terminal/terminalShell'
 import { loadScopedTerminalPersistLocalSessions } from './terminal/terminalPersistLocalSettings'
 import { recentShellOpens } from './terminal/shellOpenDiagnostics'
-import { loadShellPrewarmCount } from './terminal/shellPrewarmSettings'
+import { connectionPrewarmEnabled, connectionShellPrewarmCount, loadShellPrewarmCount } from './terminal/shellPrewarmSettings'
 
 interface CliRequest {
   id: string
@@ -464,10 +464,14 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       const project = resolveProject(req.project)
       const pool = await safeInvoke<{ target: number; ready: number; preparing: number; reserved: number; reason: string | null }>(
         '读取 Shell 预热状态', 'shell_prewarm_status', { cwd: project.path })
-      const configured = await loadShellPrewarmCount()
+      // 本机读「设置 → 终端」，远程项目读所在连接在「远程连接」中的设置。
+      const connectionId = sshConnectionIdFromUri(project.path)
+      const configured = connectionId
+        ? (connectionPrewarmEnabled(connectionId) ? connectionShellPrewarmCount(connectionId) : 0)
+        : await loadShellPrewarmCount()
       let reason = pool.reason
       if (!pool.target) {
-        const local = !project.path.startsWith('ssh://')
+        const local = !connectionId
         if (!isProjectTrusted(project)) reason = 'untrusted'
         else if (configured === 0) reason = 'disabled'
         else if (project.ephemeral || (local && detectTerminalHostPlatform() !== 'win')) reason = 'unsupported_host'

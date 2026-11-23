@@ -628,7 +628,7 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 
 ### 普通 Shell 预热
 
-「终端 › 集成: Shell 预热数量」在用户作用域显示，沿用设置项和共享下拉，提供自动、关闭及 1–8。自动保留 1 个，领取后立即补充；更多数量仅用于连续快速新建。只为当前已信任项目准备普通 Shell：本机 Windows 项目（PowerShell / CMD）需开启本地终端可接回；SSH 项目须使用 Server 模式，Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell。全应用共用空闲预算，后台逐个补充，窗口重新获得焦点时保留已就绪项；内存不足暂停，切换项目、撤销信任和退出回收未领取项。命中直接领取，未命中正常新建；预热不增加标签或退出确认。详见 [Shell 预热](docs/windows-shell-prewarm.md)。
+数量按位置分开设置：「终端 › 集成: 本机 Shell 预热数量」只在 Windows 用户作用域显示，提供自动、关闭及 1–8；每条远程连接在「远程连接 → 终端」中设置「远端预热」开关、「普通 Shell 预热数量」（自动、不预热、1–8）与 CLI 预热，设置行左侧为标题和说明、右侧为共享下拉，窄窗时下拉换行。自动保留 1 个，领取后立即补充；更多数量仅用于连续快速新建。只为当前已信任项目准备普通 Shell：本机 Windows 项目（PowerShell / CMD）需开启本地终端可接回；SSH 项目须使用 Server 模式，Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell。全应用共用空闲预算，后台逐个补充，窗口重新获得焦点时保留已就绪项；内存不足暂停，切换项目、撤销信任和退出回收未领取项。命中直接领取，未命中正常新建；预热不增加标签或退出确认。详见 [Shell 预热](docs/windows-shell-prewarm.md)。
 
 ### 终端标签（TerminalTabs）
 

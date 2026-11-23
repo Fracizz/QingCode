@@ -143,3 +143,23 @@ test('a failed stage stops other running work and never starts dependents', asyn
     assert.equal(state.tasks[2].pid, undefined)
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
+
+test('--size-optimized forwards -SizeOptimized to every Rust build stage only', () => {
+  const tasks = buildPlan({ only: 'all', sizeOptimized: true })
+  for (const id of ['server', 'exe', 'installer']) {
+    assert.ok(tasks.find(task => task.id === id).args.includes('-SizeOptimized'), id)
+  }
+  for (const id of ['frontend', 'icons', 'embed', 'apk']) {
+    assert.ok(!tasks.find(task => task.id === id).args.includes('-SizeOptimized'), id)
+  }
+  assert.ok(!buildPlan({ only: 'all' }).some(task => task.args.includes('-SizeOptimized')))
+})
+
+test('local -SizeOptimized profile matches the CI release env', () => {
+  const read = file => readFileSync(new URL(file, import.meta.url), 'utf8')
+  const local = Object.fromEntries([...read('./package-common.ps1').matchAll(/^\s*(CARGO_PROFILE_RELEASE_\w+)\s*=\s*'([^']*)'/gm)].map(m => [m[1], m[2]]))
+  const workflowEnv = file => Object.fromEntries([...read(file).matchAll(/^  (CARGO_PROFILE_RELEASE_\w+):\s*'?([^'\s]+)'?\s*$/gm)].map(m => [m[1], m[2]]))
+  assert.equal(Object.keys(local).length, 4)
+  assert.deepEqual(workflowEnv('../.github/workflows/release.yml'), local)
+  assert.deepEqual(workflowEnv('../.github/workflows/warm-release-cache.yml'), local)
+})

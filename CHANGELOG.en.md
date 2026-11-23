@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Plain-shell prewarm counts are now managed per location: Settings → Terminal keeps only the local (Windows) "Local Prewarmed Shells" count, and each remote connection sets its own "Prewarmed plain shells" (Auto / Off / 1–8) under Remote Connections → Terminal. Setting it to Off still allows CLI-only prewarming. Remote connections previously followed the global count and now default to Auto (1).
+- Reorganized the Remote Connections detail page: projects come first, and the default terminal profile and prewarm settings are grouped under "Terminal" with descriptions on the left, dropdowns on the right, and live Shell / CLI ready counts for the connection.
+
+
 ## [0.1.21-beta.7] - 2026-11-22
 
 A beta after v0.1.20 that makes CLI prewarming configurable per host, adds a per-connection prewarm count, keeps remote prewarming from getting stuck, and polishes the mobile workbench.

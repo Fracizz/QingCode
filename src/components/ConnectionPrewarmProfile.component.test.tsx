@@ -5,7 +5,7 @@ import { connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProf
 import { forgetTerminalProfileTrust, trustTerminalProfile } from '../lib/terminal/terminalProfileTrust'
 import { saveTerminalProfileSettings, type TerminalProfile } from '../lib/terminal/terminalProfiles'
 import { trustProject } from '../lib/workspaceTrust'
-import { connectionPrewarmEnabled, setConnectionPrewarmEnabled } from '../lib/terminal/shellPrewarmSettings'
+import { connectionPrewarmEnabled, connectionShellPrewarmCount, connectionShellPrewarmCounts, setConnectionPrewarmEnabled } from '../lib/terminal/shellPrewarmSettings'
 import type { Project } from '../types'
 import { useProjectStore } from '../store/projectStore'
 import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
@@ -26,7 +26,7 @@ it('opts in per connection and binds background execution to the trusted command
   fireEvent.click(screen.getByRole('option', { name: 'Claude' }))
   expect(connectionPrewarmProfile('a')).toEqual(profile)
   view.rerender(<ConnectionPrewarmProfile connectionId="b" />)
-  expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toHaveTextContent('仅预热普通 Shell')
+  expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toHaveTextContent('不预热 CLI')
   expect(connectionPrewarmProfile('b')).toBeUndefined()
   act(() => saveTerminalProfileSettings({ ...settings, profiles: [{ ...profile, command: 'claude --resume' }] }))
   expect(connectionPrewarmProfile('a')).toBeUndefined()
@@ -141,4 +141,23 @@ it('turns prewarming off per connection and hides the CLI choice', () => {
   act(() => setConnectionPrewarmEnabled('a', true))
   view.rerender(<ConnectionPrewarmProfile connectionId="a" />)
   expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toHaveTextContent('CC')
+})
+
+it('sets the plain shell count per connection, independent of the CLI pool', () => {
+  const view = render(<ConnectionPrewarmProfile connectionId="a" />)
+  expect(screen.getByRole('button', { name: '普通 Shell 预热数量' })).toHaveTextContent('自动')
+  fireEvent.click(screen.getByRole('button', { name: '普通 Shell 预热数量' }))
+  fireEvent.click(screen.getByRole('option', { name: '3' }))
+  expect(connectionShellPrewarmCount('a')).toBe(3)
+  // 0 只停普通 Shell，CLI 选择仍可用。
+  fireEvent.click(screen.getByRole('button', { name: '普通 Shell 预热数量' }))
+  fireEvent.click(screen.getByRole('option', { name: '不预热' }))
+  expect(connectionShellPrewarmCount('a')).toBe(0)
+  expect(screen.getByRole('button', { name: '远端 CLI 预热' })).toBeTruthy()
+  view.rerender(<ConnectionPrewarmProfile connectionId="b" />)
+  expect(connectionShellPrewarmCount('b')).toBe('auto')
+  expect(connectionShellPrewarmCounts()).toEqual({ a: 0 })
+  fireEvent.click(screen.getByRole('button', { name: '普通 Shell 预热数量' }))
+  fireEvent.click(screen.getByRole('option', { name: '自动（1 个）' }))
+  expect(connectionShellPrewarmCounts()).toEqual({ a: 0 })
 })

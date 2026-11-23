@@ -12,7 +12,7 @@ const check = (name, condition) => {
   run('wait', '--fn', `Boolean(${condition})`)
   results.push({ name, passed: true })
 }
-const label = '终端 › 集成: Shell 预热数量'
+const label = '终端 › 集成: 本机 Shell 预热数量'
 const control = `document.querySelector('button[aria-label="${label}"]')`
 const saved = `JSON.parse(JSON.stringify([...window.shellPrewarmFixture.disk.values()])).some(text => text.includes('"terminal.integrated.shellPrewarmCount": 8'))`
 try {
@@ -50,11 +50,12 @@ try {
   click('自动（1 个）', 'option')
   check('can return to automatic mode', `${control}?.textContent.includes('自动')`)
   click('Windows')
-  check('Linux clients can configure prewarming for Windows SSH hosts', `navigator.userAgent === 'Linux' && ${control}?.disabled === false && ${control}.textContent.includes('自动')`)
+  // 远程连接的预热在「远程连接 → 终端」中按连接设置；非 Windows 客户端没有本机池，不显示本机数量。
+  check('Linux clients hide the local-only shell count', `navigator.userAgent === 'Linux' && !${control}`)
   click('Linux')
   click('English / light')
   run('set', 'viewport', '420', '760')
-  check('English light setting fits narrow windows', `document.querySelector('button[aria-label="Terminal › Integrated: Prewarmed Shells"]') && document.documentElement.scrollWidth <= innerWidth`)
+  check('English light setting fits narrow windows', `document.querySelector('button[aria-label="Terminal › Integrated: Local Prewarmed Shells"]') && document.documentElement.scrollWidth <= innerWidth`)
   run('screenshot', resolve(output, 'light-en-narrow.png'))
   run('set', 'viewport', '680', '350')
   run('open', 'http://127.0.0.1:38439/web-tests/shell-prewarm.html?titles')

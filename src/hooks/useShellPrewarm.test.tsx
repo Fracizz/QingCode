@@ -26,7 +26,7 @@ vi.mock('../lib/terminal/shellPrewarmSettings', async importOriginal => ({
 vi.mock('../lib/terminal/terminalPersistLocalSettings', () => ({ loadEffectiveTerminalPersistLocalSessions: mocks.persist }))
 vi.mock('../lib/terminal/terminalProfiles', () => ({ getPrewarmShell: () => 'auto', TERMINAL_PROFILES_KEY: 'profiles' }))
 vi.mock('../lib/terminal/terminalShell', () => ({ detectTerminalHostPlatform: mocks.platform }))
-import { notifyShellPrewarmChanged, setConnectionPrewarmEnabled, setLocalPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
+import { notifyShellPrewarmChanged, setConnectionPrewarmEnabled, setConnectionShellPrewarmCount, setLocalPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
 import { useShellPrewarm } from './useShellPrewarm'
 const project: Project = { id: 'one', name: 'One', path: 'D:/work/one' }
 const configuredPaths = () => mocks.invoke.mock.calls.map(call => (call[2] as { cwd: string | null }).cwd)
@@ -212,6 +212,9 @@ describe('Windows prewarm coordinator', () => {
     act(() => setConnectionPrewarmEnabled('windev', false))
     await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toEqual({ cwd: null, shell: 'auto', count: 'auto', disabledConnections: ['windev'] }))
     act(() => { setLocalPrewarmEnabled(true); setConnectionPrewarmEnabled('windev', true) })
+    // 每条连接的普通 Shell 数量单独发送，与本机数量 count 无关。
+    act(() => setConnectionShellPrewarmCount('windev', 3))
+    await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ count: 'auto', connectionCounts: { windev: 3 } }))
     hook.unmount()
     await act(async () => {})
     localStorage.clear()

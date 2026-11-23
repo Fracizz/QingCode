@@ -13,6 +13,8 @@ param(
   [switch]$SkipAndroid,
   # Unified local CLI already refreshed the validated offline pack.
   [switch]$SkipServerPack,
+  # 按发布配置的体积优化编译（同 CI release.yml），更小但更慢。
+  [switch]$SizeOptimized,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
   [string]$Target = ''
 )
@@ -118,6 +120,8 @@ try {
     $env:RUSTC_WRAPPER = 'sccache'
     Write-Host 'Using sccache for Rust compilation cache.' -ForegroundColor DarkGray
   }
+
+  if ($SizeOptimized) { Enable-SizeOptimizedRustProfile }
 
   Write-Step 'Prepare'
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
@@ -248,7 +252,7 @@ try {
   Write-Host "  源: $($exe.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Tips: -SkipFrontend (Rust only) · -SkipServer · -Force (full rebuild) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
+  Write-Host "Tips: -SkipFrontend (Rust only) · -SkipServer · -Force (full rebuild) · -SizeOptimized (release-size build) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
 } finally {
   Pop-Location
 }

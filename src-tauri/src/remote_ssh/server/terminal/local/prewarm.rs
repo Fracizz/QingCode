@@ -484,6 +484,8 @@ impl ShellPrewarmPool {
         anchored_profiles: Vec<PrewarmProfile>,
         // 用户在「远程连接」里关闭预热的连接：普通 Shell 与 CLI 都不预热。
         disabled_connections: Vec<String>,
+        // 各连接单独设置的普通 Shell 数量；`count` 只决定本机池。
+        connection_counts: BTreeMap<String, usize>,
     ) -> Result<usize, String> {
         let Some(mut state) = self.lock_for_window(window) else {
             return Ok(0);
@@ -491,15 +493,20 @@ impl ShellPrewarmPool {
         let count = resolve_count(&count);
         app.state::<LocalCodexPool>()
             .configure(app, window, local_profile.filter(|_| count > 0));
+        // 远端 CLI 不受本机数量影响；`shell` 为空是失效请求，先停掉旧的 CLI 池。
         app.state::<ConnectionShellPools>().set_profiles(
             window,
             profile,
             anchored_profiles,
-            count > 0,
+            shell.is_some(),
         );
         if let Some(shell) = &shell {
-            app.state::<ConnectionShellPools>()
-                .configure(app, shell, count, disabled_connections);
+            app.state::<ConnectionShellPools>().configure(
+                app,
+                shell,
+                connection_counts,
+                disabled_connections,
+            );
         }
         // A projectless or remote-only window may update the global setting while
         // another window still owns the local project. Keep that project's budget.

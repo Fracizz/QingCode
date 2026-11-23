@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][ValidateSet('frontend', 'icons', 'server', 'embed')][string]$Stage,
-  [switch]$SkipServer
+  [switch]$SkipServer,
+  [switch]$SizeOptimized
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -24,6 +25,7 @@ try {
       } else { Write-Host 'Icons up to date.' }
     }
     'server' {
+      if ($SizeOptimized) { Enable-SizeOptimizedRustProfile }
       Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
       Publish-ServerOfflinePack -ProjectRoot $projectRoot
     }

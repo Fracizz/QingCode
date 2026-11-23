@@ -1,5 +1,24 @@
 # Shared helpers for Windows packaging scripts (package-exe / package-installer).
 
+# 与 .github/workflows/release.yml 顶层 env 保持一致（package-local.test.mjs 校验），
+# 让本地 -SizeOptimized 构建复现发布产物体积。
+$script:SizeOptimizedRustProfile = [ordered]@{
+  CARGO_PROFILE_RELEASE_OPT_LEVEL     = 's'
+  CARGO_PROFILE_RELEASE_LTO           = 'fat'
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '1'
+  CARGO_PROFILE_RELEASE_INCREMENTAL   = 'false'
+}
+
+# 在当前进程设置 CARGO_PROFILE_RELEASE_* 覆盖本地 [profile.release]（opt-level 2 / 无 LTO / 增量）。
+# 子进程（build-server.ps1、cargo、tauri build）继承这些变量；server-release 继承 release，同样生效。
+# 注意：与默认配置来回切换会让 Cargo 全量重编（指纹不同），冷编译约慢 2–3 倍。
+function Enable-SizeOptimizedRustProfile {
+  foreach ($entry in $script:SizeOptimizedRustProfile.GetEnumerator()) {
+    Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value
+  }
+  Write-Host 'Size-optimized Rust build (-SizeOptimized): opt-level s + fat LTO + codegen-units 1, incremental off.' -ForegroundColor Yellow
+}
+
 function Resolve-CargoReleaseDir {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
