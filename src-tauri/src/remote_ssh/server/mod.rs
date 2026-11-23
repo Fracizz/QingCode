@@ -101,6 +101,8 @@ pub(crate) struct ServerSlot {
     pub(crate) unavailable_reason: Option<String>,
     /// 发现/部署过程中的瞬时阶段（installing / handshaking）。稳态为 None。
     pub(crate) activity: Option<server_status::ServerPhase>,
+    /// 本轮安装替换的是远端已有的旧版本服务（随 installing/handshaking 一起上报）。
+    pub(crate) activity_upgrade: bool,
     /// daemon 传输最近一次降级的时间：冷却 [`daemon::AGENT_DAEMON_RETRY_AFTER_DOWNGRADE`]
     /// 后由 ensure 快路径重新探测，daemon 崩溃不至于永久留在 serve 模式。
     pub(crate) daemon_downgraded_at: Option<Instant>,

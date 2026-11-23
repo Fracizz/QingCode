@@ -11,7 +11,12 @@ export interface ServerOperation {
   error?: string
   /** 用户点了“后台运行”：隐藏进度卡，任务继续；失败时自动重新显示。 */
   background?: boolean
+  /** 由项目准备流程按后端安装阶段自动创建（而非更新对话框/自动更新），由该流程负责结束。 */
+  prepared?: boolean
 }
+
+/** 安装/更新的是连接共享的远端服务，卡片标题不用某个项目名；连接名由来源角标显示。 */
+export const SHARED_SERVER_OPERATION_NAME = '远端服务'
 
 export const useServerOperationStore = create<{ tasks: Record<string, ServerOperation> }>(() => ({ tasks: {} }))
 
@@ -20,10 +25,19 @@ export function beginServerOperation(
   name: string,
   kind: ServerOperation['kind'],
   progress?: Pick<ServerOperation, 'step' | 'label' | 'startedAt' | 'background'>,
+  extra?: Pick<ServerOperation, 'prepared'>,
 ) {
   useServerOperationStore.setState(s => ({ tasks: { ...s.tasks, [rootUri]: {
-    rootUri, name, kind, ...(progress ?? { step: 1, label: '正在连接 SSH…', startedAt: Date.now() }),
+    rootUri, name, kind, ...(progress ?? { step: 1, label: '正在连接 SSH…', startedAt: Date.now() }), ...extra,
   } } }))
+}
+
+/** 进行中的任务改判类型（如后端随后报告这是替换旧版本：安装 → 更新）。 */
+export function setServerOperationKind(rootUri: string, kind: ServerOperation['kind']) {
+  useServerOperationStore.setState(s => {
+    const task = s.tasks[rootUri]
+    return task && !task.finishedAt && task.kind !== kind ? { tasks: { ...s.tasks, [rootUri]: { ...task, kind } } } : s
+  })
 }
 
 export function reportServerOperation(rootUri: string, step: number, label: string) {
@@ -61,6 +75,16 @@ export function finishServerOperation(rootUri: string, error?: string) {
 
 function connectionOf(path: string): string | undefined {
   return path.match(/^ssh:\/\/([^/]+)/)?.[1] || undefined
+}
+
+/** 同一 SSH 连接上其他项目正在进行的安装/更新任务：服务按连接共享，不再另开一张卡。 */
+export function activeServerOperationOnConnection(
+  tasks: Record<string, ServerOperation>,
+  rootUri: string,
+): ServerOperation | undefined {
+  const connection = connectionOf(rootUri)
+  if (!connection) return undefined
+  return Object.values(tasks).find(task => task.rootUri !== rootUri && !task.finishedAt && connectionOf(task.rootUri) === connection)
 }
 
 /**

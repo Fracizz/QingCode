@@ -1977,6 +1977,7 @@
     "准备中": "Preparing",
     "已完成": "Completed",
     "安装 QingCode Server": "Install QingCode Server",
+    "更新 QingCode Server": "Update QingCode Server",
     "Server 已就绪": "Server is ready",
     "Server 安装与更新进度": "Server installation and update progress",
     "第 {step}/4 步": "Step {step}/4",

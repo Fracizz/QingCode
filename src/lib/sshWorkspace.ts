@@ -8,7 +8,15 @@ import { directAgentApi, directAgentSshCandidates, hasDirectAgentConnection, typ
 import { parseSshServerState, sshServerVersionMismatch, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
 import { directServerUpdateApi, updatePhaseLabels, validServerUpdatePackage, type UpdatePhase } from './directServerUpdate'
-import { beginServerOperation, reportServerOperation, finishServerOperation, useServerOperationStore } from '../store/serverOperationStore'
+import {
+  activeServerOperationOnConnection,
+  beginServerOperation,
+  finishServerOperation,
+  reportServerOperation,
+  setServerOperationKind,
+  SHARED_SERVER_OPERATION_NAME,
+  useServerOperationStore,
+} from '../store/serverOperationStore'
 
 export interface SshSessionSecrets {
   password?: string
@@ -79,10 +87,10 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
         sshConnectionId: ssh.id,
         config: sshRuntimeConfig(ssh, sshSecretsFor(ssh.id)),
       }
-      // 服务按连接共享：进度与完成提示以连接命名，而不是触发检查的某个项目。
+      // 服务按连接共享：进度卡标题为「远端服务」（连接名由角标显示），完成提示以连接命名。
       const own = connections.find(connection => connection.id === id)
       const label = own ? sshConnectionLabel(own) : `${info.host}:${info.port}`
-      beginServerOperation(project.path, label, 'update')
+      beginServerOperation(project.path, SHARED_SERVER_OPERATION_NAME, 'update')
       const progress = (phase: UpdatePhase) => reportServerOperation(project.path,
         phase === 'connecting' ? 1 : phase === 'checkingPackage' || phase === 'downloading' ? 2 : phase === 'verifying' ? 4 : 3,
         updatePhaseLabels[phase])
@@ -417,6 +425,12 @@ export async function isSshWorkspaceReady(rootUri: string): Promise<boolean> {
   }
 }
 
+/** 项目准备流程自己创建、仍在进行的安装/更新任务；更新对话框或自动更新的任务由各自流程结束。 */
+function preparedOperation(rootUri: string) {
+  const task = useServerOperationStore.getState().tasks[rootUri]
+  return task?.prepared && !task.finishedAt ? task : undefined
+}
+
 /** Registration only proves SSH/SFTP is connected. Wait for the service and
  * daemon needed by files and terminals before activating a Server workspace. */
 export async function prepareSshWorkspace(
@@ -435,15 +449,20 @@ export async function prepareSshWorkspace(
   const accept = (state: SshServerState) => {
     if (state.rootUri !== rootUri) return
     if (!stopped) onState(state)
-    const existing = useServerOperationStore.getState().tasks[rootUri]
-    if (options && state.phase === 'installing' && (!existing || existing.finishedAt)) {
-      beginServerOperation(rootUri, options.project.name, 'install')
+    const tasks = useServerOperationStore.getState().tasks
+    const existing = tasks[rootUri]
+    // 服务按连接共享：进度卡以「远端服务」为题、连接名作角标；同连接已有任务在跑时不另开卡片。
+    if (options && state.phase === 'installing' && (!existing || existing.finishedAt)
+      && !activeServerOperationOnConnection(tasks, rootUri)) {
+      beginServerOperation(rootUri, SHARED_SERVER_OPERATION_NAME, state.upgrading ? 'update' : 'install', undefined, { prepared: true })
     }
-    const task = useServerOperationStore.getState().tasks[rootUri]
-    if (task?.kind === 'install' && !task.finishedAt) {
-      if (state.phase === 'installing') reportServerOperation(rootUri, 3, '安装 QingCode Server')
-      if (state.phase === 'handshaking') reportServerOperation(rootUri, 4, '正在验证远端服务与配对身份…')
-    }
+    const task = preparedOperation(rootUri)
+    if (!task) return
+    // 替换远端已有的旧版本属于更新；该标记可能在握手阶段才随状态到达。
+    if (state.upgrading && task.kind === 'install') setServerOperationKind(rootUri, 'update')
+    const upgrading = state.upgrading || task.kind === 'update'
+    if (state.phase === 'installing') reportServerOperation(rootUri, 3, upgrading ? '更新 QingCode Server' : '安装 QingCode Server')
+    if (state.phase === 'handshaking') reportServerOperation(rootUri, 4, '正在验证远端服务与配对身份…')
   }
   const poll = async () => {
     try {
@@ -486,10 +505,10 @@ export async function prepareSshWorkspace(
       }
       await prepare()
     }
-    if (useServerOperationStore.getState().tasks[rootUri]?.kind === 'install') finishServerOperation(rootUri)
+    if (preparedOperation(rootUri)) finishServerOperation(rootUri)
     signal.throwIfAborted()
   } catch (error) {
-    if (useServerOperationStore.getState().tasks[rootUri]?.kind === 'install') finishServerOperation(rootUri, String(error))
+    if (preparedOperation(rootUri)) finishServerOperation(rootUri, String(error))
     throw error
   } finally {
     stop()

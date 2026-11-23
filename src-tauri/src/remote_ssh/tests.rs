@@ -1727,6 +1727,7 @@ fn server_states_skip_idle_passive_roots() {
         reason: reason.map(Into::into),
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     };
     // 后台登记、从未部署的根：不计入，否则管理页永远「正在准备服务」。
     assert!(passive_root_idle(true, &state(ServerPhase::Probing, None)));

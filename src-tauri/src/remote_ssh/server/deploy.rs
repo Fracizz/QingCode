@@ -1566,7 +1566,7 @@ async fn ensure_server_endpoint_inner(
                 None => probe_daemon_for_slot(manager, root, &key, None, false).await,
             }
         }
-        manager.set_server_activity(&key, None);
+        manager.set_server_activity(&key, None, false);
         publish_server_if_watched(app, manager, root);
         return Ok(cached);
     }
@@ -1580,12 +1580,12 @@ async fn ensure_server_endpoint_inner(
     let gate = manager.server_gate(&key)?;
     let guard = gate.lock().await;
     if let Some(cached) = cached_server_slot(manager, &key) {
-        manager.set_server_activity(&key, None);
+        manager.set_server_activity(&key, None, false);
         publish_server_if_watched(app, manager, root);
         return Ok(cached);
     }
     // 新一轮从 probing 开始，清掉上次中断留下的瞬时阶段。
-    manager.set_server_activity(&key, None);
+    manager.set_server_activity(&key, None, false);
     publish_server_if_watched(app, manager, root);
     let mut timer = StageTimer::new();
     match discover_or_deploy_server(manager, &connection_id, root, app, &mut timer).await {

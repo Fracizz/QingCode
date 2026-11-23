@@ -250,6 +250,9 @@ pub struct SshServerState {
     pub deferred_upgrade: Option<DeferredUpgrade>,
     /// 最近一次发现/部署的分阶段耗时摘要；只在就绪时给出。
     pub timings: Option<String>,
+    /// 安装/握手阶段替换的是远端已有的旧版本服务（而非首次安装），界面据此显示「更新中」。
+    #[serde(default)]
+    pub upgrading: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -365,6 +368,7 @@ fn plain_state(input: &ServerSteadyInputs<'_>, phase: ServerPhase) -> SshServerS
         reason: None,
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     }
 }
 
@@ -380,6 +384,7 @@ fn ready_direct(input: &ServerSteadyInputs<'_>, reason: &str) -> SshServerState 
         reason: Some(reason.to_string()),
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     }
 }
 
@@ -399,6 +404,7 @@ fn ready_server(input: &ServerSteadyInputs<'_>, has_daemon: bool) -> SshServerSt
         reason: None,
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     }
 }
 
@@ -549,6 +555,9 @@ pub(crate) fn state_for_root(
         ServerPhase::Disconnected => {
             state.reason = manager.connection_closed_reason(&parsed.connection_id);
         }
+        ServerPhase::Installing | ServerPhase::Handshaking => {
+            state.upgrading = slot.as_ref().is_some_and(|slot| slot.activity_upgrade);
+        }
         _ => {}
     }
     Ok(state)
@@ -610,6 +619,7 @@ pub(crate) fn publish_authenticating(
             reason: None,
             deferred_upgrade: None,
             timings: None,
+            upgrading: false,
         },
     );
 }
@@ -634,6 +644,7 @@ pub(crate) fn publish_disconnected(
             reason: None,
             deferred_upgrade: None,
             timings: None,
+            upgrading: false,
         },
     );
 }
@@ -647,7 +658,24 @@ pub(crate) fn note_server_activity(
     activity: ServerPhase,
 ) {
     let key = server::server_slot_key(connection_id, &root.canonical_path);
-    manager.set_server_activity(&key, Some(activity));
+    // 握手沿用前面安装阶段记下的「是否替换旧版本」；其他阶段视为新一轮，先清掉。
+    manager.set_server_activity(&key, Some(activity), activity == ServerPhase::Handshaking);
+    if let Some(app) = app {
+        publish_root_state(app, manager, root);
+    }
+}
+
+/// 进入安装阶段：`upgrading` 表示远端已有旧版本服务、这次是替换（界面显示「更新中」）。
+pub(crate) fn note_server_installing(
+    manager: &SshManager,
+    app: Option<&AppHandle>,
+    root: &RegisteredRoot,
+    connection_id: &str,
+    upgrading: bool,
+) {
+    let key = server::server_slot_key(connection_id, &root.canonical_path);
+    manager.set_server_activity(&key, Some(ServerPhase::Installing), false);
+    manager.set_server_activity_upgrade(&key, upgrading);
     if let Some(app) = app {
         publish_root_state(app, manager, root);
     }
@@ -727,6 +755,7 @@ pub(super) fn state_for_uri(
         reason: manager.connection_closed_reason(&parsed.connection_id),
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     })
 }
 
@@ -1237,11 +1266,13 @@ mod tests {
                 "rootUri",
                 "timings",
                 "transport",
+                "upgrading",
                 "version",
             ]
         );
         // 耗时摘要由 state_for_root 按 slot 填充；纯阶段计算不带。
         assert!(value["timings"].is_null());
+        assert_eq!(value["upgrading"], false);
         assert_eq!(value["connectionId"], "c1");
         assert_eq!(value["rootUri"], "ssh://c1/srv/app");
         assert_eq!(value["phase"], "readyServer");

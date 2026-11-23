@@ -249,6 +249,7 @@ impl SshManager {
         &self,
         key: &str,
         activity: Option<server_status::ServerPhase>,
+        keep_upgrade: bool,
     ) {
         let Ok(mut servers) = self.servers.write() else {
             return;
@@ -258,6 +259,18 @@ impl SshManager {
         }
         let slot = servers.entry(key.to_string()).or_default();
         slot.activity = activity;
+        if !keep_upgrade {
+            slot.activity_upgrade = false;
+        }
+    }
+
+    /// 标记本轮安装替换的是远端已有的旧版本服务；只在已有 slot 上生效。
+    pub(crate) fn set_server_activity_upgrade(&self, key: &str, upgrading: bool) {
+        if let Ok(mut servers) = self.servers.write() {
+            if let Some(slot) = servers.get_mut(key) {
+                slot.activity_upgrade = upgrading;
+            }
+        }
     }
 
     /// 快照变化时返回 true，调用方再 emit。相同载荷不重复发。

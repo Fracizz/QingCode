@@ -249,20 +249,39 @@ async fn read_gateway_files(
     Some(info)
 }
 
-/// 网关已在运行且版本合用时把连接登记为隧道直连；描述读不到或网关不可用返回 `false`。
+/// [`switch_if_running`] 的结果。
+#[derive(Debug, PartialEq, Eq)]
+enum RunningGateway {
+    /// 网关在运行且版本合用，已登记为隧道直连。
+    Switched,
+    /// 没有接入；`upgrading` 表示远端留有其他版本网关的描述，接下来是替换而非首次安装。
+    Unavailable { upgrading: bool },
+}
+
+/// 网关已在运行且版本合用时把连接登记为隧道直连；描述读不到或网关不可用时不接入。
 /// 只经 SFTP 读描述、经隧道做健康检查，不执行任何远端命令。调用方须已 `adopt` 会话。
-async fn switch_if_running(manager: &SshManager, connection_id: &str) -> Result<bool, String> {
+async fn switch_if_running(
+    manager: &SshManager,
+    connection_id: &str,
+) -> Result<RunningGateway, String> {
     let Some(info) = read_gateway_files(manager, connection_id).await else {
-        return Ok(false);
+        return Ok(RunningGateway::Unavailable { upgrading: false });
     };
+    let upgrading = replaces_other_version(&info.server_version);
     let config = tunnel_config(connection_id, &info)?;
     match direct::test(&config).await {
         Ok(health) if direct::require_usable_gateway(&config, &health).is_ok() => {
             switch_to_tunnel(manager, connection_id, config)?;
-            Ok(true)
+            Ok(RunningGateway::Switched)
         }
-        _ => Ok(false),
+        _ => Ok(RunningGateway::Unavailable { upgrading }),
     }
+}
+
+/// 远端描述记录的网关版本与本地服务程序不同：接下来的暂存与启动属于更新。
+/// 同版本网关只是没在运行（如远端重启后），重新拉起仍按安装展示。
+fn replaces_other_version(remote_version: &str) -> bool {
+    !remote_version.is_empty() && remote_version != qingcode_server::SERVER_VERSION
 }
 
 /// 登记项目根之前的快速接入（见 `ssh_connect`）：只接入运行中的网关，返回是否已改经隧道。
@@ -282,9 +301,10 @@ pub(super) async fn activate_running(manager: &SshManager, connection_id: &str) 
     if adopt(connection_id, session).is_err() {
         return false;
     }
-    let activated = switch_if_running(manager, connection_id)
-        .await
-        .unwrap_or(false);
+    let activated = matches!(
+        switch_if_running(manager, connection_id).await,
+        Ok(RunningGateway::Switched)
+    );
     if !activated {
         // The regular SSH path still owns the authenticated session.
         forget(connection_id);
@@ -334,16 +354,10 @@ async fn activate_gateway(
     adopt(id, session)?;
     // 快速路径：网关已在运行且版本合用时直接接入，不必暂存程序（Windows 上
     // 校验程序摘要要十几秒）。描述读不到或网关不可用再走完整准备。
-    if switch_if_running(manager, id).await? {
+    let RunningGateway::Unavailable { upgrading } = switch_if_running(manager, id).await? else {
         return Ok(());
-    }
-    server_status::note_server_activity(
-        manager,
-        app,
-        root,
-        id,
-        server_status::ServerPhase::Installing,
-    );
+    };
+    server_status::note_server_installing(manager, app, root, id, upgrading);
     let staged = server::stage_direct_gateway(manager, root).await?;
     server_status::note_server_activity(
         manager,
@@ -737,6 +751,13 @@ mod tests {
         assert!(message.contains("127.0.0.1:48763"), "{message}");
         assert!(message.starts_with("[direct:unreachable]"));
         assert!(open_failure(&russh::Error::Disconnect, "127.0.0.1", 1).is_none());
+    }
+
+    #[test]
+    fn only_a_different_remote_gateway_version_counts_as_upgrade() {
+        assert!(replaces_other_version("0.0.1"));
+        assert!(!replaces_other_version(qingcode_server::SERVER_VERSION));
+        assert!(!replaces_other_version(""));
     }
 
     fn paired(hostname: &str) -> qingcode_server::direct::DirectInfo {
