@@ -45,6 +45,7 @@ import {
   remoteShellPathFromUri,
   sshTerminalPasteRoot,
   SSH_TERMINAL_PASTE_MAX_BYTES,
+  terminalPasteStamp,
   uploadLocalFilesForSshTerminal,
   pasteLocalFilesIntoSshTerminal,
   clearSshTerminalPasteUploads,
@@ -111,8 +112,46 @@ describe('uploadLocalFilesForSshTerminal', () => {
       }),
     )
     const destination = mocks.startSshTransfer.mock.calls[0][0].destination as string
-    expect(destination).toMatch(/^ssh:\/\/c1\/home\/owner\/app\/\.qingcode\/terminal-paste\//)
+    expect(destination).toMatch(
+      /^ssh:\/\/c1\/home\/owner\/app\/\.qingcode\/terminal-paste\/\d{8}-\d{6}-\d{3}$/,
+    )
     expect(pasted).toBe(`'${destination.replace(/^ssh:\/\/c1/, '')}/note.txt'`)
+  })
+
+  it('formats batch directories as local time to the millisecond', () => {
+    expect(terminalPasteStamp(new Date(2026, 0, 2, 3, 4, 5, 6))).toBe('20260102-030405-006')
+  })
+
+  it('adds a suffix when a batch directory for the same millisecond exists', async () => {
+    const existing = new Set<string>()
+    mocks.safeInvoke.mockImplementation(async (_action: string, command: string, args: { parent?: string; name?: string; path?: string }) => {
+      if (command === 'file_stat') return { size: 12, is_dir: false }
+      if (command === 'validate_directory') {
+        if (args.path && (existing.has(args.path) || !/\d{3}(-\d+)?$/.test(args.path))) return
+        throw new Error('missing')
+      }
+      if (command === 'create_directory') {
+        const path = `${args.parent}/${args.name}`
+        if (existing.has(path)) throw new Error('exists')
+        existing.add(path)
+        return path
+      }
+      return undefined
+    })
+    mocks.startSshTransfer.mockResolvedValue({ status: 'completed' })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 0, 2, 3, 4, 5, 6))
+    try {
+      await uploadLocalFilesForSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\a.txt'])
+      await uploadLocalFilesForSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\a.txt'])
+    } finally {
+      vi.useRealTimers()
+    }
+    const destinations = mocks.startSshTransfer.mock.calls.map(call => call[0].destination)
+    expect(destinations).toEqual([
+      'ssh://c1/home/owner/app/.qingcode/terminal-paste/20260102-030405-006',
+      'ssh://c1/home/owner/app/.qingcode/terminal-paste/20260102-030405-006-2',
+    ])
   })
 
   it('rejects a file over 100MB before creating a remote directory', async () => {
