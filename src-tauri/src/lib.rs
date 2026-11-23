@@ -960,6 +960,7 @@ pub fn run() {
             remote_ssh::ssh_file_ctime,
             remote_ssh::ssh_read_file,
             remote_ssh::ssh_read_image_file,
+            remote_ssh::ssh_authorize_outside_file,
             remote_ssh::ssh_detect_file_encoding,
             remote_ssh::ssh_read_file_slice,
             remote_ssh::ssh_find_line_offset,

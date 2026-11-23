@@ -289,7 +289,10 @@ export function isTerminalPathUnderRoot(path: string, root: string): boolean {
   return !!parts && isUnderRoot({ ...target, parts }, splitPath(root))
 }
 
-/** 解析成候选的编辑器路径，按优先级排列。SSH 项目的结果都在项目根目录内。 */
+/**
+ * 解析成候选的编辑器路径，按优先级排列。项目根外的候选（本机文件或同一 SSH 连接上的
+ * 远程文件）打开前还需单独授权。
+ */
 export function terminalFileCandidates(
   originalPath: string,
   context: { root: string; cwd?: string; projectName?: string; env?: TerminalPathEnv },
@@ -297,7 +300,6 @@ export function terminalFileCandidates(
   const root = splitPath(context.root)
   const rawPath = expandPathVariable(originalPath, root, context.env)
   if (rawPath === null) return []
-  const isSsh = root.prefix.startsWith('ssh://')
   const rawParts = rawPath.split(/[\\/]+/).filter(Boolean)
   const isAbsolute = /^(?:[A-Za-z]:)?[\\/]/.test(rawPath)
   const results: string[] = []
@@ -307,7 +309,6 @@ export function terminalFileCandidates(
     if (!parts) return
     const path = { ...candidate, parts }
     const under = isUnderRoot(path, root)
-    if (isSsh && !under) return
     // 根目录内统一成项目自己的写法：编辑器按路径字符串匹配已打开的标签。
     const resolved = under
       ? `${root.prefix}${root.sep}${[...root.parts, ...parts.slice(root.parts.length)].join(root.sep)}`

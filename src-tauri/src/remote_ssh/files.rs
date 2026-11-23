@@ -160,6 +160,15 @@ pub async fn ssh_read_image_file(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// 终端 Ctrl+点击项目根外的远程文件时调用：只读授权这一个已存在的普通文件，返回是否授权。
+#[tauri::command]
+pub async fn ssh_authorize_outside_file(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<bool, String> {
+    manager.authorize_outside_file(&path).await
+}
+
 #[tauri::command]
 pub async fn ssh_detect_file_encoding(
     path: String,

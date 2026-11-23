@@ -319,6 +319,9 @@ pub struct SshManager {
     /// 同一连接内不会变化；Windows 上每次解析都要起两次 PowerShell。
     server_installs: Mutex<HashMap<String, (String, String)>>,
     host_daemons: server::HostDaemonCache,
+    /// 终端里 Ctrl+点击、经用户操作授权的项目根外远程文件（规范化 URI → 远端规范路径）。
+    /// 只读：以未信任的单文件「根」参与 SFTP 读取，不能写入、执行或列目录。
+    outside_files: RwLock<HashMap<String, String>>,
 }
 
 impl SshManager {
@@ -419,6 +422,7 @@ impl SshManager {
             server_offline_dir: RwLock::new(None),
             workspace_server_settings: RwLock::new(HashMap::new()),
             passive_roots: RwLock::new(HashSet::new()),
+            outside_files: RwLock::new(HashMap::new()),
             server_cache_dir: RwLock::new(None),
             server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),

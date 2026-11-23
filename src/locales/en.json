@@ -2020,7 +2020,7 @@
     "保存 Shift+Enter 换行设置失败: {error}": "Failed to save Shift+Enter newline setting: {error}",
     "未找到文件：{path}": "File not found: {path}",
     "项目中未找到 {path}": "{path} was not found in this project",
-    "只能打开远程项目根目录内的文件：{path}": "Only files inside the remote project root can be opened: {path}",
+    "无法在本机展开远程终端的路径变量：{path}": "Cannot expand a remote terminal path variable locally: {path}",
     "打开外部链接？": "Open external link?",
     "终端程序提供的链接文字与实际地址不同，请确认后再打开。": "The link text provided by the terminal program differs from its actual address. Confirm before opening it.",
     "打开链接": "Open Link",

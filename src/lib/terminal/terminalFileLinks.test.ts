@@ -208,12 +208,22 @@ describe('terminalFileCandidates', () => {
     expect(terminalFileCandidates('src/a.ts', { root, cwd: root })).toEqual(['ssh://conn/srv/app/src/a.ts'])
   })
 
-  it.each(['/etc/passwd', '/srv/app/../secret.txt', '../secret.txt', '/srv/application/a.ts'])(
-    'rejects SSH path outside the root: %s',
-    path => {
-      expect(terminalFileCandidates(path, { root: 'ssh://conn/srv/app' })).toEqual([])
-    },
-  )
+  it.each([
+    ['/etc/passwd', 'ssh://conn/etc/passwd'],
+    ['/srv/app/../secret.txt', 'ssh://conn/srv/secret.txt'],
+    ['../secret.txt', 'ssh://conn/srv/secret.txt'],
+    ['/srv/application/a.ts', 'ssh://conn/srv/application/a.ts'],
+  ])('keeps SSH paths outside the root on the same connection: %s', (path, expected) => {
+    const candidates = terminalFileCandidates(path, { root: 'ssh://conn/srv/app' })
+    expect(candidates).toEqual([expected])
+    expect(isTerminalPathUnderRoot(expected, 'ssh://conn/srv/app')).toBe(false)
+  })
+
+  it('maps Windows OpenSSH paths outside the root to the same connection', () => {
+    expect(
+      terminalFileCandidates('C:\\Users\\me\\AppData\\Local\\Temp\\a.png', { root: 'ssh://conn/D:/code/app' }),
+    ).toEqual(['ssh://conn/C:/Users/me/AppData/Local/Temp/a.png'])
+  })
 
   it('supports Windows OpenSSH roots', () => {
     expect(terminalFileCandidates('D:\\code\\app\\a.ts', { root: 'ssh://conn/D:/code/app' })).toEqual([
