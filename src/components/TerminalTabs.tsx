@@ -115,7 +115,7 @@ function TerminalPrewarmIndicator({ terminal }: { terminal: PrewarmIndicatorView
   if (showsPrewarmHit(terminal)) {
     return (
       <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0">
-        <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-fg-muted">
+        <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-brand">
           <Zap size={12} aria-hidden="true" />
         </span>
       </Tooltip>
