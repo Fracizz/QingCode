@@ -53,7 +53,9 @@ pub(crate) use paths::{
     parse_server_state, remote_roots_equivalent, server_serve_log_path, server_state_path,
     windows_host_path,
 };
-pub(crate) use scripts::{kill_server_command, windows_kill_server_script};
+pub(crate) use scripts::{
+    kill_server_command, windows_kill_server_script, windows_native_server_program,
+};
 pub(crate) use serve::{server_stream_call, ServerStreamOutcome};
 pub(crate) use terminal::local as local_terminal;
 pub(crate) use terminal::{

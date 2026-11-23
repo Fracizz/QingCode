@@ -78,6 +78,7 @@ while ($null -ne ($line = $inputReader.ReadLine())) {
         break
       }
     }
+    if ($request.hash -and !$answer.blocked) { $answer.sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
     $answer.ok = ($null -eq $answer.blocked)
   } catch { $answer.error = $_.Exception.Message }
   [Console]::Out.WriteLine(($answer | ConvertTo-Json -Compress))
@@ -89,6 +90,7 @@ while ($null -ne ($line = $inputReader.ReadLine())) {
 struct Request<'a> {
     id: u64,
     paths: &'a [String],
+    hash: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +99,7 @@ struct Response {
     id: u64,
     ok: bool,
     checked: usize,
+    sha: Option<String>,
     blocked: Option<String>,
     error: Option<String>,
 }
@@ -116,7 +119,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> JsonSession<S> {
         }
     }
 
-    async fn exchange(&mut self, id: u64, paths: &[String]) -> Result<Response, String> {
+    async fn exchange(
+        &mut self,
+        id: u64,
+        paths: &[String],
+        hash: bool,
+    ) -> Result<Response, String> {
         // A cancelled write/read may have left a partial request or an unread
         // response. Never reuse it for another caller, even if its next line is OK.
         if self.in_flight {
@@ -125,7 +133,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> JsonSession<S> {
         if paths.is_empty() || paths.len() > MAX_COMPONENTS {
             return Err("Windows 路径组件数量超过校验上限".into());
         }
-        let mut bytes = serde_json::to_vec(&Request { id, paths }).map_err(|e| e.to_string())?;
+        let mut bytes =
+            serde_json::to_vec(&Request { id, paths, hash }).map_err(|e| e.to_string())?;
         bytes.extend_from_slice(b"\r\n");
         if bytes.len() > MAX_LINE_BYTES {
             return Err("Windows 路径校验请求超过 64KB".into());
@@ -163,7 +172,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> JsonSession<S> {
         let allowed = response.ok
             && response.blocked.is_none()
             && response.error.is_none()
-            && response.checked == paths.len();
+            && response.checked == paths.len()
+            && match response.sha.as_deref() {
+                Some(digest) => {
+                    hash && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())
+                }
+                None => !hash,
+            };
         let blocked = !response.ok
             && response.error.is_none()
             && response.blocked.as_ref().is_some_and(|p| paths.contains(p))
@@ -315,14 +330,38 @@ impl WindowsPathGuard {
         transport: &Weak<ConnectedSession>,
         path: &str,
     ) -> Result<Option<String>, String> {
-        let paths: Vec<_> = windows_sftp_guard_components(path)
-            .iter()
-            .map(|p| windows_native_path(p).ok_or("Windows 路径组件格式无效"))
-            .collect::<Result<_, _>>()?;
-        if paths.is_empty() {
-            return Ok(None);
-        }
-        let deadline = tokio::time::Instant::now() + GUARD_TIMEOUT;
+        Ok(self
+            .inspect(transport, path, false)
+            .await?
+            .and_then(|reply| reply.blocked))
+    }
+
+    /// Hash only after checking every component, on the already-warm SFTP metadata
+    /// channel. The worker never executes the staged program.
+    pub(super) async fn sha256(
+        &self,
+        transport: &Weak<ConnectedSession>,
+        path: &str,
+    ) -> Result<String, String> {
+        self.inspect(transport, path, true)
+            .await?
+            .and_then(|reply| if reply.ok { reply.sha } else { None })
+            .ok_or_else(|| "Windows 服务程序路径包含链接或无法取得摘要，已拒绝执行".into())
+    }
+
+    /// Prepare the same session used by mandatory checks, without sending a
+    /// request. Concurrent callers share the existing channel and opener.
+    pub(super) async fn warm(&self, transport: &Weak<ConnectedSession>) -> Result<(), String> {
+        self.ready_worker(transport, tokio::time::Instant::now() + GUARD_TIMEOUT)
+            .await
+            .map(drop)
+    }
+
+    async fn ready_worker(
+        &self,
+        transport: &Weak<ConnectedSession>,
+        deadline: tokio::time::Instant,
+    ) -> Result<tokio::sync::MutexGuard<'_, GuardCache>, String> {
         let mut cache = tokio::time::timeout_at(deadline, self.cache.lock())
             .await
             .map_err(|_| "等待 Windows 路径校验超时，已拒绝访问".to_string())?;
@@ -333,60 +372,94 @@ impl WindowsPathGuard {
                 let _ = tokio::time::timeout(Duration::from_secs(1), stale.io.shutdown()).await;
             }
         }
-        let result = tokio::time::timeout_at(deadline, async {
-            if cache.session.is_none() {
-                if cache.opening.is_none() {
-                    let transport = transport
-                        .upgrade()
-                        .ok_or("SSH 连接已关闭，无法校验 Windows 路径")?;
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    cache.opening = Some(rx);
-                    // Own the pending open until its confirmation arrives. If a
-                    // caller times out, retain this receiver instead of opening
-                    // unlimited replacement channels. Dropping the cache makes
-                    // a late result close itself through OpeningChannel's Drop.
-                    tauri::async_runtime::spawn(async move {
-                        let opened = transport
-                            .handle
-                            .channel_open_session()
-                            .await
-                            .map(|channel| OpeningChannel(Some(channel)))
-                            .map_err(|e| format!("打开 Windows 路径校验通道失败：{e}"));
-                        let _ = tx.send(opened);
-                    });
-                }
-                let command = worker_command()?;
-                let opened = cache.opening.as_mut().unwrap().await;
-                cache.opening = None;
-                let mut opening = opened.map_err(|_| "Windows 路径校验通道任务已结束")??;
-                opening
-                    .0
-                    .as_ref()
-                    .unwrap()
-                    .exec(true, command)
-                    .await
-                    .map_err(|e| format!("启动 Windows 路径校验失败：{e}"))?;
-                // Windows OpenSSH can accept DATA before its process stdin is
-                // connected. Wait for both SSH exec confirmation and script READY.
-                let _worker_pid = wait_worker_ready(&mut opening).await?;
-                cache.session = Some(JsonSession::new(opening.0.take().unwrap().into_stream()));
-                #[cfg(test)]
-                self.starts.fetch_add(1, Ordering::Relaxed);
-                #[cfg(test)]
-                self.pid.store(u64::from(_worker_pid), Ordering::Relaxed);
+        if cache.session.is_some() {
+            return Ok(cache);
+        }
+        tokio::time::timeout_at(deadline, async {
+            if cache.opening.is_none() {
+                let transport = transport
+                    .upgrade()
+                    .ok_or("SSH 连接已关闭，无法校验 Windows 路径")?;
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                cache.opening = Some(rx);
+                // Own the pending open until its confirmation arrives. If a
+                // caller times out, retain this receiver instead of opening
+                // unlimited replacement channels. Dropping the cache makes
+                // a late result close itself through OpeningChannel's Drop.
+                tauri::async_runtime::spawn(async move {
+                    let opened = transport
+                        .handle
+                        .channel_open_session()
+                        .await
+                        .map(|channel| OpeningChannel(Some(channel)))
+                        .map_err(|error| {
+                            if is_session_channel_refusal(&error) {
+                                format!("打开 Windows 路径校验通道失败：{CHANNEL_REFUSED_MARKER}")
+                            } else {
+                                format!("打开 Windows 路径校验通道失败：{error}")
+                            }
+                        });
+                    let _ = tx.send(opened);
+                });
             }
+            let command = worker_command()?;
+            let opened = cache.opening.as_mut().unwrap().await;
+            cache.opening = None;
+            let mut opening = opened.map_err(|_| "Windows 路径校验通道任务已结束")??;
+            opening
+                .0
+                .as_ref()
+                .unwrap()
+                .exec(true, command)
+                .await
+                .map_err(|e| format!("启动 Windows 路径校验失败：{e}"))?;
+            // Windows OpenSSH can accept DATA before its process stdin is
+            // connected. Wait for both SSH exec confirmation and script READY.
+            let _worker_pid = wait_worker_ready(&mut opening).await?;
+            cache.session = Some(JsonSession::new(opening.0.take().unwrap().into_stream()));
+            #[cfg(test)]
+            self.starts.fetch_add(1, Ordering::Relaxed);
+            #[cfg(test)]
+            self.pid.store(u64::from(_worker_pid), Ordering::Relaxed);
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|_| "启动 Windows 路径校验超过 15 秒".to_string())??;
+        Ok(cache)
+    }
+
+    async fn inspect(
+        &self,
+        transport: &Weak<ConnectedSession>,
+        path: &str,
+        hash: bool,
+    ) -> Result<Option<Response>, String> {
+        let paths: Vec<_> = windows_sftp_guard_components(path)
+            .iter()
+            .map(|p| windows_native_path(p).ok_or("Windows 路径组件格式无效"))
+            .collect::<Result<_, _>>()?;
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        let deadline = tokio::time::Instant::now() + GUARD_TIMEOUT;
+        let mut cache = self.ready_worker(transport, deadline).await?;
+        let result = tokio::time::timeout_at(deadline, async {
             let id = self
                 .next_id
                 .fetch_add(1, Ordering::Relaxed)
                 .checked_add(1)
                 .ok_or("Windows 路径校验请求序号已耗尽")?;
-            cache.session.as_mut().unwrap().exchange(id, &paths).await
+            cache
+                .session
+                .as_mut()
+                .unwrap()
+                .exchange(id, &paths, hash)
+                .await
         })
         .await
         .unwrap_or_else(|_| Err("Windows 路径校验超过 15 秒，已拒绝访问".into()));
         match result {
-            Ok(response) if response.ok => Ok(None),
-            Ok(response) if response.blocked.is_some() => Ok(response.blocked),
+            Ok(response) if response.ok || response.blocked.is_some() => Ok(Some(response)),
             Ok(response) => Err(format!(
                 "无法校验 Windows 远程路径，已拒绝访问：{}",
                 response.error.unwrap_or_default()
@@ -435,9 +508,38 @@ mod tests {
         });
         let mut session = JsonSession::new(client);
         for id in [1, 2] {
-            assert!(session.exchange(id, &paths()).await.unwrap().ok);
+            assert!(session.exchange(id, &paths(), false).await.unwrap().ok);
         }
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hash_request_requires_a_full_digest_for_the_checked_path() {
+        for (digest, valid) in [
+            (Some("ab".repeat(32)), true),
+            (Some("g".repeat(64)), false),
+            (Some("f".repeat(63)), false),
+            (None, false),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let task = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                let mut line = String::new();
+                server.read_line(&mut line).await.unwrap();
+                let sent: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(sent["hash"], true);
+                assert_eq!(sent["paths"], serde_json::json!(paths()));
+                let reply = serde_json::json!({"id": 1, "ok": true, "checked": 1, "sha": digest});
+                server
+                    .get_mut()
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let result = JsonSession::new(client).exchange(1, &paths(), true).await;
+            assert_eq!(result.is_ok(), valid);
+            task.await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -456,7 +558,7 @@ mod tests {
                 server.get_mut().write_all(&reply).await.unwrap();
             });
             let mut session = JsonSession::new(client);
-            assert!(session.exchange(1, &paths()).await.is_err());
+            assert!(session.exchange(1, &paths(), false).await.is_err());
             task.await.unwrap();
         }
     }
@@ -465,13 +567,14 @@ mod tests {
     async fn guard_cancelled_request_cannot_consume_a_stale_allow_response() {
         let (client, _server) = tokio::io::duplex(4096);
         let mut session = JsonSession::new(client);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(20), session.exchange(1, &paths()))
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            session.exchange(1, &paths(), false)
+        )
+        .await
+        .is_err());
         assert!(session.in_flight);
-        let error = session.exchange(2, &paths()).await.unwrap_err();
+        let error = session.exchange(2, &paths(), false).await.unwrap_err();
         assert!(error.contains("上次请求已取消"));
     }
 

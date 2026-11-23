@@ -309,7 +309,7 @@ pub(super) fn close_connection(address: &str, connection_id: &str) {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct DirectConnectionConfig {
     pub endpoint: String,
@@ -1189,7 +1189,7 @@ pub(super) mod tests {
                     serve: None,
                     daemon: Some(DaemonAccess {
                         bin: "direct".into(),
-                        token: config.token,
+                        token: config.token.clone(),
                     }),
                 }),
                 ..Default::default()
@@ -1197,6 +1197,26 @@ pub(super) mod tests {
         );
         // This was the previous startup path: it accepts the stale version.
         manager.ensure_connection_alive(id).await.unwrap();
+        // Allow exactly one TLS connection for preparation. The authenticated
+        // liveness response must also carry the version used to reject this gateway.
+        let target = endpoint(&config.endpoint).unwrap().authority;
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = proxy.local_addr().unwrap();
+        manager.direct_connections.write().unwrap().insert(
+            id.into(),
+            DirectConnectionConfig {
+                endpoint: format!("https://{address}"),
+                ..config
+            },
+        );
+        let relay = tokio::spawn(async move {
+            let (mut client, _) = proxy.accept().await.unwrap();
+            drop(proxy);
+            let mut gateway = tokio::net::TcpStream::connect(target).await.unwrap();
+            tokio::io::copy_bidirectional(&mut client, &mut gateway)
+                .await
+                .unwrap();
+        });
         let error = direct_settings::prepare_root(&manager, &root, None)
             .await
             .unwrap_err();
@@ -1205,6 +1225,7 @@ pub(super) mod tests {
         assert!(error.contains(qingcode_server::SERVER_VERSION), "{error}");
         assert!(manager.server_slot(&key).unwrap().endpoint.is_none());
         assert!(manager.sessions.read().unwrap().is_empty());
+        relay.await.unwrap();
         gateway.abort();
         let _ = gateway.await;
         let _ = std::fs::remove_dir_all(directory);

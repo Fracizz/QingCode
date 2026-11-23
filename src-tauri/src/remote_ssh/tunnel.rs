@@ -199,7 +199,21 @@ async fn start_gateway(
     bin: &str,
     at: &qingcode_server::direct::DirectInfo,
 ) -> Result<qingcode_server::direct::DirectInfo, String> {
-    let started = run(manager, root, direct_update::start_commands(bin, at)).await?;
+    let started = match (
+        server::windows_native_server_program(bin),
+        at.hostname.parse::<std::net::IpAddr>(),
+    ) {
+        (Some(program), Ok(host)) => {
+            let command = format!(
+                "{program} direct --hostname {host} --port {} --detach",
+                at.port
+            );
+            manager
+                .exec_command(&root.uri, &command, None, true, Duration::from_secs(40))
+                .await?
+        }
+        _ => run(manager, root, direct_update::start_commands(bin, at)).await?,
+    };
     if started.exit_code != 0 {
         return Err(format!(
             "启动远端 Server 网关失败（{}:{}）：{}",
@@ -239,9 +253,9 @@ async fn read_gateway_files(
             Some(text)
         }
     };
-    let mut info: qingcode_server::direct::DirectInfo =
-        serde_json::from_str(&read("endpoint.json").await?).ok()?;
-    let token = read("token").await?.trim().to_string();
+    let (descriptor, token) = tokio::join!(read("endpoint.json"), read("token"));
+    let mut info: qingcode_server::direct::DirectInfo = serde_json::from_str(&descriptor?).ok()?;
+    let token = token?.trim().to_string();
     if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
@@ -370,7 +384,9 @@ async fn activate_gateway(
         Some(info) => {
             let config = tunnel_config(id, &info)?;
             match direct::test(&config).await {
-                Ok(health) if direct::require_usable_gateway(&config, &health).is_ok() => info,
+                Ok(health) if direct::require_usable_gateway(&config, &health).is_ok() => {
+                    return switch_to_tunnel(manager, id, config);
+                }
                 Ok(_) => {
                     // 更旧的网关：只停止经身份核对的这一个网关进程，daemon 与终端保留。
                     let stopped =

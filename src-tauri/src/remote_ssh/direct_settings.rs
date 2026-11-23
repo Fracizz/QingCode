@@ -81,12 +81,22 @@ pub(super) async fn prepare_root(
     app: Option<&AppHandle>,
 ) -> Result<(), String> {
     let id = parse_remote_uri(&root.uri)?.connection_id;
-    manager.ensure_connection_alive(&id).await?;
-    if root.trusted {
-        // Health accepts older service versions; workspace preparation must
-        // apply the same version and daemon gate as file/terminal operations.
-        server::ensure_server_endpoint_with_app(manager, root, app).await?;
+    if !root.trusted {
+        return manager.ensure_connection_alive(&id).await;
     }
+    // The gateway check confirms liveness, version and (when needed) daemon HELLO.
+    let config = manager
+        .direct_config(&id)
+        .ok_or("Server 连接已变化，请重新连接工作区")?;
+    server::ensure_gateway_endpoint(
+        manager,
+        root,
+        app,
+        &id,
+        config,
+        server::GatewayDaemonCheck::Ensure,
+    )
+    .await?;
     Ok(())
 }
 

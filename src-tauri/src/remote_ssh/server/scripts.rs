@@ -222,6 +222,20 @@ pub(crate) fn windows_connect_daemon_command_existing(remote_bin: &str) -> Strin
     format!("{} connect --stdio", windows_exec_program(remote_bin))
 }
 
+fn windows_bare_program(path: &str) -> bool {
+    !path.is_empty()
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/:._-".contains(&b))
+}
+
+/// Simple drive paths can run under cmd, PowerShell and Git Bash without a
+/// wrapper. Other paths must use the existing encoded PowerShell script.
+pub(crate) fn windows_native_server_program(bin: &str) -> Option<String> {
+    let path = windows_host_path(bin)?.replace('\\', "/");
+    windows_bare_program(&path).then_some(path)
+}
+
 /// exec 命令里的程序路径，要同时适配 OpenSSH 的三种默认 shell。
 ///
 /// 反斜杠转正斜杠并去 POSIX 前导斜杠：`/D:/x/y.exe` → `D:/x/y.exe`，Git Bash
@@ -231,11 +245,7 @@ pub(crate) fn windows_connect_daemon_command_existing(remote_bin: &str) -> Strin
 /// 程序执行。含空格等字符时只能加引号（cmd / Git Bash 可用）。
 fn windows_exec_program(remote_bin: &str) -> String {
     let forward = remote_bin.trim_start_matches('/').replace('\\', "/");
-    let bare = !forward.is_empty()
-        && forward
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"/:._-".contains(&byte));
-    if bare {
+    if windows_bare_program(&forward) {
         forward
     } else {
         format!("\"{forward}\"")
@@ -317,27 +327,6 @@ pub(crate) fn windows_self_check_then_deploy_script(
 
 /// 只有明确不存在才允许按首次安装处理；读取失败不能触发替换正在运行的服务。
 pub(super) const REMOTE_BINARY_MISSING_EXIT: u32 = 44;
-
-/// 远端程序摘要与本地可信文件不一致（与读取失败区分）。
-pub(super) const REMOTE_DIGEST_MISMATCH_EXIT: u32 = 45;
-
-/// Windows：一次 PowerShell 往返内先由 PowerShell 独立计算摘要（不信任程序自报），
-/// 一致后再 self-check。读不到摘要以 1 退出，不一致以 [`REMOTE_DIGEST_MISMATCH_EXIT`] 退出。
-pub(super) fn windows_verify_digest_then_self_check_script(
-    bin: &str,
-    expected_sha256: &str,
-) -> String {
-    format!(
-        "$ErrorActionPreference = 'Stop'
-try {{ $actual = (Get-FileHash -LiteralPath '{bin}' -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() }} catch {{ exit 1 }}
-if ($actual -cne '{sha}') {{ exit {mismatch} }}
-{check}",
-        bin = powershell_literal(bin),
-        sha = powershell_literal(&expected_sha256.trim().to_ascii_lowercase()),
-        mismatch = REMOTE_DIGEST_MISMATCH_EXIT,
-        check = windows_self_check_script(bin, expected_sha256),
-    )
-}
 
 /// 保留 sha256sum 的失败退出码；不能用管道把工具缺失/权限错误变成成功。
 pub(super) fn remote_sha256_command(remote_bin: &str) -> String {
@@ -561,23 +550,21 @@ mod tests {
     }
 
     #[test]
-    fn windows_digest_check_runs_before_self_check_in_one_script() {
-        let sha = "AB".repeat(32);
-        let script = windows_verify_digest_then_self_check_script(r"C:\Users\o'neil\qc.exe", &sha);
-        // PowerShell 独立计算摘要并区分不一致与读取失败；一致后才执行程序自检。
-        let digest = script
-            .find("Get-FileHash -LiteralPath 'C:\\Users\\o''neil\\qc.exe'")
-            .unwrap();
-        let mismatch = script
-            .find(&format!(
-                "if ($actual -cne '{}') {{ exit 45 }}",
-                "ab".repeat(32)
-            ))
-            .unwrap();
-        let check = script.find("self-check --expect-sha256").unwrap();
-        assert!(digest < mismatch && mismatch < check);
-        assert!(script.contains("catch { exit 1 }"));
-        assert!(script.contains("if ($LASTEXITCODE -ne 0) { exit 41 }"));
+    fn native_server_program_requires_a_shell_safe_windows_path() {
+        assert_eq!(
+            windows_native_server_program("/C:/Users/dev/.qingcode/server.exe").as_deref(),
+            Some("C:/Users/dev/.qingcode/server.exe")
+        );
+        for path in [
+            "/srv/qc",
+            "/C:/User Name/qc.exe",
+            "/C:/o'neil/qc.exe",
+            "/C:/%user%/qc.exe",
+            "/C:/a&b/qc.exe",
+            "/C:/中文/qc.exe",
+        ] {
+            assert!(windows_native_server_program(path).is_none());
+        }
     }
 
     #[test]
