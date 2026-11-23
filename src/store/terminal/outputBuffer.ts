@@ -15,8 +15,10 @@ import {
   pushCommandHistory,
   saveTerminalOutputSnapshot,
   terminalByteRingToBytes,
+  screenAfterHeadTruncate,
   type TerminalByteRing,
-  truncateScrollbackBytes,
+  truncateScrollbackText,
+  type PersistedTerminalScreen,
 } from '@/lib/terminal/terminalSessionPersist'
 import {
   getTerminalScrollback,
@@ -26,7 +28,11 @@ import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '@/lib/terminal/terminalPtySi
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import { clearTerminalProgramActivity } from '@/lib/terminal/terminalProgramActivity'
 import { isSessionPersistEnabled } from '../../lib/sessionPersistSettings'
-import { terminalCapture, type TerminalCapture } from '../../lib/terminal/terminalMirror'
+import {
+  terminalCapture,
+  terminalPersistCapture,
+  type TerminalCapture,
+} from '../../lib/terminal/terminalMirror'
 import { recordPerformanceThroughput } from '../../lib/performanceDiagnostics'
 import { decodeTerminalEventData } from '../../utils/terminalIpc'
 import { useTerminalControlStore } from '../terminalControlStore'
@@ -261,6 +267,7 @@ export function clearTerminalOutput(id: string, options?: { persist?: boolean })
   terminalRingUpdatedAt.delete(id)
   terminalRingVersions.delete(id)
   terminalScrollbackTextCache.delete(id)
+  terminalPersistCaptureCache.delete(id)
   clearTerminalCommandActivity(id)
   clearTerminalProgramActivity(id)
   if (options?.persist !== false) scheduleTerminalOutputPersist()
@@ -271,17 +278,35 @@ export function seedTerminalOutputFromPersist(
   id: string,
   scrollback: string,
   history: string[] = [],
-  resumeSeq?: number
+  resumeSeq?: number,
+  screen?: PersistedTerminalScreen
 ) {
   if (scrollback) {
     // 续传序号只对这份 scrollback 有意义，两者一起恢复。
     if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
-    const bytes = truncateScrollbackBytes(
-      encodeScrollbackText(scrollback),
-      getTerminalScrollback(),
-      maxBufferedBytes()
-    )
-    terminalScrollbackRings.set(id, createTerminalByteRing(maxBufferedBytes(), bytes))
+    const text = truncateScrollbackText(scrollback, getTerminalScrollback(), maxBufferedBytes())
+    const bytes = encodeScrollbackText(text)
+    const ring = createTerminalByteRing(maxBufferedBytes(), bytes)
+    terminalScrollbackRings.set(id, ring)
+    terminalRingScreens.delete(id)
+    // 开头的屏幕段按原网格交给视图写入（见 subscribeTerminalOutput），不当普通字节写进当前网格。
+    const kept = screenAfterHeadTruncate(screen, scrollback.length, text.length)
+    if (kept) {
+      const screenBytes = encodeScrollbackText(text.slice(0, kept.chars)).length
+      const size = screenBytes - (bytes.length - ring.byteLength)
+      if (size > 0) {
+        const ringBytes = terminalByteRingToBytes(ring)
+        terminalRingScreens.set(id, {
+          snapshot: {
+            data: decodeScrollbackBytes(ringBytes.subarray(0, size)),
+            cols: kept.cols,
+            rows: kept.rows,
+          },
+          size,
+          after: ring.byteLength - size,
+        })
+      }
+    }
     terminalRingUpdatedAt.set(id, Date.now())
     bumpRingVersion(id)
   }
@@ -298,7 +323,7 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
   const wanted = new Set(terminalIds)
   for (const [id, entry] of Object.entries(snapshot.terminals)) {
     if (!wanted.has(id)) continue
-    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history, entry.seq)
+    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history, entry.seq, entry.screen)
   }
 }
 
@@ -344,16 +369,75 @@ export function subscribeTerminalOutput(
   }
 }
 
-function collectOutputPersistPayload(terminalIds: Iterable<string>): Record<
+type PersistPayloadEntry = {
+  scrollback: string
+  history: string[]
+  updatedAt?: number
+  seq?: number
+  screen?: PersistedTerminalScreen
+}
+
+/** 上次序列化的结果：ring 没变就复用，避免持续输出时每次持久化都重新序列化整个缓冲。 */
+const terminalPersistCaptureCache = new Map<
   string,
-  { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
-> {
-  const terminals: Record<
-    string,
-    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
-  > = {}
+  { version: number; scrollback: string; screen: PersistedTerminalScreen }
+>()
+
+/**
+ * 退出时（`renderScreens`）有视图的终端存 xterm 渲染好的画面，而不是截断过的原始字节：
+ * Claude Code 这类行内 TUI 靠光标上移擦掉上一帧，原始字节从半截回放时擦错行，叠出残留的
+ * 转圈行和互相覆盖的文字。序列化要遍历整个缓冲，平时的定时持久化不做，只在之后没有新输出时
+ * 沿用退出时的结果（关闭流程里晚到的定时持久化不能把它换回原始字节）。
+ * 没有视图（本次启动后没打开过的项目）时存 ring，ring 开头若仍是完整的屏幕段就带上它的网格。
+ */
+function persistScrollbackFor(
+  id: string,
+  renderScreens: boolean
+): Pick<PersistPayloadEntry, 'scrollback' | 'screen'> {
+  const capture = terminalPersistCapture(id)
+  if (capture) {
+    const version = terminalRingVersions.get(id) ?? 0
+    const cached = terminalPersistCaptureCache.get(id)
+    if (cached && cached.version === version) {
+      return { scrollback: cached.scrollback, screen: cached.screen }
+    }
+  }
+  if (capture && renderScreens) {
+    const version = terminalRingVersions.get(id) ?? 0
+    // 先把批处理中的输出交给视图，它们会出现在序列化结果之后的「未解析」部分。
+    if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
+    const captured = capture({
+      scrollback: getTerminalScrollback(),
+      maxChars: maxBufferedBytes(),
+    })
+    if (captured && captured.screenChars > 0) {
+      const screen = { cols: captured.cols, rows: captured.rows, chars: captured.screenChars }
+      terminalPersistCaptureCache.set(id, { version, scrollback: captured.data, screen })
+      return { scrollback: captured.data, screen }
+    }
+  }
+  const scrollback = cachedScrollbackText(id)
+  const ringScreen = terminalRingScreens.get(id)
+  const ring = terminalScrollbackRings.get(id)
+  if (ringScreen && ring && ring.byteLength === ringScreen.size + ringScreen.after) {
+    const chars = ringScreen.snapshot.data.length
+    if (chars > 0 && chars <= scrollback.length) {
+      return {
+        scrollback,
+        screen: { cols: ringScreen.snapshot.cols, rows: ringScreen.snapshot.rows, chars },
+      }
+    }
+  }
+  return { scrollback }
+}
+
+function collectOutputPersistPayload(
+  terminalIds: Iterable<string>,
+  renderScreens: boolean
+): Record<string, PersistPayloadEntry> {
+  const terminals: Record<string, PersistPayloadEntry> = {}
   for (const id of terminalIds) {
-    const scrollback = cachedScrollbackText(id)
+    const { scrollback, screen } = persistScrollbackFor(id, renderScreens)
     const history = terminalCommandHistory.get(id) ?? []
     if (!scrollback && history.length === 0) continue
     terminals[id] = {
@@ -361,12 +445,17 @@ function collectOutputPersistPayload(terminalIds: Iterable<string>): Record<
       history,
       updatedAt: terminalRingUpdatedAt.get(id),
       seq: terminalResumeSeqs.get(id),
+      ...(screen ? { screen } : {}),
     }
   }
   return terminals
 }
 
-export function persistTerminalOutputNow() {
+/**
+ * 立即持久化终端输出。`renderScreens` 用于退出前的最后一次：有视图的终端改存渲染好的画面
+ * （见 persistScrollbackFor）。
+ */
+export function persistTerminalOutputNow(options?: { renderScreens?: boolean }) {
   if (outputPersistTimer) {
     clearTimeout(outputPersistTimer)
     outputPersistTimer = null
@@ -381,7 +470,10 @@ export function persistTerminalOutputNow() {
   // terminalStore 尚未注册数据源时不写盘，避免用空列表覆盖已保存的输出。
   if (!outputPersistTerminalIds) return
   lastOutputPersistAt = Date.now()
-  const terminals = collectOutputPersistPayload(outputPersistTerminalIds())
+  const terminals = collectOutputPersistPayload(
+    outputPersistTerminalIds(),
+    options?.renderScreens === true
+  )
   const snapshot = buildTerminalOutputSnapshot({
     terminals,
     scrollbackLines: getTerminalScrollback(),

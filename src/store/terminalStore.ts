@@ -2017,7 +2017,7 @@ registerTerminalOutputPersistSource(() =>
 // Scrollback / command history is persisted separately (terminalSessionPersist).
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    persistTerminalOutputNow()
+    persistTerminalOutputNow({ renderScreens: true })
   })
 }
 

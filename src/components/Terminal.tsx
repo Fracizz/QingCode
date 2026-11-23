@@ -2,7 +2,10 @@ import TerminalExitNotice from './TerminalExitNotice'
 import TerminalConnectionNotice from './TerminalConnectionNotice'
 import TerminalControlNotice from './TerminalControlNotice'
 import MobileTerminalHistory from './MobileTerminalHistory'
-import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
+import {
+  registerTerminalCapture,
+  registerTerminalPersistCapture,
+} from '@/lib/terminal/terminalMirror'
 import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
 import {
   isTerminalInputBlocked,
@@ -193,6 +196,17 @@ function terminalSearchOptions(incremental = false): ISearchOptions {
     incremental,
     decorations: TERMINAL_SEARCH_DECORATIONS,
   }
+}
+
+function combineChunks(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0]
+  const out = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0))
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
 }
 
 function writeFinishedTaskHint(term: XTerm) {
@@ -1379,6 +1393,29 @@ export default function TerminalView({
     const writeFlow = new TerminalWriteFlow(paused =>
       setTerminalOutputPaused(terminalId, flowHolder, paused)
     )
+    // 已交给 xterm、还没解析完的输出（按写入顺序）。持久化时接在序列化画面之后，
+    // 与续传序号对应的「已收到的全部输出」一致，重启接回时不丢也不重复。
+    const unparsedOutput: Uint8Array[] = []
+    const unregisterPersistCapture = registerTerminalPersistCapture(terminalId, limits => {
+      if (!historyParsed || screenWriteLockRef.current > 0 || xtermRef.current !== term) return null
+      // 只给重启后会接回原进程的终端存画面：新建进程的终端只是展示历史，原始输出够用，
+      // 也免得本地写进缓冲的「已恢复」「已退出」提示被存下来、每次重启叠一行。
+      const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+      if (tab?.persistent !== true || !tab.ptyId) return null
+      // 序列化耗时随行数线性增长；超出字符预算的行反正会被截掉，按每行至少一整行宽估算上限。
+      const scrollback = Math.min(limits.scrollback, Math.ceil(limits.maxChars / Math.max(1, term.cols)))
+      const screen = serializeAddon.serialize({ scrollback })
+      if (!screen) return null
+      const pending = unparsedOutput.length
+        ? new TextDecoder().decode(combineChunks(unparsedOutput))
+        : ''
+      return {
+        data: screen + pending,
+        cols: term.cols,
+        rows: term.rows,
+        screenChars: screen.length,
+      }
+    })
     let unsubscribeOutput: (() => void) | undefined
     const subscribeTimer = window.setTimeout(() => {
       // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，之后再 fit 也无法还原。
@@ -1397,7 +1434,9 @@ export default function TerminalView({
         const size = data.length
         const isReplay = replaying
         writeFlow.written(size)
+        unparsedOutput.push(data)
         term.write(data, () => {
+          unparsedOutput.shift()
           writeFlow.parsed(size)
           lastOutputParsedAtRef.current = Date.now()
           followBottomAfterResize()
@@ -1614,6 +1653,7 @@ export default function TerminalView({
       disposeHostScrollLock()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
       unregisterCapture()
+      unregisterPersistCapture()
       unregisterReader()
       term.dispose()
       container.replaceChildren()
