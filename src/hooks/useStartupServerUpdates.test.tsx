@@ -8,6 +8,8 @@ import type { Project, SshConnection } from '../types'
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(), prepare: vi.fn(), toast: vi.fn(), backend: vi.fn(() => true),
   restore: vi.fn(() => true), trusted: vi.fn((_project: Project) => true), suspended: vi.fn((_id: string) => false),
+  released: vi.fn((_id: string, _verified: boolean) => {}),
+  hold: vi.fn((id: string) => (verified: boolean) => mocks.released(id, verified)),
 }))
 const connection = (id: string, direct = true): SshConnection => ({
   id, name: id, host: id, username: 'user', port: 22, auth_kind: 'privateKey',
@@ -23,6 +25,7 @@ const store = create(() => ({ projects, sshConnections: [connection('a'), connec
 const ui = create(() => ({ serverUpdateRootUri: null as string | null }))
 vi.mock('../store/projectStore', () => ({ useProjectStore: store }))
 vi.mock('../store/uiStore', () => ({ useUIStore: ui }))
+vi.mock('../store/sshWarmupStore', () => ({ holdSshWarmupConnection: mocks.hold }))
 vi.mock('../lib/runtimeCapabilities', () => ({ hasBackend: mocks.backend }))
 vi.mock('../lib/windowSession', () => ({ shouldRestoreWorkspace: mocks.restore }))
 vi.mock('../lib/workspaceTrust', () => ({ createProjectTrustChecker: () => mocks.trusted, isProjectTrusted: mocks.trusted }))
@@ -66,6 +69,17 @@ describe('startup Server maintenance', () => {
     await act(async () => {})
     expect(mocks.prepare).toHaveBeenCalledTimes(2)
     expect(ui.getState().serverUpdateRootUri).toBeNull()
+  })
+
+  it('holds background preparation of each checked connection and reports whether its server is verified', async () => {
+    mocks.prepare.mockImplementation(async (path: string) => {
+      if (path === projects[2].path) throw new Error('unreachable')
+    })
+    renderHook(() => useStartupServerUpdates(true))
+    await waitFor(() => expect(mocks.released).toHaveBeenCalledTimes(2))
+    expect(mocks.hold.mock.calls.map(call => call[0]).sort()).toEqual(['a', 'b'])
+    expect(mocks.released).toHaveBeenCalledWith('a', true)
+    expect(mocks.released).toHaveBeenCalledWith('b', false)
   })
 
   it('updates different connections concurrently so an unreachable host does not block the others', async () => {
@@ -131,7 +145,7 @@ describe('startup Server maintenance', () => {
   it('reports a completed restore-time update before the startup scan is ready and closes only its own recovery dialog', async () => {
     const view = renderHook(() => useStartupServerUpdates(false))
     ui.setState({ serverUpdateRootUri: projects[0].path })
-    act(() => window.dispatchEvent(new CustomEvent('server-updated', { detail: { rootUri: projects[0].path, name: 'Host A' } })))
+    act(() => window.dispatchEvent(new CustomEvent('server-updated', { detail: { rootUri: projects[0].path, name: 'Host A', connectionId: 'a' } })))
     expect(mocks.toast).toHaveBeenCalledWith('success', '已自动更新 Host A 的远端服务')
     expect(ui.getState().serverUpdateRootUri).toBeNull()
     ui.setState({ serverUpdateRootUri: projects[1].path })

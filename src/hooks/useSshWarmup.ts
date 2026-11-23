@@ -55,7 +55,12 @@ export function useSshWarmup(ready: boolean) {
         }
       }
     ).catch(() => () => {})
-    const serverUpdated = () => queue.retryFailed()
+    // 更新完成即证明该连接的服务可用：同连接项目立即并发准备，其他连接的失败也重试一次。
+    const serverUpdated = (event: Event) => {
+      const id = (event as CustomEvent<{ connectionId?: string } | undefined>).detail?.connectionId
+      if (id) queue.connectionVerified(id)
+      queue.retryFailed()
+    }
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, refresh)
     window.addEventListener(SSH_SERVER_UPDATED_EVENT, serverUpdated)
     window.addEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)

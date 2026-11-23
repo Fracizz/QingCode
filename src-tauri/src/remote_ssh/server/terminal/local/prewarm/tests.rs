@@ -1155,3 +1155,35 @@ async fn lost_daemon_session_does_not_pause_profile_prewarm_but_cli_exit_does() 
     assert_eq!(pool.0.lock().unwrap().paused_reason, Some("profile_exited"));
     daemon.abort();
 }
+
+#[test]
+fn server_restart_clears_update_backoff_and_wakes_the_refill_worker() {
+    let cwd = "ssh://conn-1/C:/work/a";
+    let shell = remote_shell("warm-a", cwd, true);
+    let target = target_for(&shell, 1);
+    let pool = ShellPrewarmPool::default();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target);
+        state.shells.push(shell);
+        state.generation = 7;
+        state.preparing = true;
+        state.paused_reason = Some("create_failed_backoff");
+        state.ready_timeouts = 2;
+    }
+    pool.retry_now();
+    let state = pool.0.lock().unwrap();
+    // 进行中的创建作废，退避与暂停原因清空；仍存活的预热项保留。
+    assert_eq!(state.generation, 8);
+    assert!(!state.preparing);
+    assert_eq!(state.paused_reason, None);
+    assert_eq!(state.ready_timeouts, 0);
+    assert_eq!(state.shells.len(), 1);
+}
+
+#[test]
+fn server_restart_ignores_an_unconfigured_pool() {
+    let pool = ShellPrewarmPool::default();
+    pool.retry_now();
+    assert_eq!(pool.0.lock().unwrap().generation, 0);
+}

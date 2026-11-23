@@ -16,6 +16,8 @@ export const SSH_WARMUP_DELAY_MS = 1500
 export const SSH_WARMUP_RETRY_DELAYS_MS = [10_000, 30_000]
 /** 已就绪的连接断开后重新排队的延迟，同时限制连接反复断开时的频率。 */
 export const SSH_WARMUP_RECOVERY_DELAY_MS = 30_000
+/** 连接级服务刚确认可用（启动检查通过/更新完成）后的宽限期：期间的断开多半是更新重启网关的旧事件，立即恢复。 */
+export const SSH_WARMUP_VERIFIED_GRACE_MS = 15_000
 
 export type WarmupPhase = 'queued' | 'preparing' | 'ready' | 'attention' | 'failed'
 export interface WarmupStatus {
@@ -94,6 +96,10 @@ export class SshWarmupQueue<T> {
   private provenConnections = new Set<string>()
   /** 按连接记录前台打开计数；显式请求全局暂停时使用 `*`。 */
   private foreground = new Map<string, number>()
+  /** 连接级服务检查/更新进行中的连接：期间不发起该连接的项目准备，免得各项目各自撞上版本不一致。 */
+  private holds = new Map<string, number>()
+  /** 连接最近一次被确认服务可用的时间。 */
+  private verifiedAt = new Map<string, number>()
   private paused = false
   private timer?: ReturnType<typeof setTimeout>
   private retryTimer?: ReturnType<typeof setTimeout>
@@ -179,7 +185,52 @@ export class SshWarmupQueue<T> {
   }
 
   private yieldsToForeground(connectionId: string): boolean {
-    return this.foreground.has('*') || this.foreground.has(connectionId)
+    return this.foreground.has('*') || this.foreground.has(connectionId) || this.holds.has(connectionId)
+  }
+
+  /**
+   * 连接级服务检查/自动更新期间暂停该连接的项目准备。结束时传入服务是否已确认可用：
+   * 可用则同连接项目立即并发准备（不再由首个项目探路、也不等让路延迟）。
+   */
+  holdConnection(connectionId: string): (verified: boolean) => void {
+    this.holds.set(connectionId, (this.holds.get(connectionId) ?? 0) + 1)
+    let ended = false
+    return verified => {
+      if (ended) return
+      ended = true
+      const remaining = (this.holds.get(connectionId) ?? 1) - 1
+      if (remaining > 0) this.holds.set(connectionId, remaining)
+      else this.holds.delete(connectionId)
+      if (verified) this.connectionVerified(connectionId)
+      else this.schedule()
+    }
+  }
+
+  /**
+   * 连接的远端服务已确认可用（启动检查通过或刚完成更新）：该连接之前的失败与退避作废，
+   * 同连接项目直接按已验证连接并发准备，并立即开始。需要认证的项目仍等用户处理。
+   */
+  connectionVerified(id: string) {
+    if (this.disposed) return
+    this.provenConnections.add(id)
+    this.verifiedAt.set(id, Date.now())
+    for (const entry of this.entries.values()) {
+      if (entry.target.connectionId !== id) continue
+      if (entry.status.phase !== 'failed' && entry.retryAt === undefined) continue
+      entry.status = { phase: 'queued' }
+      entry.retryAt = undefined
+      entry.attempts = 0
+    }
+    this.publish()
+    this.armRetry()
+    this.kick()
+  }
+
+  /** 立即放行排队任务；已有让路定时器时保留它，不打断其他连接的前台让路。 */
+  private kick() {
+    if (this.disposed || this.paused || this.timer) return
+    this.startupPending = false
+    this.drain()
   }
 
   /**
@@ -203,6 +254,7 @@ export class SshWarmupQueue<T> {
   /** 用户主动断开或连接被移除：作废且不自动恢复。 */
   invalidateConnection(id: string) {
     this.provenConnections.delete(id)
+    this.verifiedAt.delete(id)
     for (const [key, entry] of this.entries) {
       if (entry.target.connectionId !== id) continue
       entry.controller.abort()
@@ -211,10 +263,14 @@ export class SshWarmupQueue<T> {
     this.publish()
   }
 
-  /** 已就绪的连接意外断开：结果作废，延迟后重新预热，当前项目等下次打开。 */
+  /**
+   * 已就绪的连接意外断开：结果作废，延迟后重新预热，当前项目等下次打开。
+   * 服务刚确认可用时的断开是更新重启网关留下的，立即重新准备，不再等恢复延迟。
+   */
   connectionLost(id: string) {
-    this.provenConnections.delete(id)
-    const retryAt = Date.now() + SSH_WARMUP_RECOVERY_DELAY_MS
+    const recovered = Date.now() - (this.verifiedAt.get(id) ?? -Infinity) < SSH_WARMUP_VERIFIED_GRACE_MS
+    if (!recovered) this.provenConnections.delete(id)
+    const retryAt = recovered ? undefined : Date.now() + SSH_WARMUP_RECOVERY_DELAY_MS
     for (const [key, entry] of this.entries) {
       if (entry.target.connectionId !== id) continue
       entry.controller.abort()
@@ -223,6 +279,7 @@ export class SshWarmupQueue<T> {
     }
     this.publish()
     this.armRetry()
+    if (recovered) this.kick()
   }
 
   /** 远端服务更新完成：之前的失败和退避都不再有效，立即重新排队（需认证的除外）。 */

@@ -1118,3 +1118,49 @@ fn daemon_request_params_roundtrip_as_msgpack_map() {
     assert_eq!(decoded.client_id, "c1");
     assert_eq!(decoded.protocol_min, PROTOCOL_VERSION);
 }
+
+#[test]
+fn sibling_roots_reuse_the_connection_gateway_verification_for_the_same_token() {
+    use super::super::deploy::gateway_verified_on_connection;
+    let manager = SshManager::new();
+    let id = "test-shared-gateway";
+    for (key, path, trusted) in [
+        ("a", "/work/a", true),
+        ("b", "/work/b", true),
+        ("c", "/work/c", false),
+    ] {
+        manager.roots.write().unwrap().insert(
+            key.into(),
+            RegisteredRoot {
+                uri: format!("ssh://{id}{path}"),
+                canonical_path: path.into(),
+                trusted,
+            },
+        );
+    }
+    let verified = |slot_path: &str, token: &str| {
+        manager.set_server_slot(
+            &server_slot_key(id, slot_path),
+            ServerSlot {
+                endpoint: Some(ServerEndpoint {
+                    serve: None,
+                    daemon: Some(DaemonAccess {
+                        bin: "direct".into(),
+                        token: token.into(),
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+    };
+    // 更新后各项目端点均已清空：首个项目必须真正探测。
+    assert!(!gateway_verified_on_connection(&manager, id, "paired"));
+    // 未受信任项目的端点不作为依据。
+    verified("/work/c", "paired");
+    assert!(!gateway_verified_on_connection(&manager, id, "paired"));
+    verified("/work/a", "paired");
+    assert!(gateway_verified_on_connection(&manager, id, "paired"));
+    // 配对 token 轮换后旧结论失效；其他连接不受影响。
+    assert!(!gateway_verified_on_connection(&manager, id, "rotated"));
+    assert!(!gateway_verified_on_connection(&manager, "other", "paired"));
+}

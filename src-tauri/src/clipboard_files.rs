@@ -130,10 +130,8 @@ pub(crate) fn store_project_attachment(
             return Err("附件目录不在当前项目内".into());
         }
     }
-    // Unique directories and create_new prevent overwriting existing attachments.
-    let directory = directory.join(uuid::Uuid::new_v4().to_string());
-    allowlist.ensure_writable(&normalize_path(&directory))?;
-    std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
+    // 每批附件一个本地时间（毫秒）目录；同毫秒已存在时追加序号，create_new 防止覆盖已有附件。
+    let directory = create_batch_directory(&directory, &terminal_paste_stamp(), allowlist)?;
     let path = directory.join(name);
     let result = (|| {
         use std::io::Write;
@@ -155,6 +153,33 @@ pub(crate) fn store_project_attachment(
         return Err(error);
     }
     Ok(normalize_path(&path))
+}
+
+/// 粘贴批次目录名：本地时间精确到毫秒，如 `20261123-153045-123`，与前端 SSH 粘贴一致。
+fn terminal_paste_stamp() -> String {
+    chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string()
+}
+
+fn create_batch_directory(
+    parent: &Path,
+    stamp: &str,
+    allowlist: &crate::path_guard::PathAllowlist,
+) -> Result<PathBuf, String> {
+    for attempt in 1..=20 {
+        let name = if attempt == 1 {
+            stamp.to_string()
+        } else {
+            format!("{stamp}-{attempt}")
+        };
+        let directory = parent.join(name);
+        allowlist.ensure_writable(&normalize_path(&directory))?;
+        match std::fs::create_dir(&directory) {
+            Ok(()) => return Ok(directory),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("附件目录已存在，请稍后重试".into())
 }
 
 fn normalize_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
@@ -729,6 +754,12 @@ mod attachment_tests {
         .unwrap();
         assert_ne!(first, second);
         assert!(Path::new(&first).starts_with(root.join(".qingcode/terminal-paste")));
+        for path in [&first, &second] {
+            let batch = Path::new(path).parent().unwrap().file_name().unwrap();
+            let batch = batch.to_string_lossy();
+            let stamp = batch.get(..19).unwrap();
+            assert!(chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S-%3f").is_ok());
+        }
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
         std::fs::remove_dir_all(root).unwrap();

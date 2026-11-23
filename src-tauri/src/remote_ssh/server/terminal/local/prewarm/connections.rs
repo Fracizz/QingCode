@@ -77,6 +77,20 @@ impl ConnectionShellPools {
         self.changed();
     }
 
+    /// 该连接的远端服务刚更新完成：普通 Shell 与 CLI 预热立即重试，不等失败退避。
+    pub(crate) fn server_restarted(&self, connection_id: &str) {
+        {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pool) = state.pools.get(connection_id) {
+                pool.retry_now();
+            }
+            if let Some((_, _, pool)) = state.profiles.get(connection_id) {
+                pool.retry_now();
+            }
+        }
+        self.changed();
+    }
+
     pub(crate) fn close_window(&self, window: &str) {
         self.0
             .lock()

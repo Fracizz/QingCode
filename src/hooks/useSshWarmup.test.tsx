@@ -61,3 +61,21 @@ it('keeps both opened and warmed projects ready after switching and reloading th
   }
   expect(mocks.run).toHaveBeenCalledTimes(1)
 })
+
+it('re-prepares a connection right after its server update completes', async () => {
+  store.setState({ projects, currentProject: undefined as unknown as Project })
+  mocks.run.mockRejectedValueOnce(new Error('gateway restarting'))
+  renderHook(() => useSshWarmup(true))
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(mocks.run).toHaveBeenCalledTimes(1)
+  expect(useSshWarmupStore.getState().statuses.get(projects[1].path)?.phase).toBe('failed')
+  act(() => {
+    window.dispatchEvent(new CustomEvent('server-updated', { detail: { rootUri: projects[0].path, name: 'host', connectionId: 'host' } }))
+  })
+  // 不等 10 秒失败退避：同连接项目立即并发重新准备。
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(mocks.run).toHaveBeenCalledTimes(3)
+  for (const target of projects) {
+    expect(useSshWarmupStore.getState().statuses.get(target.path)?.phase).toBe('ready')
+  }
+})

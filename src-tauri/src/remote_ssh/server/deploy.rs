@@ -1366,6 +1366,27 @@ pub(crate) async fn update_server_endpoint_with_app(
     result.map(|_| ())
 }
 
+/// 网关与 daemon 按连接共享：同一连接上已有项目以同一配对 token 通过 daemon 探测时，
+/// 其他项目沿用该结论，只做健康与版本检查。更新后首个项目探测通过，其余项目不再逐个探测。
+/// 更新/重连会清空各项目的端点（token 也随配对轮换），不会沿用重启前的结论。
+pub(super) fn gateway_verified_on_connection(
+    manager: &SshManager,
+    connection_id: &str,
+    token: &str,
+) -> bool {
+    manager
+        .roots_for_connection(connection_id)
+        .iter()
+        .filter(|root| root.trusted)
+        .any(|root| {
+            manager
+                .server_slot(&server_slot_key(connection_id, &root.canonical_path))
+                .and_then(|slot| slot.endpoint)
+                .and_then(|endpoint| endpoint.daemon)
+                .is_some_and(|daemon| daemon.bin == "direct" && daemon.token == token)
+        })
+}
+
 pub(crate) async fn ensure_gateway_endpoint(
     manager: &SshManager,
     root: &RegisteredRoot,
@@ -1381,7 +1402,8 @@ pub(crate) async fn ensure_gateway_endpoint(
     let key = server_slot_key(connection_id, &root.canonical_path);
     let verified = manager
         .server_slot(&key)
-        .is_some_and(|slot| slot.endpoint.is_some());
+        .is_some_and(|slot| slot.endpoint.is_some())
+        || gateway_verified_on_connection(manager, connection_id, &config.token);
     let checked = async {
         manager.ensure_connection_alive(connection_id).await?;
         let health = super::super::direct::test(&config).await?;

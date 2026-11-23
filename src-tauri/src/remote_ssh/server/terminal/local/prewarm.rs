@@ -465,6 +465,26 @@ impl ShellPrewarmPool {
         self.1.notify_waiters();
     }
 
+    /// 远端服务刚完成更新：清掉更新期间留下的失败退避/暂停，取消重启窗口内发起、
+    /// 注定失败或卡到超时的创建，立即按当前配置重新补充，不等 15 秒退避。
+    pub(super) fn retry_now(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.target.is_none() {
+            return;
+        }
+        state.shells.retain(|entry| !entry.session_lost());
+        state.generation += 1;
+        state.preparing = false;
+        state.paused_reason = None;
+        state.ready_timeouts = 0;
+        trace(
+            "server_restarted",
+            serde_json::json!({"kept": state.shells.len()}),
+        );
+        self.1.notify_waiters();
+        self.2.notify_one();
+    }
+
     fn stop(&self) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.target.is_none() {

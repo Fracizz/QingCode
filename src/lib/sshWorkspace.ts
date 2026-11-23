@@ -63,7 +63,8 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
   let attempt = directUpdateAttempts.get(gateway)
   if (!attempt) {
     attempt = (async () => {
-      const candidates = directAgentSshCandidates(await listSshConnections(), info.host)
+      const connections = await listSshConnections()
+      const candidates = directAgentSshCandidates(connections, info.host)
       await Promise.all(candidates.map(item => hydrateSshSecrets(item.id)))
       const ssh = candidates.find(connection => connection.id === id)
         ?? (candidates.length === 1 ? candidates[0] : undefined)
@@ -78,7 +79,10 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
         sshConnectionId: ssh.id,
         config: sshRuntimeConfig(ssh, sshSecretsFor(ssh.id)),
       }
-      beginServerOperation(project.path, project.name, 'update')
+      // 服务按连接共享：进度与完成提示以连接命名，而不是触发检查的某个项目。
+      const own = connections.find(connection => connection.id === id)
+      const label = own ? sshConnectionLabel(own) : `${info.host}:${info.port}`
+      beginServerOperation(project.path, label, 'update')
       const progress = (phase: UpdatePhase) => reportServerOperation(project.path,
         phase === 'connecting' ? 1 : phase === 'checkingPackage' || phase === 'downloading' ? 2 : phase === 'verifying' ? 4 : 3,
         updatePhaseLabels[phase])
@@ -94,7 +98,7 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
         if (state?.phase !== 'readyServer' || state.transport !== 'agent') throw new Error(state?.reason ?? '远端服务尚未就绪')
         finishServerOperation(project.path)
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SSH_SERVER_UPDATED_EVENT, {
-          detail: { rootUri: project.path, name: project.name },
+          detail: { rootUri: project.path, name: label, connectionId: id },
         }))
       } catch (error) {
         finishServerOperation(project.path, String(error))

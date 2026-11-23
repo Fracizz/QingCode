@@ -6,6 +6,7 @@ import { createProjectTrustChecker, isProjectTrusted } from '../lib/workspaceTru
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 import { translate } from '../lib/i18n'
+import { holdSshWarmupConnection } from '../store/sshWarmupStore'
 import {
   ensureSshWorkspaceConnected,
   isSshBackgroundSuspended,
@@ -53,17 +54,26 @@ export function startupServerLanes(
   return [...lanes.values()]
 }
 
+/**
+ * 连接级服务检查：借一个代表项目确认该连接的远端服务版本，必要时自动更新一次。
+ * 期间暂停同连接的后台项目准备，避免每个项目各自撞上版本不一致；通过后同连接项目立即并发准备。
+ */
 async function checkStartupServer(project: Project, signal: AbortSignal) {
   const id = sshConnectionIdFromUri(project.path)!
   if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) return
+  const release = holdSshWarmupConnection(id)
+  let verified = false
   try {
     await ensureSshWorkspaceConnected(project, { background: true, signal })
     signal.throwIfAborted()
     if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) return
     await prepareSshWorkspace(project.path, signal, () => {}, { project, background: true })
+    verified = true
   } catch {
     // Failed updates retain the shared progress card and manual recovery.
     // Unreachable hosts must not open authentication or update dialogs.
+  } finally {
+    release(verified && !signal.aborted)
   }
 }
 
