@@ -72,7 +72,6 @@ import {
   TERMINAL_CLEAR_INPUT_EVENT,
   TERMINAL_COPY_SCREEN_EVENT,
   TERMINAL_EXPORT_EVENT,
-  TERMINAL_RESET_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
 } from '@/lib/terminal/terminalViewBridge'
@@ -495,15 +494,6 @@ export default function TerminalView({
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
   }, [])
-
-  const resetTerminalView = useCallback(() => {
-    const term = xtermRef.current
-    if (!term) return
-    term.reset()
-    term.scrollToBottom()
-    searchAddonRef.current?.clearDecorations()
-    resetSearchMatch()
-  }, [resetSearchMatch])
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
@@ -1653,11 +1643,6 @@ export default function TerminalView({
       if (!matches(detail)) return
       openSearch()
     }
-    const onReset = (event: Event) => {
-      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
-      if (!matches(detail)) return
-      resetTerminalView()
-    }
     const onCopyScreen = (event: Event) => {
       if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) copyScreen()
     }
@@ -1669,19 +1654,17 @@ export default function TerminalView({
     }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
-    window.addEventListener(TERMINAL_RESET_EVENT, onReset)
     window.addEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
     window.addEventListener(TERMINAL_EXPORT_EVENT, onExport)
     window.addEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
-      window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
       window.removeEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
       window.removeEventListener(TERMINAL_EXPORT_EVENT, onExport)
       window.removeEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     }
-  }, [clearBuffer, clearInput, copyScreen, exportBuffer, openSearch, resetTerminalView, terminalId])
+  }, [clearBuffer, clearInput, copyScreen, exportBuffer, openSearch, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {

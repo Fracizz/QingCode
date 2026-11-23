@@ -20,8 +20,6 @@
       ]
     },
     "dialog:default",
-    "sql:default",
-    "sql:allow-execute",
     "core:webview:allow-create-webview-window",
     "core:window:allow-minimize",
     "core:window:allow-maximize",

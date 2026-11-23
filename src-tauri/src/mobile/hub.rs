@@ -660,23 +660,6 @@ impl Hub {
         Ok(resize)
     }
 
-    /// 最近的输入来源记录（不含内容），供电脑端查看谁在什么时候输入过。
-    pub(super) fn input_log(&self, id: &str) -> Result<Value, String> {
-        let inner = self.inner.lock().unwrap();
-        let session = inner.live(id).ok_or("终端不存在。")?;
-        Ok(json!(session
-            .sharing
-            .input_log
-            .iter()
-            .rev()
-            .map(|record| json!({
-                "name": inner.controller_name(&record.by),
-                "kind": HubState::controller_kind(&record.by),
-                "at": record.at_ms, "bytes": record.bytes, "automatic": record.automatic,
-            }))
-            .collect::<Vec<_>>()))
-    }
-
     /// 电脑终端镜像已通过电脑端检查，手机可以接入。
     pub(super) fn mirror_approved(&self, id: &str) -> bool {
         self.inner

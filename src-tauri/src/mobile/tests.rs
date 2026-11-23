@@ -475,9 +475,6 @@ fn the_last_typist_owns_the_size_and_desktop_size_is_remembered() {
         hub.device_input("term-1", "phone", "\x1b[24;80R").unwrap(),
         InputDecision::Drop
     );
-    let log = hub.input_log("term-1").unwrap();
-    assert_eq!(log[0]["name"], DESKTOP_NAME);
-    assert_eq!(log[1]["name"], "phone-name");
 }
 
 #[test]

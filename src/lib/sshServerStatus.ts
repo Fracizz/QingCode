@@ -240,11 +240,6 @@ export function sshServerSwitchBlocker(state: SshServerState): string | null {
   return null
 }
 
-/** 连接配置为 SSH 模式（零足迹直连）：没有远端服务，芯片与菜单按 SSH 模式展示。 */
-export function sshServerDisabledBySetting(state: SshServerState): boolean {
-  return state.connectionMode === 'ssh'
-}
-
 /** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到远端服务」。 */
 export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'

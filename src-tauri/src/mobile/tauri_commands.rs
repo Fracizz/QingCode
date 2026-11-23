@@ -400,15 +400,6 @@ pub async fn mobile_terminal_kick_devices(id: String, app: AppHandle) -> Result<
     Ok(())
 }
 
-/// 最近的输入来源（谁、何时、多少字节），不含内容。
-#[tauri::command]
-pub fn mobile_terminal_input_log(
-    id: String,
-    state: State<'_, MobileState>,
-) -> Result<Value, String> {
-    state.hub.input_log(&id)
-}
-
 /// 主窗口重载后恢复各终端的共享提示。镜像在 Rust 侧记录，重载不影响手机。
 #[tauri::command]
 pub fn mobile_terminal_controls(

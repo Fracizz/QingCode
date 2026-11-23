@@ -47,7 +47,7 @@ pub fn ipc_endpoint_file() -> PathBuf {
     app_data_dir().join("qingcode.ipc")
 }
 
-/// Absolute `sqlite:` URL for tauri-plugin-sql (dev) or relative name (release).
+/// Absolute `sqlite:` URL (dev) or name relative to the app config dir (release); see `app_db.rs`.
 pub fn build_db_url() -> String {
     if cfg!(debug_assertions) {
         let db = db_file();

@@ -130,7 +130,6 @@ export {
   hasTerminalScrollback,
   hydrateTerminalOutputForTabs,
   persistTerminalOutputNow,
-  scheduleTerminalOutputPersist,
   seedTerminalOutputFromPersist,
   subscribeTerminalOutput,
   type TerminalViewSnapshot,
