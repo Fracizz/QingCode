@@ -65,6 +65,21 @@ export function planTerminalRestore(tab: RestorableTerminal): TerminalRestorePla
   }
 }
 
+/**
+ * 视图挂载时回放了本次启动前持久化的历史，且接的是仍在运行的原进程（正要接回或已接回）：
+ * 回放完要让程序整屏重绘一次。持久化的是截断过的原始字节流，Claude Code 这类行内 TUI
+ * 按差量重画，从半截回放出来的屏幕与程序以为的不一致，之后的每帧都会画错位置。
+ * 新建的进程（create）和已结束的终端不需要。
+ */
+export function restoredReplayNeedsRedraw(
+  hadRestoredHistory: boolean,
+  tab: (RestorableTerminal & Pick<TerminalTab, 'status'>) | undefined
+): boolean {
+  if (!hadRestoredHistory || !tab || tab.persistent !== true) return false
+  if (tab.status === 'exited') return planTerminalRestore(tab).mode === 'attach'
+  return true
+}
+
 /** Match the spawn decision on every client/remote OS, never infer it from a path or shell. */
 export function terminalRestoreNotices(tab: RestorableTerminal): {
   history: string

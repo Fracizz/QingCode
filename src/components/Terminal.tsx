@@ -37,7 +37,11 @@ import {
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
 import { runOnFrameOrTimeout } from '@/lib/terminal/frameOrTimeout'
-import { planTerminalRestore, terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import {
+  planTerminalRestore,
+  restoredReplayNeedsRedraw,
+  terminalRestoreNotices,
+} from '@/lib/terminal/terminalRestorePlan'
 import { publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { formatTerminalQuote } from '@/lib/terminal/terminalQuote'
 import {
@@ -240,6 +244,8 @@ export default function TerminalView({
   const followBottomUntilRef = useRef(0)
   /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
   const redrawPendingRef = useRef(false)
+  /** 本次挂载回放了重启前持久化的历史、接的是仍在运行的原进程：接回完成后要整屏重绘一次。 */
+  const restoredRedrawRef = useRef(false)
   /**
    * 正在解析的屏幕快照数。快照按 daemon 网格排版、整行依赖自动折行，xterm 又是分帧异步
    * 解析的：解析完之前任何一次 fit 改了列数，后半段就会逐行错位成阶梯。期间推迟所有 fit。
@@ -1380,6 +1386,13 @@ export default function TerminalView({
       resizeGridFromContainer()
       setReplayMasked(true)
       let replaying = true
+      // 回放了本次启动前持久化的历史、接的又是仍在运行的原进程：那是截断过的原始字节流，
+      // Claude Code 这类行内 TUI 按差量重画（只改变化的格子），从半截回放出来的屏幕和程序
+      // 以为的不一致，之后每帧都画错位置（叠出多行转圈、文字互相覆盖）。接回完成后让它整屏重绘一次。
+      restoredRedrawRef.current = restoredReplayNeedsRedraw(
+        hadRestoredScrollback,
+        useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+      )
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
@@ -1389,7 +1402,7 @@ export default function TerminalView({
           lastOutputParsedAtRef.current = Date.now()
           followBottomAfterResize()
           if (!isReplay || xtermRef.current !== term) return
-          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
+          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通缓冲区见下方 restoredRedrawRef。
           if (term.buffer.active.type !== 'alternate') return
           redrawPendingRef.current = true
           scheduleFit(true, false)
@@ -1429,6 +1442,17 @@ export default function TerminalView({
       replaying = false
       term.write('', () => {
         historyParsed = true
+        // 挂载前已经接回（未打开的项目由兜底计时器先接回）：没有后续的状态变化，这里直接重绘；
+        // 仍在接回途中的由下方状态 effect 在转为运行中时处理，避免重绘两次。
+        if (
+          restoredRedrawRef.current &&
+          xtermRef.current === term &&
+          useTerminalStore.getState().terminals.find(t => t.id === terminalId)?.status === 'running'
+        ) {
+          restoredRedrawRef.current = false
+          redrawPendingRef.current = true
+          scheduleFit(true, false)
+        }
         // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
         if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })
@@ -1739,6 +1763,15 @@ export default function TerminalView({
           term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
         }
       })()
+    } else if (
+      terminal.status === 'running' &&
+      previous !== 'running' &&
+      restoredRedrawRef.current
+    ) {
+      // 回放了持久化历史的原进程接回完成（见回放处 restoredRedrawRef 的说明），整屏重绘一次。
+      restoredRedrawRef.current = false
+      redrawPendingRef.current = true
+      scheduleFit(true, false)
     } else if (
       terminal.status === 'running' &&
       previous === 'starting' &&
