@@ -4115,6 +4115,7 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "dirs",
  "encoding_rs",
  "futures-util",

@@ -766,6 +766,22 @@ mod attachment_tests {
     }
 
     #[test]
+    fn batch_directory_adds_suffix_when_same_millisecond_exists() {
+        let root = std::env::temp_dir().join(format!(
+            "qingcode-paste-batch-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let allowlist = trusted_project(&root);
+        let stamp = "20260102-030405-006";
+        let first = create_batch_directory(&root, stamp, &allowlist).unwrap();
+        let second = create_batch_directory(&root, stamp, &allowlist).unwrap();
+        assert_eq!(first, root.join(stamp));
+        assert_eq!(second, root.join(format!("{stamp}-2")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn project_attachment_roundtrip_uses_repository_and_preserves_existing_images() {
         project_roundtrip(&std::env::temp_dir());
     }
