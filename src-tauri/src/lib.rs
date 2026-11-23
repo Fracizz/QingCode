@@ -912,6 +912,7 @@ pub fn run() {
             remote_ssh::direct_agent_probe,
             remote_ssh::direct_agent_test,
             remote_ssh::direct_agent_save,
+            remote_ssh::direct_agent_forget,
             remote_ssh::direct_agent_provision,
             remote_ssh::direct_agent_manage,
             remote_ssh::direct_agent_update,

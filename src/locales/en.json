@@ -1656,7 +1656,7 @@
     "私钥（推荐，WSL 无需密码）": "Private key (recommended; no password needed for WSL)",
     "端口": "Port",
     "认证方式": "Authentication",
-    "删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），删除后这些项目将无法连接，需要重新绑定连接。此操作不可撤销。": "Delete connection {label}? It is still used by {count} remote project(s) ({names}); they will be unable to connect until rebound to another connection. This cannot be undone.",
+    "删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），这些项目及 Server 配对凭据将一并移除（远端文件不受影响）。此操作不可撤销。": "Delete connection {label}? It is still used by {count} remote project(s) ({names}); those projects and the Server pairing credentials will be removed too (remote files are not affected). This cannot be undone.",
     "请输入 SSH 密码以测试连接。": "Enter the SSH password to test the connection.",
     "还没有 SSH 连接。新建一个连接，或通过「打开 SSH 项目」创建。": "No SSH connections yet. Create one here, or via “Open SSH Project”.",
     "远程连接": "Remote Connections",

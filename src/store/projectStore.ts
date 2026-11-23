@@ -13,7 +13,7 @@ import {
   renameEditorPaths,
 } from './editorSessionBridge'
 import { translate } from '../lib/i18n'
-import { enrichDirectAgentConnections } from '../lib/directAgent'
+import { directAgentApi, enrichDirectAgentConnections } from '../lib/directAgent'
 import {
   formatExpandDirErrorToast,
   formatReadDirErrorToast,
@@ -77,6 +77,7 @@ import {
   requestSshReconnect,
   forgetSshSessionSecrets,
   deleteSavedSshSecrets,
+  sshConnectionIdFromUri,
   sshRootUri,
   SSH_CONNECTIONS_CHANGED_EVENT,
   waitForSshWorkspaceConnection,
@@ -516,9 +517,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   deleteSshConnection: async id => {
+    // 连接删除后，引用它的远程项目已无法再连接，一并移除，避免残留“重新连接”入口。
+    const refs = get().projects.filter(
+      project => !project.ephemeral && (project.connection_id === id || sshConnectionIdFromUri(project.path) === id)
+    )
+    for (const project of refs) {
+      cancelSshWarmup(project.path)
+      cancelSshOpening(sshOpeningKey(project))
+      await safeInvoke('注销 SSH 项目', 'ssh_forget_workspace_root', { rootUri: project.path }).catch(() => undefined)
+      await deleteProjectRows(project.id)
+    }
     await deleteSshConnectionRow(id)
     forgetSshSessionSecrets(id)
     await deleteSavedSshSecrets(id).catch(() => undefined)
+    // Server 配对凭据随连接一起清除。
+    await directAgentApi.forget?.(id).catch(() => undefined)
+    if (refs.length > 0) {
+      const removed = new Set(refs.map(project => project.id))
+      const wasCurrent = !!get().currentProject && removed.has(get().currentProject!.id)
+      set(s => {
+        const projectTrees = { ...s.projectTrees }
+        const expandedProjects = { ...s.expandedProjects }
+        for (const projectId of removed) {
+          delete projectTrees[projectId]
+          delete expandedProjects[projectId]
+        }
+        return {
+          currentProject: wasCurrent ? null : s.currentProject,
+          recentFiles: wasCurrent ? [] : s.recentFiles,
+          fileTree: wasCurrent ? [] : s.fileTree,
+          projectTrees,
+          expandedProjects,
+          unavailableProjectIds: s.unavailableProjectIds.filter(projectId => !removed.has(projectId)),
+        }
+      })
+      // 先更新可移植种子，否则启动同步会把项目以新 id 重新插入。
+      await persistProjectsToUserSettings()
+      await get().loadProjects({ syncFromSettings: false })
+    }
     await get().loadSshConnections()
     window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
   },

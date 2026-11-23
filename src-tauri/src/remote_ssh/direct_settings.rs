@@ -435,6 +435,46 @@ pub async fn direct_agent_save(
     Ok(())
 }
 
+/// 删除 SSH 连接时一并清除该连接的 Server 配对凭据与内存中的直连状态。
+#[tauri::command]
+pub async fn direct_agent_forget(
+    connection_id: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let gate = manager.server_gate(&format!("direct-config|{connection_id}"))?;
+    let _guard = gate.lock().await;
+    {
+        let _store = STORE_WRITE.lock().map_err(|_| "Server 凭据存储不可用")?;
+        let mut records = read(&app)?;
+        if records.remove(&connection_id).is_some() {
+            write(&app, &records)?;
+        }
+    }
+    let previous = manager
+        .direct_connections
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
+    if let Some(old) = previous {
+        direct::close_connection(&old.endpoint, &connection_id);
+        if old.tunnel.is_some() {
+            tunnel::forget(&connection_id);
+        }
+    }
+    manager
+        .direct_active
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
+    manager
+        .direct_failures
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
+    Ok(())
+}
+
 pub(super) fn startup_enabled(app: &AppHandle, id: &str) -> Result<bool, String> {
     Ok(read(app)?
         .get(id)

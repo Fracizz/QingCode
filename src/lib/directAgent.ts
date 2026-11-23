@@ -92,6 +92,7 @@ export interface DirectAgentApi {
   probe(host: string, port: number): Promise<{ certificateFingerprint: string }>
   test(target: DirectAgentTarget): Promise<{ version: string; protocol: number }>
   save(target: DirectAgentTarget & { enabled: boolean }): Promise<void>
+  forget?(connectionId: string): Promise<void>
   firewallPlatform?(connectionId: string, sshConnectionId?: string): Promise<DirectAgentFirewallPlatform | null>
   firewallPlan?(target: DirectAgentFirewallTarget): Promise<DirectAgentFirewallPlan>
   firewallApply?(target: DirectAgentFirewallTarget & { expectedPlanSha256: string }): Promise<DirectAgentFirewallResult>
@@ -121,6 +122,7 @@ export const directAgentApi: DirectAgentApi = {
   probe: (host, port) => safeInvoke('检查 Server 服务器身份', 'direct_agent_probe', { host, port }),
   test: target => safeInvoke('测试 Server 直连', 'direct_agent_test', { ...target }),
   save: target => safeInvoke('保存 Server 直连配置', 'direct_agent_save', { ...target }),
+  forget: connectionId => safeInvoke('清除 Server 配对凭据', 'direct_agent_forget', { connectionId }),
   firewallPlatform: (connectionId, sshConnectionId) => safeInvoke('识别远端系统', 'direct_agent_firewall_platform', { connectionId, sshConnectionId }),
   firewallPlan: target => safeInvoke('检查 SSH 防火墙授权', 'direct_agent_firewall_plan', { ...target }),
   firewallApply: target => safeInvoke('通过 SSH 放行 Server 端口', 'direct_agent_firewall_apply', { ...target }),

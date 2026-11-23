@@ -703,7 +703,7 @@ export default function RemoteConnectionsManager() {
       title: t('删除 SSH 连接'),
       message:
         refs.length > 0
-          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），删除后这些项目将无法连接，需要重新绑定连接。此操作不可撤销。', {
+          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），这些项目及 Server 配对凭据将一并移除（远端文件不受影响）。此操作不可撤销。', {
               label,
               count: refs.length,
               names: refs.map(project => project.name).join('、'),
