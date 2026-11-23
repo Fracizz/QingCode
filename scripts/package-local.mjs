@@ -301,7 +301,7 @@ async function main(args) {
 }
 
 // 打包依赖 release 增量编译，缓存需要保留；但旧哈希目录会堆积，打包成功后按
-// prune-rust-target.ps1 的策略只清增量缓存（每 crate 保留 3 份、7 天未用、总量 10GB）。失败只告警。
+// prune-rust-target.ps1 的策略只清增量缓存（每 crate 保留 3 份、7 天未用、总量 6GB）。失败只告警。
 function pruneRustTarget() {
   if (process.platform !== 'win32') return
   try {
