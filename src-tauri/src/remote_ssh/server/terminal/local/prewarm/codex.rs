@@ -238,6 +238,46 @@ pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
 const SESSION_LOST: &str = "cli_session_lost";
 /// 单次创建超过总时限（连接或启动卡住）：属于暂时性失败，退避后重试。
 pub(super) const CREATE_TIMED_OUT: &str = "prewarm_create_timeout";
+/// CLI 在时限内未出现输入界面或未确认目录：多为偶发启动慢，先重试；连续超时才暂停。
+pub(super) const READY_TIMED_OUT: &str = "等待 CLI 输入界面或目录确认超时";
+/// 连续就绪超时达到该次数才暂停为 `cli_not_ready`（即超时后自动重试一次）。
+pub(super) const READY_TIMEOUT_PAUSE_AFTER: u32 = 2;
+/// 诊断里保留的屏幕末尾行数与单行长度上限。
+const SCREEN_TAIL_LINES: usize = 8;
+const SCREEN_TAIL_CHARS: usize = 120;
+
+/// 就绪超时时的屏幕末尾，用于诊断卡在哪个画面。
+/// 去掉专用目录和疑似路径的片段，不把用户路径写进诊断。
+fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
+    let anchors = [anchor.to_string(), anchor.replace('\\', "/")];
+    let mut lines: Vec<String> = screen
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut line = line.to_string();
+            for anchor in anchors.iter().filter(|a| !a.is_empty()) {
+                line = line.replace(anchor.as_str(), "<anchor>");
+            }
+            line.split(' ')
+                .map(|word| {
+                    if word.contains('/') || word.contains('\\') {
+                        "<path>"
+                    } else {
+                        word
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(SCREEN_TAIL_CHARS)
+                .collect()
+        })
+        .collect();
+    let skip = lines.len().saturating_sub(SCREEN_TAIL_LINES);
+    lines.drain(..skip);
+    lines
+}
 
 /// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
 pub(super) fn retry_later(error: &str) -> bool {
@@ -900,11 +940,21 @@ pub(super) async fn prepare_at(
         {
             HANDOFF_UNAVAILABLE.to_string()
         } else {
-            "等待 CLI 输入界面或目录确认超时".to_string()
+            READY_TIMED_OUT.to_string()
         }
     })
     .and_then(|result| result)
     .map_err(|error| session_error(session, error));
+    if ready.as_ref().is_err_and(|error| error == READY_TIMED_OUT) {
+        super::trace(
+            "ready_timeout_screen",
+            serde_json::json!({
+                "agent": agent,
+                "remote": remote,
+                "screen": screen_tail_for_diagnostics(&codex.screen.screen().contents(), cwd),
+            }),
+        );
+    }
     #[cfg(test)]
     if ready.is_err() {
         eprintln!("CLI readiness screen: {}", codex.screen.screen().contents());

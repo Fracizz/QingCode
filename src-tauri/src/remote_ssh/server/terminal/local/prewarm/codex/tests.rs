@@ -76,8 +76,26 @@ fn lost_daemon_session_is_retried_instead_of_pausing_as_cli_not_ready() {
     let lost = format!("{SESSION_LOST}: daemon 连接已关闭");
     assert!(retry_later(&lost));
     assert_eq!(interaction_blocker(&lost), None);
-    assert!(!retry_later("等待 CLI 输入界面或目录确认超时"));
+    // 就绪超时由预热池按连续次数决定重试或暂停，不在这里一律当暂时性失败。
+    assert!(!retry_later(READY_TIMED_OUT));
+    assert_eq!(interaction_blocker(READY_TIMED_OUT), None);
     assert!(!retry_later(LOGIN_REQUIRED));
+}
+
+#[test]
+fn ready_timeout_screen_tail_drops_paths_and_keeps_last_lines() {
+    let screen = format!(
+        "{}\nWelcome to Claude Code\n  cwd: D:\\Users\\me\\.qingcode\\cli-prewarm\\a1\nUpdate available! Run: npm i -g pkg\n\n❯ Try \"fix lint\"",
+        (0..20).map(|i| format!("old {i}")).collect::<Vec<_>>().join("\n")
+    );
+    let tail = screen_tail_for_diagnostics(&screen, r"D:\Users\me\.qingcode\cli-prewarm\a1");
+    assert_eq!(tail.len(), SCREEN_TAIL_LINES);
+    assert_eq!(tail.last().unwrap(), "❯ Try \"fix lint\"");
+    assert!(tail.contains(&"  cwd: <anchor>".to_string()));
+    assert!(tail.contains(&"Update available! Run: npm i -g pkg".to_string()));
+    assert!(!tail.iter().any(|line| line.contains("Users")));
+    let other = screen_tail_for_diagnostics("open /home/u/secret now", "/anchor");
+    assert_eq!(other, vec!["open <path> now".to_string()]);
 }
 
 #[test]

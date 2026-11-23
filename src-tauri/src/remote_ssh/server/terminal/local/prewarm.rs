@@ -217,6 +217,8 @@ struct PoolState {
     running: bool,
     paused_reason: Option<&'static str>,
     preparing: bool,
+    /// 连续 CLI 就绪超时次数；成功或配置变化时清零。
+    ready_timeouts: u32,
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
@@ -458,6 +460,7 @@ impl ShellPrewarmPool {
         state.generation += 1;
         state.preparing = false;
         state.paused_reason = None;
+        state.ready_timeouts = 0;
         state.shells.clear();
         self.1.notify_waiters();
     }
@@ -602,6 +605,7 @@ impl ShellPrewarmPool {
             state.generation += 1;
             state.preparing = false;
             state.paused_reason = None;
+            state.ready_timeouts = 0;
             self.1.notify_waiters();
             self.2.notify_one();
         }
@@ -1307,6 +1311,7 @@ impl ShellPrewarmPool {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.generation == generation {
                     state.preparing = false;
+                    state.ready_timeouts = 0;
                     if state.refill_slots(target.count) == 0 {
                         continue;
                     }
@@ -1330,9 +1335,15 @@ impl ShellPrewarmPool {
                         continue;
                     }
                     state.preparing = false;
+                    // CLI 偶发启动慢导致就绪超时：先自动重试，连续超时才暂停为 cli_not_ready。
+                    let retry_timeout = error == codex::READY_TIMED_OUT && {
+                        state.ready_timeouts += 1;
+                        state.ready_timeouts < codex::READY_TIMEOUT_PAUSE_AFTER
+                    };
                     // 专用目录暂被占用（已领取的会话仍在用）或 daemon 会话中途断开（远端服务升级等）：
                     // 按普通失败退避重试，不要求用户切换配置。
                     if !codex::retry_later(&error)
+                        && !retry_timeout
                         && target
                             .key
                             .profile
@@ -1377,6 +1388,17 @@ impl ShellPrewarmPool {
                                 "cli_not_ready"
                             },
                         );
+                        continue;
+                    }
+                    if retry_timeout {
+                        // 已等满就绪时限，立即重试一次，不再额外退避。
+                        trace(
+                            "ready_timeout_retry",
+                            serde_json::json!({"remote": remote, "attempt": state.ready_timeouts}),
+                        );
+                        state.paused_reason = None;
+                        drop(state);
+                        self.2.notify_one();
                         continue;
                     }
                     state.paused_reason = Some(if error == codex::ANCHOR_BUSY {
