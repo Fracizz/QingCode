@@ -54,7 +54,7 @@ import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
 import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
 import InfoTipCard from './InfoTipCard'
-import { buildProjectFilterData } from '../lib/projectManagerFilters'
+import { buildProjectFilterData, buildProjectSourceOptions } from '../lib/projectManagerFilters'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -114,12 +114,10 @@ export default function ProjectManager() {
     () => buildProjectFilterData(projects, sshConnections, projectLabels, localLabel),
     [projects, sshConnections, projectLabels, localLabel]
   )
-  const sourceOptions = useMemo(() => {
-    const sources = new Map([...filterData.values()].map(data => [data.source, data]))
-    return [...sources.values()].sort((a, b) =>
-      a.sourceLabel.localeCompare(b.sourceLabel, language)
-    )
-  }, [filterData, language])
+  const sourceOptions = useMemo(
+    () => buildProjectSourceOptions(filterData, sshConnections, language),
+    [filterData, sshConnections, language]
+  )
 
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)

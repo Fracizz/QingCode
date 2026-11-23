@@ -43,9 +43,13 @@ export default function SshReconnectDialog() {
       setError('')
       setDirectInfo(null)
       setCheckingProfile(true)
+      // 连接配置已被删除：项目无法再连接，静默移除，不再弹出重连提示。
+      const dropOrphan = () => {
+        setProject(null)
+        void useProjectStore.getState().pruneOrphanSshProjects()
+      }
       if (!requested.connection_id) {
-        setError('SSH 项目缺少连接配置。')
-        setCheckingProfile(false)
+        dropOrphan()
         return
       }
       void Promise.all([
@@ -54,10 +58,13 @@ export default function SshReconnectDialog() {
       ])
         .then(([value, info]) => {
           if (request !== requestRef.current) return
+          if (!value) {
+            dropOrphan()
+            return
+          }
           setConnection(value)
           setDirectInfo(info)
-          setPrivateKeyPath(value?.private_key_path ?? '')
-          if (!value) setError('SSH 连接配置不存在。')
+          setPrivateKeyPath(value.private_key_path ?? '')
         })
         .catch(reason => {
           if (request === requestRef.current) setError(String(reason))
