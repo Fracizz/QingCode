@@ -1770,6 +1770,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           recordShellOpen(tab.projectId, result.outcome, performance.now() - tab.openRequestedAt, result.reason)
         }
       }
+      // 恢复时视图挂的常驻「正在接回」浮层：接回成功会被「已重新连接」替换，
+      // 回退新建时没有连接事件，这里收起，免得它一直留着。
+      if (activeTerminalOverlayNotice(id)?.sticky) clearTerminalOverlayNotice(id)
       // 先解除在途标记，补发的 resize/重绘才会真正下发。
       ptySpawnInFlight.delete(id)
       // 新建按 size 创建；接回按实测网格对齐，沿用 PTY 尺寸时本端不知道它的尺寸。
@@ -1786,6 +1789,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
     } catch (e) {
       console.error('spawnPendingTerminal failed:', e)
+      clearTerminalOverlayNotice(id)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id

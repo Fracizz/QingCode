@@ -37,7 +37,8 @@ import {
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
 import { runOnFrameOrTimeout } from '@/lib/terminal/frameOrTimeout'
-import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import { planTerminalRestore, terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import { publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { formatTerminalQuote } from '@/lib/terminal/terminalQuote'
 import {
   protectTerminalSelectionMenu,
@@ -1444,10 +1445,18 @@ export default function TerminalView({
         const latest = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         if (!latest || latest.status !== 'exited') return
         const pendingRestoreNote = translate(terminalRestoreNotices(latest).history)
-        if (sessionOpen === null) {
-          if (latest.awaitingRestoreSpawn) {
+        // 接回的是仍在运行的进程（常是 Claude Code 等行内 TUI）：提示写进缓冲会把光标下移，
+        // 接回后 TUI 按行数擦除重绘时整体错位（重复的转圈行），且接回成功后这行「正在接回」
+        // 永远留在屏幕底部，看起来像卡住。改用浮层，接回成功的「已重新连接」或失败提示会替换它。
+        const writeAwaitSpawnNote = () => {
+          if (planTerminalRestore(latest).mode === 'attach') {
+            publishTerminalOverlayNotice(terminalId, pendingRestoreNote, { sticky: true })
+          } else {
             term.writeln(`\r\n\x1b[90m[${pendingRestoreNote}]\x1b[0m`)
           }
+        }
+        if (sessionOpen === null) {
+          if (latest.awaitingRestoreSpawn) writeAwaitSpawnNote()
           return
         }
         const recovery = restoredExitRecovery({
@@ -1465,11 +1474,11 @@ export default function TerminalView({
           }))
           return
         }
-        const note =
-          recovery === 'await-spawn'
-            ? pendingRestoreNote
-            : translate('会话输出已恢复；可从终端标签重启进程')
-        term.writeln(`\r\n\x1b[90m[${note}]\x1b[0m`)
+        if (recovery === 'await-spawn') {
+          writeAwaitSpawnNote()
+          return
+        }
+        term.writeln(`\r\n\x1b[90m[${translate('会话输出已恢复；可从终端标签重启进程')}]\x1b[0m`)
         if (recovery === 'locked') writeFinishedTaskHint(term)
       })()
     }, 0)
