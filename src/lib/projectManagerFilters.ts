@@ -16,34 +16,24 @@ export interface ProjectFilterData {
 }
 
 export interface ProjectSourceOption {
-  kind: 'wsl' | 'ssh'
   source: string
   sourceLabel: string
 }
 
 /**
- * 来源筛选的细分选项：WSL 发行版取自项目；SSH 连接只列本机已配置的远程连接，
- * 引用了已删除/未知连接的项目仍可通过「SSH」大类筛到，不再生成无名的「SSH」条目。
+ * 来源筛选的远程连接选项：只列本机已配置的远程连接（WSL 也按普通 Linux SSH 连接添加），
+ * 按名称排序；不为已删除/未知连接生成无名条目。
  */
 export function buildProjectSourceOptions(
-  filterData: ReadonlyMap<string, ProjectFilterData>,
   connections: ReadonlyArray<SshConnection>,
   locale: string
 ): ProjectSourceOption[] {
-  const byLabel = (a: ProjectSourceOption, b: ProjectSourceOption) =>
-    a.sourceLabel.localeCompare(b.sourceLabel, locale)
-  const wsl = new Map<string, ProjectSourceOption>()
-  for (const data of filterData.values()) {
-    if (data.kind === 'wsl' && data.source !== 'wsl') {
-      wsl.set(data.source, { kind: 'wsl', source: data.source, sourceLabel: data.sourceLabel })
-    }
-  }
-  const ssh = connections.map(connection => ({
-    kind: 'ssh' as const,
-    source: `ssh:${connection.id}`,
-    sourceLabel: sshConnectionLabel(connection),
-  }))
-  return [...[...wsl.values()].sort(byLabel), ...ssh.sort(byLabel)]
+  return connections
+    .map(connection => ({
+      source: `ssh:${connection.id}`,
+      sourceLabel: sshConnectionLabel(connection),
+    }))
+    .sort((a, b) => a.sourceLabel.localeCompare(b.sourceLabel, locale))
 }
 
 /** Search all source metadata, even when a unique name has no visible source badge. */
