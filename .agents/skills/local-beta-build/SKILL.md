@@ -7,7 +7,7 @@ description: >-
 
 # 本地 beta 打包
 
-本技能对应仓库常规发版前流程：先把代码拉到 `test` 分支最新，再把 beta 号 +1，最后用统一 CLI **默认开启 `-SizeOptimized`（体积优化构建，与 CI 发布产物一致）** 在本地出包。只做本地动作：**不 commit、不 tag、不 push、不发布 Release**，除非用户另行要求。
+本技能对应仓库常规发版前流程：先把代码拉到 `test` 分支最新，再把 beta 号 +1，最后用统一 CLI 在本地出包。**日常测试默认不带 `--size-optimized`**（普通 release，增量快）；用户说「正式 beta / 体积优化 / 与 CI 一致 / 发布前验收」时才带（见第 3 步）。只做本地动作：**不 commit、不 tag、不 push、不发布 Release**，除非用户另行要求。
 
 本技能是**项目级技能**：唯一事实来源在仓库 `.claude/skills/local-beta-build/`，用 `cs-skills-deploy --project D:\Code\QingCode` 同步到仓库内 `.claude` / `.codex` / `.cursor` / `.agents`。不要同步到 `~/.claude`、`~/.codex`、`~/.cursor`、`~/.agents` 等全局目录，也不要发布到远端技能库。
 
@@ -23,7 +23,7 @@ agent-cli-x exec windows-91295 --cwd dl: --timeout 120 "Set-Location -LiteralPat
 
 - 该节点没有指向仓库的 workspace（只有 `dl` / `cdrive`，路径权限只读），所以**不要用 `read`/`edit`/`write` 改仓库文件**：每条命令都用 `exec --cwd dl:`，在命令开头 `Set-Location -LiteralPath 'D:\Code\QingCode'`，改版本号用 `pnpm bump:version <版本>`。
 - 每次 `exec` 都是新 Shell，步骤之间不保留目录与环境变量；多行或引号复杂的命令先写本地脚本再 `exec --script`。
-- 打包用后台模式：`exec ... "pnpm package:local start --jobs 3 --size-optimized"` 拿到 run-id，再用 `exec ... "pnpm package:local status <run-id>"` 轮询（或用 `exec --detach` + `job logs windows-91295 <id> --follow`）。不要用前台长命令占住默认超时。
+- 打包用后台模式：`exec ... "pnpm package:local start --jobs 3"`（正式 beta 追加 `--size-optimized`）拿到 run-id，再用 `exec ... "pnpm package:local status <run-id>"` 轮询（或用 `exec --detach` + `job logs windows-91295 <id> --follow`）。不要用前台长命令占住默认超时。
 - 产物留在 10.87 的 `D:\Code\QingCode\release\`，用户未要求时不要拷回本机；汇报里写明是在 10.87 构建，并给出远端路径。
 - 耗时记录照常写到**构建机**仓库的 `.dev/beta-build-timings.md`（在 10.87 上用 `exec` 追加）。
 - 不要在节点的 `exec` 里再调用 `agent-cli-x`（禁止中转）；遇到 `not allowed to relay` 停止并告知用户。
@@ -69,14 +69,16 @@ rg -n "0\.1\.18-beta\.\d+" --glob '!node_modules' --glob '!target' --glob '!rele
 ## 3. 本地打包
 
 ```powershell
-pnpm package:local start --jobs 3 --size-optimized   # 默认：后台体积优化构建，返回 run-id
-pnpm package:local --size-optimized                  # 前台：安装版 + Server 离线包 + APK
+pnpm package:local start --jobs 3                    # 默认（日常测试）：后台普通 release 构建，返回 run-id
+pnpm package:local start --jobs 3 --size-optimized   # 正式 beta：后台体积优化构建，与 CI 产物一致
+pnpm package:local                                   # 前台：安装版 + Server 离线包 + APK
 pnpm package:local status <run-id>                   # 查看状态与各阶段日志
 pnpm package:local cancel <run-id>                   # 取消（--task apk 只取消 APK）
 ```
 
-- **默认必须带 `--size-optimized`**：统一 CLI 把它转成 `-SizeOptimized` 转发给 `server` / `installer` 两个 Rust 阶段（`opt-level = "s"` + fat LTO + codegen-units 1、关闭 incremental），产物体积与 CI 发布一致（安装版约 −19%、Server 离线包约 −25%）。用 `pnpm package:local --plan --size-optimized` 可先确认参数已转发。
-- 体积优化会禁用增量缓存，冷编译可达 15 分钟以上（实测 930s，`server` 348s + `installer` 580s）：**务必用 `start` 后台模式**并轮询 `status`，或把输出 tee 到 `.dev/` 下的日志，不要用默认 2 分钟超时的前台命令。只有明确要求快速增量调试包时才可以省略该参数，且要在汇报里说明产物体积不同。
+- **何时带 `--size-optimized`**：默认（「本地构建 beta」「新的 BT 版本」等日常测试）**不带**，走 `[profile.release]`（opt-level 2、codegen-units 16、无 LTO、增量），只改前端或少量 Rust 时通常一两分钟出包；汇报里注明「普通 release，体积比 CI 产物大（安装版约 +19%、Server 离线包约 +25%）」。用户明确说「正式 beta」「体积优化」「与 CI 一致」「发布前验收」或要把包发给别人时才带。
+- `--size-optimized` 由统一 CLI 转成 `-SizeOptimized` 转发给 `server` / `installer` 两个 Rust 阶段（`opt-level = "s"` + fat LTO + codegen-units 1、关闭 incremental），产物体积与 CI 发布一致。用 `pnpm package:local --plan --size-optimized` 可先确认参数已转发。
+- 体积优化时依赖 crate 的缓存仍可复用，但项目自身 crate 每次全量重编，fat LTO 每次整体重做，下限约 12 分钟（实测 707～930s，`installer` 440～580s 最慢）：**务必用 `start` 后台模式**并轮询 `status`，或把输出 tee 到 `.dev/` 下的日志，不要用默认 2 分钟超时的前台命令。普通 release 也建议用 `start`，首次切换 profile 时依赖要按新设置重编一次。
 - 耗时不靠人工计时：`start` 记录的 run-id 里已有 `startedAt` / `finishedAt` 与每个 `tasks[]` 的起止时间，第 4 步据此计算总耗时与分段耗时。只有走前台 `pnpm package:local` 时才需要自己记下开始与结束时间。
 - 同一工作区只允许一个统一打包任务，不要与其他打包脚本（`pnpm package`、`package:exe` 等）并发。
 - 报 `active.lock` 时，先确认其中的 PID 与 Cargo/Java 子进程已退出再删除锁。
@@ -101,7 +103,7 @@ Get-ChildItem release | Sort-Object LastWriteTime -Descending | Select-Object -F
    - **Windows exe 总耗时** = `installer.finishedAt - run.startedAt`：从开跑到安装版 exe 产物完成，含前置 `frontend` / `icons` / `server` / `embed`（即用户实际等桌面安装版的时间）。
    - **APK 总耗时** = `apk.finishedAt - run.startedAt`：从开跑到 APK 产物完成（与 exe 并行，通常短于 exe）。
    - **全流程总耗时** = `run.finishedAt - run.startedAt`。
-   失败或取消时用最后一个时间戳并标注未完成，不要当作成功耗时记录。体积优化默认是冷构建，备注列要写清 `冷构建` / `增量构建` 与 `体积优化 --size-optimized`（或省略该参数的例外原因）。
+   失败或取消时用最后一个时间戳并标注未完成，不要当作成功耗时记录。备注列要写清 `冷构建` / `增量构建` 与 `体积优化 --size-optimized` / `普通 release`；两类耗时差距大，与上一条记录比较时只比同类。
 2. 追加一行到 `.dev/beta-build-timings.md`（`.dev` 已在 `.gitignore` 中，只留本地、不提交；文件不存在先写表头；备注列写清 `冷构建` / `增量构建`、失败或取消的阶段、APK 是否因缺工具链跳过；时间用本地时区，同一条记录内格式一致）：
 
 ```markdown
