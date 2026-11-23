@@ -5,7 +5,7 @@ import type { TerminalTab } from '../types'
 const mocks = vi.hoisted(() => ({ store: null as unknown as ReturnType<typeof makeStore> }))
 
 function makeStore() {
-  return create<{ terminals: TerminalTab[]; closeTerminal: (id: string) => Promise<void> }>()(set => ({
+  return create<{ terminals: TerminalTab[]; closeTerminal: (id: string, options?: { ignoreKillError?: boolean }) => Promise<void> }>()(set => ({
     terminals: [],
     closeTerminal: vi.fn(async (id: string) => set(s => ({ terminals: s.terminals.filter(tab => tab.id !== id) }))),
   }))
@@ -43,6 +43,17 @@ describe('dismissEndedTerminals', () => {
     setStatus('b', 'exited')
     expect(mocks.store.getState().terminals.map(t => t.id)).toEqual(['old', 'c'])
     expect(mocks.store.getState().closeTerminal).toHaveBeenCalledTimes(2)
+  })
+
+  it('应用重启后待接回的标签会被更新结束，立即关闭且忽略结束进程失败', () => {
+    mocks.store = makeStore()
+    const restore = { ...tab('r', 'c1', 'exited'), awaitingRestoreSpawn: true, persistent: true, ptyId: 'pty-r' }
+    const restoreOther = { ...tab('r2', 'c2', 'exited'), awaitingRestoreSpawn: true, persistent: true, ptyId: 'pty-r2' }
+    mocks.store.setState({ terminals: [restore, restoreOther, tab('a', 'c1', 'running')] })
+    expect(liveTerminalIdsOnConnection(mocks.store.getState().terminals, 'c1')).toEqual(['r', 'a'])
+    dismissTerminalsWhenEnded('c1')
+    expect(mocks.store.getState().terminals.map(t => t.id)).toEqual(['r2', 'a'])
+    expect(mocks.store.getState().closeTerminal).toHaveBeenCalledWith('r', { ignoreKillError: true })
   })
 
   it('超时后不再关闭', () => {

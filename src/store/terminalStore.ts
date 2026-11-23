@@ -515,7 +515,11 @@ interface TerminalState {
     name: string,
     linkage?: { runConfigId: string; runTaskId: string }
   ) => Promise<string | null>
-  closeTerminal: (id: string) => Promise<void>
+  /**
+   * `ignoreKillError`：进程已确认结束（如强制更新 Server 结束的终端）时，结束进程失败也照常移除标签，
+   * 不提示「关闭终端失败」。
+   */
+  closeTerminal: (id: string, options?: { ignoreKillError?: boolean }) => Promise<void>
   closeOtherTerminals: (id: string) => Promise<void>
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
@@ -788,7 +792,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return id
   },
 
-  closeTerminal: async (id: string) => {
+  closeTerminal: async (id: string, options) => {
     const spawnInFlight = ptySpawnInFlight.has(id)
     clearPtySpawnFallback(id)
     ptySpawnInFlight.delete(id)
@@ -802,11 +806,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       try {
         await killTerminalForClose(terminal, spawnInFlight)
       } catch (error) {
-        useProjectStore
-          .getState()
-          .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
-        releaseIntentionalPtyKill(id)
-        return
+        if (options?.ignoreKillError) {
+          console.warn(`close ended terminal ${id}: kill failed`, error)
+        } else {
+          useProjectStore
+            .getState()
+            .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
+          releaseIntentionalPtyKill(id)
+          return
+        }
       }
     }
     set(s => {

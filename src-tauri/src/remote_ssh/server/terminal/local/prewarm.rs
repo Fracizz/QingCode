@@ -1661,7 +1661,10 @@ async fn create_local_warm_shell(
     manager: &SshManager,
     target: &Target,
 ) -> Result<WarmShell, String> {
-    let (_, session) = open_local_session(manager).await?;
+    // 本机 Server 重启/更新期间连不上：CLI 尚未启动，按可重试处理。
+    let (_, session) = open_local_session(manager)
+        .await
+        .map_err(codex::transport_error)?;
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
         id,
@@ -1783,17 +1786,28 @@ async fn create_remote_warm_shell(
     target: &Target,
     remote: &RemoteTarget,
 ) -> Result<WarmShell, String> {
+    // 以下失败都发生在 CLI 启动前（远端服务重启/升级、网络抖动等），标为可重试，
+    // 不能让 CLI 预热因此停在 cli_not_ready。
     let directory = if target.key.profile.is_some() {
         // 已信任的项目根只用于授权打开连接；CLI 本身在专用空目录启动。
         let parsed = parse_remote_uri(&target.project_path)?;
-        let sftp = manager.open_sftp(&remote.connection_id).await?;
-        let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root).await?;
+        let sftp = manager
+            .open_sftp(&remote.connection_id)
+            .await
+            .map_err(codex::transport_error)?;
+        let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root)
+            .await
+            .map_err(codex::transport_error)?;
         if remote_native_directory(&canonical)
             != remote_native_directory(&remote.root.canonical_path)
         {
             return Err("预热终端需要匹配已注册项目根目录".into());
         }
-        Some(remote_cli_anchor(manager, &remote.connection_id).await?)
+        Some(
+            remote_cli_anchor(manager, &remote.connection_id)
+                .await
+                .map_err(codex::transport_error)?,
+        )
     } else {
         None
     };
@@ -1805,11 +1819,12 @@ async fn create_remote_warm_shell(
         &client_id,
         &remote.daemon,
     )
-    .await?;
+    .await
+    .map_err(codex::transport_error)?;
     if !remote_target_valid(manager, remote) {
         session.shutdown();
         transport.release();
-        return Err("预热期间项目授权或连接已变化".into());
+        return Err(codex::transport_error("预热期间项目授权或连接已变化"));
     }
     prepare_remote_shell(target, remote, transport, session, directory).await
 }

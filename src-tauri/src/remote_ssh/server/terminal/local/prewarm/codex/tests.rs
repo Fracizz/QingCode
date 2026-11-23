@@ -83,6 +83,19 @@ fn lost_daemon_session_is_retried_instead_of_pausing_as_cli_not_ready() {
 }
 
 #[test]
+fn transport_failure_before_cli_starts_is_retried_instead_of_pausing_as_cli_not_ready() {
+    // 强制更新 Server 后 daemon 刚重启：连接、校验目录或建 PTY 失败时 CLI 还没运行。
+    let failed = transport_error("daemon 握手失败");
+    assert!(failed.starts_with(TRANSPORT_FAILED));
+    assert!(failed.ends_with("daemon 握手失败"));
+    assert!(retry_later(&failed));
+    assert_eq!(interaction_blocker(&failed), None);
+    // CLI 启动后给出的结论仍按原规则暂停。
+    assert!(!retry_later(SERVER_OUTDATED));
+    assert!(!retry_later(CLI_NOT_INSTALLED));
+}
+
+#[test]
 fn ready_timeout_screen_tail_drops_paths_and_keeps_last_lines() {
     let screen = format!(
         "{}\nWelcome to Claude Code\n  cwd: D:\\Users\\me\\.qingcode\\cli-prewarm\\a1\nUpdate available! Run: npm i -g pkg\n\n❯ Try \"fix lint\"",

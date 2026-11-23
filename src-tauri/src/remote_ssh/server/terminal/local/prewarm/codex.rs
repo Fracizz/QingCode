@@ -236,6 +236,9 @@ pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
 pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
 /// 预热途中 daemon 会话断开（如远端服务升级重启 daemon）：与 CLI 本身无关，稍后自动重试。
 const SESSION_LOST: &str = "cli_session_lost";
+/// CLI 启动前的连接、目录校验或建 PTY 失败（远端服务刚重启/升级、网络抖动等）：
+/// CLI 尚未运行，与 CLI 本身无关，稍后自动重试。
+const TRANSPORT_FAILED: &str = "cli_transport_failed";
 /// 单次创建超过总时限（连接或启动卡住）：属于暂时性失败，退避后重试。
 pub(super) const CREATE_TIMED_OUT: &str = "prewarm_create_timeout";
 /// CLI 在时限内未出现输入界面或未确认目录：多为偶发启动慢，先重试；连续超时才暂停。
@@ -281,7 +284,15 @@ fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
 
 /// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
 pub(super) fn retry_later(error: &str) -> bool {
-    error == ANCHOR_BUSY || error == CREATE_TIMED_OUT || error.starts_with(SESSION_LOST)
+    error == ANCHOR_BUSY
+        || error == CREATE_TIMED_OUT
+        || error.starts_with(SESSION_LOST)
+        || error.starts_with(TRANSPORT_FAILED)
+}
+
+/// 把 CLI 启动前的基础设施错误标为 [`TRANSPORT_FAILED`]，预热循环据此退避重试而不暂停为 `cli_not_ready`。
+pub(super) fn transport_error(error: impl std::fmt::Display) -> String {
+    format!("{TRANSPORT_FAILED}: {error}")
 }
 
 /// 会话已关闭时，把超时等表象错误归为 [`SESSION_LOST`]，保留关闭原因便于诊断。
@@ -893,7 +904,11 @@ pub(super) async fn prepare_at(
     let session = entry.session.as_mut().ok_or("CLI 预热会话不可用")?;
     let created = session.request("pty.createTransient", &serde_json::json!({
         "cwd": launch_dir, "claimCwdFile": cwd_file, "shell": shell, "args": args, "env": env, "cols": 120, "rows": 30
-    })).await.map_err(|error| session_error(session, error))?;
+    })).await.map_err(|error| match session.closed_reason() {
+        Some(_) => session_error(session, error),
+        // 建 PTY 失败时 CLI 还没启动，不能据此判定 CLI 未就绪。
+        None => transport_error(error),
+    })?;
     entry.pty_id = created["id"].as_str().ok_or("预热应答缺少 id")?.into();
     let mut codex = CodexSession {
         screen: vt100::Parser::new_with_callbacks(

@@ -1,4 +1,4 @@
-import { dismissTerminalsWhenEnded } from '../lib/dismissEndedTerminals'
+import { broadcastDismissTerminalsWhenEnded } from '../lib/dismissEndedTerminals'
 import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
 import ConnectionDefaultProfile from './ConnectionDefaultProfile'
 import { hasBackend } from '../lib/runtimeCapabilities'
@@ -795,8 +795,8 @@ export default function RemoteConnectionsManager() {
         cancelLabel: t('继续等待'),
       })
       if (!accepted || controller.signal.aborted) return
-      // 更新会结束此连接托管的终端：它们退出后直接关闭标签，不保留「已退出」的窗口。
-      dismissTerminalsWhenEnded(state.connectionId)
+      // 更新会结束此连接托管的终端：各窗口里的这些标签退出后直接关闭，不保留「已退出」的窗口。
+      await broadcastDismissTerminalsWhenEnded(state.connectionId)
       if (state.transport === 'agent') {
         setForceDirect({ rootUri, confirmed: impact })
       } else {
