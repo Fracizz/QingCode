@@ -1,7 +1,7 @@
 ---
 name: local-beta-build
 description: >-
-  拉取最新代码并仅在本机构建新的 QingCode beta 版本（本地打包，不提交、不打标签、不推送、不发布）。
+  拉取最新代码并构建新的 QingCode beta 版本（优先通过 agent-cli-x 在 10.87 的 D:\Code\QingCode 构建，不可用时在本机；不提交、不打标签、不推送、不发布）。
   触发词：本地构建 beta、构建新的 beta 版本、新的 BT 版本、beta 打包、拉取代码然后本地构建、local beta build。
 ---
 
@@ -10,6 +10,23 @@ description: >-
 本技能对应仓库常规发版前流程：先把代码拉到 `test` 分支最新，再把 beta 号 +1，最后用统一 CLI **默认开启 `-SizeOptimized`（体积优化构建，与 CI 发布产物一致）** 在本地出包。只做本地动作：**不 commit、不 tag、不 push、不发布 Release**，除非用户另行要求。
 
 本技能是**项目级技能**：唯一事实来源在仓库 `.claude/skills/local-beta-build/`，用 `cs-skills-deploy --project D:\Code\QingCode` 同步到仓库内 `.claude` / `.codex` / `.cursor` / `.agents`。不要同步到 `~/.claude`、`~/.codex`、`~/.cursor`、`~/.agents` 等全局目录，也不要发布到远端技能库。
+
+## 0. 选择构建机（优先 10.87）
+
+先探测 agent-cli-x 节点 **192.168.10.87**（`windows-91295`）是否可用，可用就在它的 `D:\Code\QingCode` 上执行下文全部步骤；不可用才回退到本机当前仓库。
+
+```powershell
+agent-cli-x peer list 10.87          # exit 1 = 未登记 → 回退本机
+agent-cli-x info windows-91295       # exit 100/101/106 等 = 不可达/授权问题 → 回退本机，并在汇报里说明原因
+agent-cli-x exec windows-91295 --cwd dl: --timeout 120 "Set-Location -LiteralPath 'D:\Code\QingCode'; git status -sb"
+```
+
+- 该节点没有指向仓库的 workspace（只有 `dl` / `cdrive`，路径权限只读），所以**不要用 `read`/`edit`/`write` 改仓库文件**：每条命令都用 `exec --cwd dl:`，在命令开头 `Set-Location -LiteralPath 'D:\Code\QingCode'`，改版本号用 `pnpm bump:version <版本>`。
+- 每次 `exec` 都是新 Shell，步骤之间不保留目录与环境变量；多行或引号复杂的命令先写本地脚本再 `exec --script`。
+- 打包用后台模式：`exec ... "pnpm package:local start --jobs 3 --size-optimized"` 拿到 run-id，再用 `exec ... "pnpm package:local status <run-id>"` 轮询（或用 `exec --detach` + `job logs windows-91295 <id> --follow`）。不要用前台长命令占住默认超时。
+- 产物留在 10.87 的 `D:\Code\QingCode\release\`，用户未要求时不要拷回本机；汇报里写明是在 10.87 构建，并给出远端路径。
+- 耗时记录照常写到**构建机**仓库的 `.dev/beta-build-timings.md`（在 10.87 上用 `exec` 追加）。
+- 不要在节点的 `exec` 里再调用 `agent-cli-x`（禁止中转）；遇到 `not allowed to relay` 停止并告知用户。
 
 ## 前置检查
 
