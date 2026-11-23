@@ -895,6 +895,8 @@ describe('terminal persistent connection events', () => {
     mocks.attachTerminal.mockRejectedValueOnce(new Error('temporarily offline'))
     expect(await store.attachDetachedTerminals(project.id, 'conn', detached, { background: true })).toBe(0)
     expect(useTerminalStore.getState().terminals.some(tab => tab.ptyId === 'pty-retry')).toBe(false)
+    // 移除的临时标签不能残留在该项目记住的窗格绑定里。
+    expect(useTerminalStore.getState().activeTerminalByProject[project.id]).toBeUndefined()
     expect(mocks.killDetachedTerminal).not.toHaveBeenCalled()
     expect(mocks.killTerminal).not.toHaveBeenCalled()
 

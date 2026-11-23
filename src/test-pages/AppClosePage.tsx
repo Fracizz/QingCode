@@ -46,6 +46,10 @@ export function AppClosePage() {
         },
         closeTerminal: async tab => { record(`close:${tab.id}`) },
         markEnded: tab => { tab.endedAt = Date.now(); tab.status = 'exited'; record(`ended:${tab.id}`) },
+        removeEnded: tab => {
+          tabs.current = tabs.current.filter(current => current !== tab)
+          record(`removed:${tab.id}`)
+        },
         markDetached: tab => { record(`detached:${tab.id}`) },
         flush: () => record('flush'), destroy: async () => { record('destroy') },
       })

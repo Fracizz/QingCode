@@ -15,10 +15,11 @@ function tab(id: string, remote = true, overrides: Partial<TerminalTab> = {}): T
 
 function fixture(tabs: TerminalTab[], decisions = ['preserve']) {
   const events: string[] = []
+  const live = [...tabs]
   const deps: AppCloseDependencies = {
     pauseSpawns: vi.fn(async () => { events.push('pause') }),
     resumeSpawns: vi.fn(() => { events.push('resume') }),
-    terminals: () => tabs,
+    terminals: () => live,
     transferCount: () => 0,
     choose: vi.fn(async () => decisions.shift() ?? null),
     showProgress: vi.fn(),
@@ -26,6 +27,7 @@ function fixture(tabs: TerminalTab[], decisions = ['preserve']) {
     finishRemote: vi.fn(async (tab, action) => { events.push(`${action}:${tab.id}`) }),
     closeTerminal: vi.fn(async tab => { events.push(`close:${tab.id}`) }),
     markEnded: vi.fn(tab => { events.push(`ended:${tab.id}`); Object.assign(tab, { status: 'exited', endedAt: 123 }) }),
+    removeEnded: vi.fn(tab => { events.push(`removed:${tab.id}`); live.splice(live.indexOf(tab), 1) }),
     markDetached: vi.fn(tab => { events.push(`detached:${tab.id}`) }),
     flush: vi.fn(() => { events.push('flush') }),
     destroy: vi.fn(async () => { events.push('destroy') }),
@@ -68,14 +70,25 @@ describe('app close decisions', () => {
     expect(deps.destroy).not.toHaveBeenCalled()
   })
 
-  it('marks confirmed kills ended before persisting, leaving no live PTY to reattach', async () => {
-    const tabs = [tab('remote'), tab('other-project')]
+  it('removes confirmed remote kills from the terminal list before persisting', async () => {
+    const tabs = [tab('remote'), tab('other-project'), tab('compat', true, { persistent: false, ptyId: undefined }),
+      tab('local', false)]
     const { deps, events } = fixture(tabs, ['terminate'])
     await runAppClose(deps)
     expect(deps.finishRemote).toHaveBeenCalledTimes(2)
     expect(deps.finishRemote).toHaveBeenCalledWith(tabs[0], 'terminate')
     expect(deps.markDetached).not.toHaveBeenCalled()
-    expect(events.indexOf('ended:remote')).toBeLessThan(events.indexOf('flush'))
+    expect(deps.removeEnded).toHaveBeenCalledTimes(3)
+    expect(deps.markEnded).toHaveBeenCalledExactlyOnceWith(tabs[3])
+    expect(events.indexOf('removed:remote')).toBeLessThan(events.indexOf('flush'))
+  })
+
+  it('keeps preserve-path disconnected remote tabs in the list', async () => {
+    const tabs = [tab('remote'), tab('compat', true, { persistent: false, ptyId: undefined })]
+    const { deps } = fixture(tabs)
+    await runAppClose(deps)
+    expect(deps.removeEnded).not.toHaveBeenCalled()
+    expect(deps.markEnded).toHaveBeenCalledExactlyOnceWith(tabs[1])
   })
 
   it('retries only failures and never repeats acknowledged kills', async () => {
@@ -100,6 +113,7 @@ describe('app close decisions', () => {
     vi.mocked(deps.finishRemote).mockRejectedValueOnce(new Error('timeout')).mockResolvedValue(undefined)
     await runAppClose(deps)
     expect(deps.markEnded).not.toHaveBeenCalled()
+    expect(deps.removeEnded).not.toHaveBeenCalled()
     expect(deps.finishRemote).toHaveBeenLastCalledWith(remote, 'preserve')
     expect(deps.markDetached).toHaveBeenCalledWith(remote)
     expect(remote.ptyId).toBe('pty-offline')

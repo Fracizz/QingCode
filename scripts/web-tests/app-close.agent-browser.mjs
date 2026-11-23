@@ -35,7 +35,7 @@ try {
   verify('pending cleanup keeps the progress dialog visible', "!!document.querySelector('[role=dialog] [role=status]')")
   browser('screenshot', resolve(output, 'terminating.png'))
   browser('wait', '--fn', `${events}.includes('destroy')`)
-  verify('terminate records both remote sessions ended', `${events}.includes('ended:SSH') && ${events}.includes('ended:Server') && !${events}.includes('preserve:')`)
+  verify('terminate removes both remote sessions from the list', `${events}.includes('removed:SSH') && ${events}.includes('removed:Server') && ${events}.includes('ended:local') && !${events}.includes('preserve:')`)
 
   click('模拟远端未确认')
   click('结束远程终端并退出')

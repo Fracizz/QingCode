@@ -520,6 +520,8 @@ interface TerminalState {
    * 不提示「关闭终端失败」。
    */
   closeTerminal: (id: string, options?: { ignoreKillError?: boolean }) => Promise<void>
+  /** 进程已确认结束（如退出应用时选择结束远程终端）：只移除标签与输出缓存，不再结束进程。 */
+  removeEndedTerminal: (id: string) => void
   closeOtherTerminals: (id: string) => Promise<void>
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
@@ -825,6 +827,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         terminals,
         ...clearClosedFromPanes(s, closed.projectId, id, terminals),
       }
+    })
+    clearTerminalOutput(id)
+  },
+
+  removeEndedTerminal: (id: string) => {
+    clearPtySpawnFallback(id)
+    ptySpawnInFlight.delete(id)
+    lastPtySize.delete(id)
+    deferredPtySync.delete(id)
+    set(s => {
+      const closed = s.terminals.find(t => t.id === id)
+      if (!closed) return {}
+      const terminals = s.terminals.filter(t => t.id !== id)
+      return { terminals, ...clearClosedFromPanes(s, closed.projectId, id, terminals) }
     })
     clearTerminalOutput(id)
   },
@@ -1239,7 +1255,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (failed?.status !== 'exited' || !failed.restoreUnavailable) continue
         set(state => {
           const terminals = state.terminals.filter(terminal => terminal.id !== failed.id)
-          return { terminals, ...clearClosedFromPanes(state, projectId, pane, terminals) }
+          return { terminals, ...clearClosedFromPanes(state, projectId, failed.id, terminals) }
         })
         disconnectNoticeShown.delete(failed.id)
         lastPtySize.delete(failed.id)

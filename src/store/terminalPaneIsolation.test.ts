@@ -434,4 +434,18 @@ describe('terminal pane isolation', () => {
     expect(s.terminals.map(t => t.id).sort()).toEqual(['p1a', 'tr'])
     expect(s.secondaryTerminalId).toBe('tr')
   })
+  it('removeEndedTerminal drops the tab and rebinds the pane without killing the process', () => {
+    useTerminalStore.setState({
+      terminals: [tab('gone', 'primary', { cwd: 'ssh://conn/proj', status: 'exited' }), tab('kept', 'primary')],
+      activeTerminalId: 'gone',
+      activeTerminalByProject: { p1: 'gone' },
+    })
+    vi.mocked(safeInvoke).mockClear()
+    useTerminalStore.getState().removeEndedTerminal('gone')
+    const s = useTerminalStore.getState()
+    expect(s.terminals.map(t => t.id)).toEqual(['kept'])
+    expect(s.activeTerminalId).toBe('kept')
+    expect(s.activeTerminalByProject).toEqual({ p1: 'kept' })
+    expect(safeInvoke).not.toHaveBeenCalled()
+  })
 })
