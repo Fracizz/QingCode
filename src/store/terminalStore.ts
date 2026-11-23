@@ -31,6 +31,7 @@ import {
   disambiguateTerminalName,
   resolveNewTerminalName,
   terminalDisplayLabel,
+  posixSshShellLabelKey,
   windowsSshShellLabel,
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -663,8 +664,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const id = 'id' in reservation ? reservation.id : crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
     const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
+    // 远端只收到配置自身的 shell（见 spawn），POSIX 远程不能按本机默认 Shell 命名。
+    const posixSshLabel = posixSshShellLabelKey(projectPath, shell)
     const shellLabel =
-      windowsSshShellLabel(projectPath, nameShell) ?? translate(terminalShellLabelKey(nameShell))
+      (posixSshLabel && translate(posixSshLabel)) ??
+      windowsSshShellLabel(projectPath, nameShell) ??
+      translate(terminalShellLabelKey(nameShell))
     const baseName = resolveNewTerminalName(
       profile.name,
       profile.command,
