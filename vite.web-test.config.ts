@@ -34,6 +34,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'pairingFlow.js': ['mobile/android/web/pairingFlow.js', 'text/javascript'],
   'outputReader.js': ['mobile/android/web/outputReader.js', 'text/javascript'],
   'composeStatus.js': ['mobile/android/web/composeStatus.js', 'text/javascript'],
+  'newSessionDialog.js': ['mobile/android/web/newSessionDialog.js', 'text/javascript'],
   'sessionDrawer.js': ['mobile/android/web/sessionDrawer.js', 'text/javascript'],
   'sessionOverview.js': ['mobile/android/web/sessionOverview.js', 'text/javascript'],
   'sessionPrefs.js': ['mobile/android/web/sessionPrefs.js', 'text/javascript'],

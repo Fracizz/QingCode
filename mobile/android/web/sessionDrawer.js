@@ -217,10 +217,11 @@ export function createSessionDrawer({ prefix, remote, tracker = { busy: new Set(
     const busy = state.busy();
     const project = state.project();
     const profile = state.profile();
-    const current = sessions.find(item => item.id === selected);
+    // 电脑终端只在纵览里，顶栏沿用用户点选的条目。
+    const current = sessions.find(item => item.id === selected) ?? state.selectedEntry?.();
     setText(get('terminal-name'), current ? sessionName(current) : project?.name ?? t('终端'));
-    // 电脑终端不在本项目列表里，用接入时的条目判断。<svg> 没有 hidden 属性接口，要直接改特性。
-    get('terminal-prewarm').toggleAttribute('hidden', (current ?? state.selectedEntry?.())?.prewarm !== true);
+    // <svg> 没有 hidden 属性接口，要直接改特性。
+    get('terminal-prewarm').toggleAttribute('hidden', current?.prewarm !== true);
     // 顶栏副行空间有限：只留项目名和连接名（如 qingcode · WinDev），完整来源在会话侧栏里。
     setText(get('terminal-host'), project ? project.name + ' · ' + projectPlaceLabel({ ...project, host: '' }) : '');
     setText(get('session-context'), project ? profile.name + ' / ' + project.name + ' · ' + projectSourceLabel(project) : '');

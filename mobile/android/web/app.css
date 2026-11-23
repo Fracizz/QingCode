@@ -1390,11 +1390,17 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 
 /* 新建会话：与其他弹层一致的分组列表。 */
 .session-shortcuts { margin: 12px 0; background: var(--paper); }
-.session-shortcuts > button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; width: 100%; min-height: 52px; padding: 8px 14px; border: 0; border-radius: 0; background: transparent; font-size: 15px; font-weight: 600; text-align: left; }
-/* 行用 button 选择器抹掉了边框，分隔线要同等以上优先级才能生效。 */
-.session-shortcuts > button + button { border-top: 1px solid var(--divider); }
-.session-shortcuts > button small { font-size: 12px; font-weight: 400; color: var(--muted); }
-.session-shortcuts[aria-busy="true"] { opacity: .72; }
+.session-shortcuts > button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; padding: 8px 14px; border: 0; border-radius: 0; background: transparent; font-size: 15px; font-weight: 600; text-align: left; }
+.session-shortcuts > button ~ button { border-top: 1px solid var(--divider); }
+.session-shortcuts > button > span { min-width: 0; overflow-wrap: anywhere; }
+.session-shortcuts small { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.session-shortcuts small:empty, #terminal-create-result:has(.error[hidden]) { display: none; }
+.session-shortcuts > button[data-pending] { background: var(--accent-surface); color: var(--ink); opacity: 1; transition: none; }
+.session-shortcuts [data-pending] small, .session-shortcuts [data-retry] small { flex: none; color: var(--accent); }
+.session-shortcuts .session-spinner { display: block; width: 16px; height: 16px; }
+.session-shortcuts > #terminal-create-result { padding: 0 14px 10px; border: 0; }
+#terminal-create-sessions { display: grid; gap: 4px; }
+#terminal-create-sessions button { text-align: start; overflow-wrap: anywhere; }
 #new-session-dialog .dialog-actions { margin-top: 12px; }
 #viewport[data-columns="fixed"] { overflow-x: auto; }
 /* 下拉选项：隐藏的 select 只存值，点开后是与其他弹层一致的选择面板，不使用系统下拉样式。 */

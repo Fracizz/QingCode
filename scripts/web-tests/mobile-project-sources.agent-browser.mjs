@@ -27,7 +27,7 @@ const windowsPath = String.raw`D:\development\shared worktrees\android companion
 try {
   run('set', 'viewport', '390', '844')
   run('open', 'http://127.0.0.1:38439/mobile-android/')
-  run('eval', `localStorage.clear(); location.reload()`)
+  run('eval', `localStorage.clear(); localStorage.setItem('qingcode:mobile:motion', 'reduce'); location.reload()`)
   check('fixture starts ready', `!!window.__mobileFixture && typeof window.qingLink === 'function'`)
   run('eval', `window.__mobileFixture.state.projects = [
     { id: 'wsl-remote', name: 'django', kind: 'ssh', host: 'localhost', connectionName: 'WSL', path: 'ssh://wsl/home/code/django', lastOpenedAt: 3 },
@@ -42,6 +42,7 @@ try {
   run('click', '#pair-submit')
   check('computer connects', `document.getElementById('active-host').dataset.state === 'online'`)
   check('home no longer shows a recent projects section', `!document.querySelector('#home-projects') && !document.querySelector('#home-project-list')`)
+  run('wait', '--fn', `document.querySelector('#home-session-overview [data-project="win-remote"]')`)
   // 单条搜索结果不分组，来源直接显示在行内，用来验证项目行的小屏布局与快捷操作。
   run('click', '#dashboard-nav [data-page="project"]')
   run('fill', '#search', '252.107')
@@ -183,6 +184,37 @@ try {
   run('wait', '--fn', `${settled('new-session-dialog')} && ${hittable(claudeProfile)}`)
   run('click', claudeProfile)
   check('the selected profile creates one terminal in the target project and keeps the saved font', `${ready} && window.__mobileFixture.state.creates.length === window.__homeCreates + 1 && window.__mobileFixture.state.creates.at(-1).project === 'win-remote' && window.__mobileFixture.state.creates.at(-1).terminalProfile === 'claude' && window.__mobileFixture.terminalFontSize() === 8`)
+  run('eval', `window.__mobileFixture.addDesktopTerminal({ id: 'desktop-codex', project: 'local', title: 'Codex' });
+    window.__mobileFixture.pushScreen('desktop-codex', 'Codex local prompt');
+    window.qingBack()`)
+  const codex = '#home-session-overview [data-id="desktop-codex"] .row'
+  run('wait', '--fn', `document.querySelector('${codex}')`)
+  run('eval', `(() => {
+    const request = window.QingCodeNative.request;
+    window.__localListReads = 0;
+    window.QingCodeNative.request = (id, payload) => {
+      const args = JSON.parse(payload);
+      if (args.op === 'sessions' && args.project === 'local') window.__localListReads++;
+      if (args.op === 'poll' && args.id === 'desktop-codex' && !window.__deliverFirstScreen) {
+        window.__deliverFirstScreen = () => request(id, payload);
+        return;
+      }
+      request(id, payload);
+    };
+    performance.clearMeasures('qingcode.terminal.first-screen');
+  })()`)
+  run('click', codex)
+  check('local desktop Codex starts attaching from the home list without another project lookup',
+    `window.__deliverFirstScreen && window.__localListReads === 0 && document.querySelector('#terminal-status').textContent === '正在接入终端…' && document.querySelector('#send').disabled`)
+  run('eval', 'window.__deliverFirstScreen()')
+  check('Codex output is visible and its first screen has a timing entry',
+    `${ready} && window.__mobileFixture.terminalText().includes('Codex local prompt') && performance.getEntriesByName('qingcode.terminal.first-screen').length === 1`)
+  run('eval', 'window.qingBack()')
+  check('the resume card points to the last local Codex session', `document.querySelector('#resume-name').textContent === 'Codex'`)
+  run('click', '#resume')
+  check('resuming local Codex reuses its ID without creating or listing sessions again',
+    `${ready} && document.querySelector('#terminal-name').textContent.includes('Codex') && window.__localListReads === 0 && window.__mobileFixture.state.creates.length === window.__homeCreates + 1`)
+
 } catch (error) {
   results.push({ passed: false, error: String(error) })
   process.exitCode = 1
