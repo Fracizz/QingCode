@@ -471,17 +471,26 @@ pub(super) async fn apply_resize(
     rows: u16,
 ) -> Result<(), String> {
     let (cols, rows) = size(cols, rows);
-    if routes_through_ssh_table(app, kind, id) {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let previous = hub.screen_size(id);
+    // 先把新尺寸与尺寸方通知电脑端，再改 PTY：电脑端 xterm 要在 ConPTY / 程序按新尺寸
+    // 重绘之前换好网格，否则重绘落进旧网格（例如手机交还尺寸后仍是手机的窄网格），画面错位叠帧。
+    // 事件按发出顺序送达，改尺寸之后才产生的输出一定排在这条通知后面。
+    hub.with_session(id, |session| session.screen.resize(cols, rows));
+    emit_control(app, id);
+    let result = if routes_through_ssh_table(app, kind, id) {
         crate::remote_ssh::ssh_resize_terminal_unchecked(id.to_owned(), cols, rows, app.state())
-            .await?;
+            .await
     } else {
-        app.state::<crate::TerminalManager>()
-            .resize(id, cols, rows)?;
+        app.state::<crate::TerminalManager>().resize(id, cols, rows)
+    };
+    if result.is_err() {
+        if let Some((cols, rows)) = previous {
+            hub.with_session(id, |session| session.screen.resize(cols, rows));
+        }
+        emit_control(app, id);
     }
-    app.state::<MobileState>()
-        .hub
-        .with_session(id, |session| session.screen.resize(cols, rows));
-    Ok(())
+    result
 }
 
 /// 手机接入请求的参数，`size` 是手机报上的本机网格。
