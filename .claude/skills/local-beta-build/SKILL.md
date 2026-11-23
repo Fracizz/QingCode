@@ -7,7 +7,7 @@ description: >-
 
 # 本地 beta 打包
 
-本技能对应仓库常规发版前流程：先把代码拉到 `test` 分支最新，再把 beta 号 +1，最后用统一 CLI 在本地出包。只做本地动作：**不 commit、不 tag、不 push、不发布 Release**，除非用户另行要求。
+本技能对应仓库常规发版前流程：先把代码拉到 `test` 分支最新，再把 beta 号 +1，最后用统一 CLI **默认开启 `-SizeOptimized`（体积优化构建，与 CI 发布产物一致）** 在本地出包。只做本地动作：**不 commit、不 tag、不 push、不发布 Release**，除非用户另行要求。
 
 本技能是**项目级技能**：唯一事实来源在仓库 `.claude/skills/local-beta-build/`，用 `cs-skills-deploy --project D:\Code\QingCode` 同步到仓库内 `.claude` / `.codex` / `.cursor` / `.agents`。不要同步到 `~/.claude`、`~/.codex`、`~/.cursor`、`~/.agents` 等全局目录，也不要发布到远端技能库。
 
@@ -52,13 +52,14 @@ rg -n "0\.1\.18-beta\.\d+" --glob '!node_modules' --glob '!target' --glob '!rele
 ## 3. 本地打包
 
 ```powershell
-pnpm package:local                    # 前台：安装版 + Server 离线包 + APK
-pnpm package:local start --jobs 3     # 后台：返回 run-id，避免终端阻塞
-pnpm package:local status <run-id>    # 查看状态与各阶段日志
-pnpm package:local cancel <run-id>    # 取消（--task apk 只取消 APK）
+pnpm package:local start --jobs 3 --size-optimized   # 默认：后台体积优化构建，返回 run-id
+pnpm package:local --size-optimized                  # 前台：安装版 + Server 离线包 + APK
+pnpm package:local status <run-id>                   # 查看状态与各阶段日志
+pnpm package:local cancel <run-id>                   # 取消（--task apk 只取消 APK）
 ```
 
-- 冷构建 Rust 可能超过 10 分钟：优先 `start` 后台模式，或把输出 tee 到 `.dev/` 下的日志。大型任务不要用默认 2 分钟超时的前台命令。
+- **默认必须带 `--size-optimized`**：统一 CLI 把它转成 `-SizeOptimized` 转发给 `server` / `installer` 两个 Rust 阶段（`opt-level = "s"` + fat LTO + codegen-units 1、关闭 incremental），产物体积与 CI 发布一致（安装版约 −19%、Server 离线包约 −25%）。用 `pnpm package:local --plan --size-optimized` 可先确认参数已转发。
+- 体积优化会禁用增量缓存，冷编译可达 15 分钟以上（实测 930s，`server` 348s + `installer` 580s）：**务必用 `start` 后台模式**并轮询 `status`，或把输出 tee 到 `.dev/` 下的日志，不要用默认 2 分钟超时的前台命令。只有明确要求快速增量调试包时才可以省略该参数，且要在汇报里说明产物体积不同。
 - 耗时不靠人工计时：`start` 记录的 run-id 里已有 `startedAt` / `finishedAt` 与每个 `tasks[]` 的起止时间，第 4 步据此计算总耗时与分段耗时。只有走前台 `pnpm package:local` 时才需要自己记下开始与结束时间。
 - 同一工作区只允许一个统一打包任务，不要与其他打包脚本（`pnpm package`、`package:exe` 等）并发。
 - 报 `active.lock` 时，先确认其中的 PID 与 Cargo/Java 子进程已退出再删除锁。
@@ -83,7 +84,7 @@ Get-ChildItem release | Sort-Object LastWriteTime -Descending | Select-Object -F
    - **Windows exe 总耗时** = `installer.finishedAt - run.startedAt`：从开跑到安装版 exe 产物完成，含前置 `frontend` / `icons` / `server` / `embed`（即用户实际等桌面安装版的时间）。
    - **APK 总耗时** = `apk.finishedAt - run.startedAt`：从开跑到 APK 产物完成（与 exe 并行，通常短于 exe）。
    - **全流程总耗时** = `run.finishedAt - run.startedAt`。
-   失败或取消时用最后一个时间戳并标注未完成，不要当作成功耗时记录。
+   失败或取消时用最后一个时间戳并标注未完成，不要当作成功耗时记录。体积优化默认是冷构建，备注列要写清 `冷构建` / `增量构建` 与 `体积优化 --size-optimized`（或省略该参数的例外原因）。
 2. 追加一行到 `.dev/beta-build-timings.md`（`.dev` 已在 `.gitignore` 中，只留本地、不提交；文件不存在先写表头；备注列写清 `冷构建` / `增量构建`、失败或取消的阶段、APK 是否因缺工具链跳过；时间用本地时区，同一条记录内格式一致）：
 
 ```markdown
