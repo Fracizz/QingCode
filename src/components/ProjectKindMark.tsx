@@ -14,6 +14,8 @@ export function ProjectKindIcon({
   open = false,
   closed = false,
   preparation = false,
+  strokeWidth,
+  absoluteStrokeWidth,
 }: {
   project: Pick<Project, 'kind' | 'path'>
   size?: number
@@ -22,15 +24,19 @@ export function ProjectKindIcon({
   /** 本地项目用带横线的闭合文件夹（终端列表组头），优先于 open。 */
   closed?: boolean
   preparation?: boolean
+  /** 透传给 lucide；配合 absoluteStrokeWidth 可在不同尺寸下保持同一绝对线宽。 */
+  strokeWidth?: number
+  absoluteStrokeWidth?: boolean
 }) {
+  const stroke = { strokeWidth, absoluteStrokeWidth }
   if (preparation && isSshProject(project)) {
     return <SshPreparationIcon path={project.path} size={size} className={className} />
   }
   if (isWslProject(project) || isSshProject(project)) {
-    return <Cloud size={size} className={className} />
+    return <Cloud size={size} className={className} {...stroke} />
   }
   const Icon = closed ? FolderClosed : open ? FolderOpen : Folder
-  return <Icon size={size} className={className} />
+  return <Icon size={size} className={className} {...stroke} />
 }
 
 /** 项目类型徽标与来源徽标（连接名 / 发行版）同一外观，并排时高度、字号一致。 */

@@ -44,6 +44,8 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useTerminalStore, MAX_TERMINALS_PER_PROJECT } from '../store/terminalStore'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
+import { isSshProject } from '../lib/sshWorkspace'
+import { isWslProject } from '../lib/wslWorkspace'
 import {
   getTerminalActivityIndicator,
   subscribeTerminalActivityIndicator,
@@ -140,8 +142,8 @@ const SOURCE_TEXT: Record<TerminalSourceKind, string> = {
 }
 const SOURCE_CHIP = 'rounded border border-current/25 bg-current/[0.07] px-[5px] py-px'
 
-// 16px 图标默认线宽缩放后约 1.33px；主机图标更小，若按比例缩放线条会变细发虚，像另一套图标。
-// 固定为同样的绝对线宽，让主机图标只靠尺寸降级，笔画与项目图标一致。
+// 16px 图标默认线宽缩放后约 1.33px；主机图标与本地项目文件夹更小，若按比例缩放线条会变细发虚，像另一套图标。
+// 固定为同样的绝对线宽，让它们只靠尺寸区分，笔画与云图标一致。
 const HOST_ICON_STROKE = { strokeWidth: 4 / 3, absoluteStrokeWidth: true } as const
 
 function HostKindIcon({ kind, size }: { kind: TerminalSourceKind; size: number }) {
@@ -847,8 +849,15 @@ export default function TerminalSessionList() {
                 // 共用文字基线；16px 图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
                 className="flex translate-y-[3px] flex-shrink-0 text-term-list-project"
               >
-                {/* 本地项目固定用闭合文件夹，不随展开切换成打开态；远程沿用云图标。 */}
-                <ProjectKindIcon project={project} closed size={16} />
+                {/* 本地项目固定用闭合文件夹，不随展开切换成打开态；远程沿用云图标。
+                    文件夹是方正轮廓，同尺寸下比云的弧形轮廓显大显重，缩到 15px 做光学补偿；
+                    线宽固定 4/3px，与云和主机图标一致（按比例缩放会细到 1.25px 而发虚）。 */}
+                <ProjectKindIcon
+                  project={project}
+                  closed
+                  size={isSshProject(project) || isWslProject(project) ? 16 : 15}
+                  {...HOST_ICON_STROKE}
+                />
               </span>
               {/* 来源标签按自然宽度显示（上限见 .project-source-badge），长项目名先截断：同名项目靠来源区分，「W…」没有意义。 */}
               {/* 来源字号更小，按基线对齐才不会悬在项目名上方；项目名与会话名同亮，来源退到辅助级。 */}
