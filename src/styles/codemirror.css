@@ -252,6 +252,7 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
 }
 :is(.cm-editor, .qing-md-find-layer) .cm-qing-find-close {
   position: absolute;
-  top: 4px;
+  /* 与首行输入框（--ui-control-height）垂直居中，和上一个/下一个按钮对齐；按钮固定 22px。 */
+  top: calc(4px + (var(--ui-control-height) - 22px) / 2);
   right: 4px;
 }
