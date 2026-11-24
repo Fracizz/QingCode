@@ -43,12 +43,13 @@ export default function TerminalStatusMark({
     const label = t('切换到项目后恢复')
     return (
       <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
-        {/* 与已退出同为空心圈：虚线圈在小尺寸下发糊；两者靠行尾（已退出才有重启与「已退出」）区分。 */}
+        {/* 与已退出同为空心圈（虚线圈在小尺寸下发糊），但边框细到 1px：非当前项目的终端整排都是这个状态，需更安静；
+            两者仍主要靠行尾（已退出才有重启与「已退出」）区分。 */}
         <span
           role="img"
           aria-label={label}
           data-terminal-awaiting-restore={terminalId}
-          className="block h-2 w-2 rounded-full border-[1.5px] border-term-list-meta"
+          className="block h-2 w-2 rounded-full border border-term-list-meta"
         />
       </Tooltip>
     )

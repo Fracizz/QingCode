@@ -1012,7 +1012,7 @@ export default function TerminalSessionList() {
           data-terminal-host-header={section.key}
           data-terminal-host-sortable={hostSortable ? 'true' : undefined}
           onPointerDown={hostSortable ? event => startHostDrag(event, section.key) : undefined}
-          className="flex h-6 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-xs text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
+          className="flex h-7 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-sm text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
           onClick={() => {
             if (!searching) setHostCollapsed(section.key, expanded)
           }}
@@ -1022,8 +1022,9 @@ export default function TerminalSessionList() {
             aria-hidden="true"
             className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
+          {/* 主机图标 14px、标签 12px：比 16px 项目图标低一级，但不再小到和行尾计数同级。 */}
           <span className={`flex flex-shrink-0 ${SOURCE_TEXT[section.kind]}`}>
-            <HostKindIcon kind={section.kind} size={12} />
+            <HostKindIcon kind={section.kind} size={14} />
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
           <PrewarmPoolBadge hostKey={section.key} scoped={prewarmStatuses.get(section.key)} translate={translate} />
