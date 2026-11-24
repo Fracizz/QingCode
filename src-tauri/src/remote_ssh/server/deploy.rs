@@ -2,7 +2,9 @@
 //! (连接, 根) 粒度的 slot 缓存、幂等跳过与部署退避。
 
 use super::daemon::{daemon_downgrade_retry_ready, ensure_remote_daemon};
-use super::download::{locate_local_server_binary, locate_local_server_binary_with};
+use super::download::{
+    locate_local_server_binary, locate_local_server_binary_with, server_manifest_path,
+};
 use super::install_cache;
 use super::paths::{
     can_reuse_discovered_server, legacy_agent_state_path, legacy_project_agent_binary_path,
@@ -268,6 +270,11 @@ pub(crate) async fn stage_direct_gateway(
             "Server 程序自检未通过：{}",
             self_check_failure_detail(&checked.stderr, checked.exit_code)
         ));
+    }
+    // 有清单的包已在本地核对过版本；无清单的手工二进制（如 exe 旁残留的旧版）
+    // 必须在停止运行中的网关之前核对实际版本，否则会用旧程序执行它不认识的子命令。
+    if !server_manifest_path(&local_binary).is_file() {
+        verify_remote_server_version(manager, root, &remote_bin).await?;
     }
     Ok(remote_bin)
 }
