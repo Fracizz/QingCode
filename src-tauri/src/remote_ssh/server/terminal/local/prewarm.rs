@@ -46,7 +46,7 @@ pub(crate) struct PrewarmProfile {
     profile_id: String,
     shell: String,
     command: String,
-    /// 远端连接各自设置的 CLI 预热数量；本机 CLI 预热固定 1 个。只决定池容量，不参与复用判断。
+    /// CLI 预热数量：本机在设置页、远端按连接各自设置。只决定池容量，不参与复用判断。
     #[serde(default = "default_profile_count")]
     count: usize,
 }

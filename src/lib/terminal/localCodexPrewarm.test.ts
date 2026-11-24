@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it } from 'vitest'
-import { localCodexPrewarm, saveLocalCodexPrewarm, supportsCodexPrewarm } from './localCodexPrewarm'
+import { CLI_PREWARM_MAX_COUNT, localCodexPrewarm, localCodexPrewarmCount, saveLocalCodexPrewarm, saveLocalCodexPrewarmCount, supportsCodexPrewarm } from './localCodexPrewarm'
 import { forgetTerminalProfileTrust, trustTerminalProfile } from './terminalProfileTrust'
 import { saveTerminalProfileSettings, type TerminalProfile } from './terminalProfiles'
 
@@ -41,4 +41,22 @@ it('only prestarts fresh CLI sessions', () => {
     expect(supportsCodexPrewarm({ ...profile, command })).toBe(false)
   }
   expect(supportsCodexPrewarm({ ...profile, shell: 'cmd' })).toBe(false)
+})
+
+it('keeps the local CLI prewarm count in 1..max and across profile changes', () => {
+  persist(profile)
+  trustTerminalProfile(profile)
+  expect(localCodexPrewarmCount()).toBe(1)
+  // 未选择 CLI 时不保存数量。
+  saveLocalCodexPrewarmCount(3)
+  expect(localCodexPrewarmCount()).toBe(1)
+  saveLocalCodexPrewarm(profile)
+  saveLocalCodexPrewarmCount(3)
+  expect(localCodexPrewarmCount()).toBe(3)
+  expect(localCodexPrewarm()).toEqual(profile)
+  // 换 CLI 沿用已设置的数量，越界值回落到 1。
+  saveLocalCodexPrewarm({ ...profile })
+  expect(localCodexPrewarmCount()).toBe(3)
+  saveLocalCodexPrewarmCount(CLI_PREWARM_MAX_COUNT + 1)
+  expect(localCodexPrewarmCount()).toBe(1)
 })

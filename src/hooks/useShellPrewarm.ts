@@ -1,4 +1,4 @@
-import { localCodexPrewarm, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
+import { localCodexPrewarm, localCodexPrewarmCount, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
 import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
@@ -69,7 +69,7 @@ export function useShellPrewarm(project: Project | null) {
         const profile = active && connectionId && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
           command: preset.command.trim().replace(/\s*\n+\s*/g, '; '), count: connectionPrewarmCount(connectionId) } : undefined
         const localProfile = persist && codex ? { profileId: codex.id,
-          shell: codex.shell, command: codex.command.trim() } : undefined
+          shell: codex.shell, command: codex.command.trim(), count: localCodexPrewarmCount() } : undefined
         // 当前项目不在的连接，用其最近打开的受信任项目授权连接；CLI 都在专用空目录启动。
         const anchors = connectionPrewarmAnchors(useProjectStore.getState().projects, connectionId)
         await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile, localProfile, anchors, disabledPrewarmConnections(), connectionShellPrewarmCounts())

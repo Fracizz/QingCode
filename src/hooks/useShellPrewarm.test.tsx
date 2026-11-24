@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   persist: vi.fn(async () => true), trusted: vi.fn(() => true), platform: vi.fn(() => 'win'),
 }))
 vi.mock('../lib/terminal/localCodexPrewarm', () => ({
-  LOCAL_CODEX_PREWARM_KEY: 'local-codex', localCodexPrewarm: mocks.localCodex,
+  LOCAL_CODEX_PREWARM_KEY: 'local-codex', localCodexPrewarm: mocks.localCodex, localCodexPrewarmCount: () => 3,
 }))
 vi.mock('../lib/terminal/connectionPrewarmProfile', () => ({
   connectionPrewarmAnchors: () => [], connectionPrewarmCount: () => 2, CONNECTION_PREWARM_PREFIX: 'profile:', connectionPrewarmProfile: mocks.preset,
@@ -74,7 +74,7 @@ describe('Windows prewarm coordinator', () => {
   it('keeps the local Codex profile across project changes, including a window with no project', async () => {
     mocks.localCodex.mockReturnValue({ id: 'ai', shell: 'pwsh', command: 'codex' })
     const hook = renderHook(({ value }: { value: Project | null }) => useShellPrewarm(value), { initialProps: { value: null as Project | null } })
-    const profile = { profileId: 'ai', shell: 'pwsh', command: 'codex' }
+    const profile = { profileId: 'ai', shell: 'pwsh', command: 'codex', count: 3 }
     await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ cwd: null, localProfile: profile }))
     hook.rerender({ value: project })
     await waitFor(() => expect(mocks.invoke.mock.lastCall?.[2]).toMatchObject({ cwd: project.path, localProfile: profile }))

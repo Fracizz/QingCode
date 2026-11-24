@@ -1,15 +1,15 @@
 import type { Project } from '../../types'
 import { sshConnectionIdFromUri } from '../sshWorkspace'
 import { createProjectTrustChecker } from '../workspaceTrust'
-import { isPrewarmCli } from './localCodexPrewarm'
+import { CLI_PREWARM_MAX_COUNT, isPrewarmCli } from './localCodexPrewarm'
 import { connectionPrewarmEnabled, notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import { isTerminalProfileTrusted } from './terminalProfileTrust'
 import { loadTerminalProfileSettings, profilesForConnection, type TerminalProfile } from './terminalProfiles'
 
 export const CONNECTION_PREWARM_PREFIX = 'qingcode:connection-cli-prewarm:'
 
-/** 每条连接常驻的 CLI 预热数量上限（与后端 MAX_PROFILE_COUNT 一致），每个都是完整的 CLI 进程。 */
-export const CONNECTION_PREWARM_MAX_COUNT = 4
+/** 每条连接常驻的 CLI 预热数量上限，与本机共用（见 CLI_PREWARM_MAX_COUNT）。 */
+export const CONNECTION_PREWARM_MAX_COUNT = CLI_PREWARM_MAX_COUNT
 
 function readSaved(connectionId: string): { id?: unknown; shell?: unknown; command?: unknown; count?: unknown } | null {
   try {

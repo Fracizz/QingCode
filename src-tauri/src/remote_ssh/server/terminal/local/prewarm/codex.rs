@@ -74,13 +74,15 @@ impl LocalCodexPool {
                 return None;
             }
             profile.cwd.clone_from(&cwd);
+            // 本机 CLI 预热数量由设置页指定（1–4），只改数量时 set_target 保留已就绪的 CLI。
+            let count = profile.pool_count();
             key.profile = Some(profile);
             Some(Target {
                 project_path: cwd.clone(),
                 cwd,
                 key,
                 launch,
-                count: 1,
+                count,
                 window: window.into(),
                 remote: None,
             })
