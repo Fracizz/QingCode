@@ -582,7 +582,7 @@ export default function TerminalSessionList() {
         tabIndex={term.id === rovingTerminalId ? 0 : -1}
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
-        className={`group relative flex min-h-8 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg pl-6 pr-1 transition-colors ${
+        className={`group relative flex min-h-8 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg pl-[26px] pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-term-list-active'
             : 'text-term-list-fg hover:bg-bg-hover hover:text-term-list-active'
@@ -632,7 +632,7 @@ export default function TerminalSessionList() {
           className={
             managing
               ? 'flex flex-shrink-0'
-              : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
+              : 'absolute inset-y-0 left-1 flex w-4 items-center justify-center'
           }
         >
           <TerminalStatusMark
@@ -749,7 +749,7 @@ export default function TerminalSessionList() {
     )
   }
 
-  const renderGroup = (group: TerminalSessionGroup) => {
+  const renderGroup = (group: TerminalSessionGroup, index: number) => {
     const { project, terminals } = group
     const isCurrent = project.id === currentProjectId
     const isEmpty = terminals.length === 0
@@ -775,7 +775,8 @@ export default function TerminalSessionList() {
         aria-label={project.name}
         aria-current={isCurrent ? 'true' : undefined}
         data-terminal-project-group={project.id}
-        className={`relative ${draggedProjectId === project.id ? 'opacity-45' : ''}`}
+        // 项目组之间多留 6px，组头与上一组的会话行拉开，层级不再只靠图标区分。
+        className={`relative ${index > 0 ? 'mt-1.5' : ''} ${draggedProjectId === project.id ? 'opacity-45' : ''}`}
       >
         {projectDrop?.id === project.id && (
           <span
@@ -840,10 +841,11 @@ export default function TerminalSessionList() {
               <span
                 aria-hidden="true"
                 data-terminal-group-current={isCurrent ? 'true' : undefined}
-                // 共用文字基线；补偿 14px 图标底部留白，避免云图标视觉上悬空。
-                className="flex translate-y-[2px] flex-shrink-0 text-term-list-project"
+                // 共用文字基线；16px 图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
+                className="flex translate-y-[3px] flex-shrink-0 text-term-list-project"
               >
-                <ProjectKindIcon project={project} open={expanded} size={14} />
+                {/* 本地项目固定用闭合文件夹，不随展开切换成打开态；远程沿用云图标。 */}
+                <ProjectKindIcon project={project} closed size={16} />
               </span>
               {/* 来源标签按自然宽度显示（上限见 .project-source-badge），长项目名先截断：同名项目靠来源区分，「W…」没有意义。 */}
               {/* 来源字号更小，按基线对齐才不会悬在项目名上方；项目名与会话名同亮，来源退到辅助级。 */}
@@ -1263,7 +1265,7 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          // 组间与组内同为 2px，项目行与会话行节奏一致；分组靠图标和缩进区分，不加分隔线。
+          // 组内 2px，项目组之间另加 6px（见 renderGroup）；分组靠间距和图标区分，不加分隔线。
           // 左右 8px：选中底色内缩，组头图标与表头标题、搜索框（12px）左对齐。
           className="view-fade flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
           onKeyDown={onListKeyDown}

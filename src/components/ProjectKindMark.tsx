@@ -1,4 +1,4 @@
-import { Cloud, Folder, FolderOpen } from 'lucide-react'
+import { Cloud, Folder, FolderClosed, FolderOpen } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { ProjectSourceBadge } from './ProjectName'
 import { useI18n } from '../lib/i18n'
@@ -12,12 +12,15 @@ export function ProjectKindIcon({
   size = 14,
   className,
   open = false,
+  closed = false,
   preparation = false,
 }: {
   project: Pick<Project, 'kind' | 'path'>
   size?: number
   className?: string
   open?: boolean
+  /** 本地项目用带横线的闭合文件夹（终端列表组头），优先于 open。 */
+  closed?: boolean
   preparation?: boolean
 }) {
   if (preparation && isSshProject(project)) {
@@ -26,7 +29,7 @@ export function ProjectKindIcon({
   if (isWslProject(project) || isSshProject(project)) {
     return <Cloud size={size} className={className} />
   }
-  const Icon = open ? FolderOpen : Folder
+  const Icon = closed ? FolderClosed : open ? FolderOpen : Folder
   return <Icon size={size} className={className} />
 }
 

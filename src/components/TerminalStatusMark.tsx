@@ -9,10 +9,10 @@ import Tooltip from './Tooltip'
 
 // 下移 1px 做光学对齐：几何居中时，正文（Segoe UI 上伸部高于下伸部、含 p/g 等下伸字母）
 // 的墨迹中心比行框中心低 0.5–1.5px，标记会显得偏上。
-const SLOT_CLASS = 'inline-flex h-3.5 w-3.5 flex-shrink-0 translate-y-px items-center justify-center'
+const SLOT_CLASS = 'inline-flex h-4 w-4 flex-shrink-0 translate-y-px items-center justify-center'
 
 /**
- * 终端列表行首的固定状态位（14px），每一行都有标记，扫读时左侧对齐成一列：
+ * 终端列表行首的固定状态位（16px，与项目图标同宽），每一行都有标记，扫读时左侧对齐成一列：
  * 运行中 `accent` 转圈 > 有新结果 `brand` 实心点 > 空闲淡灰小点；已退出与待恢复都是空心圈（后者没有行尾的重启按钮）。
  * 关闭「标签运行状态」设置后不显示运行中和新结果，退回空闲点；已退出与待恢复不受影响。
  */
@@ -48,7 +48,7 @@ export default function TerminalStatusMark({
           role="img"
           aria-label={label}
           data-terminal-awaiting-restore={terminalId}
-          className="block h-[7px] w-[7px] rounded-full border-[1.5px] border-term-list-meta"
+          className="block h-2 w-2 rounded-full border-[1.5px] border-term-list-meta"
         />
       </Tooltip>
     )
@@ -61,7 +61,7 @@ export default function TerminalStatusMark({
           role="img"
           aria-label={label}
           data-terminal-status="exited"
-          className="block h-[7px] w-[7px] rounded-full border-[1.5px] border-term-list-meta"
+          className="block h-2 w-2 rounded-full border-[1.5px] border-term-list-meta"
         />
       </Tooltip>
     )
@@ -71,7 +71,7 @@ export default function TerminalStatusMark({
     return (
       <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
         <span role="img" aria-label={label} data-terminal-activity="running" className="flex text-accent">
-          <LoaderCircle size={12} className="animate-spin" aria-hidden="true" />
+          <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
         </span>
       </Tooltip>
     )
@@ -84,12 +84,12 @@ export default function TerminalStatusMark({
           role="img"
           aria-label={label}
           data-terminal-activity="attention"
-          className="block h-2 w-2 rounded-full bg-brand"
+          className="block h-2.5 w-2.5 rounded-full bg-brand"
         />
       </Tooltip>
     )
   }
-  // 空闲：直径与空心圈一致（7px），只靠淡色弱化，实心/空心区分状态；与其他状态一样悬停给出说明。
+  // 空闲：直径与空心圈一致（8px），只靠淡色弱化，实心/空心区分状态；与其他状态一样悬停给出说明。
   const label = t('空闲')
   return (
     <Tooltip label={label} side="top" wrapperClassName={SLOT_CLASS}>
@@ -97,7 +97,7 @@ export default function TerminalStatusMark({
         role="img"
         aria-label={label}
         data-terminal-status="idle"
-        className="block h-[7px] w-[7px] rounded-full bg-term-list-meta/45"
+        className="block h-2 w-2 rounded-full bg-term-list-meta/60"
       />
     </Tooltip>
   )
