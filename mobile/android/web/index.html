@@ -31,6 +31,8 @@
     <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></symbol>
+    <symbol id="i-columns" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M12 3v18"></path></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></symbol>
@@ -89,7 +91,8 @@
         <!-- 首屏大标题：上方小字是当前电脑与延迟（点按管理连接），与右上角设置按钮同一行。 -->
         <header class="hero">
           <button id="active-host" class="hero-eyebrow host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><span id="home-latency"></span><svg><use href="#i-chevron"/></svg></button>
-          <h1 id="home-title" class="hero-title">终端</h1>
+          <!-- 首页不显示大标题，仅保留给读屏作为页面名称。 -->
+          <h1 id="home-title" class="sr-only">终端</h1>
 
         </header>
         <!-- 待处理：看不到的终端跑完后留下「有新结果」，与电脑端终端列表的标记一致；看过即清除。 -->
@@ -414,10 +417,10 @@
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 tabindex="-1" id="session-dialog-title">终端设置</h2>
     <div class="settings-group">
-      <div class="setting-row"><div class="setting-text"><strong>终端字号</strong><p>也可在终端上双指缩放</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
-      <div class="setting-row" data-tappable><div class="setting-text"><label for="terminal-columns">终端列宽</label><p>固定列宽时可横向滚动</p></div><select id="terminal-columns" data-control="value"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select></div>
-      <div class="setting-row"><div class="setting-text"><strong>快捷键栏</strong><p>调整顺序、添加自定义键，隐藏的键移到「更多」</p></div><button id="open-key-layout" class="secondary compact" type="button">调整</button></div>
-      <div class="setting-row"><div class="setting-text"><strong>更多设置</strong><p>语言、图片压缩、发送按键、后台提醒等</p></div><button id="open-settings-from-terminal" class="secondary compact" type="button">打开</button></div>
+      <div class="setting-row"><svg class="setting-icon" aria-hidden="true"><use href="#i-type"/></svg><div class="setting-text"><strong>终端字号</strong><p>也可在终端上双指缩放</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
+      <div class="setting-row" data-tappable><svg class="setting-icon" aria-hidden="true"><use href="#i-columns"/></svg><div class="setting-text"><label for="terminal-columns">终端列宽</label><p id="terminal-columns-hint">固定列宽时可横向滚动</p></div><select id="terminal-columns" data-control="value" aria-describedby="terminal-columns-hint"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select></div>
+      <button id="open-key-layout" class="setting-row setting-link" type="button"><svg class="setting-icon" aria-hidden="true"><use href="#i-keyboard"/></svg><span class="setting-text"><strong>快捷键栏</strong></span><span class="setting-value">调整顺序</span><svg class="setting-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+      <button id="open-settings-from-terminal" class="setting-row setting-link" type="button"><svg class="setting-icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="setting-text"><strong>更多设置</strong></span><span class="setting-value">语言、图片、提醒</span><svg class="setting-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button>
     </div>
     <fieldset id="touch-mode" class="setting-choices" aria-describedby="touch-mode-hint">
       <legend>全屏程序中的触摸</legend>

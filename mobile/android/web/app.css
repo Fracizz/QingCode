@@ -341,13 +341,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .app-head > * { pointer-events: auto; }
 /* 顶栏底色向上铺满状态栏：展开时透明（露出氛围光），收起后与顶栏同为纯色。 */
 .app-head::before { content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--safe-top); background: inherit; pointer-events: none; }
+/* 收起后的顶栏用不透明纯色：毛玻璃会把下方卡片的强调色光晕透成一团糊色，标题旁看着像漏光。 */
 .dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); background: var(--paper); }
-/* 收起后的顶栏用毛玻璃：滚到下面的列表隐约透出。只在这块 48px 区域模糊，面积小、不拖慢滚动；
-   不支持 backdrop-filter 或 color-mix 的内核保留上面的纯色。backdrop-filter 不继承，状态栏延伸部分单独设置。 */
-@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dashboard[data-collapsed="true"] .app-head { background: color-mix(in srgb, var(--paper) 78%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
-  .dashboard[data-collapsed="true"] .app-head::before { -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
-}
 .app-head-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .app-head-title {
   display: inline-flex;
@@ -524,8 +519,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .dashed-action svg { width: 22px; height: 22px; color: var(--accent); }
 .dashed-action:active:not(:disabled) { border-color: var(--accent-border); background: var(--accent-surface); }
 .home-footnote { margin: 22px 8px 0; color: var(--muted); font-size: 12px; line-height: 1.7; text-align: center; opacity: .75; }
-.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 6px; }
-.section-heading h2 { font-size: 13px; color: var(--muted); font-weight: 500; letter-spacing: .02em; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px 16px; }
+.section-heading h2 { font-size: 13px; color: var(--muted); font-weight: 500; }
 .section-heading .text-button { display: inline-flex; align-items: center; padding-right: 0; }
 .section-heading svg { width: 16px; height: 16px; }
 .tile { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--control-radius); background: var(--accent-surface); color: var(--accent); }
@@ -643,8 +638,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .connection-card { display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: center; padding-right: 4px; }
 .connection-main { min-width: 0; border-radius: 0; }
 .connection-main .dot { width: 6px; height: 6px; }
-/* .row-text small 会裁切溢出：左侧留出 3px 给圆点光晕，负外边距保持圆点与上方文字对齐。 */
-.connection-main .connection-state { display: flex; align-items: center; gap: 6px; margin: 2px 0 0 -3px; padding-left: 3px; color: var(--muted); font-size: 11.5px; }
+/* .row-text small 默认裁切溢出；状态行文字很短，放开裁切，让 ping 呼吸时放大的圆点和光晕完整显示。 */
+.connection-main .connection-state { display: flex; align-items: center; gap: 6px; margin-top: 2px; overflow: visible; color: var(--muted); font-size: 11.5px; }
 .connection-card[data-state="online"] .connection-state { color: var(--accent); }
 .connection-card[data-state="offline"] .connection-state { color: var(--error); }
 .connection-card > .icon-button { color: var(--muted); }
@@ -764,6 +759,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 #terminal-screen[data-viewing="true"] #viewport { overflow: auto; touch-action: pan-x pan-y; }
 #terminal-screen[data-taken="true"] #terminal-tools { display: none; }
 #history-status { padding: 4px 0 8px; color: var(--muted); font-size: 12px; }
+#history-status:empty { display: none; }
 /* 文字与选区颜色跟随终端主题（见 terminalHistory.js applyTerminalColors），与实时终端观感一致。 */
 #history-content { margin: 0; color: var(--history-fg, var(--ink)); white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--mono); user-select: text; -webkit-user-select: text; }
 #history-content::selection, #history-content ::selection { background: var(--history-selection, #3a3d42); }
@@ -947,7 +943,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .extra-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .extra-keys-five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 #keys-target { color: var(--muted); }
-.keys-group-title { margin: 12px 0 6px; font-size: 12px; font-weight: 650; color: var(--muted); }
+.keys-group-title { margin: 14px 4px 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
 #overflow-keys-section h3 { margin-top: 12px; font-size: 13px; font-weight: 650; color: var(--muted); }
 #overflow-keys-section .extra-keys { margin-block: 8px 4px; }
 #keys-dialog > .hint { margin-top: 12px; }
@@ -996,7 +992,8 @@ dialog {
   box-shadow: 0 16px 64px var(--dialog-shadow);
 }
 dialog[open] { animation: dialog-in 340ms var(--ease-spring); }
-dialog::backdrop { background: #000000b8; }
+/* 深色遮罩不压太黑，弹层打开时页面只是退后一层，不像突然熄灯。 */
+dialog::backdrop { background: #0000008c; }
 :root[data-theme="light"] dialog::backdrop { background: #0000002e; }
 /* 浅色：弹层不描边，只靠柔和投影浮起，和纯白页面融在一起。 */
 :root[data-theme="light"] dialog { border-color: transparent; box-shadow: var(--elev-3); }
@@ -1133,12 +1130,13 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 .session-group-head .project-source-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 首页组头延续项目行的点按行为；右侧新建终端与浏览文件和项目列表同款，各保持 44px 触控区。 */
 .session-group-head.session-group-head-home { align-items: center; gap: 2px; padding: 0; }
-/* 图标与名称同处一行网格：整组在 44px 触控区内垂直居中，名称换行时图标仍与首行对齐，不跑到两行中间。 */
-.session-group-open { display: grid; flex: 1; grid-template-columns: 15px minmax(0, 1fr); align-content: center; align-items: start; gap: 6px; min-width: 0; padding: 0 6px 0 8px; color: inherit; font: inherit; text-align: left; }
+/* 上下 8px 内边距：单行时仍由 44px 按钮撑高、外观不变；名称过长把来源标签挤到第二行时，标签和下方会话卡片之间留出呼吸距离。
+   图标与名称同处一行网格：整组在 44px 触控区内垂直居中，名称换行时图标仍与首行对齐，不跑到两行中间。 */
+.session-group-open { display: grid; flex: 1; grid-template-columns: 15px minmax(0, 1fr); align-content: center; align-items: start; gap: 6px; min-width: 0; padding: 8px 6px 8px 8px; color: inherit; font: inherit; text-align: left; }
 .session-group-open .session-group-icon { align-self: start; margin-top: calc((20px - 15px) / 2); }
 .session-group-open .session-group-summary strong { line-height: 20px; }
 .session-group-open:disabled { opacity: 1; }
-.session-group-open .session-group-summary { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
+.session-group-open .session-group-summary { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; }
 .session-group-context { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
 .session-group-context .project-source-chip { max-width: min(12em, 100%); }
 .session-group-head-home .session-group-add { color: var(--accent); }
@@ -1339,7 +1337,8 @@ dialog.session-drawer[data-docked="true"] .session-option[data-current="true"] .
 dialog { transition: opacity var(--motion-exit) var(--ease-exit), transform var(--motion-exit) var(--ease-exit), display var(--motion-exit) allow-discrete, overlay var(--motion-exit) allow-discrete; }
 /* 旧版内核的 ::backdrop 不继承 :root 变量，这里写字面值。 */
 dialog::backdrop { transition: background-color 180ms linear, display 180ms allow-discrete, overlay 180ms allow-discrete; }
-dialog[open]::backdrop { animation: backdrop-in 240ms linear; }
+/* 与贴底弹层 380ms 入场同拍，ease-out 让遮罩逐渐加深而不是一下子压暗。 */
+dialog[open]::backdrop { animation: backdrop-in 360ms cubic-bezier(.2, 0, 0, 1); }
 /* 退出途中仍在顶层显示，不能挡住下面的点击。 */
 dialog:not([open]) { opacity: 0; transform: scale(.98); pointer-events: none; }
 dialog:not([open])::backdrop { background: transparent; pointer-events: none; }
@@ -1472,7 +1471,8 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .select-option .row-text strong, .select-option .row-text small { white-space: normal; overflow-wrap: anywhere; }
 .select-option .row-text small:empty { display: none; }
 .select-option svg { width: 18px; height: 18px; visibility: hidden; }
-.select-option[aria-checked="true"] { background: var(--accent-surface); color: var(--accent); }
+/* 选中项只用强调色文字和对勾标记，不铺整块色底，深色主题下不刺眼。 */
+.select-option[aria-checked="true"] { color: var(--accent); }
 .select-option[aria-checked="true"] svg { visibility: visible; }
 .setting-choices { min-width: 0; margin: 14px 0 8px; padding: 0; border: 0; }
 .setting-choices legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 650; }
@@ -1546,7 +1546,8 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 .session-option .row-text small.session-idle { color: var(--muted); font-size: 11.5px; white-space: normal; }
 /* 设置页：全屏滚动，同组设置共用一个容器；宽屏时内容限宽居中。 */
 .settings-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 max(0px, calc((100% - 640px) / 2)) 8px; }
-.settings-group-title { margin: 16px 4px 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
+/* 分组标题与首页分区标题、更多按键分组标题同一套：13px 常规字重，左边距对齐分组内文字。 */
+.settings-group-title { margin: 22px 16px 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .language-setting { padding: 12px 14px; }
 .language-setting strong { font-size: 14px; }
 .segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 10px; padding: 4px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--paper); }
@@ -1556,23 +1557,17 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .update-setting .hint { margin: 0; padding: 0 14px 10px; color: var(--muted); font-size: 12px; }
 .update-setting .hint:empty { display: none; }
-/* 设置页（参考 iOS / 主流 App 设置）：居中标题 + 圆形返回；分组大圆角、组内不画分隔线；
+/* 设置页与终端设置弹层：标题靠左（与其他全屏页一致），分组圆角沿用 --group-radius、组内不画分隔线；
    行首线性图标，标题单行，右侧当前值 + 箭头或开关。选项类说明移到点开后的选择面板（selectMenu.js），开关类保留一行说明。 */
-.settings-dialog .workspace-head { position: relative; justify-content: center; min-height: 52px; margin-left: 0; }
-.settings-dialog .workspace-head > .icon-button { position: absolute; left: 0; top: 50%; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: var(--surface); transform: translateY(-50%); }
-.settings-dialog .workspace-head > .icon-button:active:not(:disabled) { background: var(--raised); transform: translateY(-50%) scale(.94); }
-.settings-dialog .workspace-head h2 { font-size: 17px; font-weight: 600; }
-.settings-dialog .settings-group-title { margin: 22px 16px 8px; font-size: 13px; font-weight: 500; }
 .settings-dialog .settings-body > .settings-group-title:first-child { margin-top: 8px; }
-.settings-dialog .settings-group { border-radius: 20px; }
-.settings-dialog .settings-group > * + *, .settings-dialog .update-setting > .setting-row + .setting-row { border-top: 0; }
-.settings-dialog .setting-row { gap: 14px; min-height: 58px; padding: 10px 14px 10px 16px; }
-.settings-dialog .setting-icon { width: 22px; height: 22px; stroke-width: 1.75; color: var(--ink); }
-.settings-dialog .setting-text :is(label, strong) { font-size: 15px; font-weight: 500; }
-.settings-dialog .setting-text p { margin-top: 1px; font-size: 12px; line-height: 1.4; }
-.settings-dialog .setting-row:has(.select-trigger) .setting-text p { display: none; }
-.settings-dialog .setting-row .select-trigger { gap: 4px; font-size: 14px; }
-.settings-dialog .setting-row .select-trigger svg, .setting-chevron { width: 18px; height: 18px; color: var(--muted); }
+:is(.settings-dialog, #session-dialog) .settings-group > * + *, .settings-dialog .update-setting > .setting-row + .setting-row { border-top: 0; }
+:is(.settings-dialog, #session-dialog) .setting-row { gap: 14px; min-height: 58px; padding: 10px 14px 10px 16px; }
+:is(.settings-dialog, #session-dialog) .setting-icon { width: 22px; height: 22px; stroke-width: 1.75; color: var(--ink); }
+:is(.settings-dialog, #session-dialog) .setting-text :is(label, strong) { font-size: 15px; font-weight: 500; }
+:is(.settings-dialog, #session-dialog) .setting-text p { margin-top: 1px; font-size: 12px; line-height: 1.4; }
+:is(.settings-dialog, #session-dialog) .setting-row:has(.select-trigger) .setting-text p { display: none; }
+:is(.settings-dialog, #session-dialog) .setting-row .select-trigger { gap: 4px; font-size: 14px; }
+:is(.settings-dialog, #session-dialog) .setting-row .select-trigger svg, .setting-chevron { width: 18px; height: 18px; color: var(--muted); }
 .setting-link { width: 100%; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
 .setting-link:disabled { opacity: 1; }
 .setting-link:disabled .setting-value { opacity: .6; }

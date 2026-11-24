@@ -194,6 +194,8 @@ export const EN = Object.freeze({
   '打开设置': 'Open settings',
   '通用': 'General',
   '关于': 'About',
+  '调整顺序': 'Reorder',
+  '语言、图片、提醒': 'Language, images, alerts',
   '发送与图片': 'Sending and images',
   '提醒与渲染': 'Alerts and rendering',
   '更多设置': 'More settings',
