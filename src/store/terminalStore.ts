@@ -110,6 +110,7 @@ import {
   sendPtySizePaced,
   terminalViewGrids,
 } from './terminal/ptySizing'
+import { discardSpawnInput, queueSpawnInput, takeSpawnInput } from './terminal/spawnInputQueue'
 import {
   bindTerminalInBackground,
   bindTerminalToPane,
@@ -800,6 +801,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
     deferredPtySync.delete(id)
+    discardSpawnInput(id)
     markIntentionalPtyKill(id)
     const terminal = get().terminals.find(candidate => candidate.id === id)
     // Restored metadata has no PTY until its first spawn. Removing an opted-out
@@ -836,6 +838,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
     deferredPtySync.delete(id)
+    discardSpawnInput(id)
     set(s => {
       const closed = s.terminals.find(t => t.id === id)
       if (!closed) return {}
@@ -1568,6 +1571,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (data === '\x03') await enterShellAfterTask(id)
       return
     }
+    // 新建/接回在途（如远端服务更新中）后端还没有该终端：先暂存，就绪后补发。
+    if (ptySpawnInFlight.has(id) || tab.ptySpawnPending || tab.awaitingRestoreSpawn) {
+      if (!queueSpawnInput(id, data)) {
+        useProjectStore.getState().pushToast('error', translate('终端尚未就绪，超出暂存上限的输入已丢弃'))
+      }
+      return
+    }
     if (shouldCancelReconnectOnInput(tab, false, data)) {
       await cancelTerminalReconnect(id)
       return
@@ -1811,6 +1821,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       } else if (deferred?.action === 'redraw') {
         void get().redrawTerminal(id, deferred.cols, deferred.rows)
       }
+      const queuedInput = takeSpawnInput(id)
+      if (queuedInput) void get().writeToTerminal(id, queuedInput)
     } catch (e) {
       console.error('spawnPendingTerminal failed:', e)
       clearTerminalOverlayNotice(id)
@@ -1840,6 +1852,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     } finally {
       ptySpawnInFlight.delete(id)
       deferredPtySync.delete(id)
+      discardSpawnInput(id)
     }
   },
 

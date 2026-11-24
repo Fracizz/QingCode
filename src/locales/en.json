@@ -591,6 +591,7 @@
     "关闭终端失败: {error}": "Failed to close terminal: {error}",
     "结束终端进程失败: {error}": "Failed to end terminal process: {error}",
     "终端输入失败: {error}": "Failed to write to terminal: {error}",
+    "终端尚未就绪，超出暂存上限的输入已丢弃": "Terminal is not ready yet; input beyond the buffer limit was discarded",
     "未检测到 PowerShell 7，已自动改用 {shell}": "PowerShell 7 was not found. Switched automatically to {shell}.",
     "未找到 {requested}，已自动改用 {resolved}": "{requested} was not found. Switched automatically to {resolved}.",
     "关闭其它终端": "Close Other Terminals",
