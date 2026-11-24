@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProjectStore } from '../../store/projectStore'
 import {
-  noteTerminalReattached,
-  REATTACH_NOTICE_SETTLE_MS,
+  noteTerminalReattaching,
   resetReattachNoticeForTests,
   trackStartupReattach,
 } from './terminalReattachNotice'
@@ -11,38 +10,27 @@ describe('terminalReattachNotice', () => {
   const pushToast = vi.fn()
 
   beforeEach(() => {
-    vi.useFakeTimers()
     resetReattachNoticeForTests()
     pushToast.mockReset()
     useProjectStore.setState({ pushToast })
   })
 
-  afterEach(() => {
-    resetReattachNoticeForTests()
-    vi.useRealTimers()
-  })
-
-  it('并发接回的多个终端只汇总提示一次', () => {
-    trackStartupReattach(['a', 'b', 'c'])
-    noteTerminalReattached('a')
-    vi.advanceTimersByTime(REATTACH_NOTICE_SETTLE_MS - 1)
-    noteTerminalReattached('b')
-    vi.advanceTimersByTime(REATTACH_NOTICE_SETTLE_MS)
+  it('启动后第一个终端开始接回时提示一次，不显示个数', () => {
+    trackStartupReattach(['a', 'b'])
+    noteTerminalReattaching('a')
+    noteTerminalReattaching('b')
     expect(pushToast).toHaveBeenCalledTimes(1)
-    expect(pushToast.mock.calls[0][0]).toBe('success')
-    expect(pushToast.mock.calls[0][1]).toContain('2')
+    expect(pushToast.mock.calls[0][0]).toBe('info')
+    expect(pushToast.mock.calls[0][1]).not.toMatch(/\d/)
 
-    // 提示过之后，后来接回的（如切到项目、断线重连）不再提示。
-    noteTerminalReattached('c')
-    trackStartupReattach(['d'])
-    noteTerminalReattached('d')
-    vi.advanceTimersByTime(REATTACH_NOTICE_SETTLE_MS * 2)
+    // 提示过之后，后来登记并接回的（如断线重连）不再提示。
+    trackStartupReattach(['c'])
+    noteTerminalReattaching('c')
     expect(pushToast).toHaveBeenCalledTimes(1)
   })
 
-  it('未登记的标签接回不计数、不提示', () => {
-    noteTerminalReattached('x')
-    vi.advanceTimersByTime(REATTACH_NOTICE_SETTLE_MS * 2)
+  it('未登记的标签接回不提示', () => {
+    noteTerminalReattaching('x')
     expect(pushToast).not.toHaveBeenCalled()
   })
 })

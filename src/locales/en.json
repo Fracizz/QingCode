@@ -996,6 +996,7 @@
     "另有 {count} 个终端未能结束": "{count} more terminal(s) could not be ended",
     "每个项目最多可创建 {count} 个终端": "Each project can have at most {count} terminals",
     "已接回 {count} 个远端终端": "Reattached {count} remote terminal(s)",
+    "正在后台接回上次的终端…": "Reattaching your previous terminals in the background…",
     "受终端数量上限限制，还有 {count} 个远端终端未接回": "{count} remote terminal(s) were not reattached because the terminal limit was reached",
     "会话输出已恢复；进程将按原配置重新启动": "Session output restored; the process will restart with its previous configuration",
     "会话输出已恢复；正在接回原终端…": "Session output restored; reattaching to the original terminal…",

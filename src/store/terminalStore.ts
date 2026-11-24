@@ -35,7 +35,7 @@ import {
   windowsSshShellLabel,
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
-import { noteTerminalReattached, trackStartupReattach } from '../lib/terminal/terminalReattachNotice'
+import { noteTerminalReattaching, trackStartupReattach } from '../lib/terminal/terminalReattachNotice'
 import { serverModeErrorAction } from '../lib/serverModeError'
 import {
   DEFAULT_PTY_COLS,
@@ -1051,7 +1051,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       brTerminalByProject: { ...(bindings.brTerminalByProject ?? {}) },
     })
     hydrateTerminalOutputForTabs(owned.map(t => t.id))
-    // 启动恢复的会话里仍可能在运行的原进程：接回后汇总提示一次。
+    // 启动恢复的会话里仍可能在运行的原进程：开始接回时提示一次。
     trackStartupReattach(owned.filter(t => planTerminalRestore(t).mode === 'attach').map(t => t.id))
   },
 
@@ -1256,7 +1256,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       added.push(tab)
     }
     if (!background) useUIStore.getState().openTerminalPanel()
-    // 后台接回远端遗留终端（自动接回）也计入启动汇总提示；手动接回有自己的提示。
+    // 后台接回远端遗留终端（自动接回）也算启动接回；手动接回有自己的提示。
     else trackStartupReattach(added.map(tab => tab.id))
     await Promise.all(
       added.map(tab => {
@@ -1714,6 +1714,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         attachSize = terminalViewGrids.get(id) ?? null
         if (attachSize) rememberPtySize(id, attachSize.cols, attachSize.rows)
         else lastPtySize.delete(id)
+        noteTerminalReattaching(id)
         try {
           spawnResult = await attachTerminal({
             id,
@@ -1820,7 +1821,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       markPtySizeChanged(id)
       const spawnedTab = get().terminals.find(terminal => terminal.id === id)
       if (spawnedTab) recordTerminalDiagnostic('terminal.spawned', spawnedTab)
-      if (attached) noteTerminalReattached(id)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id
