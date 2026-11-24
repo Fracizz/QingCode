@@ -6,6 +6,38 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-11-24
+
+The stable release after v0.1.20, rolling up the 0.1.21 beta line: automatic terminal reattachment after restart, prewarming and terminal profiles configured per host and connection, unified remote Server updates, and a long round of terminal-list, editor, and mobile polish.
+
+### Added
+
+- Terminals reattach automatically after startup: terminals still running last time (remote and locally hosted) are reattached in the background for every project, without switching projects or taking focus; leftover remote terminals without a local tab are reattached directly instead of showing the "N terminal(s) are still running remotely" notification. Connections that need a password, have an unconfirmed host fingerprint, or were disconnected manually are skipped and reattach when you switch to the project; locally hosted terminals whose process is gone also wait until then to restart from their saved configuration. Turn it off under Settings → Projects and Sessions → Reattach Terminals on Startup (on by default).
+- Terminal profiles are grouped per remote connection, can be copied across connections and imported; a connection's own default profile takes precedence over the global default, and a profile scoped to another connection falls back to the ordinary terminal.
+- Prewarming switches are independent per host (local and each remote connection), plain-shell counts are set per location (Auto / Off / 1–8), and local CLI prewarming can keep 1–4 CLIs warm at once; the terminal list host header shows ready/target pool counts and hovering reveals both pools plus the latest claim.
+- Markdown preview supports in-page find; Ctrl+click on a path in an SSH terminal can open remote files outside the project root.
+- Deleting an SSH connection also removes the remote projects and stored Server pairing credentials that reference it; orphan projects left behind by deleted connections are pruned automatically.
+- Remote Server checks and updates are unified per connection: one progress card per connection, other projects on the same connection reuse the gateway verdict and prepare concurrently, and warm SSH channels are reused.
+- The phone can recover unconfirmed terminal sessions and claims the local CLI prewarm pool when creating CLI-configured terminals in local projects.
+- Size-optimized release builds with sqlx removed make installers smaller; a Rust target cache pruning policy was added, the offline Server package is now mirrored to Gitee, and CI has a fixed Android release signing key so releases ship a signed APK that upgrades in place.
+
+### Changed
+
+- Reorganized the Remote Connections detail page: projects come first, and the default terminal profile and prewarm settings are grouped under "Terminal" with descriptions on the left, dropdowns on the right, and live Shell / CLI ready counts for the connection.
+- The prewarm badge shows Shell and CLI pools separately; double-click retries with a spinning indicator; ready/paused colors are softened to 75% and claimed terminals use the brand-colored ⚡ badge on desktop and mobile.
+- Terminal list polish: fixed 16px icon slots, a larger host title, uniform 8px status markers, a 12px loading spinner, a calmer 2s rotation for running spinners (desktop and mobile), and a 15px local-project folder with fixed stroke width; the find panel's close button is vertically centered with its input.
+- The project source filter now lists only local and remote connections, with WSL treated as a normal Linux remote connection; reattachment shows one hint while starting and one summary toast when finished; multi-device Git sync "cannot fast-forward" errors now show one short reason instead of a file list and instructions.
+- A paused CLI prewarm pool retries automatically after five minutes, and the timed-out diagnostic records the step it was stuck on.
+
+### Fixed
+
+- Terminal view state is persisted from the xterm rendered screen, so reattaching after restart no longer overlaps or misaligns TUI output; inline TUIs are fully repainted once on reattach.
+- Keyboard input typed while a terminal is being created or reattached is buffered and replayed when ready, avoiding "SSH terminal does not exist" during remote Server updates; AI CLI multi-line paste still works when the terminal mode marker is missing.
+- Handing a terminal back from the phone resizes the desktop grid before changing the PTY size, so redraws no longer land in the narrow phone grid; mobile image attachment directories and SSH paste batch directories use local millisecond timestamps to avoid collisions.
+- CLI prewarming no longer gets stuck at `cli_anchor_busy` when a Claude session already claimed an anchor; occupied prewarm directories, ready-check timeouts, remote Server restarts, and dropped event streams all retry with backoff, and prewarming recovers automatically after a forced Server update.
+- Linux remote terminal tabs no longer inherit the local default PowerShell 7; direct-gateway deployment checks the remote version when the local server has no manifest.
+- Closing remote terminals on exit removes them from the terminal list, failed reattach tabs release their pane binding, and a remote forced Server update closes the terminal tabs it ends.
+
 ## [0.1.21-beta.36] - 2026-11-24
 
 A beta after v0.1.21-beta.7 that focuses on automatic terminal reattachment after restart, per-connection terminal profiles and prewarm settings, remote Server update reliability, and a long round of terminal-list and mobile polish.
