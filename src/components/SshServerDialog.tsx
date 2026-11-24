@@ -337,19 +337,18 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   return (
     <div
       role="status"
-      className={`flex items-start gap-3 rounded-md border p-3 ${mismatch ? 'border-warn/40 bg-warn/5' : ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
+      className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 rounded-md border p-3 ${mismatch ? 'border-warn/40 bg-warn/5' : ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
     >
+      {/* 图标与标题同处首行网格单元并垂直居中，避免随字号行高错位 */}
       <Icon
         size={16}
         aria-hidden
-        className={`mt-0.5 flex-shrink-0 ${mismatch ? 'text-warn' : pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
+        className={`flex-shrink-0 ${mismatch ? 'text-warn' : pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
       />
-      <div className="min-w-0">
-        <h3 className={`font-semibold ${ready ? 'text-ok' : offline ? 'text-danger' : 'text-fg'}`}>
-          {title}
-        </h3>
-        <p className="mt-1 text-ui-sm leading-relaxed text-fg-muted">{description}</p>
-      </div>
+      <h3 className={`min-w-0 font-semibold ${ready ? 'text-ok' : offline ? 'text-danger' : 'text-fg'}`}>
+        {title}
+      </h3>
+      <p className="col-start-2 mt-1 min-w-0 text-ui-sm leading-relaxed text-fg-muted">{description}</p>
     </div>
   )
 }
