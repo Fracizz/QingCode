@@ -18,7 +18,12 @@
             }
         }
         Remove-QcEmptyDirectory $anchor
-        if (@(Get-ChildItem -Force -LiteralPath $anchor).Count) {
+        # Claude Code 运行期间一直在启动目录持有 .claude\scheduled_tasks.lock（已领取的会话也是），只剩它时不算占用。
+        $qcLeft = @(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop | Where-Object {
+            !($_.Name -eq '.claude' -and $_.PSIsContainer -and !($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                !@(Get-ChildItem -Force -LiteralPath $_.FullName -ErrorAction Stop | Where-Object Name -ne 'scheduled_tasks.lock').Count)
+        })
+        if ($qcLeft.Count) {
             [Console]::WriteLine("QC-${env:QINGCODE_PREWARM_NONCE}-anchor_busy!")
             exit 1
         }

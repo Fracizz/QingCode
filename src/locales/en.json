@@ -2235,6 +2235,8 @@
     "CLI 预热": "CLI prewarm",
     "Shell 预热 {ready}/{target}": "Shell prewarm {ready}/{target}",
     "CLI 预热 {ready}/{target}": "CLI prewarm {ready}/{target}",
+    "双击重新触发预热": "Double-click to restart prewarming",
+    "重新触发预热": "Restart prewarming",
     "就绪 {ready}/{target}": "Ready {ready}/{target}",
     "已预留 {count}": "Reserved {count}",
     "暂停：{reason}": "Paused: {reason}",

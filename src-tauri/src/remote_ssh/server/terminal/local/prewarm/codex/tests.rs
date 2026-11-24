@@ -703,6 +703,12 @@ fn launch_scripts_never_carry_carriage_returns() {
             script.contains("-anchor_busy!"),
             "{agent} powershell={powershell}"
         );
+        // 已领取的 Claude 会话一直持有 .claude/scheduled_tasks.lock：只剩它时不能判为占用，
+        // 否则只要有一个 Claude 终端开着，CLI 预热就一直停在 cli_anchor_busy。
+        assert!(
+            script.contains("scheduled_tasks.lock"),
+            "{agent} powershell={powershell}"
+        );
     }
 }
 
