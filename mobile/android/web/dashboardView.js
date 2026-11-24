@@ -321,9 +321,11 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     get('refresh').dataset.busy = String(busy);
     get('refresh').setAttribute('aria-label', busy ? t('正在读取项目') : t('刷新项目'));
     get('project-filters').hidden = !profile;
-    // 大标题上方的小字：已连接时说明当前电脑与项目数，未配对时引导先连接。
+    // 页首小字：已连接时说明当前电脑、项目数与远程（SSH）连接数，未配对时引导先连接。
+    const remotes = groupProjectsByHost(listedProjects()).filter(group => group.kind === 'ssh').length;
     get('project-subtitle').textContent = profile
-      ? [profile.name, state.loaded() ? t('{n} 个项目', { n: listedProjects().length }) : ''].filter(Boolean).join(' · ')
+      ? [profile.name, state.loaded() ? t('{n} 个项目', { n: listedProjects().length }) : '',
+        state.loaded() && remotes ? t('{n} 个远程连接', { n: remotes }) : ''].filter(Boolean).join(' · ')
       : t('请先在「连接」中配对电脑。');
     get('list-label').textContent = matching.length ? t('{n} 个项目', { n: matching.length })
       : state.loaded() ? (query ? t('没有匹配的项目') : t('电脑上还没有项目'))

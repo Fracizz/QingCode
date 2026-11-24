@@ -1,6 +1,6 @@
 // 快捷键栏的自定义：按保存的布局排列常用键，隐藏的键移到「更多」弹层顶部；
 // 「终端设置 → 快捷键栏」打开编辑弹层，用开关、长按拖动或上移 / 下移按钮调整，立即生效并保存在手机上。
-// 自定义键（键名 + 发送的文本）在同一列表中排序和隐藏，按钮为 data-key="custom"，按下由 app.js 委托处理。
+// 自定义键（键名 + 发送的文本或特殊按键）在同一列表中排序和隐藏，按钮为 data-key="custom"，按下由 app.js 委托处理。
 import {
   CUSTOM_KEY_LIMIT,
   customKeyDetail,
@@ -20,6 +20,8 @@ import {
   removeCustomKey,
   saveCustomKey,
   serializeKeyLayout,
+  SPECIAL_KEY_LIMIT,
+  SPECIAL_KEY_PRESETS,
   toggleKeyHidden,
   visibleKeys,
 } from './keyLayout.js';
@@ -166,11 +168,56 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
   }
 
   // ---- 自定义键编辑弹层 ----
+  let kind = 'text';
+
+  function setKind(next) {
+    kind = next;
+    for (const item of get('custom-key-kind').querySelectorAll('[data-kind]')) {
+      item.setAttribute('aria-checked', String(item.dataset.kind === kind));
+    }
+    get('custom-key-text-fields').hidden = kind !== 'text';
+    get('custom-key-keys-fields').hidden = kind !== 'keys';
+    get('custom-key-error').hidden = true;
+  }
+
+  get('custom-key-kind').addEventListener('click', event => {
+    const item = event.target.closest?.('[data-kind]');
+    if (item) setKind(item.dataset.kind);
+  });
+
+  // 点预设按键插入到光标处：修饰键前缀（Ctrl+ 等）直接拼接，其余按键前后补空格分隔。
+  get('custom-key-presets').replaceChildren(...SPECIAL_KEY_PRESETS.map(preset => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.dataset.i18nSkip = '';
+    item.textContent = preset;
+    item.addEventListener('pointerdown', event => event.preventDefault());
+    item.addEventListener('click', () => insertPreset(preset));
+    return item;
+  }));
+
+  function insertPreset(preset) {
+    const input = get('custom-key-keys');
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    const glued = before.endsWith('+') || !before.trim();
+    const insert = (glued ? '' : (before.endsWith(' ') ? '' : ' ')) + preset
+      + (preset.endsWith('+') || after.startsWith(' ') || !after ? '' : ' ');
+    input.value = (before + insert + after).slice(0, input.maxLength);
+    const caret = Math.min(input.value.length, before.length + insert.length);
+    input.setSelectionRange(caret, caret);
+    get('custom-key-error').hidden = true;
+  }
+
   function openCustomKey(def) {
     editing = def;
     get('custom-key-title').textContent = def ? t('编辑自定义键') : t('添加自定义键');
     get('custom-key-text').value = def?.text ?? '';
-    get('custom-key-enter').checked = def?.enter ?? true;
+    get('custom-key-enter').checked = def?.keys ? true : def?.enter ?? true;
+    get('custom-key-keys').value = def?.keys ?? '';
+    setKind(def?.keys ? 'keys' : 'text');
     get('custom-key-name').value = def?.name ?? '';
     get('custom-key-error').hidden = true;
     get('custom-key-delete').hidden = !def;
@@ -179,15 +226,17 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
 
   get('custom-key-form').addEventListener('submit', event => {
     event.preventDefault();
-    const def = normalizeCustomKey({
-      id: editing?.id ?? newCustomKeyId(layout),
-      name: get('custom-key-name').value,
-      text: get('custom-key-text').value,
-      enter: get('custom-key-enter').checked,
-    });
+    const id = editing?.id ?? newCustomKeyId(layout);
+    const name = get('custom-key-name').value;
+    const keys = get('custom-key-keys').value;
+    const def = kind === 'keys'
+      ? (keys.trim() ? normalizeCustomKey({ id, name, keys }) : null)
+      : normalizeCustomKey({ id, name, text: get('custom-key-text').value, enter: get('custom-key-enter').checked });
     const error = get('custom-key-error');
     if (!def) {
-      error.textContent = t('请输入要发送的文本，不能包含换行。');
+      error.textContent = kind === 'keys'
+        ? t('按键无效：用空格分隔，每个按键如 Ctrl+D、Alt+X、F5、Esc 或单个字符，最多 {n} 个。', { n: SPECIAL_KEY_LIMIT })
+        : t('请输入要发送的文本，不能包含换行。');
       error.hidden = false;
       return;
     }

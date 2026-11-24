@@ -144,25 +144,29 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
+  /* 浅色走「纯白 + 极淡灰」路线：页面、卡片、弹层都是纯白，靠留白、细分隔线和很淡的扩散投影分层；
+     灰阶取纯中性色（不带蓝调），正文接近纯黑，层次更干净清晰。 */
   --paper: #ffffff;
-  --surface: #f8f9fa;
-  --surface-high: #f1f2f4;
-  --raised: #eceef1;
-  --line: #b5bac1;
-  --divider: #dedfe2;
-  --ink: #111827;
-  --muted: #4b5563;
+  --surface: #ffffff;
+  --surface-high: #f3f4f6;
+  --raised: #f1f2f4;
+  --line: #dde0e4;
+  --divider: #eff0f2;
+  --ink: #141414;
+  --muted: #6b6e75;
+  /* 输入框、搜索框的填充底：无描边的浅灰胶囊。 */
+  --field: #f4f5f7;
   /* 强调色与深色主题同为品牌青绿，取电脑端浅色品牌色（#0d9488）的加深一档，
-     保证白底、淡青底上的小字和实心按钮白字均 ≥ 4.5:1；淡青选中底与电脑端浅色当前项一致。 */
+     保证白底、淡青底上的小字和实心按钮白字均 ≥ 4.5:1；选中底再淡一档，更通透。 */
   --accent: #0f766e;
   --accent-ink: #ffffff;
-  --accent-surface: #e6f4f1;
-  --accent-pressed: #dbefea;
-  --accent-border: #5ba497;
+  --accent-surface: #eaf6f3;
+  --accent-pressed: #dcefea;
+  --accent-border: #9fcfc5;
   --accent-fill-pressed: #115e59;
   --accent-halo: #0d948826;
-  --glow: #0d948824;
-  --glow-soft: #0d94880d;
+  --glow: #0d948812;
+  --glow-soft: #0d948805;
   --error: #b91c34;
   --error-surface: #fdecef;
   --error-ink: #ffffff;
@@ -172,18 +176,18 @@
   --source-ssh: #45734c;
   --source-wsl: #93590f;
   --console: #ffffff;
-  --terminal-control: #eceef1e6;
-  --terminal-track: #eceef199;
-  --terminal-thumb: #4b55638c;
-  --dialog-shadow: #0002;
-  --edge: #1118270f;
-  --edge-top: #1118270f;
-  --elev-1: 0 1px 2px #1118270d;
-  --elev-2: 0 1px 2px #1118270d, 0 6px 18px #1118270f;
-  --elev-3: 0 2px 6px #11182714, 0 16px 40px #11182724;
-  --key-top: #ffffffcc;
-  --key-bottom: #1118271f;
-  --press: #1118270a;
+  --terminal-control: #ffffffeb;
+  --terminal-track: #f1f2f499;
+  --terminal-thumb: #6b6e758c;
+  --dialog-shadow: #00000014;
+  --edge: #0000000d;
+  --edge-top: #0000000d;
+  --elev-1: 0 1px 2px #00000008, 0 2px 10px #00000008;
+  --elev-2: 0 1px 3px #0000000a, 0 8px 28px #0000000f;
+  --elev-3: 0 4px 12px #0000000d, 0 20px 48px #00000014;
+  --key-top: #ffffff;
+  --key-bottom: #00000014;
+  --press: #0000000a;
 }
 @supports (transition-timing-function: linear(0, 1)) {
   :root { --ease-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1); }
@@ -228,12 +232,12 @@ button:disabled { opacity: .45; cursor: default; }
 /* Material 状态层：按下时叠加一层浅色，而不是整块换色。 */
 button:active:not(:disabled), button:focus-visible { background-color: var(--raised); }
 /* 按压回弹：只用于小按钮；拖动手柄、虚拟鼠标按键、导航和整行列表项（改用柔和状态层，见下）不缩放。:where 不抬高优先级，后面的专属规则仍可覆盖。 */
-button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-nav button, .row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button, .resume-card)):active:not(:disabled) { transform: scale(.97); }
+button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-nav button, .row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .session-shortcuts > button, #submission-list button, .terminal-actions button, .resume-card)):active:not(:disabled) { transform: scale(.97); }
 /* 整行可点的列表项（会话、项目、连接、设置行、选项）：按下只柔和地叠一层淡色，不缩放。
    按下 150ms 淡入、松手 260ms 淡出（transition 写在哪个状态上，就决定进入该状态的时长）；选中项换底色也随之淡入，不瞬间跳变。
    已选中 / 当前项按下时保留自身底色，不被状态层盖掉。 */
-:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button) { transition: background-color 260ms var(--ease), color 260ms var(--ease); }
-:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .session-shortcuts > button, #submission-list button, .terminal-actions button):not([aria-checked="true"], [aria-current="true"]):active:not(:disabled) { background-color: var(--press); transition-duration: 150ms; }
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .session-shortcuts > button, #submission-list button, .terminal-actions button) { transition: background-color 260ms var(--ease), color 260ms var(--ease); }
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .session-shortcuts > button, #submission-list button, .terminal-actions button):not([aria-checked="true"], [aria-current="true"]):active:not(:disabled) { background-color: var(--press); transition-duration: 150ms; }
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -891,6 +895,12 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 :is(#special-keys, .extra-keys) button[aria-pressed="true"]:not([data-locked="true"]):is(:active, :focus-visible) { background: var(--accent-pressed); }
 #compose-form { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 48px; align-items: end; column-gap: 3px; row-gap: 4px; margin-top: 8px; padding: 5px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); transition: border-color 120ms ease, background-color 120ms ease; }
 #compose-form:focus-within { border-color: var(--accent-border); }
+/* 多行（app.js resizeComposer 写 data-stacked）：键盘在上、图片在下竖排于左列并贴底，输入框占满中间。 */
+#compose-form[data-stacked="true"] { grid-template-columns: 44px minmax(0, 1fr) 48px; grid-template-rows: minmax(0, 1fr) 44px 44px; }
+#compose-form[data-stacked="true"] #keyboard { grid-area: 2 / 1; }
+#compose-form[data-stacked="true"] #attach-image { grid-area: 3 / 1; }
+#compose-form[data-stacked="true"] #compose { grid-area: 1 / 2 / 4 / 3; }
+#compose-form[data-stacked="true"] #send { grid-area: 3 / 3; }
 #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
 /* 横向拖动移动光标时用虚线强调色边框提示「触控板」状态。 */
 #compose-form[data-dragging="true"] { border-style: dashed; border-color: var(--accent); }
@@ -962,6 +972,9 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .key-layout-add { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-top: 4px; padding-left: 4px; }
 .key-layout-add svg { width: 16px; height: 16px; }
 .custom-key-enter { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+.segmented.custom-key-kind { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 4px; }
+.custom-key-presets { display: flex; flex-wrap: wrap; gap: 6px; max-height: 30vh; overflow-y: auto; }
+.custom-key-presets button { min-width: 44px; min-height: 36px; padding: 0 8px; border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font: 13px var(--mono); }
 .font-stepper { display: flex; flex: none; align-items: center; gap: 4px; padding: 3px; border-radius: var(--control-radius); background: var(--paper); }
 .font-stepper button { width: 44px; color: var(--accent); }
 .font-stepper output { min-width: 38px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -984,7 +997,9 @@ dialog {
 }
 dialog[open] { animation: dialog-in 340ms var(--ease-spring); }
 dialog::backdrop { background: #000000b8; }
-:root[data-theme="light"] dialog::backdrop { background: #14192338; }
+:root[data-theme="light"] dialog::backdrop { background: #0000002e; }
+/* 浅色：弹层不描边，只靠柔和投影浮起，和纯白页面融在一起。 */
+:root[data-theme="light"] dialog { border-color: transparent; box-shadow: var(--elev-3); }
 dialog h2 { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 6px; }
 dialog p { font-size: 14px; color: var(--muted); }
 dialog code { display: block; margin: 10px 0; padding: 10px 12px; border-radius: var(--control-radius); background: var(--paper); overflow-wrap: anywhere; font: 12.5px/1.6 var(--mono); }
@@ -1371,13 +1386,13 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 :root[data-screen-kind="page"] .app-head { view-transition-name: app-head; }
 ::view-transition-group(app-head), ::view-transition-new(app-head) { animation: none; }
 ::view-transition-old(app-head) { animation: none; opacity: 0; }
-/* 收到延迟探测回应时圆点缓慢呼吸一次（含连接页当前电脑）；终端未连上时圆点不动。 */
-#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, .connection-card[data-current="true"][data-state="online"] .dot.ping-flash { animation: ping-dot 1400ms ease-in-out; }
+/* 收到延迟探测回应时圆点缓慢呼吸一次（含左上角紧凑标题、连接页当前电脑）；终端未连上时圆点不动。 */
+#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #app-head-title[data-state="online"] .dot.ping-flash, .connection-card[data-current="true"][data-state="online"] .dot.ping-flash { animation: ping-dot 1400ms ease-in-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 1400ms ease-in-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop, dialog.session-drawer:not([open]) { transition: none; }
   :root[data-session-dock-motion] :is(main, dialog.session-drawer[data-docked="true"]) { transition-property: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, .connection-card .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #app-head-title .dot.ping-flash, .connection-card .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1541,6 +1556,30 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .update-setting .hint { margin: 0; padding: 0 14px 10px; color: var(--muted); font-size: 12px; }
 .update-setting .hint:empty { display: none; }
+/* 设置页（参考 iOS / 主流 App 设置）：居中标题 + 圆形返回；分组大圆角、组内不画分隔线；
+   行首线性图标，标题单行，右侧当前值 + 箭头或开关。选项类说明移到点开后的选择面板（selectMenu.js），开关类保留一行说明。 */
+.settings-dialog .workspace-head { position: relative; justify-content: center; min-height: 52px; margin-left: 0; }
+.settings-dialog .workspace-head > .icon-button { position: absolute; left: 0; top: 50%; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: var(--surface); transform: translateY(-50%); }
+.settings-dialog .workspace-head > .icon-button:active:not(:disabled) { background: var(--raised); transform: translateY(-50%) scale(.94); }
+.settings-dialog .workspace-head h2 { font-size: 17px; font-weight: 600; }
+.settings-dialog .settings-group-title { margin: 22px 16px 8px; font-size: 13px; font-weight: 500; }
+.settings-dialog .settings-body > .settings-group-title:first-child { margin-top: 8px; }
+.settings-dialog .settings-group { border-radius: 20px; }
+.settings-dialog .settings-group > * + *, .settings-dialog .update-setting > .setting-row + .setting-row { border-top: 0; }
+.settings-dialog .setting-row { gap: 14px; min-height: 58px; padding: 10px 14px 10px 16px; }
+.settings-dialog .setting-icon { width: 22px; height: 22px; stroke-width: 1.75; color: var(--ink); }
+.settings-dialog .setting-text :is(label, strong) { font-size: 15px; font-weight: 500; }
+.settings-dialog .setting-text p { margin-top: 1px; font-size: 12px; line-height: 1.4; }
+.settings-dialog .setting-row:has(.select-trigger) .setting-text p { display: none; }
+.settings-dialog .setting-row .select-trigger { gap: 4px; font-size: 14px; }
+.settings-dialog .setting-row .select-trigger svg, .setting-chevron { width: 18px; height: 18px; color: var(--muted); }
+.setting-link { width: 100%; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.setting-link:disabled { opacity: 1; }
+.setting-link:disabled .setting-value { opacity: .6; }
+.setting-value { flex: none; max-width: 45%; overflow: hidden; color: var(--muted); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.settings-dialog .update-setting .hint { padding: 0 16px 10px 52px; }
+/* 选择面板标题下的说明（设置页选项行的说明移到这里）。 */
+.select-hint { margin: 4px 0 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .update-card { margin-bottom: 12px; }
 #update-notes { max-height: 38vh; overflow: auto; margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 system-ui, sans-serif; user-select: text; -webkit-user-select: text; }
 #update-progress { width: 100%; height: 6px; margin-top: 12px; accent-color: var(--accent); }
@@ -1673,3 +1712,35 @@ dialog.workspace-dialog::backdrop { background: transparent; }
   #files-dialog .files-controls { min-height: 44px; }
   #files-transfer .hint { display: none; }
 }
+
+/* ---------- 浅色主题细化：更白、更纯净、更清晰 ---------- */
+/* 输入框、搜索框、下拉框改成无描边的浅灰填充胶囊，聚焦时才出现强调色边框。 */
+:root[data-theme="light"] :is(input:not([type="checkbox"], [type="radio"]), textarea, .select-trigger) { border-color: transparent; background: var(--field); }
+/* 设置页行内的下拉只显示「当前值 + 箭头」，不铺底。 */
+:root[data-theme="light"] .settings-dialog .setting-row .select-trigger { background: transparent; }
+:root[data-theme="light"] :is(input:not([type="checkbox"], [type="radio"]), textarea):focus,
+:root[data-theme="light"] .select-trigger[aria-expanded="true"] { border-color: var(--accent-border); background: var(--paper); }
+:root[data-theme="light"] #compose { background: transparent; }
+:root[data-theme="light"] #compose:focus { background: transparent; }
+/* 命令栏：白底浮起卡片，极淡描边 + 柔和投影。 */
+:root[data-theme="light"] #compose-form { border-color: #ebedf0; background: var(--paper); box-shadow: var(--elev-2); }
+:root[data-theme="light"] #compose-form:focus-within { border-color: var(--accent-border); }
+:root[data-theme="light"] #compose-form[data-mode="raw"] { border-color: var(--accent-border); background: var(--accent-surface); }
+/* 浮层提示、菜单：深色的重投影换成浅色的扩散投影，描边更淡。 */
+:root[data-theme="light"] :is(.terminal-selection-tools, .terminal-state, #font-toast, .compose-note, .sort-toast, .virtual-mouse-menu, #scroll-bottom, .pull-badge) { border-color: #ebedf0; background: var(--paper); box-shadow: var(--elev-2); }
+:root[data-theme="light"] .virtual-mouse { box-shadow: var(--elev-2); }
+:root[data-theme="light"] :is(.key-layout-row, .session-group, .session-option).dragging { box-shadow: var(--elev-3); }
+/* 当前会话：淡青底 + 强调色标题，与列表其它行一眼区分。 */
+:root[data-theme="light"] .session-option[data-current="true"] .session-face { background: var(--accent-surface); }
+:root[data-theme="light"] .session-option[data-current="true"] strong { color: var(--accent); }
+/* 弹层里的设置分组：白底上用一圈极淡描边圈出，不再白底叠白底看不出边界。 */
+:root[data-theme="light"] dialog.sheet .settings-group { box-shadow: inset 0 0 0 1px var(--divider); }
+/* 底部导航与页面同为纯白，只留一条极淡分隔线。 */
+:root[data-theme="light"] #dashboard-nav { background: var(--paper); }
+/* 分段切换：浅灰底槽 + 白色选中块（iOS 分段控件），不画描边。 */
+:root[data-theme="light"] .segmented { border-color: transparent; background: var(--field); }
+:root[data-theme="light"] .segmented button[aria-checked="true"] { background: var(--paper); color: var(--accent); box-shadow: var(--elev-1); }
+:root[data-theme="light"] .secondary { border-color: #e6e8eb; }
+/* 开关关闭态的轨道：纯白底上加深一档，否则和背景糊在一起。 */
+:root[data-theme="light"] .switch-check:not(:checked), :root[data-theme="light"] .switch:not([aria-checked="true"])::before { background: #e4e6ea; }
+:root[data-theme="light"] .switch-check:not(:checked)::after, :root[data-theme="light"] .switch:not([aria-checked="true"])::after { background: #ffffff; box-shadow: 0 1px 3px #00000026; }

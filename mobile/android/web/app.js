@@ -85,17 +85,13 @@ translateDocument(document.body);
 // 语言切换：立即生效。原生 WebView 拦截了页面内跳转，location.reload() 不会真正重载，
 // 因此改为就地重译静态文案并重绘各视图，同时保留当前页面与终端会话。
 function renderLanguageChoice() {
-  const choice = loadLocalePreference(localStorage);
-  for (const button of document.querySelectorAll('#app-language [data-locale]')) {
-    button.setAttribute('aria-checked', String(button.dataset.locale === choice));
-  }
+  get('app-language').value = loadLocalePreference(localStorage);
 }
 renderLanguageChoice();
-get('app-language').addEventListener('click', event => {
-  const button = event.target.closest?.('[data-locale]');
-  if (!button || button.getAttribute('aria-checked') === 'true') return;
-  saveLocalePreference(localStorage, button.dataset.locale);
-  renderLanguageChoice();
+get('app-language').addEventListener('change', () => {
+  const choice = get('app-language').value;
+  if (choice === loadLocalePreference(localStorage)) return;
+  saveLocalePreference(localStorage, choice);
   applyLocale(initLocale(localStorage, navigator));
 });
 
@@ -681,7 +677,7 @@ function renderLatency() {
   if (isFreshLatency(snapshot, latencyFlashedAt)) {
     latencyFlashedAt = snapshot.checkedAt;
     const targets = terminalScreen.hidden
-      ? [get('active-host').querySelector('.dot'), get('home-latency'), document.querySelector('.connection-card[data-current="true"] .dot')]
+      ? [get('active-host').querySelector('.dot'), get('home-latency'), get('app-head-title').querySelector('.dot'), document.querySelector('.connection-card[data-current="true"] .dot')]
       : [get('terminal-dot'), get('terminal-latency')];
     for (const element of targets) if (element) replayAnimation(element, 'ping-flash');
   }
@@ -1069,9 +1065,19 @@ function draftKey(id) {
   return profile.id + '/' + id;
 }
 
+// 多行时左侧键盘与图片按钮改为上下排列，输入框变宽。是否换行按并排（较窄）布局判断，
+// 避免变宽后又回到一行、来回切换。
+const STACKED_MIN_HEIGHT = 92; // 两个 44px 按钮 + 4px 行距
 function resizeComposer() {
+  const form = get('compose-form');
+  delete form.dataset.stacked;
   compose.style.height = '44px';
-  compose.style.height = Math.min(compose.scrollHeight, 98) + 'px';
+  const stacked = compose.scrollHeight > 44;
+  if (stacked) {
+    form.dataset.stacked = 'true';
+    compose.style.height = '44px';
+  }
+  compose.style.height = Math.min(Math.max(compose.scrollHeight, stacked ? STACKED_MIN_HEIGHT : 0), 98) + 'px';
   updateComposerActions();
   saveDraft();
   if (get('expanded-dialog').open && document.activeElement !== get('expanded-compose')) get('expanded-compose').value = compose.value;
@@ -2468,9 +2474,9 @@ function sendInput(value, { raw = false, enter = '', onComplete, wheelDirection 
 }
 
 /** 按键片段逐次写入终端（不合并缓冲、不叠加修饰键），用于清除输入等长按键序列。 */
-function sendKeys(parts) {
+function sendKeys(parts, options) {
   if (!terminalReady) return false;
-  if (!terminalInput.enqueueKeys(parts, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease })) {
+  if (!terminalInput.enqueueKeys(parts, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease }, options)) {
     get('terminal-status').textContent = t('输入过长，请分段粘贴。');
     return false;
   }
@@ -2860,14 +2866,16 @@ for (const container of [get('special-keys'), get('overflow-keys')]) {
   });
 }
 
-/** 自定义键：把文本直接发给终端（不经过手机草稿），需要时隔一会儿再发回车。 */
+/** 自定义键：把文本直接发给终端（不经过手机草稿），需要时隔一会儿再发回车；特殊按键逐键单独写入。 */
 function pressCustomKey(keyButton) {
   if (keyButton.disabled || composing || editorComposing || !terminalReady) return;
   const def = shortcutBar.customKey(keyButton.dataset.customId);
   if (!def) return;
   clearModifiers();
-  const { data, enter } = customKeyInput(def);
-  sendInput(data, { raw: true, enter });
+  const { data, enter, keys } = customKeyInput(def, { applicationCursor: term?.modes.applicationCursorKeysMode });
+  // 按键间隔足够长，Esc 后的字符不会被 TUI 当作 Alt 组合。
+  if (keys) sendKeys(keys, { gap: 60 });
+  else sendInput(data, { raw: true, enter });
 }
 
 function pressKey(keyButton) {

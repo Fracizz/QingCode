@@ -26,6 +26,11 @@
     <symbol id="i-project" viewBox="0 0 24 24"><path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"></path><path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"></path></symbol>
     <symbol id="i-host" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></symbol>
@@ -84,7 +89,7 @@
         <!-- 首屏大标题：上方小字是当前电脑与延迟（点按管理连接），与右上角设置按钮同一行。 -->
         <header class="hero">
           <button id="active-host" class="hero-eyebrow host-pill" type="button"><span class="dot"></span><span id="active-host-name">未连接</span><span id="home-latency"></span><svg><use href="#i-chevron"/></svg></button>
-          <h1 id="home-title" class="hero-title">QingCode</h1>
+          <h1 id="home-title" class="hero-title">终端</h1>
 
         </header>
         <!-- 待处理：看不到的终端跑完后留下「有新结果」，与电脑端终端列表的标记一致；看过即清除。 -->
@@ -121,7 +126,7 @@
       <section id="project-screen" class="dashboard-page" hidden aria-labelledby="project-title">
         <div id="project-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
         <header class="hero with-action">
-          <div><p id="project-subtitle" class="hero-eyebrow"></p><h1 id="project-title" class="hero-title">项目</h1></div>
+          <div><p id="project-subtitle" class="hero-eyebrow"></p><h1 id="project-title" class="hero-title sr-only">项目</h1></div>
           <button id="refresh" class="icon-button" type="button" aria-label="刷新项目"><svg><use href="#i-refresh"/></svg></button>
 
         </header>
@@ -141,7 +146,7 @@
       <section id="connection-screen" class="dashboard-page" hidden aria-labelledby="connection-title">
         <div id="connection-pull" class="pull-indicator" aria-hidden="true"><span class="pull-badge"><svg class="pull-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" pathLength="100"></circle></svg><svg class="pull-done"><use href="#i-check"/></svg><svg class="pull-failed"><use href="#i-alert"/></svg></span></div>
         <header class="hero with-action">
-          <div><p id="connection-subtitle" class="hero-eyebrow"></p><h1 id="connection-title" class="hero-title">连接</h1></div>
+          <div><p id="connection-subtitle" class="hero-eyebrow"></p><h1 id="connection-title" class="hero-title">QingCode</h1></div>
           <button id="add-host" class="secondary compact" type="button"><svg><use href="#i-plus"/></svg> 添加</button>
 
         </header>
@@ -426,18 +431,19 @@
   <!-- 手机通用设置：全屏页，工作台顶栏与终端设置都能打开，叠在当前界面上，不影响终端会话。 -->
   <dialog id="settings-dialog" class="workspace-dialog settings-dialog" aria-labelledby="settings-title">
     <header class="workspace-head" tabindex="-1"><button type="button" class="icon-button" data-close="settings-dialog" aria-label="返回"><svg><use href="#i-back"/></svg></button><h2 id="settings-title">设置</h2></header>
+    <!-- 行首图标 + 标题，右侧当前值与箭头或开关；选项类说明收进点开后的选择面板，开关类保留一行说明。 -->
     <div class="settings-body">
       <h3 class="settings-group-title">通用</h3>
       <div class="settings-group">
-        <section class="language-setting" aria-labelledby="language-title">
-          <strong id="language-title">语言 / Language</strong>
-          <div id="app-language" class="segmented" role="radiogroup" aria-labelledby="language-title">
-            <button type="button" role="radio" data-locale="auto" aria-checked="false">跟随系统</button>
-            <button type="button" role="radio" data-locale="zh" aria-checked="false" lang="zh-CN">中文</button>
-            <button type="button" role="radio" data-locale="en" aria-checked="false" lang="en">English</button>
-          </div>
-        </section>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-globe"/></svg>
+          <div class="setting-text"><label for="app-language">语言 / Language</label></div>
+          <select id="app-language" data-control="value">
+            <option value="auto">跟随系统</option><option value="zh" lang="zh-CN">中文</option><option value="en" lang="en">English</option>
+          </select>
+        </div>
+        <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-moon"/></svg>
           <div class="setting-text"><label for="app-theme">主题</label><p id="app-theme-hint">与电脑端同名主题配色一致</p></div>
           <select id="app-theme" data-control="value" aria-describedby="app-theme-hint">
             <option value="dark" selected>深色</option>
@@ -448,18 +454,15 @@
           </select>
         </div>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-sparkles"/></svg>
           <div class="setting-text"><label for="app-motion">界面动效</label><p id="app-motion-hint">减少后关闭页面切换、分区入场和弹层滑入；系统开启「移除动画」时始终减少</p></div>
           <select id="app-motion" data-control="value" aria-describedby="app-motion-hint">
             <option value="auto" selected>跟随系统</option>
             <option value="reduce">减少动效</option>
           </select>
         </div>
-        <section id="update-section" class="update-setting" aria-labelledby="update-title">
-          <div class="setting-row"><div class="setting-text"><strong id="update-title">应用更新</strong><p id="update-version"></p></div><button id="update-check" class="secondary compact" type="button">检查更新</button></div>
-          <p id="update-status" class="hint" role="status"></p>
-          <label class="setting-row" for="update-auto"><span class="setting-text"><strong>每天自动检查更新</strong></span><input id="update-auto" class="switch-check" type="checkbox" checked></label>
-        </section>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-sun"/></svg>
           <div class="setting-text"><label for="keep-screen-on">屏幕常亮</label><p id="keep-screen-on-hint">留在应用内时不自动熄屏，会增加耗电</p></div>
           <select id="keep-screen-on" data-control="switch" aria-describedby="keep-screen-on-hint">
             <option value="off" selected data-i18n="state:off">关闭</option><option value="on">使用应用时保持亮屏</option>
@@ -469,12 +472,14 @@
       <h3 class="settings-group-title">工作台</h3>
       <div class="settings-group">
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-home"/></svg>
           <div class="setting-text"><label for="home-sessions-setting">全部会话</label><p id="home-sessions-setting-hint">在首页列出所有项目的会话，关闭后仍可在会话栏查看</p></div>
           <select id="home-sessions-setting" data-control="switch" aria-describedby="home-sessions-setting-hint">
             <option value="on" selected>在首页显示</option><option value="off">不在首页显示</option>
           </select>
         </div>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-loader-circle"/></svg>
           <div class="setting-text"><label for="running-status-setting">运行状态</label><p id="running-status-setting-hint">会话行显示转圈与「运行中」，关闭不影响排序和提醒</p></div>
           <select id="running-status-setting" data-control="switch" aria-describedby="running-status-setting-hint">
             <option value="on" selected>在会话列表显示</option><option value="off">不显示</option>
@@ -484,12 +489,14 @@
       <h3 class="settings-group-title">发送与图片</h3>
       <div class="settings-group">
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-image"/></svg>
           <div class="setting-text"><label for="image-compression">图片压缩</label><p id="image-compression-hint">单张最大 8 MB，超出请选择压缩；HEIC 需系统支持解码</p></div>
           <select id="image-compression" data-control="value" aria-describedby="image-compression-hint">
             <option value="original">原图 · 不压缩</option><option value="low">低压缩 · 更清晰</option><option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
           </select>
         </div>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-send"/></svg>
           <div class="setting-text"><label for="send-mode">发送按键</label><p id="send-mode-hint">「直接 Enter」等文字送达后再单独发送回车</p></div>
           <select id="send-mode" data-control="value" aria-describedby="send-mode-hint">
             <option value="default" selected>默认 · 文字与回车一起发送</option><option value="enter">发送并直接 Enter</option>
@@ -499,18 +506,28 @@
       <h3 class="settings-group-title">提醒与渲染</h3>
       <div class="settings-group">
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-bell"/></svg>
           <div class="setting-text"><label for="session-watch">后台提醒</label><p id="session-watch-hint">程序停下或会话结束时通知；普通 Shell 命令无法判断，需能连上电脑，会增加耗电</p></div>
           <select id="session-watch" data-control="switch" aria-describedby="session-watch-hint">
             <option value="off" selected data-i18n="state:off">关闭</option><option value="on">程序停下时通知我</option>
           </select>
         </div>
         <div class="setting-row" data-tappable>
+          <svg class="setting-icon" aria-hidden="true"><use href="#i-zap"/></svg>
           <div class="setting-text"><label for="terminal-renderer">硬件加速渲染</label><p id="terminal-renderer-hint">画面花屏或闪烁时可关闭</p></div>
           <select id="terminal-renderer" data-control="switch" aria-describedby="terminal-renderer-hint">
             <option value="on" selected>开启 · 全屏程序更流畅</option><option value="off" data-i18n="state:off">关闭</option>
           </select>
         </div>
       </div>
+      <section id="update-section" aria-labelledby="about-title">
+        <h3 id="about-title" class="settings-group-title">关于</h3>
+        <div class="settings-group update-setting">
+          <button id="update-check" class="setting-row setting-link" type="button"><svg class="setting-icon" aria-hidden="true"><use href="#i-info"/></svg><span class="setting-text"><strong id="update-title">检查更新</strong></span><span id="update-version" class="setting-value"></span><svg class="setting-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+          <p id="update-status" class="hint" role="status"></p>
+          <label class="setting-row" for="update-auto"><svg class="setting-icon" aria-hidden="true"><use href="#i-refresh"/></svg><span class="setting-text"><strong>每天自动检查更新</strong></span><input id="update-auto" class="switch-check" type="checkbox" checked></label>
+        </div>
+      </section>
     </div>
   </dialog>
 
@@ -519,6 +536,7 @@
   <dialog id="select-dialog" class="sheet" aria-labelledby="select-dialog-title" data-i18n-skip>
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 id="select-dialog-title"></h2>
+    <p id="select-dialog-hint" class="select-hint" hidden></p>
     <div id="select-options" class="select-options" role="radiogroup"></div>
   </dialog>
 
@@ -641,10 +659,22 @@
     <form id="custom-key-form">
       <h2 id="custom-key-title">添加自定义键</h2>
       <label for="custom-key-name">键名（可选）</label>
-      <input id="custom-key-name" maxlength="24" autocomplete="off" placeholder="留空显示发送的文本">
-      <label for="custom-key-text">发送的文本</label>
-      <input id="custom-key-text" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/new">
-      <label class="custom-key-enter"><input id="custom-key-enter" class="switch-check" type="checkbox" checked> 发送后按回车</label>
+      <input id="custom-key-name" maxlength="24" autocomplete="off" placeholder="留空显示发送的内容">
+      <div id="custom-key-kind" class="segmented custom-key-kind" role="radiogroup" aria-label="自定义键类型">
+        <button type="button" role="radio" data-kind="text" aria-checked="true">文本</button>
+        <button type="button" role="radio" data-kind="keys" aria-checked="false">特殊按键</button>
+      </div>
+      <div id="custom-key-text-fields">
+        <label for="custom-key-text">发送的文本</label>
+        <input id="custom-key-text" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/new">
+        <label class="custom-key-enter"><input id="custom-key-enter" class="switch-check" type="checkbox" checked> 发送后按回车</label>
+      </div>
+      <div id="custom-key-keys-fields" hidden>
+        <label for="custom-key-keys">按键</label>
+        <input id="custom-key-keys" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ctrl+D">
+        <p class="hint">多个按键用空格分隔，依次发送，如「Esc : w q Enter」。点下方按键插入：</p>
+        <div id="custom-key-presets" class="custom-key-presets"></div>
+      </div>
       <p id="custom-key-error" class="error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="custom-key-delete" type="button" class="secondary danger" hidden>删除</button><button type="button" class="secondary" data-close="custom-key-dialog">取消</button><button type="submit" class="primary">保存</button></div>
     </form>

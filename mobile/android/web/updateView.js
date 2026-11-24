@@ -50,7 +50,8 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
   }
 
   function render() {
-    get('update-version').textContent = current ? t('当前版本 {version}', { version: current.name }) : '';
+    get('update-version').textContent = current?.name ?? '';
+    get('update-version').title = current ? t('当前版本 {version}', { version: current.name }) : '';
     get('update-check').disabled = !current || phase === 'checking';
     get('update-auto').checked = prefs.auto;
     paintStatus();
