@@ -16,6 +16,7 @@ const SLOT_CLASS = 'inline-flex h-4 w-4 flex-shrink-0 translate-y-px items-cente
  * 改为淡色整圈轨道 + 1/4 弧旋转，任何时刻轮廓都是以中心为圆心的完整圆。
  * 外径 12px（约为正文字高的 0.75，与 Codex 侧栏转圈的视觉比例相当；10px 时相对文字偏小），线宽 1.5px 与已退出空心圈一致；
  * 取偶数尺寸，在 16px 槽位里两侧各 2px，落在整像素上不发虚。颜色取 currentColor。
+ * 转速 1.4s/圈（比默认 animate-spin 的 1s 慢），列表常驻多个转圈时不显得急躁；手机端 .session-spinner 同步。
  */
 export function TerminalListSpinner({ label, className = '' }: { label?: string; className?: string }) {
   return (
@@ -27,7 +28,7 @@ export function TerminalListSpinner({ label, className = '' }: { label?: string;
       role={label ? 'img' : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
-      className={`flex-shrink-0 animate-spin ${className}`}
+      className={`flex-shrink-0 animate-[spin_1.4s_linear_infinite] ${className}`}
     >
       <circle cx="6" cy="6" r="5.25" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
       <path d="M6 .75a5.25 5.25 0 0 1 5.25 5.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

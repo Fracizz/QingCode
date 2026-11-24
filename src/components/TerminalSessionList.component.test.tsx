@@ -344,7 +344,7 @@ describe('TerminalSessionList', () => {
     ]
     render(<TerminalSessionList />)
     expect(row('t1').querySelector('[data-terminal-status="idle"]')).not.toBeNull()
-    expect(row('t2').querySelector('[data-terminal-activity="running"] .animate-spin')).not.toBeNull()
+    expect(row('t2').querySelector('[data-terminal-activity="running"] svg')).not.toBeNull()
     expect(row('gone').querySelector('[data-terminal-status="exited"]')).not.toBeNull()
     expect(row('gone').querySelector('[data-tooltip="已退出"]')).not.toBeNull()
   })
