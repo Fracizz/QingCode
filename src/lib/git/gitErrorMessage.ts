@@ -192,6 +192,32 @@ export function parseScmErrorDisplay(raw: string, context?: ScmErrorContext): Sc
   }
 }
 
+/**
+ * 多端同步「无法快进」toast 的简短说明：只说原因，不列文件、不带操作建议。
+ * 标题已表明“未自动同步”，这里一行即可。
+ */
+export function gitPushSyncBlockedI18n(raw: string): GitPullErrorI18n {
+  const text = normalizeGitErrorRaw(raw)
+  const lower = text.toLowerCase()
+  const overwritten = extractGitOverwrittenFiles(text)
+  if (
+    overwritten.length > 0 ||
+    lower.includes('would be overwritten by merge') ||
+    text.includes('本地更改将被合并操作覆盖')
+  ) {
+    return overwritten.length > 0
+      ? { key: '本地有 {count} 个文件未提交', params: { count: overwritten.length } }
+      : { key: '本地有未提交修改' }
+  }
+  const i18n = gitScmErrorI18n(raw, 'pull')
+  if (i18n.key.includes('远程认证失败')) return { key: '远程认证失败' }
+  if (i18n.key.includes('无法连接远程仓库')) return { key: '无法连接远程仓库' }
+  const detail = lastMeaningfulGitLine(text)
+  if (!detail) return { key: '操作已取消' }
+  const clipped = detail.length > 60 ? `${detail.slice(0, 57)}…` : detail
+  return { key: '{detail}', params: { detail: clipped } }
+}
+
 /** Map raw git pull failure text to a concise i18n key + params. */
 export function gitPullErrorI18n(raw: string): GitPullErrorI18n {
   return gitScmErrorI18n(raw, 'pull')

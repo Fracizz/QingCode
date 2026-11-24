@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractGitOverwrittenFiles,
   formatGitChangedFileList,
+  gitPushSyncBlockedI18n,
   classifyGitPushError,
   gitPullErrorI18n,
   gitSwitchErrorI18n,
@@ -79,5 +80,27 @@ hint: Updates were rejected because the remote contains work that you do not hav
   it('detects authentication failures', () => {
     expect(classifyGitPushError('Error: 认证失败')).toBe('auth-failed')
     expect(classifyGitPushError('fatal: Authentication failed for')).toBe('auth-failed')
+  })
+})
+
+describe('gitPushSyncBlockedI18n', () => {
+  it('只给出未提交文件个数，不列路径', () => {
+    const raw = `error: Your local changes to the following files would be overwritten by merge:
+\tapi/a.py
+\tapi/b.py
+\tapi/c.py
+Please commit your changes or stash them before you merge.
+Aborting`
+    expect(gitPushSyncBlockedI18n(raw)).toEqual({ key: '本地有 {count} 个文件未提交', params: { count: 3 } })
+  })
+
+  it('认证与网络错误给出简短原因', () => {
+    expect(gitPushSyncBlockedI18n('fatal: Authentication failed for x').key).toBe('远程认证失败')
+    expect(gitPushSyncBlockedI18n('fatal: Could not resolve host: x').key).toBe('无法连接远程仓库')
+  })
+
+  it('其他错误截断为短文本', () => {
+    const i18n = gitPushSyncBlockedI18n(`fatal: ${'x'.repeat(200)}`)
+    expect(String(i18n.params?.detail).length).toBeLessThanOrEqual(58)
   })
 })
