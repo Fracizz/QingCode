@@ -1,7 +1,7 @@
 // 状态行里的输入短状态图标：图片进度 > 提交状态（发送中 / 已接收 / 结果未知）。
 // 「电脑已接收」只对本次界面上看着发出的提交短暂显示约 4 秒，随后图标消失，不常驻勾号；
 // 重新进入终端时不再回放以前已接收的回执。
-// 发送中、结果未知、手机保存失败会一直显示，便于核对。提交原文仍可在「… → 最近提交与项目草稿」查看。
+// 发送中、结果未知、手机保存失败会一直显示，便于核对；结果未知点开查看后即收起。提交原文仍可在「… → 最近提交与项目草稿」查看。
 import { get } from './dom.js';
 import { t } from './i18n.js';
 
@@ -19,6 +19,15 @@ export function createComposeStatus({ receipts, persistenceFailed }) {
   let shownReceipt = null;
   let expiredReceipt = null;
   let receiptTimer = null;
+  // 点开查看过的回执（结果未知 / 已接收）不再占用状态行；发送中仍保留。
+  const dismissed = new Set();
+
+  /** 点按状态图标查看后收起；手机保存失败是数据风险提示，不随点按消失。 */
+  function dismiss() {
+    const latest = receipts()[0];
+    if (latest && latest.state !== 'sending') dismissed.add(latest.id);
+    renderSubmission();
+  }
 
   function renderSubmission() {
     const latest = receipts()[0] ?? null;
@@ -36,7 +45,8 @@ export function createComposeStatus({ receipts, persistenceFailed }) {
         renderSubmission();
       }, RECEIPT_VISIBLE_MS);
     }
-    const visible = failed || (!!latest && !(received && expiredReceipt === latest.id));
+    const dismissedLatest = !!latest && latest.state !== 'sending' && dismissed.has(latest.id);
+    const visible = failed || (!!latest && !dismissedLatest && !(received && expiredReceipt === latest.id));
     get('submission-state').dataset.visible = String(visible);
     chip.dataset.state = failed ? 'error' : latest?.state ?? '';
     // 状态图标由 .compose-note::before 按 data-state 绘制，文案不再带符号。
@@ -73,5 +83,5 @@ export function createComposeStatus({ receipts, persistenceFailed }) {
     get('submission-state').hidden = true;
   }
 
-  return { renderSubmission, renderNotes, setImageNote, reset, imageNote: () => imageNote };
+  return { renderSubmission, renderNotes, setImageNote, reset, dismiss, imageNote: () => imageNote };
 }

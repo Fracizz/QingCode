@@ -1146,7 +1146,7 @@ for (const [id, action] of Object.entries({
   menu.close();
   action();
 });
-get('review-submission').addEventListener('click', showSubmissions);
+get('review-submission').addEventListener('click', () => { showSubmissions(); composeStatus.dismiss(); });
 get('expanded-compose').addEventListener('input', () => { compose.value = get('expanded-compose').value; resizeComposer(); });
 get('expanded-compose').addEventListener('compositionstart', () => { editorComposing = true; cancelKeyRepeats(); updateComposerActions(); });
 get('expanded-compose').addEventListener('compositionend', () => { editorComposing = false; updateComposerActions(); });

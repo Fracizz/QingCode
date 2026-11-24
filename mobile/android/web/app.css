@@ -1116,7 +1116,10 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 .session-group-head .project-source-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 首页组头延续项目行的点按行为；右侧新建终端与浏览文件和项目列表同款，各保持 44px 触控区。 */
 .session-group-head.session-group-head-home { align-items: center; gap: 2px; padding: 0; }
-.session-group-open { display: flex; flex: 1; min-width: 0; align-items: center; justify-content: flex-start; gap: 6px; padding: 0 6px 0 8px; color: inherit; font: inherit; text-align: left; }
+/* 图标与名称同处一行网格：整组在 44px 触控区内垂直居中，名称换行时图标仍与首行对齐，不跑到两行中间。 */
+.session-group-open { display: grid; flex: 1; grid-template-columns: 15px minmax(0, 1fr); align-content: center; align-items: start; gap: 6px; min-width: 0; padding: 0 6px 0 8px; color: inherit; font: inherit; text-align: left; }
+.session-group-open .session-group-icon { align-self: start; margin-top: calc((20px - 15px) / 2); }
+.session-group-open .session-group-summary strong { line-height: 20px; }
 .session-group-open:disabled { opacity: 1; }
 .session-group-open .session-group-summary { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
 .session-group-context { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
