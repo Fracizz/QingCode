@@ -577,6 +577,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .rows > * + * { border-top: 1px solid var(--divider); }
 /* 项目分组：标题吸在搜索框下方，组内共用标题里的主机信息。 */
 .project-groups { display: grid; gap: 4px; }
+/* 分组外框的边缘高光（::after z-index: 2）关在各自容器里：否则滚到吸顶的分组标题、搜索框下方时，圆角描边会画在它们上面。 */
+.project-groups .rows { isolation: isolate; }
 .project-group-head { position: sticky; z-index: 1; top: calc(var(--app-head-height) - var(--page-top) + 58px); display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 4px; border-radius: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; text-align: left; }
 .project-group-head:active:not(:disabled), .project-group-head:focus-visible { background: var(--paper); color: var(--ink); transform: none; }
 .project-group-head:disabled { opacity: 1; }
@@ -1312,8 +1314,9 @@ dialog.session-drawer[data-docked="true"] .session-option[data-current="true"] .
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes float-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px) scale(.94); } }
-@keyframes ping-dot { 35% { opacity: .55; transform: scale(1.5); } }
-@keyframes ping-value { 35% { color: var(--accent); } }
+/* 一次完整呼吸：圆点微微放大、光晕向外扩散再收回。 */
+@keyframes ping-dot { 50% { transform: scale(1.3); box-shadow: 0 0 0 6px var(--accent-halo); } }
+@keyframes ping-value { 50% { color: var(--accent); } }
 
 /* ---------- 动效 ----------
    只给界面外壳加：终端内容、光标和手指拖动不做动画。
@@ -1368,13 +1371,13 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 :root[data-screen-kind="page"] .app-head { view-transition-name: app-head; }
 ::view-transition-group(app-head), ::view-transition-new(app-head) { animation: none; }
 ::view-transition-old(app-head) { animation: none; opacity: 0; }
-/* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
-#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
-#terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
+/* 收到延迟探测回应时圆点缓慢呼吸一次（含连接页当前电脑）；终端未连上时圆点不动。 */
+#terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, .connection-card[data-current="true"][data-state="online"] .dot.ping-flash { animation: ping-dot 1400ms ease-in-out; }
+#terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 1400ms ease-in-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop, dialog.session-drawer:not([open]) { transition: none; }
   :root[data-session-dock-motion] :is(main, dialog.session-drawer[data-docked="true"]) { transition-property: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, .connection-card .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {

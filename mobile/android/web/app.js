@@ -681,9 +681,9 @@ function renderLatency() {
   if (isFreshLatency(snapshot, latencyFlashedAt)) {
     latencyFlashedAt = snapshot.checkedAt;
     const targets = terminalScreen.hidden
-      ? [get('active-host').querySelector('.dot'), get('home-latency')]
+      ? [get('active-host').querySelector('.dot'), get('home-latency'), document.querySelector('.connection-card[data-current="true"] .dot')]
       : [get('terminal-dot'), get('terminal-latency')];
-    for (const element of targets) replayAnimation(element, 'ping-flash');
+    for (const element of targets) if (element) replayAnimation(element, 'ping-flash');
   }
   // 状态圆点已表示与电脑的连接，副行只显示数值，给项目名和连接名留出空间。
   get('terminal-latency').textContent = value;
