@@ -109,6 +109,20 @@ fn ready_timeout_screen_tail_drops_paths_and_keeps_last_lines() {
     assert!(!tail.iter().any(|line| line.contains("Users")));
     let other = screen_tail_for_diagnostics("open /home/u/secret now", "/anchor");
     assert_eq!(other, vec!["open <path> now".to_string()]);
+    // 斜杠命令名保留；专用目录的其它写法标为 <anchor~>，不泄露完整路径。
+    let cd = screen_tail_for_diagnostics(
+        "❯ /cd\n  ⎿  Usage: /cd <directory>\n ~\\.qingcode\\cli-prewarm\n/home/u/x",
+        r"C:\Users\me\.qingcode\cli-prewarm",
+    );
+    assert_eq!(
+        cd,
+        vec![
+            "❯ /cd",
+            "  ⎿  Usage: /cd <directory>",
+            " <anchor~>",
+            "<path>"
+        ]
+    );
 }
 
 #[test]
@@ -212,6 +226,7 @@ fn a_loading_composer_and_a_previous_command_do_not_authorize_enter() {
         nonce: String::new(),
         handoff: None,
         anchor: String::new(),
+        step: "launch",
     };
     view.screen.process("› Ask Codex to do anything".as_bytes());
     assert!(!view.input_ready());

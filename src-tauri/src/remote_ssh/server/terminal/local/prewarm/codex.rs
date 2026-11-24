@@ -255,6 +255,11 @@ const SCREEN_TAIL_CHARS: usize = 120;
 /// 去掉专用目录和疑似路径的片段，不把用户路径写进诊断。
 fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
     let anchors = [anchor.to_string(), anchor.replace('\\', "/")];
+    let anchor_name = anchor
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty());
     let mut lines: Vec<String> = screen
         .lines()
         .map(str::trim_end)
@@ -266,8 +271,20 @@ fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
             }
             line.split(' ')
                 .map(|word| {
-                    if word.contains('/') || word.contains('\\') {
-                        "<path>"
+                    if is_slash_command(word) {
+                        // `/cd`、`/pwd` 等命令名不含用户信息，保留以便看出提交了什么。
+                        word
+                    } else if word.contains('/') || word.contains('\\') {
+                        // 专用目录的其它写法（`~/...`、斜杠方向不同）单独标出，便于判断 CLI 实际所在目录。
+                        let name = word
+                            .trim_end_matches(['/', '\\', '.', ','])
+                            .rsplit(['/', '\\'])
+                            .next();
+                        if anchor_name.is_some() && name == anchor_name {
+                            "<anchor~>"
+                        } else {
+                            "<path>"
+                        }
                     } else {
                         word
                     }
@@ -282,6 +299,17 @@ fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
     let skip = lines.len().saturating_sub(SCREEN_TAIL_LINES);
     lines.drain(..skip);
     lines
+}
+
+/// 形如 `/cd`、`/add-dir` 的单段斜杠命令名。
+fn is_slash_command(word: &str) -> bool {
+    word.strip_prefix('/').is_some_and(|name| {
+        (1..=24).contains(&name.len())
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    })
 }
 
 /// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
@@ -447,6 +475,8 @@ pub(super) struct CodexSession {
     handoff: Option<tempfile::NamedTempFile>,
     /// CLI 启动所在的专用空目录（本机 `codex-prewarm`，远端 `~/.qingcode/cli-prewarm`）。
     pub(super) anchor: String,
+    /// 就绪/切目录流程当前所在步骤，超时时写入诊断。
+    pub(super) step: &'static str,
 }
 
 impl CodexSession {
@@ -543,6 +573,7 @@ impl CodexSession {
         cwd: &str,
         local: bool,
     ) -> Result<(), String> {
+        self.step = "trust_or_composer";
         self.wait_for(session, id, |v| {
             let screen = claude_rows(v.screen.screen());
             claude_composer(&claude_input_rows(v.screen.screen()), "")
@@ -613,6 +644,7 @@ impl CodexSession {
         } else {
             cwd.to_string()
         };
+        self.step = "cd_wait_empty_composer";
         self.wait_for(session, id, |v| {
             claude_composer(&claude_input_rows(v.screen.screen()), "")
         })
@@ -620,6 +652,7 @@ impl CodexSession {
         send_input_to_session(session, id, &self.input_seq, b"/cd".to_vec())
             .await
             .map_err(|e| e.0)?;
+        self.step = "cd_wait_command_menu";
         self.wait_for(session, id, |v| {
             let content = claude_rows(v.screen.screen());
             claude_composer(&claude_input_rows(v.screen.screen()), "/cd")
@@ -638,6 +671,7 @@ impl CodexSession {
         .await
         .map_err(|e| e.0)?;
         let draft = format!("/cd {path}");
+        self.step = "cd_wait_draft";
         self.wait_for(session, id, |v| {
             claude_composer(&claude_input_rows(v.screen.screen()), &draft)
         })
@@ -650,6 +684,11 @@ impl CodexSession {
             format!("Moved to {path}")
         } else {
             format!("Already in {path}.")
+        };
+        self.step = if change {
+            "cd_wait_moved"
+        } else {
+            "cd_wait_already_in"
         };
         self.wait_for(session, id, |v| {
             let screen = v.screen.screen();
@@ -924,6 +963,7 @@ pub(super) async fn prepare_at(
         nonce: nonce.clone(),
         handoff,
         anchor: cwd.into(),
+        step: "launch",
     };
     let ready = tokio::time::timeout(READY_TIMEOUT, async {
         if shell_handoff(agent) {
@@ -968,6 +1008,7 @@ pub(super) async fn prepare_at(
             serde_json::json!({
                 "agent": agent,
                 "remote": remote,
+                "step": codex.step,
                 "screen": screen_tail_for_diagnostics(&codex.screen.screen().contents(), cwd),
             }),
         );

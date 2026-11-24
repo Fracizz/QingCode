@@ -1182,6 +1182,30 @@ fn server_restart_clears_update_backoff_and_wakes_the_refill_worker() {
 }
 
 #[test]
+fn ready_timeout_pause_resumes_automatically_once_due() {
+    let now = Instant::now();
+    let mut state = PoolState {
+        paused_reason: Some("cli_not_ready"),
+        ready_timeouts: 2,
+        not_ready_retry_at: Some(now + Duration::from_secs(60)),
+        ..PoolState::default()
+    };
+    assert!(!state.resume_not_ready(now));
+    assert_eq!(state.paused_reason, Some("cli_not_ready"));
+    assert!(state.resume_not_ready(now + Duration::from_secs(60)));
+    assert_eq!(state.paused_reason, None);
+    assert_eq!(state.ready_timeouts, 0);
+    assert_eq!(state.not_ready_retry_at, None);
+    // 登录/升级提示等非超时暂停没有自动重试时间，保持暂停。
+    state.paused_reason = Some("cli_not_ready");
+    assert!(!state.resume_not_ready(now + Duration::from_secs(3600)));
+    // 其它暂停原因不受影响。
+    state.paused_reason = Some("server_outdated");
+    state.not_ready_retry_at = Some(now);
+    assert!(!state.resume_not_ready(now));
+}
+
+#[test]
 fn server_restart_ignores_an_unconfigured_pool() {
     let pool = ShellPrewarmPool::default();
     pool.retry_now();

@@ -219,7 +219,13 @@ struct PoolState {
     preparing: bool,
     /// 连续 CLI 就绪超时次数；成功或配置变化时清零。
     ready_timeouts: u32,
+    /// 因连续就绪超时暂停为 `cli_not_ready`/`codex_not_ready` 时，到点自动重试一轮。
+    /// 其它原因（登录、升级提示等）的暂停为 None，仍需用户处理或手动重试。
+    not_ready_retry_at: Option<Instant>,
 }
+
+/// 就绪超时多为偶发：暂停后隔一段时间自动再试，避免领完最后一个后预热池长期为空。
+const NOT_READY_AUTO_RETRY: Duration = Duration::from_secs(5 * 60);
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
 
@@ -404,6 +410,20 @@ impl PoolState {
             remaining -= 1;
             true
         });
+    }
+
+    /// 就绪超时暂停到点：解除暂停并清零超时计数，返回是否解除。
+    fn resume_not_ready(&mut self, now: Instant) -> bool {
+        let due = matches!(
+            self.paused_reason,
+            Some("codex_not_ready" | "cli_not_ready")
+        ) && self.not_ready_retry_at.is_some_and(|at| now >= at);
+        if due {
+            self.paused_reason = None;
+            self.ready_timeouts = 0;
+            self.not_ready_retry_at = None;
+        }
+        due
     }
 
     fn prune_idle(&mut self) -> usize {
@@ -1277,6 +1297,12 @@ impl ShellPrewarmPool {
                 if state.generation != generation {
                     continue;
                 }
+                if state.resume_not_ready(Instant::now()) {
+                    trace(
+                        "not_ready_auto_retry",
+                        serde_json::json!({"remote": target.remote.is_some()}),
+                    );
+                }
                 if let Some(reason) = paused_reason {
                     let before = state.shells.len();
                     state.shells.clear();
@@ -1405,6 +1431,8 @@ impl ShellPrewarmPool {
                                 "cli_not_ready"
                             },
                         );
+                        state.not_ready_retry_at = (error == codex::READY_TIMED_OUT)
+                            .then(|| Instant::now() + NOT_READY_AUTO_RETRY);
                         continue;
                     }
                     if retry_timeout {
