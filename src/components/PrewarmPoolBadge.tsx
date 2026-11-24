@@ -9,10 +9,10 @@ import Tooltip from './Tooltip'
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
 const TONE = {
-  // 补满为绿色（可直接用），补充中退成辅助灰，暂停用警示色。
-  full: 'text-ok',
+  // 补满为绿色（可直接用），补充中退成辅助灰，暂停用警示色；状态色降到 75% 不抢标题。
+  full: 'text-ok/75',
   filling: 'text-term-list-meta',
-  paused: 'text-warn',
+  paused: 'text-warn/75',
 } as const
 
 /** 重试转圈至少保持的时长：命令瞬间返回时也让用户看清已触发。 */
