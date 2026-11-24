@@ -103,7 +103,7 @@ import PrewarmPoolBadge from './PrewarmPoolBadge'
 import { usePrewarmStatuses } from '../hooks/usePrewarmStatuses'
 import { terminalLastActiveAt } from '@/lib/terminal/terminalLastActive'
 import TerminalRenameInput from './TerminalRenameInput'
-import TerminalStatusMark from './TerminalStatusMark'
+import TerminalStatusMark, { TerminalListSpinner } from './TerminalStatusMark'
 import Tooltip from './Tooltip'
 import { TooltipSuppressionContext } from './tooltipContext'
 import type { TerminalTab } from '../types'
@@ -679,10 +679,9 @@ export default function TerminalSessionList() {
           )}
         </div>
         {(term.status === 'reconnecting' || isPending) && !isRenaming && (
-          <LoaderCircle
-            size={14}
-            aria-label={isPending ? translate('正在切换项目…') : translate('正在重新连接…')}
-            className={`flex-shrink-0 animate-spin ${isPending ? 'text-fg-muted' : 'text-warn'}`}
+          <TerminalListSpinner
+            label={isPending ? translate('正在切换项目…') : translate('正在重新连接…')}
+            className={isPending ? 'text-fg-muted' : 'text-warn'}
           />
         )}
         {exited && !isRenaming && !managing && (
@@ -865,11 +864,7 @@ export default function TerminalSessionList() {
             </Tooltip>
           </button>
           {pendingProjectId === project.id && (
-            <LoaderCircle
-              size={14}
-              aria-label={translate('正在切换项目…')}
-              className="flex-shrink-0 animate-spin text-fg-muted"
-            />
+            <TerminalListSpinner label={translate('正在切换项目…')} className="text-fg-muted" />
           )}
           {hasAttention && (
             <span
