@@ -901,7 +901,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* 横向拖动移动光标时用虚线强调色边框提示「触控板」状态。 */
 #compose-form[data-dragging="true"] { border-style: dashed; border-color: var(--accent); }
 #compose-form[data-dragging="true"] #compose { caret-color: var(--accent); }
-#compose { width: 100%; min-height: 44px; resize: none; padding: 11px 6px; border: 0; border-radius: var(--control-radius); background: transparent; font: 15px/22px var(--mono); }
+/* break-spaces：行尾的空格也占位并折到下一行，光标随之移动；pre-wrap 下行尾空格悬挂在边缘，看起来像没输入进去。 */
+#compose { width: 100%; min-height: 44px; resize: none; white-space: break-spaces; padding: 11px 6px; border: 0; border-radius: var(--control-radius); background: transparent; font: 15px/22px var(--mono); }
 #compose:focus-visible { outline: none; box-shadow: none; }
 #compose::placeholder { font-family: system-ui, sans-serif; font-size: 14px; }
 #compose-form .icon-button { width: 44px; height: 44px; color: var(--muted); }

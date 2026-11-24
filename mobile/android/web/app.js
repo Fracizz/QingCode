@@ -1065,8 +1065,8 @@ function draftKey(id) {
   return profile.id + '/' + id;
 }
 
-// 多行时左侧键盘与图片按钮改为上下排列，输入框变宽。是否换行按并排（较窄）布局判断，
-// 避免变宽后又回到一行、来回切换。
+// 多行时左侧键盘与图片按钮改为上下排列，输入框变宽。只有变宽后仍需多行才竖排；
+// 并排时放不下一行、变宽后放得下，就保持并排并让输入框长高，换行立刻可见，也不会来回切换。
 const STACKED_MIN_HEIGHT = 92; // 两个 44px 按钮 + 4px 行距
 // 离屏测量用的文本框：在它上面量换行和高度，输入框本身只在竖排状态真正变化时才改布局。
 // 每次输入都切换输入框的网格位置和宽度，会让部分安卓输入法重建输入连接，吞掉刚输入的空格等按键。
@@ -1094,8 +1094,9 @@ function resizeComposer() {
     // 竖排时输入框多占一列（44px 按钮 + 列间距），据此换算单行布局下的宽度。
     const extra = 44 + (parseFloat(getComputedStyle(form).columnGap) || 0);
     const narrow = wasStacked ? width - extra : width;
-    const stacked = measureCompose(narrow) > 44;
-    const height = stacked ? Math.min(Math.max(measureCompose(narrow + extra), STACKED_MIN_HEIGHT), 98) : 44;
+    const wide = measureCompose(narrow + extra);
+    const stacked = wide > 44;
+    const height = stacked ? Math.min(Math.max(wide, STACKED_MIN_HEIGHT), 98) : Math.min(measureCompose(narrow), 98);
     if (stacked !== wasStacked) {
       if (stacked) form.dataset.stacked = 'true';
       else delete form.dataset.stacked;
