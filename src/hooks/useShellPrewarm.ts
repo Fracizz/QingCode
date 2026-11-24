@@ -1,5 +1,5 @@
 import { localCodexPrewarm, LOCAL_CODEX_PREWARM_KEY } from '../lib/terminal/localCodexPrewarm'
-import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
+import { CONNECTION_PREWARM_PREFIX, connectionPrewarmAnchors, connectionPrewarmCount, connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
 import { TERMINAL_PROFILE_TRUST_CHANGED_EVENT, TERMINAL_PROFILE_TRUST_KEY } from '../lib/terminal/terminalProfileTrust'
 import { sshConnectionIdFromUri } from '../lib/sshWorkspace'
 import { useEffect, useRef } from 'react'
@@ -10,22 +10,26 @@ import type { Project } from '../types'
 import { useProjectStore } from '../store/projectStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { isProjectTrusted, WORKSPACE_TRUST_CHANGED_EVENT, WORKSPACE_TRUST_SYNCED_EVENT } from '../lib/workspaceTrust'
-import { loadShellPrewarmCount, SHELL_PREWARM_CHANGED_EVENT } from '../lib/terminal/shellPrewarmSettings'
+import {
+  CONNECTION_PREWARM_DISABLED_PREFIX, CONNECTION_SHELL_COUNT_PREFIX, connectionPrewarmEnabled, connectionShellPrewarmCounts, disabledPrewarmConnections, loadShellPrewarmCount,
+  LOCAL_PREWARM_DISABLED_KEY, localPrewarmEnabled, SHELL_PREWARM_CHANGED_EVENT,
+} from '../lib/terminal/shellPrewarmSettings'
 import { loadEffectiveTerminalPersistLocalSessions } from '../lib/terminal/terminalPersistLocalSettings'
 import { getPrewarmShell, TERMINAL_PROFILES_KEY } from '../lib/terminal/terminalProfiles'
 import { detectTerminalHostPlatform } from '../lib/terminal/terminalShell'
 
 let backendSequence = Promise.resolve()
-type PrewarmProfile = { cwd: string; profileId: string; command: string; shell: string }
-function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: PrewarmProfile, localProfile?: Omit<PrewarmProfile, 'cwd'>, anchoredProfiles?: PrewarmProfile[]) {
+type PrewarmProfile = { cwd: string; profileId: string; command: string; shell: string; count?: number }
+/** `count` 只决定本机池；远程连接按 `connectionCounts`（未列出的连接自动 1 个）。 */
+function configure(cwd: string | null, shell: string | null, count: 'auto' | number, profile?: PrewarmProfile, localProfile?: Omit<PrewarmProfile, 'cwd'>, anchoredProfiles?: PrewarmProfile[], disabledConnections?: string[], connectionCounts?: Record<string, number>) {
   backendSequence = backendSequence.then(() =>
-    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }), ...(localProfile && { localProfile }), ...(anchoredProfiles?.length && { anchoredProfiles }) }),
+    safeInvoke('配置 Shell 预热', 'configure_shell_prewarm', { cwd, shell, count, ...(profile && { profile }), ...(localProfile && { localProfile }), ...(anchoredProfiles?.length && { anchoredProfiles }), ...(disabledConnections?.length && { disabledConnections }), ...(connectionCounts && Object.keys(connectionCounts).length && { connectionCounts }) }),
   ).then(() => {}, () => {})
   return backendSequence
 }
 
 /**
- * 最近聚焦的原生窗口同步每条连接及本机的预热数量；配置串行，撤销信任、改设置立即使旧项失效。
+ * 最近聚焦的原生窗口同步本机（设置 → 终端）与每条连接（远程连接）各自的预热数量；配置串行，撤销信任、改设置立即使旧项失效。
  * 本机项目只在 Windows 客户端预热；SSH 项目由后端判断 Server 模式及远端 Shell 是否支持预热。
  * 预热项按主机复用：切换项目只复查条件，同一主机上已就绪的 Shell 保留，领取时再切到目标目录。
  */
@@ -51,22 +55,24 @@ export function useShellPrewarm(project: Project | null) {
         if (stale()) return
         const active = projectRef.current
         if (!active?.path.startsWith('ssh://')) localProject = active
-        const local = localHostWindows && localProject && (localProject.ephemeral || isProjectTrusted(localProject)) ? localProject : null
-        const codex = localHostWindows ? localCodexPrewarm() : undefined
+        // 本机预热开关只管本机池（普通 Shell 和本机 CLI），不影响远程连接。
+        const localEnabled = localHostWindows && localPrewarmEnabled()
+        const local = localEnabled && localProject && (localProject.ephemeral || isProjectTrusted(localProject)) ? localProject : null
+        const codex = localEnabled ? localCodexPrewarm() : undefined
         const [count, persist] = await Promise.all([
           loadShellPrewarmCount(), local || codex ? loadEffectiveTerminalPersistLocalSessions(local) : false,
         ])
         const shell = getPrewarmShell()
         if (stale()) return
         const connectionId = active && sshConnectionIdFromUri(active.path)
-        const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmProfile(connectionId)
-        const profile = active && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
-          command: preset.command.trim().replace(/\s*\n+\s*/g, '; ') } : undefined
+        const preset = active && connectionId && isProjectTrusted(active) && connectionPrewarmEnabled(connectionId) && connectionPrewarmProfile(connectionId)
+        const profile = active && connectionId && preset ? { cwd: active.path, profileId: preset.id, shell: preset.shell,
+          command: preset.command.trim().replace(/\s*\n+\s*/g, '; '), count: connectionPrewarmCount(connectionId) } : undefined
         const localProfile = persist && codex ? { profileId: codex.id,
           shell: codex.shell, command: codex.command.trim() } : undefined
         // 当前项目不在的连接，用其最近打开的受信任项目授权连接；CLI 都在专用空目录启动。
         const anchors = connectionPrewarmAnchors(useProjectStore.getState().projects, connectionId)
-        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile, localProfile, anchors)
+        await configure(persist && shell !== 'wsl' ? local?.path ?? null : null, shell, count, profile, localProfile, anchors, disabledPrewarmConnections(), connectionShellPrewarmCounts())
       })().catch(() => {})
     }
     const invalidate = () => refresh(true)
@@ -77,7 +83,7 @@ export function useShellPrewarm(project: Project | null) {
     const onTrustSynced = () => { if (document.hasFocus()) recheck() }
     recheckRef.current = recheck
     const storage = (event: StorageEvent) => {
-      if (!event.key || event.key === LOCAL_CODEX_PREWARM_KEY || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
+      if (!event.key || event.key === LOCAL_CODEX_PREWARM_KEY || event.key === LOCAL_PREWARM_DISABLED_KEY || event.key.startsWith(CONNECTION_PREWARM_PREFIX) || event.key.startsWith(CONNECTION_PREWARM_DISABLED_PREFIX) || event.key.startsWith(CONNECTION_SHELL_COUNT_PREFIX) || event.key === TERMINAL_PROFILE_TRUST_KEY || event.key === TERMINAL_PROFILES_KEY || event.key === 'qingcode:workspace-trust') invalidate()
     }
     // WebView 失焦时，CLI 仍能导入设置；窗口归属由所有 WebView 共用的原生池判断。
     const initiallyFocused = document.hasFocus()

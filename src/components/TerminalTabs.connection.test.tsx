@@ -167,6 +167,13 @@ describe('TerminalTabs', () => {
     expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
   })
 
+  it('hides the hit icon when only a Shell was warm and the CLI started cold', () => {
+    const view = render(<TerminalSessionHeader terminal={terminal({ launchCommand: 'claude', prewarm: { outcome: 'hit' } })} />)
+    expect(screen.queryByRole('img', { name: '已领取预热终端' })).toBeNull()
+    view.rerender(<TerminalSessionHeader terminal={terminal({ launchCommand: 'claude', prewarm: { outcome: 'hit', kind: 'profile' } })} />)
+    expect(screen.getByRole('img', { name: '已领取预热终端' })).toBeTruthy()
+  })
+
   it('warns when a non-persistent SSH process will end on disconnect', () => {
     mocks.state.terminals = [
       terminal({

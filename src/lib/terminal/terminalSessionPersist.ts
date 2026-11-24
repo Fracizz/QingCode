@@ -29,12 +29,20 @@ export function nextOutputPersistDelay(now: number, lastPersistAt: number): numb
   return Math.max(OUTPUT_PERSIST_DEBOUNCE_MS, lastPersistAt + OUTPUT_PERSIST_MIN_INTERVAL_MS - now)
 }
 
+/**
+ * scrollback 开头那段按固定网格排版的屏幕：xterm 序列化出的已渲染画面，或 daemon 下发的快照。
+ * 回放时必须先把视图改成这个网格再写入（序列化结果靠自动换行拼接折行），之后再 fit。
+ * `chars` 是该段在 scrollback 字符串里的长度，其后是按原样追加的原始输出。
+ */
+export type PersistedTerminalScreen = { cols: number; rows: number; chars: number }
+
 export type PersistedTerminalOutput = {
   scrollback: string
   history: string[]
   updatedAt: number
   /** daemon 终端在这份 scrollback 之后的续传序号；重启接回时只补发此后的输出。 */
   seq?: number
+  screen?: PersistedTerminalScreen
 }
 
 export type TerminalOutputSnapshot = {
@@ -259,12 +267,55 @@ export function absorbInputForHistory(
   return { pending: line, commands }
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+export function parsePersistedTerminalScreen(
+  value: unknown,
+  textLength: number,
+): PersistedTerminalScreen | undefined {
+  if (!isRecord(value)) return undefined
+  if (!isPositiveInteger(value.cols) || !isPositiveInteger(value.rows)) return undefined
+  if (!isPositiveInteger(value.chars) || value.chars > textLength) return undefined
+  return { cols: value.cols, rows: value.rows, chars: value.chars }
+}
+
+/**
+ * 从头截断 scrollback 后，开头屏幕段还剩多少。截掉的是最旧的行，剩下部分仍按原网格排版；
+ * 整段被截掉时返回 undefined，余下的只是原始输出。
+ */
+export function screenAfterHeadTruncate(
+  screen: PersistedTerminalScreen | undefined,
+  before: number,
+  after: number,
+): PersistedTerminalScreen | undefined {
+  if (!screen) return undefined
+  const chars = screen.chars - Math.max(0, before - after)
+  return chars > 0 ? { ...screen, chars } : undefined
+}
+
+function truncateWithScreen(
+  scrollback: string,
+  screen: PersistedTerminalScreen | undefined,
+  maxLines: number,
+  maxChars?: number,
+): { scrollback: string; screen?: PersistedTerminalScreen } {
+  const truncated = truncateScrollbackText(scrollback, maxLines, maxChars)
+  const kept = screenAfterHeadTruncate(screen, scrollback.length, truncated.length)
+  return { scrollback: truncated, ...(kept ? { screen: kept } : {}) }
+}
+
 function parseTerminalOutput(value: unknown): PersistedTerminalOutput | null {
   if (!isRecord(value)) return null
   if (typeof value.scrollback !== 'string') return null
   const maxLines = getTerminalScrollback()
   return {
-    scrollback: truncateScrollbackText(value.scrollback, maxLines),
+    ...truncateWithScreen(
+      value.scrollback,
+      parsePersistedTerminalScreen(value.screen, value.scrollback.length),
+      maxLines,
+    ),
     history: normalizeCommandHistory(value.history),
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
     ...(typeof value.seq === 'number' && Number.isSafeInteger(value.seq) && value.seq >= 0
@@ -366,7 +417,13 @@ export function clearTerminalOutputSnapshot(): void {
 export function buildTerminalOutputSnapshot(input: {
   terminals: Record<
     string,
-    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
+    {
+      scrollback: string
+      history: string[]
+      updatedAt?: number
+      seq?: number
+      screen?: PersistedTerminalScreen
+    }
   >
   now?: number
   scrollbackLines?: number
@@ -376,7 +433,12 @@ export function buildTerminalOutputSnapshot(input: {
   const now = input.now ?? Date.now()
   const terminals: Record<string, PersistedTerminalOutput> = {}
   for (const [id, entry] of Object.entries(input.terminals)) {
-    const scrollback = truncateScrollbackText(entry.scrollback, maxLines, maxChars)
+    const { scrollback, screen } = truncateWithScreen(
+      entry.scrollback,
+      entry.screen,
+      maxLines,
+      maxChars,
+    )
     const history = normalizeCommandHistory(entry.history)
     if (!scrollback && history.length === 0) continue
     terminals[id] = {
@@ -384,6 +446,7 @@ export function buildTerminalOutputSnapshot(input: {
       history,
       updatedAt: entry.updatedAt ?? now,
       ...(entry.seq !== undefined ? { seq: entry.seq } : {}),
+      ...(screen ? { screen } : {}),
     }
   }
   return enforceTerminalOutputStorageBudget({

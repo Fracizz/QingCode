@@ -1,5 +1,5 @@
 # Build QingCode Windows NSIS installer (.exe setup) via Tauri.
-# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer] [-SkipLatestAlias]
+# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer] [-SkipLatestAlias] [-SizeOptimized]
 [CmdletBinding()]
 param(
   [switch]$Force,
@@ -11,6 +11,8 @@ param(
   [switch]$SkipServerPack,
   # Keep only the versioned setup artifact for local installer-only runs.
   [switch]$SkipLatestAlias,
+  # 按发布配置的体积优化编译（同 CI release.yml），更小但更慢。
+  [switch]$SizeOptimized,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -69,6 +71,8 @@ try {
     $env:RUSTC_WRAPPER = 'sccache'
     Write-Host 'Using sccache for Rust compilation cache.' -ForegroundColor DarkGray
   }
+
+  if ($SizeOptimized) { Enable-SizeOptimizedRustProfile }
 
   if (-not $Target) {
     $arch = $env:PROCESSOR_ARCHITECTURE
@@ -204,7 +208,7 @@ try {
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "Install notes: first install waits for Start Install; upgrades run in place automatically; optional launch checked on finish page; /S for silent install (/R opts into launch)." -ForegroundColor DarkGray
-  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
+  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · -SizeOptimized · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
   Clear-ServerResourceDir -ProjectRoot $projectRoot
   Pop-Location

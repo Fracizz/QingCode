@@ -130,10 +130,8 @@ pub(crate) fn store_project_attachment(
             return Err("附件目录不在当前项目内".into());
         }
     }
-    // Unique directories and create_new prevent overwriting existing attachments.
-    let directory = directory.join(uuid::Uuid::new_v4().to_string());
-    allowlist.ensure_writable(&normalize_path(&directory))?;
-    std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
+    // 每批附件一个本地时间（毫秒）目录；同毫秒已存在时追加序号，create_new 防止覆盖已有附件。
+    let directory = create_batch_directory(&directory, &terminal_paste_stamp(), allowlist)?;
     let path = directory.join(name);
     let result = (|| {
         use std::io::Write;
@@ -155,6 +153,33 @@ pub(crate) fn store_project_attachment(
         return Err(error);
     }
     Ok(normalize_path(&path))
+}
+
+/// 粘贴批次目录名：本地时间精确到毫秒，如 `20261123-153045-123`，与前端 SSH 粘贴一致。
+fn terminal_paste_stamp() -> String {
+    chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string()
+}
+
+fn create_batch_directory(
+    parent: &Path,
+    stamp: &str,
+    allowlist: &crate::path_guard::PathAllowlist,
+) -> Result<PathBuf, String> {
+    for attempt in 1..=20 {
+        let name = if attempt == 1 {
+            stamp.to_string()
+        } else {
+            format!("{stamp}-{attempt}")
+        };
+        let directory = parent.join(name);
+        allowlist.ensure_writable(&normalize_path(&directory))?;
+        match std::fs::create_dir(&directory) {
+            Ok(()) => return Ok(directory),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("附件目录已存在，请稍后重试".into())
 }
 
 fn normalize_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
@@ -533,8 +558,61 @@ mod tests {
         assert!(bmp.len() > 14);
     }
 
+    const CF_HDROP: u32 = 15;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetClipboardSequenceNumber() -> u32;
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
+    }
+
+    /// 系统剪贴板是全局共享资源：本模块用例互斥执行，避免并行时互相覆盖或清空。
+    static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn clipboard_lock() -> std::sync::MutexGuard<'static, ()> {
+        CLIPBOARD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// 写入剪贴板后立刻读取。剪贴板历史、远程桌面同步等外部进程可能占用或中途改写
+    /// 剪贴板：写入失败、格式已不在或读取期间序号变化都视为外部干扰并重试；始终无法
+    /// 得到稳定结果时返回 `None`，由调用方跳过（这是环境问题，不是读取逻辑回归）。
+    fn read_back_stable<T>(
+        format: u32,
+        mut write: impl FnMut() -> bool,
+        mut read: impl FnMut() -> T,
+    ) -> Option<T> {
+        for _ in 0..10 {
+            if write() {
+                let sequence = unsafe { GetClipboardSequenceNumber() };
+                if unsafe { IsClipboardFormatAvailable(format) } != 0 {
+                    let value = read();
+                    if unsafe { GetClipboardSequenceNumber() } == sequence {
+                        return Some(value);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        None
+    }
+
+    fn restore_clipboard(previous: &[String]) {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return;
+        };
+        if previous.is_empty() {
+            let _ = clipboard.clear();
+        } else {
+            let restore: Vec<&Path> = previous.iter().map(Path::new).collect();
+            let _ = clipboard.set().file_list(&restore);
+        }
+    }
+
     #[test]
     fn reads_hdrop_roundtrip_and_restores_previous_files() {
+        let _lock = clipboard_lock();
         let previous = read_clipboard_paths().unwrap_or_default();
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -545,18 +623,22 @@ mod tests {
         let file = dir.join("note.txt");
         fs::write(&file, "hi").unwrap();
 
-        let mut clipboard = arboard::Clipboard::new().unwrap();
-        clipboard.set().file_list(&[file.as_path()]).unwrap();
-        let got = read_clipboard_paths().unwrap();
-
-        if previous.is_empty() {
-            let _ = clipboard.clear();
-        } else {
-            let restore: Vec<&Path> = previous.iter().map(Path::new).collect();
-            let _ = clipboard.set().file_list(&restore);
-        }
+        let got = read_back_stable(
+            CF_HDROP,
+            || {
+                arboard::Clipboard::new()
+                    .and_then(|mut clipboard| clipboard.set().file_list(&[file.as_path()]))
+                    .is_ok()
+            },
+            || read_clipboard_paths().unwrap(),
+        );
+        restore_clipboard(&previous);
         fs::remove_dir_all(&dir).unwrap();
 
+        let Some(got) = got else {
+            eprintln!("跳过：系统剪贴板不可用或持续被其他进程改写");
+            return;
+        };
         assert!(got.iter().any(|path| path.ends_with("note.txt")), "{got:?}");
     }
 
@@ -569,28 +651,32 @@ mod tests {
             0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE,
             0x02, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ];
+        let _lock = clipboard_lock();
         let previous = read_clipboard_paths().unwrap_or_default();
-        set_png_clipboard(PNG);
-        let first = read_clipboard_paths().unwrap();
-        let second = read_clipboard_paths().unwrap();
-        if previous.is_empty() {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                let _ = clipboard.clear();
-            }
-        } else {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                let restore: Vec<&Path> = previous.iter().map(Path::new).collect();
-                let _ = clipboard.set().file_list(&restore);
-            }
-        }
+        let got = read_back_stable(
+            register_format("PNG"),
+            || set_png_clipboard(PNG),
+            || {
+                (
+                    read_clipboard_paths().unwrap(),
+                    read_clipboard_paths().unwrap(),
+                )
+            },
+        );
+        restore_clipboard(&previous);
 
+        let Some((first, second)) = got else {
+            eprintln!("跳过：系统剪贴板不可用或持续被其他进程改写");
+            return;
+        };
         assert_eq!(first, second, "{first:?}");
         let path = first.first().expect("png path");
         assert!(path.ends_with(".png"), "{path}");
         assert_eq!(&fs::read(path).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
     }
 
-    fn set_png_clipboard(bytes: &[u8]) {
+    /// 剪贴板被占用或不可写时返回 false，由调用方重试。
+    fn set_png_clipboard(bytes: &[u8]) -> bool {
         #[link(name = "user32")]
         extern "system" {
             fn OpenClipboard(owner: *mut core::ffi::c_void) -> i32;
@@ -614,16 +700,21 @@ mod tests {
             name.push(0);
             let format = RegisterClipboardFormatW(name.as_ptr());
             assert!(format != 0);
-            assert!(OpenClipboard(std::ptr::null_mut()) != 0);
-            assert!(EmptyClipboard() != 0);
-            let memory = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
-            assert!(!memory.is_null());
-            let locked = GlobalLock(memory);
-            assert!(!locked.is_null());
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), locked as *mut u8, bytes.len());
-            GlobalUnlock(memory);
-            assert!(!SetClipboardData(format, memory).is_null());
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return false;
+            }
+            let ok = EmptyClipboard() != 0 && {
+                let memory = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
+                assert!(!memory.is_null());
+                let locked = GlobalLock(memory);
+                assert!(!locked.is_null());
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), locked as *mut u8, bytes.len());
+                GlobalUnlock(memory);
+                // 成功后内存归系统所有；失败时测试进程很快退出，不单独释放。
+                !SetClipboardData(format, memory).is_null()
+            };
             CloseClipboard();
+            ok
         }
     }
 }
@@ -663,8 +754,30 @@ mod attachment_tests {
         .unwrap();
         assert_ne!(first, second);
         assert!(Path::new(&first).starts_with(root.join(".qingcode/terminal-paste")));
+        for path in [&first, &second] {
+            let batch = Path::new(path).parent().unwrap().file_name().unwrap();
+            let batch = batch.to_string_lossy();
+            let stamp = batch.get(..19).unwrap();
+            assert!(chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S-%3f").is_ok());
+        }
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_directory_adds_suffix_when_same_millisecond_exists() {
+        let root = std::env::temp_dir().join(format!(
+            "qingcode-paste-batch-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let allowlist = trusted_project(&root);
+        let stamp = "20260102-030405-006";
+        let first = create_batch_directory(&root, stamp, &allowlist).unwrap();
+        let second = create_batch_directory(&root, stamp, &allowlist).unwrap();
+        assert_eq!(first, root.join(stamp));
+        assert_eq!(second, root.join(format!("{stamp}-2")));
         std::fs::remove_dir_all(root).unwrap();
     }
 

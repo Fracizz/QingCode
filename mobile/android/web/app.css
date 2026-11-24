@@ -690,7 +690,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 /* 标题行：会话名后跟预热标识（领取了电脑端预热终端时显示的灰色闪电）。 */
 .terminal-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .terminal-title h1 { min-width: 0; }
-.prewarm-mark { flex: none; width: 14px; height: 14px; color: var(--muted); }
+/* 需高于通用 svg:not(.sprite)（20px）规则的优先级，否则闪电会比标题还大。 */
+.terminal-title .prewarm-mark { flex: none; width: 14px; height: 14px; color: var(--accent); }
 .prewarm-mark[hidden] { display: none; }
 #terminal-latency { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #terminal-host:not(:empty) + #terminal-latency::before { content: '·'; margin-right: 6px; }
@@ -1052,6 +1053,9 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 .session-option .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .session-pin { display: none; flex: none; color: var(--muted); }
 .session-option[data-pinned="true"] .session-pin { display: block; }
+/* 领取了预热终端的会话：标题后跟 ⚡，与电脑标签一致；与标题首行居中。 */
+.session-option .session-prewarm { display: none; flex: none; width: 14px; height: 14px; margin-top: calc((1.45em - 14px) / 2); color: var(--accent); }
+.session-option[data-prewarm="true"] .session-prewarm { display: block; }
 .session-option[data-current="true"] .session-face { background: var(--surface-high); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
 #session-scope { flex: none; margin-top: 0; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1355,6 +1359,11 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 :root[data-screen-exit="forward"]::view-transition-old(root) { --screen-shift: -12px; }
 :root[data-screen-exit="back"]::view-transition-old(root) { --screen-shift: 12px; }
 @keyframes screen-out { to { opacity: 0; transform: translateX(var(--screen-shift)); } }
+/* 工作台内切页时顶栏（右上角设置按钮）两页都在同一位置：单独命名移出根快照，不跟旧快照一起平移淡出，
+   否则旧快照里的按钮会在新按钮上方错开 12px 淡出，看起来像抖动。旧图直接隐藏、新图不做动画，原地不动。 */
+:root[data-screen-kind="page"] .app-head { view-transition-name: app-head; }
+::view-transition-group(app-head), ::view-transition-new(app-head) { animation: none; }
+::view-transition-old(app-head) { animation: none; opacity: 0; }
 /* 收到延迟探测回应时闪一下；终端未连上时圆点不闪。 */
 #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash { animation: ping-dot 460ms ease-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 460ms ease-out; }
@@ -1381,11 +1390,17 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 
 /* 新建会话：与其他弹层一致的分组列表。 */
 .session-shortcuts { margin: 12px 0; background: var(--paper); }
-.session-shortcuts > button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; width: 100%; min-height: 52px; padding: 8px 14px; border: 0; border-radius: 0; background: transparent; font-size: 15px; font-weight: 600; text-align: left; }
-/* 行用 button 选择器抹掉了边框，分隔线要同等以上优先级才能生效。 */
-.session-shortcuts > button + button { border-top: 1px solid var(--divider); }
-.session-shortcuts > button small { font-size: 12px; font-weight: 400; color: var(--muted); }
-.session-shortcuts[aria-busy="true"] { opacity: .72; }
+.session-shortcuts > button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; padding: 8px 14px; border: 0; border-radius: 0; background: transparent; font-size: 15px; font-weight: 600; text-align: left; }
+.session-shortcuts > button ~ button { border-top: 1px solid var(--divider); }
+.session-shortcuts > button > span { min-width: 0; overflow-wrap: anywhere; }
+.session-shortcuts small { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.session-shortcuts small:empty, #terminal-create-result:has(.error[hidden]) { display: none; }
+.session-shortcuts > button[data-pending] { background: var(--accent-surface); color: var(--ink); opacity: 1; transition: none; }
+.session-shortcuts [data-pending] small, .session-shortcuts [data-retry] small { flex: none; color: var(--accent); }
+.session-shortcuts .session-spinner { display: block; width: 16px; height: 16px; }
+.session-shortcuts > #terminal-create-result { padding: 0 14px 10px; border: 0; }
+#terminal-create-sessions { display: grid; gap: 4px; }
+#terminal-create-sessions button { text-align: start; overflow-wrap: anywhere; }
 #new-session-dialog .dialog-actions { margin-top: 12px; }
 #viewport[data-columns="fixed"] { overflow-x: auto; }
 /* 下拉选项：隐藏的 select 只存值，点开后是与其他弹层一致的选择面板，不使用系统下拉样式。 */

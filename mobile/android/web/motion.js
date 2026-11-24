@@ -26,9 +26,10 @@ export function pageDirection(from, to) {
  * update 只负责按最新意图摆放画面，晚到的回调重复执行也无副作用。
  * @param {() => void} update 摆放新画面
  * @param {'forward' | 'back' | 'none'} direction 新画面相对旧画面的层级方向
+ * @param {'screen' | 'page'} kind page 表示工作台内切页：顶栏不随旧快照移动（app.css 按 data-screen-kind 单独命名顶栏）
  * @returns {Promise<void>} 新画面已摆好（DOM 已切换）
  */
-export function swapScreen(update, direction = 'none') {
+export function swapScreen(update, direction = 'none', kind = 'screen') {
   const root = document.documentElement;
   if (typeof document.startViewTransition !== 'function' || reducedMotion() || document.visibilityState === 'hidden') {
     update();
@@ -36,6 +37,7 @@ export function swapScreen(update, direction = 'none') {
   }
   rescueTaps();
   root.dataset.screenExit = direction;
+  root.dataset.screenKind = kind;
   return new Promise(resolve => {
     let placed = false;
     let guard = 0;
@@ -47,7 +49,7 @@ export function swapScreen(update, direction = 'none') {
     };
     const transition = document.startViewTransition(place);
     current = transition;
-    transition.finished.catch(() => {}).finally(() => { if (current === transition) { delete root.dataset.screenExit; current = null; } });
+    transition.finished.catch(() => {}).finally(() => { if (current === transition) { delete root.dataset.screenExit; delete root.dataset.screenKind; current = null; } });
     // 快照要等下一次渲染；WebView 卡帧或被节流时不能让切换跟着卡住：超时直接摆放并跳过这次过渡。
     guard = setTimeout(() => { place(); transition.skipTransition(); }, SWAP_GUARD_MS);
   });

@@ -23,6 +23,22 @@ function Get-CanonicalReleaseAssetNames {
   )
 }
 
+# Offline remote-Server package; docs/server-offline-update.md tells users to download it from
+# GitHub or Gitee Releases, so the Gitee mirror must carry it too.
+function Get-OfflineServerReleaseAssetNames {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Version
+  )
+  if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw 'Version is required'
+  }
+  if ($Version.StartsWith('v')) {
+    $Version = $Version.Substring(1)
+  }
+  @("QingCode_${Version}-servers.zip")
+}
+
 # Assets published only when their build prerequisites exist (Android needs the release keystore).
 function Get-OptionalReleaseAssetNames {
   param(
@@ -67,6 +83,11 @@ function Select-CanonicalReleaseFiles {
     throw ("Missing canonical release asset(s): {0}" -f ($missing -join ', '))
   }
   foreach ($name in (Get-OptionalReleaseAssetNames -Version $Version)) {
+    if ($byName.ContainsKey($name)) {
+      $selected.Add([string]$byName[$name]) | Out-Null
+    }
+  }
+  foreach ($name in (Get-OfflineServerReleaseAssetNames -Version $Version)) {
     if ($byName.ContainsKey($name)) {
       $selected.Add([string]$byName[$name]) | Out-Null
     }

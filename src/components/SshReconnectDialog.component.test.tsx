@@ -5,12 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SshReconnectDialog from './SshReconnectDialog'
 import type { Project } from '../types'
 
-const { readConnection, readDirect, connect, switchProject, manage, restore, confirm } = vi.hoisted(() => ({ readConnection: vi.fn(), readDirect: vi.fn(), connect: vi.fn(), switchProject: vi.fn(), manage: vi.fn(), restore: vi.fn(), confirm: vi.fn() }))
+const { readConnection, readDirect, connect, switchProject, pruneOrphanSshProjects, manage, restore, confirm } = vi.hoisted(() => ({ readConnection: vi.fn(), readDirect: vi.fn(), connect: vi.fn(), switchProject: vi.fn(), pruneOrphanSshProjects: vi.fn(), manage: vi.fn(), restore: vi.fn(), confirm: vi.fn() }))
 vi.mock('../lib/projectRepository', () => ({ getSshConnection: readConnection, upsertSshConnection: vi.fn() }))
 vi.mock('../lib/directAgent', async () => ({ ...await vi.importActual('../lib/directAgent'), directAgentApi: { info: readDirect, manage } }))
 vi.mock('../lib/sshWorkspace', async () => ({ ...await vi.importActual('../lib/sshWorkspace'), connectSshWorkspace: connect, restoreSshTransport: restore, SSH_RECONNECT_REQUEST_EVENT: 'qingcode:ssh-reconnect-request' }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog: confirm }))
-vi.mock('../store/projectStore', () => ({ useProjectStore: Object.assign((select: (state: { sshConnections: never[] }) => unknown) => select({ sshConnections: [] }), { getState: () => ({ switchProject }) }) }))
+vi.mock('../store/projectStore', () => ({ useProjectStore: Object.assign((select: (state: { sshConnections: never[] }) => unknown) => select({ sshConnections: [] }), { getState: () => ({ switchProject, pruneOrphanSshProjects }) }) }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 
 const project: Project = { id: 'p1', name: 'Agent project', kind: 'ssh', connection_id: 'c1', path: 'ssh://c1/D:/code/app', root_path: '/D:/code/app', created_at: 1, last_opened_at: 1 }
@@ -95,5 +95,15 @@ describe('Agent workspace reconnect', () => {
     fireEvent.change(input, { target: { value: 'session-password' } })
     fireEvent.click(screen.getByRole('button', { name: '重新连接' }))
     await waitFor(() => expect(connect).toHaveBeenCalledWith(project, expect.objectContaining({ username: 'dev', port: 2222, mode: 'ssh' }), { password: 'session-password', passphrase: undefined }))
+  })
+
+  it('silently removes a project whose connection was deleted instead of prompting', async () => {
+    readConnection.mockResolvedValue(null)
+    pruneOrphanSshProjects.mockResolvedValue(1)
+    const { container } = render(<SshReconnectDialog />)
+    act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-reconnect-request', { detail: project })))
+    await waitFor(() => expect(pruneOrphanSshProjects).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(container.textContent).not.toContain('SSH 连接配置不存在')
   })
 })

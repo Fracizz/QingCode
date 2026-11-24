@@ -12,7 +12,7 @@ import {
   sessionRunning,
   sessionStatusLine,
 } from './protocol.js';
-import { fillProjectSource, icon, rowText, button, setText } from './dom.js';
+import { fillProjectSource, icon, prewarmMark, rowText, button, setText } from './dom.js';
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -408,7 +408,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const attention = document.createElement('span');
     attention.className = 'session-attention';
     attention.setAttribute('aria-hidden', 'true');
-    heading.append(icon('loader-circle', 'session-spinner'), attention, icon('pin', 'session-pin'), name);
+    heading.append(icon('loader-circle', 'session-spinner'), attention, icon('pin', 'session-pin'), name, prewarmMark());
     const idle = document.createElement('small');
     idle.className = 'session-idle';
     text.append(idle);
@@ -437,6 +437,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
   function renderRow(row, session, { current, last, busy, pinned, draggable }) {
     row.dataset.draggable = String(draggable);
     row.dataset.pinned = String(pinned);
+    row.dataset.prewarm = String(session.prewarm === true);
     const label = sessionName(session);
     const active = current && session.id === state.selected();
     // 只影响显示；「运行中优先」排序仍按真实状态。

@@ -141,15 +141,6 @@ export async function loadEffectiveSshServerEnabled(
   return next
 }
 
-export async function loadScopedSshServerEnabled(
-  _scope: 'global' | 'project',
-  _project?: Project | null,
-): Promise<boolean> {
-  const next = readSshServerEnabled(await loadGlobalSettings())
-  notifySshServerEnabledChanged(next)
-  return next
-}
-
 export async function saveScopedSshServerEnabled(
   _scope: 'global' | 'project',
   enabled: boolean,

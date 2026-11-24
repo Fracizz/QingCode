@@ -14,6 +14,24 @@ function latency(samples: number[]) {
   return { count: samples.length, p50Ms: percentile(0.5), p95Ms: percentile(0.95) }
 }
 
+/** 一组项目（如同一主机下的项目）最近新建终端的命中、未命中次数及未命中原因。 */
+export function recentShellOpenCounts(projectIds: ReadonlySet<string>) {
+  let hit = 0
+  let miss = 0
+  const missReasons: Record<string, number> = {}
+  for (const sample of recent) {
+    if (!projectIds.has(sample.projectId)) continue
+    if (sample.outcome === 'hit') {
+      hit++
+    } else {
+      miss++
+      const reason = sample.reason ?? 'unknown'
+      missReasons[reason] = (missReasons[reason] ?? 0) + 1
+    }
+  }
+  return { hit, miss, missReasons }
+}
+
 export function recentShellOpens(projectId: string) {
   const hit: number[] = []
   const miss: number[] = []

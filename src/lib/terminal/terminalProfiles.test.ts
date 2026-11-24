@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_TERMINAL_PROFILE,
+  LOCAL_PROFILE_SCOPE,
+  copyProfileToScope,
+  profilesForConnection,
   getDefaultTerminalProfile,
   getPrewarmShell,
   getTerminalProfile,
@@ -60,6 +63,43 @@ describe('terminalProfiles defaultShell', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('filters profiles by connection scope and falls back when the global default belongs elsewhere', async () => {
+    const { effectiveDefaultProfileIdFor, saveConnectionDefaultProfileId } = await import('./connectionDefaultProfile')
+    vi.stubGlobal('window', { dispatchEvent: () => true })
+    try {
+      saveTerminalProfileSettings({
+        defaultProfileId: 'win',
+        defaultShell: defaultTerminalShell(),
+        profiles: [
+          { ...DEFAULT_TERMINAL_PROFILE },
+          { id: 'common', name: 'Common', command: '', shell: 'auto' },
+          { id: 'here', name: 'Here', command: '', shell: 'auto', scope: LOCAL_PROFILE_SCOPE },
+          { id: 'win', name: 'Win', command: '', shell: 'auto', scope: 'win-dev' },
+        ],
+      })
+      const settings = loadTerminalProfileSettings()
+      expect(profilesForConnection(settings, 'win-dev').map(p => p.id)).toEqual(['default', 'common', 'win'])
+      expect(profilesForConnection(settings, null).map(p => p.id)).toEqual(['default', 'common', 'here'])
+      expect(effectiveDefaultProfileIdFor('win-dev', settings)).toBe('win')
+      expect(effectiveDefaultProfileIdFor(null, settings)).toBe('default')
+      expect(effectiveDefaultProfileIdFor('other', settings)).toBe('default')
+      // 连接默认指向其他分类的配置时失效。
+      saveConnectionDefaultProfileId('other', 'here')
+      expect(effectiveDefaultProfileIdFor('other', settings)).toBe('default')
+      saveConnectionDefaultProfileId('other', 'common')
+      expect(effectiveDefaultProfileIdFor('other', settings)).toBe('common')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('copies a profile into another scope with a new id', () => {
+    const copy = copyProfileToScope({ name: 'Claude', command: 'claude', shell: 'pwsh' }, 'win-dev')
+    expect(copy).toMatchObject({ name: 'Claude', command: 'claude', shell: 'pwsh', scope: 'win-dev' })
+    expect(copy.id).not.toBe('')
+    expect('scope' in copyProfileToScope(copy, undefined)).toBe(false)
   })
 
   it('keeps custom profile shells independent of the global default', () => {

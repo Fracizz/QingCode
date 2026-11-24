@@ -11,7 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const runsRoot = path.join(root, '.dev/package-runs')
 const help = `Local packaging (never publishes):
   pnpm package:local [run|start] [--only all|local|desktop|exe|installer|server|apk]
-                     [--jobs 3] [--skip-frontend] [--skip-icons] [--skip-server] [--plan]
+                     [--jobs 3] [--skip-frontend] [--skip-icons] [--skip-server] [--size-optimized] [--plan]
   pnpm package:local status <run-id>
   pnpm package:local cancel <run-id> [--task apk]
 Default: installer + Server offline pack + APK (versioned NSIS setup; no QingCode-setup.exe alias, no portable exe).
@@ -20,7 +20,8 @@ All packaging modes include the Server offline pack; portable exe is opt-in.
 Successful runs keep only the newest 3 versions in release/.
 run is foreground (Ctrl+C cancels its process trees); start runs in the background.
 Logs and JSON status: .dev/package-runs/<run-id>/
-Only independent stages run in parallel; exe and installer share a Cargo target and run sequentially.`
+Only independent stages run in parallel; exe and installer share a Cargo target and run sequentially.
+--size-optimized compiles Rust like CI releases (opt-level s + fat LTO): smaller, ~2-3x slower cold build.`
 
 const RETAINED_VERSIONS = 3
 const ARTIFACT_SUFFIXES = [
@@ -63,10 +64,11 @@ export function buildPlan(options = {}) {
   const add = (id, script, args = [], needs = []) => tasks.push({ id, command: 'pwsh', args: ['-NoProfile', '-File', `scripts/${script}`, ...args], needs })
   if (desktop && !options.skipFrontend) add('frontend', 'package-stage.ps1', ['-Stage', 'frontend'])
   if ((desktop || apk) && !options.skipIcons) add('icons', 'package-stage.ps1', ['-Stage', 'icons'])
-  if (server) add('server', 'package-stage.ps1', ['-Stage', 'server', ...(options.skipServer ? ['-SkipServer'] : [])])
+  const sizeFlags = options.sizeOptimized ? ['-SizeOptimized'] : []
+  if (server) add('server', 'package-stage.ps1', ['-Stage', 'server', ...(options.skipServer ? ['-SkipServer'] : []), ...sizeFlags])
   const desktopNeeds = tasks.filter(task => ['frontend', 'icons', 'server'].includes(task.id)).map(task => task.id)
   if (desktop) add('embed', 'package-stage.ps1', ['-Stage', 'embed'], desktopNeeds)
-  const flags = ['-SkipFrontend', '-SkipIcons', '-SkipServer', '-SkipAndroid', '-SkipServerPack']
+  const flags = ['-SkipFrontend', '-SkipIcons', '-SkipServer', '-SkipAndroid', '-SkipServerPack', ...sizeFlags]
   if (desktop && ['all', 'desktop', 'exe'].includes(only)) add('exe', 'package-exe.ps1', flags, ['embed'])
   if (desktop && ['all', 'local', 'desktop', 'installer'].includes(only)) {
     const installerFlags = ['installer', 'local'].includes(only) ? [...flags, '-SkipLatestAlias'] : flags
@@ -241,7 +243,7 @@ async function main(args) {
     if (['--only', '--jobs', '--task', '--run-id'].includes(arg)) {
       if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Missing value for ${arg}`)
       options[arg.slice(2)] = args[++i]
-    } else if (['--plan', '--skip-frontend', '--skip-icons', '--skip-server'].includes(arg)) options[arg.slice(2)] = true
+    } else if (['--plan', '--skip-frontend', '--skip-icons', '--skip-server', '--size-optimized'].includes(arg)) options[arg.slice(2)] = true
     else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`)
     else positional.push(arg)
   }
@@ -259,7 +261,7 @@ async function main(args) {
   if (!['run', 'start'].includes(command)) throw new Error(`Unknown command: ${command}`)
   const jobs = Number(options.jobs ?? 3)
   if (!Number.isInteger(jobs) || jobs < 1 || jobs > 8) throw new Error('--jobs must be an integer from 1 to 8.')
-  const tasks = buildPlan({ only: options.only, skipFrontend: options['skip-frontend'], skipIcons: options['skip-icons'], skipServer: options['skip-server'] })
+  const tasks = buildPlan({ only: options.only, skipFrontend: options['skip-frontend'], skipIcons: options['skip-icons'], skipServer: options['skip-server'], sizeOptimized: options['size-optimized'] })
   if (options.plan) { console.log(JSON.stringify({ jobs, tasks }, null, 2)); return }
   const id = options['run-id'] ?? `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
   const directory = runPath(id)
@@ -299,7 +301,7 @@ async function main(args) {
 }
 
 // 打包依赖 release 增量编译，缓存需要保留；但旧哈希目录会堆积，打包成功后按
-// prune-rust-target.ps1 的策略只清增量缓存（每 crate 保留 3 份、7 天未用、总量 10GB）。失败只告警。
+// prune-rust-target.ps1 的策略只清增量缓存（每 crate 保留 3 份、7 天未用、总量 6GB）。失败只告警。
 function pruneRustTarget() {
   if (process.platform !== 'win32') return
   try {

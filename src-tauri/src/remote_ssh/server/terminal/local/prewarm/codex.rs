@@ -18,12 +18,30 @@ fn checked_anchor(parent: &Path, create: bool) -> Result<PathBuf, String> {
             _ => {}
         }
     }
-    if path.canonicalize().map_err(io)? != path
-        || std::fs::read_dir(&path).map_err(io)?.next().is_some()
-    {
+    if path.canonicalize().map_err(io)? != path {
+        return Err("Codex 预热目录必须是 QingCode 的专用空目录".into());
+    }
+    remove_empty_dirs(&path);
+    if std::fs::read_dir(&path).map_err(io)?.next().is_some() {
         return Err("Codex 预热目录必须是 QingCode 的专用空目录".into());
     }
     Ok(path)
+}
+
+/// 此前在专用目录启动的 CLI 会话可能留下空目录（如 Claude 的 `.claude`）。
+/// 只删除空目录、不进入链接；仍有文件时保留，由调用方按非空处理。
+fn remove_empty_dirs(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        // DirEntry::file_type 不跟随链接；Windows 目录联接同样视为链接。
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let path = entry.path();
+            remove_empty_dirs(&path);
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
 }
 
 pub(super) fn validate_anchor(app: &AppHandle, cwd: &str) -> Result<(), String> {
@@ -105,6 +123,22 @@ impl LocalCodexPool {
             return None;
         }
         self.pool.reserve_key(&key, &cwd, false).ok()
+    }
+
+    /// 同 [`Self::reserve`]，命中后改按调用方的终端 id 领取（手机终端需 `mobile-` id）。
+    pub(crate) fn reserve_as(
+        &self,
+        id: &str,
+        cwd: &str,
+        shell: Option<&str>,
+        profile_id: &str,
+        command: &str,
+    ) -> bool {
+        if self.pool.has_entry(id) {
+            return false;
+        }
+        self.reserve(cwd, shell, profile_id, command)
+            .is_some_and(|warm_id| self.pool.rename_reserved(&warm_id, id).is_ok())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -198,6 +232,76 @@ const SCRIPT_BLOCKED: &str = "cli_script_blocked";
 const HANDOFF_UNAVAILABLE: &str = "cli_handoff_unavailable";
 /// 启动脚本在 PATH 上找不到所选 CLI。
 pub(super) const CLI_NOT_INSTALLED: &str = "cli_not_installed";
+/// 专用启动目录里仍有文件（多为已领取的 CLI 会话正在使用），不是需要用户处理的阻塞，稍后自动重试。
+pub(super) const ANCHOR_BUSY: &str = "cli_anchor_busy";
+/// 预热途中 daemon 会话断开（如远端服务升级重启 daemon）：与 CLI 本身无关，稍后自动重试。
+const SESSION_LOST: &str = "cli_session_lost";
+/// CLI 启动前的连接、目录校验或建 PTY 失败（远端服务刚重启/升级、网络抖动等）：
+/// CLI 尚未运行，与 CLI 本身无关，稍后自动重试。
+const TRANSPORT_FAILED: &str = "cli_transport_failed";
+/// 单次创建超过总时限（连接或启动卡住）：属于暂时性失败，退避后重试。
+pub(super) const CREATE_TIMED_OUT: &str = "prewarm_create_timeout";
+/// CLI 在时限内未出现输入界面或未确认目录：多为偶发启动慢，先重试；连续超时才暂停。
+pub(super) const READY_TIMED_OUT: &str = "等待 CLI 输入界面或目录确认超时";
+/// 连续就绪超时达到该次数才暂停为 `cli_not_ready`（即超时后自动重试一次）。
+pub(super) const READY_TIMEOUT_PAUSE_AFTER: u32 = 2;
+/// 诊断里保留的屏幕末尾行数与单行长度上限。
+const SCREEN_TAIL_LINES: usize = 8;
+const SCREEN_TAIL_CHARS: usize = 120;
+
+/// 就绪超时时的屏幕末尾，用于诊断卡在哪个画面。
+/// 去掉专用目录和疑似路径的片段，不把用户路径写进诊断。
+fn screen_tail_for_diagnostics(screen: &str, anchor: &str) -> Vec<String> {
+    let anchors = [anchor.to_string(), anchor.replace('\\', "/")];
+    let mut lines: Vec<String> = screen
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut line = line.to_string();
+            for anchor in anchors.iter().filter(|a| !a.is_empty()) {
+                line = line.replace(anchor.as_str(), "<anchor>");
+            }
+            line.split(' ')
+                .map(|word| {
+                    if word.contains('/') || word.contains('\\') {
+                        "<path>"
+                    } else {
+                        word
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(SCREEN_TAIL_CHARS)
+                .collect()
+        })
+        .collect();
+    let skip = lines.len().saturating_sub(SCREEN_TAIL_LINES);
+    lines.drain(..skip);
+    lines
+}
+
+/// 暂时性失败：按普通失败退避重试，不暂停预热、不要求用户切换配置。
+pub(super) fn retry_later(error: &str) -> bool {
+    error == ANCHOR_BUSY
+        || error == CREATE_TIMED_OUT
+        || error.starts_with(SESSION_LOST)
+        || error.starts_with(TRANSPORT_FAILED)
+}
+
+/// 把 CLI 启动前的基础设施错误标为 [`TRANSPORT_FAILED`]，预热循环据此退避重试而不暂停为 `cli_not_ready`。
+pub(super) fn transport_error(error: impl std::fmt::Display) -> String {
+    format!("{TRANSPORT_FAILED}: {error}")
+}
+
+/// 会话已关闭时，把超时等表象错误归为 [`SESSION_LOST`]，保留关闭原因便于诊断。
+fn session_error(session: &DaemonSession, error: String) -> String {
+    match session.closed_reason() {
+        Some(reason) => format!("{SESSION_LOST}: {reason}"),
+        None => error,
+    }
+}
 
 pub(super) fn interaction_blocker(error: &str) -> Option<&'static str> {
     match error {
@@ -220,6 +324,10 @@ fn startup_blocker(agent: &str, screen: &str, anchor: &str, nonce: &str) -> Opti
     let missing = format!("QC-{nonce}-cli_not_installed!");
     if screen.lines().any(|line| line.trim() == missing) {
         return Some(CLI_NOT_INSTALLED);
+    }
+    let busy = format!("QC-{nonce}-anchor_busy!");
+    if screen.lines().any(|line| line.trim() == busy) {
+        return Some(ANCHOR_BUSY);
     }
     if agent == "codex" {
         if has("Update available") && has("Update now") && has("Skip until next version") {
@@ -796,7 +904,11 @@ pub(super) async fn prepare_at(
     let session = entry.session.as_mut().ok_or("CLI 预热会话不可用")?;
     let created = session.request("pty.createTransient", &serde_json::json!({
         "cwd": launch_dir, "claimCwdFile": cwd_file, "shell": shell, "args": args, "env": env, "cols": 120, "rows": 30
-    })).await?;
+    })).await.map_err(|error| match session.closed_reason() {
+        Some(_) => session_error(session, error),
+        // 建 PTY 失败时 CLI 还没启动，不能据此判定 CLI 未就绪。
+        None => transport_error(error),
+    })?;
     entry.pty_id = created["id"].as_str().ok_or("预热应答缺少 id")?.into();
     let mut codex = CodexSession {
         screen: vt100::Parser::new_with_callbacks(
@@ -843,10 +955,21 @@ pub(super) async fn prepare_at(
         {
             HANDOFF_UNAVAILABLE.to_string()
         } else {
-            "等待 CLI 输入界面或目录确认超时".to_string()
+            READY_TIMED_OUT.to_string()
         }
     })
-    .and_then(|result| result);
+    .and_then(|result| result)
+    .map_err(|error| session_error(session, error));
+    if ready.as_ref().is_err_and(|error| error == READY_TIMED_OUT) {
+        super::trace(
+            "ready_timeout_screen",
+            serde_json::json!({
+                "agent": agent,
+                "remote": remote,
+                "screen": screen_tail_for_diagnostics(&codex.screen.screen().contents(), cwd),
+            }),
+        );
+    }
     #[cfg(test)]
     if ready.is_err() {
         eprintln!("CLI readiness screen: {}", codex.screen.screen().contents());

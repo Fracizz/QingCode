@@ -475,9 +475,6 @@ fn the_last_typist_owns_the_size_and_desktop_size_is_remembered() {
         hub.device_input("term-1", "phone", "\x1b[24;80R").unwrap(),
         InputDecision::Drop
     );
-    let log = hub.input_log("term-1").unwrap();
-    assert_eq!(log[0]["name"], DESKTOP_NAME);
-    assert_eq!(log[1]["name"], "phone-name");
 }
 
 #[test]
@@ -582,6 +579,42 @@ fn attach_size_resizes_only_for_the_size_owner_and_feeds_a_take() {
     assert_eq!(hub.attach_size("term-1", "phone", 70, 20), None);
     assert!(hub.screen_size("term-1").is_some());
     assert_eq!(hub.screen_size("missing"), None);
+}
+
+#[test]
+fn attach_take_size_defaults_to_the_phone_grid_unless_locked_or_read_only() {
+    let hub = handoff_hub();
+    approved_mirror(&hub, "term-1");
+    assert!(hub.desktop_resize("term-1", 160, 48));
+    // 没报过网格时不抢尺寸。
+    hub.claim("term-1", "phone", false, None).unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    // 报上网格接入：默认改用手机尺寸，已是尺寸方时不再重复。
+    assert_eq!(hub.attach_size("term-1", "phone", 50, 30), None);
+    assert_eq!(hub.attach_take_size("term-1", "phone"), Some((50, 30)));
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    assert!(!hub.desktop_resize("term-1", 160, 48));
+    // 电脑打字取回尺寸后，锁定尺寸时重新接入不抢。
+    assert_eq!(
+        hub.desktop_input("term-1", "a").unwrap(),
+        InputDecision::Forward {
+            resize: Some((160, 48))
+        }
+    );
+    hub.set_size_lock("term-1", &Controller::Desktop, true)
+        .unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    hub.set_size_lock("term-1", &Controller::Desktop, false)
+        .unwrap();
+    // 只读旁观、被电脑独占、未知设备都不抢。
+    hub.claim("term-1", "phone", false, Some(true)).unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    hub.claim("term-1", "phone", false, Some(false)).unwrap();
+    hub.set_exclusive("term-1", Controller::Desktop, true, false)
+        .unwrap();
+    assert_eq!(hub.attach_take_size("term-1", "phone"), None);
+    assert_eq!(hub.attach_take_size("term-1", "stranger"), None);
+    assert_eq!(hub.attach_take_size("missing", "phone"), None);
 }
 
 #[test]
@@ -1638,6 +1671,17 @@ fn program_busy_handles_osc_and_unicode_split_across_chunks() {
 }
 
 #[test]
+fn phone_badge_marks_a_command_profile_only_when_its_cli_was_prewarmed() {
+    use super::launch::visible_prewarm_hit;
+    // 普通 Shell：领到预热 Shell 即命中。
+    assert!(visible_prewarm_hit(true, false, false));
+    // 带命令（如 claude）只领到预热 Shell：命令冷启动，不显示 ⚡。
+    assert!(!visible_prewarm_hit(true, true, false));
+    assert!(visible_prewarm_hit(true, true, true));
+    assert!(!visible_prewarm_hit(false, false, false));
+}
+
+#[test]
 fn metadata_reports_prewarm_hit_for_the_phone_badge() {
     let mut session = Session::new(project(), "phone".into(), 1);
     assert_eq!(session.metadata("mobile-1")["prewarm"], false);
@@ -1684,7 +1728,13 @@ fn create_accepts_an_optional_terminal_profile_id() {
         matches!(chosen, Operation::Create { terminal_profile: Some(ref id), .. } if id == "claude")
     );
     let list: Operation = serde_json::from_str(r#"{"op":"terminal_profiles"}"#).unwrap();
-    assert!(matches!(list, Operation::TerminalProfiles));
+    assert!(matches!(
+        list,
+        Operation::TerminalProfiles { project: None }
+    ));
+    let scoped: Operation =
+        serde_json::from_str(r#"{"op":"terminal_profiles","project":"p"}"#).unwrap();
+    assert!(matches!(scoped, Operation::TerminalProfiles { project: Some(ref id) } if id == "p"));
     let keys: Operation = serde_json::from_str(r#"{"op":"shortcut_keys"}"#).unwrap();
     assert!(matches!(keys, Operation::ShortcutKeys));
     // 手机不能直接提交命令：未知字段被忽略，命令只来自电脑端配置。

@@ -8,7 +8,7 @@ import {
   type FontSettings,
 } from '../../lib/fontSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
-import { DEFAULT_TERMINAL_PROFILE, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
+import { DEFAULT_TERMINAL_PROFILE, profilesForConnection, type TerminalProfileSettings } from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   detectTerminalHostPlatform,
@@ -22,7 +22,7 @@ import type { Project } from '../../types'
 import { useUIStore } from '../../store/uiStore'
 import FontFamilySelect from '../FontFamilySelect'
 import SettingSelect from '../SettingSelect'
-import LocalCodexPrewarm from './LocalCodexPrewarm'
+import LocalCodexPrewarm, { LocalPrewarmToggle } from './LocalCodexPrewarm'
 import { SettingItem } from '../SettingsLayout'
 import TerminalShortcutBarSettings from '../TerminalShortcutBarSettings'
 import type { TerminalIntegrationSettingsState } from './useSettingsSectionState'
@@ -230,13 +230,12 @@ export default function TerminalSettingsSection({
           </select>
         </SettingItem>
       )}
-      {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('Codex', 'Claude Code', 'OpenCode', 'CLI', '预热') && (
-        <LocalCodexPrewarm profiles={terminal.profiles} />
-      )}
-      {match('预热', 'Shell', 'shellPrewarmCount') && (
+      {/* 本机预热（仅 Windows）：总开关、普通 Shell 数量与本机 CLI；远程连接在「远程连接」中按连接单独设置。 */}
+      {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('本机预热', '预热', 'Shell') && <LocalPrewarmToggle />}
+      {detectTerminalHostPlatform() === 'win' && match('预热', 'Shell', 'shellPrewarmCount') && (
         <SettingItem
-          title={t('终端 › 集成: Shell 预热数量')}
-          description={t('每条已连接且有受信任项目的 Server 模式连接各自预热普通 Shell（Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell）；本机 Windows 单独计数，需开启「本地终端可接回」。自动模式每处保留 1 个，预留后立即补充，也可关闭或指定每处 1–8 个。本机内存不足时暂停本机预热。')}
+          title={t('终端 › 集成: 本机 Shell 预热数量')}
+          description={t('本机 Windows 项目预热的普通 Shell（PowerShell / CMD），需开启「本地终端可接回」。自动保留 1 个，预留后立即补充，也可关闭或指定 1–8 个；本机内存不足时暂停。远程连接的预热在「远程连接 → 终端」中按连接单独设置。')}
           modified={shellPrewarmCount !== 'auto'}
           locked={workspaceLocked}
           lockHint={t('此设置仅在用户作用域中可用')}
@@ -244,7 +243,7 @@ export default function TerminalSettingsSection({
           <SettingSelect
             value={String(shellPrewarmCount)}
             disabled={workspaceLocked}
-            aria-label={t('终端 › 集成: Shell 预热数量')}
+            aria-label={t('终端 › 集成: 本机 Shell 预热数量')}
             onChange={value => void updateShellPrewarmCount(value === 'auto' ? 'auto' : Number(value))}
             options={[
               { value: 'auto', label: t('自动（1 个）') },
@@ -253,6 +252,9 @@ export default function TerminalSettingsSection({
             ]}
           />
         </SettingItem>
+      )}
+      {!workspaceLocked && detectTerminalHostPlatform() === 'win' && match('Codex', 'Claude Code', 'OpenCode', 'CLI', '预热') && (
+        <LocalCodexPrewarm profiles={profilesForConnection(terminal, null)} />
       )}
       {match('Shift+Enter', '换行', 'Agent', 'shiftEnterNewline') && (
         <SettingItem

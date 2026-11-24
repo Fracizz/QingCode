@@ -49,6 +49,7 @@ describe('notifyCliPrewarmServerOutdated', () => {
   it('设置页只说明 CLI 相关的暂停原因', () => {
     expect(cliPrewarmPauseDetail('cli_not_installed', 'codex')).toContain('未找到 codex 命令')
     expect(cliPrewarmPauseDetail('profile_exited', 'codex')).toContain('已退出')
+    expect(cliPrewarmPauseDetail('cli_anchor_busy', 'claude')).toContain('自动重试')
     expect(cliPrewarmPauseDetail('remote_unavailable', 'codex')).toBeNull()
     expect(cliPrewarmPauseDetail(null, 'codex')).toBeNull()
   })

@@ -1,6 +1,6 @@
 import { notifyShellPrewarmChanged } from './shellPrewarmSettings'
 import { isTerminalProfileTrusted } from './terminalProfileTrust'
-import { loadTerminalProfileSettings, type TerminalProfile } from './terminalProfiles'
+import { loadTerminalProfileSettings, profilesForConnection, type TerminalProfile } from './terminalProfiles'
 
 export const LOCAL_CODEX_PREWARM_KEY = 'qingcode:local-codex-prewarm'
 
@@ -23,7 +23,7 @@ export function localCodexPrewarm() {
   try {
     const saved = JSON.parse(localStorage.getItem(LOCAL_CODEX_PREWARM_KEY) ?? 'null')
     if (!saved?.profileId) return
-    const profile = loadTerminalProfileSettings().profiles.find(p =>
+    const profile = profilesForConnection(loadTerminalProfileSettings(), null).find(p =>
       p.id === saved.profileId && p.shell === saved.shell && p.command === saved.command &&
       supportsCodexPrewarm(p) && isTerminalProfileTrusted(p))
     return profile

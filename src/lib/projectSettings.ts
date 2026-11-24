@@ -308,7 +308,7 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
-  // terminal.integrated.shellPrewarmCount：普通 Shell，每条已连接且有受信任项目的 Server 模式连接（Windows 或 Linux/macOS 远端）各自计数，本机另算（需开启本地终端可接回）；auto=每处保留 1 个并在预留后立即补充，0=关闭，1–8=每处数量，仅用户作用域
+  // terminal.integrated.shellPrewarmCount：本机 Windows 普通 Shell 预热数量（需开启本地终端可接回），远程连接在「远程连接 → 终端」中各自设置；auto=保留 1 个并在预留后立即补充，0=关闭，1–8=手动指定，仅用户作用域
   "terminal.integrated.shellPrewarmCount": "auto",
 
   // ============================== 全局项目列表 ==============================

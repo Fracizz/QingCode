@@ -47,6 +47,7 @@ try {
   run('click', '#pair-submit')
   check('paired computer is online', `document.querySelector('#active-host').dataset.state==='online'`)
   run('click', '#dashboard-nav [data-page="project"]')
+  run('wait', '--fn', `!document.querySelector('#project-screen').hidden && !document.documentElement.dataset.screenExit && document.querySelector('#project-list .project-row .row')?.offsetWidth > 0`)
   run('click', '#project-list > :first-child .project-row:first-child .row')
   evaluate('window.__mobileFixture.startTerminalIfEmpty()')
   check('terminal is attached', ready)
@@ -85,21 +86,46 @@ try {
   evaluate(`window.__previousRequest=window.QingCodeNative.request;window.QingCodeNative.request=(id,payload)=>{const request=JSON.parse(payload);if(request.op==='create'&&!window.__failedCreate){window.__failedCreate=id;return;}window.__previousRequest(id,payload)}`)
   run('click', '#new-session')
   settled('new-session-dialog')
-  run('click', '#terminal-profiles button:first-child')
-  check('slow creation shows progress and disables repeated submissions', `window.__failedCreate && !document.querySelector('#terminal-profiles-progress').hidden && document.querySelector('#terminal-profiles button').disabled && document.querySelector('#new-session-dialog [data-close]').disabled`)
+  const chosen = '#terminal-profiles [data-profile="claude"]'
+  run('wait', '--fn', `document.querySelector('${chosen}')`)
+  evaluate(`(() => {
+    const row = document.querySelector('${chosen}');
+    window.__readsBeforeCreate = window.__mobileFixture.state.sessionRequests.length;
+    row.click();
+    window.__immediateFeedback = row.dataset.pending === 'true' && !row.querySelector('svg');
+    row.click();
+    document.querySelector('#terminal-profiles button').click();
+  })()`)
+  check('only the chosen profile gives immediate feedback, with no list fetch before create', `window.__immediateFeedback && window.__failedCreate && window.__mobileFixture.state.sessionRequests.length === window.__readsBeforeCreate && document.querySelectorAll('#terminal-profiles [data-pending]').length === 1 && document.querySelector('#new-session-dialog [data-close]').disabled`)
+  check('slow creation shows a spinner and status beside the selected name', `document.querySelector('${chosen} .session-spinner') && document.querySelector('${chosen} small').textContent === '正在创建…'`)
+  check('a long wait shows the target computer in place of the configuration hint', `document.querySelector('#terminal-profiles-help').hidden && document.querySelector('#terminal-profiles-progress').textContent.includes(document.querySelector('#active-host-name').textContent)`)
+  capture('02-create-wait')
   evaluate(`window.qingReply(window.__failedCreate,{ok:false,error:'SSH 连接失败：Disconnected'})`)
-  check('SSH startup failure stays at the action, restores retry and preserves the current draft', `document.querySelector('#new-session-dialog').open && document.querySelector('#terminal-profiles-error').textContent.includes('在握手时断开') && document.querySelector('#terminal-profiles-progress').hidden && !document.querySelector('#terminal-profiles button').disabled && !document.querySelector('#new-session-dialog [data-close]').disabled && ${ready} && document.querySelector('#compose').value==='恢复保存后保留的新草稿'`)
+  check('SSH failure and retry stay at the chosen row and the current draft survives', `document.querySelector('${chosen} + #terminal-create-result #terminal-profiles-error')?.textContent.includes('在握手时断开') && document.querySelector('${chosen} small').textContent === '重试' && !document.querySelector('${chosen}').disabled && !document.querySelector('#new-session-dialog [data-close]').disabled && ${ready} && document.querySelector('#compose').value==='恢复保存后保留的新草稿'`)
   capture('02-ssh-create-failure')
-  run('click', '#new-session-dialog [data-close]')
-  run('click', '#show-sessions')
-  settled('session-drawer')
-  check('the session list responds immediately after creation fails', `!document.querySelector('#session-options .row').disabled && document.querySelector('#session-progress').hidden`)
-  run('click', '#session-options .row')
-  check('the existing terminal still opens from the list', `!document.querySelector('#session-drawer').open && ${ready}`)
-  run('click', '#new-session')
-  settled('new-session-dialog')
-  run('click', '#terminal-profiles button:first-child')
-  check('explicit retry creates only one new session', `window.__mobileFixture.state.sessions.size===2 && !document.querySelector('#new-session-dialog').open && ${ready}`)
+
+  // 电脑已执行重试，只有回执超时。再次点原行只刷新列表，用户决定接入哪一个。
+  evaluate(`(() => {
+    const request = window.QingCodeNative.request;
+    const reply = window.qingReply;
+    let lost;
+    window.QingCodeNative.request = (id, payload) => {
+      if (JSON.parse(payload).op === 'create') lost = id;
+      request(id, payload);
+    };
+    window.qingReply = (id, result) => {
+      if (id === lost) reply(id, { ok: false, code: 'timeout', error: '连接超时' });
+      else reply(id, result);
+    };
+  })()`)
+  run('click', chosen)
+  const recovery = '#terminal-create-sessions button'
+  check('after a lost acknowledgement the actual project sessions are offered without a second create', `document.querySelectorAll('${recovery}').length === 2 && window.__mobileFixture.state.sessions.size === 2 && document.querySelector('${chosen} small').textContent === '刷新会话'`)
+  evaluate(`window.__createsBeforeCheck = window.__mobileFixture.state.creates.length`)
+  run('click', chosen)
+  check('rechecking the uncertain result is read-only', `document.querySelectorAll('${recovery}').length === 2 && window.__mobileFixture.state.creates.length === window.__createsBeforeCheck`)
+  run('click', recovery + ':last-child')
+  check('opening the recovered session attaches it and records the first screen', `document.querySelector('#terminal-name').textContent.includes('2') && !document.querySelector('#new-session-dialog').open && ${ready} && performance.getEntriesByName('qingcode.terminal.first-screen').length === 1`)
 
   evaluate(`window.__failure={error:'SSH 握手期间连接已断开（test:22），请检查远端 SSH 服务和网络后重试'}`)
   check('SSH failure on an existing session leaves the computer online and offers retry', `document.querySelector('#terminal-status').textContent.includes('在握手时断开') && !document.querySelector('#terminal-retry').hidden && document.querySelector('#send').disabled && document.querySelector('#active-host').dataset.state==='online'`)
@@ -121,8 +147,9 @@ try {
   check('the list explains the pending operation and disables its session controls', `window.__failedEnd && !document.querySelector('#session-progress').hidden && [...document.querySelectorAll('#session-options .row')].every(b=>b.disabled)`)
   evaluate(`window.qingReply(window.__failedEnd,{ok:false,error:'SSH 连接失败：Disconnected'})`)
   check('a session operation failure releases the list and reports the SSH issue there', `document.querySelector('#session-progress').hidden && document.querySelector('#session-error').textContent.includes('在握手时断开') && [...document.querySelectorAll('#session-options .row')].every(b=>!b.disabled)`)
+  evaluate("performance.clearMeasures('qingcode.terminal.first-screen')")
   run('click', '#session-options [data-id="mobile-1"] .row')
-  check('another row switches to its own session and draft', `${ready} && document.querySelector('#compose').value==='恢复保存后保留的新草稿'`)
+  check('another row switches to its own session and draft', `${ready} && performance.getEntriesByName('qingcode.terminal.first-screen').length === 1 && document.querySelector('#compose').value==='恢复保存后保留的新草稿'`)
 
   evaluate(`new Promise(resolve=>window.__mobileFixture.terminal().write('\x1b[?1049h\x1b[?1000h\x1b[?1006hgesture test',resolve))`)
   evaluate(`window.__wheels=[];window.__gestureTarget=window.__mobileFixture.terminal().element.querySelector('.xterm-screen');window.__gestureTarget.addEventListener('wheel',e=>window.__wheels.push({momentum:e.qingMomentum,delta:e.deltaY}));window.__touch=(type,points)=>{const target=window.__gestureTarget;const touches=points.map(([x,y],i)=>new Touch({identifier:i+1,target,clientX:x,clientY:y}));const event=new TouchEvent(type,{bubbles:true,cancelable:true,touches,changedTouches:touches});target.dispatchEvent(event);return event.defaultPrevented}`)

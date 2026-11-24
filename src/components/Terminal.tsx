@@ -2,7 +2,10 @@ import TerminalExitNotice from './TerminalExitNotice'
 import TerminalConnectionNotice from './TerminalConnectionNotice'
 import TerminalControlNotice from './TerminalControlNotice'
 import MobileTerminalHistory from './MobileTerminalHistory'
-import { registerTerminalCapture } from '@/lib/terminal/terminalMirror'
+import {
+  registerTerminalCapture,
+  registerTerminalPersistCapture,
+} from '@/lib/terminal/terminalMirror'
 import { isMobileTerminalId } from '@/lib/ipc/mobileSessions'
 import {
   isTerminalInputBlocked,
@@ -37,7 +40,12 @@ import {
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
 import { runOnFrameOrTimeout } from '@/lib/terminal/frameOrTimeout'
-import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
+import {
+  planTerminalRestore,
+  restoredReplayNeedsRedraw,
+  terminalRestoreNotices,
+} from '@/lib/terminal/terminalRestorePlan'
+import { publishTerminalOverlayNotice } from '@/lib/terminal/terminalOverlayNotice'
 import { formatTerminalQuote } from '@/lib/terminal/terminalQuote'
 import {
   protectTerminalSelectionMenu,
@@ -72,7 +80,6 @@ import {
   TERMINAL_CLEAR_INPUT_EVENT,
   TERMINAL_COPY_SCREEN_EVENT,
   TERMINAL_EXPORT_EVENT,
-  TERMINAL_RESET_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
 } from '@/lib/terminal/terminalViewBridge'
@@ -191,6 +198,17 @@ function terminalSearchOptions(incremental = false): ISearchOptions {
   }
 }
 
+function combineChunks(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0]
+  const out = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0))
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}
+
 function writeFinishedTaskHint(term: XTerm) {
   term.writeln(
     `\x1b[90m${translate('按 Ctrl+C 在当前标签进入命令行，或点标签「重启」重新运行任务。')}\x1b[0m`
@@ -240,6 +258,8 @@ export default function TerminalView({
   const followBottomUntilRef = useRef(0)
   /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
   const redrawPendingRef = useRef(false)
+  /** 本次挂载回放了重启前持久化的历史、接的是仍在运行的原进程：接回完成后要整屏重绘一次。 */
+  const restoredRedrawRef = useRef(false)
   /**
    * 正在解析的屏幕快照数。快照按 daemon 网格排版、整行依赖自动折行，xterm 又是分帧异步
    * 解析的：解析完之前任何一次 fit 改了列数，后半段就会逐行错位成阶梯。期间推迟所有 fit。
@@ -495,15 +515,6 @@ export default function TerminalView({
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
   }, [])
-
-  const resetTerminalView = useCallback(() => {
-    const term = xtermRef.current
-    if (!term) return
-    term.reset()
-    term.scrollToBottom()
-    searchAddonRef.current?.clearDecorations()
-    resetSearchMatch()
-  }, [resetSearchMatch])
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
@@ -1382,6 +1393,29 @@ export default function TerminalView({
     const writeFlow = new TerminalWriteFlow(paused =>
       setTerminalOutputPaused(terminalId, flowHolder, paused)
     )
+    // 已交给 xterm、还没解析完的输出（按写入顺序）。持久化时接在序列化画面之后，
+    // 与续传序号对应的「已收到的全部输出」一致，重启接回时不丢也不重复。
+    const unparsedOutput: Uint8Array[] = []
+    const unregisterPersistCapture = registerTerminalPersistCapture(terminalId, limits => {
+      if (!historyParsed || screenWriteLockRef.current > 0 || xtermRef.current !== term) return null
+      // 只给重启后会接回原进程的终端存画面：新建进程的终端只是展示历史，原始输出够用，
+      // 也免得本地写进缓冲的「已恢复」「已退出」提示被存下来、每次重启叠一行。
+      const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+      if (tab?.persistent !== true || !tab.ptyId) return null
+      // 序列化耗时随行数线性增长；超出字符预算的行反正会被截掉，按每行至少一整行宽估算上限。
+      const scrollback = Math.min(limits.scrollback, Math.ceil(limits.maxChars / Math.max(1, term.cols)))
+      const screen = serializeAddon.serialize({ scrollback })
+      if (!screen) return null
+      const pending = unparsedOutput.length
+        ? new TextDecoder().decode(combineChunks(unparsedOutput))
+        : ''
+      return {
+        data: screen + pending,
+        cols: term.cols,
+        rows: term.rows,
+        screenChars: screen.length,
+      }
+    })
     let unsubscribeOutput: (() => void) | undefined
     const subscribeTimer = window.setTimeout(() => {
       // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，之后再 fit 也无法还原。
@@ -1389,16 +1423,25 @@ export default function TerminalView({
       resizeGridFromContainer()
       setReplayMasked(true)
       let replaying = true
+      // 回放了本次启动前持久化的历史、接的又是仍在运行的原进程：那是截断过的原始字节流，
+      // Claude Code 这类行内 TUI 按差量重画（只改变化的格子），从半截回放出来的屏幕和程序
+      // 以为的不一致，之后每帧都画错位置（叠出多行转圈、文字互相覆盖）。接回完成后让它整屏重绘一次。
+      restoredRedrawRef.current = restoredReplayNeedsRedraw(
+        hadRestoredScrollback,
+        useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+      )
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
         writeFlow.written(size)
+        unparsedOutput.push(data)
         term.write(data, () => {
+          unparsedOutput.shift()
           writeFlow.parsed(size)
           lastOutputParsedAtRef.current = Date.now()
           followBottomAfterResize()
           if (!isReplay || xtermRef.current !== term) return
-          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
+          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通缓冲区见下方 restoredRedrawRef。
           if (term.buffer.active.type !== 'alternate') return
           redrawPendingRef.current = true
           scheduleFit(true, false)
@@ -1438,6 +1481,17 @@ export default function TerminalView({
       replaying = false
       term.write('', () => {
         historyParsed = true
+        // 挂载前已经接回（未打开的项目由兜底计时器先接回）：没有后续的状态变化，这里直接重绘；
+        // 仍在接回途中的由下方状态 effect 在转为运行中时处理，避免重绘两次。
+        if (
+          restoredRedrawRef.current &&
+          xtermRef.current === term &&
+          useTerminalStore.getState().terminals.find(t => t.id === terminalId)?.status === 'running'
+        ) {
+          restoredRedrawRef.current = false
+          redrawPendingRef.current = true
+          scheduleFit(true, false)
+        }
         // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
         if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })
@@ -1454,10 +1508,18 @@ export default function TerminalView({
         const latest = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         if (!latest || latest.status !== 'exited') return
         const pendingRestoreNote = translate(terminalRestoreNotices(latest).history)
-        if (sessionOpen === null) {
-          if (latest.awaitingRestoreSpawn) {
+        // 接回的是仍在运行的进程（常是 Claude Code 等行内 TUI）：提示写进缓冲会把光标下移，
+        // 接回后 TUI 按行数擦除重绘时整体错位（重复的转圈行），且接回成功后这行「正在接回」
+        // 永远留在屏幕底部，看起来像卡住。改用浮层，接回成功的「已重新连接」或失败提示会替换它。
+        const writeAwaitSpawnNote = () => {
+          if (planTerminalRestore(latest).mode === 'attach') {
+            publishTerminalOverlayNotice(terminalId, pendingRestoreNote, { sticky: true })
+          } else {
             term.writeln(`\r\n\x1b[90m[${pendingRestoreNote}]\x1b[0m`)
           }
+        }
+        if (sessionOpen === null) {
+          if (latest.awaitingRestoreSpawn) writeAwaitSpawnNote()
           return
         }
         const recovery = restoredExitRecovery({
@@ -1475,11 +1537,11 @@ export default function TerminalView({
           }))
           return
         }
-        const note =
-          recovery === 'await-spawn'
-            ? pendingRestoreNote
-            : translate('会话输出已恢复；可从终端标签重启进程')
-        term.writeln(`\r\n\x1b[90m[${note}]\x1b[0m`)
+        if (recovery === 'await-spawn') {
+          writeAwaitSpawnNote()
+          return
+        }
+        term.writeln(`\r\n\x1b[90m[${translate('会话输出已恢复；可从终端标签重启进程')}]\x1b[0m`)
         if (recovery === 'locked') writeFinishedTaskHint(term)
       })()
     }, 0)
@@ -1591,6 +1653,7 @@ export default function TerminalView({
       disposeHostScrollLock()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
       unregisterCapture()
+      unregisterPersistCapture()
       unregisterReader()
       term.dispose()
       container.replaceChildren()
@@ -1653,11 +1716,6 @@ export default function TerminalView({
       if (!matches(detail)) return
       openSearch()
     }
-    const onReset = (event: Event) => {
-      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
-      if (!matches(detail)) return
-      resetTerminalView()
-    }
     const onCopyScreen = (event: Event) => {
       if (matches((event as CustomEvent<TerminalViewBridgeDetail>).detail)) copyScreen()
     }
@@ -1669,19 +1727,17 @@ export default function TerminalView({
     }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
-    window.addEventListener(TERMINAL_RESET_EVENT, onReset)
     window.addEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
     window.addEventListener(TERMINAL_EXPORT_EVENT, onExport)
     window.addEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
-      window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
       window.removeEventListener(TERMINAL_COPY_SCREEN_EVENT, onCopyScreen)
       window.removeEventListener(TERMINAL_EXPORT_EVENT, onExport)
       window.removeEventListener(TERMINAL_CLEAR_INPUT_EVENT, onClearInput)
     }
-  }, [clearBuffer, clearInput, copyScreen, exportBuffer, openSearch, resetTerminalView, terminalId])
+  }, [clearBuffer, clearInput, copyScreen, exportBuffer, openSearch, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {
@@ -1747,6 +1803,15 @@ export default function TerminalView({
           term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
         }
       })()
+    } else if (
+      terminal.status === 'running' &&
+      previous !== 'running' &&
+      restoredRedrawRef.current
+    ) {
+      // 回放了持久化历史的原进程接回完成（见回放处 restoredRedrawRef 的说明），整屏重绘一次。
+      restoredRedrawRef.current = false
+      redrawPendingRef.current = true
+      scheduleFit(true, false)
     } else if (
       terminal.status === 'running' &&
       previous === 'starting' &&

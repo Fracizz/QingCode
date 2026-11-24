@@ -54,7 +54,7 @@ import ProjectName from './ProjectName'
 import { useProjectLabels } from '../hooks/useProjectLabels'
 import { projectChipTooltipLabel, projectHoverDetails } from '../lib/projectChipTooltip'
 import InfoTipCard from './InfoTipCard'
-import { buildProjectFilterData } from '../lib/projectManagerFilters'
+import { buildProjectFilterData, buildProjectSourceOptions } from '../lib/projectManagerFilters'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -114,12 +114,10 @@ export default function ProjectManager() {
     () => buildProjectFilterData(projects, sshConnections, projectLabels, localLabel),
     [projects, sshConnections, projectLabels, localLabel]
   )
-  const sourceOptions = useMemo(() => {
-    const sources = new Map([...filterData.values()].map(data => [data.source, data]))
-    return [...sources.values()].sort((a, b) =>
-      a.sourceLabel.localeCompare(b.sourceLabel, language)
-    )
-  }, [filterData, language])
+  const sourceOptions = useMemo(
+    () => buildProjectSourceOptions(sshConnections, language),
+    [sshConnections, language]
+  )
 
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)
@@ -132,10 +130,7 @@ export default function ProjectManager() {
     if (filter === 'visible') list = list.filter(p => !p.hidden)
     else if (filter === 'hidden') list = list.filter(p => p.hidden)
     if (sourceFilter !== 'all') {
-      list = list.filter(p => {
-        const data = filterData.get(p.id)
-        return data?.kind === sourceFilter || data?.source === sourceFilter
-      })
+      list = list.filter(p => filterData.get(p.id)?.source === sourceFilter)
     }
     if (normalizedSearch) {
       list = list.filter(p => filterData.get(p.id)?.searchText.includes(normalizedSearch))
@@ -390,24 +385,12 @@ export default function ProjectManager() {
             >
               <option value="all">{t('全部来源')}</option>
               <option value="local">{t('本机')}</option>
-              <option value="wsl">WSL</option>
-              <option value="ssh">SSH</option>
-              {(['wsl', 'ssh'] as const).map(kind => {
-                const options = sourceOptions.filter(
-                  data => data.kind === kind && data.source !== kind
-                )
-                return (
-                  options.length > 0 && (
-                    <optgroup key={kind} label={t(kind === 'wsl' ? 'WSL 发行版' : 'SSH 连接')}>
-                      {options.map(data => (
-                        <option key={data.source} value={data.source}>
-                          {data.sourceLabel}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )
-                )
-              })}
+              {/* 来源只保留本机与各远程连接；WSL 按普通 Linux 远程连接添加 */}
+              {sourceOptions.map(data => (
+                <option key={data.source} value={data.source}>
+                  {data.sourceLabel}
+                </option>
+              ))}
             </select>
             <SegmentedControl<FilterMode>
               ariaLabel={t('筛选项目')}

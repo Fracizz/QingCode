@@ -487,6 +487,26 @@ fn route_test_pty_data(state: &SessionState, seq: u64, bytes: usize) {
 }
 
 #[tokio::test]
+async fn session_events_end_after_close_once_queued_events_are_delivered() {
+    let (state, mut events) = test_session_state();
+    let state = Arc::new(state);
+    events.state = Some(Arc::clone(&state));
+    route_test_pty_data(&state, 0, 4);
+    assert!(!events.session_closed());
+    // daemon 重启等导致会话关闭：发送端仍随 state 存活，事件流也必须结束。
+    state.mark_closed("daemon 连接已关闭");
+    assert!(matches!(
+        events.recv().await,
+        Some(Event::PtyData { seq: 0, .. })
+    ));
+    let end = tokio::time::timeout(Duration::from_millis(100), events.recv())
+        .await
+        .expect("会话关闭后等待事件的一方必须立即结束，不能挂到预热超时");
+    assert!(end.is_none());
+    assert!(events.session_closed());
+}
+
+#[tokio::test]
 async fn session_slow_event_consumer_is_byte_bounded_and_fails_pending_rpc() {
     let (state, mut events) = test_session_state();
     let (reply_tx, reply_rx) = oneshot::channel();
@@ -1097,4 +1117,50 @@ fn daemon_request_params_roundtrip_as_msgpack_map() {
     let decoded: HelloRequest = proto::decode_value(&proto::encode(&hello).unwrap()).unwrap();
     assert_eq!(decoded.client_id, "c1");
     assert_eq!(decoded.protocol_min, PROTOCOL_VERSION);
+}
+
+#[test]
+fn sibling_roots_reuse_the_connection_gateway_verification_for_the_same_token() {
+    use super::super::deploy::gateway_verified_on_connection;
+    let manager = SshManager::new();
+    let id = "test-shared-gateway";
+    for (key, path, trusted) in [
+        ("a", "/work/a", true),
+        ("b", "/work/b", true),
+        ("c", "/work/c", false),
+    ] {
+        manager.roots.write().unwrap().insert(
+            key.into(),
+            RegisteredRoot {
+                uri: format!("ssh://{id}{path}"),
+                canonical_path: path.into(),
+                trusted,
+            },
+        );
+    }
+    let verified = |slot_path: &str, token: &str| {
+        manager.set_server_slot(
+            &server_slot_key(id, slot_path),
+            ServerSlot {
+                endpoint: Some(ServerEndpoint {
+                    serve: None,
+                    daemon: Some(DaemonAccess {
+                        bin: "direct".into(),
+                        token: token.into(),
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+    };
+    // 更新后各项目端点均已清空：首个项目必须真正探测。
+    assert!(!gateway_verified_on_connection(&manager, id, "paired"));
+    // 未受信任项目的端点不作为依据。
+    verified("/work/c", "paired");
+    assert!(!gateway_verified_on_connection(&manager, id, "paired"));
+    verified("/work/a", "paired");
+    assert!(gateway_verified_on_connection(&manager, id, "paired"));
+    // 配对 token 轮换后旧结论失效；其他连接不受影响。
+    assert!(!gateway_verified_on_connection(&manager, id, "rotated"));
+    assert!(!gateway_verified_on_connection(&manager, "other", "paired"));
 }

@@ -34,6 +34,8 @@ export type SshServerState = {
   reason: string | null
   /** 最近一次发现/部署的分阶段耗时摘要；旧版后端不发此字段。 */
   timings?: string | null
+  /** 安装/握手阶段替换的是远端已有的旧版本（显示「更新中」）；旧版后端不发此字段。 */
+  upgrading?: boolean
 }
 
 const PHASES = new Set<SshServerPhase>([
@@ -114,6 +116,7 @@ export function parseSshServerState(value: unknown): SshServerState | null {
     reason,
     timings,
     ...(isDeferredUpgrade(record.deferredUpgrade) ? { deferredUpgrade: record.deferredUpgrade } : {}),
+    ...(record.upgrading === true ? { upgrading: true } : {}),
   }
 }
 
@@ -238,11 +241,6 @@ export function sshServerSwitchBlocker(state: SshServerState): string | null {
   const reason = state.reason?.trim() ?? ''
   if (reason.startsWith(REASON_UNTRUSTED)) return '请先信任该工作区，再切换到远端服务'
   return null
-}
-
-/** 连接配置为 SSH 模式（零足迹直连）：没有远端服务，芯片与菜单按 SSH 模式展示。 */
-export function sshServerDisabledBySetting(state: SshServerState): boolean {
-  return state.connectionMode === 'ssh'
 }
 
 /** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到远端服务」。 */

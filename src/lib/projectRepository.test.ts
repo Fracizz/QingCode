@@ -14,7 +14,7 @@ const { mockDb, savedSettingsRef, globalSettingsRef } = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@tauri-apps/plugin-sql', () => ({
+vi.mock('./database', () => ({
   default: { load: async () => mockDb },
 }))
 
@@ -166,7 +166,7 @@ describe('setProjectsSortOrders', () => {
     mockDb.execute.mockResolvedValue({ rowsAffected: 1 })
   })
 
-  it('updates each id without wrapping BEGIN/COMMIT (plugin-sql nested txn)', async () => {
+  it('updates each id without wrapping BEGIN/COMMIT (no nested txn)', async () => {
     await setProjectsSortOrders([
       { id: 'a', sortOrder: 0 },
       { id: 'b', sortOrder: 1 },

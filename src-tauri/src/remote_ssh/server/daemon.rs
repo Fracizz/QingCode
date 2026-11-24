@@ -450,11 +450,28 @@ struct SessionEventSender {
 
 pub(super) struct SessionEventReceiver {
     receiver: mpsc::Receiver<QueuedSessionEvent>,
+    /// 发送端随 SessionState 存活、不会因连接断开而释放；据此在会话关闭后结束事件流。
+    state: Option<Arc<SessionState>>,
 }
 
 impl SessionEventReceiver {
+    /// 会话关闭后先交付已排队的事件，再返回 None；否则只等事件的调用方
+    /// （如预热就绪等待）会一直挂到超时。
     pub(super) async fn recv(&mut self) -> Option<Event> {
-        self.receiver.recv().await.map(|queued| queued.event)
+        let Some(state) = &self.state else {
+            return self.receiver.recv().await.map(|queued| queued.event);
+        };
+        tokio::select! {
+            biased;
+            queued = self.receiver.recv() => queued.map(|queued| queued.event),
+            _ = state.wait_closed() => self.receiver.try_recv().ok().map(|queued| queued.event),
+        }
+    }
+
+    fn session_closed(&self) -> bool {
+        self.state
+            .as_ref()
+            .is_some_and(|state| state.closed.load(Ordering::Acquire))
     }
 }
 
@@ -465,7 +482,10 @@ fn session_event_channel() -> (SessionEventSender, SessionEventReceiver) {
             sender,
             budget: Arc::new(Semaphore::new(SESSION_EVENT_QUEUE_BYTES)),
         },
-        SessionEventReceiver { receiver },
+        SessionEventReceiver {
+            receiver,
+            state: None,
+        },
     )
 }
 
@@ -640,7 +660,7 @@ impl DaemonSession {
         let (mut reader, mut writer) = channel.channel.split();
         let stderr_notes = channel.stderr_notes;
         let (outbound_tx, mut outbound_rx) = session_outbound::channel();
-        let (events_tx, events_rx) = session_event_channel();
+        let (events_tx, mut events_rx) = session_event_channel();
         let state = Arc::new(SessionState {
             pending: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
@@ -651,6 +671,7 @@ impl DaemonSession {
             closed_notify: tokio::sync::Notify::new(),
             last_frame: Mutex::new(Instant::now()),
         });
+        events_rx.state = Some(Arc::clone(&state));
 
         let writer_state = Arc::clone(&state);
         tauri::async_runtime::spawn(async move {
@@ -1004,7 +1025,7 @@ impl DaemonSession {
                     Event::PtyData { id, data, .. } if id == pty_id => output(&data),
                     _ => {}
                 },
-                Err(mpsc::error::TryRecvError::Empty) => return false,
+                Err(mpsc::error::TryRecvError::Empty) => return events.session_closed(),
                 Err(mpsc::error::TryRecvError::Disconnected) => return true,
             }
         }

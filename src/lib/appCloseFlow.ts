@@ -40,6 +40,8 @@ export interface AppCloseDependencies {
   finishRemote: (tab: TerminalTab, action: RemoteExitAction) => Promise<void>
   closeTerminal: (tab: TerminalTab) => Promise<void>
   markEnded: (tab: TerminalTab) => void
+  /** 选择结束时已确认结束的远程终端：直接从终端列表移除，下次启动不再出现「已退出」标签。 */
+  removeEnded: (tab: TerminalTab) => void
   markDetached: (tab: TerminalTab) => void
   flush: () => void
   destroy: () => Promise<void>
@@ -101,7 +103,8 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
       const results = await Promise.allSettled(pending.map(async tab => {
         if (hasPreservableSession(tab)) await deps.finishRemote(tab, 'terminate')
         else await deps.closeTerminal(tab)
-        deps.markEnded(tab)
+        if (action === 'terminate' && tab.cwd.startsWith('ssh://')) deps.removeEnded(tab)
+        else deps.markEnded(tab)
         endedCount++
         reportEnded()
       }))

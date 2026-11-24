@@ -1,5 +1,5 @@
 import { hasBackend } from './runtimeCapabilities'
-import Database from '@tauri-apps/plugin-sql'
+import Database from './database'
 import { safeInvoke, NotInTauriError } from './tauri'
 import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, normalizeProjectPath } from '../utils/fileTreeHelpers'
@@ -430,9 +430,10 @@ export async function setProjectSortOrder(id: string, sortOrder: number): Promis
 
 /**
  * Persist many `sort_order` values (title-bar drag reorder).
- * Do not wrap in BEGIN/COMMIT: `@tauri-apps/plugin-sql` already runs each
- * `execute` inside its own transaction, so a nested BEGIN fails with
- * "cannot start a transaction within a transaction".
+ * Not wrapped in BEGIN/COMMIT: each `execute` is a separate IPC call on the
+ * shared app_db connection, so an explicit transaction would also capture
+ * unrelated writes issued meanwhile (and nested BEGIN fails with
+ * "cannot start a transaction within a transaction").
  */
 export async function setProjectsSortOrders(
   orders: Array<{ id: string; sortOrder: number }>

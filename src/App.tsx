@@ -31,6 +31,7 @@ import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
 import { hasBackend } from './lib/runtimeCapabilities'
+import { listenDismissEndedTerminals } from './lib/dismissEndedTerminals'
 import { isWebTest } from './lib/webTestMode'
 import {
   editorSurface,
@@ -374,13 +375,19 @@ function App() {
     if (!hasBackend()) return
     let cancelled = false
     let unlisten: (() => void) | undefined
+    let unlistenDismiss: (() => void) | undefined
     initializeTerminalEvents().then(fn => {
       if (cancelled) fn()
       else unlisten = fn
     })
+    listenDismissEndedTerminals().then(fn => {
+      if (cancelled) fn()
+      else unlistenDismiss = fn
+    })
     return () => {
       cancelled = true
       unlisten?.()
+      unlistenDismiss?.()
     }
   }, [initializeTerminalEvents])
 

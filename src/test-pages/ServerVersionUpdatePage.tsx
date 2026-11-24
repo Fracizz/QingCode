@@ -129,8 +129,8 @@ if (import.meta.env.MODE === 'web-test') {
     async (command, rawArgs) => {
       const args = rawArgs as Record<string, unknown> | undefined
       if (command === 'db_url') return 'sqlite:startup-fixture'
-      if (command === 'plugin:sql|load') return 'sqlite:startup-fixture'
-      if (command === 'plugin:sql|select') return useProjectStore.getState().sshConnections
+      if (command === 'db_load') return 'sqlite:startup-fixture'
+      if (command === 'db_select') return useProjectStore.getState().sshConnections
       if (command === 'default_settings_path') return '/fixture/default-settings.json'
       if (command === 'read_file') return '// in-memory settings\n{"ssh.server.autoDownload":true}'
       if (command === 'ssh_workspace_status') return true

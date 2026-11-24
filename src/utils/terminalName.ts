@@ -57,6 +57,17 @@ export function windowsSshShellLabel(cwd: string, shell?: string | null): string
   return 'PowerShell'
 }
 
+/**
+ * POSIX 远程（Linux/macOS）终端标签的 i18n 键。未指定 bash/zsh/sh 时远端走
+ * 登录用户的 `$SHELL`，不能套用本机的默认 Shell（如 Windows 上的 PowerShell 7）。
+ */
+export function posixSshShellLabelKey(cwd: string, shell?: string | null): string | null {
+  if (!cwd.startsWith('ssh://') || windowsSshShellLabel(cwd) !== null) return null
+  if (shell === 'bash') return 'Bash'
+  if (shell === 'zsh') return 'Zsh'
+  return 'Shell'
+}
+
 const SHELL_PROMPT_PATH_TITLES = [
   // Ubuntu / Debian / RHEL 默认提示符：user@host: ~/app
   /^[^\s@:]+@[^\s:]+:\s*(?:~|\/|[A-Za-z]:[\\/])/,

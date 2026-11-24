@@ -6,7 +6,8 @@
   1. 增量编译缓存（各配置下的 incremental/<crate>-<hash>）：同一 crate 只保留最近更新的
      -KeepPerCrate 份（旧版本号、旧特性组合留下的哈希目录不会再被复用）；超过 -MaxAgeDays 天未更新的删除；
      剩余总量仍超过 -MaxIncrementalGB 时，从最久未更新的开始删到上限以内。
-  2. 整个 target 仍超过 -MaxTargetGB 时，从最久未用的构建配置（如 debug、server-release、
+  2. deps 产物：同一构建配置下同名 crate 只保留最近 -KeepPerCrate 个哈希版本，连同对应 .fingerprint。
+  3. 整个 target 仍超过 -MaxTargetGB 时，从最久未用的构建配置（如 debug、server-release、
      <triple>/debug）开始清掉 deps / build / .fingerprint / incremental，相当于对该配置 cargo clean。
   删除只影响下次编译速度，不影响源码。有 rustc 正在往该 target 输出时跳过（-Force 例外）。
 
@@ -22,8 +23,8 @@ param(
   [string]$TargetDir,
   [int]$MaxAgeDays = 7,
   [int]$KeepPerCrate = 3,
-  [double]$MaxIncrementalGB = 10,
-  [double]$MaxTargetGB = 50,
+  [double]$MaxIncrementalGB = 6,
+  [double]$MaxTargetGB = 30,
   [switch]$DryRun,
   # 只清增量缓存，不按总量上限清整个构建配置（打包后调用，避免误删 debug 依赖）。
   [switch]$IncrementalOnly,
@@ -136,7 +137,57 @@ if ($incrementalBytes -gt $capBytes) {
   }
 }
 
-# 2. 总量上限：按构建配置从最久未用的开始清。
+# 2. deps 旧产物：同一构建配置下同名 crate 只保留最近 KeepPerCrate 个哈希版本
+#    （依赖升级、特性组合变化、测试目标改名后留下的旧 rlib/rmeta/dll/pdb/exe 不会再被复用）。
+#    同哈希的 .fingerprint 目录一并删除；误删仍在用的变体只会触发该 crate 重编。
+if (-not $IncrementalOnly -and $KeepPerCrate -gt 0) {
+  $depsDirs = Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -Depth 2 -Filter deps -ErrorAction SilentlyContinue
+  foreach ($depsDir in $depsDirs) {
+    $units = Get-ChildItem -LiteralPath $depsDir.FullName -File -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.BaseName -match '-[0-9a-f]{16}$' } |
+      Group-Object { $_.BaseName.Substring($_.BaseName.Length - 16) } |
+      ForEach-Object {
+        $hash = $_.Name
+        # crate 名优先取 <name>-<hash>.d；没有 .d 时去掉 lib 前缀（rlib/rmeta 带 lib 前缀）。
+        $dep = $_.Group | Where-Object Extension -eq '.d' | Select-Object -First 1
+        $name = if ($dep) { $dep.BaseName.Substring(0, $dep.BaseName.Length - 17) }
+        else { $_.Group[0].BaseName.Substring(0, $_.Group[0].BaseName.Length - 17) -replace '^lib', '' }
+        [pscustomobject]@{
+          Name  = $name
+          Hash  = $hash
+          Files = $_.Group
+          Time  = ($_.Group | Measure-Object LastWriteTime -Maximum).Maximum
+          Bytes = [long]($_.Group | Measure-Object Length -Sum).Sum
+        }
+      }
+    $fingerprintDir = Join-Path $depsDir.Parent.FullName '.fingerprint'
+    $staleCount = 0
+    $staleBytes = 0L
+    foreach ($group in ($units | Group-Object Name)) {
+      foreach ($unit in ($group.Group | Sort-Object Time -Descending | Select-Object -Skip $KeepPerCrate)) {
+        $staleCount++
+        if ($DryRun) { $staleBytes += $unit.Bytes; continue }
+        $freed = 0L
+        foreach ($file in $unit.Files) {
+          try { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop; $freed += $file.Length }
+          catch { Write-Warning "跳过 $($file.FullName)：$($_.Exception.Message)" }
+        }
+        $staleBytes += $freed
+        if (Test-Path -LiteralPath $fingerprintDir) {
+          Get-ChildItem -LiteralPath $fingerprintDir -Directory -Filter "*-$($unit.Hash)" -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      }
+    }
+    if ($staleCount -gt 0) {
+      $verb = if ($DryRun) { '[dry-run] 删除' } else { '已删除' }
+      Write-Host "$verb $($depsDir.FullName) 中 $staleCount 个旧哈希产物（$(Format-GB $staleBytes)，同一 crate 仅保留最近 $KeepPerCrate 份）"
+      $script:removedBytes += $staleBytes
+    }
+  }
+}
+
+# 3. 总量上限：按构建配置从最久未用的开始清。
 $totalCap = [long]($MaxTargetGB * 1GB)
 $total = $before - $script:removedBytes
 if (-not $IncrementalOnly -and $total -gt $totalCap) {

@@ -195,38 +195,26 @@ export function clearClosedFromPanes(
     return null
   }
 
-  let activeTerminalId = s.activeTerminalId
-  let secondaryTerminalId = s.secondaryTerminalId
-  let blTerminalId = s.blTerminalId
-  let brTerminalId = s.brTerminalId
-  const activeTerminalByProject = { ...s.activeTerminalByProject }
-  const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-  const blTerminalByProject = { ...s.blTerminalByProject }
-  const brTerminalByProject = { ...s.brTerminalByProject }
-
-  if (activeTerminalId === closedId) {
-    activeTerminalId = pickForPane('primary')
-    if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
-    else delete activeTerminalByProject[projectId]
+  /**
+   * 窗格当前显示的是被关终端时改绑同项目同窗格的下一个；否则只修正该项目记住的绑定，
+   * 避免后台项目（非当前项目）的映射继续指向已移除的终端。
+   */
+  const rebind = (pane: TerminalFocusPane, current: string | null, byProject: Record<string, string>) => {
+    const shown = current === closedId
+    if (!shown && byProject[projectId] !== closedId) return [current, { ...byProject }] as const
+    const replacement = pickForPane(pane)
+    const map = { ...byProject }
+    if (replacement) map[projectId] = replacement
+    else delete map[projectId]
+    return [shown ? replacement : current, map] as const
   }
 
-  if (secondaryTerminalId === closedId) {
-    secondaryTerminalId = pickForPane('secondary')
-    if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
-    else delete secondaryTerminalByProject[projectId]
-  }
-
-  if (blTerminalId === closedId) {
-    blTerminalId = pickForPane('bl')
-    if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
-    else delete blTerminalByProject[projectId]
-  }
-
-  if (brTerminalId === closedId) {
-    brTerminalId = pickForPane('br')
-    if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
-    else delete brTerminalByProject[projectId]
-  }
+  const [activeTerminalId, activeTerminalByProject] =
+    rebind('primary', s.activeTerminalId, s.activeTerminalByProject)
+  const [secondaryTerminalId, secondaryTerminalByProject] =
+    rebind('secondary', s.secondaryTerminalId, s.secondaryTerminalByProject)
+  const [blTerminalId, blTerminalByProject] = rebind('bl', s.blTerminalId, s.blTerminalByProject)
+  const [brTerminalId, brTerminalByProject] = rebind('br', s.brTerminalId, s.brTerminalByProject)
 
   return {
     activeTerminalId,
@@ -266,4 +254,4 @@ export function clearProjectPaneMaps(
     brTerminalByProject,
   }
 }
-
+

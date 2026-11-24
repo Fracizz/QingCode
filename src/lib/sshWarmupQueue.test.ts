@@ -9,6 +9,7 @@ import {
   SSH_WARMUP_DELAY_MS,
   SSH_WARMUP_RECOVERY_DELAY_MS,
   SSH_WARMUP_RETRY_DELAYS_MS,
+  SSH_WARMUP_VERIFIED_GRACE_MS,
   type WarmupStatus,
   type WarmupTarget,
 } from './sshWarmupQueue'
@@ -346,6 +347,69 @@ describe('bounded SSH background preparation', () => {
     queue.retryFailed()
     await vi.runAllTimersAsync()
     expect(statuses().get(target(1).project.path)?.phase).toBe('ready')
+  })
+
+  it('holds a connection during its server check, then fans out at once when verified', async () => {
+    const finish: Array<() => void> = []
+    const run = vi.fn(() => new Promise<number[]>(resolve => finish.push(() => resolve([1]))))
+    const { queue } = harness(run)
+    const release = queue.holdConnection('a')
+    queue.update([...Array.from({ length: 5 }, (_, i) => target(i, 'a')), target(9, 'b')])
+    await vi.runAllTimersAsync()
+    // 其他连接照常准备，被检查的连接不提前撞上版本不一致。
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls[0][0].connectionId).toBe('b')
+    release(true)
+    // 已验证：不等让路延迟，也不让首个项目独占。
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(1 + Math.min(SSH_WARMUP_CONNECTION_CONCURRENCY, SSH_WARMUP_CONCURRENCY - 1))
+  })
+
+  it('releases a failed connection check back to the cautious single-root order', async () => {
+    const finish: Array<() => void> = []
+    const run = vi.fn(() => new Promise<number[]>(resolve => finish.push(() => resolve([1]))))
+    const { queue } = harness(run)
+    const release = queue.holdConnection('a')
+    queue.update(Array.from({ length: 3 }, (_, i) => target(i, 'a')))
+    await vi.runAllTimersAsync()
+    expect(run).not.toHaveBeenCalled()
+    release(false)
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_DELAY_MS)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('requeues failures and backoffs of a connection immediately once its server is verified', async () => {
+    let healthy = false
+    const run = vi.fn(async (): Promise<number[]> => {
+      if (!healthy) throw new Error('gateway restarting')
+      return [1]
+    })
+    const { queue, statuses } = harness(run)
+    queue.update([target(1, 'a'), target(2, 'a'), target(3, 'a')])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(statuses().get(target(2, 'a').project.path)?.phase).toBe('failed')
+    healthy = true
+    queue.connectionVerified('a')
+    await vi.advanceTimersByTimeAsync(0)
+    for (const index of [1, 2, 3]) expect(statuses().get(target(index, 'a').project.path)?.phase).toBe('ready')
+  })
+
+  it('recovers at once from a disconnect that follows a server update instead of waiting', async () => {
+    const { queue, run, statuses } = harness()
+    const targets = [target(1, 'a'), target(2, 'a')]
+    queue.update(targets)
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(2)
+    queue.connectionVerified('a')
+    queue.connectionLost('a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(4)
+    expect(statuses().get(targets[1].project.path)?.phase).toBe('ready')
+    // 宽限期过后的断开照常延迟恢复。
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_VERIFIED_GRACE_MS)
+    queue.connectionLost('a')
+    await vi.advanceTimersByTimeAsync(SSH_WARMUP_RECOVERY_DELAY_MS - 1)
+    expect(run).toHaveBeenCalledTimes(4)
   })
 
   it('pauses the queue when the window is hidden and invalidates changed configurations', async () => {

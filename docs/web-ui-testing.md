@@ -31,6 +31,8 @@ README 手机版截图：先启动 `pnpm test:web`，运行 `node scripts/web-te
 
 会话抽屉两个范围的一致性：`scripts/web-tests/mobile-session-parity.ego.mjs`（用法同上）。覆盖「本项目」同款组头、同一会话在两个范围状态行相同、「全部」跨项目置顶 / 重命名 / 结束、长按打开操作菜单、电脑终端只能结束、多选隐藏行内操作、320px 布局，以及从「本项目」移除当前项目时统计其手机会话。截图和 JSON 位于 `.dev/web-tests/mobile-session-parity/`。
 
+手机预热标志：`scripts/web-tests/mobile-prewarm-badge.ego.mjs`（先启动 `pnpm test:web`，可用 `node scripts/web-tests/headless-task-space.mjs <仓库绝对路径>/scripts/web-tests/mobile-prewarm-badge.ego.mjs` 无头运行）。覆盖领取了预热终端的手机会话与电脑终端在侧栏「本项目」「全部」行标题后显示 ⚡、普通会话不显示，以及切到电脑预热终端后顶栏标题旁显示、切回普通会话后隐藏。截图和 JSON 位于 `.dev/web-tests/mobile-prewarm-badge/`；预热领取本身由 Rust `mobile` 测试与电脑端测试覆盖。
+
 手机项目打开记录与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证首页不再显示「最近打开」、从项目页打开后写入手机记录且按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
 手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证项目空状态按钮与右上角「+」打开同一「新建会话」弹层、首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。

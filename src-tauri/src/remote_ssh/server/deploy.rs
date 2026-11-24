@@ -15,8 +15,8 @@ use super::scripts::{
     prepare_private_server_dirs_command, remote_sha256_command, self_check_then_deploy_command,
     sha256_of_file_async, windows_deploy_for, windows_prepare_server_dirs_script,
     windows_remote_sha256_script, windows_remove_for, windows_self_check_then_deploy_script,
-    windows_stop_for, windows_verify_digest_then_self_check_script, PREPARE_HOME_INVALID_EXIT,
-    REMOTE_BINARY_MISSING_EXIT, REMOTE_DIGEST_MISMATCH_EXIT, SELF_CHECK_FAILED_EXIT,
+    windows_stop_for, PREPARE_HOME_INVALID_EXIT, REMOTE_BINARY_MISSING_EXIT,
+    SELF_CHECK_FAILED_EXIT,
 };
 use super::serve::ping_server;
 use super::*;
@@ -96,23 +96,51 @@ pub(crate) async fn stage_direct_gateway(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<String, String> {
-    let current = manager.registered_root(&root.uri)?;
-    if !current.trusted || current.canonical_path != root.canonical_path {
-        return Err("请先信任当前远程项目，再安装直连 Server".into());
-    }
+    let check_trust = || -> Result<(), String> {
+        let current = manager.registered_root(&root.uri)?;
+        if current.trusted && current.canonical_path == root.canonical_path {
+            Ok(())
+        } else {
+            Err("请先信任当前远程项目，再安装直连 Server".into())
+        }
+    };
+    check_trust()?;
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     if manager.direct_config(&connection_id).is_some() {
         return Err("直连模式不能通过 SSH 安装或替换服务，请在远端控制台管理 Server".into());
     }
-    let (arch, local_binary) = locate_local_server_binary(manager, root)
-        .await
-        .map_err(|error| error.reason)?;
-    let sha256 = sha256_of_file_async(&local_binary).await?;
-    let sftp = manager.open_sftp(&connection_id).await?;
-    let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
-        .await
-        .map_err(|error| error.reason)?;
+    // SFTP is read-only here until the package has passed local validation.
+    let (package, sftp) = tokio::join!(
+        locate_local_server_binary(manager, root),
+        manager.open_sftp(&connection_id),
+    );
+    let (arch, local_binary) = package.map_err(|error| error.reason)?;
+    let sftp = sftp?;
     let windows = windows_native_path(&root.canonical_path).is_some();
+    check_trust()?;
+    // The directory setup and guard startup both used to launch PowerShell
+    // sequentially on a cold Windows host. Neither consumes the other's result.
+    let (digest, location, warm) = tokio::join!(
+        sha256_of_file_async(&local_binary),
+        resolve_install_location(manager, &sftp, root, &connection_id),
+        async {
+            if windows {
+                sftp.windows_guard.warm(&sftp.transport).await?;
+            }
+            Ok::<_, String>(())
+        },
+    );
+    let sha256 = digest?;
+    let (home, install_dir) = location.map_err(|error| error.reason)?;
+    if let Err(error) = warm {
+        if !is_channel_refused_error(&error) {
+            return Err(error);
+        }
+        // sshd may have granted its last free slot to directory setup. It
+        // has finished now, so retry the guard once without competing for it.
+        sftp.windows_guard.warm(&sftp.transport).await?;
+    }
+    check_trust()?;
     let gateway_dir = format!("{install_dir}/direct-gateway");
     let content_dir = format!("{gateway_dir}/{sha256}");
     let resolved_home = sftp
@@ -129,17 +157,16 @@ pub(crate) async fn stage_direct_gateway(
                 .await
                 .map_err(|error| format!("创建 Server 安装目录失败：{error}"))?;
         }
-        let attributes = sftp
-            .symlink_metadata(directory.to_string())
-            .await
-            .map_err(|error| format!("检查 Server 目录属性失败：{error}"))?;
+        let (attributes, canonical) = tokio::join!(
+            sftp.symlink_metadata(directory.to_string()),
+            sftp.canonicalize(directory.to_string()),
+        );
+        let attributes =
+            attributes.map_err(|error| format!("检查 Server 目录属性失败：{error}"))?;
         if !attributes.is_dir() || attributes.is_symlink() {
             return Err("Server 安装目录必须是用户私有真实目录".into());
         }
-        let canonical = sftp
-            .canonicalize(directory.to_string())
-            .await
-            .map_err(|error| format!("解析 Server 安装目录失败：{error}"))?;
+        let canonical = canonical.map_err(|error| format!("解析 Server 安装目录失败：{error}"))?;
         if !remote_path_is_within(&canonical, &resolved_home)
             || !remote_roots_equivalent(&canonical, directory, windows)
         {
@@ -163,30 +190,19 @@ pub(crate) async fn stage_direct_gateway(
         .try_exists(remote_bin.clone())
         .await
         .map_err(|error| format!("检查 Server 程序失败：{error}"))?;
-    // Windows 每次远端命令都要冷启动一次 PowerShell（约 2 秒）。已存在的程序把
-    // 独立摘要校验（由 PowerShell 计算，不信任程序自报）与 self-check 合成一次往返。
-    if let Some(script) = exists
-        .then(|| windows_host_path(&remote_bin))
-        .flatten()
-        .map(|path| windows_verify_digest_then_self_check_script(&path, &sha256))
-    {
-        let checked = exec_on_root(manager, root, "", &script).await?;
-        return match checked.exit_code {
-            0 => Ok(remote_bin),
-            REMOTE_DIGEST_MISMATCH_EXIT => {
-                Err("内容寻址 Server 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into())
-            }
-            SELF_CHECK_FAILED_EXIT => Err(format!(
-                "Server 程序自检未通过：{}",
-                self_check_failure_detail(&checked.stderr, checked.exit_code)
-            )),
-            code => Err(format!(
-                "读取远端服务摘要失败（退出码 {code}），已保留运行中的服务"
-            )),
-        };
-    }
+    // Directory checks above already opened the Windows metadata worker on
+    // this SSH session. Reuse it for an independent hash before any execution.
+    let matches = async |path: &str| {
+        if windows {
+            check_trust()?;
+            let digest = sftp.windows_guard.sha256(&sftp.transport, path).await?;
+            Ok(digest.eq_ignore_ascii_case(&sha256))
+        } else {
+            remote_binary_sha_matches(manager, root, path, &sha256).await
+        }
+    };
     if exists {
-        if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
+        if !matches(&remote_bin).await? {
             return Err(
                 "内容寻址 Server 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into(),
             );
@@ -212,11 +228,12 @@ pub(crate) async fn stage_direct_gateway(
                 .await
                 .map_err(|error| format!("完成 Server 上传失败：{error}"))?;
             drop(output);
-            if !remote_binary_sha_matches(manager, root, &temp, &sha256).await? {
+            if !matches(&temp).await? {
                 return Err("Server 临时文件 SHA-256 校验失败，已拒绝安装".into());
             }
             // SFTP rename does not overwrite an existing destination. No
             // process termination or destination removal is permitted here.
+            check_trust()?;
             sftp.rename(temp.clone(), remote_bin.clone())
                 .await
                 .map_err(|error| format!("提交 Server 程序失败（未覆盖现有程序）：{error}"))?;
@@ -228,14 +245,24 @@ pub(crate) async fn stage_direct_gateway(
         }
         upload?;
     }
-    // 两条路径都已对最终内容做过一次独立 SHA-256 校验：已存在的程序直接校验，
-    // 新上传的在用户私有目录里校验临时文件后不覆盖地 rename。再算一遍在
-    // Windows 上要多冷启动一次 PowerShell（约 3 秒），随后的 self-check 也会核对摘要。
-    let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
-    let script = windows_host_path(&remote_bin)
-        .map(|path| windows_self_check_then_deploy_script(&path, &sha256, ""))
-        .unwrap_or_default();
-    let checked = exec_on_root(manager, root, &command, &script).await?;
+    let checked = if let Some(program) = windows_native_server_program(&remote_bin) {
+        // The digest is lowercase hex calculated locally, never shell input.
+        manager
+            .exec_command(
+                &root.uri,
+                &format!("{program} self-check --expect-sha256 {sha256}"),
+                None,
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
+            .await?
+    } else {
+        let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
+        let script = windows_host_path(&remote_bin)
+            .map(|path| windows_self_check_then_deploy_script(&path, &sha256, ""))
+            .unwrap_or_default();
+        exec_on_root(manager, root, &command, &script).await?
+    };
     if checked.exit_code != 0 {
         return Err(format!(
             "Server 程序自检未通过：{}",
@@ -1366,6 +1393,27 @@ pub(crate) async fn update_server_endpoint_with_app(
     result.map(|_| ())
 }
 
+/// 网关与 daemon 按连接共享：同一连接上已有项目以同一配对 token 通过 daemon 探测时，
+/// 其他项目沿用该结论，只做健康与版本检查。更新后首个项目探测通过，其余项目不再逐个探测。
+/// 更新/重连会清空各项目的端点（token 也随配对轮换），不会沿用重启前的结论。
+pub(super) fn gateway_verified_on_connection(
+    manager: &SshManager,
+    connection_id: &str,
+    token: &str,
+) -> bool {
+    manager
+        .roots_for_connection(connection_id)
+        .iter()
+        .filter(|root| root.trusted)
+        .any(|root| {
+            manager
+                .server_slot(&server_slot_key(connection_id, &root.canonical_path))
+                .and_then(|slot| slot.endpoint)
+                .and_then(|endpoint| endpoint.daemon)
+                .is_some_and(|daemon| daemon.bin == "direct" && daemon.token == token)
+        })
+}
+
 pub(crate) async fn ensure_gateway_endpoint(
     manager: &SshManager,
     root: &RegisteredRoot,
@@ -1381,10 +1429,12 @@ pub(crate) async fn ensure_gateway_endpoint(
     let key = server_slot_key(connection_id, &root.canonical_path);
     let verified = manager
         .server_slot(&key)
-        .is_some_and(|slot| slot.endpoint.is_some());
+        .is_some_and(|slot| slot.endpoint.is_some())
+        || gateway_verified_on_connection(manager, connection_id, &config.token);
     let checked = async {
-        manager.ensure_connection_alive(connection_id).await?;
-        let health = super::super::direct::test(&config).await?;
+        let health = manager
+            .confirm_active_gateway(connection_id, &config)
+            .await?;
         super::super::direct::require_usable_gateway(&config, &health)?;
         if verified && matches!(check, GatewayDaemonCheck::Ensure) {
             return Ok(());
@@ -1544,7 +1594,7 @@ async fn ensure_server_endpoint_inner(
                 None => probe_daemon_for_slot(manager, root, &key, None, false).await,
             }
         }
-        manager.set_server_activity(&key, None);
+        manager.set_server_activity(&key, None, false);
         publish_server_if_watched(app, manager, root);
         return Ok(cached);
     }
@@ -1558,12 +1608,12 @@ async fn ensure_server_endpoint_inner(
     let gate = manager.server_gate(&key)?;
     let guard = gate.lock().await;
     if let Some(cached) = cached_server_slot(manager, &key) {
-        manager.set_server_activity(&key, None);
+        manager.set_server_activity(&key, None, false);
         publish_server_if_watched(app, manager, root);
         return Ok(cached);
     }
     // 新一轮从 probing 开始，清掉上次中断留下的瞬时阶段。
-    manager.set_server_activity(&key, None);
+    manager.set_server_activity(&key, None, false);
     publish_server_if_watched(app, manager, root);
     let mut timer = StageTimer::new();
     match discover_or_deploy_server(manager, &connection_id, root, app, &mut timer).await {

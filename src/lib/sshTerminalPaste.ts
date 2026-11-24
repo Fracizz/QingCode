@@ -55,6 +55,32 @@ async function ensureSshDirectory(parent: string, name: string): Promise<string>
   }
 }
 
+const pad = (value: number, width = 2) => String(value).padStart(width, '0')
+
+/** 粘贴批次目录名：本地时间精确到毫秒，如 `20261123-153045-123`。 */
+export function terminalPasteStamp(date = new Date()): string {
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}-` +
+    pad(date.getMilliseconds(), 3)
+  )
+}
+
+/** 新建批次目录；同一毫秒已有目录时追加 `-2`、`-3`，避免两次粘贴混进同一目录互相覆盖。 */
+async function createSshPasteBatchDirectory(parent: string, stamp: string): Promise<string> {
+  for (let attempt = 1; ; attempt += 1) {
+    const name = attempt === 1 ? stamp : `${stamp}-${attempt}`
+    try {
+      return await safeInvoke<string>('创建远程目录', 'create_directory', { parent, name })
+    } catch (error) {
+      const exists = await safeInvoke('检查远程目录', 'validate_directory', {
+        path: joinSshResource(parent, name),
+      }).then(() => true, () => false)
+      if (!exists || attempt >= 20) throw error
+    }
+  }
+}
+
 export async function readClipboardFileList(): Promise<string[]> {
   if (!isTauri()) return []
   try {
@@ -111,8 +137,7 @@ export async function uploadLocalFilesForSshTerminal(
   const root = resolveSshProjectRoot(cwd)
   const qingcode = await ensureSshDirectory(root, '.qingcode')
   const pasteRoot = await ensureSshDirectory(qingcode, TERMINAL_PASTE_DIR)
-  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  const destination = await ensureSshDirectory(pasteRoot, stamp)
+  const destination = await createSshPasteBatchDirectory(pasteRoot, terminalPasteStamp())
   const result = await startSshTransfer({
     direction: 'upload',
     destination,

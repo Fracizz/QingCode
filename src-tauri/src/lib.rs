@@ -2,6 +2,7 @@
 pub(crate) const APP_VERSION: &str =
     include_str!(concat!(env!("OUT_DIR"), "/qingcode_version.txt"));
 
+mod app_db;
 mod app_memory;
 mod app_paths;
 mod binary_ext;
@@ -38,7 +39,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
-use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
 mod mobile;
 mod mobile_screen;
@@ -309,99 +309,6 @@ fn migrate_legacy_database() {
         let _ = std::fs::copy(&legacy_db, &new_db);
         return;
     }
-}
-
-fn get_migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "create projects and settings tables",
-        sql: "CREATE TABLE IF NOT EXISTS projects (
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              path TEXT NOT NULL UNIQUE,
-              default_shell TEXT,
-              created_at INTEGER NOT NULL,
-              last_opened_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS recent_files (
-              project_id TEXT,
-              path TEXT NOT NULL,
-              opened_at INTEGER NOT NULL,
-              PRIMARY KEY(project_id, path)
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-              key TEXT PRIMARY KEY,
-              value TEXT NOT NULL
-            );",
-        kind: MigrationKind::Up,
-    }]
-}
-
-fn get_column_migrations() -> Vec<Migration> {
-    // Lightweight schema-up migrations applied once by version. SQLite lacks
-    // `ADD COLUMN IF NOT EXISTS`, so each migration is guarded by its distinct
-    // version number; tauri-plugin-sql records applied versions and skips
-    // re-running them.
-    vec![
-        Migration {
-            version: 2,
-            description: "add hidden column to projects",
-            sql: "ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 3,
-            description: "add sort_order column to projects",
-            sql: "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 4,
-            description: "create favorite items table",
-            sql: "CREATE TABLE IF NOT EXISTS favorite_items (
-                    project_id TEXT NOT NULL,
-                    relative_path TEXT NOT NULL,
-                    item_type TEXT NOT NULL,
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    PRIMARY KEY(project_id, relative_path)
-                  );
-                  CREATE INDEX IF NOT EXISTS idx_favorite_items_project_order
-                    ON favorite_items(project_id, sort_order);",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 5,
-            description: "add remote project metadata",
-            sql: "ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'local';
-                  ALTER TABLE projects ADD COLUMN connection_id TEXT;
-                  ALTER TABLE projects ADD COLUMN root_path TEXT;",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 6,
-            description: "create ssh connections table",
-            sql: "CREATE TABLE IF NOT EXISTS ssh_connections (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    host TEXT NOT NULL,
-                    port INTEGER NOT NULL DEFAULT 22,
-                    username TEXT NOT NULL,
-                    auth_kind TEXT NOT NULL,
-                    private_key_path TEXT,
-                    host_key_fingerprint TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                  );",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 7,
-            description: "add ssh connection mode",
-            sql: "ALTER TABLE ssh_connections ADD COLUMN mode TEXT;",
-            kind: MigrationKind::Up,
-        },
-    ]
 }
 
 #[tauri::command]
@@ -821,15 +728,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations(&app_paths::build_db_url(), {
-                    let mut m = get_migrations();
-                    m.extend(get_column_migrations());
-                    m
-                })
-                .build(),
-        )
+        .manage(app_db::AppDbState::default())
         .manage(TerminalManager::new())
         .manage(remote_ssh::local_terminal::LocalCodexPool::default())
         .manage(remote_ssh::local_terminal::ShellPrewarmPool::default())
@@ -905,7 +804,6 @@ pub fn run() {
             mobile::mobile_terminal_lock_size,
             mobile::mobile_terminal_take_size,
             mobile::mobile_terminal_kick_devices,
-            mobile::mobile_terminal_input_log,
             mobile::mobile_terminal_controls,
             mobile::mobile_mirror_seed,
             mobile::mobile_view_open,
@@ -984,6 +882,10 @@ pub fn run() {
             run_environment::resolve_run_environment,
             remote_ssh::ssh_run_environment,
             db_url,
+            app_db::db_load,
+            app_db::db_execute,
+            app_db::db_select,
+            app_db::db_close,
             default_settings_path,
             user_locales::user_locales_dir,
             user_locales::list_user_locales,
@@ -1010,6 +912,7 @@ pub fn run() {
             remote_ssh::direct_agent_probe,
             remote_ssh::direct_agent_test,
             remote_ssh::direct_agent_save,
+            remote_ssh::direct_agent_forget,
             remote_ssh::direct_agent_provision,
             remote_ssh::direct_agent_manage,
             remote_ssh::direct_agent_update,
@@ -1057,6 +960,7 @@ pub fn run() {
             remote_ssh::ssh_file_ctime,
             remote_ssh::ssh_read_file,
             remote_ssh::ssh_read_image_file,
+            remote_ssh::ssh_authorize_outside_file,
             remote_ssh::ssh_detect_file_encoding,
             remote_ssh::ssh_read_file_slice,
             remote_ssh::ssh_find_line_offset,

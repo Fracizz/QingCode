@@ -81,12 +81,22 @@ pub(super) async fn prepare_root(
     app: Option<&AppHandle>,
 ) -> Result<(), String> {
     let id = parse_remote_uri(&root.uri)?.connection_id;
-    manager.ensure_connection_alive(&id).await?;
-    if root.trusted {
-        // Health accepts older service versions; workspace preparation must
-        // apply the same version and daemon gate as file/terminal operations.
-        server::ensure_server_endpoint_with_app(manager, root, app).await?;
+    if !root.trusted {
+        return manager.ensure_connection_alive(&id).await;
     }
+    // The gateway check confirms liveness, version and (when needed) daemon HELLO.
+    let config = manager
+        .direct_config(&id)
+        .ok_or("Server 连接已变化，请重新连接工作区")?;
+    server::ensure_gateway_endpoint(
+        manager,
+        root,
+        app,
+        &id,
+        config,
+        server::GatewayDaemonCheck::Ensure,
+    )
+    .await?;
     Ok(())
 }
 
@@ -432,6 +442,46 @@ pub async fn direct_agent_save(
         manager.start_workspace_watch(app.clone(), &root);
         server_status::publish_root_state(&app, &manager, &root);
     }
+    Ok(())
+}
+
+/// 删除 SSH 连接时一并清除该连接的 Server 配对凭据与内存中的直连状态。
+#[tauri::command]
+pub async fn direct_agent_forget(
+    connection_id: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let gate = manager.server_gate(&format!("direct-config|{connection_id}"))?;
+    let _guard = gate.lock().await;
+    {
+        let _store = STORE_WRITE.lock().map_err(|_| "Server 凭据存储不可用")?;
+        let mut records = read(&app)?;
+        if records.remove(&connection_id).is_some() {
+            write(&app, &records)?;
+        }
+    }
+    let previous = manager
+        .direct_connections
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
+    if let Some(old) = previous {
+        direct::close_connection(&old.endpoint, &connection_id);
+        if old.tunnel.is_some() {
+            tunnel::forget(&connection_id);
+        }
+    }
+    manager
+        .direct_active
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
+    manager
+        .direct_failures
+        .write()
+        .map_err(|_| "Server 状态不可用")?
+        .remove(&connection_id);
     Ok(())
 }
 

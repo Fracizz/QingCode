@@ -35,6 +35,7 @@
     ],
     creates: [],
     terminalProfileRequests: 0,
+    terminalProfileProjects: [],
     attaches: [],
     leasedInputs: [],
     capabilities: { protocolVersion: 1, features: ['terminal_profiles', 'session_names', 'images', 'latest_screen', 'history', 'all_sessions', 'project_files'], sessionScope: 'shared' },
@@ -149,7 +150,7 @@
   function sessionMetadata(session) {
     const lastActiveAt = session.lastActiveAt ?? Date.now()
     const basic = { id: session.id, number: session.number, exit: session.exit, createdAt: session.createdAt ?? null,
-      lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3 }
+      lastActiveAt, idleDeadline: session.exit ? null : lastActiveAt + 24 * 3600e3, prewarm: session.prewarm === true }
     return state.sessionNames ? { ...basic, name: session.customName ?? session.title ?? '终端 ' + session.number,
       programTitle: session.title ?? null,
       ...(typeof session.programBusy === 'boolean' ? { programBusy: session.programBusy, activityRevision: session.activityRevision } : {}),
@@ -222,6 +223,8 @@
       }
       case 'terminal_profiles':
         state.terminalProfileRequests += 1
+        // 新版手机带目标项目，电脑端据此只返回该项目所属连接可用的配置。
+        state.terminalProfileProjects.push(request.project ?? null)
         return state.terminalProfiles ? { ok: true, data: state.terminalProfiles } : { ok: false, error: '请求格式无效。' }
       case 'create': {
         const chosen = request.terminal_profile && state.terminalProfiles?.find(item => item.id === request.terminal_profile)
@@ -619,14 +622,14 @@
       state.sessions.get(id).kicked = true
       for (const wake of state.sessions.get(id).waiters.splice(0)) wake()
     },
-    addDesktopTerminal({ id, project, title, createdAt = null }) {
-      const session = { id, number: 0, project, title, createdAt, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
+    addDesktopTerminal({ id, project, title, createdAt = null, prewarm = false }) {
+      const session = { id, number: 0, project, title, createdAt, prewarm, origin: 'desktop', holder: '电脑', output: [], next: 0, waiters: [], exit: null }
       state.sessions.set(id, session)
       return session
     },
-    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null, createdAt = Date.now() } = {}) {
+    addSession({ project, title = null, deviceName = 'Pixel', ownDevice = true, exit = null, projectInfo = null, createdAt = Date.now(), prewarm = false } = {}) {
       const number = state.nextSession++
-      const session = { id: 'mobile-' + number, number, project, title, createdAt, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
+      const session = { id: 'mobile-' + number, number, project, title, createdAt, prewarm, deviceName, ownDevice, exit, projectInfo, output: [], next: 0, waiters: [] }
       state.sessions.set(session.id, session)
       push(session, base64('PS> '))
       return session.id

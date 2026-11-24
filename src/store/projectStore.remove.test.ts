@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
 }))
 
-vi.mock('@tauri-apps/plugin-sql', () => ({
+vi.mock('../lib/database', () => ({
   default: {
     load: async () => ({
       select: async (sql: string, params: string[] = []) =>

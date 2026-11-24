@@ -19,6 +19,7 @@ import {
   pruneTerminalOutputSnapshot,
   pushCommandHistory,
   saveTerminalOutputSnapshot,
+  screenAfterHeadTruncate,
   terminalByteRingToBytes,
   truncateScrollbackBytes,
   truncateScrollbackText,
@@ -200,5 +201,53 @@ describe('terminal output resume sequence', () => {
     expect(parsed?.terminals.a.seq).toBeUndefined()
     expect(parsed?.terminals.b.seq).toBeUndefined()
     expect(parsed?.terminals.c.seq).toBeUndefined()
+  })
+})
+
+describe('persisted terminal screen', () => {
+  it('keeps the screen grid through build and parse', () => {
+    const built = buildTerminalOutputSnapshot({
+      terminals: {
+        t1: { scrollback: 'screen\r\nrawtail', history: [], screen: { cols: 120, rows: 30, chars: 8 } },
+      },
+      now: 1,
+    })
+    expect(built.terminals.t1.screen).toEqual({ cols: 120, rows: 30, chars: 8 })
+    const parsed = parseTerminalOutputSnapshot(JSON.parse(JSON.stringify(built)))
+    expect(parsed?.terminals.t1.screen).toEqual({ cols: 120, rows: 30, chars: 8 })
+  })
+
+  it('shrinks the screen prefix when the oldest lines are truncated', () => {
+    const screenText = Array.from({ length: 150 }, (_, index) => `line${index}`).join('\n')
+    const scrollback = `${screenText}\nraw`
+    const built = buildTerminalOutputSnapshot({
+      terminals: {
+        t1: { scrollback, history: [], screen: { cols: 80, rows: 24, chars: screenText.length } },
+      },
+      now: 1,
+      scrollbackLines: 100,
+    })
+    const kept = built.terminals.t1
+    expect(kept.scrollback.split('\n')).toHaveLength(100)
+    expect(kept.scrollback.slice(0, kept.screen!.chars)).toBe(
+      screenText.slice(scrollback.length - kept.scrollback.length)
+    )
+    expect(kept.scrollback.slice(kept.screen!.chars)).toBe('\nraw')
+    // 屏幕段整段被截掉后只剩原始输出，不再带网格。
+    expect(screenAfterHeadTruncate({ cols: 80, rows: 24, chars: 4 }, 14, 8)).toBeUndefined()
+  })
+
+  it('drops malformed screen metadata', () => {
+    const parsed = parseTerminalOutputSnapshot({
+      version: TERMINAL_SESSION_OUTPUT_VERSION,
+      terminals: {
+        a: { scrollback: 'abc', history: [], screen: { cols: 0, rows: 24, chars: 1 } },
+        b: { scrollback: 'abc', history: [], screen: { cols: 80, rows: 24, chars: 4 } },
+        c: { scrollback: 'abc', history: [], screen: 'x' },
+      },
+    })
+    expect(parsed?.terminals.a.screen).toBeUndefined()
+    expect(parsed?.terminals.b.screen).toBeUndefined()
+    expect(parsed?.terminals.c.screen).toBeUndefined()
   })
 })

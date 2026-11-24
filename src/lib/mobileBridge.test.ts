@@ -203,6 +203,26 @@ describe('mobile project bridge', () => {
     expect(mocks.listProjects).not.toHaveBeenCalled()
   })
 
+  it('lists only common profiles and those of the project connection when the phone names a project', async () => {
+    const remote: Project = { ...local, id: 'win', kind: 'ssh', path: 'ssh://win-dev/D:/code/app', connection_id: 'win-dev' }
+    mocks.listProjects.mockResolvedValue([local, remote])
+    localStorage.setItem(TERMINAL_PROFILES_KEY, JSON.stringify({
+      defaultShell: 'pwsh',
+      profiles: [
+        { id: 'common', name: 'Common', command: '', shell: 'auto' },
+        { id: 'here', name: 'Local', command: '', shell: 'auto', scope: 'local' },
+        { id: 'win', name: 'Win', command: '', shell: 'auto', scope: 'win-dev' },
+        { id: 'other', name: 'Other', command: '', shell: 'auto', scope: 'ssh-wsl' },
+      ],
+    }))
+    const ids = async (project: string | null) =>
+      ((await send({ project, profiles: true })) as { data: { id: string }[] }).data.map(item => item.id)
+    expect(await ids(remote.id)).toEqual(['default', 'common', 'win'])
+    expect(await ids(local.id)).toEqual(['default', 'common', 'here'])
+    // 旧版手机不带项目：仍给全部配置。
+    expect(await ids(null)).toEqual(['default', 'common', 'here', 'win', 'other'])
+  })
+
   it('resolves a trusted profile with the desktop shell rules and rejects untrusted ones', async () => {
     localStorage.setItem(TERMINAL_PROFILES_KEY, JSON.stringify({
       defaultShell: 'pwsh',

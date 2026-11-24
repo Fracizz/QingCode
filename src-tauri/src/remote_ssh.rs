@@ -319,6 +319,9 @@ pub struct SshManager {
     /// 同一连接内不会变化；Windows 上每次解析都要起两次 PowerShell。
     server_installs: Mutex<HashMap<String, (String, String)>>,
     host_daemons: server::HostDaemonCache,
+    /// 终端里 Ctrl+点击、经用户操作授权的项目根外远程文件（规范化 URI → 远端规范路径）。
+    /// 只读：以未信任的单文件「根」参与 SFTP 读取，不能写入、执行或列目录。
+    outside_files: RwLock<HashMap<String, String>>,
 }
 
 impl SshManager {
@@ -338,11 +341,7 @@ impl SshManager {
         // Disconnection or re-pairing may have completed while the probe was pending.
         let active = self.direct_active.read().map_err(|_| "Server 状态不可用")?;
         if !active.contains(connection_id)
-            || !self.direct_config(connection_id).is_some_and(|current| {
-                current.endpoint == config.endpoint
-                    && current.certificate_fingerprint == config.certificate_fingerprint
-                    && current.token == config.token
-            })
+            || self.direct_config(connection_id).as_ref() != Some(&config)
         {
             return Ok(());
         }
@@ -419,6 +418,7 @@ impl SshManager {
             server_offline_dir: RwLock::new(None),
             workspace_server_settings: RwLock::new(HashMap::new()),
             passive_roots: RwLock::new(HashSet::new()),
+            outside_files: RwLock::new(HashMap::new()),
             server_cache_dir: RwLock::new(None),
             server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),
@@ -646,27 +646,47 @@ impl SshManager {
     /// watch 监督任务用它在断线后主动恢复，而不是等用户下一次操作。
     pub(crate) async fn ensure_connection_alive(&self, connection_id: &str) -> Result<(), String> {
         if let Some(config) = self.direct_config(connection_id) {
-            if !self
-                .direct_active
-                .read()
-                .is_ok_and(|active| active.contains(connection_id))
-            {
-                return Err("Server 连接已断开，请重新连接工作区".into());
-            }
-            let result = direct::confirm_health(&config).await.map(|_| ());
-            if let Ok(mut failures) = self.direct_failures.write() {
-                match &result {
-                    Ok(()) => {
-                        failures.remove(connection_id);
-                    }
-                    Err(error) => {
-                        failures.insert(connection_id.into(), error.clone());
-                    }
-                }
-            }
-            return result;
+            return self
+                .confirm_active_gateway(connection_id, &config)
+                .await
+                .map(|_| ());
         }
         self.live_session(connection_id).await.map(|_| ())
+    }
+
+    async fn confirm_active_gateway(
+        &self,
+        connection_id: &str,
+        config: &direct::DirectConnectionConfig,
+    ) -> Result<direct::DirectHealth, String> {
+        if !self
+            .direct_active
+            .read()
+            .is_ok_and(|active| active.contains(connection_id))
+        {
+            return Err("Server 连接已断开，请重新连接工作区".into());
+        }
+        if self.direct_config(connection_id).as_ref() != Some(config) {
+            return Err("Server 连接已变化，请重新连接工作区".into());
+        }
+        let result = direct::confirm_health(config).await;
+        let active = self.direct_active.read().map_err(|_| "Server 状态不可用")?;
+        if !active.contains(connection_id)
+            || self.direct_config(connection_id).as_ref() != Some(config)
+        {
+            return Err("Server 连接已变化，请重新连接工作区".into());
+        }
+        if let Ok(mut failures) = self.direct_failures.write() {
+            match &result {
+                Ok(_) => {
+                    failures.remove(connection_id);
+                }
+                Err(error) => {
+                    failures.insert(connection_id.into(), error.clone());
+                }
+            }
+        }
+        result
     }
 
     fn root_for_uri(&self, uri: &str, require_trust: bool) -> Result<RegisteredRoot, String> {

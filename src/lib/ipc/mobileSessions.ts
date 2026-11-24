@@ -203,15 +203,3 @@ export function takeTerminalSizeForDesktop(id: string): Promise<void> {
   return safeInvoke('按电脑尺寸显示', 'mobile_terminal_take_size', { id })
 }
 
-export interface TerminalInputRecord {
-  name: string
-  kind: 'desktop' | 'device'
-  at: number
-  bytes: number
-  automatic: boolean
-}
-
-/** 最近的输入来源（谁、何时、多少字节），不含内容。 */
-export function terminalInputLog(id: string): Promise<TerminalInputRecord[]> {
-  return safeInvoke('读取输入来源', 'mobile_terminal_input_log', { id })
-}

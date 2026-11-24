@@ -36,7 +36,7 @@ const groups: SearchGroup[] = [
   { category: 'terminal', terms: ['粘贴', '大段', '文件', 'largePasteAsFile', '终端 › 集成: 大段粘贴存为文件', 'terminal.integrated.largePasteAsFile'] },
   { category: 'terminal', terms: ['持久', '接回', '保留', '本地终端', 'persistLocalSessions', '终端 › 集成: 本地终端可接回', 'terminal.integrated.persistLocalSessions'] },
   { category: 'terminal', terms: ['Codex', '本机 CLI 预热', 'Claude Code', 'OpenCode', 'CLI prewarm'], userOnly: true, windowsOnly: true },
-  { category: 'terminal', terms: ['预热', 'Shell', 'shellPrewarmCount', 'prewarm', '终端 › 集成: Shell 预热数量', 'terminal.integrated.shellPrewarmCount'], userOnly: true },
+  { category: 'terminal', terms: ['预热', 'Shell', 'shellPrewarmCount', 'prewarm', '终端 › 集成: 本机 Shell 预热数量', 'terminal.integrated.shellPrewarmCount'], userOnly: true, windowsOnly: true },
   { category: 'terminal', terms: ['状态', '运行中', 'tabActivityIndicator', '终端 › 集成: 标签运行状态', 'terminal.integrated.tabActivityIndicator'] },
   { category: 'terminal', terms: ['Shift+Enter', '换行', 'Agent', 'shiftEnterNewline', '终端 › 集成: Shift+Enter 换行', 'terminal.integrated.shiftEnterNewline'] },
   { category: 'tools', terms: ['AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills'], userOnly: true },

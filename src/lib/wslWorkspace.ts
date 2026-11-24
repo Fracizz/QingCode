@@ -1,13 +1,5 @@
 import type { Project } from '../types'
 
-/** 本机 WSL 发行版的 UNC 根目录，用作文件夹选择器的初始位置。 */
-export const WSL_ROOT_PATH = '\\\\wsl.localhost\\'
-
-/** WSL 仅在 Windows 宿主上可用。 */
-export function wslSupported(userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent): boolean {
-  return /windows/i.test(userAgent)
-}
-
 /**
  * Checks whether a path string represents a WSL path.
  *

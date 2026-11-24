@@ -48,6 +48,23 @@ test('release selection appends the optional Android APK when it was built', {
   assert.deepEqual(selectReleaseFiles(required), required)
 })
 
+test('release selection appends the offline Server package so Gitee mirrors it too', {
+  skip: process.platform !== 'win32' ? 'Requires Windows PowerShell release tooling.' : false,
+}, () => {
+  const required = [
+    'QingCode_1.2.3-beta.2-windows-x64.exe',
+    'QingCode_1.2.3-beta.2-windows-x64-setup.exe',
+    'QingCode_1.2.3-beta.2-windows-arm64.exe',
+    'QingCode_1.2.3-beta.2-windows-arm64-setup.exe',
+    'QingCode_1.2.3-beta.2-macos-arm64.dmg',
+    'QingCode_1.2.3-beta.2-macos-arm64.zip',
+  ]
+  const servers = 'QingCode_1.2.3-beta.2-servers.zip'
+  const apk = 'QingCode_1.2.3-beta.2-android.apk'
+  assert.deepEqual(selectReleaseFiles([servers, ...required]), [...required, servers])
+  assert.deepEqual(selectReleaseFiles([servers, apk, ...required]), [...required, apk, servers])
+})
+
 test('release selection supplies six separate upload paths in canonical order', {
   skip: process.platform !== 'win32' ? 'Requires Windows PowerShell release tooling.' : false,
 }, () => {

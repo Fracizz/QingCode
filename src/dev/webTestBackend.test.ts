@@ -138,7 +138,7 @@ describe('Web native boundary contract', () => {
     expect(() => normalizeTestPath(`${TEST_ROOT}/../other`)).toThrow()
     expect(() => normalizeTestPath('C:\\workspace')).toThrow()
     await expect(backend.invoke('git_push')).rejects.toThrow('未实现接口')
-    await expect(backend.invoke('plugin:sql|load', { db: 'sqlite:production.db' })).rejects.toThrow(
+    await expect(backend.invoke('db_load', { db: 'sqlite:production.db' })).rejects.toThrow(
       'isolated'
     )
   })

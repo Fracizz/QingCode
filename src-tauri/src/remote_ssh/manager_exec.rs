@@ -26,7 +26,12 @@ impl SshManager {
         require_trust: bool,
     ) -> Result<(Arc<SftpSession>, RemoteUri, RegisteredRoot), String> {
         let parsed = parse_remote_uri(uri)?;
-        let root = self.root_for_uri(uri, require_trust)?;
+        let root = match self.root_for_uri(uri, require_trust) {
+            Ok(root) => root,
+            // 只读请求才可能落到已授权的项目外文件上；写入与执行仍要求在项目根内。
+            Err(error) if !require_trust => self.outside_file_root(uri).ok_or(error)?,
+            Err(error) => return Err(error),
+        };
         if let Some(config) = self.direct_config(&parsed.connection_id) {
             if !self.connection_is_open(&parsed.connection_id) {
                 return Err(direct::disconnected_message(
@@ -43,6 +48,63 @@ impl SshManager {
         }
         let sftp = self.open_sftp(&parsed.connection_id).await?;
         Ok((sftp, parsed, root))
+    }
+
+    /// 已授权的项目根外文件：当作未信任、只含这一个文件的「根」，复用读取命令的边界检查。
+    /// 连接上已没有任何已注册项目（断开、项目被移除）时授权随之失效。
+    pub(super) fn outside_file_root(&self, uri: &str) -> Option<RegisteredRoot> {
+        let normalized = normalize_remote_uri(uri);
+        let canonical_path = self.outside_files.read().ok()?.get(&normalized)?.clone();
+        let connection_id = remote_uri_connection_id(&normalized)?;
+        if self.roots_for_connection(connection_id).is_empty() {
+            return None;
+        }
+        Some(RegisteredRoot {
+            uri: normalized,
+            canonical_path,
+            trusted: false,
+        })
+    }
+
+    /// 终端 Ctrl+点击项目根外的远程路径：仅当连接上有已注册项目、目标是已存在的普通文件
+    /// （跟随链接后）时只读授权这一个文件。项目根内的路径不需要授权，返回 false。
+    pub(super) async fn authorize_outside_file(&self, uri: &str) -> Result<bool, String> {
+        const MAX_OUTSIDE_FILES: usize = 256;
+        let parsed = parse_remote_uri(uri)?;
+        if self.root_for_uri(uri, false).is_ok()
+            || self.roots_for_connection(&parsed.connection_id).is_empty()
+        {
+            return Ok(false);
+        }
+        let sftp = match self.direct_config(&parsed.connection_id) {
+            Some(config) => {
+                if !self.connection_is_open(&parsed.connection_id) {
+                    return Ok(false);
+                }
+                Arc::new(SftpSession::direct(config, None, false))
+            }
+            None => self.open_sftp(&parsed.connection_id).await?,
+        };
+        let Ok(canonical) = sftp.canonicalize(parsed.path.clone()).await else {
+            return Ok(false);
+        };
+        let Ok(metadata) = sftp.metadata(canonical.clone()).await else {
+            return Ok(false);
+        };
+        if !metadata.is_regular() {
+            return Ok(false);
+        }
+        reject_windows_sftp_links(&sftp, &canonical).await?;
+        let mut files = self
+            .outside_files
+            .write()
+            .map_err(|_| "SSH 工作区状态不可用".to_string())?;
+        let normalized = normalize_remote_uri(uri);
+        if !files.contains_key(&normalized) && files.len() >= MAX_OUTSIDE_FILES {
+            return Ok(false);
+        }
+        files.insert(normalized, canonical);
+        Ok(true)
     }
 
     pub(super) async fn exec_uri(

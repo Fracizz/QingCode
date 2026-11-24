@@ -66,15 +66,17 @@ pub(super) async fn create(
         .map(str::to_owned);
     let shell = profile.map(|profile| profile.shell);
     // 电脑端为该连接选中的「预热终端配置」已在运行时直接接入，否则退回普通 Shell 池。
+    let profile_hit = reserve_prewarmed_profile(
+        app,
+        &id,
+        &project,
+        shell.as_deref(),
+        profile_id,
+        command.as_deref(),
+    );
+    let has_command = command.is_some();
     let prewarmed =
-        reserve_prewarmed_profile(
-            app,
-            &id,
-            &project,
-            shell.as_deref(),
-            profile_id,
-            command.as_deref(),
-        ) || reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), command.is_some());
+        profile_hit || reserve_prewarmed_shell(app, &id, &project, shell.as_deref(), has_command);
     let result = if project.kind == ProjectKind::Ssh {
         if let Some(command) = command {
             // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
@@ -108,6 +110,18 @@ pub(super) async fn create(
             .await
         }
     } else if let Some(result) = match prewarmed {
+        // 本机 CLI 预热：在专用目录运行的 CLI 切到项目目录后接回，与电脑端配置终端同一路径。
+        true if profile_hit => {
+            take_local_prewarmed_cli(
+                app,
+                &id,
+                &project.path,
+                shell.as_deref(),
+                command.as_deref().unwrap_or_default(),
+                (cols, rows),
+            )
+            .await
+        }
         true => {
             take_local_prewarmed_shell(
                 app,
@@ -161,7 +175,7 @@ pub(super) async fn create(
         .and_then(|result| result)
     };
     let kept = hub.finish_create(&id, result.is_ok());
-    let prewarm_hit = result?.prewarm_hit;
+    let prewarm_hit = visible_prewarm_hit(result?.prewarm_hit, has_command, profile_hit);
     if !kept {
         let _ = end(app, id, project.kind).await;
         return Err("移动连接已停止或设备已移除。".into());
@@ -170,6 +184,12 @@ pub(super) async fn create(
     let session = inner.sessions.get_mut(&id).ok_or("终端不存在。")?;
     session.prewarm_hit = prewarm_hit;
     Ok(session.metadata(&id))
+}
+
+/// 手机 ⚡ 与电脑标签同一规则：带启动命令的配置只有领取到 CLI 预热会话才算命中；
+/// 只领到预热 Shell、命令仍冷启动时不标记。
+pub(super) fn visible_prewarm_hit(spawn_hit: bool, has_command: bool, profile_hit: bool) -> bool {
+    spawn_hit && (!has_command || profile_hit)
 }
 
 /// 与电脑端新建相同的预热条件：本机项目（Windows、电脑端开启了「本地终端可接回」才有预热目标）
@@ -189,9 +209,11 @@ fn reserve_prewarmed_shell(
         })
 }
 
-/// 远端 Windows Server 模式项目：电脑端为该连接选中的终端配置已提前运行时，预留并改用手机
-/// 终端 id；`ssh_spawn_script_unchecked` 按 id 在配置池中领取并重放之前的输出。项目、配置、
-/// Shell 与命令须与预热项完全一致（预热只跟随电脑端当前项目），否则按未命中处理。
+/// 电脑端选中的 CLI 预热配置已提前运行时，预留并改用手机终端 id：
+/// - SSH Server 模式项目：`ssh_spawn_script_unchecked` 按 id 在该连接的配置池中领取并重放输出；
+/// - 本机项目：在本机 CLI 池（专用空目录启动）中预留，由 [`take_local_prewarmed_cli`] 切目录后接回。
+///
+/// 配置、Shell 与命令须与预热项完全一致，否则按未命中处理；WSL 不预热。
 fn reserve_prewarmed_profile(
     app: &AppHandle,
     id: &str,
@@ -203,13 +225,42 @@ fn reserve_prewarmed_profile(
     let (Some(profile_id), Some(command)) = (profile_id, command) else {
         return false;
     };
-    project.kind == ProjectKind::Ssh
-        && app
+    match project.kind {
+        ProjectKind::Ssh => app
             .state::<crate::remote_ssh::local_terminal::ConnectionShellPools>()
             .profile_pool(&project.path)
             .is_some_and(|pool| {
                 pool.reserve_profile_as(id, &project.path, shell, profile_id, command)
-            })
+            }),
+        ProjectKind::Local => {
+            app.state::<crate::PathAllowlist>()
+                .ensure_executable(&project.path)
+                .is_ok()
+                && app
+                    .state::<crate::remote_ssh::local_terminal::LocalCodexPool>()
+                    .reserve_as(id, &project.path, shell, profile_id, command)
+        }
+        ProjectKind::Wsl => false,
+    }
+}
+
+/// 领取本机 CLI 预热；未命中返回 None 走原来的进程内新建（预热 CLI 已随预留项回收，命令不会执行两次）。
+async fn take_local_prewarmed_cli(
+    app: &AppHandle,
+    id: &str,
+    cwd: &str,
+    shell: Option<&str>,
+    command: &str,
+    size: (u16, u16),
+) -> Option<Result<crate::terminal::TerminalSpawnResult, String>> {
+    if let Err(error) = app.state::<crate::PathAllowlist>().ensure_executable(cwd) {
+        return Some(Err(error));
+    }
+    let manager = app.state::<crate::remote_ssh::SshManager>();
+    app.state::<crate::remote_ssh::local_terminal::LocalCodexPool>()
+        .take(id, cwd, shell, command, None, size, app, &manager)
+        .await
+        .transpose()
 }
 
 /// 领取本机预热 Shell；未命中返回 None 走原来的进程内新建。启动命令交付后确认丢失时

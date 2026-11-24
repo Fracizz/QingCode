@@ -309,12 +309,13 @@ export function captureWorkspaceSessionSnapshot(options?: {
   })
 }
 
-function persistNow() {
+/** `final`：退出前的最后一次，终端输出改存渲染好的画面（见 persistTerminalOutputNow）。 */
+function persistNow(final = false) {
   if (!shouldRestoreWorkspace() || !persistReady) return
   if (!isSessionPersistEnabled()) return
   saveWorkspaceSession(captureWorkspaceSessionSnapshot())
   // Keep bulky scrollback in sync when session metadata flushes.
-  persistTerminalOutputNow()
+  persistTerminalOutputNow({ renderScreens: final })
 }
 
 export function scheduleWorkspaceSessionPersist() {
@@ -344,7 +345,7 @@ export function installWorkspaceSessionPersistence() {
     }
   })
 
-  window.addEventListener('beforeunload', persistNow)
+  window.addEventListener('beforeunload', () => persistNow(true))
 }
 
 export function flushWorkspaceSessionPersist() {
@@ -352,5 +353,5 @@ export function flushWorkspaceSessionPersist() {
     clearTimeout(persistTimer)
     persistTimer = null
   }
-  persistNow()
+  persistNow(true)
 }

@@ -14,6 +14,7 @@ import { parseSshServerState, type DeferredUpgrade } from '../lib/sshServerStatu
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { beginServerOperation, finishServerOperation, reportServerOperation, useServerOperationStore } from '../store/serverOperationStore'
+import { markSshWarmupConnectionVerified } from '../store/sshWarmupStore'
 import ModalOverlay from './ModalOverlay'
 import ServerOperationProgress from './ServerOperationProgress'
 
@@ -150,6 +151,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi, confirmedUpgrade, 
       return
     }
     if (backgrounded.current) finishServerOperation(rootUri)
+    // 手动更新同样证明该连接的服务可用：同连接项目立即重新准备，不等断开后的恢复延迟。
+    if (connectionId) markSshWarmupConnectionVerified(connectionId)
     pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
     if (!backgrounded.current) dismiss()
   }

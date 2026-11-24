@@ -188,6 +188,22 @@ pwsh -NoProfile -File scripts/build-android.ps1 -SdkPlatform 'C:\Android\Sdk\pla
 - 发布构建使用 `-Release` 和固定发布密钥库：`-Keystore`（或 `QINGCODE_ANDROID_KEYSTORE`）、`QINGCODE_ANDROID_KEYSTORE_PASSWORD`、`QINGCODE_ANDROID_KEY_ALIAS`，可选 `QINGCODE_ANDROID_KEY_PASSWORD`。口令通过环境变量传给 `apksigner`。
 - Release CI 在配置了仓库 Secrets `ANDROID_KEYSTORE_BASE64`（发布密钥库的 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`（可选 `ANDROID_KEY_PASSWORD`）时构建 `QingCode_<版本>-android.apk` 并随 Release 发布、同步到 Gitee；未配置时跳过 APK 并给出警告，其余平台照常发布。密钥库一旦用于发布不可更换，否则已安装的手机无法覆盖升级。
 
+### 发布签名密钥（当前在用，长期复用）
+
+| 项 | 值 |
+| --- | --- |
+| keyAlias | `qingcode` |
+| 证书主体 | `CN=QingCode Release, OU=Android, O=QingCode, C=CN` |
+| 算法 / 有效期 | RSA 2048 · SHA256withRSA，2026-11-23 → 2054-04-10 |
+| 证书 SHA-256 | `00:01:0D:E4:BE:06:DF:70:F7:F9:BB:13:3E:29:28:C0:9A:D9:B8:E7:D3:27:25:11:9B:0F:A5:4B:FF:E0:A0:02` |
+| 证书 SHA-1 | `C3:B2:3B:9E:FD:99:B9:8A:AD:29:AD:61:90:2B:15:91:94:80:D2:A4` |
+
+- 首次用于 `0.1.21-beta.7`。此前用调试密钥侧载的包必须卸载重装，之后所有版本可覆盖升级。
+- 密钥库只以 base64 存在仓库 Secrets，仓库里不放密钥文件；口令只存在密码管理器与拥有者本机的备份里，不要写进仓库、Issue 或日志。
+- CI 侧还原方式：`base64 -w0 qingcode-release.jks | gh secret set ANDROID_KEYSTORE_BASE64`，再设 `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS=qingcode`（口令与别名同 key 用同一口令时再设 `ANDROID_KEY_PASSWORD`），最后 `gh workflow run release.yml --ref v<版本> -f tag=v<版本>` 重出该版本。
+- 密钥丢失或泄露只能换密钥，已安装用户必须卸载重装；若确需平滑轮换，可用 `apksigner rotate --out lineage --old-signer … --new-signer …` 生成签名谱系并让后续 APK 携带 `--lineage`，谱系文件必须与密钥一起备份。
+- 因此密钥库与口令至少要有一份仓库之外的加密备份（密码管理器/离线介质），`.dev/` 与本机临时目录都会被清理。
+
 系统需为 Android 8.0 或以上，并使用支持当前 xterm.js 的 Android System WebView。扫码需要相机权限，仅在点「扫码添加」时申请。Windows 配套版可用现有 `pnpm package:exe` 流程构建。
 
 ## 测试
@@ -208,7 +224,7 @@ HEIC / HEIF 在手机支持解码时自动转为 JPEG 后上传，包括「原�
 
 图片按钮固定在输入框内，快捷键折叠后仍可使用。系统选择器支持一次多选，手机只保留所选图片的引用，逐张读取、上传并把路径插入草稿，显示当前张数；单张仍限制 8 MB。中途失败会保留已插入图片并提示成功张数，重新选择剩余图片即可；切换会话会停止余下图片的上传，释放选择引用，已在传输中的文件不自动撤回或重发。
 
-图片最终统一保存在当前项目 `.qingcode/terminal-paste/<唯一目录>/`：本机项目写入本机仓库，WSL 项目写入发行版仓库并插入 Linux 路径；SSH 项目复用桌面的 SSH / Server 上传流程，写入远端仓库目录。SSH 传输所用的本机临时副本在传输结束后删除；本机和 WSL 不再把 C 盘缓存路径作为最终附件路径。上传前重新核对项目位置和工作区信任，并拒绝附件目录的符号链接逃逸。图片路径进入当前会话的命令草稿，可补充说明后提交。上传不会自动执行回车；取消或切换项目 / 会话后，迟到的结果不会写入其他草稿。超时不自动重发，远端如已收到文件，可按现有终端粘贴清理方式处理。
+图片最终统一保存在当前项目 `.qingcode/terminal-paste/<YYYYMMDD-HHmmss-SSS>/`（本地时间到毫秒）：本机项目写入本机仓库，WSL 项目写入发行版仓库并插入 Linux 路径；SSH 项目复用桌面的 SSH / Server 上传流程，写入远端仓库目录。SSH 传输所用的本机临时副本在传输结束后删除；本机和 WSL 不再把 C 盘缓存路径作为最终附件路径。上传前重新核对项目位置和工作区信任，并拒绝附件目录的符号链接逃逸。图片路径进入当前会话的命令草稿，可补充说明后提交。上传不会自动执行回车；取消或切换项目 / 会话后，迟到的结果不会写入其他草稿。超时不自动重发，远端如已收到文件，可按现有终端粘贴清理方式处理。
 
 Android 30+ 由系统栏、刘海和键盘尺寸调整 WebView。终端底部工具区左右各留 8px，快捷键和输入框铺满可用宽度；按屏幕底部圆角与这 8px 边距的交点计算底部净空，扣除系统栏或键盘已避让的高度，只补足剩余间距，不挤窄整块工具区。工作台导航仍以水平内边距避让圆角，内容高 46px、上下各 4px，保留至少 44px 的触摸区域。
 

@@ -12,21 +12,11 @@ pub(crate) const PRESENCE_TIMEOUT: Duration = Duration::from_secs(10);
 /// 最近这么久内有输入，在线状态里显示「正在输入」。
 pub(crate) const TYPING_WINDOW: Duration = Duration::from_secs(3);
 /// 每个终端保留的输入来源记录条数。
-const INPUT_LOG_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Controller {
     Desktop,
     Device(String),
-}
-
-/// 一次输入的来源记录：谁、什么时候、多少字节、是否自动应答。不保存内容。
-#[derive(Clone, Debug)]
-pub(crate) struct InputRecord {
-    pub(crate) by: Controller,
-    pub(crate) at_ms: u64,
-    pub(crate) bytes: usize,
-    pub(crate) automatic: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +52,6 @@ pub(crate) struct Sharing {
     /// 电脑是否正在显示这个终端：电脑终端始终为 true，手机终端在电脑打开查看标签时为 true。
     pub(crate) desktop_present: bool,
     pub(crate) last_input: Option<(Controller, Instant, u64)>,
-    pub(crate) input_log: VecDeque<InputRecord>,
 }
 
 impl Sharing {
@@ -76,7 +65,6 @@ impl Sharing {
             viewers: HashMap::new(),
             kicked: Default::default(),
             last_input: None,
-            input_log: VecDeque::new(),
         }
     }
 
@@ -103,7 +91,7 @@ impl Sharing {
         Ok(())
     }
 
-    /// 处理一次输入：校验独占与只读、过滤非尺寸方的自动应答、键盘输入抢尺寸并记录来源。
+    /// 处理一次输入：校验独占与只读、过滤非尺寸方的自动应答、键盘输入抢尺寸并记下最近输入方。
     pub(crate) fn input(
         &mut self,
         who: Controller,
@@ -116,25 +104,12 @@ impl Sharing {
         if automatic && self.size_owner != who && self.present(&self.size_owner, now) {
             return Ok(InputDecision::Drop);
         }
-        self.record(InputRecord {
-            by: who.clone(),
-            at_ms: now_ms,
-            bytes: data.len(),
-            automatic,
-        });
         if automatic {
             return Ok(InputDecision::Forward { resize: None });
         }
         self.last_input = Some((who.clone(), now, now_ms));
         let resize = self.claim_size(who);
         Ok(InputDecision::Forward { resize })
-    }
-
-    fn record(&mut self, record: InputRecord) {
-        if self.input_log.len() >= INPUT_LOG_LIMIT {
-            self.input_log.pop_front();
-        }
-        self.input_log.push_back(record);
     }
 
     /// 键盘输入让这一方成为尺寸方；返回需要应用的新尺寸。
@@ -272,7 +247,10 @@ mod tests {
                 resize: Some((200, 50))
             })
         );
-        assert_eq!(sharing.input_log.len(), 2);
+        assert_eq!(
+            sharing.last_input.as_ref().map(|input| &input.0),
+            Some(&Controller::Desktop)
+        );
     }
 
     #[test]

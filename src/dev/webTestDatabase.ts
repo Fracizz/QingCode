@@ -1,13 +1,12 @@
 import initSqlJs, { type Database, type SqlValue } from 'sql.js'
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
-import rustSource from '../../src-tauri/src/lib.rs?raw'
+import rustSource from '../../src-tauri/src/app_db.rs?raw'
 
 /** Consume the native migration source, so Web never maintains its own schema. */
 export function nativeMigrationSql(source: string): string[] {
-  const section = source.slice(
-    source.indexOf('fn get_migrations()'),
-    source.indexOf('#[tauri::command]', source.indexOf('fn get_column_migrations()'))
-  )
+  const start = source.indexOf('fn get_migrations()')
+  const end = source.indexOf('#[cfg(test)]', source.indexOf('fn get_column_migrations()'))
+  const section = start < 0 ? '' : source.slice(start, end < 0 ? undefined : end)
   const sql = [...section.matchAll(/sql:\s*"((?:\\.|[^"\\])*)"/g)].map(match =>
     match[1].replace(
       /\\([nrt"\\])/g,

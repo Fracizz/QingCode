@@ -2,7 +2,6 @@
 
 export const TERMINAL_CLEAR_EVENT = 'qingcode:terminal-clear'
 export const TERMINAL_SEARCH_EVENT = 'qingcode:terminal-search'
-export const TERMINAL_RESET_EVENT = 'qingcode:terminal-reset'
 export const TERMINAL_COPY_SCREEN_EVENT = 'qingcode:terminal-copy-screen'
 export const TERMINAL_EXPORT_EVENT = 'qingcode:terminal-export'
 export const TERMINAL_CLEAR_INPUT_EVENT = 'qingcode:terminal-clear-input'
@@ -49,15 +48,6 @@ export function requestTerminalCopyScreen(terminalId?: string) {
 export function requestTerminalExport(terminalId?: string) {
   window.dispatchEvent(
     new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_EXPORT_EVENT, {
-      detail: { terminalId },
-    }),
-  )
-}
-
-/** Reset one xterm before the backend writes a full screen snapshot. */
-export function requestTerminalReset(terminalId: string) {
-  window.dispatchEvent(
-    new CustomEvent<TerminalViewBridgeDetail>(TERMINAL_RESET_EVENT, {
       detail: { terminalId },
     }),
   )

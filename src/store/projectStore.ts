@@ -13,7 +13,7 @@ import {
   renameEditorPaths,
 } from './editorSessionBridge'
 import { translate } from '../lib/i18n'
-import { enrichDirectAgentConnections } from '../lib/directAgent'
+import { directAgentApi, enrichDirectAgentConnections } from '../lib/directAgent'
 import {
   formatExpandDirErrorToast,
   formatReadDirErrorToast,
@@ -77,6 +77,7 @@ import {
   requestSshReconnect,
   forgetSshSessionSecrets,
   deleteSavedSshSecrets,
+  sshConnectionIdFromUri,
   sshRootUri,
   SSH_CONNECTIONS_CHANGED_EVENT,
   waitForSshWorkspaceConnection,
@@ -138,6 +139,8 @@ interface ProjectState {
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
   deleteSshConnection: (id: string) => Promise<void>
+  /** 静默移除连接配置已不存在的远程项目，返回移除数量。 */
+  pruneOrphanSshProjects: () => Promise<number>
   /** `name` 为空时使用目录名。 */
   addProject: (path: string, name?: string) => Promise<boolean>
   addSshProject: (
@@ -363,6 +366,82 @@ function clearCurrentProjectSession(
   }
 }
 
+function sshProjectConnectionId(project: Project): string | undefined {
+  return project.connection_id || sshConnectionIdFromUri(project.path)
+}
+
+/** 注销并删除远程项目的数据库记录（不触碰远端文件）。 */
+async function purgeSshProjectRows(projects: readonly Project[]): Promise<void> {
+  for (const project of projects) {
+    cancelSshWarmup(project.path)
+    cancelSshOpening(sshOpeningKey(project))
+    await safeInvoke('注销 SSH 项目', 'ssh_forget_workspace_root', { rootUri: project.path }).catch(() => undefined)
+    await deleteProjectRows(project.id)
+  }
+}
+
+/** 清除连接相关的会话凭据、已保存凭据与 Server 配对凭据。 */
+async function forgetSshConnectionCredentials(id: string): Promise<void> {
+  forgetSshSessionSecrets(id)
+  await deleteSavedSshSecrets(id).catch(() => undefined)
+  await directAgentApi.forget?.(id).catch(() => undefined)
+}
+
+/**
+ * 移除连接配置已不存在的远程项目（孤儿项目），返回剩余项目。
+ * 读取连接列表失败时保持原样，避免误删。
+ */
+async function removeOrphanSshProjects(projects: Project[]): Promise<Project[]> {
+  const sshProjects = projects.filter(project => !project.ephemeral && isSshProject(project))
+  if (sshProjects.length === 0) return projects
+  let known: Set<string>
+  try {
+    known = new Set((await listSshConnections()).map(connection => connection.id))
+  } catch {
+    return projects
+  }
+  const orphans = sshProjects.filter(project => {
+    const id = sshProjectConnectionId(project)
+    return !id || !known.has(id)
+  })
+  if (orphans.length === 0) return projects
+  try {
+    await purgeSshProjectRows(orphans)
+  } catch (error) {
+    console.warn('remove orphan ssh projects failed:', error)
+    return projects
+  }
+  const connectionIds = new Set(orphans.map(sshProjectConnectionId).filter((id): id is string => !!id))
+  for (const id of connectionIds) await forgetSshConnectionCredentials(id)
+  const removed = new Set(orphans.map(project => project.id))
+  return projects.filter(project => !removed.has(project.id))
+}
+
+function dropProjectsFromState(
+  get: () => ProjectState,
+  set: (fn: (s: ProjectState) => Partial<ProjectState>) => void,
+  removed: ReadonlySet<string>
+) {
+  const current = get().currentProject
+  const wasCurrent = !!current && removed.has(current.id)
+  set(s => {
+    const projectTrees = { ...s.projectTrees }
+    const expandedProjects = { ...s.expandedProjects }
+    for (const projectId of removed) {
+      delete projectTrees[projectId]
+      delete expandedProjects[projectId]
+    }
+    return {
+      currentProject: wasCurrent ? null : s.currentProject,
+      recentFiles: wasCurrent ? [] : s.recentFiles,
+      fileTree: wasCurrent ? [] : s.fileTree,
+      projectTrees,
+      expandedProjects,
+      unavailableProjectIds: s.unavailableProjectIds.filter(projectId => !removed.has(projectId)),
+    }
+  })
+}
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   currentProject: null,
@@ -402,9 +481,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   loadProjects: async options => {
     try {
-      const { migrated, projects, importedFromSettings } = await loadProjectsFromDb({
+      const loaded = await loadProjectsFromDb({
         syncFromSettings: options?.syncFromSettings,
       })
+      const { migrated, importedFromSettings } = loaded
+      // 连接已删除的远程项目无法再连接，加载时直接清理，不再弹“重新连接”。
+      const projects = await removeOrphanSshProjects(loaded.projects)
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
       if (importedFromSettings > 0) {
         get().pushToast(
@@ -516,11 +598,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   deleteSshConnection: async id => {
+    // 连接删除后，引用它的远程项目已无法再连接，一并移除，避免残留“重新连接”入口。
+    const refs = get().projects.filter(
+      project => !project.ephemeral && sshProjectConnectionId(project) === id
+    )
+    await purgeSshProjectRows(refs)
     await deleteSshConnectionRow(id)
-    forgetSshSessionSecrets(id)
-    await deleteSavedSshSecrets(id).catch(() => undefined)
+    await forgetSshConnectionCredentials(id)
+    if (refs.length > 0) {
+      dropProjectsFromState(get, set, new Set(refs.map(project => project.id)))
+      // 先更新可移植种子，否则启动同步会把项目以新 id 重新插入。
+      await persistProjectsToUserSettings()
+      await get().loadProjects({ syncFromSettings: false })
+    }
     await get().loadSshConnections()
     window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
+  },
+
+  pruneOrphanSshProjects: async () => {
+    const before = get().projects
+    const after = await removeOrphanSshProjects(before)
+    if (after.length === before.length) return 0
+    const kept = new Set(after.map(project => project.id))
+    const removed = new Set(before.filter(project => !kept.has(project.id)).map(project => project.id))
+    dropProjectsFromState(get, set, removed)
+    set(s => ({ projects: s.projects.filter(project => !removed.has(project.id)) }))
+    void syncAllowlistRoots(get().projects)
+    return removed.size
   },
 
   addProject: async (path: string, requestedName?: string) => {
@@ -1068,6 +1172,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (e instanceof SshPreparationError) return false
         console.error('switchProject failed:', e)
         if (isSshProject(project)) {
+          // 连接配置已删除：静默移除该项目，不再提示。
+          if (/SSH 连接配置不存在|SSH 项目缺少连接配置/.test(String(e))) {
+            void get().pruneOrphanSshProjects()
+            return false
+          }
           const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
           const remoteTimedOut = SSH_TIMEOUT_RE.test(String(e))
           if (

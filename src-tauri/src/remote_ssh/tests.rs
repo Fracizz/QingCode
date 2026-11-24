@@ -669,6 +669,36 @@ fn passive_registration_remains_passive_across_trust_changes() {
 }
 
 #[test]
+fn outside_file_root_is_read_only_and_needs_a_registered_project() {
+    let manager = SshManager::new();
+    let file = "ssh://c/C:/Users/me/AppData/Local/Temp/a.png";
+    manager
+        .outside_files
+        .write()
+        .unwrap()
+        .insert(file.into(), "/C:/Users/me/AppData/Local/Temp/a.png".into());
+    // 连接上没有已注册项目时授权不生效。
+    assert!(manager.outside_file_root(file).is_none());
+    manager.roots.write().unwrap().insert(
+        "ssh://c/D:/code/app".into(),
+        RegisteredRoot {
+            uri: "ssh://c/D:/code/app".into(),
+            canonical_path: "/D:/code/app".into(),
+            trusted: true,
+        },
+    );
+    let root = manager.outside_file_root(file).unwrap();
+    assert!(!root.trusted);
+    assert_eq!(root.canonical_path, "/C:/Users/me/AppData/Local/Temp/a.png");
+    // 只授权这一个文件，同目录的其他文件不在内。
+    assert!(manager
+        .outside_file_root("ssh://c/C:/Users/me/AppData/Local/Temp/b.png")
+        .is_none());
+    // 写入与执行走 root_for_uri，不会因授权而放行。
+    assert!(manager.root_for_uri(file, false).is_err());
+}
+
+#[test]
 fn offline_dir_is_searched_before_other_server_dirs() {
     let manager = SshManager::new();
     let root = std::env::temp_dir().join(format!("qingcode-offline-order-{}", std::process::id()));
@@ -1697,6 +1727,7 @@ fn server_states_skip_idle_passive_roots() {
         reason: reason.map(Into::into),
         deferred_upgrade: None,
         timings: None,
+        upgrading: false,
     };
     // 后台登记、从未部署的根：不计入，否则管理页永远「正在准备服务」。
     assert!(passive_root_idle(true, &state(ServerPhase::Probing, None)));

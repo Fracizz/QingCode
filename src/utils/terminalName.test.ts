@@ -6,6 +6,7 @@ import {
   resolveNewTerminalName,
   shouldApplyOscTabTitle,
   terminalDisplayLabel,
+  posixSshShellLabelKey,
   windowsSshShellLabel,
 } from './terminalName'
 
@@ -104,5 +105,20 @@ describe('shouldApplyOscTabTitle', () => {
     expect(shouldApplyOscTabTitle({}, 'conhost')).toBe(false)
     expect(shouldApplyOscTabTitle({ shellKind: 'command' }, 'npm run dev')).toBe(false)
     expect(shouldApplyOscTabTitle({ shellKind: 'ps1' }, 'build')).toBe(false)
+  })
+})
+
+describe('posixSshShellLabelKey', () => {
+  it('不把本机默认 Shell 套到 Linux 远程终端上', () => {
+    expect(posixSshShellLabelKey('ssh://connection/home/code/django', 'auto')).toBe('Shell')
+    expect(posixSshShellLabelKey('ssh://connection/home/code/django', 'pwsh')).toBe('Shell')
+    expect(posixSshShellLabelKey('ssh://connection/home/code/django')).toBe('Shell')
+    expect(posixSshShellLabelKey('ssh://connection/home/code/django', 'bash')).toBe('Bash')
+    expect(posixSshShellLabelKey('ssh://connection/home/code/django', 'zsh')).toBe('Zsh')
+  })
+
+  it('本机路径和 Windows 远程返回 null', () => {
+    expect(posixSshShellLabelKey('D:/code/app', 'auto')).toBeNull()
+    expect(posixSshShellLabelKey('ssh://connection/D:/code/app', 'auto')).toBeNull()
   })
 })

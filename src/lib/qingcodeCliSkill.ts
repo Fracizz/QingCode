@@ -248,7 +248,7 @@ ${quoted} terminal close <id|name> --yes [--project ...]
 
 - Use \`terminal prewarm status\` before creating a tab. It reports the configured budget and this project's target, ready, preparing and reserved counts. A reason explains an inactive or paused pool. The recent field summarizes successful new tabs in this project from the last 100 in this window, with hit/miss counts, miss reasons and P50/P95 milliseconds to writable input after trust approval.
 - Create with \`--wait\` to wait for writable input (default 60 seconds). On timeout, keep the returned terminal ID. Run \`terminal diagnostics <id>\` in the same project to distinguish reserved, hit, miss and unknown outcomes. A miss carries a reason; older/restored tabs may have no observation.
-- Profile upsert takes JSON with name and command (use an empty string for a plain shell), optional shell and optional id. Supply the existing id to rename; otherwise a unique exact name is matched. Changing a command or shell clears the profile's execution trust. Removing the default profile restores the built-in default.
+- Profile upsert takes JSON with name and command (use an empty string for a plain shell), optional shell, optional id, and optional scope (\`"local"\` for this computer, an SSH connection id, or an empty string/null for all connections; omitted keeps the current scope). Scoped profiles are offered only for projects on that connection. Supply the existing id to rename; otherwise a unique exact name is matched. Changing a command or shell clears the profile's execution trust. Removing the default profile restores the built-in default.
 - Works for terminals in QingCode, local and SSH alike; the same command drives a remote project's
   terminal through the GUI's authenticated session.
 - \`terminal create\` uses the default profile. Pass \`--profile\` with an ID or unique exact name from \`terminal profiles\` to select another. The command returns the terminal \`id\`. It starts asynchronously:
@@ -516,7 +516,7 @@ ${quoted} terminal close <id|name> --yes [--project ...]
 
 - 新建前用 \`terminal prewarm status\` 查看设置预算、当前项目实际目标、就绪、准备中和已预留数量，池未启用或暂停时查看 reason。recent 从该窗口最近 100 次成功新建中筛选当前项目，给出命中和回退次数、回退原因及信任检查后到可写的 P50/P95 毫秒数。
 - \`create --wait\` 等到终端可输入，默认 60 秒。超时后保留返回的标签 ID。用同一项目的 \`terminal diagnostics <id>\` 查看 reserved（已预留）、hit（已领取）、miss（未命中及原因）或 unknown（无确定记录）。旧版或恢复的标签可能没有记录。
-- 单项配置 upsert 接收 JSON，必填 name 和 command（普通 Shell 使用空字符串），可选 shell 和 id。改名时传入已有 ID，省略 ID 时按唯一完整名称匹配。修改命令或 Shell 后需要重新确认运行信任；删除默认配置会切回内置普通终端。
+- 单项配置 upsert 接收 JSON，必填 name 和 command（普通 Shell 使用空字符串），可选 shell、id 和 scope（\`"local"\` 表示本机，SSH 连接 ID 表示该连接，空字符串或 null 表示通用；省略时保持原分类），分类配置只在该连接的项目中可选。改名时传入已有 ID，省略 ID 时按唯一完整名称匹配。修改命令或 Shell 后需要重新确认运行信任；删除默认配置会切回内置普通终端。
 - 适用于 QingCode 中的本地和 SSH 终端；同一条命令经由 GUI 已认证的会话驱动远端项目的终端。
 - \`terminal create\` 使用默认配置。可从 \`terminal profiles\` 获取 ID 或唯一的完整名称，通过 \`--profile\` 指定配置。新建后返回终端 \`id\`。终端异步启动，发送输入前先轮询
   \`terminal list\`，直到 \`writable\` 为 true。

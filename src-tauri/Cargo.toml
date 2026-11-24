@@ -42,18 +42,24 @@ base64 = "0.22"
 # Tauri 栈锁在 2.11：2.12 起 tauri-runtime-wry 要求 tao ^0.37，会让 vendor/tao(0.35.3) 的
 # Windows 堆损坏补丁失效（见 vendor/tao/QINGCODE.md）。升级前须先在 tao 0.37 上重放补丁，
 # 并同步前端 @tauri-apps/* 的 minor 版本。
-tauri = { version = "~2.11", features = ["protocol-asset"] }
+# 关闭默认的 dynamic-acl：未使用运行时 add_capability，避免把全部插件 ACL manifest 嵌进二进制。
+# 其余默认 feature 原样保留；common-controls-v6 为原生对话框所需。
+tauri = { version = "~2.11", default-features = false, features = ["wry", "compression", "common-controls-v6", "x11", "dbus", "protocol-asset"] }
 tauri-plugin-opener = "~2.5"
 tauri-plugin-dialog = "~2.7"
-tauri-plugin-sql = { version = "~2.4", features = ["sqlite"] }
 tauri-plugin-single-instance = "~2.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-dirs = "7"
+# 与 tauri 依赖的 dirs 6 对齐，避免链接两份。
+dirs = "6"
 glob = "0.3"
+# 应用数据库（app_db.rs，前端经命令访问）与 CLI（cli/db.rs）共用；不再引入 tauri-plugin-sql/sqlx。
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
-sysinfo = "0.33"
+# 终端粘贴附件按本地时间（毫秒）建目录；clock 特性已由依赖树启用，不新增 crate。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 只用进程/内存（system）与网卡列表（network）；关掉 disk/user/component(WMI)/multithread(rayon)。
+sysinfo = { version = "0.33", default-features = false, features = ["system", "network"] }
 portable-pty = "0.8"
 ignore = "0.4.29"
 encoding_rs = "0.8"
@@ -88,7 +94,7 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 ring = "0.17"
 subtle = "2"
 qrcode = { version = "0.15", default-features = false }
-# 注意：tokio / futures / chrono 不作为直接依赖。
+# 注意：tokio / futures 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
 
@@ -116,6 +122,9 @@ tao = { path = "vendor/tao" }
 # - lto = false：关闭链接时优化（默认即 false，此处显式声明，避免被其他配置开启）
 # - strip + panic=abort：减小单文件 exe 体积、链接更快
 # 若追求极致构建速度可把 opt-level 改为 1；若更在意运行时性能可改回 3 并设 lto = "thin"
+# 发布到 GitHub Release 的产物不用这套设置：release.yml / warm-release-cache.yml 用
+# CARGO_PROFILE_RELEASE_* 覆盖为 opt-level "s" + lto "fat" + codegen-units 1 + 关增量，
+# 实测 Windows x64 exe 约 25.0 MB → 16.3 MB（冷编译约慢 2–3 倍）。本地要复现发布体积时给打包脚本加 -SizeOptimized（或 pnpm package:local --size-optimized）。
 [profile.release]
 opt-level = 2
 lto = false

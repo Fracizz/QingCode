@@ -10,7 +10,7 @@ import { isTauri, safeInvoke } from './tauri'
 import { isWslProject, wslDistroNameFromPath } from './wslWorkspace'
 import { isProjectTrusted, pushTrustedRootsToNative } from './workspaceTrust'
 import { uploadLocalFilesForSshTerminal } from './sshTerminalPaste'
-import { getTerminalProfile, loadTerminalProfileSettings } from './terminal/terminalProfiles'
+import { getTerminalProfile, loadTerminalProfileSettings, profilesForConnection } from './terminal/terminalProfiles'
 import { isTerminalProfileTrusted } from './terminal/terminalProfileTrust'
 import { currentShortcutBarState } from '@/store/terminalShortcutBarStore'
 import { normalizeTerminalShell } from './terminal/terminalShell'
@@ -19,6 +19,7 @@ import { applyTerminalControlPayload, type TerminalControlPayload } from '@/stor
 import { terminalViewGrids } from '@/store/terminal/ptySizing'
 import { isTerminalProgramBusy } from './terminal/terminalProgramActivity'
 import { terminalLastActiveAt } from './terminal/terminalLastActive'
+import { showsPrewarmHit } from './terminal/prewarmIndicator'
 import { isMobileTerminalId } from './ipc/mobileSessions'
 import type { TerminalTab } from '@/types'
 
@@ -28,7 +29,7 @@ interface Request {
   fileRules?: boolean
   project?: string | null
   attachment?: string | null
-  /** 列出终端配置（不含命令）。 */
+  /** 列出终端配置（不含命令）；带 `project` 时只列出该项目所属连接可用的配置。 */
   profiles?: boolean
   /** 列出快捷键栏的自定义键，供手机导入。 */
   shortcutKeys?: boolean
@@ -80,6 +81,8 @@ async function listDesktopTerminals() {
       // 手机首页「待处理」据此显示「N 分钟前」；没有记录时给 null，不能给 0（会被算成 1970 年）
       lastActiveAt: terminalLastActiveAt(tab),
       idleDeadline: null,
+      // 领取了预热终端：手机在会话行和顶栏标题旁显示 ⚡，与电脑标签一致。
+      prewarm: showsPrewarmHit(tab),
       project,
     }]
   })
@@ -150,9 +153,14 @@ function profileName(name: string) {
   return name.trim() || '未命名配置'
 }
 
-/** 手机端只拿到名称与信任状态；命令留在电脑端，创建时按 id 再解析。 */
-export function mobileTerminalProfiles() {
-  return loadTerminalProfileSettings().profiles.map(profile => ({
+/**
+ * 手机端只拿到名称与信任状态；命令留在电脑端，创建时按 id 再解析。
+ * 指定项目所属连接时只给通用配置和该连接（或本机）分类的配置；`undefined` 表示旧版手机未带项目，给全部。
+ */
+export function mobileTerminalProfiles(connectionId?: string | null) {
+  const settings = loadTerminalProfileSettings()
+  const profiles = connectionId === undefined ? settings.profiles : profilesForConnection(settings, connectionId)
+  return profiles.map(profile => ({
     id: profile.id,
     name: profileName(profile.name),
     trusted: isTerminalProfileTrusted(profile),
@@ -208,7 +216,13 @@ async function respond({
     await useTerminalStore.getState().closeTerminal(endTerminal)
     return null
   }
-  if (profiles) return mobileTerminalProfiles()
+  if (profiles) {
+    if (projectId === null) return mobileTerminalProfiles()
+    const projects = await withDb('加载移动端项目列表', listProjects)
+    const target = projects.find(item => item.id === projectId)
+    // 与电脑端新建终端一致：按项目路径判断所属连接。
+    return mobileTerminalProfiles(target ? sshConnectionIdFromUri(target.path) ?? null : undefined)
+  }
   if (shortcutKeys) return mobileShortcutKeys()
   if (profile !== undefined) return mobileTerminalProfile(profile)
   // The main window can lag behind projects added/removed in another window or

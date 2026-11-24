@@ -149,12 +149,19 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
       assert.ok((await names()).includes('django [WSL · root@localhost]'))
       await shot('desktop')
     })
-    await step('原生 WSL、Ubuntu、Debian 与 SSH 连接分别筛选', async () => {
+    await step('来源只有本机与远程连接（WSL 按 Linux 远程连接）', async () => {
+      const options = await page.evaluate(selector => {
+        const select = document.querySelector(selector)
+        return {
+          values: [...select.querySelectorAll('option')].map(option => option.value),
+          groups: select.querySelectorAll('optgroup').length,
+        }
+      }, selectors.source)
+      assert.deepEqual(options, {
+        values: ['all', 'local', 'ssh:fixture-windev', 'ssh:fixture-wsl'],
+        groups: 0,
+      })
       for (const [value, total] of [
-        ['wsl', 3],
-        ['wsl:Ubuntu', 2],
-        ['wsl:Debian', 1],
-        ['ssh', 6],
         ['ssh:fixture-wsl', 3],
         ['ssh:fixture-windev', 3],
         ['local', 7],
@@ -162,8 +169,6 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
         await source(value)
         await expectRange(total)
       }
-      await source('wsl:Debian')
-      await expectNames(['debian-service'])
     })
     await step('名称、路径、连接、主机、账号与大小写搜索', async () => {
       await source('all')
@@ -197,7 +202,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
       )
       assert.deepEqual(navigation, [true, true])
       await clearConditions()
-      await source('wsl')
+      await source('ssh:fixture-wsl')
       await tab('已显示')
       await expectRange(1)
       await tab('已隐藏')
@@ -217,11 +222,13 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
       await expectRange(16)
     })
     await step('排序应用于全部筛选结果', async () => {
-      await source('wsl')
+      await source('ssh:fixture-wsl')
       await click('名称')
-      await expectNames(['debian-service', 'django [WSL · Ubuntu]', 'ubuntu-tools'])
+      // 只比较项目名，去掉同名来源标签，避免与标签文案耦合
+      const baseNames = async () => (await names()).map(name => name.replace(/ \[.*\]$/, ''))
+      assert.deepEqual(await baseNames(), ['django', 'eman-next', 'nem-panel'])
       await click('切换排序方向')
-      await expectNames(['ubuntu-tools', 'django [WSL · Ubuntu]', 'debian-service'])
+      assert.deepEqual(await baseNames(), ['nem-panel', 'eman-next', 'django'])
       await source('all')
       await page.selectOption(selectors.sort, 'last_opened_at')
     })
@@ -238,10 +245,10 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
         new Set(await saveIds()),
         new Set(['ubuntu-django', 'win-nem', 'win-django', 'win-qingcode', 'wsl-nem'])
       )
-      await source('wsl')
+      await source('ssh:fixture-wsl')
       await expectSelected(1)
       await click('保存选中为多项目工作区')
-      assert.deepEqual(await saveIds(), ['ubuntu-django'])
+      assert.deepEqual(await saveIds(), ['wsl-nem'])
       await clearConditions()
       await click('取消选择')
     })
@@ -256,7 +263,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
       )
     })
     await step('行内隐藏与恢复只修改内存数据', async () => {
-      await source('wsl:Ubuntu')
+      await source('ssh:fixture-windev')
       await search('django')
       await click('从顶栏隐藏')
       await tab('已显示')
@@ -275,7 +282,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
         mobile: false,
       })
       assert.deepEqual(await checkToolbar(), { withinViewport: true, overlapping: false })
-      await source('wsl')
+      await source('ssh:fixture-wsl')
       await expectRange(3)
       await shot('narrow')
       await source('all')
@@ -312,7 +319,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
       await page.waitForSelector('input[aria-label="Search project names, paths, or sources"]', {
         state: 'visible',
       })
-      await page.selectOption('select[aria-label="Filter project sources"]', 'wsl')
+      await page.selectOption('select[aria-label="Filter project sources"]', 'ssh:fixture-wsl')
       await page.waitForFunction(
         () => document.querySelector('[role="status"]')?.textContent === 'Showing 1-3 of 3 projects'
       )

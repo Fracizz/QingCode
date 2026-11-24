@@ -56,6 +56,62 @@ fn startup_blocker_reports_a_missing_cli_only_for_this_terminal() {
 }
 
 #[test]
+fn busy_anchor_is_reported_for_this_terminal_and_retried_without_user_action() {
+    assert_eq!(
+        startup_blocker("claude", "QC-nonce-anchor_busy!", "/anchor", "nonce"),
+        Some(ANCHOR_BUSY)
+    );
+    assert_eq!(
+        startup_blocker("claude", "QC-stale-anchor_busy!", "/anchor", "nonce"),
+        None
+    );
+    // 不是交互阻塞：预热池按退避自动重试，不弹「需切换配置」的暂停。
+    assert_eq!(interaction_blocker(ANCHOR_BUSY), None);
+    assert!(retry_later(ANCHOR_BUSY));
+}
+
+#[test]
+fn lost_daemon_session_is_retried_instead_of_pausing_as_cli_not_ready() {
+    // 远端服务升级会重启 daemon，正在预热的 CLI 随之结束；这与 CLI 是否就绪无关。
+    let lost = format!("{SESSION_LOST}: daemon 连接已关闭");
+    assert!(retry_later(&lost));
+    assert_eq!(interaction_blocker(&lost), None);
+    // 就绪超时由预热池按连续次数决定重试或暂停，不在这里一律当暂时性失败。
+    assert!(!retry_later(READY_TIMED_OUT));
+    assert_eq!(interaction_blocker(READY_TIMED_OUT), None);
+    assert!(!retry_later(LOGIN_REQUIRED));
+}
+
+#[test]
+fn transport_failure_before_cli_starts_is_retried_instead_of_pausing_as_cli_not_ready() {
+    // 强制更新 Server 后 daemon 刚重启：连接、校验目录或建 PTY 失败时 CLI 还没运行。
+    let failed = transport_error("daemon 握手失败");
+    assert!(failed.starts_with(TRANSPORT_FAILED));
+    assert!(failed.ends_with("daemon 握手失败"));
+    assert!(retry_later(&failed));
+    assert_eq!(interaction_blocker(&failed), None);
+    // CLI 启动后给出的结论仍按原规则暂停。
+    assert!(!retry_later(SERVER_OUTDATED));
+    assert!(!retry_later(CLI_NOT_INSTALLED));
+}
+
+#[test]
+fn ready_timeout_screen_tail_drops_paths_and_keeps_last_lines() {
+    let screen = format!(
+        "{}\nWelcome to Claude Code\n  cwd: D:\\Users\\me\\.qingcode\\cli-prewarm\\a1\nUpdate available! Run: npm i -g pkg\n\n❯ Try \"fix lint\"",
+        (0..20).map(|i| format!("old {i}")).collect::<Vec<_>>().join("\n")
+    );
+    let tail = screen_tail_for_diagnostics(&screen, r"D:\Users\me\.qingcode\cli-prewarm\a1");
+    assert_eq!(tail.len(), SCREEN_TAIL_LINES);
+    assert_eq!(tail.last().unwrap(), "❯ Try \"fix lint\"");
+    assert!(tail.contains(&"  cwd: <anchor>".to_string()));
+    assert!(tail.contains(&"Update available! Run: npm i -g pkg".to_string()));
+    assert!(!tail.iter().any(|line| line.contains("Users")));
+    let other = screen_tail_for_diagnostics("open /home/u/secret now", "/anchor");
+    assert_eq!(other, vec!["open <path> now".to_string()]);
+}
+
+#[test]
 fn claude_only_confirms_the_selected_trust_choice_in_the_managed_directory() {
     let prompt = "Accessing workspace:\nD:/Test/codex-prewarm\nQuick safety check: Is this a project you created or one you trust?\n❯ No, exit\nYes, I trust this folder\nEnter to confirm · Esc to cancel";
     assert_eq!(
@@ -85,6 +141,21 @@ fn preset_anchor_is_created_and_refuses_existing_content() {
     std::fs::write(path.join("AGENTS.md"), "fixture").unwrap();
     assert!(checked_anchor(temp.path(), true).is_err());
     assert!(path.join("AGENTS.md").is_file());
+}
+
+#[test]
+fn preset_anchor_prunes_empty_directories_left_by_a_cli() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = checked_anchor(temp.path(), true).unwrap();
+    // Claude 会在启动目录留下空的 .claude；它不应让预热一直失败。
+    std::fs::create_dir_all(path.join(".claude").join("nested")).unwrap();
+    assert_eq!(checked_anchor(temp.path(), false).unwrap(), path);
+    assert!(!path.join(".claude").exists());
+    // 仍有文件时保留内容并拒绝。
+    std::fs::create_dir(path.join(".claude")).unwrap();
+    std::fs::write(path.join(".claude").join("settings.local.json"), "{}").unwrap();
+    assert!(checked_anchor(temp.path(), false).is_err());
+    assert!(path.join(".claude").join("settings.local.json").is_file());
 }
 
 #[test]
@@ -255,6 +326,7 @@ trust_level = "trusted"
         profile_id: agent.into(),
         shell: "powershell".into(),
         command: agent.into(),
+        count: 1,
     });
     let mut target = Target {
         project_path: cwd.clone(),
@@ -447,6 +519,8 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
     for p in [&anchor, &project] {
         std::fs::create_dir(p).unwrap()
     }
+    // 之前的 CLI 会话留下的空目录（如 .claude）不应让预热失败。
+    std::fs::create_dir_all(anchor.join(".claude").join("nested")).unwrap();
     let anchor = anchor.to_str().unwrap();
     let project = project.to_str().unwrap();
     std::fs::write(config.join(".claude.json"),serde_json::json!({
@@ -514,6 +588,7 @@ async fn posix_server_switches_real_cli() -> Result<(), String> {
         command: agent.clone(),
         shell: "auto".into(),
         profile_id: agent.clone(),
+        count: 1,
     });
     let mut target = target_for(&entry, 1);
     use std::os::unix::fs::PermissionsExt as _;
@@ -623,6 +698,11 @@ fn launch_scripts_never_carry_carriage_returns() {
             script.contains("-cli_not_installed!"),
             "{agent} powershell={powershell}"
         );
+        // 专用目录被占用时都要报告可重试的原因，而不是笼统退出。
+        assert!(
+            script.contains("-anchor_busy!"),
+            "{agent} powershell={powershell}"
+        );
     }
 }
 
@@ -657,4 +737,48 @@ fn pi_launch_scripts_embed_the_preload_loader() {
             .any(|line| line.starts_with("'@") || line.trim() == "QC_PI_PRELOAD"));
     }
     assert!(supported("pi") && shell_handoff("pi") && !shell_handoff("claude"));
+}
+
+#[cfg(windows)]
+#[test]
+fn phone_claims_local_cli_prewarm_under_its_own_terminal_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().to_str().unwrap();
+    let (cwd, launch, mut key) = local_launch_key(project, Some("powershell")).unwrap();
+    key.profile = Some(PrewarmProfile {
+        cwd: cwd.clone(),
+        cross_project: false,
+        profile_id: "agent".into(),
+        shell: "powershell".into(),
+        command: "codex".into(),
+        count: 1,
+    });
+    let mut entry = super::super::tests::fake_shell();
+    entry.id = "prepared".into();
+    entry.cwd.clone_from(&cwd);
+    entry.key = key.clone();
+    entry.launch = launch.clone();
+    let pool = LocalCodexPool::default();
+    {
+        let mut state = pool.pool.0.lock().unwrap();
+        state.target = Some(Target {
+            project_path: cwd.clone(),
+            cwd: cwd.clone(),
+            key,
+            launch,
+            count: 1,
+            window: "main".into(),
+            remote: None,
+        });
+        state.shells.push(entry);
+    }
+    // 配置、Shell 或命令不一致都按未命中处理，不占用预热项。
+    assert!(!pool.reserve_as("mobile-1", project, Some("powershell"), "other", "codex"));
+    assert!(!pool.reserve_as("mobile-1", project, Some("pwsh"), "agent", "codex"));
+    assert!(!pool.reserve_as("mobile-1", project, Some("powershell"), "agent", "claude"));
+    assert!(!pool.pool.has_entry("mobile-1"));
+    assert!(pool.reserve_as("mobile-1", project, Some("powershell"), "agent", "codex"));
+    assert!(pool.pool.has_entry("mobile-1"));
+    assert!(!pool.pool.has_entry("prepared"));
+    assert!(!pool.reserve_as("mobile-2", project, Some("powershell"), "agent", "codex"));
 }

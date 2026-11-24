@@ -1,3 +1,4 @@
+import { broadcastDismissTerminalsWhenEnded } from '../lib/dismissEndedTerminals'
 import ConnectionPrewarmProfile from './ConnectionPrewarmProfile'
 import ConnectionDefaultProfile from './ConnectionDefaultProfile'
 import { hasBackend } from '../lib/runtimeCapabilities'
@@ -222,6 +223,8 @@ export default function RemoteConnectionsManager() {
   const standaloneAgent = Boolean(selected && selected.username === 'Agent' && selected.auth_kind === 'password' && (selected.agentEndpoint || selected.host_key_fingerprint === selectedDirect?.certificateFingerprint))
   const directEndpoint = selectedDirect && (selectedDirect.enabled || standaloneAgent) ? selectedDirect : selected?.agentEndpoint
   const directEnabled = selectedDirect ? selectedDirect.enabled : Boolean(selected?.agentEndpoint)
+  // 终端预热只在 Server 模式（含端口直连）可用。
+  const serverMode = Boolean(selected && (directEnabled || standaloneAgent || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server'))
   const connectionModeLabel = directEnabled || standaloneAgent || selected?.agentEndpoint ? 'Server 端口直连'
     : selected && resolveSshConnectionMode(selected, getSshServerEnabled()) === 'ssh' ? 'SSH 直连（兼容模式）' : 'SSH + 远端服务'
   const serverStates = selected ? statesByConnection[selected.id] ?? [] : []
@@ -700,7 +703,7 @@ export default function RemoteConnectionsManager() {
       title: t('删除 SSH 连接'),
       message:
         refs.length > 0
-          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），删除后这些项目将无法连接，需要重新绑定连接。此操作不可撤销。', {
+          ? t('删除连接 {label}？该连接仍被 {count} 个远程项目使用（{names}），这些项目及 Server 配对凭据将一并移除（远端文件不受影响）。此操作不可撤销。', {
               label,
               count: refs.length,
               names: refs.map(project => project.name).join('、'),
@@ -792,6 +795,8 @@ export default function RemoteConnectionsManager() {
         cancelLabel: t('继续等待'),
       })
       if (!accepted || controller.signal.aborted) return
+      // 更新会结束此连接托管的终端：各窗口里的这些标签退出后直接关闭，不保留「已退出」的窗口。
+      await broadcastDismissTerminalsWhenEnded(state.connectionId)
       if (state.transport === 'agent') {
         setForceDirect({ rootUri, confirmed: impact })
       } else {
@@ -1344,10 +1349,6 @@ export default function RemoteConnectionsManager() {
                           }}
                         /></div>}
                         {!editing && <>
-                        <ConnectionDefaultProfile connectionId={selected.id} />
-                        {(directEnabled || standaloneAgent || resolveSshConnectionMode(selected, getSshServerEnabled()) === 'server') && (
-                          <ConnectionPrewarmProfile connectionId={selected.id} />
-                        )}
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
                             {t(allProjects ? '远程项目' : '最近项目')}
@@ -1382,6 +1383,17 @@ export default function RemoteConnectionsManager() {
                             </ul>
                           )}
                           {connectionProjects.length > 5 && <button type="button" aria-expanded={allProjects} onClick={() => setAllProjects(value => !value)} className="mt-2 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t(allProjects ? '收起项目' : '查看全部项目')}</button>}
+                        </div>
+
+                        {/* 本连接的终端设置：默认配置与预热（普通 Shell、CLI）都按连接保存，与「设置 → 终端」的本机设置互不影响。 */}
+                        <div>
+                          <p className={`${sectionTitleClass} mb-2`}>{t('终端')}</p>
+                          <div className="divide-y divide-dialog-separator overflow-hidden rounded-md border border-dialog-border">
+                            <ConnectionDefaultProfile connectionId={selected.id} />
+                            {serverMode
+                              ? <ConnectionPrewarmProfile connectionId={selected.id} />
+                              : <p className={`${helpClass} px-3 py-2.5`}>{t('兼容模式（SSH 直连）不支持终端预热；关闭兼容模式后可在此设置。')}</p>}
+                          </div>
                         </div>
 
                         <div>

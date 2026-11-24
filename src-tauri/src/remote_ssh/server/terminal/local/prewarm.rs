@@ -22,6 +22,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
+/// 单次创建的总时限：SFTP/daemon 连接或 CLI 启动卡住时按失败退避重试，
+/// 否则补充循环会一直停在「准备中」，池子用完后不再补充。
+const CREATE_TIMEOUT: Duration = Duration::from_secs(120);
 const RESERVATION_TTL: Duration = Duration::from_secs(15);
 /// 本机领取只经命名管道；远端领取要经过 SSH 往返，给更宽的上限。
 const LOCAL_CLAIM_TIMEOUT: Duration = Duration::from_secs(2);
@@ -29,8 +32,11 @@ const REMOTE_CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
 /// daemon 支持在 `pty.claim` 时改记工作目录。
 const CLAIM_CWD_CAPABILITY: &str = "pty.claimCwd";
 
+/// 远端 CLI 预热每条连接最多常驻的 CLI 数量（每个都是完整的 CLI 进程）。
+const MAX_PROFILE_COUNT: usize = 4;
+
 /// 复用条件：同一主机上启动参数相同。工作目录不在键里，见 [`WarmShell::can_rebind`]。
-#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PrewarmProfile {
     #[serde(default)] // Only remote profiles supply a directory.
@@ -40,6 +46,31 @@ pub(crate) struct PrewarmProfile {
     profile_id: String,
     shell: String,
     command: String,
+    /// 远端连接各自设置的 CLI 预热数量；本机 CLI 预热固定 1 个。只决定池容量，不参与复用判断。
+    #[serde(default = "default_profile_count")]
+    count: usize,
+}
+
+fn default_profile_count() -> usize {
+    1
+}
+
+// 数量不在相等判断里：只改数量时保留已就绪的 CLI，不能因为键变化被整池丢弃。
+impl PartialEq for PrewarmProfile {
+    fn eq(&self, other: &Self) -> bool {
+        self.cwd == other.cwd
+            && self.cross_project == other.cross_project
+            && self.profile_id == other.profile_id
+            && self.shell == other.shell
+            && self.command == other.command
+    }
+}
+impl Eq for PrewarmProfile {}
+
+impl PrewarmProfile {
+    fn pool_count(&self) -> usize {
+        self.count.clamp(1, MAX_PROFILE_COUNT)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -151,6 +182,13 @@ impl WarmShell {
             })
     }
 
+    /// 远端预热项所在的 daemon 连接已关闭；此时 PTY 随连接失效，并非命令自行退出。
+    fn session_lost(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.closed_reason().is_some())
+    }
+
     fn has_startup_channel(&self) -> bool {
         self.startup_pipe.is_some()
             || self.startup_input
@@ -179,6 +217,8 @@ struct PoolState {
     running: bool,
     paused_reason: Option<&'static str>,
     preparing: bool,
+    /// 连续 CLI 就绪超时次数；成功或配置变化时清零。
+    ready_timeouts: u32,
 }
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
@@ -370,8 +410,9 @@ impl PoolState {
         let before = self.shells.len();
         self.shells.retain_mut(|entry| {
             if !entry.alive() {
-                if entry.key.profile.is_some() {
-                    // An opted-in command may deliberately exit. Never relaunch it on a timer.
+                // CLI 自己退出可能是有意的，不按定时重启；daemon 连接断开（Server 重启、
+                // 网络中断）不是 CLI 退出，照常按退避补充，否则 CLI 预热会一直停在 profile_exited。
+                if entry.key.profile.is_some() && !entry.session_lost() {
                     self.paused_reason = Some("profile_exited");
                 }
                 return false;
@@ -419,8 +460,29 @@ impl ShellPrewarmPool {
         state.generation += 1;
         state.preparing = false;
         state.paused_reason = None;
+        state.ready_timeouts = 0;
         state.shells.clear();
         self.1.notify_waiters();
+    }
+
+    /// 远端服务刚完成更新：清掉更新期间留下的失败退避/暂停，取消重启窗口内发起、
+    /// 注定失败或卡到超时的创建，立即按当前配置重新补充，不等 15 秒退避。
+    pub(super) fn retry_now(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.target.is_none() {
+            return;
+        }
+        state.shells.retain(|entry| !entry.session_lost());
+        state.generation += 1;
+        state.preparing = false;
+        state.paused_reason = None;
+        state.ready_timeouts = 0;
+        trace(
+            "server_restarted",
+            serde_json::json!({"kept": state.shells.len()}),
+        );
+        self.1.notify_waiters();
+        self.2.notify_one();
     }
 
     fn stop(&self) {
@@ -443,6 +505,10 @@ impl ShellPrewarmPool {
         profile: Option<PrewarmProfile>,
         local_profile: Option<PrewarmProfile>,
         anchored_profiles: Vec<PrewarmProfile>,
+        // 用户在「远程连接」里关闭预热的连接：普通 Shell 与 CLI 都不预热。
+        disabled_connections: Vec<String>,
+        // 各连接单独设置的普通 Shell 数量；`count` 只决定本机池。
+        connection_counts: BTreeMap<String, usize>,
     ) -> Result<usize, String> {
         let Some(mut state) = self.lock_for_window(window) else {
             return Ok(0);
@@ -450,15 +516,20 @@ impl ShellPrewarmPool {
         let count = resolve_count(&count);
         app.state::<LocalCodexPool>()
             .configure(app, window, local_profile.filter(|_| count > 0));
+        // 远端 CLI 不受本机数量影响；`shell` 为空是失效请求，先停掉旧的 CLI 池。
         app.state::<ConnectionShellPools>().set_profiles(
             window,
             profile,
             anchored_profiles,
-            count > 0,
+            shell.is_some(),
         );
         if let Some(shell) = &shell {
-            app.state::<ConnectionShellPools>()
-                .configure(app, shell, count);
+            app.state::<ConnectionShellPools>().configure(
+                app,
+                shell,
+                connection_counts,
+                disabled_connections,
+            );
         }
         // A projectless or remote-only window may update the global setting while
         // another window still owns the local project. Keep that project's budget.
@@ -504,6 +575,22 @@ impl ShellPrewarmPool {
         self.set_target(app, &mut state, target);
     }
 
+    /// 只改容量：保留已就绪项（多出的空闲项按新数量裁掉），增加时立即补充。
+    fn set_count(&self, count: usize) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(target) = state.target.as_mut().filter(|t| t.count != count) else {
+            return;
+        };
+        target.count = count;
+        let target = target.clone();
+        state.trim_idle(&target);
+        trace(
+            "resized",
+            serde_json::json!({"count": count, "remote": target.remote.is_some()}),
+        );
+        self.2.notify_one();
+    }
+
     fn set_target(&self, app: &AppHandle, state: &mut PoolState, target: Target) {
         let same_transport = match (
             state.target.as_ref().and_then(|t| t.remote.as_ref()),
@@ -538,6 +625,7 @@ impl ShellPrewarmPool {
             state.generation += 1;
             state.preparing = false;
             state.paused_reason = None;
+            state.ready_timeouts = 0;
             self.1.notify_waiters();
             self.2.notify_one();
         }
@@ -1234,13 +1322,16 @@ impl ShellPrewarmPool {
                     trace("create_cancelled", serde_json::json!({"remote": remote, "ms": started.elapsed().as_millis() as u64}));
                     continue;
                 }
-                entry = create_warm_shell(&manager, &target) => entry,
+                entry = tokio::time::timeout(CREATE_TIMEOUT, create_warm_shell(&manager, &target)) => {
+                    entry.unwrap_or_else(|_| Err(codex::CREATE_TIMED_OUT.to_string()))
+                }
             };
             let ms = started.elapsed().as_millis() as u64;
             if let Ok(entry) = entry {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.generation == generation {
                     state.preparing = false;
+                    state.ready_timeouts = 0;
                     if state.refill_slots(target.count) == 0 {
                         continue;
                     }
@@ -1264,11 +1355,20 @@ impl ShellPrewarmPool {
                         continue;
                     }
                     state.preparing = false;
-                    if target
-                        .key
-                        .profile
-                        .as_ref()
-                        .is_some_and(|p| !remote || p.cross_project)
+                    // CLI 偶发启动慢导致就绪超时：先自动重试，连续超时才暂停为 cli_not_ready。
+                    let retry_timeout = error == codex::READY_TIMED_OUT && {
+                        state.ready_timeouts += 1;
+                        state.ready_timeouts < codex::READY_TIMEOUT_PAUSE_AFTER
+                    };
+                    // 专用目录暂被占用（已领取的会话仍在用）或 daemon 会话中途断开（远端服务升级等）：
+                    // 按普通失败退避重试，不要求用户切换配置。
+                    if !codex::retry_later(&error)
+                        && !retry_timeout
+                        && target
+                            .key
+                            .profile
+                            .as_ref()
+                            .is_some_and(|p| !remote || p.cross_project)
                     {
                         if remote && error == codex::SERVER_OUTDATED {
                             // 旧 daemon 有运行中的终端时会推迟升级：暂停到配置变化，并提示所属窗口（不阻塞）。
@@ -1310,7 +1410,22 @@ impl ShellPrewarmPool {
                         );
                         continue;
                     }
-                    state.paused_reason = Some("create_failed_backoff");
+                    if retry_timeout {
+                        // 已等满就绪时限，立即重试一次，不再额外退避。
+                        trace(
+                            "ready_timeout_retry",
+                            serde_json::json!({"remote": remote, "attempt": state.ready_timeouts}),
+                        );
+                        state.paused_reason = None;
+                        drop(state);
+                        self.2.notify_one();
+                        continue;
+                    }
+                    state.paused_reason = Some(if error == codex::ANCHOR_BUSY {
+                        codex::ANCHOR_BUSY
+                    } else {
+                        "create_failed_backoff"
+                    });
                 }
                 tokio::select! {
                     _ = &mut changed => {},
@@ -1566,7 +1681,10 @@ async fn create_local_warm_shell(
     manager: &SshManager,
     target: &Target,
 ) -> Result<WarmShell, String> {
-    let (_, session) = open_local_session(manager).await?;
+    // 本机 Server 重启/更新期间连不上：CLI 尚未启动，按可重试处理。
+    let (_, session) = open_local_session(manager)
+        .await
+        .map_err(codex::transport_error)?;
     let id = uuid::Uuid::new_v4().to_string();
     let mut entry = WarmShell {
         id,
@@ -1688,17 +1806,28 @@ async fn create_remote_warm_shell(
     target: &Target,
     remote: &RemoteTarget,
 ) -> Result<WarmShell, String> {
+    // 以下失败都发生在 CLI 启动前（远端服务重启/升级、网络抖动等），标为可重试，
+    // 不能让 CLI 预热因此停在 cli_not_ready。
     let directory = if target.key.profile.is_some() {
         // 已信任的项目根只用于授权打开连接；CLI 本身在专用空目录启动。
         let parsed = parse_remote_uri(&target.project_path)?;
-        let sftp = manager.open_sftp(&remote.connection_id).await?;
-        let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root).await?;
+        let sftp = manager
+            .open_sftp(&remote.connection_id)
+            .await
+            .map_err(codex::transport_error)?;
+        let canonical = ensure_existing_path_within(&sftp, &parsed.path, &remote.root)
+            .await
+            .map_err(codex::transport_error)?;
         if remote_native_directory(&canonical)
             != remote_native_directory(&remote.root.canonical_path)
         {
             return Err("预热终端需要匹配已注册项目根目录".into());
         }
-        Some(remote_cli_anchor(manager, &remote.connection_id).await?)
+        Some(
+            remote_cli_anchor(manager, &remote.connection_id)
+                .await
+                .map_err(codex::transport_error)?,
+        )
     } else {
         None
     };
@@ -1710,11 +1839,12 @@ async fn create_remote_warm_shell(
         &client_id,
         &remote.daemon,
     )
-    .await?;
+    .await
+    .map_err(codex::transport_error)?;
     if !remote_target_valid(manager, remote) {
         session.shutdown();
         transport.release();
-        return Err("预热期间项目授权或连接已变化".into());
+        return Err(codex::transport_error("预热期间项目授权或连接已变化"));
     }
     prepare_remote_shell(target, remote, transport, session, directory).await
 }
@@ -1825,6 +1955,7 @@ pub(in crate::remote_ssh::server::terminal) async fn real_host_cli_probe(
         profile_id: command.into(),
         shell: shell.into(),
         command: command.into(),
+        count: 1,
     };
     let mut target = profile
         .target(manager, "stab")

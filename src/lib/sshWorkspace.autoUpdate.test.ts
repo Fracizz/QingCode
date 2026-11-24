@@ -47,7 +47,16 @@ describe('first-open automatic paired Server update', () => {
     mocks.invoke.mockImplementation(async (_label, command) => {
       if (command === 'ssh_prepare_workspace' && preparations++ === 0) throw mismatch
     })
-    await run()
+    const updated = vi.fn()
+    vi.stubGlobal('window', { dispatchEvent: updated })
+    try {
+      await run()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    // 进度卡标题为连接共享的「远端服务」（连接名由角标显示）；完成通知按连接命名，并带上连接 id 供预热队列立即放行同连接项目。
+    expect(useServerOperationStore.getState().tasks[project.path].name).toBe('远端服务')
+    expect(updated.mock.calls[0][0].detail).toEqual({ rootUri: project.path, name: 'SSH（dev@localhost）', connectionId: ssh.id })
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ packageSource: { mode: 'offline', directory: '/offline' }, sshConnectionId: ssh.id }), expect.any(Function))
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ packageDirectory: '/offline', rootUri: project.path }), expect.any(Function))
     expect(preparations).toBe(2)

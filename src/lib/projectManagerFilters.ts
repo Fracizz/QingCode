@@ -15,6 +15,27 @@ export interface ProjectFilterData {
   searchText: string
 }
 
+export interface ProjectSourceOption {
+  source: string
+  sourceLabel: string
+}
+
+/**
+ * 来源筛选的远程连接选项：只列本机已配置的远程连接（WSL 也按普通 Linux SSH 连接添加），
+ * 按名称排序；不为已删除/未知连接生成无名条目。
+ */
+export function buildProjectSourceOptions(
+  connections: ReadonlyArray<SshConnection>,
+  locale: string
+): ProjectSourceOption[] {
+  return connections
+    .map(connection => ({
+      source: `ssh:${connection.id}`,
+      sourceLabel: sshConnectionLabel(connection),
+    }))
+    .sort((a, b) => a.sourceLabel.localeCompare(b.sourceLabel, locale))
+}
+
 /** Search all source metadata, even when a unique name has no visible source badge. */
 export function buildProjectFilterData(
   projects: ReadonlyArray<Project>,

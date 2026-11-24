@@ -25,6 +25,15 @@ export async function authorizeExistingFile(path: string): Promise<boolean> {
   return safeInvoke<boolean>('授权文件', 'authorize_existing_file', { path })
 }
 
+/**
+ * 只读授权 SSH 项目根外的单个远程文件（终端里 Ctrl+点击远端路径）。要求同一连接上有已注册
+ * 项目、目标是已存在的普通文件；返回是否授权成功。授权后只能读取，不能写入或执行。
+ */
+export async function authorizeRemoteOutsideFile(uri: string): Promise<boolean> {
+  if (!hasBackend()) return false
+  return safeInvoke<boolean>('授权远程文件', 'ssh_authorize_outside_file', { path: uri })
+}
+
 export async function syncRootsFromProjects(
   projects: Array<{ path: string }>,
 ): Promise<void> {

@@ -95,7 +95,7 @@ describe('listenForCliRequests', () => {
       await vi.waitFor(() => expect(safeInvoke).toHaveBeenCalledWith(expect.any(String), 'resolve_cli_request', {
         id: 'list', ok: true, error: null, data: {
           defaultProfileId: 'default', profiles: expect.arrayContaining([
-            { id: profile.id, name: profile.name, shell: expect.any(String), trusted: true },
+            { id: profile.id, name: profile.name, shell: expect.any(String), scope: null, trusted: true },
           ]),
         },
       }))

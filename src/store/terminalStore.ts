@@ -1,6 +1,6 @@
 import { localCodexPrewarm } from '../lib/terminal/localCodexPrewarm'
 import { connectionPrewarmProfile } from '../lib/terminal/connectionPrewarmProfile'
-import { connectionDefaultProfileId } from '../lib/terminal/connectionDefaultProfile'
+import { effectiveDefaultProfileIdFor } from '../lib/terminal/connectionDefaultProfile'
 import { recordShellOpen } from '../lib/terminal/shellOpenDiagnostics'
 import { reservePrewarmedShell } from '../lib/terminal/shellPrewarmSettings'
 import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
@@ -31,6 +31,7 @@ import {
   disambiguateTerminalName,
   resolveNewTerminalName,
   terminalDisplayLabel,
+  posixSshShellLabelKey,
   windowsSshShellLabel,
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -109,6 +110,7 @@ import {
   sendPtySizePaced,
   terminalViewGrids,
 } from './terminal/ptySizing'
+import { discardSpawnInput, queueSpawnInput, takeSpawnInput } from './terminal/spawnInputQueue'
 import {
   bindTerminalInBackground,
   bindTerminalToPane,
@@ -130,7 +132,6 @@ export {
   hasTerminalScrollback,
   hydrateTerminalOutputForTabs,
   persistTerminalOutputNow,
-  scheduleTerminalOutputPersist,
   seedTerminalOutputFromPersist,
   subscribeTerminalOutput,
   type TerminalViewSnapshot,
@@ -515,7 +516,13 @@ interface TerminalState {
     name: string,
     linkage?: { runConfigId: string; runTaskId: string }
   ) => Promise<string | null>
-  closeTerminal: (id: string) => Promise<void>
+  /**
+   * `ignoreKillError`：进程已确认结束（如强制更新 Server 结束的终端）时，结束进程失败也照常移除标签，
+   * 不提示「关闭终端失败」。
+   */
+  closeTerminal: (id: string, options?: { ignoreKillError?: boolean }) => Promise<void>
+  /** 进程已确认结束（如退出应用时选择结束远程终端）：只移除标签与输出缓存，不再结束进程。 */
+  removeEndedTerminal: (id: string) => void
   closeOtherTerminals: (id: string) => Promise<void>
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
@@ -646,7 +653,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const connection = sshConnectionIdFromUri(projectPath)
     // 未指定配置时（点「+」），远程连接自己的默认配置优先于全局默认。
-    const profile = getTerminalProfile(profileId ?? connectionDefaultProfileId(connection) ?? undefined)
+    // 归属其他分类的全局默认回落到普通终端。
+    const profile = getTerminalProfile(profileId ?? effectiveDefaultProfileIdFor(connection))
     if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const openRequestedAt = performance.now()
     const shell = normalizeTerminalShell(profile.shell)
@@ -663,8 +671,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const id = 'id' in reservation ? reservation.id : crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
     const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
+    // 远端只收到配置自身的 shell（见 spawn），POSIX 远程不能按本机默认 Shell 命名。
+    const posixSshLabel = posixSshShellLabelKey(projectPath, shell)
     const shellLabel =
-      windowsSshShellLabel(projectPath, nameShell) ?? translate(terminalShellLabelKey(nameShell))
+      (posixSshLabel && translate(posixSshLabel)) ??
+      windowsSshShellLabel(projectPath, nameShell) ??
+      translate(terminalShellLabelKey(nameShell))
     const baseName = resolveNewTerminalName(
       profile.name,
       profile.command,
@@ -783,12 +795,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return id
   },
 
-  closeTerminal: async (id: string) => {
+  closeTerminal: async (id: string, options) => {
     const spawnInFlight = ptySpawnInFlight.has(id)
     clearPtySpawnFallback(id)
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
     deferredPtySync.delete(id)
+    discardSpawnInput(id)
     markIntentionalPtyKill(id)
     const terminal = get().terminals.find(candidate => candidate.id === id)
     // Restored metadata has no PTY until its first spawn. Removing an opted-out
@@ -797,11 +810,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       try {
         await killTerminalForClose(terminal, spawnInFlight)
       } catch (error) {
-        useProjectStore
-          .getState()
-          .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
-        releaseIntentionalPtyKill(id)
-        return
+        if (options?.ignoreKillError) {
+          console.warn(`close ended terminal ${id}: kill failed`, error)
+        } else {
+          useProjectStore
+            .getState()
+            .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
+          releaseIntentionalPtyKill(id)
+          return
+        }
       }
     }
     set(s => {
@@ -812,6 +829,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         terminals,
         ...clearClosedFromPanes(s, closed.projectId, id, terminals),
       }
+    })
+    clearTerminalOutput(id)
+  },
+
+  removeEndedTerminal: (id: string) => {
+    clearPtySpawnFallback(id)
+    ptySpawnInFlight.delete(id)
+    lastPtySize.delete(id)
+    deferredPtySync.delete(id)
+    discardSpawnInput(id)
+    set(s => {
+      const closed = s.terminals.find(t => t.id === id)
+      if (!closed) return {}
+      const terminals = s.terminals.filter(t => t.id !== id)
+      return { terminals, ...clearClosedFromPanes(s, closed.projectId, id, terminals) }
     })
     clearTerminalOutput(id)
   },
@@ -1226,7 +1258,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (failed?.status !== 'exited' || !failed.restoreUnavailable) continue
         set(state => {
           const terminals = state.terminals.filter(terminal => terminal.id !== failed.id)
-          return { terminals, ...clearClosedFromPanes(state, projectId, pane, terminals) }
+          return { terminals, ...clearClosedFromPanes(state, projectId, failed.id, terminals) }
         })
         disconnectNoticeShown.delete(failed.id)
         lastPtySize.delete(failed.id)
@@ -1539,6 +1571,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (data === '\x03') await enterShellAfterTask(id)
       return
     }
+    // 新建/接回在途（如远端服务更新中）后端还没有该终端：先暂存，就绪后补发。
+    if (ptySpawnInFlight.has(id) || tab.ptySpawnPending || tab.awaitingRestoreSpawn) {
+      if (!queueSpawnInput(id, data)) {
+        useProjectStore.getState().pushToast('error', translate('终端尚未就绪，超出暂存上限的输入已丢弃'))
+      }
+      return
+    }
     if (shouldCancelReconnectOnInput(tab, false, data)) {
       await cancelTerminalReconnect(id)
       return
@@ -1765,6 +1804,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           recordShellOpen(tab.projectId, result.outcome, performance.now() - tab.openRequestedAt, result.reason)
         }
       }
+      // 恢复时视图挂的常驻「正在接回」浮层：接回成功会被「已重新连接」替换，
+      // 回退新建时没有连接事件，这里收起，免得它一直留着。
+      if (activeTerminalOverlayNotice(id)?.sticky) clearTerminalOverlayNotice(id)
       // 先解除在途标记，补发的 resize/重绘才会真正下发。
       ptySpawnInFlight.delete(id)
       // 新建按 size 创建；接回按实测网格对齐，沿用 PTY 尺寸时本端不知道它的尺寸。
@@ -1779,8 +1821,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       } else if (deferred?.action === 'redraw') {
         void get().redrawTerminal(id, deferred.cols, deferred.rows)
       }
+      const queuedInput = takeSpawnInput(id)
+      if (queuedInput) void get().writeToTerminal(id, queuedInput)
     } catch (e) {
       console.error('spawnPendingTerminal failed:', e)
+      clearTerminalOverlayNotice(id)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id
@@ -1807,6 +1852,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     } finally {
       ptySpawnInFlight.delete(id)
       deferredPtySync.delete(id)
+      discardSpawnInput(id)
     }
   },
 
@@ -1984,7 +2030,7 @@ registerTerminalOutputPersistSource(() =>
 // Scrollback / command history is persisted separately (terminalSessionPersist).
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    persistTerminalOutputNow()
+    persistTerminalOutputNow({ renderScreens: true })
   })
 }
 

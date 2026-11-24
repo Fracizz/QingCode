@@ -1,14 +1,31 @@
 //! One refill worker per authenticated Server-mode connection (Windows or POSIX). A registered,
 //! trusted root permits opening the transport; the idle shell itself starts at home.
 use super::*;
+use std::collections::BTreeSet;
 
 #[derive(Default)]
 struct Connections {
     shell: Option<String>,
-    count: usize,
+    /// 各连接在「远程连接」中设置的普通 Shell 数量；未设置的连接按 [`DEFAULT_CONNECTION_COUNT`]。
+    counts: BTreeMap<String, usize>,
+    /// 已关闭预热的连接 id。
+    disabled: BTreeSet<String>,
     running: bool,
     pools: BTreeMap<String, ShellPrewarmPool>,
     profiles: BTreeMap<String, (String, PrewarmProfile, ShellPrewarmPool)>,
+}
+
+/// 连接未单独设置时保留的普通 Shell 数量（自动）：领取后立即补充。
+const DEFAULT_CONNECTION_COUNT: usize = 1;
+
+impl Connections {
+    fn count_for(&self, id: &str) -> usize {
+        self.counts
+            .get(id)
+            .copied()
+            .unwrap_or(DEFAULT_CONNECTION_COUNT)
+            .min(8)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -60,6 +77,20 @@ impl ConnectionShellPools {
         self.changed();
     }
 
+    /// 该连接的远端服务刚更新完成：普通 Shell 与 CLI 预热立即重试，不等失败退避。
+    pub(crate) fn server_restarted(&self, connection_id: &str) {
+        {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pool) = state.pools.get(connection_id) {
+                pool.retry_now();
+            }
+            if let Some((_, _, pool)) = state.profiles.get(connection_id) {
+                pool.retry_now();
+            }
+        }
+        self.changed();
+    }
+
     pub(crate) fn close_window(&self, window: &str) {
         self.0
             .lock()
@@ -84,18 +115,28 @@ impl ConnectionShellPools {
             .map(|(_, _, pool)| pool.clone())
     }
 
-    pub(crate) fn configure(&self, app: &AppHandle, shell: &str, count: usize) {
+    /// 远端普通 Shell 只看各连接自己的数量，与本机「Shell 预热数量」无关；
+    /// 数量为 0 的连接只停普通 Shell，CLI 预热照常（关闭整条连接用 `disabled`）。
+    pub(crate) fn configure(
+        &self,
+        app: &AppHandle,
+        shell: &str,
+        counts: BTreeMap<String, usize>,
+        disabled: impl IntoIterator<Item = String>,
+    ) {
+        let disabled: BTreeSet<String> = disabled.into_iter().collect();
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.shell.as_deref() == Some(shell) && state.count == count {
+        if state.shell.as_deref() == Some(shell)
+            && state.counts == counts
+            && state.disabled == disabled
+            && state.running
+        {
             return;
         }
         state.shell = Some(shell.into());
-        state.count = count;
-        if count == 0 {
-            for (_, pool) in std::mem::take(&mut state.pools) {
-                pool.stop();
-            }
-        } else if !state.running {
+        state.counts = counts;
+        state.disabled = disabled;
+        if !state.running {
             state.running = true;
             let pools = self.clone();
             let app = app.clone();
@@ -113,13 +154,15 @@ impl ConnectionShellPools {
         loop {
             {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if state.count == 0 {
-                    state.running = false;
-                    return;
-                }
                 let manager = app.state::<SshManager>();
-                for (window, profile, pool) in state.profiles.values() {
+                for (id, (window, profile, pool)) in &state.profiles {
+                    if state.disabled.contains(id) {
+                        pool.stop();
+                        continue;
+                    }
                     if pool.keeps_trusted_anchor(&manager, profile) {
+                        // 同一 CLI 仍可用：只同步该连接设置的数量，已就绪的 CLI 保留。
+                        pool.set_count(profile.pool_count());
                         continue;
                     }
                     if let Some(target) = profile.target(&manager, window) {
@@ -128,7 +171,8 @@ impl ConnectionShellPools {
                         pool.stop();
                     }
                 }
-                let eligible = connected_targets(&manager);
+                let mut eligible = connected_targets(&manager);
+                eligible.retain(|id, _| !state.disabled.contains(id) && state.count_for(id) > 0);
                 state.pools.retain(|id, pool| {
                     if eligible.contains_key(id) {
                         true
@@ -137,9 +181,9 @@ impl ConnectionShellPools {
                         false
                     }
                 });
-                let count = state.count;
                 let shell = state.shell.clone();
                 for (id, remote) in eligible {
+                    let count = state.count_for(&id);
                     let Ok((launch, key)) = remote_launch_key(&remote.root.uri, shell.as_deref())
                     else {
                         continue;
@@ -225,7 +269,7 @@ impl PrewarmProfile {
             cwd: self.cwd.clone(),
             key,
             launch,
-            count: 1,
+            count: self.pool_count(),
             window: window.to_owned(),
             remote: Some(remote),
         })
@@ -301,6 +345,7 @@ mod tests {
             profile_id: "claude".into(),
             shell: "auto".into(),
             command: "claude".into(),
+            count: 1,
         };
         let next_project = PrewarmProfile {
             cwd: "ssh://windev/D:/b".into(),
@@ -336,6 +381,18 @@ mod tests {
     }
 
     #[test]
+    fn each_connection_uses_its_own_shell_count() {
+        let state = Connections {
+            counts: BTreeMap::from([("off".into(), 0), ("many".into(), 3), ("huge".into(), 99)]),
+            ..Default::default()
+        };
+        assert_eq!(state.count_for("unset"), DEFAULT_CONNECTION_COUNT);
+        assert_eq!(state.count_for("off"), 0);
+        assert_eq!(state.count_for("many"), 3);
+        assert_eq!(state.count_for("huge"), 8);
+    }
+
+    #[test]
     fn anchored_profiles_are_kept_per_connection_and_removed_on_revocation() {
         let registry = ConnectionShellPools::default();
         let profile = |host: &str, command: &str| PrewarmProfile {
@@ -344,6 +401,7 @@ mod tests {
             shell: "auto".into(),
             command: command.into(),
             cross_project: false,
+            count: 1,
         };
         registry.set_profiles(
             "main",

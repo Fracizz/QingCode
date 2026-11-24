@@ -3,6 +3,7 @@ import {
   filterUnownedDetachedTerminals,
   parseSshDetachedTerminal,
   planTerminalRestore,
+  restoredReplayNeedsRedraw,
   terminalRestoreNotices,
   type SshDetachedTerminal,
 } from './terminalRestorePlan'
@@ -203,5 +204,30 @@ describe('detached terminal filtering', () => {
     const base = { ptyId: 'pty-2', connectionId: 'conn', cwd: 'ssh://conn/srv/app', cols: 100, rows: 30 }
     expect(parseSshDetachedTerminal({ ...base, detachedRemainingMs: 60_000 }, 1_000)?.expiresAt).toBe(61_000)
     expect(parseSshDetachedTerminal(base, 1_000)).not.toHaveProperty('expiresAt')
+  })
+})
+
+describe('restoredReplayNeedsRedraw', () => {
+  const restored = {
+    persistent: true,
+    ptyId: 'pty-1',
+    connectionId: 'conn',
+    cwd: 'ssh://conn/home/app',
+    awaitingRestoreSpawn: true,
+    status: 'exited' as const,
+  }
+
+  it('redraws a still-running process whose persisted history was replayed', () => {
+    expect(restoredReplayNeedsRedraw(true, restored)).toBe(true)
+    expect(restoredReplayNeedsRedraw(true, { ...restored, awaitingRestoreSpawn: false, status: 'running' })).toBe(true)
+    expect(restoredReplayNeedsRedraw(true, { ...restored, awaitingRestoreSpawn: false, status: 'starting' })).toBe(true)
+  })
+
+  it('skips views without replayed history, new processes and ended terminals', () => {
+    expect(restoredReplayNeedsRedraw(false, restored)).toBe(false)
+    expect(restoredReplayNeedsRedraw(true, undefined)).toBe(false)
+    expect(restoredReplayNeedsRedraw(true, { ...restored, persistent: false })).toBe(false)
+    expect(restoredReplayNeedsRedraw(true, { ...restored, ptyId: undefined })).toBe(false)
+    expect(restoredReplayNeedsRedraw(true, { ...restored, awaitingRestoreSpawn: false })).toBe(false)
   })
 })

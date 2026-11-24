@@ -366,5 +366,9 @@ pub async fn direct_agent_update(
     }
     result?;
     server::ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await?;
+    // 新网关与 daemon 均已通过校验：CLI/Shell 预热立即重建，不等重启窗口里积累的失败退避。
+    if let Some(pools) = app.try_state::<super::local_terminal::ConnectionShellPools>() {
+        pools.server_restarted(&id);
+    }
     server_status::state_for_root(&manager, &root)
 }

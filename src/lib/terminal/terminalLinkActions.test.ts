@@ -3,7 +3,7 @@ import { matchTerminalFileHits, terminalFileSearchName } from './terminalFileLin
 import { openTerminalFile } from './terminalLinkActions'
 import { getFileStat } from '../fileIpc'
 import { searchFiles } from '../searchFiles'
-import { authorizeExistingFile } from '../pathAllowlist'
+import { authorizeExistingFile, authorizeRemoteOutsideFile } from '../pathAllowlist'
 import { confirmDialog } from '../../store/confirmStore'
 
 const { openFile, openPalette, pushToast, workspace } = vi.hoisted(() => ({
@@ -16,7 +16,10 @@ const { openFile, openPalette, pushToast, workspace } = vi.hoisted(() => ({
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 vi.mock('../fileIpc', () => ({ getFileStat: vi.fn() }))
 vi.mock('../searchFiles', () => ({ searchFiles: vi.fn() }))
-vi.mock('../pathAllowlist', () => ({ authorizeExistingFile: vi.fn(async () => false) }))
+vi.mock('../pathAllowlist', () => ({
+  authorizeExistingFile: vi.fn(async () => false),
+  authorizeRemoteOutsideFile: vi.fn(async () => false),
+}))
 vi.mock('@tauri-apps/api/path', () => ({
   homeDir: vi.fn(async () => 'C:\\Users\\me'),
   tempDir: vi.fn(async () => 'C:\\Users\\me\\AppData\\Local\\Temp\\'),
@@ -198,14 +201,35 @@ describe('openTerminalFile in an SSH project', () => {
     workspace.root = 'D:\\code\\app'
   })
 
-  it('explains that remote files outside the project root cannot be opened', async () => {
-    await openTerminalFile('t1', { path: 'C:\\Users\\Administrator\\.claude\\settings.json' })
+  it('authorizes a remote file outside the root read-only and opens it', async () => {
+    vi.mocked(authorizeRemoteOutsideFile).mockResolvedValue(true)
+    await openTerminalFile('t1', { path: 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\sheet2.png' })
+    const expected = 'ssh://conn-1/C:/Users/Administrator/AppData/Local/Temp/sheet2.png'
+    expect(authorizeRemoteOutsideFile).toHaveBeenCalledWith(expected)
     expect(authorizeExistingFile).not.toHaveBeenCalled()
+    expect(openFile).toHaveBeenCalledWith(expected, undefined, undefined)
+    expect(pushToast).not.toHaveBeenCalled()
+  })
+
+  it('reports a missing remote file outside the root', async () => {
+    vi.mocked(authorizeRemoteOutsideFile).mockResolvedValue(false)
+    await openTerminalFile('t1', { path: 'C:\\Users\\Administrator\\gone.png' })
+    expect(openFile).not.toHaveBeenCalled()
     expect(searchFiles).not.toHaveBeenCalled()
-    expect(pushToast).toHaveBeenCalledWith(
-      'error',
-      '只能打开远程项目根目录内的文件：C:\\Users\\Administrator\\.claude\\settings.json',
-    )
+    expect(pushToast).toHaveBeenCalledWith('error', '未找到文件：C:\\Users\\Administrator\\gone.png')
+  })
+
+  it('asks before authorizing a hidden OSC 8 remote target outside the root', async () => {
+    vi.mocked(confirmDialog).mockResolvedValue(false)
+    await openTerminalFile('t1', { path: 'C:\\Users\\me\\a.txt' }, { confirmOutsideProject: true })
+    expect(confirmDialog).toHaveBeenCalledOnce()
+    expect(authorizeRemoteOutsideFile).not.toHaveBeenCalled()
+  })
+
+  it('explains that remote path variables cannot be expanded locally', async () => {
+    await openTerminalFile('t1', { path: '~/.claude/settings.json' })
+    expect(authorizeRemoteOutsideFile).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalledWith('error', '无法在本机展开远程终端的路径变量：~/.claude/settings.json')
   })
 
   it('still reports a missing file inside the remote project root', async () => {

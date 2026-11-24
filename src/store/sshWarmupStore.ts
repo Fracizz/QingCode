@@ -20,6 +20,13 @@ interface ForegroundLease {
 /** 进行中的前台打开，跨队列重建保留，避免队列晚于打开流程创建时漏掉让路。 */
 const foregroundLeases = new Set<ForegroundLease>()
 
+interface ConnectionHold {
+  connectionId: string
+  release?: (verified: boolean) => void
+}
+/** 进行中的连接级服务检查/更新，同样跨队列重建保留。 */
+const connectionHolds = new Set<ConnectionHold>()
+
 export function startSshWarmupQueue(): SshWarmupQueue<FileNode[] | null> {
   queue?.dispose()
   const next = new SshWarmupQueue<FileNode[] | null>({
@@ -46,6 +53,7 @@ export function startSshWarmupQueue(): SshWarmupQueue<FileNode[] | null> {
   queue = next
   // 队列创建前已开始的前台打开（如启动恢复的项目）仍要让同连接的后台任务让路。
   for (const lease of foregroundLeases) lease.release = next.beginForeground(lease.connectionId)
+  for (const hold of connectionHolds) hold.release = next.holdConnection(hold.connectionId)
   return next
 }
 
@@ -63,6 +71,25 @@ export function beginSshForeground(connectionId?: string): () => void {
     if (!foregroundLeases.delete(lease)) return
     lease.release?.()
   }
+}
+
+/**
+ * 连接级服务检查/自动更新期间暂停该连接的后台项目准备；结束时传入服务是否已确认可用，
+ * 可用则同连接项目立即并发准备。
+ */
+export function holdSshWarmupConnection(connectionId: string): (verified: boolean) => void {
+  const hold: ConnectionHold = { connectionId, release: queue?.holdConnection(connectionId) }
+  connectionHolds.add(hold)
+  return verified => {
+    if (!connectionHolds.delete(hold)) return
+    if (hold.release) hold.release(verified)
+    else if (verified) queue?.connectionVerified(connectionId)
+  }
+}
+
+/** 连接的远端服务已确认可用（如手动更新完成）：同连接项目立即重新准备。 */
+export function markSshWarmupConnectionVerified(connectionId: string) {
+  queue?.connectionVerified(connectionId)
 }
 
 export function takeSshWarmup(path: string): Promise<FileNode[] | null | undefined> | undefined {

@@ -209,13 +209,14 @@ export class WebTestBackend {
     if (failure) throw new Error(failure)
     const path = typeof args.path === 'string' ? args.path : ''
     const id = String(args.id ?? '')
-    if (command.startsWith('plugin:sql|')) {
+    if (command.startsWith('db_')) {
       if (args.db !== TEST_DB) throw new Error('Web test only opens its isolated database')
-      if (command === 'plugin:sql|load') return TEST_DB
-      if (command === 'plugin:sql|select')
+      if (command === 'db_load') return TEST_DB
+      if (command === 'db_select')
         return this.db.select(String(args.query), args.values as SqlValue[])
-      if (command === 'plugin:sql|execute')
+      if (command === 'db_execute')
         return this.db.execute(String(args.query), args.values as SqlValue[])
+      if (command === 'db_close') return true
     }
     // SSH file commands retain resource URIs and check the simulated transport.
     if (

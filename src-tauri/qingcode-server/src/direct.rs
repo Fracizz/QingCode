@@ -192,8 +192,13 @@ pub fn replace_private_file(source: &Path, destination: &Path) -> Result<(), Str
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("临时凭据必须是普通文件".into());
     }
-    if std::fs::symlink_metadata(destination).is_ok_and(|value| value.file_type().is_symlink()) {
-        return Err("凭据目标不能是符号链接".into());
+    if let Ok(existing) = std::fs::symlink_metadata(destination) {
+        if existing.file_type().is_symlink() {
+            return Err("凭据目标不能是符号链接".into());
+        }
+        if existing.is_dir() {
+            return Err("凭据目标不能是目录".into());
+        }
     }
     #[cfg(windows)]
     {
@@ -208,25 +213,40 @@ pub fn replace_private_file(source: &Path, destination: &Path) -> Result<(), Str
         }
         source.push(0);
         destination.push(0);
-        // SAFETY: paths are NUL-terminated UTF-16, live throughout the call;
-        // COPY_ALLOWED is intentionally absent so cross-volume moves fail.
-        if unsafe {
-            MoveFileExW(
-                source.as_ptr(),
-                destination.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        } == 0
-        {
-            return Err(format!(
-                "原子替换凭据文件失败: {}",
-                io::Error::last_os_error()
-            ));
+        // 目标文件被其他进程以不含 FILE_SHARE_DELETE 的方式短暂打开时（Windows OpenSSH
+        // 的 sftp-server 读取描述、杀毒/索引扫描等），替换会返回拒绝访问或共享冲突；
+        // 这类占用通常在毫秒级释放，短暂重试而不是让网关启动失败。
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut delay = Duration::from_millis(20);
+        loop {
+            // SAFETY: paths are NUL-terminated UTF-16, live throughout the call;
+            // COPY_ALLOWED is intentionally absent so cross-volume moves fail.
+            if unsafe {
+                MoveFileExW(
+                    source.as_ptr(),
+                    destination.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            } != 0
+            {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if !is_transient_replace_error(&error) || std::time::Instant::now() >= deadline {
+                return Err(format!("原子替换凭据文件失败: {error}"));
+            }
+            std::thread::sleep(delay);
+            delay = (delay * 2).min(Duration::from_millis(200));
         }
-        Ok(())
     }
     #[cfg(not(windows))]
     std::fs::rename(source, destination).map_err(|error| format!("原子替换凭据文件失败: {error}"))
+}
+
+/// 拒绝访问（5）、共享冲突（32）、锁冲突（33）：目标被他人短暂占用，可重试。
+#[cfg(windows)]
+fn is_transient_replace_error(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(5 | 32 | 33))
 }
 
 pub fn private_write(path: &Path, content: &[u8]) -> Result<(), String> {
@@ -1174,6 +1194,33 @@ mod tests {
         let directory = dir.join("not-a-file");
         std::fs::create_dir(&directory).unwrap();
         assert!(replace_private_file(&directory, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"replacement");
+        let staged_dir = dir.join("credentials.next");
+        std::fs::write(&staged_dir, b"next").unwrap();
+        assert!(replace_private_file(&staged_dir, &directory).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 读者以不含 FILE_SHARE_DELETE 的方式短暂打开描述文件时，替换应等待占用释放。
+    #[cfg(windows)]
+    #[test]
+    fn private_file_replacement_waits_for_reader_without_share_delete() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temporary();
+        let destination = dir.join("endpoint.json");
+        std::fs::write(&destination, b"previous").unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE，不含 FILE_SHARE_DELETE。
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1 | 2)
+            .open(&destination)
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(reader);
+        });
+        private_write(&destination, b"replacement").unwrap();
+        release.join().unwrap();
         assert_eq!(std::fs::read(&destination).unwrap(), b"replacement");
         std::fs::remove_dir_all(dir).unwrap();
     }

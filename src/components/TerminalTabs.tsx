@@ -45,6 +45,7 @@ import {
   subscribeTerminalActivityIndicator,
 } from '@/lib/terminal/terminalActivitySettings'
 import { terminalTabTooltip } from '@/lib/terminal/terminalTabPresentation'
+import { showsPrewarmHit, showsPrewarmPending } from '@/lib/terminal/prewarmIndicator'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
 
@@ -92,13 +93,15 @@ function TerminalPaneHeader({
 const PREWARM_PENDING_DELAY_MS = 300
 
 /** 预热状态是否需要在标题旁占位（命中图标或接管中的加载指示）。 */
-function hasPrewarmIndicator(prewarm: TerminalTab['prewarm']): boolean {
-  return prewarm?.outcome === 'hit' || prewarm?.outcome === 'reserved'
+function hasPrewarmIndicator(terminal: PrewarmIndicatorView): boolean {
+  return showsPrewarmHit(terminal) || showsPrewarmPending(terminal)
 }
 
-function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm'] }) {
+type PrewarmIndicatorView = Pick<TerminalTab, 'prewarm' | 'launchCommand'>
+
+function TerminalPrewarmIndicator({ terminal }: { terminal: PrewarmIndicatorView }) {
   const { t } = useI18n()
-  const reserved = prewarm?.outcome === 'reserved'
+  const reserved = showsPrewarmPending(terminal)
   const [pendingVisible, setPendingVisible] = useState(false)
   useEffect(() => {
     if (!reserved) return
@@ -109,10 +112,10 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
     }
   }, [reserved])
 
-  if (prewarm?.outcome === 'hit') {
+  if (showsPrewarmHit(terminal)) {
     return (
       <Tooltip label={t('已领取预热终端')} side="top" wrapperClassName="inline-flex shrink-0">
-        <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-fg-muted">
+        <span role="img" aria-label={t('已领取预热终端')} data-terminal-prewarm="" className="inline-flex text-brand">
           <Zap size={12} aria-hidden="true" />
         </span>
       </Tooltip>
@@ -133,14 +136,14 @@ function TerminalPrewarmIndicator({ prewarm }: { prewarm: TerminalTab['prewarm']
   return null
 }
 
-export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTab, 'name' | 'prewarm'> }) {
+export function TerminalSessionHeader({ terminal }: { terminal?: Pick<TerminalTab, 'name' | 'prewarm' | 'launchCommand'> }) {
   return (
     <TerminalPaneHeader>
       {terminal?.name && (
         // 名称与状态图标按文字基线对齐（图标底边落在基线上），整组再在头部内垂直居中。
         <div className="flex min-w-0 items-baseline gap-1.5 overflow-hidden px-2">
           <span className="min-w-0 truncate text-ui text-fg">{formatTerminalName(terminal.name)}</span>
-          <TerminalPrewarmIndicator prewarm={terminal.prewarm} />
+          <TerminalPrewarmIndicator terminal={terminal} />
         </div>
       )}
     </TerminalPaneHeader>
@@ -221,7 +224,7 @@ export default function TerminalTabs({
 
   // Stable deps for overflow measure (avoid new-array identity loops).
   const projectTerminalMeasureKey = projectTerminals
-    .map(term => `${term.id}:${term.name}:${term.status}:${term.prewarm?.outcome === 'hit'}`)
+    .map(term => `${term.id}:${term.name}:${term.status}:${showsPrewarmHit(term)}`)
     .join('|')
 
   useLayoutEffect(() => {
@@ -343,7 +346,7 @@ export default function TerminalTabs({
               if (!t) return null
               const isCloseArmed = closeArmId === t.id
               const isActive = t.id === paneActiveId
-              const showPrewarm = t.prewarm?.outcome === 'hit' && renamingId !== t.id
+              const showPrewarm = showsPrewarmHit(t) && renamingId !== t.id
               const tooltipLines = terminalTabTooltip(t, translate)
               return (
                 <div
@@ -455,7 +458,7 @@ export default function TerminalTabs({
                         </span>
                       </Tooltip>
                     )}
-                    {renamingId !== t.id && <TerminalPrewarmIndicator prewarm={t.prewarm} />}
+                    {renamingId !== t.id && <TerminalPrewarmIndicator terminal={t} />}
                     {t.status === 'reconnecting' && renamingId !== t.id && (
                       <Tooltip
                         label={translate('正在重新连接…')}
@@ -637,7 +640,7 @@ export default function TerminalTabs({
             >
               <span className="ui-chip ui-chip-compact h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
-              {hasPrewarmIndicator(term.prewarm) && renamingId !== term.id && (
+              {hasPrewarmIndicator(term) && renamingId !== term.id && (
                 <span data-terminal-prewarm="" className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
               )}
               {term.status === 'reconnecting' && (

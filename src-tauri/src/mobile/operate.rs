@@ -92,7 +92,11 @@ pub(super) enum Operation {
     /// 手机后台提醒：所有项目会话的忙碌、退出和提醒计数，不含任何终端内容。
     Attention,
     /// 电脑端「终端配置」列表（只含 id / 名称 / 是否已信任，不含命令）。
-    TerminalProfiles,
+    /// 带 `project` 时只列出该项目所属连接（或本机）分类和通用配置；旧版手机不传，列出全部。
+    TerminalProfiles {
+        #[serde(default)]
+        project: Option<String>,
+    },
     /// 电脑端终端快捷键栏的自定义键（名称 / 文本 / 是否回车），供手机导入；只读。
     ShortcutKeys,
     Create {
@@ -294,7 +298,9 @@ pub(super) async fn operate(
                 .map(|(id, session)| session.attention(id))
                 .collect::<Vec<_>>()))
         }
-        Operation::TerminalProfiles => desktop_query(app, json!({ "profiles": true })).await,
+        Operation::TerminalProfiles { project } => {
+            desktop_query(app, json!({ "profiles": true, "project": project })).await
+        }
         Operation::ShortcutKeys => desktop_query(app, json!({ "shortcutKeys": true })).await,
         Operation::Create {
             project,
@@ -465,17 +471,26 @@ pub(super) async fn apply_resize(
     rows: u16,
 ) -> Result<(), String> {
     let (cols, rows) = size(cols, rows);
-    if routes_through_ssh_table(app, kind, id) {
+    let hub = &app.state::<MobileState>().inner().hub;
+    let previous = hub.screen_size(id);
+    // 先把新尺寸与尺寸方通知电脑端，再改 PTY：电脑端 xterm 要在 ConPTY / 程序按新尺寸
+    // 重绘之前换好网格，否则重绘落进旧网格（例如手机交还尺寸后仍是手机的窄网格），画面错位叠帧。
+    // 事件按发出顺序送达，改尺寸之后才产生的输出一定排在这条通知后面。
+    hub.with_session(id, |session| session.screen.resize(cols, rows));
+    emit_control(app, id);
+    let result = if routes_through_ssh_table(app, kind, id) {
         crate::remote_ssh::ssh_resize_terminal_unchecked(id.to_owned(), cols, rows, app.state())
-            .await?;
+            .await
     } else {
-        app.state::<crate::TerminalManager>()
-            .resize(id, cols, rows)?;
+        app.state::<crate::TerminalManager>().resize(id, cols, rows)
+    };
+    if result.is_err() {
+        if let Some((cols, rows)) = previous {
+            hub.with_session(id, |session| session.screen.resize(cols, rows));
+        }
+        emit_control(app, id);
     }
-    app.state::<MobileState>()
-        .hub
-        .with_session(id, |session| session.screen.resize(cols, rows));
-    Ok(())
+    result
 }
 
 /// 手机接入请求的参数，`size` 是手机报上的本机网格。
@@ -526,7 +541,9 @@ pub(super) async fn attach(
     // 先记下本机网格：已是尺寸方时直接得到要改的尺寸，接管时 `take_exclusive` 也用这份新尺寸。
     let fresh = size.and_then(|(cols, rows)| hub.attach_size(&id, device, cols, rows));
     let claim = hub.claim_rejoin(&id, device, take, observe, rejoin)?;
-    let resize = claim.resize.or(fresh);
+    // 手机查看终端时默认改用手机尺寸：可输入且尺寸未锁定就成为尺寸方，电脑打字或「按电脑尺寸」再改回。
+    let taken = size.and_then(|_| hub.attach_take_size(&id, device));
+    let resize = claim.resize.or(fresh).or(taken);
     let redraw = resize.is_some_and(|grid| hub.screen_size(&id).is_some_and(|now| now != grid));
     if redraw {
         hub.with_session(&id, Session::note_resize);

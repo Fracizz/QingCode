@@ -10,8 +10,22 @@
             # Create the remote dedicated directory on first use; it is then checked to be an empty non-link.
             if (!(Test-Path -LiteralPath $anchor)) { New-Item -ItemType Directory -Path $anchor -ErrorAction Stop | Out-Null }
             Set-Location -LiteralPath $anchor -ErrorAction Stop
-            if (((Get-Item -Force -LiteralPath $anchor -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-                @(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop).Count) { exit 1 }
+            if ((Get-Item -Force -LiteralPath $anchor -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 1 }
+            # 清掉此前 CLI 会话留下的空目录（不进入链接）；仍有文件时报告目录被占用，稍后重试。
+            function Remove-QcEmptyDirectory([string]$dir) {
+                foreach ($child in @(Get-ChildItem -Force -Directory -LiteralPath $dir -ErrorAction Stop)) {
+                    if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                    Remove-QcEmptyDirectory $child.FullName
+                    if (!@(Get-ChildItem -Force -LiteralPath $child.FullName -ErrorAction Stop).Count) {
+                        Remove-Item -Force -LiteralPath $child.FullName -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            Remove-QcEmptyDirectory $anchor
+            if (@(Get-ChildItem -Force -LiteralPath $anchor -ErrorAction Stop).Count) {
+                [Console]::WriteLine("QC-$nonce-anchor_busy!")
+                exit 1
+            }
         }
         $pi = Get-Command -Name pi -ErrorAction SilentlyContinue | Select-Object -First 1
         if (!$pi) {

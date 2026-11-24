@@ -36,6 +36,10 @@ export function requestAppClose(): Promise<void> {
           ...(tab.cwd.startsWith('ssh://') ? {} : { persistent: undefined, ptyId: undefined, connectionId: undefined }) }
         : current,
     ) })),
+    removeEnded: tab => {
+      const current = useTerminalStore.getState().terminals.find(t => t.id === tab.id && t.ptyId === tab.ptyId)
+      if (current) useTerminalStore.getState().removeEndedTerminal(current.id)
+    },
     markDetached: tab => {
       const currentTab = useTerminalStore.getState().terminals.find(t => t.id === tab.id && t.ptyId === tab.ptyId)
       if (currentTab) rememberPreservedTerminalName(currentTab)

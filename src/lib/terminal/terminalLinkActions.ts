@@ -4,7 +4,7 @@ import type { IBufferRange, Terminal } from '@xterm/xterm'
 import { loadExcludeSettingsForProject } from '../excludeSettings'
 import { getFileStat } from '../fileIpc'
 import { translate } from '../i18n'
-import { authorizeExistingFile } from '../pathAllowlist'
+import { authorizeExistingFile, authorizeRemoteOutsideFile } from '../pathAllowlist'
 import { searchFiles, type SearchFilesResult } from '../searchFiles'
 import { useCommandPaletteStore } from '../../store/commandPaletteStore'
 import { confirmDialog } from '../../store/confirmStore'
@@ -78,8 +78,8 @@ interface OpenTerminalFileOptions {
 }
 
 /**
- * 候选路径能否作为文件打开。项目外的本机文件不在路径沙箱里，用户点击后只授权这一个
- * 已存在的普通文件；`ssh://` 资源只在项目根目录内，不做授权。
+ * 候选路径能否作为文件打开。项目外的文件不在沙箱里，用户点击后只授权这一个已存在的
+ * 普通文件：本机文件走路径沙箱，同一 SSH 连接上的远程文件只读授权（不能保存或执行）。
  */
 async function isOpenableFile(path: string, root: string, options: OpenTerminalFileOptions) {
   try {
@@ -87,7 +87,7 @@ async function isOpenableFile(path: string, root: string, options: OpenTerminalF
   } catch {
     // 不存在、不在允许范围内或远端不可达。
   }
-  if (path.startsWith('ssh://') || isTerminalPathUnderRoot(path, root)) return false
+  if (isTerminalPathUnderRoot(path, root)) return false
   if (options.confirmOutsideProject) {
     const confirmed = await confirmDialog({
       title: translate('打开项目外的文件？'),
@@ -99,7 +99,9 @@ async function isOpenableFile(path: string, root: string, options: OpenTerminalF
     if (!confirmed) return false
   }
   try {
-    return await authorizeExistingFile(path)
+    return path.startsWith('ssh://')
+      ? await authorizeRemoteOutsideFile(path)
+      : await authorizeExistingFile(path)
   } catch (error) {
     console.warn('authorize terminal file failed:', error)
     return false
@@ -137,9 +139,9 @@ export async function openTerminalFile(
   if (signal.aborted) return
 
   const query = project ? terminalFileSearchName(target.path) : null
-  // SSH 项目只解析根目录内的路径：根外绝对路径（或远端路径变量）没有候选，文件可能存在，不能报"未找到"。
+  // 远端路径变量（`~`、`%TEMP%`）无法在本机展开，没有候选；文件可能存在，不能报"未找到"。
   if (root.startsWith('ssh://') && !candidates.length && !query) {
-    pushToast('error', translate('只能打开远程项目根目录内的文件：{path}', { path: target.path }))
+    pushToast('error', translate('无法在本机展开远程终端的路径变量：{path}', { path: target.path }))
     return
   }
   const notFound = () => pushToast('error', translate('未找到文件：{path}', { path: target.path }))

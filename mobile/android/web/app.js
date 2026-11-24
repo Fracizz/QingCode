@@ -19,6 +19,7 @@ import {
   parsePairingLink,
   projectLocation,
   projectPlaceLabel,
+  projectSessionsFromOverview,
   projectSourceLabel,
   rememberProject,
   renameProfileKeys,
@@ -54,6 +55,7 @@ import { createDashboardView } from './dashboardView.js';
 import { createPairingFlow } from './pairingFlow.js';
 import { createOutputReader } from './outputReader.js';
 import { createComposeStatus } from './composeStatus.js';
+import { createNewSessionDialog } from './newSessionDialog.js';
 import { createSessionDrawer } from './sessionDrawer.js';
 import { createSessionOverview } from './sessionOverview.js';
 import { createHeroHeader } from './heroHeader.js';
@@ -77,6 +79,7 @@ const native = window.QingCodeNative;
 const loadTerminalFont = createTerminalFontLoader(document.fonts, 2500, {
   cjkFace: () => (window.QingCodeNative ? createCjkFontFace(window.FontFace) : null),
 });
+whenIdle(loadTerminalFont);
 document.documentElement.lang = initLocale(localStorage, navigator) === 'en' ? 'en' : 'zh-CN';
 translateDocument(document.body);
 // 语言切换：立即生效。原生 WebView 拦截了页面内跳转，location.reload() 不会真正重载，
@@ -160,8 +163,10 @@ let page = 'home';
 let shownScreen = 'dashboard';
 let sessions = [];
 let selected = null;
+// 当前接入的会话条目；电脑终端不在本项目会话列表里，顶栏靠它显示预热标志。
+let selectedEntry = null;
 let foreground = true;
-// 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
+// 电脑端终端配置（按电脑和目标项目缓存，配置按项目所属连接分类），弹窗打开时先显示缓存再刷新。
 const terminalProfiles = new Map();
 let terminalProfilesRequest = 0;
 let viewEpoch = 0;
@@ -188,6 +193,7 @@ let terminalLinks;
 // 链接弹层当前显示的目标：{ url, open, note }。
 let linkTarget = null;
 let terminalReady = false;
+let firstScreenStart = null;
 // 切换终端时旧画面留在新终端上方，新终端写好第一屏再撤掉，避免黑屏。
 let heldFrame = null;
 let frameStatusTimer;
@@ -416,6 +422,7 @@ const drawer = createSessionDrawer({
     project: () => project,
     sessions: () => sessions,
     selected: () => selected,
+    selectedEntry: () => (selectedEntry?.id === selected ? selectedEntry : null),
     busy: () => busy,
     viewEpoch: () => viewEpoch,
     foreground: () => foreground,
@@ -642,7 +649,7 @@ async function openSessionTarget(target) {
   }
   if (!await activate(item)) return;
   const destination = projects.find(candidate => candidate.id === target.project);
-  if (destination) await openProject(destination, false, { id: target.session });
+  if (destination) await openProject(destination, { target: { id: target.session }, take: true });
 }
 window.qingOpenSession = target => { void openSessionTarget(target); };
 // 在线更新：版本信息、后台检查与安装包下载（原生层经 window.qingUpdate 回传进度）。
@@ -722,7 +729,7 @@ function showPage(next) {
   shownScreen = 'dashboard';
   // 旧画面（终端或上一页）以快照退出，同一页刷新不做过渡。
   let placed = Promise.resolve();
-  if (changed) placed = swapScreen(placeScreen, direction);
+  if (changed) placed = swapScreen(placeScreen, direction, fromTerminal ? 'screen' : 'page');
   else placeScreen();
   syncLatency();
   if (next === 'home') {
@@ -933,7 +940,10 @@ get('refresh').addEventListener('click', async () => {
   }
 });
 get('search').addEventListener('input', () => dashboard.renderProjects());
-get('resume').addEventListener('click', () => { void openProject(lastProject()); });
+get('resume').addEventListener('click', () => {
+  const target = resumeSession();
+  void openProject(lastProject(), target ? { target, knownSessions: projectSessionsFromOverview(homeOverview.list(), target.project.id) } : {});
+});
 get('browse-projects').addEventListener('click', () => showPage('project'));
 get('project-empty-action').addEventListener('click', () => {
   if (!profile) showPage('connection');
@@ -969,7 +979,10 @@ for (const item of get('dashboard-nav').querySelectorAll('button')) {
       return;
     }
     lastNavigationTap = { page: next, time: event.timeStamp };
+    const changed = page !== next;
     showPage(next);
+    // 底部导航切到另一页时静默刷新一次项目与连接状态（首页会话列表由 showPage 刷新）；连接中或授权失效时不重复发起。
+    if (changed && profile && hostState(profile) !== 'checking' && hostState(profile) !== 'expired') void refreshProjects();
   });
 }
 
@@ -1387,6 +1400,7 @@ function leaveTerminal({ preserveFullscreen = false, keepDrawer = false, holdFra
   fitting = null;
   for (const id of ['share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) get(id).close();
   selected = null;
+  selectedEntry = null;
   composing = false;
   clearModifiers();
   setRawKeyboard(false);
@@ -2001,7 +2015,7 @@ function handleTerminalError(error, retry = null) {
   }
 }
 
-async function openProject(item, resumeOnly = false, target = null) {
+async function openProject(item, { resumeOnly = false, target = null, knownSessions, take = false, started = performance.now() } = {}) {
   if (!item || busy) return;
   setSessionBusy(true);
   // 已在终端页时是切换项目：保留旧画面，也不退出沉浸模式再进入。
@@ -2012,8 +2026,8 @@ async function openProject(item, resumeOnly = false, target = null) {
   drawer.enterProject(item.id);
   sessions = [];
   compose.value = '';
-  get('terminal-name').textContent = item.name;
-  get('terminal-prewarm').hidden = true;
+  get('terminal-name').textContent = target?.name ? sessionName(target) : item.name;
+  get('terminal-prewarm').setAttribute('hidden', '');
   // 头部只留一行：项目名与连接名（与 sessionDrawer.js 一致），完整来源在项目列表与会话侧栏中可见。
   get('terminal-host').textContent = [item.name, projectPlaceLabel({ ...item, host: '' })].join(' · ');
   // 从工作台进入时工作台以快照往左退出，终端原地淡入；切换项目时已在终端页，直接摆放。
@@ -2021,31 +2035,32 @@ async function openProject(item, resumeOnly = false, target = null) {
   shownScreen = 'terminal';
   const placed = entering ? swapScreen(placeScreen, 'forward') : (placeScreen(), Promise.resolve());
   void syncTerminalFullscreen();
-  awaitNewFrame(t('正在连接终端…'));
+  awaitNewFrame(t(target ? '正在接入终端…' : '正在连接终端…'));
   try {
-    // 等终端页真正显示后再加载字体、测量行列。
-    await placed;
-    if (epoch !== viewEpoch) return;
-    await loadTerminalFont();
-    if (epoch !== viewEpoch) return;
-    drawer.render();
-    renderInputTip();
-    const list = await remote('sessions', { project: item.id });
+    // 已点选的会话可直接接入；首次打开项目时并行准备字体、页面和会话列表。
+    const [list] = await Promise.all([
+      knownSessions ?? remote('sessions', { project: item.id }),
+      loadTerminalFont(),
+      placed,
+    ]);
     if (epoch !== viewEpoch) return;
     sessions = mergeSessionList(list, sessions);
-    drawer.prunePins(list);
+    if (!knownSessions) drawer.prunePins(list);
     const previous = localStorage.getItem(sessionKey(item.id));
-    // target 来自列表或通知的点选，是接管；其余情况是恢复上次界面，不抢使用权。
+    // 接管意图由入口传入；「继续终端」即使有缓存也按恢复处理。
     const chosen = target && (sessions.find(session => session.id === target.id) ?? target);
     const existing = chosen
       ?? sessions.find(session => session.id === previous)
       ?? sessions.find(session => !session.exit)
       ?? sessions[0];
-    if (existing) await selectSession(existing, { take: !!chosen });
+    if (existing) await selectSession(existing, { take, started });
     else if (resumeOnly) returnToDashboard('home');
-    else showEmptyProject();
+    else {
+      renderInputTip();
+      showEmptyProject();
+    }
   } catch (error) {
-    if (epoch === viewEpoch) handleTerminalError(error, () => openProject(item, resumeOnly, target));
+    if (epoch === viewEpoch) handleTerminalError(error, () => openProject(item, { resumeOnly, target, take }));
   } finally {
     setSessionBusy(false);
   }
@@ -2067,31 +2082,7 @@ function stayOnEmptyProject(projectId) {
   showEmptyProject();
 }
 
-function renderTerminalProfiles(choices, state = '') {
-  const list = get('terminal-profiles');
-  list.replaceChildren(...choices.map(choice => {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.className = 'secondary';
-    if (choice.id) option.dataset.profile = choice.id;
-    const name = document.createElement('span');
-    name.textContent = t(choice.name);
-    option.append(name);
-    if (!choice.trusted) {
-      const hint = document.createElement('small');
-      hint.textContent = t('需先在电脑上信任');
-      option.append(hint);
-    }
-    option.addEventListener('click', () => {
-      // 电脑端创建时仍会校验信任；这里提前提示，避免关闭弹窗后才报错。
-      if (!choice.trusted) message('terminal-profiles-error', t('请先在电脑上新建一次「{name}」终端并选择「信任此配置」。', { name: choice.name }));
-      else void newSession(choice.id);
-    });
-    return option;
-  }));
-  list.setAttribute('aria-busy', String(state === 'loading'));
-  message('terminal-profiles-error', state === 'error' ? t(t('无法读取电脑端终端配置，已仅显示普通终端。')) : '');
-}
+const newSessionDialog = createNewSessionDialog(newSession);
 
 /** 项目列表、首页和会话侧栏可指定目标项目；终端顶栏默认使用当前项目。 */
 async function openNewSessionDialog(target = null) {
@@ -2102,23 +2093,25 @@ async function openNewSessionDialog(target = null) {
   get('new-session-context').textContent = destination ? destination.name + ' · ' + projectSourceLabel({ ...destination, host: '' }) : '';
   message('terminal-profiles-error', '');
   const address = profile?.id;
-  const cached = terminalProfiles.get(address);
-  renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
+  // 配置按项目所属连接分类：缓存键带上目标项目。
+  const cacheKey = address + '/' + (destination?.id ?? '');
+  const cached = terminalProfiles.get(cacheKey);
+  newSessionDialog.render(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
   dialog.showModal();
   const request = ++terminalProfilesRequest;
   try {
     const capabilities = await desktopProtocol.capabilities(profile);
     const supported = capabilities === null || capabilities.features.includes('terminal_profiles');
-    const choices = terminalProfileChoices(supported ? await remote('terminal_profiles', {}, address) : null);
-    terminalProfiles.set(address, choices);
-    if (request === terminalProfilesRequest && profile?.id === address && dialog.open) renderTerminalProfiles(choices);
+    const choices = terminalProfileChoices(supported ? await remote('terminal_profiles', destination ? { project: destination.id } : {}, address) : null);
+    terminalProfiles.set(cacheKey, choices);
+    if (request === terminalProfilesRequest && profile?.id === address && dialog.open) newSessionDialog.render(choices);
   } catch {
     // 旧版电脑端不认识该请求：保留缓存或普通终端。
-    if (request === terminalProfilesRequest && profile?.id === address && dialog.open) renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'error');
+    if (request === terminalProfilesRequest && profile?.id === address && dialog.open) newSessionDialog.render(cached ?? terminalProfileChoices(null), cached ? '' : 'error');
   }
 }
 
-async function selectSession(session, { keepDrawer = false, take = false } = {}) {
+async function selectSession(session, { keepDrawer = false, take = false, started = performance.now() } = {}) {
   get('terminal-empty').hidden = true;
   get('session-dialog').close();
   // 侧栏以模态方式开着时，关闭后先让退出动画起步，再做重建终端这类重活，否则动画要等它们做完才开始。
@@ -2133,6 +2126,8 @@ async function selectSession(session, { keepDrawer = false, take = false } = {})
   leaveTerminal({ preserveFullscreen: true, keepDrawer, holdFrame: true });
   const epoch = viewEpoch;
   selected = session.id;
+  selectedEntry = session;
+  firstScreenStart = started;
   workspace.context(draftKey(selected), project.id, project.name);
   compose.value = drafts.get(draftKey(selected)) ?? '';
   resizeComposer();
@@ -2264,6 +2259,8 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
     if (document.hidden) {
       // 后台不再接收推送，回到前台按游标重新接上。
       feed.close();
+      // 共享会话回到前台时重新接入：后台期间尺寸可能已交还电脑，接入时默认改回本机尺寸。
+      if (shared && claimed && !viewerGrid) claimed = false;
       await new Promise(resolve => setTimeout(resolve, 350));
       continue;
     }
@@ -2393,6 +2390,13 @@ async function pollLoop(session, epoch, take, explicitTake, feed) {
         get('scroll-bottom').querySelector('span').textContent = t('有新输出 · 回到最新');
       }
       if (!active()) return;
+      if (firstScreenStart !== null && data.chunks.length) {
+        const start = firstScreenStart;
+        firstScreenStart = null;
+        requestAnimationFrame(() => {
+          if (epoch === viewEpoch) measureTerminalTime('first-screen', start);
+        });
+      }
       if (data.exit) {
         clearTakenOver();
         if (current && !current.exit) {
@@ -2482,61 +2486,85 @@ get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDi
 let newSessionProject = null;
 get('terminal-empty-new').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
 
-function setCreatingSession(value) {
-  creatingSession = value;
-  const choices = get('terminal-profiles');
-  choices.setAttribute('aria-busy', String(value));
-  for (const button of choices.querySelectorAll('button')) button.disabled = value;
-  get('new-session-dialog').querySelector('[data-close]').disabled = value;
-  get('terminal-profiles-progress').hidden = !value;
+// 保留最近一次耗时供 WebView 的 Performance 面板核查，记录中不包含项目或会话名称。
+function measureTerminalTime(stage, start) {
+  const name = 'qingcode.terminal.' + stage;
+  performance.clearMeasures(name);
+  performance.measure(name, { start, end: performance.now() });
 }
 
-async function newSession(terminalProfile) {
+async function newSession(terminalProfile, option, checkOnly) {
   const target = newSessionProject ?? project;
   if (busy || !target || !profile) return;
+  const started = performance.now();
   const dialog = get('new-session-dialog');
   const epoch = viewEpoch;
   const address = profile.id;
   const elsewhere = !!newSessionProject;
-  const choice = document.activeElement;
-  const current = () => epoch === viewEpoch && address === profile?.id;
+  const current = () => epoch === viewEpoch && address === profile?.id && dialog.open;
+  const host = target.kind === 'ssh' ? projectPlaceLabel(target) : profile.name;
+  let uncertain = checkOnly;
   terminalProfilesRequest += 1;
-  message('terminal-profiles-error', '');
+  creatingSession = true;
+  const feedback = newSessionDialog.pending(option, host, uncertain);
   setSessionBusy(true);
-  setCreatingSession(true);
+
+  function open(session, list, attachStart) {
+    if (!current()) return;
+    dialog.close();
+    if (elsewhere) {
+      void openProject(target, { target: session, knownSessions: list, take: true, started: attachStart });
+    } else {
+      sessions = mergeSessionList(list, sessions);
+      void selectSession(session, { started: attachStart });
+    }
+  }
+
   let session;
+  let createdAt;
+  let errorText = '';
   try {
-    if (!elsewhere) {
-      // 补回可能已在电脑端创建成功、但手机没收到回执的会话。
+    if (!uncertain) {
+      const args = { project: target.id, ...dimensions() };
+      if (terminalProfile) args.terminal_profile = terminalProfile;
+      try {
+        session = await remote('create', args, address);
+        createdAt = performance.now();
+        if (current()) measureTerminalTime('create', started);
+      } catch (error) {
+        // 老版原生桥的整次请求超时只带原始文案。
+        if (error.revoked || (error.code !== 'timeout' && !error.message.includes('操作结果未知'))) throw error;
+        if (!current()) return;
+        uncertain = true;
+        feedback.verify();
+      }
+    }
+    if (uncertain) {
       const list = await remote('sessions', { project: target.id }, address);
       if (!current()) return;
-      sessions = mergeSessionList(list, sessions);
+      if (!elsewhere) sessions = mergeSessionList(list, sessions);
+      newSessionDialog.showSessions(list, actual => open(actual, list, performance.now()));
+      errorText = t(list.length ? '创建结果待确认。请选择已有会话，或刷新列表。' : '暂未查到会话，可稍后刷新列表。');
     }
-    const args = { project: target.id, ...dimensions() };
-    if (terminalProfile) args.terminal_profile = terminalProfile;
-    session = await remote('create', args, address);
   } catch (error) {
     if (current()) {
       if (error.revoked) {
         dialog.close();
         handleTerminalError(error);
       } else {
-        message('terminal-profiles-error', terminalErrorMessage(error));
+        const reason = terminalErrorMessage(error);
+        errorText = uncertain ? t('创建结果待确认，刷新会话失败。{reason}', { reason }) : reason;
       }
     }
   } finally {
-    setCreatingSession(false);
+    feedback.finish({ error: errorText, uncertain });
+    creatingSession = false;
     setSessionBusy(false);
     drawer.scheduleRefresh();
-    if (!session && dialog.open) choice?.focus();
   }
-  if (!current() || !session) return;
-  dialog.close();
-  if (elsewhere) await openProject(target, false, session);
-  else {
-    sessions.push(session);
-    await selectSession(session);
-  }
+  if (!session || !current()) return;
+  const known = elsewhere ? projectSessionsFromOverview((terminalScreen.hidden ? homeOverview : drawer.overview).list(), target.id) : sessions;
+  open(session, [...known.filter(item => item.id !== session.id), session], createdAt);
 }
 
 async function endSession(id) {
@@ -2595,7 +2623,7 @@ async function openOverviewSession(target, view) {
   }
   view.setError('');
   localStorage.setItem(sessionKey(destination.id), target.id);
-  await openProject(destination, false, target);
+  await openProject(destination, { target, take: true, knownSessions: projectSessionsFromOverview(view.list(), projectId) });
 }
 
 /** 纵览中某个会话的确认说明：项目 / 会话名，其他设备创建的运行中会话额外注明。 */
@@ -3005,7 +3033,7 @@ async function initialize() {
     const resume = localStorage.getItem(prefix + 'open') === item.id;
     if (await activate(item) && resume && profile?.id === item.id && page === 'home') {
       const recent = lastProject();
-      if (recent) await openProject(recent, true);
+      if (recent) await openProject(recent, { resumeOnly: true });
     }
   } catch (error) {
     showPage('connection');

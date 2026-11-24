@@ -958,6 +958,7 @@ fn profile_requires_same_connection_project_profile_shell_and_command() {
         shell: "auto".into(),
         profile_id: "agent".into(),
         command: "claude".into(),
+        count: 1,
     });
     assert!(!entry.can_rebind());
     {
@@ -996,6 +997,7 @@ fn phone_claims_prepared_profile_under_its_own_terminal_id() {
         shell: "auto".into(),
         profile_id: "agent".into(),
         command: "claude".into(),
+        count: 1,
     });
     {
         let mut state = pool.0.lock().unwrap();
@@ -1008,4 +1010,180 @@ fn phone_claims_prepared_profile_under_its_own_terminal_id() {
     assert!(pool.has_entry("mobile-1"));
     assert!(!pool.has_entry("prepared"));
     assert!(!pool.reserve_profile_as("mobile-2", cwd, Some("auto"), "agent", "claude"));
+}
+
+#[test]
+fn connection_profile_count_sets_cli_slots_and_resizing_keeps_ready_clis() {
+    let cwd = "ssh://win/D:/work/a";
+    let profile = |count: usize| PrewarmProfile {
+        cross_project: true,
+        cwd: cwd.into(),
+        shell: "auto".into(),
+        profile_id: "agent".into(),
+        command: "claude".into(),
+        count,
+    };
+    // 数量只决定容量：不同数量的同一配置仍是同一个复用键，越界值收敛到 1..=4。
+    assert!(profile(1) == profile(3));
+    assert_eq!(profile(0).pool_count(), 1);
+    assert_eq!(profile(9).pool_count(), MAX_PROFILE_COUNT);
+    let pool = ShellPrewarmPool::default();
+    let prepared = |id: &str| {
+        let mut entry = remote_shell(id, cwd, true);
+        entry.key.profile = Some(profile(2));
+        entry
+    };
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target_for(&prepared("one"), 2));
+        state.shells.push(prepared("one"));
+        // 两个名额只就绪一个时还要再补一个。
+        assert_eq!(state.refill_slots(2), 1);
+        state.shells.push(prepared("two"));
+        assert_eq!(state.refill_slots(2), 0);
+    }
+    // 连续新建两个同配置终端，两次都领到预热的 CLI。
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("one")
+    );
+    assert_eq!(
+        pool.reserve_profile(cwd, Some("auto"), "agent", "claude")
+            .as_deref(),
+        Some("two")
+    );
+    pool.0.lock().unwrap().shells.clear();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state
+            .shells
+            .extend([prepared("a"), prepared("b"), prepared("c")]);
+        state.target.as_mut().unwrap().count = 3;
+    }
+    pool.set_count(3);
+    assert_eq!(pool.0.lock().unwrap().shells.len(), 3);
+    // 调小时只裁掉多出的空闲 CLI，保留的仍是已就绪的那些。
+    pool.set_count(1);
+    let state = pool.0.lock().unwrap();
+    assert_eq!(state.target.as_ref().unwrap().count, 1);
+    assert_eq!(
+        state
+            .shells
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a"]
+    );
+}
+
+/// daemon 连接断开（Server 重启）时 CLI 预热照常补充；只有 CLI 自己退出才暂停。
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn lost_daemon_session_does_not_pause_profile_prewarm_but_cli_exit_does() {
+    use qingcode_server::daemon::{DaemonOptions, RunDir};
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = RunDir::resolve(Some(dir.path())).unwrap();
+    let options = DaemonOptions {
+        state_dir: Some(dir.path().into()),
+        ..Default::default()
+    };
+    let daemon = tokio::spawn(qingcode_server::daemon::run_async(options));
+    tokio::time::timeout(READY_TIMEOUT, async {
+        while !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let prepared = |_: ()| async {
+        let entry = remote_shell("test", "ssh://conn-1/D:/anchor", true);
+        let mut target = target_for(&entry, 1);
+        (target.launch, target.key) =
+            remote_launch_key(&target.project_path, Some("powershell")).unwrap();
+        target.cwd.clear();
+        let stream = qingcode_server::connect::connect_async(&IpcEndpoint::new(run_dir.dir()))
+            .await
+            .unwrap();
+        let session =
+            DaemonSession::open_local(stream, "test:windev", run_dir.read_token().unwrap())
+                .await
+                .unwrap();
+        let mut entry = prepare_remote_shell(
+            &target,
+            target.remote.as_ref().unwrap(),
+            SessionTransport::Local,
+            session,
+            None,
+        )
+        .await
+        .unwrap();
+        entry.key.profile = Some(PrewarmProfile {
+            cross_project: true,
+            cwd: "ssh://conn-1/D:/anchor".into(),
+            shell: "powershell".into(),
+            profile_id: "agent".into(),
+            command: "claude".into(),
+            count: 1,
+        });
+        entry
+    };
+    let pool = ShellPrewarmPool::default();
+    let lost = prepared(()).await;
+    lost.session.as_ref().unwrap().shutdown();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.shells.push(lost);
+        assert_eq!(state.prune_idle(), 1);
+        assert_eq!(state.paused_reason, None);
+    }
+    let exited = prepared(()).await;
+    let pty = exited.pty_id.clone();
+    let session = exited.session.as_ref().unwrap();
+    session
+        .request("pty.kill", &serde_json::json!({"id": pty}))
+        .await
+        .unwrap();
+    pool.0.lock().unwrap().shells.push(exited);
+    tokio::time::timeout(READY_TIMEOUT, async {
+        while pool.0.lock().unwrap().prune_idle() == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("CLI 退出后预热项应被移除");
+    assert_eq!(pool.0.lock().unwrap().paused_reason, Some("profile_exited"));
+    daemon.abort();
+}
+
+#[test]
+fn server_restart_clears_update_backoff_and_wakes_the_refill_worker() {
+    let cwd = "ssh://conn-1/C:/work/a";
+    let shell = remote_shell("warm-a", cwd, true);
+    let target = target_for(&shell, 1);
+    let pool = ShellPrewarmPool::default();
+    {
+        let mut state = pool.0.lock().unwrap();
+        state.target = Some(target);
+        state.shells.push(shell);
+        state.generation = 7;
+        state.preparing = true;
+        state.paused_reason = Some("create_failed_backoff");
+        state.ready_timeouts = 2;
+    }
+    pool.retry_now();
+    let state = pool.0.lock().unwrap();
+    // 进行中的创建作废，退避与暂停原因清空；仍存活的预热项保留。
+    assert_eq!(state.generation, 8);
+    assert!(!state.preparing);
+    assert_eq!(state.paused_reason, None);
+    assert_eq!(state.ready_timeouts, 0);
+    assert_eq!(state.shells.len(), 1);
+}
+
+#[test]
+fn server_restart_ignores_an_unconfigured_pool() {
+    let pool = ShellPrewarmPool::default();
+    pool.retry_now();
+    assert_eq!(pool.0.lock().unwrap().generation, 0);
 }
