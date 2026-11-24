@@ -47,13 +47,8 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-vi.mock('@/lib/terminal/terminalProfiles', () => ({
-  DEFAULT_TERMINAL_PROFILE: {
-    id: 'default',
-    name: 'PowerShell',
-    shell: 'powershell',
-    command: '',
-  },
+vi.mock('@/lib/terminal/terminalProfiles', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/terminal/terminalProfiles')>(),
   getTerminalProfile: vi.fn(() => ({
     id: 'default',
     name: 'PowerShell',
