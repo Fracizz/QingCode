@@ -140,10 +140,14 @@ const SOURCE_TEXT: Record<TerminalSourceKind, string> = {
 }
 const SOURCE_CHIP = 'rounded border border-current/25 bg-current/[0.07] px-[5px] py-px'
 
+// 16px 图标默认线宽缩放后约 1.33px；主机图标更小，若按比例缩放线条会变细发虚，像另一套图标。
+// 固定为同样的绝对线宽，让主机图标只靠尺寸降级，笔画与项目图标一致。
+const HOST_ICON_STROKE = { strokeWidth: 4 / 3, absoluteStrokeWidth: true } as const
+
 function HostKindIcon({ kind, size }: { kind: TerminalSourceKind; size: number }) {
-  if (kind === 'ssh') return <Server size={size} aria-hidden="true" />
-  if (kind === 'wsl') return <SquareTerminal size={size} aria-hidden="true" />
-  return <Monitor size={size} aria-hidden="true" />
+  if (kind === 'ssh') return <Server size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
+  if (kind === 'wsl') return <SquareTerminal size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
+  return <Monitor size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
 }
 
 function loadCollapsedSet(key: string): ReadonlySet<string> {
@@ -1017,8 +1021,9 @@ export default function TerminalSessionList() {
             aria-hidden="true"
             className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
-          {/* 主机图标 14px、标签 12px：比 16px 项目图标低一级，但不再小到和行尾计数同级。 */}
-          <span className={`flex flex-shrink-0 ${SOURCE_TEXT[section.kind]}`}>
+          {/* 主机图标 14px、标签 12px：比 16px 项目图标低一级，但不再小到和行尾计数同级。
+              放进与项目图标同宽的 16px 槽里居中：左对齐时两者中心差 1px，与项目图标、终端状态点不在同一竖线上。 */}
+          <span className={`flex w-4 flex-shrink-0 justify-center ${SOURCE_TEXT[section.kind]}`}>
             <HostKindIcon kind={section.kind} size={14} />
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
