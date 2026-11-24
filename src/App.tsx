@@ -66,6 +66,7 @@ import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
 import { listenForMobileRequests } from './lib/mobileBridge'
 import { useSshWarmup } from './hooks/useSshWarmup'
 import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
+import { useTerminalAutoReattach } from './hooks/useTerminalAutoReattach'
 import { useGitPushSync } from './features/gitPushSync/useGitPushSync'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
@@ -326,6 +327,7 @@ function App() {
   const projectCatalogReady = useProjectStore(s => s.projectCatalogReady)
   useSshWarmup(projectCatalogReady)
   useStartupServerUpdates(projectCatalogReady)
+  useTerminalAutoReattach(projectCatalogReady)
   useGitPushSync(projectsReady)
 
   useEffect(() => {

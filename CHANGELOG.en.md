@@ -6,6 +6,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Terminals now reattach automatically after startup: terminals that were still running last time (remote and locally hosted) are reattached in the background for every project, and leftover remote terminals without a local tab are reattached directly instead of showing the "N terminal(s) are still running remotely" notification. Nothing switches projects or steals focus. Connections that need a password, have an unconfirmed host fingerprint, or were disconnected manually are skipped and reattach when you switch to the project; locally hosted terminals whose process is gone also wait until then to restart from their saved configuration. Turn it off under Settings → Projects and Sessions → Reattach Terminals on Startup (on by default).
+
 ### Changed
 
 - Plain-shell prewarm counts are now managed per location: Settings → Terminal keeps only the local (Windows) "Local Prewarmed Shells" count, and each remote connection sets its own "Prewarmed plain shells" (Auto / Off / 1–8) under Remote Connections → Terminal. Setting it to Off still allows CLI-only prewarming. Remote connections previously followed the global count and now default to Auto (1).

@@ -91,6 +91,7 @@ import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import { planTerminalRestore } from '@/lib/terminal/terminalRestorePlan'
 import { hasLocalHostedSession } from '@/lib/appCloseFlow'
 import { parseTerminalPersistLocalSessions, setCachedTerminalPersistLocalSessions } from '@/lib/terminal/terminalPersistLocalSettings'
+import { TERMINAL_AUTO_REATTACH_CACHE_KEY } from '@/lib/terminalAutoReattachSettings'
 
 function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -137,6 +138,8 @@ describe('terminal persistent connection events', () => {
     mocks.attachTerminal.mockResolvedValue({ persistent: true })
     mocks.createTerminal.mockResolvedValue({ persistent: false })
     mocks.listDetachedTerminals.mockResolvedValue([])
+    // 默认按关闭自动接回测试原有的提示流程；自动接回的用例自行开启。
+    localStorage.setItem(TERMINAL_AUTO_REATTACH_CACHE_KEY, '0')
     useTerminalStore.setState({
       terminals: [terminal({ persistent: true })],
       activeTerminalId: 't1',
@@ -904,6 +907,118 @@ describe('terminal persistent connection events', () => {
     expect(await store.attachDetachedTerminals(project.id, 'conn', detached, { background: true })).toBe(1)
     expect(useTerminalStore.getState().terminals.find(tab => tab.ptyId === 'pty-retry')?.status).toBe('running')
     expect(useTerminalStore.getState().activeTerminalId).toBe('t1')
+  })
+
+  describe('background auto-reattach', () => {
+    const pendingTab = (overrides: Partial<TerminalTab> = {}) => terminal({
+      id: 'bg', projectId: 'p-bg', status: 'exited', persistent: true, ptyId: 'pty-bg', connectionId: 'conn',
+      awaitingRestoreSpawn: true, ptySpawnPending: true, launchCommand: 'claude', profileId: 'claude', ...overrides,
+    })
+
+    it('attaches only tabs whose original process may still run', async () => {
+      useTerminalStore.setState({ terminals: [
+        pendingTab(),
+        // 非持久标签只能按原配置新建（会重跑启动命令），后台不碰。
+        pendingTab({ id: 'create', persistent: false, ptyId: undefined, launchCommand: 'pnpm dev', shellKind: 'command' }),
+      ] })
+      mocks.attachTerminal.mockResolvedValueOnce({ persistent: true, ptyId: 'pty-bg', connectionId: 'conn' })
+
+      await useTerminalStore.getState().spawnRestoredTerminals('p-bg', { background: true })
+
+      expect(mocks.attachTerminal).toHaveBeenCalledOnce()
+      expect(mocks.attachTerminal).toHaveBeenCalledWith(expect.objectContaining({ ptyId: 'pty-bg', cols: null, rows: null }))
+      expect(mocks.createTerminal).not.toHaveBeenCalled()
+      expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+      const [attached, untouched] = useTerminalStore.getState().terminals
+      expect(attached).toMatchObject({ status: 'running', awaitingRestoreSpawn: false })
+      expect(untouched).toMatchObject({ status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true })
+    })
+
+    it('silently keeps a remote tab pending when attach fails off-screen', async () => {
+      useTerminalStore.setState({ terminals: [pendingTab()] })
+      mocks.attachTerminal.mockRejectedValueOnce(new Error('daemon handshake timeout'))
+
+      await useTerminalStore.getState().spawnRestoredTerminals('p-bg', { background: true })
+
+      expect(useTerminalStore.getState().terminals[0]).toMatchObject({
+        status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true, ptyId: 'pty-bg', persistent: true,
+      })
+      expect(useTerminalStore.getState().terminals[0].restoreUnavailable).toBeFalsy()
+      expect(mocks.pushToast).not.toHaveBeenCalled()
+      expect(mocks.createTerminal).not.toHaveBeenCalled()
+    })
+
+    it('reports the failure as usual for the project the user is looking at', async () => {
+      mocks.projectState.currentProject = { id: 'p-bg', path: 'ssh://conn/home/app' }
+      useTerminalStore.setState({ terminals: [pendingTab()] })
+      mocks.attachTerminal.mockRejectedValueOnce(new Error('daemon handshake timeout'))
+
+      await useTerminalStore.getState().spawnRestoredTerminals('p-bg', { background: true })
+
+      expect(useTerminalStore.getState().terminals[0]).toMatchObject({ restoreUnavailable: true, awaitingRestoreSpawn: false })
+    })
+
+    it('defers recreating a vanished local hosted terminal until the project is opened', async () => {
+      useTerminalStore.setState({ terminals: [pendingTab({ cwd: 'D:/work/app', connectionId: '__local__' })] })
+      mocks.attachTerminal.mockRejectedValueOnce(new Error('QC_PTY_GONE: PTY 不存在或已退出'))
+
+      await useTerminalStore.getState().spawnRestoredTerminals('p-bg', { background: true })
+
+      const tab = useTerminalStore.getState().terminals[0]
+      expect(mocks.createTerminal).not.toHaveBeenCalled()
+      expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+      expect(tab).toMatchObject({ status: 'exited', awaitingRestoreSpawn: true, ptySpawnPending: true })
+      expect(tab.ptyId).toBeUndefined()
+      expect(planTerminalRestore(tab).mode).toBe('create')
+    })
+
+    it('marks a remote terminal that really ended instead of keeping it pending', async () => {
+      useTerminalStore.setState({ terminals: [pendingTab()] })
+      mocks.attachTerminal.mockRejectedValueOnce(new Error('QC_PTY_GONE: PTY 不存在或已退出'))
+
+      await useTerminalStore.getState().spawnRestoredTerminals('p-bg', { background: true })
+
+      const tab = useTerminalStore.getState().terminals[0]
+      expect(tab).toMatchObject({ status: 'exited', awaitingRestoreSpawn: false, ptySpawnPending: false })
+      expect(tab.endedAt).toBeDefined()
+    })
+
+    it('reattaches unowned remote terminals without a prompt', async () => {
+      localStorage.setItem(TERMINAL_AUTO_REATTACH_CACHE_KEY, '1')
+      const project = { id: 'p-auto-orphan', name: 'remote', path: 'ssh://conn-auto/home/app', kind: 'ssh', connection_id: 'conn-auto' }
+      mocks.projectState.projects = [project]
+      mocks.listDetachedTerminals.mockResolvedValueOnce([
+        { ptyId: 'pty-auto', connectionId: 'conn-auto', cwd: project.path, cols: 120, rows: 40 },
+      ])
+      mocks.attachTerminal.mockResolvedValueOnce({ persistent: true, ptyId: 'pty-auto', connectionId: 'conn-auto' })
+
+      await useTerminalStore.getState().syncDetachedTerminals(project.id)
+
+      expect(mocks.pushToast).not.toHaveBeenCalled()
+      expect(mocks.choiceDialog).not.toHaveBeenCalled()
+      expect(useTerminalStore.getState().terminals.find(tab => tab.ptyId === 'pty-auto')).toMatchObject({
+        projectId: project.id, status: 'running',
+      })
+      // 原先的活动终端不被抢走。
+      expect(useTerminalStore.getState().activeTerminalId).toBe('t1')
+    })
+
+    it('retries unowned remote terminals on the next sync when attach failed', async () => {
+      localStorage.setItem(TERMINAL_AUTO_REATTACH_CACHE_KEY, '1')
+      const project = { id: 'p-auto-retry', name: 'remote', path: 'ssh://conn-retry/home/app', kind: 'ssh', connection_id: 'conn-retry' }
+      mocks.projectState.projects = [project]
+      const detached = [{ ptyId: 'pty-later', connectionId: 'conn-retry', cwd: project.path, cols: 80, rows: 24 }]
+      mocks.listDetachedTerminals.mockResolvedValue(detached)
+      mocks.attachTerminal.mockRejectedValueOnce(new Error('temporarily offline'))
+
+      await useTerminalStore.getState().syncDetachedTerminals(project.id)
+      expect(useTerminalStore.getState().terminals.some(tab => tab.ptyId === 'pty-later')).toBe(false)
+
+      mocks.attachTerminal.mockResolvedValueOnce({ persistent: true, ptyId: 'pty-later', connectionId: 'conn-retry' })
+      await useTerminalStore.getState().syncDetachedTerminals(project.id)
+      expect(useTerminalStore.getState().terminals.find(tab => tab.ptyId === 'pty-later')?.status).toBe('running')
+      expect(mocks.pushToast).not.toHaveBeenCalled()
+    })
   })
 
   it('ends an untouched default detached terminal even when replay would fail', async () => {
