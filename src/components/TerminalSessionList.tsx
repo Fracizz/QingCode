@@ -757,6 +757,7 @@ export default function TerminalSessionList() {
   const renderGroup = (group: TerminalSessionGroup, index: number) => {
     const { project, terminals } = group
     const isCurrent = project.id === currentProjectId
+    const remoteProject = isSshProject(project) || isWslProject(project)
     const isEmpty = terminals.length === 0
     const expanded = isExpanded(group)
     // 当前终端行已经高亮时组头不再铺底色，避免同一项目出现两块高亮。
@@ -846,18 +847,17 @@ export default function TerminalSessionList() {
               <span
                 aria-hidden="true"
                 data-terminal-group-current={isCurrent ? 'true' : undefined}
-                // 共用文字基线；16px 图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
-                className="flex translate-y-[3px] flex-shrink-0 text-term-list-project"
+                // 共用文字基线；图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
+                // 固定 16px 宽槽：15px 文件夹与 16px 云的项目名仍从同一列开始，与主机行、会话行对齐。
+                // 基线对齐的是图标底边，15px 文件夹若同样下移 3px，墨迹中心会比 16px 时低约 0.5px，看着下沉，故只下移 2px。
+                className={`flex w-4 flex-shrink-0 text-term-list-project ${
+                  remoteProject ? 'translate-y-[3px]' : 'translate-y-[2px]'
+                }`}
               >
                 {/* 本地项目固定用闭合文件夹，不随展开切换成打开态；远程沿用云图标。
                     文件夹是方正轮廓，同尺寸下比云的弧形轮廓显大显重，缩到 15px 做光学补偿；
                     线宽固定 4/3px，与云和主机图标一致（按比例缩放会细到 1.25px 而发虚）。 */}
-                <ProjectKindIcon
-                  project={project}
-                  closed
-                  size={isSshProject(project) || isWslProject(project) ? 16 : 15}
-                  {...HOST_ICON_STROKE}
-                />
+                <ProjectKindIcon project={project} closed size={remoteProject ? 16 : 15} {...HOST_ICON_STROKE} />
               </span>
               {/* 来源标签按自然宽度显示（上限见 .project-source-badge），长项目名先截断：同名项目靠来源区分，「W…」没有意义。 */}
               {/* 来源字号更小，按基线对齐才不会悬在项目名上方；项目名与会话名同亮，来源退到辅助级。 */}
