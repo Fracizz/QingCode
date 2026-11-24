@@ -45,6 +45,10 @@ describe('PrewarmPoolBadge', () => {
     fireEvent.doubleClick(cli)
     expect(onClick).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenCalledWith(expect.any(String), 'shell_prewarm_retry', { cwd: 'ssh://conn/D:/a' })
+    // 重试中显示转圈，再次双击不重复触发。
+    expect(cli.closest('[data-terminal-host-prewarm]')).toHaveAttribute('aria-busy', 'true')
+    fireEvent.doubleClick(cli)
+    expect(invoke).toHaveBeenCalledTimes(1)
   })
 
   it('预热未开启时不渲染', () => {

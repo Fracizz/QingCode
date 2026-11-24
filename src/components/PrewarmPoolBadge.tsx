@@ -1,5 +1,5 @@
-import { SquareTerminal, Zap } from 'lucide-react'
-import type { MouseEvent } from 'react'
+import { LoaderCircle, SquareTerminal, Zap } from 'lucide-react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import type { ScopedPrewarmStatus } from '../hooks/usePrewarmStatuses'
 import { safeInvoke } from '@/lib/tauri'
 import { prewarmBadgeDetails, prewarmBadges } from '@/lib/terminal/prewarmBadge'
@@ -14,6 +14,9 @@ const TONE = {
   filling: 'text-term-list-meta',
   paused: 'text-warn',
 } as const
+
+/** 重试转圈至少保持的时长：命令瞬间返回时也让用户看清已触发。 */
+const RETRY_FEEDBACK_MS = 800
 
 /** 吞掉单击：徽标在主机标题按钮里，双击重试时不应顺带两次展开/收起分组。 */
 const swallow = (event: MouseEvent) => event.stopPropagation()
@@ -31,11 +34,21 @@ export default function PrewarmPoolBadge({
   scoped: ScopedPrewarmStatus | undefined
   translate: Translate
 }) {
+  const [retrying, setRetrying] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
   const badges = prewarmBadges(scoped?.status)
   if (!scoped || badges.length === 0) return null
   const retry = (event: MouseEvent) => {
     event.stopPropagation()
-    void safeInvoke('重新触发预热', 'shell_prewarm_retry', { cwd: scoped.cwd }).catch(() => undefined)
+    if (retrying) return
+    setRetrying(true)
+    const started = Date.now()
+    void safeInvoke('重新触发预热', 'shell_prewarm_retry', { cwd: scoped.cwd })
+      .catch(() => undefined)
+      .finally(() => {
+        timer.current = window.setTimeout(() => setRetrying(false), Math.max(0, RETRY_FEEDBACK_MS - (Date.now() - started)))
+      })
   }
   const labels = badges.map(badge => {
     const label = translate(badge.pool === 'cli' ? 'CLI 预热 {ready}/{target}' : 'Shell 预热 {ready}/{target}', {
@@ -46,19 +59,23 @@ export default function PrewarmPoolBadge({
   })
   return (
     <Tooltip
-      label={labels.join('，')}
+      label={retrying ? translate('正在重新触发预热…') : labels.join('，')}
       content={<InfoTipCard {...prewarmBadgeDetails(scoped.status, scoped.recent, translate)} />}
       side="top"
       wrapperClassName="flex shrink-0"
     >
       <span
         data-terminal-host-prewarm={hostKey}
-        className="inline-flex items-center gap-1.5 text-ui-2xs font-medium leading-none tabular-nums"
+        aria-busy={retrying || undefined}
+        data-prewarm-retrying={retrying || undefined}
+        // 两个池之间 4px，比与终端计数之间的 6px 更紧，读作一组。
+        className="inline-flex items-center gap-1 text-ui-2xs font-medium leading-none tabular-nums"
         onClick={swallow}
         onDoubleClick={retry}
       >
         {badges.map(badge => {
-          const Icon = badge.pool === 'cli' ? Zap : SquareTerminal
+          // 重试期间图标换成同尺寸转圈，数字保留，宽度不跳。
+          const Icon = retrying ? LoaderCircle : badge.pool === 'cli' ? Zap : SquareTerminal
           return (
             <span
               key={badge.pool}
@@ -71,7 +88,7 @@ export default function PrewarmPoolBadge({
               data-prewarm-pool={badge.pool}
               className={`inline-flex items-center gap-0.5 ${TONE[badge.tone]}`}
             >
-              <Icon size={12} aria-hidden="true" />
+              <Icon size={12} aria-hidden="true" className={retrying ? 'animate-spin' : undefined} />
               {badge.ready}/{badge.target}
             </span>
           )
