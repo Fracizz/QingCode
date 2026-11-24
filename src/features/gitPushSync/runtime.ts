@@ -6,7 +6,7 @@ import {
   getPushSyncTracking,
   setPushSyncWatches,
 } from '@/lib/ipc/gitPushSync'
-import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
+import { gitPushSyncBlockedI18n } from '@/lib/git/gitErrorMessage'
 import { translate } from '@/lib/i18n'
 import { countDirtyTabsByProject } from '@/lib/projectIndicators'
 import { projectSourceLabel } from '@/lib/projectLabels'
@@ -69,7 +69,7 @@ function reloadAfterFastForward(project: Project) {
 
 /** git 原始 stderr 是英文，转成已本地化的简明说明再展示。 */
 function localizeBlockedDetail(raw: string): string {
-  const i18n = gitPullErrorI18n(raw)
+  const i18n = gitPushSyncBlockedI18n(raw)
   return translate(i18n.key, i18n.params)
 }
 

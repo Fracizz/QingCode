@@ -65,7 +65,7 @@ QingCode 在应用数据目录自动创建专用空目录 `codex-prewarm`。打�
 | Codex | 提前启动交互界面并核对 `/pwd`。领取时执行 `/cd` 并再次核对 `/pwd`。 |
 | pi | pi 没有会话内切换目录的命令，只能提前完成 Shell 和 Node 模块加载：用 Node 在专用空目录预先导入 pi 入口的全部依赖，领取时切到目标项目再运行原始入口，项目配置、扩展和会话仍在目标项目加载。找不到 `node` 或 pi 的 npm 包入口（如 bun 编译版）时只预热 Shell，领取后在目标项目普通启动 `pi`。 |
 
-退出 CLI 后，PowerShell 停留在目标项目。若遇到登录、升级、目标项目信任提示或无法确认目录，QingCode 在目标项目走普通启动。可用 `terminal prewarm status --project <项目>` 查看 `profile.ready` 和暂停原因，命中后在 `terminal diagnostics` 查看 `prewarm.kind=profile`。终端列表「按主机分组」时，主机标题在终端数量左侧显示 `⚡就绪/目标`：设了 CLI 预热的显示 CLI 池，否则显示普通 Shell 池；补满为灰色，补充中为常规色，暂停为琥珀色，悬停可看两个池的详情、暂停原因和最近的命中/未命中次数。预热未开启的主机不显示。
+退出 CLI 后，PowerShell 停留在目标项目。若遇到登录、升级、目标项目信任提示或无法确认目录，QingCode 在目标项目走普通启动。可用 `terminal prewarm status --project <项目>` 查看 `profile.ready` 和暂停原因，命中后在 `terminal diagnostics` 查看 `prewarm.kind=profile`。终端列表「按主机分组」时，主机标题在终端数量左侧分别显示普通 Shell 池 `▣就绪/目标` 与 CLI 池 `⚡就绪/目标`（未开启的池不显示），各自着色：补满为绿色，补充中为灰色，暂停为琥珀色；悬停可看两个池的详情、暂停原因和最近的命中/未命中次数，双击清掉暂停与失败退避并立即重新预热（已就绪项保留）。Claude Code 运行期间会在启动目录持有 `.claude/scheduled_tasks.lock`，专用目录只剩该锁文件时不算占用。预热未开启的主机不显示。
 
 ## 同一远程连接的跨项目 CLI 预热
 

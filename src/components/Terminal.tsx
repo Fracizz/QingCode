@@ -160,6 +160,7 @@ import {
   terminalClipboardPaths,
 } from '../lib/terminal/terminalAttachments'
 import { formatPasteSize, largePasteFileName, largePasteStats } from '../lib/terminal/largePaste'
+import { bracketedPasteInput, terminalBlockPasteRoute } from '../lib/terminal/terminalBlockPaste'
 import { confirmDialog } from '../store/confirmStore'
 import { copyToClipboard } from '../utils/fileReferences'
 import { logicalDropPoint } from '../utils/sshExplorerDrop'
@@ -338,6 +339,37 @@ export default function TerminalView({
     const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
     return tab?.status === 'running' && !tab.ptySpawnPending && !isTerminalInputBlocked(terminalId)
   }, [terminalId])
+
+  const isAgentForeground = useCallback(
+    (term: XTerm) =>
+      isTerminalAgentForeground({
+        alternateBuffer: term.buffer.active.type === 'alternate',
+        mouseTracking: term.modes.mouseTrackingMode !== 'none',
+        focusReporting: term.modes.sendFocusMode,
+        title: getTerminalProgramTitle(terminalId),
+        commandRunning: getTerminalCommandRunning(terminalId),
+      }),
+    [terminalId]
+  )
+
+  /** 前台程序能否把多行文本当作一次粘贴接收（见 terminalBlockPaste）。 */
+  const blockPasteRoute = useCallback(
+    (term: XTerm) => terminalBlockPasteRoute(term.modes.bracketedPasteMode, isAgentForeground(term)),
+    [isAgentForeground]
+  )
+
+  /** 把多行文本作为一次粘贴送进程序；前台无法安全接收（普通 Shell 等）时返回 false。 */
+  const pasteBlock = useCallback(
+    (text: string) => {
+      const term = xtermRef.current
+      if (!term || !isTerminalWritable()) return false
+      const route = blockPasteRoute(term)
+      if (route === 'xterm') term.paste(text)
+      else if (route === 'wrapped') void writeToTerminal(terminalId, bracketedPasteInput(text))
+      return route !== null
+    },
+    [blockPasteRoute, isTerminalWritable, terminalId, writeToTerminal]
+  )
 
   const prepareAttachmentPaths = useCallback(
     async (paths: string[]) => {
@@ -582,17 +614,16 @@ export default function TerminalView({
           void copySelection(selection)
         },
       },
-      // 引用选中内容到 AI CLI 输入框；只在程序开启 bracketed paste 时可用，
+      // 引用选中内容到 AI CLI 输入框；只在程序能整段接收粘贴时可用，
       // 否则多行会被逐行执行（普通 Shell 里 `> xxx` 还会变成重定向），此时灰显并说明原因。
       quote: {
         label: translate('添加到对话'),
         hint: translate('程序未处于输入状态'),
         action: () => {
           const term = xtermRef.current
-          if (!term || !quote || !isTerminalWritable() || !term.modes.bracketedPasteMode) return
+          if (!term || !quote || !blockPasteRoute(term)) return
           term.clearSelection()
-          term.paste(quote)
-          term.focus()
+          if (pasteBlock(quote)) term.focus()
         },
       },
       paste: {
@@ -637,7 +668,7 @@ export default function TerminalView({
     }
     return terminalContextMenuEntries({
       hasSelection: !!selection,
-      canQuote: !!quote && !!xtermRef.current?.modes.bracketedPasteMode,
+      canQuote: !!quote && !!xtermRef.current && !!blockPasteRoute(xtermRef.current),
       writable,
       canReadHistory: isMobileTerminalId(terminalId),
     }).map(entry => {
@@ -647,6 +678,7 @@ export default function TerminalView({
       return item
     })
   }, [
+    blockPasteRoute,
     clearBuffer,
     clearInput,
     copySelection,
@@ -654,6 +686,7 @@ export default function TerminalView({
     isTerminalWritable,
     openMobileHistory,
     openSearch,
+    pasteBlock,
     pasteFromClipboard,
     selectAll,
     terminalId,
@@ -1108,13 +1141,7 @@ export default function TerminalView({
       const shiftNewline =
         isTerminalShiftNewlineShortcut(event) &&
         getTerminalShiftEnterNewline() &&
-        isTerminalAgentForeground({
-          alternateBuffer: term.buffer.active.type === 'alternate',
-          mouseTracking: term.modes.mouseTrackingMode !== 'none',
-          focusReporting: term.modes.sendFocusMode,
-          title: getTerminalProgramTitle(terminalId),
-          commandRunning: getTerminalCommandRunning(terminalId),
-        })
+        isAgentForeground(term)
       if (isTerminalNewlineShortcut(event) || shiftNewline) {
         event.preventDefault()
         if (!event.repeat) insertTerminalNewline()
@@ -1669,6 +1696,7 @@ export default function TerminalView({
     fitSettledPanelGrid,
     flushPendingPtyResize,
     insertTerminalNewline,
+    isAgentForeground,
     isTerminalWritable,
     openMobileHistory,
     openSearch,
@@ -2008,13 +2036,9 @@ export default function TerminalView({
             if (isActiveRef.current) xtermRef.current?.focus()
           }}
           onFill={text => {
+            if (/\r|\n/.test(text)) return pasteBlock(text)
             const term = xtermRef.current
-            if (
-              !term ||
-              !isTerminalWritable() ||
-              (/\r|\n/.test(text) && !term.modes.bracketedPasteMode)
-            )
-              return false
+            if (!term || !isTerminalWritable()) return false
             term.paste(text)
             return true
           }}

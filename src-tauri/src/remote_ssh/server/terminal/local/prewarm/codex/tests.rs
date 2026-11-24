@@ -109,6 +109,20 @@ fn ready_timeout_screen_tail_drops_paths_and_keeps_last_lines() {
     assert!(!tail.iter().any(|line| line.contains("Users")));
     let other = screen_tail_for_diagnostics("open /home/u/secret now", "/anchor");
     assert_eq!(other, vec!["open <path> now".to_string()]);
+    // 斜杠命令名保留；专用目录的其它写法标为 <anchor~>，不泄露完整路径。
+    let cd = screen_tail_for_diagnostics(
+        "❯ /cd\n  ⎿  Usage: /cd <directory>\n ~\\.qingcode\\cli-prewarm\n/home/u/x",
+        r"C:\Users\me\.qingcode\cli-prewarm",
+    );
+    assert_eq!(
+        cd,
+        vec![
+            "❯ /cd",
+            "  ⎿  Usage: /cd <directory>",
+            " <anchor~>",
+            "<path>"
+        ]
+    );
 }
 
 #[test]
@@ -212,6 +226,7 @@ fn a_loading_composer_and_a_previous_command_do_not_authorize_enter() {
         nonce: String::new(),
         handoff: None,
         anchor: String::new(),
+        step: "launch",
     };
     view.screen.process("› Ask Codex to do anything".as_bytes());
     assert!(!view.input_ready());
@@ -701,6 +716,12 @@ fn launch_scripts_never_carry_carriage_returns() {
         // 专用目录被占用时都要报告可重试的原因，而不是笼统退出。
         assert!(
             script.contains("-anchor_busy!"),
+            "{agent} powershell={powershell}"
+        );
+        // 已领取的 Claude 会话一直持有 .claude/scheduled_tasks.lock：只剩它时不能判为占用，
+        // 否则只要有一个 Claude 终端开着，CLI 预热就一直停在 cli_anchor_busy。
+        assert!(
+            script.contains("scheduled_tasks.lock"),
             "{agent} powershell={powershell}"
         );
     }

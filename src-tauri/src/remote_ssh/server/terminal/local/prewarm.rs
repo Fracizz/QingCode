@@ -46,7 +46,7 @@ pub(crate) struct PrewarmProfile {
     profile_id: String,
     shell: String,
     command: String,
-    /// 远端连接各自设置的 CLI 预热数量；本机 CLI 预热固定 1 个。只决定池容量，不参与复用判断。
+    /// CLI 预热数量：本机在设置页、远端按连接各自设置。只决定池容量，不参与复用判断。
     #[serde(default = "default_profile_count")]
     count: usize,
 }
@@ -219,7 +219,13 @@ struct PoolState {
     preparing: bool,
     /// 连续 CLI 就绪超时次数；成功或配置变化时清零。
     ready_timeouts: u32,
+    /// 因连续就绪超时暂停为 `cli_not_ready`/`codex_not_ready` 时，到点自动重试一轮。
+    /// 其它原因（登录、升级提示等）的暂停为 None，仍需用户处理或手动重试。
+    not_ready_retry_at: Option<Instant>,
 }
+
+/// 就绪超时多为偶发：暂停后隔一段时间自动再试，避免领完最后一个后预热池长期为空。
+const NOT_READY_AUTO_RETRY: Duration = Duration::from_secs(5 * 60);
 #[derive(Clone, Default)]
 pub(crate) struct ShellPrewarmPool(Arc<Mutex<PoolState>>, Arc<Notify>, Arc<Notify>);
 
@@ -406,6 +412,20 @@ impl PoolState {
         });
     }
 
+    /// 就绪超时暂停到点：解除暂停并清零超时计数，返回是否解除。
+    fn resume_not_ready(&mut self, now: Instant) -> bool {
+        let due = matches!(
+            self.paused_reason,
+            Some("codex_not_ready" | "cli_not_ready")
+        ) && self.not_ready_retry_at.is_some_and(|at| now >= at);
+        if due {
+            self.paused_reason = None;
+            self.ready_timeouts = 0;
+            self.not_ready_retry_at = None;
+        }
+        due
+    }
+
     fn prune_idle(&mut self) -> usize {
         let before = self.shells.len();
         self.shells.retain_mut(|entry| {
@@ -465,9 +485,9 @@ impl ShellPrewarmPool {
         self.1.notify_waiters();
     }
 
-    /// 远端服务刚完成更新：清掉更新期间留下的失败退避/暂停，取消重启窗口内发起、
-    /// 注定失败或卡到超时的创建，立即按当前配置重新补充，不等 15 秒退避。
-    pub(super) fn retry_now(&self) {
+    /// 远端服务刚完成更新或用户手动重试：清掉失败退避/暂停，取消重启窗口内发起、
+    /// 注定失败或卡到超时的创建，立即按当前配置重新补充，不等 15 秒退避。已就绪项保留。
+    pub(crate) fn retry_now(&self) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.target.is_none() {
             return;
@@ -477,10 +497,7 @@ impl ShellPrewarmPool {
         state.preparing = false;
         state.paused_reason = None;
         state.ready_timeouts = 0;
-        trace(
-            "server_restarted",
-            serde_json::json!({"kept": state.shells.len()}),
-        );
+        trace("retry_now", serde_json::json!({"kept": state.shells.len()}));
         self.1.notify_waiters();
         self.2.notify_one();
     }
@@ -1280,6 +1297,12 @@ impl ShellPrewarmPool {
                 if state.generation != generation {
                     continue;
                 }
+                if state.resume_not_ready(Instant::now()) {
+                    trace(
+                        "not_ready_auto_retry",
+                        serde_json::json!({"remote": target.remote.is_some()}),
+                    );
+                }
                 if let Some(reason) = paused_reason {
                     let before = state.shells.len();
                     state.shells.clear();
@@ -1408,6 +1431,8 @@ impl ShellPrewarmPool {
                                 "cli_not_ready"
                             },
                         );
+                        state.not_ready_retry_at = (error == codex::READY_TIMED_OUT)
+                            .then(|| Instant::now() + NOT_READY_AUTO_RETRY);
                         continue;
                     }
                     if retry_timeout {

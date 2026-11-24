@@ -9,7 +9,8 @@ mkdir -p -- "$qc_anchor" && cd -P -- "$qc_anchor" || exit 1
 # 清掉此前 CLI 会话留下的空目录（如 .claude，find 默认不跟随链接）；
 # 仍有文件（如已领取的会话正在使用）时报告目录被占用，由预热池稍后重试。
 find . -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null
-[ -z "$(ls -A .)" ] || { printf 'QC-%s-anchor_busy!
+# Claude Code 运行期间一直在启动目录持有 .claude/scheduled_tasks.lock（已领取的会话也是），只剩它时不算占用。
+[ -z "$(ls -A .)" ] || { [ "$(ls -A .)" = .claude ] && [ ! -L .claude ] && [ "$(ls -A .claude)" = scheduled_tasks.lock ]; } || { printf 'QC-%s-anchor_busy!
 ' "$qc_nonce"; exit 1; }
 command -v opencode >/dev/null 2>&1 || { printf 'QC-%s-cli_not_installed!
 ' "$qc_nonce"; exit 1; }

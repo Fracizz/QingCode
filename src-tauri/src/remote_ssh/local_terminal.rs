@@ -408,3 +408,31 @@ pub fn shell_prewarm_status(cwd: String, app: AppHandle) -> serde_json::Value {
     }
     status
 }
+
+/// 手动重新触发 `cwd` 所在主机的预热：清掉 CLI 池与普通 Shell 池的暂停和失败退避后立即补充，
+/// 已就绪项保留。信任检查与 [`shell_prewarm_status`] 一致；返回是否找到可重试的池。
+#[tauri::command]
+pub fn shell_prewarm_retry(cwd: String, app: AppHandle) -> bool {
+    let mut pools = Vec::new();
+    if cwd.starts_with(SSH_URI_PREFIX) {
+        if !app
+            .state::<SshManager>()
+            .root_for_uri(&cwd, false)
+            .is_ok_and(|root| root.trusted)
+        {
+            return false;
+        }
+        pools.extend(app.state::<ConnectionShellPools>().profile_pool(&cwd));
+    } else if crate::run_environment::parse_wsl_path(&cwd).is_none()
+        && app.state::<PathAllowlist>().ensure_executable(&cwd).is_ok()
+    {
+        pools.push(app.state::<LocalCodexPool>().pool.clone());
+    } else {
+        return false;
+    }
+    pools.extend(pool_for_cwd(&app, &cwd));
+    for pool in &pools {
+        pool.retry_now();
+    }
+    !pools.is_empty()
+}

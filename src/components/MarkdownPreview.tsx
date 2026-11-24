@@ -108,7 +108,9 @@ const MarkdownPreview = forwardRef<HTMLDivElement, Props>(function MarkdownPrevi
   return (
     <div
       ref={ref}
-      className={`qing-md-preview h-full overflow-auto px-5 py-4 text-ui-lg leading-relaxed text-fg ${className}`}
+      // 可聚焦：点击预览后 Ctrl+F 能定位到预览内查找，而不是 WebView 自带查找条。
+      tabIndex={-1}
+      className={`qing-md-preview h-full overflow-auto outline-none px-5 py-4 text-ui-lg leading-relaxed text-fg ${className}`}
     >
       {empty ? (
         <div className="flex h-full items-center justify-center text-fg-dim text-ui-lg">{t('预览为空')}</div>

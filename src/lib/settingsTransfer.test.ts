@@ -49,6 +49,7 @@ vi.mock('./projectIndicatorSettings', () => ({
   notifyProjectIndicatorsChanged: vi.fn(),
 }))
 vi.mock('./gitRefreshSettings', () => ({ loadGitRefreshIntervalStartMinutes: async () => 5 }))
+vi.mock('./terminalAutoReattachSettings', () => ({ loadTerminalAutoReattachEnabled: async () => true }))
 
 const globalPath = 'D:/app/default-settings.json'
 const workspace = {

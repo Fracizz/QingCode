@@ -10,6 +10,8 @@ export interface PrewarmStatusScope {
 }
 
 export interface ScopedPrewarmStatus {
+  /** 查到该状态的项目路径；手动重试预热时用同一路径定位池。 */
+  cwd: string
   status: PrewarmStatus
   recent: PrewarmRecent
 }
@@ -29,7 +31,7 @@ export async function readScopePrewarmStatus(scope: PrewarmStatusScope): Promise
     // 命令不可用（浏览器预览、旧版本）时不显示徽标。
     if (status === undefined) return null
     if (hasPrewarmTarget(status)) {
-      return { status, recent: recentShellOpenCounts(new Set(scope.projects.map(p => p.id))) }
+      return { cwd: project.path, status, recent: recentShellOpenCounts(new Set(scope.projects.map(p => p.id))) }
     }
   }
   return null

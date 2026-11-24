@@ -1,6 +1,10 @@
 import { useI18n } from '../../lib/i18n'
 import { DEFAULT_SESSION_PERSIST, saveSessionPersistEnabled } from '../../lib/sessionPersistSettings'
 import {
+  DEFAULT_TERMINAL_AUTO_REATTACH,
+  saveTerminalAutoReattachEnabled,
+} from '../../lib/terminalAutoReattachSettings'
+import {
   DEFAULT_EDITOR_STATE_CACHE_SIZE,
   MAX_EDITOR_STATE_CACHE_SIZE,
   MIN_EDITOR_STATE_CACHE_SIZE,
@@ -26,13 +30,15 @@ type Props = {
   settings: ProjectSessionSettingsState
 }
 
-/** 项目与会话分区：会话状态保存、项目会话 LRU、顶栏项目角标、Git 随机刷新周期。 */
+/** 项目与会话分区：会话状态保存、启动时自动接回终端、项目会话 LRU、顶栏项目角标、Git 随机刷新周期。 */
 export default function ProjectSessionSettingsSection({ match, workspaceLocked, settings }: Props) {
   const { t } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
   const {
     sessionPersist,
     setSessionPersist,
+    autoReattachTerminals,
+    setAutoReattachTerminals,
     editorStateCacheSize,
     setEditorStateCacheSize,
     editorStateCacheSizeDraft,
@@ -67,6 +73,34 @@ export default function ProjectSessionSettingsSection({ match, workspaceLocked, 
               setSessionPersist(enabled)
               void saveSessionPersistEnabled(enabled).catch(error =>
                 pushToast('error', t('保存会话设置失败: {error}', { error: String(error) })),
+              )
+            }}
+            className="setting-control setting-select"
+          >
+            <option value="on">{t('开启')}</option>
+            <option value="off">{t('关闭')}</option>
+          </select>
+        </SettingItem>
+      )}
+      {match('启动时自动接回终端', '自动接回', '接回', '终端', '会话') && (
+        <SettingItem
+          title={t('启动时自动接回终端')}
+          description={t(
+            '启动后在后台接回上次仍在运行的终端，以及远端没有对应标签的终端，不弹提示、不切换项目。需要输入密码、未确认主机指纹或已手动断开的连接会跳过，切换到项目时再接回。关闭后只在切换到项目时接回，远端遗留终端改为提示。',
+          )}
+          modified={autoReattachTerminals !== DEFAULT_TERMINAL_AUTO_REATTACH}
+          locked={workspaceLocked}
+          lockHint={t('此设置仅在用户作用域中可用')}
+        >
+          <select
+            aria-label={t('启动时自动接回终端')}
+            value={autoReattachTerminals ? 'on' : 'off'}
+            disabled={workspaceLocked}
+            onChange={e => {
+              const enabled = e.target.value === 'on'
+              setAutoReattachTerminals(enabled)
+              void saveTerminalAutoReattachEnabled(enabled).catch(error =>
+                pushToast('error', t('保存自动接回设置失败: {error}', { error: String(error) })),
               )
             }}
             className="setting-control setting-select"

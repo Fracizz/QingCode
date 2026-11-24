@@ -42,6 +42,7 @@ void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(nul
 // Sync session-persist cache from default-settings.json for the next boot.
 void loadSessionPersistEnabled()
 void import('./lib/projectIndicatorSettings').then(m => m.loadProjectIndicatorsEnabled())
+void import('./lib/terminalAutoReattachSettings').then(m => m.loadTerminalAutoReattachEnabled())
 void loadGitRefreshIntervalStartMinutes()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

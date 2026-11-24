@@ -78,6 +78,13 @@ describe('ProjectKindMark', () => {
       const svg = container.querySelector('svg')
       expect(svg).toHaveClass('lucide-folder-open')
     })
+
+    it('closed 优先于 open，本地项目固定为闭合文件夹', () => {
+      const { container } = render(
+        <ProjectKindIcon project={{ path: 'D:/code/local' }} open closed />
+      )
+      expect(container.querySelector('svg')).toHaveClass('lucide-folder-closed')
+    })
   })
 
   describe('WslKindBadge', () => {

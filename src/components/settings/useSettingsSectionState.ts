@@ -64,6 +64,10 @@ import {
   loadSessionPersistEnabled,
 } from '../../lib/sessionPersistSettings'
 import {
+  DEFAULT_TERMINAL_AUTO_REATTACH,
+  loadTerminalAutoReattachEnabled,
+} from '../../lib/terminalAutoReattachSettings'
+import {
   DEFAULT_EDITOR_STATE_CACHE_SIZE,
   MAX_EDITOR_STATE_CACHE_SIZE,
   MIN_EDITOR_STATE_CACHE_SIZE,
@@ -301,6 +305,7 @@ export function useProjectSessionSettings(settingsRevision: number) {
   const { t } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
   const [sessionPersist, setSessionPersist] = useState(DEFAULT_SESSION_PERSIST)
+  const [autoReattachTerminals, setAutoReattachTerminals] = useState(DEFAULT_TERMINAL_AUTO_REATTACH)
   const [editorStateCacheSize, setEditorStateCacheSize] =
     useState<EditorStateCacheSizeSetting>('auto')
   const [editorStateCacheSizeDraft, setEditorStateCacheSizeDraft] = useState(
@@ -319,6 +324,7 @@ export function useProjectSessionSettings(settingsRevision: number) {
 
   useEffect(() => {
     void loadSessionPersistEnabled().then(setSessionPersist)
+    void loadTerminalAutoReattachEnabled().then(setAutoReattachTerminals)
     void loadProjectIndicatorsEnabled().then(setProjectIndicatorsEnabled)
     void loadGitRefreshIntervalStartMinutes().then(value => {
       setGitRefreshIntervalStartMinutes(value)
@@ -372,6 +378,8 @@ export function useProjectSessionSettings(settingsRevision: number) {
   return {
     sessionPersist,
     setSessionPersist,
+    autoReattachTerminals,
+    setAutoReattachTerminals,
     editorStateCacheSize,
     setEditorStateCacheSize,
     editorStateCacheSizeDraft,

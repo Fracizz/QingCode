@@ -21,6 +21,12 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
 import { openFindInActiveEditor } from '../lib/editorFind'
+import {
+  MARKDOWN_PREVIEW_FIND_EVENT,
+  isMarkdownPreviewFindTarget,
+  markdownPreviewSelectionSeed,
+  type MarkdownPreviewFindDetail,
+} from '../lib/markdownPreviewFind'
 import { activeEditorSelectionSeed } from '../lib/editorSelectionSeed'
 import { openFileFromDialog } from '../lib/openFileDialog'
 import { explorerDirectoryForSearchShortcut } from '../lib/explorerSelection'
@@ -139,6 +145,14 @@ export function useAppKeyboardShortcuts({
           event.preventDefault()
           useUIStore.getState().openTerminalPanel()
           requestTerminalSearch()
+          return
+        }
+        // Markdown 预览：打开预览内查找，避免落到 WebView 自带的窗口级查找条。
+        if (isMarkdownPreviewFindTarget(event.target)) {
+          event.preventDefault()
+          event.stopPropagation()
+          const detail: MarkdownPreviewFindDetail = { seed: markdownPreviewSelectionSeed() }
+          window.dispatchEvent(new CustomEvent(MARKDOWN_PREVIEW_FIND_EVENT, { detail }))
           return
         }
         if (

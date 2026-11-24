@@ -35,6 +35,7 @@ import {
   windowsSshShellLabel,
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import { noteTerminalReattaching, trackStartupReattach } from '../lib/terminal/terminalReattachNotice'
 import { serverModeErrorAction } from '../lib/serverModeError'
 import {
   DEFAULT_PTY_COLS,
@@ -84,6 +85,7 @@ import {
   planTerminalRestore,
   type SshDetachedTerminal,
 } from '@/lib/terminal/terminalRestorePlan'
+import { isTerminalAutoReattachEnabled } from '@/lib/terminalAutoReattachSettings'
 import {
   applyTerminalScreen,
   clearTerminalOutput,
@@ -552,8 +554,11 @@ interface TerminalState {
       brTerminalByProject?: Record<string, string>
     }
   ) => Promise<void>
-  /** Spawn PTYs for tabs restored after restart (once). */
-  spawnRestoredTerminals: (projectId: string) => Promise<void>
+  /**
+   * Spawn PTYs for tabs restored after restart (once).
+   * `background`：启动后自动接回，只接回仍在运行的原进程，接不回时静默退回待恢复。
+   */
+  spawnRestoredTerminals: (projectId: string, options?: { background?: boolean }) => Promise<void>
   /** After the SSH workspace is ready, surface detached daemon terminals once. */
   syncDetachedTerminals: (projectId: string) => Promise<void>
   /** 列出 SSH 项目内没有本地标签的远端终端（不弹窗）；非 SSH 项目返回 null。 */
@@ -603,7 +608,12 @@ interface TerminalState {
    * Create the PTY after xterm has fitted. Idempotent while `ptySpawnPending`.
    * Pass measured cols/rows so TUIs (e.g. OpenCode) start on the real grid.
    */
-  spawnPendingTerminal: (id: string, cols: number, rows: number) => Promise<void>
+  spawnPendingTerminal: (
+    id: string,
+    cols: number,
+    rows: number,
+    options?: { background?: boolean },
+  ) => Promise<void>
   renameTerminal: (id: string, name: string) => void
   initializeTerminalEvents: () => Promise<UnlistenFn>
 }
@@ -1041,6 +1051,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       brTerminalByProject: { ...(bindings.brTerminalByProject ?? {}) },
     })
     hydrateTerminalOutputForTabs(owned.map(t => t.id))
+    // 启动恢复的会话里仍可能在运行的原进程：开始接回时提示一次。
+    trackStartupReattach(owned.filter(t => planTerminalRestore(t).mode === 'attach').map(t => t.id))
   },
 
   replaceTerminalSessionsForProjects: async (projectIds, terminals, bindings) => {
@@ -1111,9 +1123,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     hydrateTerminalOutputForTabs(terminals.map(t => t.id))
   },
 
-  spawnRestoredTerminals: async (projectId: string) => {
+  spawnRestoredTerminals: async (projectId: string, options?: { background?: boolean }) => {
+    const background = options?.background === true
     const pending = get().terminals.filter(
-      t => t.projectId === projectId && t.awaitingRestoreSpawn && !restoreSpawnInFlight.has(t.id)
+      t => t.projectId === projectId && t.awaitingRestoreSpawn && !restoreSpawnInFlight.has(t.id) &&
+        // 后台只接回仍在运行的原进程；需要按原配置新建的（会重跑启动命令）留到切到项目时。
+        (!background || planTerminalRestore(t).mode === 'attach')
     )
     if (pending.length === 0) return
     for (const t of pending) restoreSpawnInFlight.add(t.id)
@@ -1139,7 +1154,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           // 重启后 lastPtySize 为空：优先用已挂载视图的真实网格接回，快照与 TUI 重绘
           // 才会与视图同一网格，视图不必先缩到默认尺寸写快照。
           const size = preferredSpawnSize(t.id)
-          return get().spawnPendingTerminal(t.id, size.cols, size.rows)
+          return get().spawnPendingTerminal(t.id, size.cols, size.rows, { background })
         }),
       )
     } finally {
@@ -1241,6 +1256,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       added.push(tab)
     }
     if (!background) useUIStore.getState().openTerminalPanel()
+    // 后台接回远端遗留终端（自动接回）也算启动接回；手动接回有自己的提示。
+    else trackStartupReattach(added.map(tab => tab.id))
     await Promise.all(
       added.map(tab => {
         const terminal = accepted.find(candidate => candidate.ptyId === tab.ptyId)
@@ -1316,6 +1333,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const orphans = found?.terminals ?? []
     if (orphans.length === 0) return
+
+    if (isTerminalAutoReattachEnabled()) {
+      // 自动接回开启：直接在后台接回，不弹提示。没接回的（失败或超出数量上限）允许下次同步重试。
+      const recovered = await get().attachDetachedTerminals(projectId, connectionId, orphans, { background: true })
+      if (recovered < orphans.length) detachedTerminalSyncs.delete(syncKey)
+      return
+    }
 
     const openOrphanActions = async () => {
       if (terminalExitInProgress) return
@@ -1657,7 +1681,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  spawnPendingTerminal: async (id: string, cols: number, rows: number) => {
+  spawnPendingTerminal: async (id: string, cols: number, rows: number, options?: { background?: boolean }) => {
     if (terminalExitInProgress) return
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab?.ptySpawnPending) return
@@ -1690,6 +1714,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         attachSize = terminalViewGrids.get(id) ?? null
         if (attachSize) rememberPtySize(id, attachSize.cols, attachSize.rows)
         else lastPtySize.delete(id)
+        noteTerminalReattaching(id)
         try {
           spawnResult = await attachTerminal({
             id,
@@ -1708,7 +1733,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           console.warn(`ssh_attach_terminal ${restorePlan.ptyId} failed:`, error)
           recordTerminalDiagnostic('terminal.restore_failed', tab)
           const gone = String(error).includes('QC_PTY_GONE:')
-          if (gone && restorePlan.fallback === 'create') {
+          const localGone = gone && restorePlan.fallback === 'create'
+          // 后台自动接回不打扰：用户正看着的项目照常提示；其余项目接不回就静默退回待恢复，
+          // 切到项目时再按原流程接回。本地托管宿主已不在时改为按原配置新建，同样留到切到项目时，
+          // 不在后台重跑启动命令。远端进程确已结束时照常标记结束。
+          const quiet = options?.background === true &&
+            useProjectStore.getState().currentProject?.id !== tab.projectId
+          if (quiet && (!gone || localGone)) {
+            if (localGone) terminalResumeSeqs.delete(id)
+            set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
+              ...terminal, status: 'exited', exitCode: null, awaitingRestoreSpawn: true, ptySpawnPending: true,
+              ...(localGone ? { persistent: undefined, ptyId: undefined, connectionId: undefined } : {}),
+            } : terminal) }))
+            return
+          }
+          if (localGone) {
             // 本地托管终端的宿主随电脑重启消失：与普通本地终端一样按原配置新建，下面继续走创建流程。
             publishTerminalNotice(id, translate('原终端已结束，已按原配置重新启动。'))
           } else {

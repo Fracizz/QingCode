@@ -33,6 +33,8 @@ export const UPDATE_CHECK_ON_STARTUP_KEY = 'qingcode.update.checkOnStartup'
 export const UPDATE_SKIPPED_VERSION_KEY = 'qingcode.update.skippedVersion'
 /** Persist/restore editor tabs + terminal sessions across app restarts. */
 export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
+/** 启动后在后台自动接回仍在运行的终端（不提示、不切换项目）。 */
+export const SESSION_AUTO_REATTACH_TERMINALS_KEY = 'qingcode.session.autoReattachTerminals'
 /** Max detached CodeMirror EditorState entries retained across project sessions. */
 export const SESSION_EDITOR_STATE_CACHE_SIZE_KEY = 'qingcode.session.editorStateCacheSize'
 /** Show running/dirty/git badges on title-bar project chips. */
@@ -121,6 +123,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
   [SESSION_PERSIST_KEY]: true,
+  [SESSION_AUTO_REATTACH_TERMINALS_KEY]: true,
   [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 'auto',
   [PROJECT_INDICATORS_ENABLED_KEY]: true,
   [GIT_REFRESH_INTERVAL_START_MINUTES_KEY]: 5,
@@ -351,6 +354,12 @@ ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   //   false = 不保存/不恢复会话状态；关闭后会清除已缓存的会话快照
   "qingcode.session.persist": true,
   //
+  // qingcode.session.autoReattachTerminals
+  //   true  = 启动后在后台接回上次仍在运行的终端（远端与本机托管）及远端没有标签的遗留终端，
+  //           不弹提示、不切换项目；需要输入密码、未确认主机指纹或已手动断开的连接跳过（默认）
+  //   false = 只在切换到项目时接回；远端遗留终端改为提示后由用户选择
+  "qingcode.session.autoReattachTerminals": true,
+  //
   // qingcode.session.editorStateCacheSize
   //   "auto" = 自动保留 12 个最近使用的编辑器状态（默认）
   //   数字   = 自定义 LRU 个数（1–100）；调小后会立即淘汰最久未使用的状态
@@ -451,6 +460,7 @@ export function stripGlobalOnlyKeys(settings: SettingsFile): SettingsFile {
   delete next[PROJECTS_KEY]
   delete next[PROJECTS_SYNC_ON_STARTUP_KEY]
   delete next[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]
+  delete next[SESSION_AUTO_REATTACH_TERMINALS_KEY]
   delete next[PROJECT_INDICATORS_ENABLED_KEY]
   delete next[GIT_REFRESH_INTERVAL_START_MINUTES_KEY]
   return next

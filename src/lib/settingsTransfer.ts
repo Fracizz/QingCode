@@ -42,6 +42,7 @@ import {
   loadProjectIndicatorsEnabled,
   notifyProjectIndicatorsChanged,
 } from './projectIndicatorSettings'
+import { loadTerminalAutoReattachEnabled } from './terminalAutoReattachSettings'
 import { loadGitRefreshIntervalStartMinutes } from './gitRefreshSettings'
 
 interface UserPreferences {
@@ -413,6 +414,7 @@ async function finishSettingsChange(
   if (scope === 'global') {
     notifySessionPersistChanged(await loadSessionPersistEnabled())
     notifyProjectIndicatorsChanged(await loadProjectIndicatorsEnabled())
+    await loadTerminalAutoReattachEnabled()
     await loadGitRefreshIntervalStartMinutes()
   }
   const editor = useEditorStore.getState()

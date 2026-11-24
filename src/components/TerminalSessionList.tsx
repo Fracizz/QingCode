@@ -44,6 +44,8 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useTerminalStore, MAX_TERMINALS_PER_PROJECT } from '../store/terminalStore'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
+import { isSshProject } from '../lib/sshWorkspace'
+import { isWslProject } from '../lib/wslWorkspace'
 import {
   getTerminalActivityIndicator,
   subscribeTerminalActivityIndicator,
@@ -103,7 +105,7 @@ import PrewarmPoolBadge from './PrewarmPoolBadge'
 import { usePrewarmStatuses } from '../hooks/usePrewarmStatuses'
 import { terminalLastActiveAt } from '@/lib/terminal/terminalLastActive'
 import TerminalRenameInput from './TerminalRenameInput'
-import TerminalStatusMark from './TerminalStatusMark'
+import TerminalStatusMark, { TerminalListSpinner } from './TerminalStatusMark'
 import Tooltip from './Tooltip'
 import { TooltipSuppressionContext } from './tooltipContext'
 import type { TerminalTab } from '../types'
@@ -140,10 +142,14 @@ const SOURCE_TEXT: Record<TerminalSourceKind, string> = {
 }
 const SOURCE_CHIP = 'rounded border border-current/25 bg-current/[0.07] px-[5px] py-px'
 
+// 16px 图标默认线宽缩放后约 1.33px；主机图标与本地项目文件夹更小，若按比例缩放线条会变细发虚，像另一套图标。
+// 固定为同样的绝对线宽，让它们只靠尺寸区分，笔画与云图标一致。
+const HOST_ICON_STROKE = { strokeWidth: 4 / 3, absoluteStrokeWidth: true } as const
+
 function HostKindIcon({ kind, size }: { kind: TerminalSourceKind; size: number }) {
-  if (kind === 'ssh') return <Server size={size} aria-hidden="true" />
-  if (kind === 'wsl') return <SquareTerminal size={size} aria-hidden="true" />
-  return <Monitor size={size} aria-hidden="true" />
+  if (kind === 'ssh') return <Server size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
+  if (kind === 'wsl') return <SquareTerminal size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
+  return <Monitor size={size} {...HOST_ICON_STROKE} aria-hidden="true" />
 }
 
 function loadCollapsedSet(key: string): ReadonlySet<string> {
@@ -582,7 +588,7 @@ export default function TerminalSessionList() {
         tabIndex={term.id === rovingTerminalId ? 0 : -1}
         aria-selected={managing ? isPicked : isActive}
         aria-busy={isPending || undefined}
-        className={`group relative flex min-h-8 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg pl-6 pr-1 transition-colors ${
+        className={`group relative flex min-h-8 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg pl-[26px] pr-1 transition-colors ${
           isPicked || (!managing && isActive)
             ? 'bg-bg-active text-term-list-active'
             : 'text-term-list-fg hover:bg-bg-hover hover:text-term-list-active'
@@ -632,7 +638,7 @@ export default function TerminalSessionList() {
           className={
             managing
               ? 'flex flex-shrink-0'
-              : 'absolute inset-y-0 left-1 flex w-3.5 items-center justify-center'
+              : 'absolute inset-y-0 left-1 flex w-4 items-center justify-center'
           }
         >
           <TerminalStatusMark
@@ -679,10 +685,9 @@ export default function TerminalSessionList() {
           )}
         </div>
         {(term.status === 'reconnecting' || isPending) && !isRenaming && (
-          <LoaderCircle
-            size={14}
-            aria-label={isPending ? translate('正在切换项目…') : translate('正在重新连接…')}
-            className={`flex-shrink-0 animate-spin ${isPending ? 'text-fg-muted' : 'text-warn'}`}
+          <TerminalListSpinner
+            label={isPending ? translate('正在切换项目…') : translate('正在重新连接…')}
+            className={isPending ? 'text-fg-muted' : 'text-warn'}
           />
         )}
         {exited && !isRenaming && !managing && (
@@ -749,9 +754,10 @@ export default function TerminalSessionList() {
     )
   }
 
-  const renderGroup = (group: TerminalSessionGroup) => {
+  const renderGroup = (group: TerminalSessionGroup, index: number) => {
     const { project, terminals } = group
     const isCurrent = project.id === currentProjectId
+    const remoteProject = isSshProject(project) || isWslProject(project)
     const isEmpty = terminals.length === 0
     const expanded = isExpanded(group)
     // 当前终端行已经高亮时组头不再铺底色，避免同一项目出现两块高亮。
@@ -775,7 +781,8 @@ export default function TerminalSessionList() {
         aria-label={project.name}
         aria-current={isCurrent ? 'true' : undefined}
         data-terminal-project-group={project.id}
-        className={`relative ${draggedProjectId === project.id ? 'opacity-45' : ''}`}
+        // 项目组之间多留 6px，组头与上一组的会话行拉开，层级不再只靠图标区分。
+        className={`relative ${index > 0 ? 'mt-1.5' : ''} ${draggedProjectId === project.id ? 'opacity-45' : ''}`}
       >
         {projectDrop?.id === project.id && (
           <span
@@ -840,10 +847,19 @@ export default function TerminalSessionList() {
               <span
                 aria-hidden="true"
                 data-terminal-group-current={isCurrent ? 'true' : undefined}
-                // 共用文字基线；补偿 14px 图标底部留白，避免云图标视觉上悬空。
-                className="flex translate-y-[2px] flex-shrink-0 text-term-list-project"
+                // 共用文字基线；图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
+                // 固定 16px 宽槽：15px 文件夹与 16px 云的项目名仍从同一列开始，与主机行、会话行对齐。
+                // 基线对齐的是图标底边，15px 文件夹若同样下移 3px，墨迹中心会比 16px 时低约 0.5px，看着下沉，故只下移 2px。
+                // 主机图标 14px 在槽内居中，墨迹左缘比槽左缘多出约 2.2px；项目图标贴槽左缘时只有约 1.3px，
+                // 竖向看文件夹/云比主机图标左偏约 1px，故整体右移 1px 让左缘对齐（只平移图标，不影响项目名起点）。
+                className={`flex w-4 flex-shrink-0 translate-x-px text-term-list-project ${
+                  remoteProject ? 'translate-y-[3px]' : 'translate-y-[2px]'
+                }`}
               >
-                <ProjectKindIcon project={project} open={expanded} size={14} />
+                {/* 本地项目固定用闭合文件夹，不随展开切换成打开态；远程沿用云图标。
+                    文件夹是方正轮廓，同尺寸下比云的弧形轮廓显大显重，缩到 15px 做光学补偿；
+                    线宽固定 4/3px，与云和主机图标一致（按比例缩放会细到 1.25px 而发虚）。 */}
+                <ProjectKindIcon project={project} closed size={remoteProject ? 16 : 15} {...HOST_ICON_STROKE} />
               </span>
               {/* 来源标签按自然宽度显示（上限见 .project-source-badge），长项目名先截断：同名项目靠来源区分，「W…」没有意义。 */}
               {/* 来源字号更小，按基线对齐才不会悬在项目名上方；项目名与会话名同亮，来源退到辅助级。 */}
@@ -863,11 +879,7 @@ export default function TerminalSessionList() {
             </Tooltip>
           </button>
           {pendingProjectId === project.id && (
-            <LoaderCircle
-              size={14}
-              aria-label={translate('正在切换项目…')}
-              className="flex-shrink-0 animate-spin text-fg-muted"
-            />
+            <TerminalListSpinner label={translate('正在切换项目…')} className="text-fg-muted" />
           )}
           {hasAttention && (
             <span
@@ -1010,7 +1022,7 @@ export default function TerminalSessionList() {
           data-terminal-host-header={section.key}
           data-terminal-host-sortable={hostSortable ? 'true' : undefined}
           onPointerDown={hostSortable ? event => startHostDrag(event, section.key) : undefined}
-          className="flex h-6 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-xs text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
+          className="flex h-7 min-w-0 select-none items-center gap-1.5 rounded-md pl-1 pr-2 text-left text-ui-sm text-term-list-meta transition-colors hover:bg-bg-hover hover:text-term-list-fg aria-disabled:cursor-default"
           onClick={() => {
             if (!searching) setHostCollapsed(section.key, expanded)
           }}
@@ -1020,8 +1032,10 @@ export default function TerminalSessionList() {
             aria-hidden="true"
             className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
-          <span className={`flex flex-shrink-0 ${SOURCE_TEXT[section.kind]}`}>
-            <HostKindIcon kind={section.kind} size={12} />
+          {/* 主机图标 14px、标签 12px：比 16px 项目图标低一级，但不再小到和行尾计数同级。
+              放进与项目图标同宽的 16px 槽里居中：左对齐时两者中心差 1px，与项目图标、终端状态点不在同一竖线上。 */}
+          <span className={`flex w-4 flex-shrink-0 justify-center ${SOURCE_TEXT[section.kind]}`}>
+            <HostKindIcon kind={section.kind} size={14} />
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
           <PrewarmPoolBadge hostKey={section.key} scoped={prewarmStatuses.get(section.key)} translate={translate} />
@@ -1263,7 +1277,7 @@ export default function TerminalSessionList() {
       ) : (
         <div
           ref={listRef}
-          // 组间与组内同为 2px，项目行与会话行节奏一致；分组靠图标和缩进区分，不加分隔线。
+          // 组内 2px，项目组之间另加 6px（见 renderGroup）；分组靠间距和图标区分，不加分隔线。
           // 左右 8px：选中底色内缩，组头图标与表头标题、搜索框（12px）左对齐。
           className="view-fade flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5"
           onKeyDown={onListKeyDown}

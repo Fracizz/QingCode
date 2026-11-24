@@ -158,15 +158,15 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
 .cm-editor .cm-panels.cm-panels-bottom {
   border-top: 1px solid var(--color-border);
 }
-.cm-editor .cm-qing-find-replace-host {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-replace-host {
   pointer-events: auto;
 }
-.cm-editor .cm-qing-find-replace {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-replace {
   font-family: var(--font-sans);
   font-size: var(--ui-font-size-sm);
   padding: 4px 6px 0 0;
 }
-.cm-editor .cm-qing-find-replace-widget {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-replace-widget {
   position: relative;
   display: flex;
   align-items: flex-start;
@@ -179,23 +179,23 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
   box-shadow: var(--shadow-find-widget);
   color: var(--color-fg);
 }
-.cm-editor .cm-qing-find-toggle-replace {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-toggle-replace {
   margin-top: 4px;
 }
-.cm-editor .cm-qing-find-rows {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-rows {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
   flex: 1;
 }
-.cm-editor .cm-qing-find-row {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-row {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
 }
-.cm-editor .cm-qing-find-input-wrap {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input-wrap {
   position: relative;
   display: flex;
   align-items: center;
@@ -206,10 +206,10 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
   border-radius: 4px;
   background: var(--color-bg-input);
 }
-.cm-editor .cm-qing-find-input-wrap:focus-within {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input-wrap:focus-within {
   border-color: var(--color-accent);
 }
-.cm-editor .cm-qing-find-input {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -220,19 +220,19 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
   color: var(--color-fg);
   font-size: var(--ui-font-size);
 }
-.cm-editor .cm-qing-find-input::placeholder {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input::placeholder {
   color: var(--color-fg-dim);
 }
-.cm-editor .cm-qing-find-input-wrap:not(.is-replace) .cm-qing-find-input {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input-wrap:not(.is-replace) .cm-qing-find-input {
   padding-right: 2px;
 }
-.cm-editor .cm-qing-find-input-toggles {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-input-toggles {
   display: flex;
   align-items: center;
   gap: 1px;
   padding-right: 2px;
 }
-.cm-editor .cm-qing-find-count {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-count {
   flex: 0 0 auto;
   min-width: 3.5rem;
   padding: 0 2px;
@@ -241,17 +241,18 @@ html:is([data-theme="olive"], [data-theme="forest"]) .cm-editor .cm-activeLineGu
   text-align: center;
   white-space: nowrap;
 }
-.cm-editor .cm-qing-find-count.is-empty {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-count.is-empty {
   color: var(--color-danger);
 }
-.cm-editor .cm-qing-find-actions {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-actions {
   display: flex;
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
 }
-.cm-editor .cm-qing-find-close {
+:is(.cm-editor, .qing-md-find-layer) .cm-qing-find-close {
   position: absolute;
-  top: 4px;
+  /* 与首行输入框（--ui-control-height）垂直居中，和上一个/下一个按钮对齐；按钮固定 22px。 */
+  top: calc(4px + (var(--ui-control-height) - 22px) / 2);
   right: 4px;
 }
