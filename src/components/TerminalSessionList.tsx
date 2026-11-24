@@ -850,7 +850,9 @@ export default function TerminalSessionList() {
                 // 共用文字基线；图标比中文字面略高，下移补偿底部留白，避免视觉上悬空。
                 // 固定 16px 宽槽：15px 文件夹与 16px 云的项目名仍从同一列开始，与主机行、会话行对齐。
                 // 基线对齐的是图标底边，15px 文件夹若同样下移 3px，墨迹中心会比 16px 时低约 0.5px，看着下沉，故只下移 2px。
-                className={`flex w-4 flex-shrink-0 text-term-list-project ${
+                // 主机图标 14px 在槽内居中，墨迹左缘比槽左缘多出约 2.2px；项目图标贴槽左缘时只有约 1.3px，
+                // 竖向看文件夹/云比主机图标左偏约 1px，故整体右移 1px 让左缘对齐（只平移图标，不影响项目名起点）。
+                className={`flex w-4 flex-shrink-0 translate-x-px text-term-list-project ${
                   remoteProject ? 'translate-y-[3px]' : 'translate-y-[2px]'
                 }`}
               >

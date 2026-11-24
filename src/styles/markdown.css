@@ -73,3 +73,19 @@
 }
 .qing-md-preview strong { font-weight: 600; color: var(--color-fg); }
 .qing-md-preview li { margin: 0.2em 0; }
+
+/* 预览内查找：浮在预览窗格右上角，与编辑器查找面板同款外观 */
+.qing-md-find-layer {
+  position: absolute;
+  top: 0;
+  right: 12px;
+  z-index: 20;
+  max-width: min(100% - 12px, 440px);
+}
+::highlight(qing-md-find) {
+  background-color: rgba(255, 213, 107, 0.35);
+}
+::highlight(qing-md-find-current) {
+  background-color: #f59e0b;
+  color: #1a1a1a;
+}

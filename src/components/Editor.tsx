@@ -133,6 +133,8 @@ import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
+import MarkdownPreviewFind from './MarkdownPreviewFind'
+import { MARKDOWN_PREVIEW_FIND_EVENT, type MarkdownPreviewFindDetail } from '../lib/markdownPreviewFind'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
 import ImageViewer from './ImageViewer'
@@ -459,6 +461,12 @@ export default function Editor() {
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [minimapHideScrollbar, setMinimapHideScrollbar] = useState(loadMinimapHideScrollbar)
   const previewScrollRef = useRef<HTMLDivElement>(null)
+  /** 预览内查找浮层；tabId 不匹配当前标签时视为关闭。 */
+  const [previewFind, setPreviewFind] = useState<{
+    tabId: string
+    seed: string
+    token: number
+  } | null>(null)
   const syncingMdScrollRef = useRef(false)
   const boundEpochRef = useRef(0)
 
@@ -475,6 +483,8 @@ export default function Editor() {
   const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
   const showSourcePane = !markdownTab || mdPreviewMode !== 'preview'
+  const previewFindOpen =
+    showPreviewPane && !!previewFind && previewFind.tabId === activeTabId
 
   // Destroy the shared view only when leaving the editable surface (not on tab switch).
   useEffect(() => {
@@ -695,6 +705,21 @@ export default function Editor() {
     }
     window.addEventListener('qingcode:toggle-markdown-preview', onToggle)
     return () => window.removeEventListener('qingcode:toggle-markdown-preview', onToggle)
+  }, [])
+
+  useEffect(() => {
+    const onFind = (event: Event) => {
+      const tabId = useEditorStore.getState().activeTabId
+      if (!tabId) return
+      const seed = (event as CustomEvent<MarkdownPreviewFindDetail>).detail?.seed ?? ''
+      setPreviewFind(prev => ({
+        tabId,
+        seed,
+        token: (prev?.token ?? 0) + 1,
+      }))
+    }
+    window.addEventListener(MARKDOWN_PREVIEW_FIND_EVENT, onFind)
+    return () => window.removeEventListener(MARKDOWN_PREVIEW_FIND_EVENT, onFind)
   }, [])
 
   useEffect(() => {
@@ -1134,9 +1159,10 @@ export default function Editor() {
           </div>
           {showPreviewPane && (
             <div
-              className={`min-w-0 flex-1 overflow-hidden border-border ${
+              className={`qing-md-preview-pane relative min-w-0 flex-1 overflow-hidden border-border ${
                 showSourcePane ? 'border-l' : ''
               }`}
+              data-preview-only={showSourcePane ? undefined : 'true'}
               onContextMenu={openPreviewContextMenu}
             >
               <MarkdownPreview
@@ -1144,6 +1170,21 @@ export default function Editor() {
                 content={previewContent}
                 filePath={activeTab.path}
               />
+              {previewFindOpen && previewFind && (
+                <div className="qing-md-find-layer">
+                  <MarkdownPreviewFind
+                    key={previewFind.tabId}
+                    previewRef={previewScrollRef}
+                    content={previewContent}
+                    seed={previewFind.seed}
+                    focusToken={previewFind.token}
+                    onClose={() => {
+                      setPreviewFind(null)
+                      previewScrollRef.current?.focus({ preventScroll: true })
+                    }}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
