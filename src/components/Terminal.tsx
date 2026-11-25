@@ -172,11 +172,9 @@ import TerminalShortcutBar, { TerminalShortcutBarExpand } from './TerminalShortc
 import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
 import {
   CUSTOM_KEY_ENTER_DELAY_MS,
-  builtinKeySequence,
   customKeyForShortcut,
   customKeyInput,
   type TerminalCustomKey,
-  type TerminalShortcutBuiltinKey,
 } from '@/lib/terminal/terminalShortcutBar'
 import { shortcutFromKeyboardEvent } from '@/lib/shortcuts'
 import { useTerminalDraftStore } from '../store/terminalDraftStore'
@@ -509,20 +507,6 @@ export default function TerminalView({
     term.clearSelection()
     term.focus()
   }, [isTerminalWritable, terminalId, writeToTerminal])
-
-  /** 快捷键栏内置键：编辑 / 控制键直接写 PTY，不经过 bracketed paste。 */
-  const sendShortcutKey = useCallback((key: TerminalShortcutBuiltinKey) => {
-    const term = xtermRef.current
-    if (!term || !isTerminalWritable()) return
-    if (key === 'clear-input') {
-      clearInput()
-      return
-    }
-    const sequence = builtinKeySequence(key, { applicationCursor: term.modes.applicationCursorKeysMode })
-    if (!sequence) return
-    void writeToTerminal(terminalId, sequence)
-    term.scrollToBottom()
-  }, [clearInput, isTerminalWritable, terminalId, writeToTerminal])
 
   /** 自定义键：先写文本，需要时隔一会儿再写回车（TUI 会把紧跟的回车当成粘贴的一部分）。 */
   const sendCustomKey = useCallback((def: TerminalCustomKey) => {
@@ -2003,7 +1987,6 @@ export default function TerminalView({
       {!shortcutBarCollapsed && (
         <TerminalShortcutBar
           disabled={!shortcutBarWritable}
-          onBuiltinKey={sendShortcutKey}
           onCustomKey={sendCustomKey}
         />
       )}

@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useVerticalPointerReorder } from '../hooks/useVerticalPointerReorder'
 import { useI18n } from '../lib/i18n'
 import {
@@ -13,12 +13,10 @@ import {
   CUSTOM_KEY_LIMIT,
   CUSTOM_KEY_NAME_LIMIT,
   CUSTOM_KEY_TEXT_LIMIT,
-  builtinKeyInfo,
   customKeyDetail,
   customKeyLabel,
   customShortcutConflict,
   findCustomKey,
-  isDefaultShortcutLayout,
   newCustomKeyId,
   normalizeCustomKey,
   type TerminalCustomKey,
@@ -35,7 +33,7 @@ const EMPTY_DRAFT: Draft = { id: null, name: '', text: '', enter: true, shortcut
 
 /**
  * 快捷键栏管理弹窗（全局挂载，由设置页、栏的「⋯」菜单、命令面板打开）：
- * 显示开关、拖拽 / 按钮排序、隐藏到「⋯」、删除 / 加回内置键（含全部删除）、自定义键（子弹窗编辑，含终端内快捷键）。
+ * 显示开关、拖拽 / 按钮排序、隐藏到「⋯」、自定义键（子弹窗编辑，含终端内快捷键）。电脑端不提供内置键。
  */
 export default function TerminalShortcutBarManager() {
   const open = useTerminalShortcutBarStore(s => s.managerOpen)
@@ -50,27 +48,7 @@ function ManagerDialog() {
   const listRef = useRef<HTMLDivElement>(null)
   const layout = { order: state.order, hidden: state.hidden, custom: state.custom }
 
-  const keyName = (key: string) => {
-    const def = findCustomKey(layout, key)
-    if (def) return def.name || def.text
-    const info = builtinKeyInfo(key)
-    return info ? t(info.name) : key
-  }
-
   const openDraft = (def: TerminalCustomKey | null) => setEditing(def ?? 'new')
-
-  const builtinCount = state.order.filter(key => builtinKeyInfo(key)).length
-
-  const removeAllBuiltins = async () => {
-    if (!await confirmDialog({
-      title: t('删除全部内置键'),
-      message: t('删除全部 {n} 个内置键？', { n: builtinCount }),
-      detail: t('自定义键保留；删除后可单独加回，或点「恢复默认」。'),
-      confirmLabel: t('删除'),
-      kind: 'danger',
-    })) return
-    state.removeAllBuiltinKeys()
-  }
 
   const removeKey = async (def: TerminalCustomKey) => {
     if (!await confirmDialog({
@@ -128,22 +106,6 @@ function ManagerDialog() {
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              className="terminal-profile-add hover:!text-danger"
-              disabled={builtinCount === 0}
-              onClick={() => void removeAllBuiltins()}
-            >
-              <Trash2 size={14} />{t('删除全部内置键')}
-            </button>
-            <button
-              type="button"
-              className="terminal-profile-add"
-              disabled={isDefaultShortcutLayout(layout)}
-              onClick={() => state.resetLayout()}
-            >
-              <RotateCcw size={14} />{t('恢复默认')}
-            </button>
-            <button
-              type="button"
               className="terminal-profile-add"
               disabled={state.custom.length >= CUSTOM_KEY_LIMIT}
               onClick={() => openDraft(null)}
@@ -153,16 +115,16 @@ function ManagerDialog() {
           </div>
           {state.order.length === 0 && (
             <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-ui-sm text-fg-muted">
-              {t('快捷键栏是空的。可以添加自定义键，或从下方加回内置键。')}
+              {t('快捷键栏是空的。点击「添加自定义键」添加要发送的文本，如 /compact。')}
             </p>
           )}
           <div className={`overflow-hidden rounded-md border border-border ${state.order.length === 0 ? 'hidden' : ''}`}>
             {state.order.map((key, index) => {
               const def = findCustomKey(layout, key)
-              const name = keyName(key)
+              if (!def) return null
+              const name = def.name || def.text
               const visible = !state.hidden.includes(key)
-              const info = builtinKeyInfo(key)
-              const chip = def ? customKeyLabel(def) : t(info?.label ?? key)
+              const chip = customKeyLabel(def)
               return (
                 <div
                   key={key}
@@ -193,26 +155,23 @@ function ManagerDialog() {
                       <span className="flex min-w-0 flex-1 items-baseline gap-2 truncate text-left">
                         {name !== chip && <span className="shrink-0 truncate">{name}</span>}
                         <span className="min-w-0 truncate text-ui-sm text-fg-muted">
-                          {def
-                            ? <><span className="font-mono">{customKeyDetail(def)}</span>{def.shortcut && <><span className="mx-1.5">·</span>{def.shortcut}</>}</>
-                            : visible ? t('内置') : t('内置 · 在「⋯」中')}
+                          <span className="font-mono">{customKeyDetail(def)}</span>
+                          {def.shortcut && <><span className="mx-1.5">·</span>{def.shortcut}</>}
                         </span>
                       </span>
                     </label>
                     <div className="terminal-profile-actions">
-                      {def && (
-                        <Tooltip label={t('编辑')} side="top">
-                          <button type="button" aria-label={t('编辑 {name}', { name })} className="terminal-profile-icon" onClick={() => openDraft(def)}>
-                            <Pencil size={14} />
-                          </button>
-                        </Tooltip>
-                      )}
-                      <Tooltip label={def ? t('删除') : t('删除（可在下方加回）')} side="top">
+                      <Tooltip label={t('编辑')} side="top">
+                        <button type="button" aria-label={t('编辑 {name}', { name })} className="terminal-profile-icon" onClick={() => openDraft(def)}>
+                          <Pencil size={14} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label={t('删除')} side="top">
                         <button
                           type="button"
                           aria-label={t('删除 {name}', { name })}
                           className="terminal-profile-icon hover:!text-danger"
-                          onClick={() => (def ? void removeKey(def) : state.removeBuiltinKey(key))}
+                          onClick={() => void removeKey(def)}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -233,27 +192,6 @@ function ManagerDialog() {
               )
             })}
           </div>
-          {state.removed.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-ui-sm text-fg-muted" data-shortcut-removed="">
-              <span>{t('已删除的内置键：')}</span>
-              {state.removed.map(key => {
-                const info = builtinKeyInfo(key)
-                const name = info ? t(info.name) : key
-                return (
-                  <Tooltip key={key} label={t('加回 {name}', { name })} side="top">
-                    <button
-                      type="button"
-                      aria-label={t('加回 {name}', { name })}
-                      className="terminal-profile-add"
-                      onClick={() => state.restoreBuiltinKey(key)}
-                    >
-                      <Plus size={12} />{t(info?.label ?? key)}
-                    </button>
-                  </Tooltip>
-                )
-              })}
-            </div>
-          )}
         </div>
       </div>
       {editing && <CustomKeyEditor initial={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}

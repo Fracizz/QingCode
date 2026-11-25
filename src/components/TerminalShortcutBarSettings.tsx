@@ -24,7 +24,7 @@ export default function TerminalShortcutBarSettings() {
         </button>
       </div>
       <p className="mt-1.5 text-ui-sm leading-relaxed text-fg-muted">
-        {t('终端底部的一排按钮，点击直接发送到所在终端；当前 {n} 个键。可排序、隐藏、删除，或添加发送文本的自定义键。', { n: count })}
+        {t('终端底部的一排自定义键，点击把设定的文本发送到所在终端；当前 {n} 个键。可添加、排序、隐藏或删除。', { n: count })}
       </p>
     </div>
   )

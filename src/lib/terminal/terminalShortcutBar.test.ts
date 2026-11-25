@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   CUSTOM_KEY_LIMIT,
-  TERMINAL_SHORTCUT_KEYS,
-  builtinKeySequence,
   customKeyDetail,
   customKeyForShortcut,
   customKeyInput,
@@ -11,16 +9,12 @@ import {
   defaultShortcutBarState,
   defaultShortcutLayout,
   fitShortcutKeyCount,
-  isDefaultShortcutLayout,
   moveShortcutKey,
   newCustomKeyId,
   normalizeCustomKey,
   parseShortcutBarState,
-  removeAllBuiltinKeys,
-  removeBuiltinKey,
   removeCustomKey,
   reorderShortcutKey,
-  restoreBuiltinKey,
   saveCustomKey,
   serializeShortcutBarState,
   toggleShortcutKeyHidden,
@@ -30,12 +24,8 @@ import {
 const custom = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: '', text: `/${id}`, enter: true, shortcut: '', ...extra })
 
 describe('terminalShortcutBar defaults', () => {
-  it('shows only mouse-friendly keys by default and hides keyboard keys', () => {
-    const { bar, overflow } = visibleShortcutKeys(defaultShortcutLayout())
-    expect(bar).toEqual(['esc', 'interrupt', 'shift-tab', 'clear-input'])
-    expect(overflow).toContain('up')
-    expect(overflow).toContain('tab')
-    expect(overflow.length + bar.length).toBe(TERMINAL_SHORTCUT_KEYS.length)
+  it('provides no built-in keys by default', () => {
+    expect(defaultShortcutLayout()).toEqual({ order: [], hidden: [], custom: [] })
   })
 
   it('defaults to expanded', () => {
@@ -50,36 +40,30 @@ describe('parseShortcutBarState', () => {
     expect(parseShortcutBarState({ order: 'x' })).toEqual(defaultShortcutBarState())
   })
 
-  it('drops unknown and duplicate keys and keeps collapsed', () => {
+  it('drops built-in keys saved by older versions, unknown and duplicate keys, and keeps collapsed', () => {
     const state = parseShortcutBarState({
-      order: ['interrupt', 'esc', 'bogus', 'esc', 'custom:missing'],
-      hidden: ['esc', 'bogus'],
+      order: ['interrupt', 'custom:b', 'esc', 'bogus', 'custom:a', 'custom:b', 'custom:missing'],
+      hidden: ['esc', 'custom:a', 'bogus'],
+      removed: ['tab'],
+      custom: [custom('a'), custom('b')],
       collapsed: true,
     })
-    expect(state.order.filter(key => key === 'interrupt' || key === 'esc')).toEqual(['interrupt', 'esc'])
-    expect(new Set(state.order).size).toBe(state.order.length)
-    expect(state.order).not.toContain('bogus')
-    expect(state.hidden).toContain('esc')
-    expect(state.collapsed).toBe(true)
-  })
-
-  it('adds keys introduced later after their default predecessor with default visibility', () => {
-    const state = parseShortcutBarState({ order: ['shift-tab', 'esc'], hidden: [] })
-    // interrupt 默认在 esc 之后；clear-input 在 shift-tab 之后。
-    expect(state.order.indexOf('interrupt')).toBe(state.order.indexOf('esc') + 1)
-    expect(state.order.indexOf('clear-input')).toBe(state.order.indexOf('shift-tab') + 1)
-    expect(state.hidden).toContain('up')
-    expect(state.hidden).not.toContain('interrupt')
+    expect(state).toEqual({
+      order: ['custom:b', 'custom:a'],
+      hidden: ['custom:a'],
+      custom: [custom('a'), custom('b')],
+      collapsed: true,
+    })
   })
 
   it('keeps valid custom keys and appends them when missing from order', () => {
     const state = parseShortcutBarState({
-      order: ['esc'],
+      order: [],
       hidden: [],
       custom: [custom('a'), custom('a'), { id: 'bad id', text: 'x' }, custom('b', { text: 'line\nbreak' })],
     })
     expect(state.custom.map(def => def.id)).toEqual(['a'])
-    expect(state.order).toContain('custom:a')
+    expect(state.order).toEqual(['custom:a'])
   })
 
   it('round-trips through serialize', () => {
@@ -148,21 +132,19 @@ describe('custom keys', () => {
 })
 
 describe('layout editing', () => {
+  const layout = () => [custom('a'), custom('b')].reduce(saveCustomKey, defaultShortcutLayout())
+
   it('moves keys within bounds', () => {
-    const layout = defaultShortcutLayout()
-    expect(moveShortcutKey(layout, 'esc', -1)).toBe(layout)
-    expect(moveShortcutKey(layout, 'esc', 1).order.slice(0, 2)).toEqual(['interrupt', 'esc'])
+    const value = layout()
+    expect(moveShortcutKey(value, 'custom:a', -1)).toBe(value)
+    expect(moveShortcutKey(value, 'custom:a', 1).order).toEqual(['custom:b', 'custom:a'])
   })
 
-  it('toggles visibility and detects default layout', () => {
-    const layout = defaultShortcutLayout()
-    expect(isDefaultShortcutLayout(layout)).toBe(true)
-    const shown = toggleShortcutKeyHidden(layout, 'up')
-    expect(shown.hidden).not.toContain('up')
-    expect(isDefaultShortcutLayout(shown)).toBe(false)
-    expect(toggleShortcutKeyHidden(layout, 'nope')).toBe(layout)
-    // 自定义键不影响「是否为默认」。
-    expect(isDefaultShortcutLayout(saveCustomKey(layout, custom('a')))).toBe(true)
+  it('toggles visibility and ignores unknown keys', () => {
+    const value = layout()
+    const hidden = toggleShortcutKeyHidden(value, 'custom:a')
+    expect(visibleShortcutKeys(hidden)).toEqual({ bar: ['custom:b'], overflow: ['custom:a'] })
+    expect(toggleShortcutKeyHidden(value, 'esc')).toBe(value)
   })
 })
 
@@ -175,70 +157,17 @@ describe('fitShortcutKeyCount', () => {
   })
 })
 
-describe('builtinKeySequence', () => {
-  it('maps keys to PTY sequences', () => {
-    expect(builtinKeySequence('esc')).toBe('\x1b')
-    expect(builtinKeySequence('interrupt')).toBe('\x03')
-    expect(builtinKeySequence('shift-tab')).toBe('\x1b[Z')
-    expect(builtinKeySequence('tab')).toBe('\t')
-    expect(builtinKeySequence('backspace')).toBe('\x7f')
-    expect(builtinKeySequence('pgup')).toBe('\x1b[5~')
-    expect(builtinKeySequence('up')).toBe('\x1b[A')
-    expect(builtinKeySequence('up', { applicationCursor: true })).toBe('\x1bOA')
-    expect(builtinKeySequence('end')).toBe('\x1b[F')
-    expect(builtinKeySequence('clear-input')).toBeNull()
-  })
-})
-
-describe('removing and restoring built-in keys', () => {
-  it('removes a built-in key and keeps it removed after a save/load round trip', () => {
-    const state = removeBuiltinKey(defaultShortcutBarState(), 'tab')
-    expect(state.order).not.toContain('tab')
-    expect(state.hidden).not.toContain('tab')
-    expect(state.removed).toEqual(['tab'])
-    const loaded = parseShortcutBarState(serializeShortcutBarState(state))
-    expect(loaded.order).not.toContain('tab')
-    expect(loaded.removed).toEqual(['tab'])
-    expect(isDefaultShortcutLayout(loaded)).toBe(false)
-  })
-
-  it('ignores custom or unknown keys', () => {
-    const state = defaultShortcutBarState()
-    expect(removeBuiltinKey(state, 'custom:a')).toBe(state)
-    expect(parseShortcutBarState({ order: ['esc'], removed: ['bogus', 3] }).removed).toEqual([])
-  })
-
-  it('restores a removed key near its default position and shows it', () => {
-    const removed = removeBuiltinKey(defaultShortcutBarState(), 'interrupt')
-    const restored = restoreBuiltinKey(removed, 'interrupt')
-    expect(restored.order.slice(0, 2)).toEqual(['esc', 'interrupt'])
-    expect(restored.removed).toEqual([])
-    expect(restored.hidden).not.toContain('interrupt')
-  })
-})
-
 describe('reorderShortcutKey', () => {
+  const layout = () => [custom('a'), custom('b'), custom('c')].reduce(saveCustomKey, defaultShortcutLayout())
+
   it('moves a key before or after the target', () => {
-    const layout = defaultShortcutLayout()
-    expect(reorderShortcutKey(layout, 'clear-input', 'esc', 'before').order.slice(0, 2)).toEqual(['clear-input', 'esc'])
-    expect(reorderShortcutKey(layout, 'esc', 'interrupt', 'after').order.slice(0, 2)).toEqual(['interrupt', 'esc'])
+    expect(reorderShortcutKey(layout(), 'custom:c', 'custom:a', 'before').order).toEqual(['custom:c', 'custom:a', 'custom:b'])
+    expect(reorderShortcutKey(layout(), 'custom:a', 'custom:b', 'after').order).toEqual(['custom:b', 'custom:a', 'custom:c'])
   })
 
   it('returns the layout unchanged for same or missing keys', () => {
-    const layout = defaultShortcutLayout()
-    expect(reorderShortcutKey(layout, 'esc', 'esc', 'after')).toBe(layout)
-    expect(reorderShortcutKey(layout, 'missing', 'esc', 'after')).toBe(layout)
-  })
-})
-
-describe('removeAllBuiltinKeys', () => {
-  it('keeps only custom keys and lets every built-in be added back', () => {
-    const withCustom = saveCustomKey(defaultShortcutBarState(), custom('a'))
-    const state = removeAllBuiltinKeys(withCustom)
-    expect(state.order).toEqual(['custom:a'])
-    expect(state.removed).toHaveLength(TERMINAL_SHORTCUT_KEYS.length)
-    const loaded = parseShortcutBarState(serializeShortcutBarState(state))
-    expect(loaded.order).toEqual(['custom:a'])
-    expect(restoreBuiltinKey(loaded, 'esc').order).toEqual(['esc', 'custom:a'])
+    const value = layout()
+    expect(reorderShortcutKey(value, 'custom:a', 'custom:a', 'after')).toBe(value)
+    expect(reorderShortcutKey(value, 'missing', 'custom:a', 'after')).toBe(value)
   })
 })
