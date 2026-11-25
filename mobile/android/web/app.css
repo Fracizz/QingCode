@@ -988,7 +988,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .custom-key-enter { display: flex; align-items: center; gap: 6px; font-weight: 400; }
 .segmented.custom-key-kind { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 4px; }
 .custom-key-presets { display: flex; flex-wrap: wrap; gap: 6px; max-height: 30vh; overflow-y: auto; }
-.custom-key-presets button { min-width: 44px; min-height: 36px; padding: 0 8px; border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font: 13px var(--mono); }
+/* 预设按键做成和快捷键栏一致的键帽，修饰键前缀（Ctrl+ 等）用强调色区分。 */
+.custom-key-presets button { min-width: 44px; min-height: 36px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--raised); color: var(--ink); font: 13px var(--mono); box-shadow: inset 0 1px 0 var(--key-top), 0 1px 0 var(--key-bottom); }
+.custom-key-presets button.modifier { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.custom-key-presets button:active { transform: scale(.96); }
 .font-stepper { display: flex; flex: none; align-items: center; gap: 4px; padding: 3px; border-radius: var(--control-radius); background: var(--paper); }
 .font-stepper button { width: 44px; color: var(--accent); }
 .font-stepper output { min-width: 38px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }

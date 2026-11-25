@@ -191,6 +191,7 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
     item.type = 'button';
     item.dataset.i18nSkip = '';
     item.textContent = preset;
+    if (preset.endsWith('+')) item.classList.add('modifier');
     item.addEventListener('pointerdown', event => event.preventDefault());
     item.addEventListener('click', () => insertPreset(preset));
     return item;

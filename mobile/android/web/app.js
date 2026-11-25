@@ -751,7 +751,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'custom-key-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
     if (id === 'files-dialog') return files.back();
