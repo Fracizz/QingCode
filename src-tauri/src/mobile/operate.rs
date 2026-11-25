@@ -559,21 +559,9 @@ pub(super) async fn attach(
 /// 等接入改尺寸引发的重绘告一段落：手机随后取的最新画面已是新尺寸，
 /// 省去旧流程「取旧尺寸画面 → 改尺寸 → 轮询到安静」的两次往返和约 900ms 的空等。
 async fn settle_redraw(hub: &Hub, id: &str) {
-    settle_output(
-        hub,
-        id,
-        ATTACH_REDRAW_FIRST,
-        ATTACH_REDRAW_GAP,
-        ATTACH_REDRAW_MAX,
-    )
-    .await;
-}
-
-/// 等输出安静：第一块输出最多等 `first`，之后安静 `gap` 即返回，整个等待不超过 `max`。
-async fn settle_output(hub: &Hub, id: &str, first: Duration, gap: Duration, max: Duration) {
     let started = Instant::now();
     let mut seen = None;
-    let mut quiet = first;
+    let mut quiet = ATTACH_REDRAW_FIRST;
     loop {
         // 在锁内取游标并登记等待：之后的输出必定唤醒这次等待，不会漏掉。
         let (next, changed) = {
@@ -584,10 +572,10 @@ async fn settle_output(hub: &Hub, id: &str, first: Duration, gap: Duration, max:
             (session.next, session.changed.clone().notified_owned())
         };
         if seen.is_some_and(|seen| seen != next) {
-            quiet = gap;
+            quiet = ATTACH_REDRAW_GAP;
         }
         seen = Some(next);
-        let left = max.saturating_sub(started.elapsed());
+        let left = ATTACH_REDRAW_MAX.saturating_sub(started.elapsed());
         if left.is_zero()
             || tokio::time::timeout(quiet.min(left), changed)
                 .await
@@ -778,42 +766,17 @@ pub(super) async fn poll_reply(
         }
     }
     emit_control_if_changed(app, id);
-    // 整段输入后的输出：等这批帧安静下来一起返回，不把中间帧（如先出现的光标色块）单独送给手机。
-    let settling = |hub: &Hub| {
-        hub.inner
-            .lock()
-            .unwrap()
-            .live(id)
-            .is_some_and(|session| session.settling_bulk_input(Instant::now()))
-    };
     let wait = {
         let inner = hub.inner.lock().unwrap();
-        let session = inner.live(id);
-        let pending_output = !latest && session.is_some_and(|session| session.next != from);
-        match read(&inner, false)? {
-            Some(reply) => {
-                let bulk = pending_output
-                    && session.is_some_and(|session| session.settling_bulk_input(Instant::now()));
-                if !bulk {
-                    return Ok(reply);
-                }
-                None
-            }
-            None => Some(inner.live(id).unwrap().changed.clone().notified_owned()),
+        if let Some(reply) = read(&inner, false)? {
+            return Ok(reply);
         }
-    };
-    let Some(wait) = wait else {
-        settle_output(hub, id, BULK_INPUT_GAP, BULK_INPUT_GAP, BULK_INPUT_MAX).await;
-        return read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into());
+        inner.live(id).unwrap().changed.clone().notified_owned()
     };
     if tokio::time::timeout(Duration::from_millis(900), wait)
         .await
         .is_ok()
     {
-        if settling(hub) {
-            settle_output(hub, id, BULK_INPUT_GAP, BULK_INPUT_GAP, BULK_INPUT_MAX).await;
-            return read(&hub.inner.lock().unwrap(), true)?.ok_or_else(|| "终端不存在。".into());
-        }
         // 按唤醒时的输入状态选窗口，滚轮常在这次长轮询挂起之后才到。
         let delay = hub
             .inner

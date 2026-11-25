@@ -120,15 +120,6 @@ const ATTACH_REDRAW_FIRST: Duration = Duration::from_millis(400);
 const ATTACH_REDRAW_GAP: Duration = Duration::from_millis(120);
 const ATTACH_REDRAW_MAX: Duration = Duration::from_millis(1200);
 
-/// 整段文字输入（手机输入框发送、粘贴）后，Claude Code 等 TUI 会分几帧处理：先画光标等中间态，
-/// 检查完路径或图片后再显示文字。电脑上中间帧一闪而过；手机按轮询逐帧收到，中间帧会停留一个往返。
-/// 这段时间内的轮询等输出安静 `BULK_INPUT_GAP` 再返回，合并成最终画面，整个等待不超过 `BULK_INPUT_MAX`。
-const BULK_INPUT_WINDOW: Duration = Duration::from_millis(1000);
-const BULK_INPUT_GAP: Duration = Duration::from_millis(60);
-const BULK_INPUT_MAX: Duration = Duration::from_millis(300);
-/// 达到这么多字符的普通输入视为整段输入；单个按键、方向键等控制序列不算。
-const BULK_INPUT_CHARS: usize = 8;
-
 /// 标题开头的转圈帧字符：盲文点阵（含空白帧 U+2800）与常见的圆形/方块转圈。
 fn is_spinner_glyph(character: char) -> bool {
     matches!(

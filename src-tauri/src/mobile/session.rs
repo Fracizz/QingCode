@@ -62,8 +62,6 @@ pub(super) struct Session {
     pub(super) last_spinner_frame: Option<Instant>,
     /// 最近一次输入或改尺寸，其后短时间内的输出视为回显/重绘。
     pub(super) last_input: Option<Instant>,
-    /// 最近一次整段文字输入（输入框发送或粘贴），其后的输出按帧合并后再给手机。
-    pub(super) last_bulk_input: Option<Instant>,
     /// 当前这段连续输出的开始与最近一次（间隔达到 `SPINNER_HOLD` 即断开）。
     pub(super) output_streak_start: Option<Instant>,
     pub(super) last_output: Option<Instant>,
@@ -139,7 +137,6 @@ impl Session {
             created_at_ms: now_ms,
             last_spinner_frame: None,
             last_input: None,
-            last_bulk_input: None,
             output_streak_start: None,
             last_output: None,
             redraw: None,
@@ -203,12 +200,6 @@ impl Session {
         }
     }
 
-    /// 整段文字输入后不久：轮询应等这批输出安静下来再返回，不让中间帧停留在手机上。
-    pub(super) fn settling_bulk_input(&self, now: Instant) -> bool {
-        self.last_bulk_input
-            .is_some_and(|at| now.saturating_duration_since(at) < BULK_INPUT_WINDOW)
-    }
-
     /// 键盘输入：既算会话活动，也让随后的回显不计入输出活跃；结束重绘段。
     pub(super) fn note_input(&mut self) {
         self.touch();
@@ -231,9 +222,6 @@ impl Session {
     /// 用户输入：回车提交时作废之前的上报（可能来自已退出的程序），由程序重新上报。
     pub(super) fn note_user_input(&mut self, data: &str) {
         self.note_input();
-        if is_bulk_input(data) {
-            self.last_bulk_input = Some(self.last_active);
-        }
         if data.contains('\r') {
             self.screen.clear_program_state();
         }
@@ -557,10 +545,4 @@ impl OutputChunk {
 pub(super) struct Exit {
     pub(super) exit_code: u32,
     pub(super) disconnected: bool,
-}
-
-/// 整段文字：粘贴，或不以控制序列开头且达到 `BULK_INPUT_CHARS` 个字符的输入。
-pub(super) fn is_bulk_input(data: &str) -> bool {
-    data.starts_with("\x1b[200~")
-        || (!data.starts_with('\x1b') && data.chars().count() >= BULK_INPUT_CHARS)
 }

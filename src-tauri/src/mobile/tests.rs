@@ -1988,22 +1988,3 @@ fn stream_sends_the_final_exit_frame_after_all_output_pages() {
     let (_, keep_streaming) = stream_line(Ok(json!({ "next": 10, "exit": null, "more": false })));
     assert!(keep_streaming);
 }
-
-#[test]
-fn bulk_input_settles_output_only_for_text_bursts() {
-    assert!(session::is_bulk_input(
-        "'/home/app/.qingcode/terminal-paste/a/mobile-image.jpg' "
-    ));
-    assert!(session::is_bulk_input("\x1b[200~a\rb\x1b[201~"));
-    assert!(!session::is_bulk_input("a"));
-    assert!(!session::is_bulk_input("\r"));
-    assert!(!session::is_bulk_input("\x1b[<64;120;40M\x1b[<64;120;40M"));
-
-    let mut session = Session::new(project(), "phone".into(), 1);
-    session.note_user_input("x");
-    assert!(!session.settling_bulk_input(Instant::now()));
-    session.note_user_input("请分析图片 '/tmp/mobile-image.jpg' ");
-    let at = session.last_bulk_input.unwrap();
-    assert!(session.settling_bulk_input(at));
-    assert!(!session.settling_bulk_input(at + BULK_INPUT_WINDOW));
-}
