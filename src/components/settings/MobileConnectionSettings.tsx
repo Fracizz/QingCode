@@ -5,6 +5,7 @@ import { hasBackend } from '@/lib/runtimeCapabilities'
 import { buildPairingLink, formatFingerprint } from '@/lib/mobilePairing'
 import { choiceDialog } from '@/store/choiceStore'
 import { SettingItem } from '../SettingsLayout'
+import LineIcon from '../LineIcon'
 import Tooltip from '../Tooltip'
 
 interface Device {
@@ -358,7 +359,7 @@ export default function MobileConnectionSettings() {
                   role="alert"
                   className="col-start-2 flex items-start gap-2 rounded border border-danger/40 px-3 py-2 text-ui-sm text-danger"
                 >
-                  <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  <LineIcon icon={CircleAlert} />
                   {status.error}
                 </div>
               )}
@@ -367,17 +368,15 @@ export default function MobileConnectionSettings() {
                   role={feedback?.error && !busy ? 'alert' : 'status'}
                   className={`col-start-2 flex items-start gap-2 text-ui-sm leading-relaxed ${feedback?.error && !busy ? 'rounded border border-danger/40 px-3 py-2 text-danger' : busy ? 'text-fg' : 'text-ok'}`}
                 >
-                  {busy ? (
-                    <LoaderCircle
-                      size={16}
-                      className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : feedback?.error ? (
-                    <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                  ) : (
-                    <CircleCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                  )}
+                  <LineIcon>
+                    {busy ? (
+                      <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    ) : feedback?.error ? (
+                      <CircleAlert size={16} aria-hidden="true" />
+                    ) : (
+                      <CircleCheck size={16} aria-hidden="true" />
+                    )}
+                  </LineIcon>
                   {busy ? busyText : feedback?.text}
                 </div>
               )}

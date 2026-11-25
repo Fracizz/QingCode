@@ -100,6 +100,7 @@ import { copyPathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
+import LineIcon from './LineIcon'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -204,9 +205,9 @@ function ScmOperationAlert({
       role="alert"
       className="flex shrink-0 flex-col gap-1.5 border-y border-danger/20 bg-danger/5 px-3 py-2"
     >
-      <div className="flex items-start gap-2 text-danger">
-        <AlertCircle size={14} className="mt-0.5 shrink-0" />
-        <p className="text-ui-sm min-w-0 flex-1 leading-[var(--ui-line-height)]">
+      <div className="flex items-start gap-2 text-ui-sm leading-[var(--ui-line-height)] text-danger">
+        <LineIcon icon={AlertCircle} size={14} />
+        <p className="min-w-0 flex-1">
           {display.literal
             ? display.summaryKey
             : t(display.summaryKey, display.summaryParams)}
