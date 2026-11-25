@@ -126,15 +126,21 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
       const name = document.createElement('span');
       name.className = 'key-name';
       if (def) name.dataset.i18nSkip = '';
-      name.textContent = hidden ? t('{name} · 在「更多」中', { name: label }) : label;
-      // 有名称的自定义键另起一行显示实际发送的内容。
-      if (def?.name) {
+      if (def) {
+        // 自定义键：键名单行省略，第二行显示隐藏状态和实际发送的内容；键帽与键名重复，不再显示，给文字留出宽度。
+        const title = document.createElement('span');
+        title.className = 'key-title';
+        title.textContent = label;
         const detail = document.createElement('span');
         detail.className = 'key-detail';
-        detail.textContent = customKeyDetail(def);
-        name.append(detail);
+        detail.textContent = [hidden ? t('在「更多」中') : '', def.name ? customKeyDetail(def) : ''].filter(Boolean).join(' · ');
+        name.append(title);
+        if (detail.textContent) name.append(detail);
+        toggle.append(box, name);
+      } else {
+        name.textContent = hidden ? t('{name} · 在「更多」中', { name: label }) : label;
+        toggle.append(box, keyCap(key), name);
       }
-      toggle.append(box, keyCap(key), name);
       const up = button('icon-button key-move', () => save(moveKey(layout, key, -1)));
       up.append(icon('arrow-up'));
       up.dataset.role = 'up';
@@ -151,7 +157,11 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
         edit.append(icon('edit'));
         edit.dataset.role = 'edit';
         edit.setAttribute('aria-label', t('编辑 {name}', { name: label }));
-        row.append(edit);
+        const remove = button('icon-button key-move key-delete', () => void deleteCustomKey(def));
+        remove.append(icon('trash'));
+        remove.dataset.role = 'delete';
+        remove.setAttribute('aria-label', t('删除 {name}', { name: label }));
+        row.append(edit, remove);
       }
       row.append(up, down);
       return row;
@@ -250,12 +260,16 @@ export function createShortcutBar({ prefix, onChange, canImport = () => false, i
     save(saveCustomKey(layout, def));
   });
 
-  get('custom-key-delete').addEventListener('click', async () => {
+  async function deleteCustomKey(def) {
+    if (!await confirmAction(t('删除自定义键「{name}」？', { name: customKeyLabel(def) }), t('删除后可以再次添加。'), t('删除'))) return;
+    save(removeCustomKey(layout, def.id));
+  }
+
+  get('custom-key-delete').addEventListener('click', () => {
     const def = editing;
     if (!def) return;
     get('custom-key-dialog').close();
-    if (!await confirmAction(t('删除自定义键「{name}」？', { name: customKeyLabel(def) }), t('删除后可以再次添加。'), t('删除'))) return;
-    save(removeCustomKey(layout, def.id));
+    void deleteCustomKey(def);
   });
 
   function importStatus(text) {

@@ -981,8 +981,14 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .key-layout-row .key-move { width: 44px; height: 44px; color: var(--muted); }
 .key-layout-row .key-move svg { width: 18px; height: 18px; }
 /* 自定义键多一个「编辑」按钮。 */
-.key-layout-row[data-custom] { grid-template-columns: minmax(0, 1fr) 44px 44px 44px; }
-.key-layout-row .key-detail { display: block; color: var(--muted); font: 12px var(--mono); overflow-wrap: anywhere; }
+.key-layout-row[data-custom] { grid-template-columns: minmax(0, 1fr) repeat(4, 38px); padding-right: 2px; }
+.key-layout-row[data-custom] .key-move { width: 38px; }
+.key-layout-row[data-custom] label { padding-right: 4px; }
+.key-layout-row .key-delete { color: var(--error); }
+/* 自定义键的两行文字都单行省略，避免窄屏下逐字折行把行撑得很高。 */
+.key-layout-row[data-custom] .key-name { flex: 1; overflow: hidden; }
+.key-layout-row :is(.key-title, .key-detail) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.key-layout-row .key-detail { margin-top: 2px; color: var(--muted); font: 12px var(--mono); }
 .key-layout-add { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-top: 4px; padding-left: 4px; }
 .key-layout-add svg { width: 16px; height: 16px; }
 .custom-key-enter { display: flex; align-items: center; gap: 6px; font-weight: 400; }
