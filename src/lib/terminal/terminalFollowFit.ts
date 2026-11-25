@@ -1,6 +1,6 @@
 /**
- * 多端共享时电脑跟随其他端的网格：行列不能改，只能按字号把对方整屏铺满电脑窗口
- * （手机竖屏 60 列在宽屏上放大，平板横屏的宽网格放进窄窗格时缩小）。
+ * 多端共享时电脑跟随其他端的网格：对方整屏放不下时按字号缩小（平板横屏的宽网格放进窄窗格），
+ * 放得下时保持设置字号、不放大（列数见 followTerminalGrid）。
  * 不用 CSS transform / zoom：WebGL 画布会被拉糊，鼠标选字的坐标也会错位。
  */
 import type { Terminal } from '@xterm/xterm'
@@ -32,6 +32,16 @@ export function gridForCell(area: TerminalArea, cell: TerminalCellSize): Termina
     cols: Math.max(2, Math.floor(area.width / cell.width)),
     rows: Math.max(1, Math.floor(area.height / cell.height)),
   }
+}
+
+/**
+ * 跟随其他端网格时电脑 xterm 的行列：行数跟随对方，列数不小于电脑自己的列数。
+ * xterm 改列数时总会回流已有内容：若缩到手机的窄列数，期间按窄宽度画出的折行，
+ * 在恢复宽列数时会被重新拼接，Claude Code 等只输出一次的历史就错位成每词一格。
+ * 列数保持电脑宽度，对方的内容只占左侧，恢复电脑网格时不再改列数。
+ */
+export function followTerminalGrid(remote: TerminalGrid, natural: TerminalGrid | undefined): TerminalGrid {
+  return { cols: Math.max(remote.cols, natural?.cols ?? 0), rows: remote.rows }
 }
 
 /**
