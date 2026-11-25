@@ -194,6 +194,8 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }
+/* 关掉 WebView 默认的点击高亮：它对 label、带点击监听的 div 也会生效，按下瞬间整块闪一下。按压反馈统一用下方的状态层。 */
+html { -webkit-tap-highlight-color: transparent; }
 [hidden], .sprite { display: none !important; }
 body { margin: 0; background: var(--paper); color: var(--ink); -webkit-font-smoothing: antialiased; }
 main {
@@ -236,8 +238,8 @@ button:where(:not(.terminal-selection-handle, .virtual-mouse-button, #dashboard-
 /* 整行可点的列表项（会话、项目、连接、设置行、选项）：按下只柔和地叠一层淡色，不缩放。
    按下 150ms 淡入、松手 260ms 淡出（transition 写在哪个状态上，就决定进入该状态的时长）；选中项换底色也随之淡入，不瞬间跳变。
    已选中 / 当前项按下时保留自身底色，不被状态层盖掉。 */
-:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .session-shortcuts > button, #submission-list button, .terminal-actions button) { transition: background-color 260ms var(--ease), color 260ms var(--ease); }
-:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .session-shortcuts > button, #submission-list button, .terminal-actions button):not([aria-checked="true"], [aria-current="true"]):active:not(:disabled) { background-color: var(--press); transition-duration: 150ms; }
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .setting-row[data-tappable], .session-shortcuts > button, #submission-list button, .terminal-actions button) { transition: background-color 260ms var(--ease), color 260ms var(--ease); }
+:is(.row, .project-open, .session-group-open, .connection-main, .select-option, .setting-link, .setting-row[data-tappable], .session-shortcuts > button, #submission-list button, .terminal-actions button):not([aria-checked="true"], [aria-current="true"]):active:not(:disabled) { background-color: var(--press); transition-duration: 150ms; }
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -571,8 +573,10 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .rows:empty { display: none; }
 /* 表面层级：工作台上的分组外框加 1px 边缘高光 + 一层浅投影。边缘画在 ::after 上并盖住行面，
    行的底色和左滑面板不会把它遮掉；弹层里的列表保持平面，避免层层描边。 */
-.dashboard :is(.rows, .settings-group) { position: relative; box-shadow: var(--elev-1); }
-.dashboard :is(.rows, .settings-group)::after { content: ''; position: absolute; z-index: 2; inset: 0; border-radius: inherit; box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px var(--edge); pointer-events: none; }
+/* 设置页同理：浅色主题下页面与分组同为纯白，不加外框就看不出卡片和圆角。 */
+:is(.dashboard :is(.rows, .settings-group), .settings-dialog .settings-group) { position: relative; box-shadow: var(--elev-1); }
+.settings-dialog .settings-group { isolation: isolate; }
+:is(.dashboard :is(.rows, .settings-group), .settings-dialog .settings-group)::after { content: ''; position: absolute; z-index: 2; inset: 0; border-radius: inherit; box-shadow: inset 0 1px 0 var(--edge-top), inset 0 0 0 1px var(--edge); pointer-events: none; }
 .rows > * + * { border-top: 1px solid var(--divider); }
 /* 项目分组：标题吸在搜索框下方，组内共用标题里的主机信息。 */
 .project-groups { display: grid; gap: 4px; }
