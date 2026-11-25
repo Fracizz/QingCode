@@ -1471,7 +1471,8 @@ dialog.sheet .settings-group { margin-top: 12px; background: var(--paper); }
 .setting-row[data-tappable] { cursor: pointer; }
 .setting-text { display: block; flex: 1; min-width: 0; }
 .setting-text :is(label, strong) { display: block; margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; cursor: inherit; }
-.setting-text p { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.setting-text .setting-hint { display: block; }
+.setting-text :is(p, .setting-hint) { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .setting-row .select-field { flex: none; max-width: 52%; margin: 0; }
 .setting-row .select-trigger { justify-content: flex-end; gap: 2px; padding: 0; border: 0; background: transparent; color: var(--muted); }
 .setting-row .select-trigger:active:not(:disabled), .setting-row .select-trigger:focus-visible { background: transparent; color: var(--ink); transform: none; }
@@ -1595,7 +1596,7 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 :is(.settings-dialog, #session-dialog) .setting-row { gap: 14px; min-height: 58px; padding: 10px 14px 10px 16px; }
 :is(.settings-dialog, #session-dialog) .setting-icon { width: 22px; height: 22px; stroke-width: 1.75; color: var(--ink); }
 :is(.settings-dialog, #session-dialog) .setting-text :is(label, strong) { font-size: 15px; font-weight: 500; }
-:is(.settings-dialog, #session-dialog) .setting-text p { margin-top: 1px; font-size: 12px; line-height: 1.4; }
+:is(.settings-dialog, #session-dialog) .setting-text :is(p, .setting-hint) { margin-top: 1px; font-size: 12px; line-height: 1.4; }
 :is(.settings-dialog, #session-dialog) .setting-row:has(.select-trigger) .setting-text p { display: none; }
 :is(.settings-dialog, #session-dialog) .setting-row .select-trigger { gap: 4px; font-size: 14px; }
 :is(.settings-dialog, #session-dialog) .setting-row .select-trigger svg, .setting-chevron { width: 18px; height: 18px; color: var(--muted); }

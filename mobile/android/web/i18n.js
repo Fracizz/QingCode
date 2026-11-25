@@ -195,6 +195,7 @@ export const EN = Object.freeze({
   '通用': 'General',
   '关于': 'About',
   '调整顺序': 'Reorder',
+  '排序、显示或隐藏按键，添加发送文本或组合键的自定义键': 'Reorder, show or hide keys, and add custom keys that send text or key combos',
   '语言、图片、提醒': 'Language, images, alerts',
   '发送与图片': 'Sending and images',
   '提醒与渲染': 'Alerts and rendering',
