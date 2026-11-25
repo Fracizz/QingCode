@@ -67,7 +67,7 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '@/lib/git/gitStatus'
-import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
+import { gitPullErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
 import {
   clearFetchAuthFailed,
   markAutoFetchAttempt,
@@ -1187,14 +1187,11 @@ export default function SourceControlPanel() {
     } catch (reason) {
       if (useProjectStore.getState().currentProject?.path === project.path) {
         setBranchMenuOpen(false)
-        const message = String(reason)
-        setOperationError(message)
-        useProjectStore
-          .getState()
-          .pushToast('error', t('读取分支列表失败：{error}', { error: message }))
+        // 面板内错误横幅会自行格式化原始错误，不再重复弹 toast。
+        setOperationError(String(reason))
       }
     }
-  }, [loading, operation, t])
+  }, [loading, operation])
 
   const switchToBranch = useCallback(
     async (branch: string) => {
@@ -1211,10 +1208,8 @@ export default function SourceControlPanel() {
         }
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
-          const message = String(reason)
-          setOperationError(message)
-          const { key, params } = gitSwitchErrorI18n(message)
-          useProjectStore.getState().pushToast('error', t(key, params))
+          // 横幅按原始错误推断“切换分支”上下文并格式化，不再重复弹 toast。
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1545,16 +1540,7 @@ export default function SourceControlPanel() {
             useGitStatusStore.getState().applyFromGitStatus(project.path, snapshot)
           }
           void refresh({ soft: true })
-          const message = String(reason)
-          setOperationError(message)
-          useProjectStore
-            .getState()
-            .pushToast(
-              'error',
-              isStage
-                ? t('暂存更改失败：{error}', { error: message })
-                : t('取消暂存失败：{error}', { error: message })
-            )
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1631,11 +1617,7 @@ export default function SourceControlPanel() {
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           void refresh({ soft: true })
-          const message = String(reason)
-          setOperationError(message)
-          useProjectStore
-            .getState()
-            .pushToast('error', t('丢弃更改失败：{error}', { error: message }))
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1668,10 +1650,9 @@ export default function SourceControlPanel() {
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           await refresh({ soft: false })
+          // 错误已在面板顶部横幅展示，不再重复弹 toast。
           const { key, params } = gitPullErrorI18n(String(reason))
-          const message = t(key, params)
-          setOperationError(message)
-          useProjectStore.getState().pushToast('error', message)
+          setOperationError(t(key, params))
         }
       } finally {
         setOperation(null)
@@ -1744,7 +1725,6 @@ export default function SourceControlPanel() {
             setAutoFetchError({ path, message })
           } else {
             setOperationError(message)
-            useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
           }
         }
         return false
@@ -1834,7 +1814,6 @@ export default function SourceControlPanel() {
             )
             setOperationError(failureMessage)
             setPushRetryAvailable(true)
-            useProjectStore.getState().pushToast('error', failureMessage)
             return
           }
           if (useProjectStore.getState().currentProject?.path !== project.path) return
@@ -1855,7 +1834,6 @@ export default function SourceControlPanel() {
           { error: String(reason) }
         )
         setOperationError(failureMessage)
-        useProjectStore.getState().pushToast('error', failureMessage)
       }
     } finally {
       setOperation(null)
@@ -1883,7 +1861,6 @@ export default function SourceControlPanel() {
         const failureMessage = t('推送失败：{error}。提交信息已保留。', { error: pushError })
         setOperationError(failureMessage)
         setPushRetryAvailable(true)
-        useProjectStore.getState().pushToast('error', failureMessage)
       }
     } finally {
       setOperation(null)

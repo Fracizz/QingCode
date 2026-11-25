@@ -78,6 +78,7 @@ import {
   isAgentCommandUnavailable,
   isDeferredUpgrade,
   type DeferredUpgrade,
+  groupSshServerStates,
   parseSshServerState,
   sshServerIsDirect,
   sshServerModeKey,
@@ -233,6 +234,7 @@ export default function RemoteConnectionsManager() {
     serverStates.length > 1 && serverStates[0].reason && serverStates.every(state => state.reason === serverStates[0].reason)
       ? serverStates[0].reason
       : null
+  const serverGroups = groupSshServerStates(serverStates)
   const groupedProjects = useMemo(() => groupConnectionProjects(projects), [projects])
   const status = connectionStatus(selected ? aliveMap[selected.id] : null, serverStates, selected ? statusErrors[selected.id] : undefined)
   const statusError = selected && statusErrors[selected.id]
@@ -821,13 +823,17 @@ export default function RemoteConnectionsManager() {
     }
   }
 
-  const restartServer = async (rootUri: string, direct: boolean, agent = false) => {
+  /** `alsoSwitch`：汇总行「切换到远端服务」时同组其他项目也逐个切换（各自独立回退）。 */
+  const restartServer = async (rootUri: string, direct: boolean, agent = false, alsoSwitch: string[] = []) => {
     if (busyRoot) return
     setBusyRoot(rootUri)
     try {
       const accepted = agent || await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
       const value = await safeInvoke<unknown>('重启远端服务', 'ssh_server_restart', { rootUri })
+      for (const other of alsoSwitch) {
+        await safeInvoke<unknown>('重启远端服务', 'ssh_server_restart', { rootUri: other })
+      }
       const next = parseSshServerState(value)
       if (next && sshServerIsDirect(next)) {
         pushToast('warn', t('仍使用 SSH 直连'), next.reason ?? undefined)
@@ -1509,15 +1515,30 @@ export default function RemoteConnectionsManager() {
                               </p>
                             )}
                             <ul className="overflow-hidden rounded-md border border-dialog-border">
-                              {serverStates.map(state => (
+                              {/* 同一连接的项目共用 daemon 与通道：一行连接级汇总，只单独列出状态不同的项目。 */}
+                              {[serverGroups.summary, ...serverGroups.exceptions].filter(state => state !== null).map(state => {
+                                const summary = state === serverGroups.summary
+                                const shared = summary && serverGroups.members.length > 1
+                                return (
                                 <li
                                   key={state.rootUri}
                                   className="flex flex-wrap items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
-                                  <FileText size={14} className="flex-shrink-0 text-fg-dim" />
-                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
-                                    {remoteShort(state.rootUri)}
-                                  </span>
+                                  {shared ? (
+                                    <Tooltip label={serverGroups.members.map(member => remoteShort(member.rootUri)).join('、')} side="top">
+                                      <span className="flex min-w-0 flex-1 items-center gap-2 text-ui-sm text-fg-muted">
+                                        <Server size={14} className="flex-shrink-0 text-fg-dim" />
+                                        {t('{count} 个项目共用', { count: serverGroups.members.length })}
+                                      </span>
+                                    </Tooltip>
+                                  ) : (
+                                    <>
+                                      <FileText size={14} className={`flex-shrink-0 ${summary ? 'text-fg-dim' : 'text-warn'}`} />
+                                      <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
+                                        {remoteShort(state.rootUri)}
+                                      </span>
+                                    </>
+                                  )}
                                   <span
                                     className={`flex-shrink-0 text-ui-sm ${
                                       state.phase === 'readyServer'
@@ -1567,7 +1588,11 @@ export default function RemoteConnectionsManager() {
                                             void restartServer(
                                               state.rootUri,
                                               sshServerIsDirect(state),
-                                              sshServerUsesGateway(state) || directEnabled
+                                              sshServerUsesGateway(state) || directEnabled,
+                                              // 共用服务重启一次即可；SSH 直连是逐项目回退，汇总行要逐个切换。
+                                              shared && sshServerIsDirect(state)
+                                                ? serverGroups.members.slice(1).map(member => member.rootUri)
+                                                : []
                                             )
                                           }
                                           className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-50"
@@ -1593,7 +1618,8 @@ export default function RemoteConnectionsManager() {
                                     </>
                                   )}
                                 </li>
-                              ))}
+                                )
+                              })}
                             </ul>
                             </>
                           )}

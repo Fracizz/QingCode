@@ -14,6 +14,8 @@ import '../App.css'
 const query = new URLSearchParams(location.search)
 let deferred = query.has('deferred')
 const holdUpdate = query.has('hold-update')
+// 同一连接多个项目：3 个共用同一服务、1 个回退 SSH 直连，用于验证汇总行与例外行。
+const multiRoot = query.has('multi-root')
 let finishUpdate: (() => void) | undefined
 const impact = { runningVersion: '0.1.18-beta.10', targetVersion: '0.1.18-beta.13', liveTerminals: 3 }
 let useDirect = deferred
@@ -97,6 +99,13 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
     if (command === 'ssh_workspace_roots') return id === 'fixture-wsl' && connected ? [{ rootUri: wslRoot, trusted: true }] : []
     if (command === 'ssh_server_states') {
       if (id === 'fixture-windev') throw new Error('Fixture: authentication required; open a project to reconnect.')
+      if (multiRoot && id === 'fixture-wsl' && connected) {
+        const base = state(id)
+        return [
+          ...['nem-panel', 'django', 'work'].map(name => ({ ...base, rootUri: `ssh://${id}/home/code/${name}` })),
+          { ...base, rootUri: `ssh://${id}/home/code/legacy`, phase: 'readyDirect', mode: 'direct', transport: 'direct', reason: 'Fixture: 端口转发被禁用' },
+        ]
+      }
       return connected || id !== 'fixture-wsl' ? [state(id)] : []
     }
     if (command === 'direct_agent_info') return id === 'fixture-tls' || (id === 'fixture-wsl' && useDirect) ? { enabled: true, host: id === 'fixture-wsl' ? 'localhost' : 'build.example.test', port: 48763, certificateFingerprint: 'a'.repeat(64), tokenSaved: true, previousPorts: [] } : null

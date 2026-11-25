@@ -248,6 +248,51 @@ export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'
 }
 
+export type SshServerStateGroups = {
+  /** 多数项目共有的状态（代表行）；没有状态时为 null。 */
+  summary: SshServerState | null
+  /** 与代表行状态一致的项目。 */
+  members: SshServerState[]
+  /** 状态与代表行不同、需要单独列出的项目。 */
+  exceptions: SshServerState[]
+}
+
+function sshServerStateSignature(state: SshServerState): string {
+  return JSON.stringify([
+    state.phase,
+    state.mode,
+    state.connectionMode,
+    state.transport,
+    state.version,
+    state.reason,
+    Boolean(state.deferredUpgrade),
+  ])
+}
+
+/**
+ * 同一连接下的项目共用 daemon 与传输通道，状态通常完全一致：按状态签名分组，
+ * 人数最多的一组作为连接级汇总（并列时取先出现的），其余项目作为例外单独列出。
+ */
+export function groupSshServerStates(states: SshServerState[]): SshServerStateGroups {
+  const groups = new Map<string, SshServerState[]>()
+  for (const state of states) {
+    const key = sshServerStateSignature(state)
+    const group = groups.get(key)
+    if (group) group.push(state)
+    else groups.set(key, [state])
+  }
+  let members: SshServerState[] = []
+  for (const group of groups.values()) {
+    if (group.length > members.length) members = group
+  }
+  const included = new Set(members)
+  return {
+    summary: members[0] ?? null,
+    members,
+    exceptions: states.filter(state => !included.has(state)),
+  }
+}
+
 export function sshServerEventMatches(eventRootUri: string, activeRootUri: string): boolean {
   return eventRootUri === activeRootUri
 }
