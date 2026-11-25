@@ -483,6 +483,7 @@ Windows SSH 的重试／重启确认框在预检发现可修复的配置格式�
 | 面板 | `relative` + `rounded-lg` + `border-border-strong` + `shadow-2xl` + `modal-content-enter`；宽度用 `max-w-*`，内容过高时 `max-h-[85vh]` + 内部滚动 |
 | 关闭 | 点击遮罩关闭（确认框等同取消）；`Escape` 由各对话框自行处理 |
 | 动效 | 遮罩 `modal-overlay-enter` 原位淡入 120ms，面板 `modal-content-enter` 原位淡入 140ms。关闭时从当前透明度淡出 100ms，弹窗交接时遮罩保持不动 |
+| 嵌套 | 弹窗叠在另一个弹窗上时（`data-modal-nested`），不再叠遮罩和模糊（遮罩层透明，仅保留点击关闭）；父面板以 `brightness` 压暗退后（`data-modal-covered`，不缩放），子面板从下方 6px、98% 上浮淡入 160ms，关闭时沿原方向下沉淡出 100ms |
 
 **适用：** `ConfirmDialog`、`PromptDialog`、`RunConfigEditor` 及今后所有居中弹窗。
 
@@ -765,6 +766,7 @@ Server 安装、更新和打开远程项目共用右下角任务卡。单任务�
 | `--motion-fast` | 120ms | 换页正文、终端会话、菜单、遮罩、Tooltip 和浮条入场 |
 | `--motion-enter` | 140ms | 对话框面板、Toast 入场，终端面板淡入淡出 |
 | `--motion-exit` | 100ms | 对话框、菜单、Toast 和浮条退出（`exitMotion.ts` 读取） |
+| `--motion-nested` | 160ms | 嵌套弹窗面板上浮入场、父面板压暗与恢复 |
 | `--motion-layout` | 180ms | 侧栏和编辑器分隔线开合 |
 | `--ease-out` | `cubic-bezier(0.16, 1, 0.3, 1)` | 折叠箭头和图片查看器反馈 |
 | `--ease-soft` | `cubic-bezier(0.3, 0, 0.2, 1)` | 入场和分隔线开合平缓起步与收尾 |

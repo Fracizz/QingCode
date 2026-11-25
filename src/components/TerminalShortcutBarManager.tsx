@@ -45,13 +45,8 @@ export default function TerminalShortcutBarManager() {
 function ManagerDialog() {
   const { t } = useI18n()
   const state = useTerminalShortcutBarStore()
-  const appShortcuts = useShortcutStore(s => s.shortcuts)
-  const [draft, setDraft] = useState<Draft | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [shortcutHint, setShortcutHint] = useState<string | null>(null)
-  const titleId = useId()
+  const [editing, setEditing] = useState<TerminalCustomKey | 'new' | null>(null)
   const managerTitleId = useId()
-  const shortcutInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const layout = { order: state.order, hidden: state.hidden, custom: state.custom }
 
@@ -62,26 +57,7 @@ function ManagerDialog() {
     return info ? t(info.name) : key
   }
 
-  const openDraft = (def: TerminalCustomKey | null) => {
-    setError(null)
-    setShortcutHint(null)
-    setDraft(def ? { ...def } : { ...EMPTY_DRAFT })
-  }
-
-  const saveDraft = () => {
-    if (!draft) return
-    const def = normalizeCustomKey({ ...draft, id: draft.id ?? newCustomKeyId(layout) })
-    if (!def) {
-      setError(t('请输入要发送的文本，不能包含换行。'))
-      return
-    }
-    if (!draft.id && state.custom.length >= CUSTOM_KEY_LIMIT) {
-      setError(t('自定义键最多 {n} 个。', { n: CUSTOM_KEY_LIMIT }))
-      return
-    }
-    state.saveCustomKey(def)
-    setDraft(null)
-  }
+  const openDraft = (def: TerminalCustomKey | null) => setEditing(def ?? 'new')
 
   const builtinCount = state.order.filter(key => builtinKeyInfo(key)).length
 
@@ -107,17 +83,6 @@ function ManagerDialog() {
     state.removeCustomKey(def.id)
   }
 
-  /** Esc：焦点在快捷键录入框时只退出录入，否则关闭弹窗。 */
-  const dismissDraft = () => {
-    const input = shortcutInputRef.current
-    if (input && document.activeElement === input) {
-      setShortcutHint(null)
-      input.blur()
-      return
-    }
-    setDraft(null)
-  }
-
   // Tauri 接管原生拖放后 WebView2 收不到 dragover / drop（光标显示禁止、放不下），改用指针拖动。
   // 落点按纵坐标取最近一行，指针越过首行顶边时仍落在首行之前。
   const { draggedId: dragged, drop: dropTarget, start: startDrag } = useVerticalPointerReorder({
@@ -128,134 +93,6 @@ function ManagerDialog() {
     canDrop: () => true,
     onDrop: (source, drop) => state.reorder(source, drop.id, drop.position),
   })
-
-  const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (!draft) return
-    if (event.key === 'Tab') return
-    event.preventDefault()
-    event.stopPropagation()
-    if (event.key === 'Escape') {
-      setShortcutHint(null)
-      event.currentTarget.blur()
-      return
-    }
-    if (event.key === 'Backspace' || event.key === 'Delete') {
-      setDraft({ ...draft, shortcut: '' })
-      setShortcutHint(null)
-      return
-    }
-    const shortcut = shortcutFromKeyboardEvent(event.nativeEvent)
-    if (!shortcut) {
-      setShortcutHint(t('请输入 Ctrl、Alt、Shift 或 Meta 加按键的组合；或按 Backspace 清空。'))
-      return
-    }
-    if (isReservedShortcut(shortcut)) {
-      setShortcutHint(t('该按键组合已由编辑器或开发工具使用。'))
-      return
-    }
-    const app = SHORTCUT_COMMANDS.find(
-      item => isShortcutBound(appShortcuts[item.id]) && canonicalizeShortcut(appShortcuts[item.id]) === shortcut,
-    )
-    if (app) {
-      setShortcutHint(t('该快捷键已用于「{name}」。', { name: t(app.label) }))
-      return
-    }
-    const conflict = customShortcutConflict(layout, draft.id ?? '', shortcut)
-    if (conflict?.kind === 'terminal') {
-      setShortcutHint(t('该按键组合由终端使用（复制、粘贴、中断、换行或查找）。'))
-      return
-    }
-    if (conflict?.kind === 'custom') {
-      setShortcutHint(t('该快捷键已用于「{name}」。', { name: customKeyLabel(conflict.key) }))
-      return
-    }
-    setDraft({ ...draft, shortcut })
-    setShortcutHint(null)
-  }
-
-  const fieldLabel = 'flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted'
-  const editor = draft && (
-    <ModalOverlay onDismiss={dismissDraft}>
-      <form
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="modal-panel modal-md modal-content-enter"
-        onSubmit={event => {
-          event.preventDefault()
-          saveDraft()
-        }}
-      >
-        <div className="flex flex-col gap-3.5 px-5 pt-5 pb-4">
-          <h2 id={titleId} className="text-ui-lg font-semibold text-fg">
-            {draft.id ? t('编辑自定义键') : t('添加自定义键')}
-          </h2>
-          <label className={fieldLabel}>
-            {t('发送的文本')}
-            <input
-              data-modal-autofocus
-              value={draft.text}
-              maxLength={CUSTOM_KEY_TEXT_LIMIT}
-              onChange={event => {
-                setDraft({ ...draft, text: event.target.value })
-                if (error) setError(null)
-              }}
-              placeholder={t('例如 /compact 或 git status')}
-              className={`modal-field-input font-mono ${error ? 'modal-field-input--invalid' : ''}`}
-              aria-invalid={error ? true : undefined}
-              spellCheck={false}
-            />
-            {error && <span className="text-danger">{error}</span>}
-          </label>
-          <label className={fieldLabel}>
-            {t('按钮名称（可选）')}
-            <input
-              value={draft.name}
-              maxLength={CUSTOM_KEY_NAME_LIMIT}
-              onChange={event => setDraft({ ...draft, name: event.target.value })}
-              placeholder={t('留空时显示发送的文本')}
-              className="modal-field-input"
-            />
-          </label>
-          <label className={fieldLabel}>
-            {t('终端内快捷键（可选）')}
-            <input
-              ref={shortcutInputRef}
-              readOnly
-              value={draft.shortcut}
-              onKeyDown={captureShortcut}
-              placeholder={t('点击后按组合键，Backspace 清空')}
-              className="modal-field-input font-mono"
-            />
-            {shortcutHint && <span className="text-warn">{shortcutHint}</span>}
-          </label>
-          <label className="flex items-center gap-2 text-ui-sm text-fg">
-            <input
-              type="checkbox"
-              checked={draft.enter}
-              onChange={event => setDraft({ ...draft, enter: event.target.checked })}
-            />
-            {t('发送后回车')}
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 rounded-b-lg border-t border-border bg-bg-deep/20 px-5 py-3.5">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setDraft(null)}
-          >
-            {t('取消')}
-          </button>
-          <button
-            type="submit"
-            className="btn btn-primary"
-          >
-            {draft.id ? t('保存') : t('添加')}
-          </button>
-        </div>
-      </form>
-    </ModalOverlay>
-  )
 
   return (
     <ModalOverlay onDismiss={state.closeManager}>
@@ -419,7 +256,175 @@ function ManagerDialog() {
           )}
         </div>
       </div>
-      {editor}
+      {editing && <CustomKeyEditor initial={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+    </ModalOverlay>
+  )
+}
+
+/** 自定义键编辑子弹窗：草稿状态放在这里，输入时只重渲染本弹窗，不连带重渲染整个管理列表。 */
+function CustomKeyEditor({ initial, onClose }: { initial: TerminalCustomKey | null; onClose: () => void }) {
+  const { t } = useI18n()
+  const order = useTerminalShortcutBarStore(s => s.order)
+  const hidden = useTerminalShortcutBarStore(s => s.hidden)
+  const custom = useTerminalShortcutBarStore(s => s.custom)
+  const saveCustomKey = useTerminalShortcutBarStore(s => s.saveCustomKey)
+  const appShortcuts = useShortcutStore(s => s.shortcuts)
+  const [draft, setDraft] = useState<Draft>(() => (initial ? { ...initial } : { ...EMPTY_DRAFT }))
+  const [error, setError] = useState<string | null>(null)
+  const [shortcutHint, setShortcutHint] = useState<string | null>(null)
+  const titleId = useId()
+  const shortcutInputRef = useRef<HTMLInputElement>(null)
+  const layout = { order, hidden, custom }
+
+  const saveDraft = () => {
+    const def = normalizeCustomKey({ ...draft, id: draft.id ?? newCustomKeyId(layout) })
+    if (!def) {
+      setError(t('请输入要发送的文本，不能包含换行。'))
+      return
+    }
+    if (!draft.id && custom.length >= CUSTOM_KEY_LIMIT) {
+      setError(t('自定义键最多 {n} 个。', { n: CUSTOM_KEY_LIMIT }))
+      return
+    }
+    saveCustomKey(def)
+    onClose()
+  }
+
+  /** Esc：焦点在快捷键录入框时只退出录入，否则关闭弹窗。 */
+  const dismissDraft = () => {
+    const input = shortcutInputRef.current
+    if (input && document.activeElement === input) {
+      setShortcutHint(null)
+      input.blur()
+      return
+    }
+    onClose()
+  }
+
+  const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Tab') return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      setShortcutHint(null)
+      event.currentTarget.blur()
+      return
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      setDraft({ ...draft, shortcut: '' })
+      setShortcutHint(null)
+      return
+    }
+    const shortcut = shortcutFromKeyboardEvent(event.nativeEvent)
+    if (!shortcut) {
+      setShortcutHint(t('请输入 Ctrl、Alt、Shift 或 Meta 加按键的组合；或按 Backspace 清空。'))
+      return
+    }
+    if (isReservedShortcut(shortcut)) {
+      setShortcutHint(t('该按键组合已由编辑器或开发工具使用。'))
+      return
+    }
+    const app = SHORTCUT_COMMANDS.find(
+      item => isShortcutBound(appShortcuts[item.id]) && canonicalizeShortcut(appShortcuts[item.id]) === shortcut,
+    )
+    if (app) {
+      setShortcutHint(t('该快捷键已用于「{name}」。', { name: t(app.label) }))
+      return
+    }
+    const conflict = customShortcutConflict(layout, draft.id ?? '', shortcut)
+    if (conflict?.kind === 'terminal') {
+      setShortcutHint(t('该按键组合由终端使用（复制、粘贴、中断、换行或查找）。'))
+      return
+    }
+    if (conflict?.kind === 'custom') {
+      setShortcutHint(t('该快捷键已用于「{name}」。', { name: customKeyLabel(conflict.key) }))
+      return
+    }
+    setDraft({ ...draft, shortcut })
+    setShortcutHint(null)
+  }
+
+  const fieldLabel = 'flex min-w-0 flex-col gap-1.5 text-ui-sm text-fg-muted'
+  return (
+    <ModalOverlay onDismiss={dismissDraft}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="modal-panel modal-md modal-content-enter"
+        onSubmit={event => {
+          event.preventDefault()
+          saveDraft()
+        }}
+      >
+        <div className="flex flex-col gap-3.5 px-5 pt-5 pb-4">
+          <h2 id={titleId} className="text-ui-lg font-semibold text-fg">
+            {draft.id ? t('编辑自定义键') : t('添加自定义键')}
+          </h2>
+          <label className={fieldLabel}>
+            {t('发送的文本')}
+            <input
+              data-modal-autofocus
+              value={draft.text}
+              maxLength={CUSTOM_KEY_TEXT_LIMIT}
+              onChange={event => {
+                setDraft({ ...draft, text: event.target.value })
+                if (error) setError(null)
+              }}
+              placeholder={t('例如 /compact 或 git status')}
+              className={`modal-field-input font-mono ${error ? 'modal-field-input--invalid' : ''}`}
+              aria-invalid={error ? true : undefined}
+              spellCheck={false}
+            />
+            {error && <span className="text-danger">{error}</span>}
+          </label>
+          <label className={fieldLabel}>
+            {t('按钮名称（可选）')}
+            <input
+              value={draft.name}
+              maxLength={CUSTOM_KEY_NAME_LIMIT}
+              onChange={event => setDraft({ ...draft, name: event.target.value })}
+              placeholder={t('留空时显示发送的文本')}
+              className="modal-field-input"
+            />
+          </label>
+          <label className={fieldLabel}>
+            {t('终端内快捷键（可选）')}
+            <input
+              ref={shortcutInputRef}
+              readOnly
+              value={draft.shortcut}
+              onKeyDown={captureShortcut}
+              placeholder={t('点击后按组合键，Backspace 清空')}
+              className="modal-field-input font-mono"
+            />
+            {shortcutHint && <span className="text-warn">{shortcutHint}</span>}
+          </label>
+          <label className="flex items-center gap-2 text-ui-sm text-fg">
+            <input
+              type="checkbox"
+              checked={draft.enter}
+              onChange={event => setDraft({ ...draft, enter: event.target.checked })}
+            />
+            {t('发送后回车')}
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 rounded-b-lg border-t border-border bg-bg-deep/20 px-5 py-3.5">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onClose}
+          >
+            {t('取消')}
+          </button>
+          <button
+            type="submit"
+            className="btn btn-primary"
+          >
+            {draft.id ? t('保存') : t('添加')}
+          </button>
+        </div>
+      </form>
     </ModalOverlay>
   )
 }

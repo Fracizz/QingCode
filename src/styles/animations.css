@@ -3,6 +3,7 @@
   --motion-fast: 120ms;
   --motion-enter: 140ms;
   --motion-exit: 100ms;
+  --motion-nested: 160ms;
   --motion-layout: 180ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-soft: cubic-bezier(0.3, 0, 0.2, 1);
@@ -51,6 +52,33 @@
 }
 @keyframes modal-content-in {
   from { opacity: 0; }
+}
+
+/* 嵌套弹窗（ModalOverlay 写 data-modal-nested / data-modal-covered）：子弹窗不再叠全屏遮罩和模糊，
+   遮罩层保留为透明点击区；父面板压暗退后，子面板从下方轻微上浮入场，层级靠明暗和方向区分，而不是凭空闪现。
+   选择器带 html 前缀，压过 theme.css 中浅色主题对遮罩的覆盖。 */
+html [data-modal-overlay][data-modal-nested] > .modal-overlay-enter {
+  background: transparent;
+  backdrop-filter: none;
+}
+[data-modal-overlay][data-modal-nested] > .modal-content-enter {
+  animation: modal-content-rise var(--motion-nested) var(--ease-out);
+}
+@keyframes modal-content-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+/* 只用 filter 压暗，不缩放父面板：缩放会让整块文字重采样发虚。 */
+[data-modal-overlay] > :not(.modal-overlay-enter) {
+  transition: filter var(--motion-nested) var(--ease-soft);
+}
+[data-modal-overlay][data-modal-covered] > :not(.modal-overlay-enter) {
+  filter: brightness(0.78);
+}
+html[data-theme="light"] [data-modal-overlay][data-modal-covered] > :not(.modal-overlay-enter) {
+  filter: brightness(0.93);
 }
 
 .menu-enter {

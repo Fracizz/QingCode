@@ -51,6 +51,21 @@ afterEach(() => {
 })
 
 describe('leaveExitGhost', () => {
+  it('keeps a nested dialog ghost backdrop transparent and sinks its panel', () => {
+    const overlay = modal()
+    overlay.dataset.modalNested = ''
+    leaveExitGhost(overlay, 'modal')
+    overlay.remove()
+
+    const [ghost] = ghosts()
+    const backdrop = ghost.querySelector<HTMLElement>('.modal-overlay-enter')!
+    expect(backdrop.style.background).toBe('transparent')
+    const panel = ghost.querySelector<HTMLElement>('.modal-content-enter')!
+    // 根节点淡出 + 面板下沉各一段动画。
+    expect(animations).toHaveLength(2)
+    expect(vi.mocked(Element.prototype.animate).mock.contexts?.[1]).toBe(panel)
+  })
+
   it('leaves an inert, unqueryable copy that keeps input values and fades out', async () => {
     const overlay = modal()
     overlay.querySelector('input')!.value = '草稿'

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ArrowDown,
   ArrowLeft,
@@ -10,6 +11,7 @@ import {
   Ellipsis,
 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
+import { beginPanelLayoutResize } from '../lib/panelResize'
 import {
   builtinKeyInfo,
   customKeyDetail,
@@ -39,6 +41,26 @@ const ICONS: Partial<Record<TerminalShortcutBuiltinKey, ReactNode>> = {
   backspace: <Delete size={12} />,
 }
 
+/**
+ * 收起 / 展开快捷键栏会改变终端高度。直接切换时 ResizeObserver 在下一帧 fit，
+ * WebGL canvas 同步清空、内容晚一帧才重绘，画面会闪一下；这里沿用面板开合的
+ * 终端快照冻结：先截图覆盖，同步提交布局，再由 settle 提交新网格并等首帧渲染后揭开。
+ */
+function setTerminalShortcutBarCollapsed(collapsed: boolean) {
+  const store = useTerminalShortcutBarStore.getState()
+  if (store.collapsed === collapsed) return
+  const release = beginPanelLayoutResize(() => {})
+  if (!release) {
+    store.setCollapsed(collapsed)
+    return
+  }
+  try {
+    flushSync(() => store.setCollapsed(collapsed))
+  } finally {
+    release()
+  }
+}
+
 export interface TerminalShortcutBarProps {
   /** 终端不可写（未启动 / 已退出 / 被独占只读）时按钮全部灰显。 */
   disabled: boolean
@@ -55,7 +77,6 @@ export default function TerminalShortcutBar({ disabled, onBuiltinKey, onCustomKe
   const order = useTerminalShortcutBarStore(s => s.order)
   const hidden = useTerminalShortcutBarStore(s => s.hidden)
   const custom = useTerminalShortcutBarStore(s => s.custom)
-  const setCollapsed = useTerminalShortcutBarStore(s => s.setCollapsed)
   const layout = { order, hidden, custom }
   const { bar, overflow } = visibleShortcutKeys(layout)
   const rowRef = useRef<HTMLDivElement>(null)
@@ -193,7 +214,7 @@ export default function TerminalShortcutBar({ disabled, onBuiltinKey, onCustomKe
         separatorBefore: items.length > 0,
         action: () => useTerminalShortcutBarStore.getState().openManager(),
       },
-      { label: t('收起快捷键栏'), action: () => setCollapsed(true) },
+      { label: t('收起快捷键栏'), action: () => setTerminalShortcutBarCollapsed(true) },
     )
     return items
   }
@@ -241,7 +262,7 @@ export default function TerminalShortcutBar({ disabled, onBuiltinKey, onCustomKe
             aria-label={t('收起快捷键栏')}
             aria-expanded
             onPointerDown={event => event.preventDefault()}
-            onClick={() => setCollapsed(true)}
+            onClick={() => setTerminalShortcutBarCollapsed(true)}
           >
             <ChevronDown size={14} />
           </button>
@@ -257,7 +278,6 @@ export default function TerminalShortcutBar({ disabled, onBuiltinKey, onCustomKe
 /** 折叠后留在终端右下角的展开按钮：浮在终端上，不占高度，避免改变终端行数。 */
 export function TerminalShortcutBarExpand() {
   const { t } = useI18n()
-  const setCollapsed = useTerminalShortcutBarStore(s => s.setCollapsed)
   return (
     <div className="terminal-shortcut-expand">
       <Tooltip label={t('展开快捷键栏')} side="left">
@@ -267,7 +287,7 @@ export function TerminalShortcutBarExpand() {
           aria-expanded={false}
           onPointerDown={event => event.preventDefault()}
           onMouseDown={event => event.stopPropagation()}
-          onClick={() => setCollapsed(false)}
+          onClick={() => setTerminalShortcutBarCollapsed(false)}
         >
           <ChevronUp size={12} />
         </button>

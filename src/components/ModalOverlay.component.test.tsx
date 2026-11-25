@@ -105,6 +105,40 @@ describe('ModalOverlay', () => {
     expect(document.querySelector('[data-modal-overlay]')).toHaveClass('window-no-drag-region')
   })
 
+  it('marks nested dialogs and dims the covered parent only while the child is open', async () => {
+    render(<NestedDialogHarness />)
+    fireEvent.click(screen.getByRole('button', { name: '打开父对话框' }))
+    const [parent] = document.querySelectorAll<HTMLElement>('[data-modal-overlay]')
+    expect(parent.dataset.modalNested).toBeUndefined()
+    expect(parent.dataset.modalCovered).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开子对话框' }))
+    const child = document.querySelectorAll<HTMLElement>('[data-modal-overlay]')[1]
+    expect(child.dataset.modalNested).toBe('')
+    expect(parent.dataset.modalCovered).toBe('')
+
+    fireEvent.keyDown(screen.getByRole('button', { name: '子操作' }), { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '子对话框' })).not.toBeInTheDocument()
+    )
+    expect(parent.dataset.modalCovered).toBeUndefined()
+  })
+
+  it('does not treat a dialog that directly replaces another as nested', () => {
+    function SwapHarness() {
+      const [which, setWhich] = useState<'a' | 'b'>('a')
+      return which === 'a'
+        ? <ModalOverlay><button type="button" onClick={() => setWhich('b')}>换成 B</button></ModalOverlay>
+        : <ModalOverlay><button type="button">B 操作</button></ModalOverlay>
+    }
+    render(<SwapHarness />)
+    fireEvent.click(screen.getByRole('button', { name: '换成 B' }))
+    screen.getByRole('button', { name: 'B 操作' })
+    const overlays = document.querySelectorAll<HTMLElement>('[data-modal-overlay]')
+    expect(overlays).toHaveLength(1)
+    expect(overlays[0].dataset.modalNested).toBeUndefined()
+  })
+
   it('returns focus to the parent dialog after its nested dialog closes', async () => {
     render(<NestedDialogHarness />)
     fireEvent.click(screen.getByRole('button', { name: '打开父对话框' }))
