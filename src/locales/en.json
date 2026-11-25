@@ -2268,6 +2268,17 @@
     "Windows 远端为 PowerShell / CMD，Linux / macOS 远端为 bash / zsh / sh 或登录 Shell。自动保留 1 个，领取后立即补充；多设几个只在连续快速新建时有用。": "PowerShell or CMD on Windows remotes; bash, zsh, sh, or the login shell on Linux and macOS. Auto keeps one and refills when taken; more only helps when opening several terminals quickly.",
     "不预热": "Off",
     "就绪 {summary}": "Ready {summary}",
-    "兼容模式（SSH 直连）不支持终端预热；关闭兼容模式后可在此设置。": "Compatibility mode (direct SSH) does not support terminal prewarming. Turn it off to configure prewarming here."
+    "兼容模式（SSH 直连）不支持终端预热；关闭兼容模式后可在此设置。": "Compatibility mode (direct SSH) does not support terminal prewarming. Turn it off to configure prewarming here.",
+    "系统资源": "System resources",
+    "采集频率": "Sampling interval",
+    "手动刷新": "Manual refresh",
+    "每 {seconds} 秒": "Every {seconds}s",
+    "立即刷新": "Refresh now",
+    "正在读取系统指标…": "Reading system metrics…",
+    "远端返回的系统指标无效": "The remote returned invalid system metrics",
+    "远端服务版本过旧，更新后可查看系统指标": "The remote service is outdated; update it to view system metrics",
+    "读取远端系统指标超时": "Timed out reading remote system metrics",
+    "CPU · {cores} 核": "CPU · {cores} cores",
+    "内存 · {total}": "Memory · {total}"
   }
 }

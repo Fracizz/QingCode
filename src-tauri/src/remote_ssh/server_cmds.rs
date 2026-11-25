@@ -59,6 +59,34 @@ pub(super) async fn measure_direct_latency(
     Ok(elapsed)
 }
 
+/// 读取远端主机 CPU / 内存配置与实时占用；只读，不改变连接健康状态。
+#[tauri::command]
+pub async fn ssh_server_system_metrics(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<serde_json::Value, String> {
+    manager.root_for_uri(&root_uri, true)?;
+    let parsed = parse_remote_uri(&root_uri)?;
+    let config = manager
+        .direct_config(&parsed.connection_id)
+        .filter(|_| manager.connection_is_open(&parsed.connection_id))
+        .ok_or("Server 连接尚未建立")?;
+    let client = direct::WorkspaceClient::new(config);
+    let body = serde_json::json!({"op":"system_metrics"});
+    let value = tokio::time::timeout(std::time::Duration::from_secs(10), client.request(&body))
+        .await
+        .map_err(|_| "读取远端系统指标超时".to_string())?
+        .map_err(|error| {
+            // 旧版远端服务不认识该操作：提示更新而不是展示原始协议错误。
+            if error.contains("不支持的工作区操作") {
+                "远端服务版本过旧，更新后可查看系统指标".to_string()
+            } else {
+                error
+            }
+        })?;
+    Ok(value)
+}
+
 /// 清掉该根的 server slot，必要时按 server.json 里的 pid 结束 serve 进程，再重新 ensure。
 #[tauri::command]
 pub async fn ssh_server_restart(
