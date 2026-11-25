@@ -1508,7 +1508,12 @@ function makeTerminal() {
     canQuote: () => terminalReady && !!term?.modes.bracketedPasteMode,
   });
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
-    onLongPress: point => terminalSelection?.start(point),
+    // 系统长按菜单已被拦下，它自带的振动也随之没了：进入选择时补一次触感反馈。
+    onLongPress: point => {
+      if (!terminalSelection) return;
+      void rpc('haptic').catch(() => {});
+      terminalSelection.start(point);
+    },
     // 只读历史与普通终端可惯性滚动；操作程序列表时松手即停，不继续向程序发送滚轮。
     canInertia: () => terminalHistory?.isOpen() || !!term && term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none',
     // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
