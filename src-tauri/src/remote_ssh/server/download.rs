@@ -34,25 +34,72 @@ pub(super) async fn locate_local_server_binary_with(
     let windows = windows_native_path(&root.canonical_path).is_some();
     let binary_name = server_binary_file_name(windows, &arch);
     let legacy_name = legacy_server_binary_file_name(windows, &arch);
-    let local = find_local_server_binary(
+    let found = find_local_server_binary(
         &manager.server_binary_dirs_for_root(&root.uri),
         &[&binary_name, &legacy_name],
     )
     .await;
-    if let Ok(Some(candidate)) = &local {
-        return Ok((arch, candidate.clone()));
+    if let Some(candidate) = found.verified {
+        return Ok((arch, candidate));
     }
+    // 无清单的手工二进制版本未知（可能是安装器升级残留的旧版），开启自动下载
+    // 时不能让它遮蔽下载；只有下载失败时才退回使用它，版本仍由远端核对。
     if allow_download && manager.server_auto_download_for_root(&root.uri) {
-        return download_server_binary(manager, &binary_name)
-            .await
-            .map(|path| (arch, path));
+        return match download_server_binary(manager, &binary_name).await {
+            Ok(path) => Ok((arch, path)),
+            Err(error) => found.unverified.map(|path| (arch, path)).ok_or(error),
+        };
     }
-    if let Err(reason) = local {
+    if let Some(candidate) = found.unverified {
+        return Ok((arch, candidate));
+    }
+    if let Some(reason) = found.rejected {
         return Err(ServerDeployError::permanent(reason));
     }
+    let excluded = found
+        .excluded
+        .map(|path| {
+            format!(
+                "已忽略版本不符且没有清单的本地服务程序 {}，请删除它或换成 {} 的离线 servers 包。",
+                path.display(),
+                qingcode_server::SERVER_VERSION
+            )
+        })
+        .unwrap_or_default();
     Err(ServerDeployError::permanent(format!(
-        "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
+        "{excluded}本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
     )))
+}
+
+/// 远端核对实际版本不符的无清单本地二进制（按本地 SHA-256 记录）。本进程内
+/// 不再选用；文件被替换后摘要变化即重新参与发现。
+fn excluded_unverified_binaries() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static EXCLUDED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    EXCLUDED.get_or_init(Default::default)
+}
+
+pub(super) fn exclude_unverified_server_binary(sha256: &str) {
+    if let Ok(mut set) = excluded_unverified_binaries().lock() {
+        set.insert(sha256.trim().to_ascii_lowercase());
+    }
+}
+
+async fn is_excluded_unverified_binary(path: &Path) -> bool {
+    let empty = excluded_unverified_binaries()
+        .lock()
+        .map(|set| set.is_empty())
+        .unwrap_or(true);
+    if empty {
+        return false;
+    }
+    let Ok(sha256) = super::scripts::sha256_of_file_async(path).await else {
+        return false;
+    };
+    excluded_unverified_binaries()
+        .lock()
+        .map(|set| set.contains(&sha256.to_ascii_lowercase()))
+        .unwrap_or(false)
 }
 
 /// 远端平台/架构缓存，按「用户@主机:端口#主机指纹」记录。主机指纹变化即换键；
@@ -149,24 +196,48 @@ fn parse_remote_platform(output: &str, windows: bool) -> Result<String, String> 
     }
 }
 
-async fn find_local_server_binary(
-    dirs: &[PathBuf],
-    names: &[&str],
-) -> Result<Option<PathBuf>, String> {
-    let mut rejected = None;
+/// 本地服务程序候选。清单校验通过的包在所有目录里优先，无清单的手工二进制
+/// 只作兜底：否则 exe 旁残留的旧版会遮蔽下载缓存或离线目录里的当前版本。
+#[derive(Debug, Default)]
+struct LocalServerCandidates {
+    verified: Option<PathBuf>,
+    unverified: Option<PathBuf>,
+    /// 清单版本、大小或摘要不符的首个原因。
+    rejected: Option<String>,
+    /// 远端已核对版本不符、本进程内排除的无清单文件。
+    excluded: Option<PathBuf>,
+}
+
+async fn find_local_server_binary(dirs: &[PathBuf], names: &[&str]) -> LocalServerCandidates {
+    let mut found = LocalServerCandidates::default();
     for dir in dirs {
         for name in names {
             let candidate = dir.join(name);
-            if candidate.is_file() {
-                if let Err(reason) = validate_local_server_manifest(&candidate).await {
-                    rejected.get_or_insert(reason);
-                    continue;
+            if !candidate.is_file() {
+                continue;
+            }
+            if !server_manifest_path(&candidate).is_file() {
+                if found.unverified.is_none() {
+                    if is_excluded_unverified_binary(&candidate).await {
+                        found.excluded.get_or_insert(candidate);
+                    } else {
+                        found.unverified = Some(candidate);
+                    }
                 }
-                return Ok(Some(candidate));
+                continue;
+            }
+            match validate_local_server_manifest(&candidate).await {
+                Ok(()) => {
+                    found.verified = Some(candidate);
+                    return found;
+                }
+                Err(reason) => {
+                    found.rejected.get_or_insert(reason);
+                }
             }
         }
     }
-    rejected.map_or(Ok(None), Err)
+    found
 }
 
 fn dir_has_server_binary(dir: &Path) -> bool {
@@ -560,13 +631,46 @@ mod tests {
         let names = ["qingcode-server-x86_64"];
         let selected = find_local_server_binary(&[old.0.clone(), current.0.clone()], &names)
             .await
-            .unwrap();
+            .verified;
         assert_eq!(selected, Some(current.0.join(names[0])));
-        let error = find_local_server_binary(std::slice::from_ref(&old.0), &names)
-            .await
-            .unwrap_err();
+        let found = find_local_server_binary(std::slice::from_ref(&old.0), &names).await;
+        assert!(found.verified.is_none() && found.unverified.is_none());
+        let error = found.rejected.unwrap();
         assert!(error.contains("0.1.14-beta.1"));
         assert!(error.contains(qingcode_server::SERVER_VERSION));
+    }
+
+    #[tokio::test]
+    async fn manifestless_binary_never_shadows_verified_package_in_later_dir() {
+        let stale = PackageFixture::new("0.1.13-beta.3");
+        std::fs::remove_file(stale.0.join("manifest.json")).unwrap();
+        let current = PackageFixture::new(qingcode_server::SERVER_VERSION);
+        let names = ["qingcode-server-x86_64"];
+        let found = find_local_server_binary(&[stale.0.clone(), current.0.clone()], &names).await;
+        assert_eq!(found.verified, Some(current.0.join(names[0])));
+        let found = find_local_server_binary(std::slice::from_ref(&stale.0), &names).await;
+        assert!(found.verified.is_none());
+        assert_eq!(found.unverified, Some(stale.0.join(names[0])));
+    }
+
+    #[tokio::test]
+    async fn excluded_manifestless_binary_is_skipped_until_its_content_changes() {
+        let stale = PackageFixture::new("0.1.13-beta.3");
+        std::fs::remove_file(stale.0.join("manifest.json")).unwrap();
+        let binary = stale.0.join("qingcode-server-x86_64");
+        // 每个测试用独有内容，避免与其他测试共享进程级排除集时互相影响。
+        std::fs::write(&binary, uuid::Uuid::new_v4().to_string()).unwrap();
+        let names = ["qingcode-server-x86_64"];
+        let sha = super::super::scripts::sha256_of_file_async(&binary)
+            .await
+            .unwrap();
+        exclude_unverified_server_binary(&sha);
+        let found = find_local_server_binary(std::slice::from_ref(&stale.0), &names).await;
+        assert!(found.unverified.is_none());
+        assert_eq!(found.excluded, Some(binary.clone()));
+        std::fs::write(&binary, uuid::Uuid::new_v4().to_string()).unwrap();
+        let found = find_local_server_binary(std::slice::from_ref(&stale.0), &names).await;
+        assert_eq!(found.unverified, Some(binary));
     }
 
     #[tokio::test]
