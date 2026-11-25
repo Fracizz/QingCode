@@ -733,7 +733,7 @@ function showPage(next) {
   shownScreen = 'dashboard';
   // 旧画面（终端或上一页）以快照退出，同一页刷新不做过渡。
   let placed = Promise.resolve();
-  if (changed) placed = swapScreen(placeScreen, direction, fromTerminal ? 'screen' : 'page');
+  if (changed) placed = swapScreen(placeScreen, direction);
   else placeScreen();
   syncLatency();
   if (next === 'home') {

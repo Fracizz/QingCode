@@ -1410,18 +1410,13 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 :root[data-screen-exit="forward"]::view-transition-old(root) { --screen-shift: -12px; }
 :root[data-screen-exit="back"]::view-transition-old(root) { --screen-shift: 12px; }
 @keyframes screen-out { to { opacity: 0; transform: translateX(var(--screen-shift)); } }
-/* 工作台内切页时顶栏（右上角设置按钮）两页都在同一位置：单独命名移出根快照，不跟旧快照一起平移淡出，
-   否则旧快照里的按钮会在新按钮上方错开 12px 淡出，看起来像抖动。旧图直接隐藏、新图不做动画，原地不动。 */
-:root[data-screen-kind="page"] .app-head { view-transition-name: app-head; }
-::view-transition-group(app-head), ::view-transition-new(app-head) { animation: none; }
-::view-transition-old(app-head) { animation: none; opacity: 0; }
 /* 收到延迟探测回应时圆点缓慢呼吸一次（含左上角紧凑标题、连接页当前电脑）；终端未连上时圆点不动。 */
 #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #app-head-title[data-state="online"] .dot.ping-flash, .connection-card[data-current="true"][data-state="online"] .dot.ping-flash { animation: ping-dot 1400ms ease-in-out; }
 #terminal-latency.ping-flash, #home-latency.ping-flash { animation: ping-value 1400ms ease-in-out; }
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop, dialog.session-drawer:not([open]) { transition: none; }
   :root[data-session-dock-motion] :is(main, dialog.session-drawer[data-docked="true"]) { transition-property: none; }
-  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #app-head-title .dot.ping-flash, .connection-card .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
+  dialog[open]::backdrop, .dashboard-page:not([hidden]), #terminal-screen:not([hidden]), #scroll-bottom:not([hidden]), .mouse-mode-pill:not([hidden]), #input-tip:not([hidden]), #font-toast:not([hidden]), .sort-toast:not([hidden]), ::view-transition-old(root), #terminal-dot[data-state="online"].ping-flash, #active-host[data-state="online"] .dot.ping-flash, #app-head-title[data-state="online"] .dot.ping-flash, .connection-card[data-current="true"][data-state="online"] .dot.ping-flash, #terminal-latency.ping-flash, #home-latency.ping-flash { animation: none; }
   button:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
