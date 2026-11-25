@@ -110,6 +110,15 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await started()
     })
 
+    await step('the settings button enters together with the connection page', async () => {
+      await page.click('#dashboard-nav [data-page="connection"]')
+      await page.waitForFunction(() => ['page-in', 'lift-in'].every(name => window.__started.some(item => item.id === 'open-settings' && item.name === name)))
+      await page.waitForFunction(() => !document.querySelector('#open-settings').getAnimations().length)
+      await page.click('#dashboard-nav [data-page="project"]')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').hidden && !document.querySelector('#project-screen').getAnimations({ subtree: true }).length)
+      await started()
+    })
+
     await step('the selected navigation pill grows from the centre', async () => {
       const pill = await page.evaluate(() => {
         const read = selector => { const style = getComputedStyle(document.querySelector(selector), '::before'); return { opacity: style.opacity, transform: style.transform } }

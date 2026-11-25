@@ -1382,6 +1382,12 @@ dialog[data-handoff]:not([open]) { transition: display var(--motion-exit) allow-
 .dashboard-page:not([hidden]) > :nth-child(n+5) { animation-delay: 60ms; }
 .dashboard-page:not([hidden]) > :is(#project-list, #connection-list, #home-sessions, #home-pending) { animation-delay: 30ms; }
 @keyframes rise-in { from { opacity: 0; transform: translateY(14px); } }
+/* 设置按钮在顶栏里、不随页面节点入场：切到连接页时让它与旁边的「添加」同步滑入上浮，不能先于页面到位。
+   上浮用独立的 translate，横移与淡入沿用 page-in。 */
+@media (prefers-reduced-motion: no-preference) {
+  .dashboard[data-page="connection"] #open-settings { animation: lift-in var(--motion-medium) var(--ease-emphasized) backwards, page-in var(--motion-long) var(--ease-emphasized) backwards; }
+}
+@keyframes lift-in { from { translate: 0 14px; } }
 #terminal-screen:not([hidden]) { animation: fade-in var(--motion-enter) linear; }
 /* 进入终端：顶栏标题与副行在原位从下方 6px 淡入上浮，不跨屏飞行、不缩放；切换项目时终端页一直显示，不重播。 */
 #terminal-screen:not([hidden]) .terminal-heading { animation: title-settle var(--motion-long) var(--ease-emphasized) backwards; }
