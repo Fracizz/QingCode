@@ -321,7 +321,7 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
   .dashboard[data-host-state="checking"]::before { animation: none; }
 }
 #dashboard-nav { background: var(--paper); }
-/* 顶栏浮在页面上方，平时透明、只露出右上角设置按钮（与大标题上方的小字同一行）；
+/* 顶栏浮在页面上方，平时透明；连接页在右上角露出设置按钮（与大标题上方的小字同一行）。
    大标题滚出后才铺底色、分隔线并淡入紧凑标题，展开时不额外占一行高度。 */
 .app-head {
   position: absolute;
@@ -345,6 +345,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .app-head::before { content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--safe-top); background: inherit; pointer-events: none; }
 /* 收起后的顶栏用不透明纯色：毛玻璃会把下方卡片的强调色光晕透成一团糊色，标题旁看着像漏光。 */
 .dashboard[data-collapsed="true"] .app-head { border-bottom-color: var(--divider); background: var(--paper); }
+/* 设置入口只放在连接页；未配对时首页没有底部导航，保留入口。用 visibility 保持顶栏布局不变。 */
+.dashboard:not([data-page="connection"]):not([data-unpaired="true"][data-page="home"]) #open-settings { visibility: hidden; }
 .app-head-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .app-head-title {
   display: inline-flex;
@@ -399,15 +401,17 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .with-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* ---------- 首屏大标题 ----------
-   小字说明与右上角设置按钮同一行（小字右侧给按钮留位），下方细体大标题。 */
+   小字说明单独一行（有设置按钮时右侧给按钮留位），下方细体大标题。 */
 .hero { margin: 0 0 16px; padding: 0 0 4px; }
 .hero-eyebrow { display: flex; gap: 8px; align-items: center; min-width: 0; min-height: 32px; padding-right: 48px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-/* 带操作的页面（项目刷新、连接添加）：操作放在小字同一行、设置按钮左侧，大标题独占下一行。 */
+/* 带操作的页面（项目刷新、连接添加）：操作放在小字同一行靠右，大标题独占下一行；连接页再让出设置按钮的位置。 */
 .hero.with-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
 .hero.with-action > div { display: contents; }
 .hero.with-action .hero-eyebrow { grid-area: 1 / 1; padding-right: 0; }
 /* 上下各 -2px：按钮点按区 36px，但这一行只占小字的 32px，中心与顶栏设置按钮齐平。 */
-.hero.with-action > button { grid-area: 1 / 2; min-height: 36px; margin: -2px 40px -2px 0; }
+.hero.with-action > button { grid-area: 1 / 2; min-height: 36px; margin: -2px 0; }
+#connection-screen .hero.with-action > button { margin-right: 40px; }
+.dashboard:not([data-unpaired="true"]) #home-screen .hero-eyebrow { padding-right: 0; }
 .hero.with-action > .compact { padding: 0 10px; border-color: transparent; background: transparent; color: var(--accent); font-size: 14px; }
 .hero.with-action > .compact:active:not(:disabled) { background: var(--accent-surface); }
 .hero.with-action > .compact svg { width: 18px; height: 18px; }
@@ -1085,6 +1089,9 @@ dialog.session-drawer:not([data-docked="true"]) { will-change: opacity, transfor
 /* 领取了预热终端的会话：标题后跟 ⚡，与电脑标签一致；与标题首行居中。 */
 .session-option .session-prewarm { display: none; flex: none; width: 14px; height: 14px; margin-top: calc((1.45em - 14px) / 2); color: var(--accent); }
 .session-option[data-prewarm="true"] .session-prewarm { display: block; }
+/* 电脑终端：信息行最前的显示器图标，与文字同高、同色。 */
+.session-option .session-desktop { display: none; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; }
+.session-option[data-desktop="true"] .session-desktop { display: inline-block; }
 .session-option[data-current="true"] .session-face { background: var(--surface-high); }
 /* 会话范围：本项目 / 全部；全部时显示跨项目纵览。 */
 #session-scope { flex: none; margin-top: 0; padding: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); }

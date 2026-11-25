@@ -121,6 +121,14 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
         return gear.right <= innerWidth && gear.width >= 44 && pill.right <= innerWidth - 15 && pill.left >= 15 && pill.width > 60
       }))
       await shot('home-320.png')
+      // 配对后设置入口只在连接页。
+      const gearVisibility = () => page.evaluate(() => getComputedStyle(document.querySelector('#open-settings')).visibility)
+      assert.equal(await gearVisibility(), 'hidden')
+      await page.click('#dashboard-nav [data-page="project"]', { label: 'show project list' })
+      assert.equal(await gearVisibility(), 'hidden')
+      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
+      assert.equal(await gearVisibility(), 'visible')
+      await shot('connections-320.png')
       await openFromHome()
       assert.ok(await noOverflow())
       await page.evaluate(() => { const body = document.querySelector('.settings-body'); body.scrollTop = body.scrollHeight })

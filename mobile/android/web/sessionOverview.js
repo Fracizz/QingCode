@@ -12,7 +12,7 @@ import {
   sessionRunning,
   sessionStatusLine,
 } from './protocol.js';
-import { fillProjectSource, icon, prewarmMark, rowText, button, setText } from './dom.js';
+import { desktopSessionLine, fillProjectSource, icon, prewarmMark, rowText, button, setText } from './dom.js';
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -402,6 +402,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     check.setAttribute('aria-hidden', 'true');
     check.append(icon('check'));
     const text = rowText('', '');
+    desktopSessionLine(text.querySelector('small'));
     const heading = text.querySelector('strong');
     const name = document.createElement('span');
     name.className = 'session-label';
@@ -461,7 +462,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     if (active) option.setAttribute('aria-current', 'true');
     else option.removeAttribute('aria-current');
     setText(row.querySelector('.session-label'), label);
-    setText(row.querySelector('small'), sessionStatusLine(session, { running, active, last, pinned, fresh }));
+    setText(row.querySelector('.session-line'), sessionStatusLine(session, { running, active, last, pinned, fresh }));
     // 快到自动结束时单独一行提醒。
     const idleInfo = sessionIdleInfo(session);
     const idle = row.querySelector('.session-idle');

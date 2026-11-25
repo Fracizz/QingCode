@@ -100,6 +100,20 @@ export function prewarmMark() {
   return mark;
 }
 
+/** 纵览会话行的信息行：电脑终端在行首显示显示器图标（由行的 data-desktop 控制），读屏读「电脑终端」。返回写文字的节点。 */
+export function desktopSessionLine(small) {
+  const mark = icon('monitor', 'session-desktop');
+  mark.removeAttribute('aria-hidden');
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', t('电脑终端'));
+  const line = document.createElement('span');
+  const text = document.createElement('span');
+  text.className = 'session-line';
+  line.append(mark, text);
+  small.append(line);
+  return text;
+}
+
 export function rowText(title, subtitle) {
   const text = document.createElement('span');
   text.className = 'row-text';

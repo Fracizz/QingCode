@@ -712,10 +712,10 @@ describe('Android 会话纵览', () => {
       .toBe('在 Pixel 上使用中 · 来自 Tablet · 终端 3')
     // 已结束的会话没有使用方；电脑终端不显示编号。
     expect(sessionStatusLine({ ...base, exit: { code: 0 }, inUseHere: false, controllerName: 'Pixel' })).toBe('已结束 · 终端 3')
-    expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
+    expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('')
     // 没有编号时用调用方给的序号。
     expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
-    // 空闲时长紧跟状态；已有空闲时长时不重复活动时间。「电脑终端」表示来源，仍在最前。
+    // 空闲时长紧跟状态；已有空闲时长时不重复活动时间。
     const now = new Date(2026, 10, 14, 15, 30).getTime()
     expect(sessionStatusLine({
       ...base, createdAt: new Date(2026, 10, 14, 9, 5).getTime(), lastActiveAt: now - 12 * 60000, idleDeadline: now + 3600000,
@@ -724,7 +724,9 @@ describe('Android 会话纵览', () => {
     expect(sessionStatusLine({
       ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑',
       createdAt: new Date(2026, 10, 3, 18, 30).getTime(), lastActiveAt: new Date(2026, 10, 3, 18, 45, 12).getTime(),
-    }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 活动于 11-03 18:45')
+    }, { now })).toBe('活动于 11-03 18:45')
+    // 电脑终端被手机或平板占用时才提示使用方。
+    expect(sessionStatusLine({ ...base, origin: 'desktop', inUseHere: false, controllerName: 'Pixel' })).toBe('在 Pixel 上使用中')
     expect(sessionStatusLine({
       ...base, exit: { code: 0 }, lastActiveAt: new Date(2026, 10, 14, 15, 20, 5).getTime(),
     }, { now })).toBe('已结束 · 活动于 15:20 · 终端 3')

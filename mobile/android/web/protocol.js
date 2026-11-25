@@ -756,20 +756,23 @@ function idleRemaining(item, now) {
  * 接入方和创建设备只有列出全部会话时才有，缺失时不显示。
  */
 export function sessionStatusLine(session, { fallback = 1, running = false, active = false, last = false, pinned = false, fresh = false, now = Date.now() } = {}) {
-  const identity = session.origin === 'desktop' ? t('电脑终端') : t('终端 {n}', { n: session.number ?? fallback });
+  // 电脑终端的来源由行首显示器图标表达，信息行不写文字，也不显示编号。
+  const desktop = session.origin === 'desktop';
+  const identity = t('终端 {n}', { n: session.number ?? fallback });
   const status = session.exit ? t('已结束')
     : [running ? t('运行中') : '', active ? t('当前会话') : last ? t('上次使用') : ''].filter(Boolean).join(' · ');
+  // 电脑终端默认就在电脑上使用，只有被某台手机或平板占用时才提示。
   const inUse = !session.exit && session.inUseHere === false && session.controllerName
+    && !(desktop && session.controllerName === '电脑')
     ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
-  const named = sessionName(session, fallback) === identity ? '' : identity;
+  const named = desktop || sessionName(session, fallback) === identity ? '' : identity;
   // 窄屏时行尾会被省略：状态与空闲时长最常用，排在前面；活动时间其次；
-  // 「终端 N」编号只用于区分，放到最后。「电脑终端」表示来源，仍放在前面。
+  // 「终端 N」编号只用于区分，放到最后。
   // 已显示「空闲 N 分钟 / 刚刚有活动」时不再重复活动时间，只给电脑终端、已结束会话等补上。
-  const desktop = session.origin === 'desktop';
   const activity = idle.text ? '' : activeLabel(session, now);
-  return [pinned ? t('已置顶') : '', desktop ? named : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, activity, desktop ? '' : named]
+  return [pinned ? t('已置顶') : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, activity, named]
     .filter(Boolean).join(' · ');
 }
 

@@ -112,6 +112,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('switching back to Chinese reloads with original text', async () => {
       await page.evaluate(() => { localStorage.setItem('qingcode:mobile:locale', 'en'); location.href = location.pathname })
       await page.waitForFunction(() => document.readyState === 'complete' && !!document.querySelector('#app-language'))
+      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
       await page.click('#open-settings', { label: 'open settings' })
       await page.waitForSelector('#settings-dialog[open]')
       await page.evaluate(() => (select => { select.value = 'zh'; select.dispatchEvent(new Event('change', { bubbles: true })) })(document.querySelector('#app-language')))
