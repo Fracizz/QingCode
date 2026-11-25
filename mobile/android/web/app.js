@@ -468,6 +468,7 @@ const homeOverview = createSessionOverview({
     projects: () => projects,
     history: () => projectHistory(),
     current: () => null,
+    order: () => drawer.sidebarProjects(),
     selected: () => null,
     lastSession: projectId => lastSessionOf(projectId),
     busy: () => busy,

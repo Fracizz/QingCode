@@ -761,6 +761,14 @@ describe('Android 会话纵览', () => {
     expect(ids('p2', 9)).toEqual(['p2', 'p1', 'p3'])
   })
 
+  it('首页借用侧栏固定顺序：使用过的项目不挪到最前，也不补空分组', () => {
+    const ids = (openedAt: number) => groupSessionOverview(list, {
+      projects, current: null, history: [{ id: 'p1', openedAt }], order: ['p2', 'p9', 'p1'], showEmpty: false,
+    }).map(group => group.project.id)
+    expect(ids(5)).toEqual(['p2', 'p1', 'p3'])
+    expect(ids(99)).toEqual(['p2', 'p1', 'p3'])
+  })
+
   it('运行中优先时有运行中会话的项目整体提前，组间保持原顺序，关闭后恢复', () => {
     const three = [local, remote, { id: 'p3', name: 'Gamma', kind: 'local', path: 'D:/c', host: '' }]
     const at = (id: string, project: { id: string }, programBusy = false) => ({ id, name: id, programBusy, exit: null, project })

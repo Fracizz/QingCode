@@ -206,10 +206,11 @@ function createdTime(session) {
  * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
  * order（侧栏）：常驻项目的固定顺序。给出后切换项目不再改变分组位置，常驻项目没有会话时也显示空分组（筛选、搜索时除外）；
  * 只因电脑终端而显示的项目排在常驻项目之后，按项目名排序。
+ * showEmpty：给出 order 时是否补出没有会话的常驻项目空分组（首页传 false，只借用固定顺序）。
  * sessionOrder(projectId)（侧栏）：组内手动顺序；新会话排在已排序会话之前，与默认的新建在上一致；「运行中优先」时不生效。
  * runningFirst：有运行中会话的项目组整体排到最前（含当前项目与侧栏固定顺序），组间保持原有相对顺序，只影响显示、不改保存的顺序。
  */
-export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null, pins = null } = {}) {
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, showEmpty = true, sessionOrder = null, pins = null } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
   const times = new Map();
   for (const item of Array.isArray(history) ? history : []) {
@@ -241,7 +242,7 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
   // 「运行中优先」：首页先显示的 8 个是跨项目计算的，只在组内提前时，靠后项目里运行中的会话仍会藏在「展开全部」后面。
   const running = group => Number(runningFirst && group.sessions.some(sessionRunning));
   if (order) {
-    if (filter === 'all' && !needles.length) {
+    if (showEmpty && filter === 'all' && !needles.length) {
       for (const id of order) if (!groups.has(id) && known.has(id)) groups.set(id, { project: known.get(id), missing: false, sessions: [] });
     }
     const rank = new Map(order.map((id, index) => [id, index]));
