@@ -77,6 +77,10 @@ html [data-modal-overlay][data-modal-nested] > .modal-overlay-enter {
 [data-modal-overlay][data-modal-covered] > :not(.modal-overlay-enter) {
   filter: brightness(0.78);
 }
+/* 父弹窗被子弹窗盖住时撤掉全屏 backdrop-filter：背后终端持续刷新时模糊每帧重算，子弹窗输入会卡顿。 */
+html [data-modal-overlay][data-modal-covered] > .modal-overlay-enter {
+  backdrop-filter: none;
+}
 html[data-theme="light"] [data-modal-overlay][data-modal-covered] > :not(.modal-overlay-enter) {
   filter: brightness(0.93);
 }

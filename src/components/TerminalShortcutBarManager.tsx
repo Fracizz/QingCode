@@ -300,9 +300,21 @@ function CustomKeyEditor({ initial, onClose }: { initial: TerminalCustomKey | nu
             {draft.id ? t('编辑自定义键') : t('添加自定义键')}
           </h2>
           <label className={fieldLabel}>
-            {t('发送的文本')}
+            {t('按钮名称（可选）')}
             <input
               data-modal-autofocus
+              value={draft.name}
+              maxLength={CUSTOM_KEY_NAME_LIMIT}
+              onChange={event => setDraft({ ...draft, name: event.target.value })}
+              placeholder={t('留空时显示发送的文本')}
+              className="modal-field-input"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+          <label className={fieldLabel}>
+            {t('发送的文本')}
+            <input
               value={draft.text}
               maxLength={CUSTOM_KEY_TEXT_LIMIT}
               onChange={event => {
@@ -313,18 +325,9 @@ function CustomKeyEditor({ initial, onClose }: { initial: TerminalCustomKey | nu
               className={`modal-field-input font-mono ${error ? 'modal-field-input--invalid' : ''}`}
               aria-invalid={error ? true : undefined}
               spellCheck={false}
+              autoComplete="off"
             />
             {error && <span className="text-danger">{error}</span>}
-          </label>
-          <label className={fieldLabel}>
-            {t('按钮名称（可选）')}
-            <input
-              value={draft.name}
-              maxLength={CUSTOM_KEY_NAME_LIMIT}
-              onChange={event => setDraft({ ...draft, name: event.target.value })}
-              placeholder={t('留空时显示发送的文本')}
-              className="modal-field-input"
-            />
           </label>
           <label className={fieldLabel}>
             {t('终端内快捷键（可选）')}
