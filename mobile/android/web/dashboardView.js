@@ -124,6 +124,7 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     if (!items.length) {
       pendingExpanded = false;
       get('home-pending-list').replaceChildren();
+      syncHomeLayout();
       return;
     }
     get('home-pending-count').textContent = String(items.length);
@@ -132,6 +133,13 @@ export function createDashboardView({ state, lastProject, syncLatency, activate,
     const more = get('home-pending-more');
     more.hidden = items.length <= PENDING_LIMIT;
     more.textContent = pendingExpanded ? t('收起') : t('还有 {n} 个', { n: items.length - PENDING_LIMIT });
+    syncHomeLayout();
+  }
+
+  /** 首页只剩「继续终端」与项目入口（可能带升级卡片）时整组偏上居中；有列表时从顶部排列。 */
+  function syncHomeLayout() {
+    const centered = pending().settled && !get('resume').hidden && get('home-pending').hidden && get('home-sessions').hidden;
+    get('home-screen').dataset.centered = String(!!centered);
   }
 
   function pendingRow(session) {

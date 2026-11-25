@@ -493,6 +493,14 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 
 /* ---------- 首页 ---------- */
 .resume-card { background: var(--surface); }
+/* 内容少时主操作组偏上居中（上下留白 2:3）：电脑名称行留在顶部；放不下时两个占位收为 0，照常从顶部滚动。 */
+#home-screen[data-centered="true"]:not([hidden]) { display: flex; flex-direction: column; }
+#home-screen[data-centered="true"] > * { flex-shrink: 0; }
+#home-screen[data-centered="true"] > .hero { order: -2; }
+#home-screen[data-centered="true"]::before { content: ''; order: -1; flex: 2 0 0; }
+#home-screen[data-centered="true"]::after { content: ''; flex: 3 0 0; }
+/* flex 布局下外边距不折叠，间距只由下方按钮的上外边距提供。 */
+#home-screen[data-centered="true"] > .update-card { margin-bottom: 0; }
 /* 空状态：不套卡片，居中两行说明 + 虚线操作区，靠留白分组。 */
 .empty-card {
   display: grid;

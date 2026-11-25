@@ -336,6 +336,7 @@ const dashboard = createDashboardView({
     list: homeOverview.list(),
     attention: attentionTracker.attention,
     visible: homeSessionsEnabled() && homeSessionsSupported && !!profile && hostState(profile) === 'online',
+    settled: !homeSessionsEnabled() || homeSessionsSettled === profile?.id,
   }),
   openSession: session => openOverviewSession(session, homeOverview),
   copyProjectPath: async item => {
@@ -455,6 +456,8 @@ let homeSessionsTimer = null;
 let homeSessionsLoading = false;
 let homeSessionsEpoch = 0;
 let homeSessionsSupported = false;
+// 已读到会话结果（含失败与旧电脑端）的电脑；读到之前首页不决定是否居中，避免卡片先居中再跳回顶部。
+let homeSessionsSettled = null;
 const homeOverview = createSessionOverview({
   root: get('home-session-overview'),
   limit: HOME_SESSIONS_LIMIT,
@@ -550,17 +553,22 @@ async function refreshHomeSessions() {
     if (epoch !== homeSessionsEpoch || profile?.id !== address) return;
     homeSessionsSupported = !!capabilities?.features.includes('all_sessions');
     if (!homeSessionsSupported) {
+      homeSessionsSettled = address;
       homeOverview.clear();
       return;
     }
     const list = await remote('sessions', { desktop: true }, address);
     if (epoch !== homeSessionsEpoch || profile?.id !== address || busy) return;
     homeOverview.setError('');
+    homeSessionsSettled = address;
     // 首页不显示任何终端，停下的会话都算看不到；先更新标记，列表重绘时「待处理」即为最新。
     updateSessionAttention(attentionTracker, list, null);
     homeOverview.setList(list, address);
   } catch (error) {
-    if (epoch === homeSessionsEpoch && profile?.id === address) homeOverview.setError(error.message);
+    if (epoch === homeSessionsEpoch && profile?.id === address) {
+      homeSessionsSettled = address;
+      homeOverview.setError(error.message);
+    }
   } finally {
     homeSessionsLoading = false;
     renderHomeSessions();
