@@ -406,7 +406,8 @@ input:focus, textarea:focus { border-color: var(--accent-border); }
 .hero.with-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
 .hero.with-action > div { display: contents; }
 .hero.with-action .hero-eyebrow { grid-area: 1 / 1; padding-right: 0; }
-.hero.with-action > button { grid-area: 1 / 2; min-height: 36px; margin-right: 40px; }
+/* 上下各 -2px：按钮点按区 36px，但这一行只占小字的 32px，中心与顶栏设置按钮齐平。 */
+.hero.with-action > button { grid-area: 1 / 2; min-height: 36px; margin: -2px 40px -2px 0; }
 .hero.with-action > .compact { padding: 0 10px; border-color: transparent; background: transparent; color: var(--accent); font-size: 14px; }
 .hero.with-action > .compact:active:not(:disabled) { background: var(--accent-surface); }
 .hero.with-action > .compact svg { width: 18px; height: 18px; }
@@ -1581,6 +1582,7 @@ dialog.workspace-dialog::backdrop { background: transparent; }
 /* 选择面板标题下的说明（设置页选项行的说明移到这里）。 */
 .select-hint { margin: 4px 0 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .update-card { margin-bottom: 12px; }
+#resume:not([hidden]) + .update-card { margin-top: 12px; }
 #update-notes { max-height: 38vh; overflow: auto; margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--console); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 system-ui, sans-serif; user-select: text; -webkit-user-select: text; }
 #update-progress { width: 100%; height: 6px; margin-top: 12px; accent-color: var(--accent); }
 #update-dialog-status:empty { display: none; }
