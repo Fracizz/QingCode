@@ -692,11 +692,11 @@
     <p id="link-status" class="hint" role="status"></p>
     <div class="dialog-actions"><button id="link-copy" type="button" class="secondary">复制链接</button><button id="link-open" type="button" class="primary">在浏览器打开</button></div>
   </dialog>
-  <dialog id="update-dialog" class="sheet" aria-labelledby="update-dialog-title">
-    <div class="sheet-handle" aria-hidden="true"><span></span></div>
+  <!-- 更新提示用居中弹窗（与系统和常见应用的更新对话框一致），不用贴底弹层。 -->
+  <dialog id="update-dialog" class="update-dialog" aria-labelledby="update-dialog-title">
     <h2 tabindex="-1" id="update-dialog-title">发现新版本</h2>
     <p id="update-dialog-version"></p>
-    <pre id="update-notes" tabindex="0" aria-label="更新说明"></pre>
+    <div id="update-notes" tabindex="0" aria-label="更新说明"></div>
     <progress id="update-progress" max="100" hidden></progress>
     <p id="update-dialog-status" class="hint" role="status"></p>
     <p id="update-dialog-error" class="error" role="alert" hidden></p>

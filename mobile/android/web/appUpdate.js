@@ -67,6 +67,117 @@ export function localizeReleaseNotes(body, language) {
   return [prelude, section].filter(Boolean).join('\n\n');
 }
 
+const DOWNLOAD_HEADING = /^(#{1,6})[ \t]+(?:下载|Downloads?)[ \t]*#*[ \t]*$/i;
+const RELEASE_TITLE = /^#{1,6}[ \t]+QingCode[ \t]+v?\d/i;
+
+/**
+ * 手机端用不到电脑安装包清单：去掉「下载 / Downloads」小节（到同级或更高级标题为止），
+ * 以及与弹窗版本行重复的 `## QingCode vX` 标题。
+ */
+export function mobileReleaseNotes(body) {
+  const kept = [];
+  let skipLevel = 0;
+  let fenced = false;
+  for (const line of String(body ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    const level = fenced ? 0 : /^(#{1,6})[ \t]/.exec(line)?.[1].length ?? 0;
+    if (skipLevel) {
+      if (!level || level > skipLevel) continue;
+      skipLevel = 0;
+    }
+    const download = level ? DOWNLOAD_HEADING.exec(line) : null;
+    if (download) { skipLevel = download[1].length; continue; }
+    if (level && RELEASE_TITLE.test(line)) continue;
+    kept.push(line);
+  }
+  return trimNoteSeparators(kept.join('\n').replace(/\n{3,}/g, '\n\n'));
+}
+
+const TABLE_RULE = /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?$/;
+const LIST_ITEM = /^(?:([-*+])|(\d+)[.)])\s+(.*)$/;
+const CJK_END = /[\u3000-\u9fff\uff00-\uffef]$/;
+const CJK_START = /^[\u3000-\u9fff\uff00-\uffef]/;
+
+/**
+ * 把发布说明的常用 Markdown 拆成块（标题、段落、列表、代码），界面再用 DOM 节点渲染，不经 innerHTML。
+ * 表格每行折成一条「单元格 · 单元格」列表项；分隔线、空锚点忽略。
+ */
+export function noteBlocks(text) {
+  const blocks = [];
+  let paragraph = null;
+  let list = null;
+  let code = null;
+  for (const raw of String(text ?? '').split('\n')) {
+    if (code) {
+      if (/^\s*```/.test(raw)) code = null;
+      else code.text += (code.text ? '\n' : '') + raw;
+      continue;
+    }
+    if (/^\s*```/.test(raw)) {
+      paragraph = list = null;
+      code = { type: 'code', text: '' };
+      blocks.push(code);
+      continue;
+    }
+    const line = raw.trim().replace(/^>\s?/, '');
+    if (NOTE_JUNK.test(line)) { paragraph = list = null; continue; }
+    let match = /^(#{1,6})\s+(.*?)(?:\s+#+)?$/.exec(line);
+    if (match) {
+      paragraph = list = null;
+      blocks.push({ type: 'heading', level: match[1].length, text: match[2] });
+      continue;
+    }
+    if (TABLE_RULE.test(line)) continue;
+    let item = null;
+    let ordered = false;
+    if (line.startsWith('|')) {
+      item = line.replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim()).filter(Boolean).join(' · ');
+    } else if ((match = LIST_ITEM.exec(line))) {
+      item = match[3];
+      ordered = !match[1];
+    }
+    if (item !== null) {
+      paragraph = null;
+      if (!list || list.ordered !== ordered) {
+        list = { type: 'list', ordered, items: [] };
+        blocks.push(list);
+      }
+      list.items.push(item);
+      continue;
+    }
+    // 列表项下缩进的续行并入上一项。
+    if (list && /^\s/.test(raw)) {
+      list.items[list.items.length - 1] += joinLine(list.items[list.items.length - 1], line);
+      continue;
+    }
+    list = null;
+    if (paragraph) paragraph.text += joinLine(paragraph.text, line);
+    else blocks.push(paragraph = { type: 'paragraph', text: line });
+  }
+  return blocks.filter(block => block.type !== 'code' || block.text);
+}
+
+/** 续行：中文相接不加空格，其余补一个空格。 */
+function joinLine(before, after) {
+  return CJK_END.test(before) && CJK_START.test(after) ? after : ' ' + after;
+}
+
+/** 行内标记拆成片段：`代码`、**粗体**；[文字](链接) 与 HTML 标签只保留文字。 */
+export function noteInline(text) {
+  const parts = [];
+  const source = String(text ?? '').replace(/<\/?[a-z][^>]*>/gi, '');
+  let last = 0;
+  for (const match of source.matchAll(/`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\([^)]*\)/g)) {
+    if (match.index > last) parts.push({ text: source.slice(last, match.index) });
+    if (match[1] != null) parts.push({ text: match[1], code: true });
+    else if (match[2] != null) parts.push({ text: match[2], strong: true });
+    else parts.push({ text: match[3] });
+    last = match.index + match[0].length;
+  }
+  if (last < source.length) parts.push({ text: source.slice(last) });
+  return parts;
+}
+
 /** 发布说明只显示纯文本，去掉回车并限制长度。 */
 export function releaseNotes(body) {
   const text = String(body ?? '').replace(/\r\n?/g, '\n').trim();
@@ -94,7 +205,7 @@ export function pickApkUpdate(list, current, { includePrerelease = isPrerelease(
       version, code, prerelease,
       url: asset.url,
       size: Number.isSafeInteger(asset.size) && asset.size > 0 ? asset.size : null,
-      notes: releaseNotes(localizeReleaseNotes(release.body, language)),
+      notes: releaseNotes(mobileReleaseNotes(localizeReleaseNotes(release.body, language))),
       page: typeof release.page === 'string' ? release.page : list.page ?? null,
       source: list.source ?? null,
     };
