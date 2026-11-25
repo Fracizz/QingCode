@@ -84,6 +84,9 @@ describe('Android mobile connection settings', () => {
     expect(screen.getByText(/abab abab/)).toBeVisible()
     // The password never goes into the QR code or the pairing link.
     expect(writeText).not.toHaveBeenCalledWith(expect.stringContaining('abcdef'))
+    // 「复制连接信息」才附带已记住的密码，用于手机粘贴后直接配对。
+    fireEvent.click(screen.getByRole('button', { name: '复制连接信息' }))
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(expect.stringMatching(/10\.0\.0\.5:48764[\s\S]*qingcode:\/\/pair\?.*&code=abcdef$/)))
   })
 
   it('lists paired phones and revokes one after confirmation', async () => {

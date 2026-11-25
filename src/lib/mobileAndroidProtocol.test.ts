@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { buildPairingLink, formatFingerprint } from './mobilePairing'
+import { buildConnectionInfo, buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
   activeLabel,
@@ -346,6 +346,17 @@ describe('Android pairing link', () => {
     const link = buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: '工作 PC&1' })
     expect(parsePairingLink(link)).toEqual({ host: '192.168.1.8', port: 48764, fingerprint, name: '工作 PC&1' })
     expect(parsePairingLink(link.replace(fingerprint, fingerprint.toUpperCase())).fingerprint).toBe(fingerprint)
+  })
+
+  it('imports the copied connection info with password from surrounding chat text', () => {
+    const info = buildConnectionInfo({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: 'a&b=c#1' })
+    expect(info).toContain('192.168.1.8:48764')
+    expect(parsePairingLink(`转发：
+${info}
+（来自聊天）`)).toEqual({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: 'a&b=c#1' })
+    // 不带密码或密码格式无效时不返回 code，仍需手动输入。
+    expect(parsePairingLink(buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX' }))).not.toHaveProperty('code')
+    expect(parsePairingLink(buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: '12' }))).not.toHaveProperty('code')
   })
 
   it('rejects foreign links and invalid fields', () => {

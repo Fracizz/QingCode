@@ -477,10 +477,16 @@ export function findPortMovedProfile(profiles, host, port, fingerprint) {
   return profiles.find(item => item.host === host && item.port !== port && item.fingerprint === fingerprint) ?? null;
 }
 
-/** 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。 */
+/**
+ * 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。
+ * 也接受「复制连接信息」的整段文本：从中提取第一个 qingcode://pair 链接，忽略聊天软件附加的前后文字。
+ * 链接带 code（密码）且格式有效时一并返回，手机可直接配对；格式无效的密码忽略，仍由用户手动输入。
+ */
 export function parsePairingLink(text) {
-  const value = String(text ?? '').trim();
-  if (!value.startsWith(PAIRING_PREFIX)) throw new Error(t('这不是 QingCode 配对链接。'));
+  const raw = String(text ?? '').trim();
+  const start = raw.indexOf(PAIRING_PREFIX);
+  if (start < 0) throw new Error(t('这不是 QingCode 配对链接。'));
+  const value = raw.slice(start).split(/\s/, 1)[0];
   const query = new URLSearchParams(value.slice(PAIRING_PREFIX.length));
   if (query.get('v') !== '1') throw new Error(t('配对链接版本不受支持，请升级 QingCode Android。'));
   const host = query.get('host') ?? '';
@@ -489,8 +495,12 @@ export function parsePairingLink(text) {
   if (!validIpv4(host) || !validPort(port)) throw new Error(t('配对链接中的地址无效。'));
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error(t('配对链接中的证书指纹无效。'));
   const name = (query.get('name') ?? '').trim().slice(0, 48) || 'Windows';
-  return { host, port, fingerprint, name };
+  const code = query.get('code') ?? '';
+  return PAIRING_CODE.test(code) ? { host, port, fingerprint, name, code } : { host, port, fingerprint, name };
 }
+
+/** 配对密码格式，与电脑端设置页一致：6–20 位可见 ASCII 字符。 */
+export const PAIRING_CODE = /^[!-~]{6,20}$/;
 
 export function decodeBase64(chunk) {
   return Uint8Array.from(atob(chunk), character => character.charCodeAt(0));
