@@ -38,7 +38,8 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
   return (
     <div className="qn-composer-model">
-      <button type="button" className="qn-chip" onClick={() => setOpen(true)} aria-label="选择模型与推理强度">
+      {/* 打开时补拉一次：首次列表为空（如 pi 刚启动）时，靠这里触发 store 的过期重取。 */}
+      <button type="button" className="qn-chip" onClick={() => { setOpen(true); void load(targetId, agent) }} aria-label="选择模型与推理强度">
         {list?.loading && models.length === 0 && <LoadingIcon size={13} />}
         {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
         <span className="truncate">{triggerLabel(selection) || '模型'}</span>

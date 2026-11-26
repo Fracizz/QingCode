@@ -1,4 +1,4 @@
-import { isThreadOutcome, sessionStatus } from '@qn/codex-client'
+import { isActiveThread, isThreadOutcome, sessionStatus } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
@@ -229,7 +229,8 @@ export function startWorkspaceObserver(): () => void {
 
   const unsubscribe = useApp.subscribe((now, before) => {
     if (now.connections !== before.connections) {
-      const removed = before.connections.filter((item) => !now.connections.some((connection) => connection.id === item.id))
+      // 重新配对换了证书指纹时，旧缓存可能属于另一台电脑，与草稿、队列一样不能带过去。
+      const removed = before.connections.filter((item) => !now.connections.some((connection) => connection.id === item.id && connection.fp === item.fp))
       if (removed.length) {
         useWorkspace.setState((state) => {
           const threads = { ...state.threads }
@@ -257,9 +258,11 @@ export function startWorkspaceObserver(): () => void {
       const previous = before.activeId === desktopId ? before.sessions[key]?.state.threads[cached.id] : undefined
       const currentChat = visibleChat(now, cached)
       const activity = current?.activity
+      // 首次读入历史时 activity 来自最后一轮的旧结果；只有列表里还在运行的会话，读入时已结束才算新结果。
+      const changed = previous ? previous.activity !== activity : cached.activity !== undefined && isActiveThread(cached.activity)
       if (currentChat && cached.unread) {
         snapshots.push({ ...cached, unread: false })
-      } else if (!currentChat && previous?.activity !== activity && isThreadOutcome(activity)) {
+      } else if (!currentChat && changed && isThreadOutcome(activity)) {
         snapshots.push({ ...cached, activity, unread: true, updatedAt: Date.now() })
       }
     }

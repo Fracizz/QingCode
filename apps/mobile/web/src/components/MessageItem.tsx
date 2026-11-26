@@ -1,4 +1,4 @@
-import { Check, ChevronRight, CircleX, Ellipsis, FilePen, Image, ListChecks, Terminal } from 'lucide-react'
+import { Check, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, GitCompare, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
 import { editUserText, splitUserText, type ItemView, type UserInput } from '@qn/codex-client'
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
@@ -9,7 +9,7 @@ import { callDevice } from '../client'
 import { getWindowNativePort } from '../native'
 import { ImageThumbnail } from './ImageThumbnail'
 import { SubagentDetails } from './SubagentDetails'
-import { Badge, Button, Dialog, LoadingIcon } from './ui'
+import { Badge, Button, Dialog, LoadingIcon, SheetAction } from './ui'
 
 /** 消息里的路径按会话 cwd 解析，点击后在只读查看页打开；没有提供时路径只是普通文本。 */
 export type FileActions = {
@@ -117,15 +117,11 @@ function Markdown({ text, streaming }: { text: string; streaming: boolean }): Re
   )
 }
 
-const statusTone = (status: string): 'muted' | 'accent' | 'danger' | 'ok' => {
-  if (/fail|error|denied|declined/i.test(status)) return 'danger'
-  if (/completed|success/i.test(status)) return 'ok'
-  if (/progress|running|started/i.test(status)) return 'accent'
-  return 'muted'
-}
-
 function DiffBlock({ text }: { text: string }) {
-  const all = text.split('\n')
+  const raw = text.split('\n')
+  // 文件名已在上方列出，预览从第一个 hunk 开始，省掉 diff/index/---/+++ 头。
+  const firstHunk = raw.findIndex((line) => line.startsWith('@@'))
+  const all = firstHunk > 0 ? raw.slice(firstHunk) : raw
   const lines = all.length > 200 ? all.slice(-200) : all
   return (
     <div>
@@ -152,13 +148,17 @@ function DiffBlock({ text }: { text: string }) {
   )
 }
 
-function MessageActions({ text, onQuote, getPlainText, onEdit }: {
+function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledOpen, onOpenChange, hideTrigger = false }: {
   text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void
+  open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = controlledOpen ?? ownOpen
+  const setOpen = (value: boolean) => { if (onOpenChange) onOpenChange(value); else setOwnOpen(value) }
   const [status, setStatus] = useState('')
   const hasText = Boolean(text.trim())
   if (!hasText && !onEdit) return null
+  if (hideTrigger && !open && !status) return null
 
   async function copy(value: string) {
     try {
@@ -166,22 +166,23 @@ function MessageActions({ text, onQuote, getPlainText, onEdit }: {
       else await navigator.clipboard.writeText(value)
       setOpen(false)
       setStatus('已复制')
+      window.setTimeout(() => setStatus((current) => current === '已复制' ? '' : current), 1600)
     } catch {
       setStatus('复制失败，可长按选中文字后复制')
     }
   }
 
   return (
-    <div className="mt-1 flex items-center justify-end gap-1">
+    <div className="qn-message-actions">
       {status && <span className="text-xs text-qn-muted" role="status">{status}</span>}
-      <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}><Ellipsis size={18} /></Button>
+      {!hideTrigger && <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}><Ellipsis size={16} /></Button>}
       {open && (
         <Dialog title="消息操作" onClose={() => setOpen(false)}>
           <div className="grid gap-1">
-            {onEdit && <Button variant="ghost" onClick={() => { setOpen(false); onEdit() }}>编辑并重发</Button>}
-            {hasText && onQuote && <Button variant="ghost" onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>引用到对话</Button>}
-            {hasText && <Button variant="ghost" onClick={() => void copy(text)}>{getPlainText ? '复制 Markdown' : '复制文本'}</Button>}
-            {hasText && getPlainText && <Button variant="ghost" onClick={() => void copy(getPlainText())}>复制纯文本</Button>}
+            {hasText && <SheetAction icon={Copy} onClick={() => void copy(getPlainText ? getPlainText() : text)}>复制</SheetAction>}
+            {hasText && getPlainText && <SheetAction icon={FileCode} onClick={() => void copy(text)}>复制 Markdown 源文</SheetAction>}
+            {hasText && onQuote && <SheetAction icon={Quote} onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>引用到对话</SheetAction>}
+            {onEdit && <SheetAction icon={Pencil} onClick={() => { setOpen(false); onEdit() }}>编辑并重发</SheetAction>}
             {status && <p className="text-xs text-qn-warn" role="alert">{status}</p>}
           </div>
         </Dialog>
@@ -248,55 +249,92 @@ export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (tex
   )
 }
 
+const CHANGE_KIND: Record<string, { label: string; tone: string }> = {
+  add: { label: '新增', tone: 'text-qn-ok' },
+  create: { label: '新增', tone: 'text-qn-ok' },
+  update: { label: '修改', tone: 'text-qn-accent' },
+  modify: { label: '修改', tone: 'text-qn-accent' },
+  delete: { label: '删除', tone: 'text-qn-danger' },
+  remove: { label: '删除', tone: 'text-qn-danger' },
+  move: { label: '移动', tone: 'text-qn-warn' },
+  rename: { label: '重命名', tone: 'text-qn-warn' },
+}
+
+/** 统计 unified diff 的增删行数，文件头不计入。 */
+export function diffStat(diff: string | undefined): { added: number; removed: number } | null {
+  if (!diff) return null
+  let added = 0
+  let removed = 0
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) added += 1
+    else if (line.startsWith('-')) removed += 1
+  }
+  return added || removed ? { added, removed } : null
+}
+
+function splitPath(path: string): { dir: string; name: string } {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at < 0 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) }
+}
+
 function FileChangeItem({
   item,
-  onQuote,
 }: {
   item: Extract<ItemView, { kind: 'fileChange' }>
   onQuote?: (text: string) => void
 }) {
   const actions = useContext(FileActionsContext)
+  const status = toolStatus(item)
+  const files = item.changes.filter((change) => change.kind !== 'output')
+  // 只有一个文件时直接展开差异预览；多个文件先列清单，避免一屏全是 diff。
+  const inlineDiff = item.changes.length === 1
   return (
-    <div className="qn-tool qn-tool-open text-xs">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <FilePen size={14} className="text-qn-muted" aria-hidden />
-        <span>文件改动</span>
-        <Badge tone={statusTone(item.status)}>{item.status}</Badge>
+    <div className="qn-tool qn-tool-open qn-file-change">
+      <div className="qn-file-change-head">
+        <FilePen size={14} className="shrink-0 text-qn-muted" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">
+          {status === 'running' ? '正在改动' : status === 'failed' ? '改动未完成' : '已改动'}
+          {files.length > 0 && ` ${files.length} 个文件`}
+        </span>
+        <ToolStatusIcon status={status} />
       </div>
-      {item.changes.length === 0 && <div className="text-qn-muted">等待改动内容…</div>}
-      {item.changes.map((change, index) => (
-        <div key={`${change.path}-${change.kind}-${index}`} className="mb-2">
-          <div className="flex items-center gap-2 py-1">
-            {actions && change.path && change.kind !== 'output' ? (
-              <button
-                type="button"
-                className="qn-path-link qn-mono min-w-0 flex-1 truncate text-left text-[11px]"
-                onClick={() => actions.openFile({ path: resolvePath(change.path, actions.cwd) })}
-              >
-                {change.path}
-              </button>
-            ) : (
-              <span className="qn-mono min-w-0 flex-1 truncate text-[11px]">{change.path}</span>
-            )}
-            <Badge>{change.kind}</Badge>
-          </div>
-          {actions && change.path && change.kind !== 'output' && (
-            <div className="mb-1 flex justify-end">
-              <Button
-                variant="ghost"
-                className="px-3 py-1 text-[11px]"
-                onClick={() =>
-                  actions.openDiff(resolvePath(change.path, actions.cwd), typeof change.diff === 'string' ? change.diff : undefined)
-                }
-              >
-                查看差异
-              </Button>
+      {item.changes.length === 0 && <div className="px-1 pb-1 text-qn-muted">等待改动内容…</div>}
+      {item.changes.map((change, index) => {
+        const kind = CHANGE_KIND[change.kind.toLowerCase()]
+        const stat = diffStat(change.diff)
+        const { dir, name } = splitPath(change.path)
+        const linked = Boolean(actions && change.path && change.kind !== 'output')
+        return (
+          <div key={`${change.path}-${change.kind}-${index}`} className="qn-file-change-row">
+            <div className="flex min-h-9 items-center gap-2">
+              {kind && <span className={`shrink-0 text-[11px] font-semibold ${kind.tone}`}>{kind.label}</span>}
+              {linked && actions ? (
+                <button type="button" className="qn-file-change-path" title={change.path}
+                  onClick={() => actions.openFile({ path: resolvePath(change.path, actions.cwd) })}>
+                  <span className="qn-file-change-dir">{dir}</span><span className="qn-file-change-name">{name}</span>
+                </button>
+              ) : (
+                <span className="qn-file-change-path" title={change.path}>
+                  <span className="qn-file-change-dir">{dir}</span><span className="qn-file-change-name">{name}</span>
+                </span>
+              )}
+              {stat && (
+                <span className="shrink-0 font-mono text-[11px] tabular-nums">
+                  <span className="text-qn-ok">+{stat.added}</span> <span className="text-qn-danger">−{stat.removed}</span>
+                </span>
+              )}
+              {linked && actions && (
+                <Button variant="ghost" className="qn-file-change-diff" aria-label={`查看 ${name} 的差异`}
+                  onClick={() => actions.openDiff(resolvePath(change.path, actions.cwd), typeof change.diff === 'string' ? change.diff : undefined)}>
+                  <GitCompare size={15} aria-hidden />
+                </Button>
+              )}
             </div>
-          )}
-          {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
-        </div>
-      ))}
-      <MessageActions text={item.changes.map((change) => change.path).join('\n')} onQuote={onQuote} />
+            {inlineDiff && typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -309,6 +347,7 @@ function UserMessage({ item, onQuote, onResend }: {
   onResend?: Resend
 }) {
   const [edit, setEdit] = useState<string | null>(null)
+  const [menu, setMenu] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
   const parsed = splitUserText(item.text)
@@ -331,13 +370,19 @@ function UserMessage({ item, onQuote, onResend }: {
 
   return (
     <div className="flex flex-col items-end">
-      <div className="qn-user-bubble">
+      {/* 用户消息不常驻「⋯」：长按气泡（或右键）打开操作，减少消息流里的按钮噪音。 */}
+      <div className="qn-user-bubble" onContextMenu={(event) => {
+        event.preventDefault()
+        navigator.vibrate?.(10)
+        setMenu(true)
+      }}>
         <div className="whitespace-pre-wrap break-words">{item.text}</div>
         {item.images && item.images.length > 0 && <div className="mt-1 flex flex-wrap gap-2">
           {item.images.map((url, index) => <MessageImage key={index} src={url} alt={`附件图片 ${index + 1}`} />)}
         </div>}
       </div>
-      <MessageActions text={item.text} onQuote={onQuote} onEdit={onResend ? () => { setFailed(false); setEdit(parsed.text) } : undefined} />
+      <MessageActions text={item.text} onQuote={onQuote} hideTrigger open={menu} onOpenChange={setMenu}
+        onEdit={onResend ? () => { setFailed(false); setEdit(parsed.text) } : undefined} />
       {edit !== null && (
         <Dialog title="编辑并重发" onClose={() => { if (!saving) setEdit(null) }}>
           <form onSubmit={(event) => { event.preventDefault(); void submit() }}>
@@ -361,12 +406,15 @@ export function MessageItem({
   agentName,
   active,
   onResend,
+  showActions = true,
 }: {
   item: ItemView
   onQuote?: (text: string) => void
   agentName?: string
   active?: boolean
   onResend?: Resend
+  /** 只在每轮最后一条回复下常驻操作入口；中间的过程说明不再逐条挂「⋯」。 */
+  showActions?: boolean
 }) {
   const markdownRef = useRef<HTMLDivElement>(null)
   switch (item.kind) {
@@ -375,11 +423,13 @@ export function MessageItem({
     case 'agent':
       return (
         <div className="px-1 py-1" aria-label={agentName}>
-          <div ref={markdownRef} className="qn-markdown break-words text-sm">
+          {/* 流式光标画在最后一个块的行尾（CSS），不单独占一行。 */}
+          <div ref={markdownRef} className={`qn-markdown break-words text-sm${item.streaming ? ' qn-streaming' : ''}`}>
             <Markdown text={item.text} streaming={item.streaming === true} />
-            {item.streaming && <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-qn-accent align-middle" />}
           </div>
-          <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} />
+          {showActions && !item.streaming && (
+            <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} />
+          )}
         </div>
       )
     case 'reasoning':

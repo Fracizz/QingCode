@@ -16,6 +16,7 @@ export function ThreadsPage() {
   const threadsError = useApp((s) => s.threadsError)
   const agentErrors = useApp((s) => s.agentErrors)
   const agentSettings = useApp((s) => s.agentSettings)
+  const targets = useApp((s) => s.targets)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
   const clearError = useApp((s) => s.clearError)
@@ -45,7 +46,7 @@ export function ThreadsPage() {
       <Header
         className="qn-threads-header"
         title={project?.name || '会话'}
-        subtitle={project && '会话'}
+        subtitle={project && (targets.find((target) => target.id === project.targetId)?.name ?? '会话')}
         onBack={goBack}
         right={
           <>

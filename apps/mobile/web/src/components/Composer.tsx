@@ -231,7 +231,7 @@ export function Composer({
           value={text}
           disabled={disabled}
           aria-label="消息"
-          placeholder={placeholder}
+          placeholder={running ? '输入下一条，发送后排队' : placeholder}
           onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onBlur={() => setCaret(null)}
@@ -251,15 +251,14 @@ export function Composer({
             {running && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? '正在中断' : '停止运行'}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
-                {interrupting ? <LoadingIcon size={14} /> : <Square size={12} fill="currentColor" aria-hidden />}
+                {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
               </Button>
             )}
-            <Button variant="primary" className={`qn-send-button${running ? ' qn-queue-button' : ''}`}
-              aria-label={sending ? '发送中' : running ? '排队' : '发送'} disabled={!canSend} onClick={() => void submit()}>
-              {sending ? <LoadingIcon size={18} /> : <ArrowUp size={19} strokeWidth={2.25} aria-hidden />}
-              {running && <span>排队</span>}
-            </Button>
-            {running && !compacting && <SendOptions canSteer={canSteer} disabled={!canSend} onSelect={(mode) => void submit(mode)} />}
+            {/* 运行中且没有内容时只留停止键；有内容后再出现发送键（排队），长按选其他发送方式。 */}
+            {(!running || canSend || sending) && (
+              <SendButton running={running && !compacting} sending={sending} disabled={!canSend} canSteer={canSteer}
+                onSend={(mode) => void submit(mode)} />
+            )}
           </div>
         </div>
         {picking && <div className="px-3 pb-2 text-xs text-qn-muted" role="status">选图中…</div>}
@@ -268,23 +267,69 @@ export function Composer({
   )
 }
 
-function SendOptions({ canSteer, disabled, onSelect }: {
-  canSteer: boolean
+const LONG_PRESS_MS = 450
+
+/** 发送键：空闲时直接发送；运行中点按排队，长按（或右键）打开发送方式。 */
+function SendButton({ running, sending, disabled, canSteer, onSend }: {
+  running: boolean
+  sending: boolean
   disabled: boolean
-  onSelect: (mode: SendMode) => void
+  canSteer: boolean
+  onSend: (mode: SendMode) => void
 }) {
   const [open, setOpen] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  const longPressed = useRef(false)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   function select(mode: SendMode) {
     setOpen(false)
-    onSelect(mode)
+    onSend(mode)
+  }
+
+  function cancelPress() {
+    window.clearTimeout(timer.current)
+    timer.current = undefined
   }
 
   return (
     <>
-      <Button variant="ghost" className="qn-icon-button" aria-label="发送方式" aria-haspopup="dialog" disabled={disabled} onClick={() => setOpen(true)}>
-        <ChevronDown size={17} aria-hidden />
+      <Button variant="primary" className="qn-send-button"
+        aria-label={sending ? '发送中' : running ? '排队' : '发送'}
+        title={running ? '点按排队，长按选择发送方式' : undefined}
+        aria-haspopup={running ? 'dialog' : undefined}
+        disabled={disabled}
+        onPointerDown={() => {
+          longPressed.current = false
+          if (!running || disabled) return
+          cancelPress()
+          timer.current = window.setTimeout(() => {
+            longPressed.current = true
+            navigator.vibrate?.(12)
+            setOpen(true)
+          }, LONG_PRESS_MS)
+        }}
+        onPointerUp={cancelPress} onPointerLeave={cancelPress} onPointerCancel={cancelPress}
+        onContextMenu={(event) => {
+          if (!running) return
+          event.preventDefault()
+          if (!longPressed.current && !disabled) setOpen(true)
+          longPressed.current = true
+        }}
+        onClick={() => {
+          if (longPressed.current) {
+            longPressed.current = false
+            return
+          }
+          onSend('queue')
+        }}>
+        {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
       </Button>
+      {running && !disabled && (
+        <Button variant="ghost" className="qn-icon-button qn-send-options" aria-label="发送方式" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+          <ChevronDown size={15} aria-hidden />
+        </Button>
+      )}
       {open && (
         <Dialog title="发送方式" onClose={() => setOpen(false)}>
           <div className="grid gap-2">

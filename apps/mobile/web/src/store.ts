@@ -132,6 +132,8 @@ const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const STORAGE_CONNECTIONS = 'connections'
+/** 连接失败信息看起来像认证失败（密码错/过期）时，重新弹密码框。 */
+const AUTH_ERROR_RE = /auth|认证|密码|password/i
 const STORAGE_ACTIVE = 'active'
 const STORAGE_MODEL_PREFS = 'modelPrefs'
 const STORAGE_DESKTOP_MODEL_PREFS = 'desktopModelPrefs'
@@ -1792,7 +1794,17 @@ export const useApp = create<AppState>((set, get) => {
       const target = get().targets.find((item) => item.id === id)
       if (!target) return
       if (target.kind === 'ssh' && target.auth.kind === 'password') {
-        set({ credential: { targetId: id, name: target.name } })
+        // 电脑上已保存密码时直接连（backend 合并已保存凭据）；认证失败再弹框让用户重输。
+        if (!target.hasSavedSecret) {
+          set({ credential: { targetId: id, name: target.name } })
+          return
+        }
+        void get().connect(id, {}).then(() => {
+          const info = get().targetStates[id]
+          if (info?.state === 'error' && AUTH_ERROR_RE.test(info.detail ?? '')) {
+            set({ credential: { targetId: id, name: target.name } })
+          }
+        })
         return
       }
       void get().connect(id, {})
@@ -1801,10 +1813,13 @@ export const useApp = create<AppState>((set, get) => {
     submitCredentials: async (password, remember) => {
       const prompt = get().credential
       if (!prompt) return
+      const saving = remember && Boolean(password)
       await get().connect(prompt.targetId, {
         ...(password ? { password } : {}),
-        ...(remember ? { remember: true } : {}),
+        ...(saving ? { remember: true } : {}),
       })
+      // 记住成功后刷新目标列表，让"已保存密码"立即生效，下次不再弹框。
+      if (saving && get().targetStates[prompt.targetId]?.state !== 'error') void get().loadTargets()
     },
 
     cancelCredentials: () => set({ credential: null }),

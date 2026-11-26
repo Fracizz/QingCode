@@ -102,7 +102,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
             <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.sending || first.saving} onClick={() => void retry()}>继续发送</Button>
           </div>
         )}
-        <ul className="qn-scroll mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label="待发送的消息">
+        <ul className="qn-scroll qn-queue-list mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label="待发送的消息">
           {queue.map((message, index) => (
             <li key={message.id} className="flex items-center gap-2 border-t border-qn-border text-sm">
               <span className="min-w-0 flex-1 truncate">{message.text.trim() || '附件或引用'}</span>

@@ -94,6 +94,20 @@ export function ChatPage() {
     () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
     [items, view?.error, running],
   )
+  // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
+  const finalReplies = useMemo(() => {
+    const ids = new Set<string>()
+    let seen = false
+    for (let index = shownItems.length - 1; index >= 0; index -= 1) {
+      const item = shownItems[index]!
+      if (item.kind === 'user') seen = false
+      else if (item.kind === 'agent' && !seen) {
+        ids.add(item.id)
+        seen = true
+      }
+    }
+    return ids
+  }, [shownItems])
   // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
   const blocks = useMemo(() => {
     let index = 0
@@ -245,7 +259,7 @@ export function ChatPage() {
                     className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
                     {block.kind === 'item'
                       ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
-                        active={activeItemIds?.includes(block.item.id)}
+                        active={activeItemIds?.includes(block.item.id)} showActions={finalReplies.has(block.item.id)}
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                   </div>
@@ -270,7 +284,9 @@ export function ChatPage() {
           </div>
         </div>
         {!atBottom && (
-          <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
+          <button type="button" className="qn-jump-latest" onClick={jumpToLatest} aria-label="回到最新">
+            <ArrowDown size={18} aria-hidden />{running && <span className="qn-jump-live" aria-hidden />}
+          </button>
         )}
       </div>
       {(error || notice || stopError) && (

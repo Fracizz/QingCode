@@ -164,6 +164,7 @@ export function parseTargets(value: unknown): Target[] {
       port: number(entry.port, 22),
       username: text(entry.username),
       auth: parseAuth(entry.auth),
+      ...(typeof entry.hasSavedSecret === 'boolean' ? { hasSavedSecret: entry.hasSavedSecret } : {}),
     })
   }
   // targets.list 约定本机在首位；排序时不改变同类的相对顺序。

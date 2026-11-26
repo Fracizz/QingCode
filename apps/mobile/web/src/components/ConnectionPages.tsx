@@ -1,4 +1,4 @@
-import { Plus, Settings } from 'lucide-react'
+import { Check, KeyRound, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { callDevice, getGateway } from '../client'
 import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress, parsePairingLink } from '../link'
@@ -7,7 +7,7 @@ import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { ConnectionStatus } from '../types'
 import { PullToRefresh } from './PullToRefresh'
-import { Badge, Button, Card, Dialog, Empty, Field, Header, Loading, Note, StatusDot } from './ui'
+import { Badge, Button, Card, Dialog, Field, Header, Loading, Note, SheetAction, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
 
 const stateText: Record<ConnectionStatus, string> = {
@@ -166,7 +166,7 @@ export function ConnectionsPage() {
         label="连接" disabled={booting || connections.length === 0} onRefresh={refreshStatuses}>
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
-            <span className="text-[13px]">{mock ? '浏览器预览' : connections.length ? `已配对 ${connections.length} 台电脑` : 'QingCode Next'}</span>
+            <span className="text-[13px]">{[connections.length ? `已配对 ${connections.length} 台电脑` : '尚未配对电脑', mock && '浏览器预览'].filter(Boolean).join(' · ')}</span>
             <div className="flex">
               {activeId && eventsConnected && !needsRepair[activeId] && (
                 <Button variant="ghost" className="px-2 text-xs" onClick={() => void activate(activeId, 'targets')}>目标与额度</Button>
@@ -186,15 +186,19 @@ export function ConnectionsPage() {
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         {eventsError && activeId && !needsRepair[activeId] && <Note message={eventsError} tone="warn" />}
         {booting ? <Loading text="正在读取已保存的连接…" /> : connections.length === 0 ? (
-          <Empty>
-            <p>在电脑端「手机连接」复制连接信息。</p>
-            <div className="mt-4 flex flex-col gap-2">
-              <Button variant="primary" onClick={addFromClipboard}>从剪贴板导入</Button>
-              <button type="button" className="qn-dashed-action qn-pressable mt-0" onClick={openAddForm}>
-                <Plus size={17} aria-hidden />添加连接
-              </button>
-            </div>
-          </Empty>
+          <div className="qn-onboard">
+            <h1 className="qn-hero-title">QingCode</h1>
+            <p className="qn-onboard-lead">在手机上继续电脑里的 Agent 会话</p>
+            <ol className="qn-onboard-steps">
+              <li><span>1</span>电脑端点侧栏底部「手机连接」并启用</li>
+              <li><span>2</span>复制连接信息，或用手机扫码</li>
+              <li><span>3</span>回到这里导入，输入配对密码</li>
+            </ol>
+            <Button variant="primary" className="w-full" onClick={addFromClipboard}>从剪贴板导入</Button>
+            <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
+              <Plus size={17} aria-hidden />扫码或手动添加
+            </button>
+          </div>
         ) : (
           <>
             <div className="qn-list-group">
@@ -235,10 +239,10 @@ export function ConnectionsPage() {
       {selected && (
         <Dialog title={selected.name} onClose={() => setMenu(null)}>
           <p className="mb-3 text-xs text-qn-muted">{formatAddress(selected.host, selected.port)}</p>
-          <div className="grid gap-2">
-            <Button onClick={() => { setMenu(null); openEditForm(selected.id) }}>编辑连接</Button>
-            <Button onClick={() => { setMenu(null); beginRepair(selected.id) }}>重新配对</Button>
-            <Button variant="danger" onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>删除连接</Button>
+          <div className="grid">
+            <SheetAction icon={Pencil} onClick={() => { setMenu(null); openEditForm(selected.id) }}>编辑连接</SheetAction>
+            <SheetAction icon={KeyRound} onClick={() => { setMenu(null); beginRepair(selected.id) }}>重新配对</SheetAction>
+            <SheetAction icon={Trash2} danger onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>删除连接</SheetAction>
           </div>
         </Dialog>
       )}
@@ -271,6 +275,7 @@ export function ConnectionFormPage() {
   const saveEdit = useApp((s) => s.saveEdit)
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [reimport, setReimport] = useState(false)
 
   if (!form) return null
   const isEdit = form.mode === 'edit'
@@ -299,6 +304,7 @@ export function ConnectionFormPage() {
       }
       setFormPaste(link)
       parsePaste()
+      setReimport(false)
     } catch (err) {
       setScanError(friendlyError(err, '扫码不可用，可用系统相机或粘贴连接信息。'))
     } finally {
@@ -312,10 +318,17 @@ export function ConnectionFormPage() {
         subtitle={isEdit ? '修改名称或地址' : isRepair ? '请从同一台电脑复制新的连接信息' : '配对到自己的电脑'}
         onBack={form.saving ? undefined : closeForm} />
       <fieldset className="qn-body qn-scroll min-w-0" disabled={form.saving}>
-        {!isEdit && (
+        {!isEdit && imported && !reimport && (
+          <div className="qn-imported mb-3">
+            <Check size={16} className="shrink-0 text-qn-ok" aria-hidden />
+            <span className="min-w-0 flex-1">已读取地址与证书指纹</span>
+            <button type="button" className="qn-note-action" onClick={() => setReimport(true)}>重新导入</button>
+          </div>
+        )}
+        {!isEdit && (!imported || reimport) && (
           <Card className="mb-3">
             <p className="mb-3 text-sm">在电脑端「手机连接」复制连接信息，再在这里导入。</p>
-            <Button className="w-full" onClick={() => { setScanError(null); void pasteFromClipboard() }}>
+            <Button className="w-full" onClick={() => { setScanError(null); setReimport(false); void pasteFromClipboard() }}>
               从剪贴板导入
             </Button>
             {getWindowNativePort() && (
@@ -329,7 +342,7 @@ export function ConnectionFormPage() {
                 <textarea className="qn-textarea" rows={3} value={form.paste} placeholder="粘贴电脑端复制的连接信息…"
                   onChange={(event) => setFormPaste(event.target.value)} />
               </Field>
-              <Button className="w-full" disabled={!form.paste.trim()} onClick={parsePaste}>导入信息</Button>
+              <Button className="w-full" disabled={!form.paste.trim()} onClick={() => { setReimport(false); parsePaste() }}>导入信息</Button>
             </details>
             {scanError && <Note message={scanError} tone="warn" onClose={() => setScanError(null)} />}
           </Card>

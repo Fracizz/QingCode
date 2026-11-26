@@ -755,6 +755,8 @@ export class MockNativePort implements NativePort {
     turn.items.push(change, reply)
     recv({ method: 'item/completed', params: { threadId, turnId, itemId: changeId, item: change } })
     recv({ method: 'item/started', params: { threadId, turnId, itemId, item: reply } })
+    // 消息含"慢"时放慢流式输出，便于在浏览器里看运行中的界面。
+    const step = /慢|slow/i.test(userText) ? 900 : 35
     let delay = 60
     for (const chunk of chunks) {
       setTimeout(() => {
@@ -762,7 +764,7 @@ export class MockNativePort implements NativePort {
         reply.text += chunk
         recv({ method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } })
       }, delay)
-      delay += 35
+      delay += step
     }
     setTimeout(() => {
       if (turn.status !== 'inProgress') return

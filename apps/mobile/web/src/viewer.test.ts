@@ -75,6 +75,24 @@ describe('统一 diff 着色', () => {
     expect(diffRows('+a\n-b').rows.map((row) => row.kind)).toEqual(['add', 'remove'])
   })
 
+  it('hunk 内以 --- / +++ 开头的内容行仍按删除 / 新增计行号', () => {
+    // 删掉 Markdown 分隔线 "---"、新增 "++i;"：diff 里分别是 "----" 与 "+++i;"。
+    const text = [
+      '--- a/x.md', '+++ b/x.md', '@@ -1,3 +1,3 @@', ' # 标题', '----', '+++i;', ' 尾行',
+      'diff --git a/y b/y', '--- a/y', '+++ b/y', '@@ -5 +5 @@', '--- 旧注释', '+-- 新注释',
+    ].join('\n')
+    const { rows } = diffRows(text)
+    expect(rows.map((row) => row.kind)).toEqual([
+      'meta', 'meta', 'hunk', 'context', 'remove', 'add', 'context',
+      'meta', 'meta', 'meta', 'hunk', 'remove', 'add',
+    ])
+    expect(rows[4]).toMatchObject({ oldNo: 2 })
+    expect(rows[5]).toMatchObject({ newNo: 2 })
+    expect(rows[6]).toMatchObject({ oldNo: 3, newNo: 3 })
+    expect(rows[11]).toMatchObject({ oldNo: 5 })
+    expect(rows[12]).toMatchObject({ newNo: 5 })
+  })
+
   it('错误码转成可读提示', () => {
     expect(viewerError({ code: 'not_found', message: 'x' }, '失败')).toBe('文件不存在或已被删除')
     expect(viewerError({ code: 'not_repo' }, '失败')).toBe('该目录不在 Git 仓库中')

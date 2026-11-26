@@ -36,6 +36,7 @@ const statusTone: Record<SessionStatus, 'muted' | 'accent' | 'warn' | 'danger'> 
   idle: 'muted', running: 'accent', pending: 'warn', input: 'warn', completed: 'muted',
   failed: 'danger', interrupted: 'muted', unread: 'accent',
 }
+const QUIET_STATUS = new Set<SessionStatus>(['idle', 'completed', 'interrupted'])
 const emptyProjects: Project[] = []
 const emptyThreads: WorkspaceThread[] = []
 const THREAD_PREVIEW_LIMIT = 5
@@ -271,12 +272,14 @@ export function WorkspaceThreadRow({
               <AgentTag agent={thread.agent} />
             </span>
           </span>
+          {/* 空闲、已完成、已中断是常态，不再逐行挂徽标；只标出需要注意的状态。 */}
           {opening ? (
             <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />打开中…</span>
           ) : status === 'running' ? (
-            <LoadingIcon className="text-qn-accent" role="img" aria-hidden={false} aria-label={sessionStatusLabels[status]} />
-          ) : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
-          <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
+            <span className="qn-row-status text-qn-accent"><LoadingIcon role="img" aria-hidden />{sessionStatusLabels[status]}</span>
+          ) : status === 'unread' ? (
+            <span className="qn-unread-dot shrink-0" role="img" aria-label={sessionStatusLabels[status]} />
+          ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
         </button>
         <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
           aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
@@ -309,8 +312,8 @@ export function WorkspaceProjectRow({ project, target, onOpen }: {
           <span className="qn-subtitle qn-mono block">{displayPath(project.path)}</span>
         </span>
       </button>
-      {target && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
-      <ProjectTools project={project} />
+      {target && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
+      <ProjectTools project={project} compact />
     </div>
   )
 }
@@ -345,6 +348,27 @@ function WorkspaceThreadList({ threads, projectName, searching, onOpen }: {
         </>
       )}
     </div>
+  )
+}
+
+/** 工作台顶部一行：当前电脑与连接状态（不只靠颜色），点按切到连接页。 */
+function WorkspaceContext() {
+  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
+  const connected = useApp((s) => s.eventsConnected)
+  const repair = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
+  const latency = useApp((s) => s.activeId ? s.connectionLatencyMs[s.activeId] : undefined)
+  const setTab = useWorkspace((s) => s.setTab)
+  if (!connection) return null
+  const state = repair ? '需重新配对' : connected ? latency != null ? `${latency} ms` : '在线' : '连接中…'
+  const tone = repair ? 'danger' : connected ? 'ok' : 'warn'
+  return (
+    <button type="button" className="qn-workspace-context-bar" onClick={() => setTab('connections')}
+      aria-label={`当前电脑 ${connection.name}，${state}，查看连接`}>
+      <span className="qn-dot" data-tone={tone} aria-hidden />
+      <span className="min-w-0 truncate">{connection.name}</span>
+      <span className="qn-workspace-context-state" data-tone={tone}>{state}</span>
+      <ChevronRight size={14} className="shrink-0 text-qn-dim" aria-hidden />
+    </button>
   )
 }
 
@@ -391,6 +415,7 @@ export function WorkspaceHome() {
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
       label={isSessions ? '会话' : '项目'} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
+      <WorkspaceContext />
       {repairReason && desktopId && (
         <Note message={repairReason === 'fingerprint' ? '电脑证书已变化，请核对后重新配对。' : '电脑已撤销此设备的授权。'}
           tone="error" actionLabel="重新配对" onAction={() => beginRepair(desktopId)} />
@@ -423,12 +448,14 @@ export function WorkspaceHome() {
             groups.length ? groups.map(({ project, threads }) => (
               <section key={JSON.stringify([desktopId, project.targetId, project.id])} className="qn-workspace-group">
                 <div className="qn-group-heading">
-                  <h2 className="truncate">{project.name}</h2>
-                  <ProjectOrigin target={targets.find((item) => item.id === project.targetId)} />
-                  {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
-                  <ProjectTools project={project} />
-                  <Button variant="ghost" className="qn-group-action" onClick={() => void showWorkspaceProject(project)}
-                    aria-label={`进入 ${project.name} 项目的会话`}><ChevronRight size={18} /></Button>
+                  <button type="button" className="qn-group-title" onClick={() => void showWorkspaceProject(project)}
+                    aria-label={`进入 ${project.name} 项目的会话`}>
+                    <h2 className="truncate">{project.name}</h2>
+                    <ProjectOrigin target={targets.find((item) => item.id === project.targetId)} />
+                    <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />
+                  </button>
+                  {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
+                  <ProjectTools project={project} compact />
                 </div>
                 <WorkspaceThreadList threads={threads} projectName={project.name} searching={searching}
                   onOpen={(thread) => void openWorkspaceThread(thread, project)} />
@@ -457,9 +484,9 @@ export function WorkspaceHome() {
             )
           )}
           {(!isSessions || groups.length > 0) && (
-            <Button className="mt-4 w-full" onClick={isSessions ? () => { setQuery(''); setTab('projects') } : showTargets}>
-              {isSessions ? '从其他项目打开会话' : '管理目标与项目'}
-            </Button>
+            <button type="button" className="qn-text-action" onClick={isSessions ? () => { setQuery(''); setTab('projects') } : showTargets}>
+              {isSessions ? '从其他项目打开会话' : '管理目标与项目'}<ChevronRight size={15} aria-hidden />
+            </button>
           )}
         </>
       )}

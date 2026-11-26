@@ -15,6 +15,8 @@ export type SshTarget = {
   port: number
   username: string
   auth: SshAuth
+  /** 仅 targets.list 附带：电脑上是否已保存可用的密码/口令（只有布尔值，明文不出电脑） */
+  hasSavedSecret?: boolean
 }
 
 export type LocalTarget = { id: 'local'; kind: 'local'; name: string }

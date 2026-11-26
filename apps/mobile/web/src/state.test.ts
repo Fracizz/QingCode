@@ -45,6 +45,15 @@ describe('parseTargets / parseProjects', () => {
     expect(parseTargets({ data: [] })).toEqual([])
   })
 
+  it('透传电脑上是否已保存密码', () => {
+    const targets = parseTargets([
+      { id: 'a', kind: 'ssh', name: 'a', host: 'h', port: 22, username: 'u', auth: { kind: 'password' }, hasSavedSecret: true },
+      { id: 'b', kind: 'ssh', name: 'b', host: 'h', port: 22, username: 'u', auth: { kind: 'password' } },
+    ])
+    expect(targets[0]).toMatchObject({ hasSavedSecret: true })
+    expect(targets[1]).not.toHaveProperty('hasSavedSecret')
+  })
+
   it('解析 key 认证与秒/毫秒时间戳', () => {
     const targets = parseTargets([
       { id: 'k', kind: 'ssh', name: 'k', host: 'h', port: 2222, username: 'u', auth: { kind: 'key', keyPath: '/k' } },
