@@ -1,7 +1,9 @@
+import { Check, ChevronRight, CircleX, Ellipsis, FilePen, ListChecks, LoaderCircle, Terminal } from 'lucide-react'
 import type { ItemView } from '@qn/codex-client'
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { toolStatus, toolSummary, type ToolItem, type ToolStatus } from '../chatGroups'
 import { allowLocalUrl, parseFileHref, resolvePath, segmentPaths, type FileLocation } from '../fileLinks'
 import { callDevice } from '../client'
 import { getWindowNativePort } from '../native'
@@ -151,7 +153,7 @@ function MessageActions({ text, onQuote, getPlainText }: {
   return (
     <div className="mt-1 flex items-center justify-end gap-1">
       {status && <span className="text-xs text-qn-muted" role="status">{status}</span>}
-      <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}>⋯</Button>
+      <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}><Ellipsis size={18} /></Button>
       {open && (
         <Dialog title="消息操作" onClose={() => setOpen(false)}>
           <div className="grid gap-1">
@@ -166,6 +168,12 @@ function MessageActions({ text, onQuote, getPlainText }: {
   )
 }
 
+function ToolStatusIcon({ status }: { status: ToolStatus }) {
+  if (status === 'running') return <LoaderCircle size={14} className="qn-spin shrink-0 text-qn-accent" aria-label="运行中" />
+  if (status === 'failed') return <CircleX size={14} className="shrink-0 text-qn-danger" aria-label="失败" />
+  return <Check size={14} className="shrink-0 text-qn-dim" aria-label="完成" />
+}
+
 function CommandItem({
   item,
   onQuote,
@@ -175,27 +183,44 @@ function CommandItem({
 }) {
   const all = item.output.split('\n')
   const output = all.length > 200 ? all.slice(-200).join('\n') : item.output
+  const status = toolStatus(item)
   return (
-    <div className="rounded-xl border border-qn-border bg-black/20 p-2 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span>⌘</span>
-        <span className="qn-mono min-w-0 flex-1 text-[12px]">$ {item.command || '（命令）'}</span>
-        <Badge tone={statusTone(item.status)}>{item.status}</Badge>
-        {item.exitCode !== null && item.exitCode !== undefined && (
-          <Badge tone={item.exitCode === 0 ? 'ok' : 'danger'}>退出码 {item.exitCode}</Badge>
-        )}
-      </div>
-      {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">cwd: {item.cwd}</div>}
-      {output && (
-        <details className="mt-2">
-          <summary className="text-[11px] text-qn-muted">输出{all.length > 200 ? '（末尾 200 行）' : ''}</summary>
-          <pre className="qn-pre qn-scroll mt-1 max-h-64 overflow-auto whitespace-pre text-[11px] leading-5">
+    <details className="qn-tool">
+      <summary className="qn-tool-row">
+        <Terminal size={14} className="shrink-0 text-qn-muted" aria-hidden />
+        <span className="qn-mono min-w-0 flex-1 truncate">{item.command || '（命令）'}</span>
+        {status === 'failed' && typeof item.exitCode === 'number' && <span className="text-qn-danger">退出码 {item.exitCode}</span>}
+        <ToolStatusIcon status={status} />
+      </summary>
+      <div className="qn-tool-body">
+        <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || '（命令）'}</div>
+        {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
+        {output && (
+          <pre className="qn-pre qn-scroll mt-2 max-h-64 overflow-auto whitespace-pre text-[11px] leading-5">
+            {all.length > 200 && <span className="text-qn-muted">（只显示末尾 200 行）{'\n'}</span>}
             {output}
           </pre>
-        </details>
-      )}
-      <MessageActions text={item.command || item.output} onQuote={onQuote} />
-    </div>
+        )}
+        <MessageActions text={item.command || item.output} onQuote={onQuote} />
+      </div>
+    </details>
+  )
+}
+
+/** 连续工具步骤折叠后的摘要行，展开后逐条显示。 */
+export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (text: string) => void }) {
+  const running = items.some((item) => toolStatus(item) === 'running')
+  return (
+    <details className="qn-tool-group">
+      <summary className="qn-tool-row">
+        {running ? <LoaderCircle size={14} className="qn-spin shrink-0 text-qn-accent" aria-hidden /> : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
+        <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
+        <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
+      </summary>
+      <div className="mt-1 space-y-1">
+        {items.map((item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />)}
+      </div>
+    </details>
   )
 }
 
@@ -208,9 +233,9 @@ function FileChangeItem({
 }) {
   const actions = useContext(FileActionsContext)
   return (
-    <div className="rounded-xl border border-qn-border bg-black/20 p-2 text-xs">
+    <div className="qn-tool qn-tool-open text-xs">
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <span>✎</span>
+        <FilePen size={14} className="text-qn-muted" aria-hidden />
         <span>文件改动</span>
         <Badge tone={statusTone(item.status)}>{item.status}</Badge>
       </div>
@@ -265,26 +290,21 @@ export function MessageItem({
   switch (item.kind) {
     case 'user':
       return (
-        <div className="flex justify-end">
-          <div className="max-w-[88%] rounded-xl border border-qn-accent/40 bg-qn-accent/10 px-3 py-2">
-            <div className="mb-1 text-right text-[11px] text-qn-muted">你</div>
-            <div className="whitespace-pre-wrap break-words text-sm">{item.text}</div>
+        <div className="flex flex-col items-end">
+          <div className="qn-user-bubble">
+            <div className="whitespace-pre-wrap break-words">{item.text}</div>
             {item.images && item.images.length > 0 && <div className="mt-1 flex flex-wrap gap-2">
               {item.images.map((url, index) => /^data:image\/(?:jpeg|png|gif|webp);base64,/i.test(url)
                 ? <img key={index} src={url} className="max-h-36 max-w-full rounded-lg object-contain" alt={`附件图片 ${index + 1}`} loading="lazy" />
                 : <Badge key={index}>图片 {index + 1}</Badge>)}
             </div>}
-            <MessageActions text={item.text} onQuote={onQuote} />
           </div>
+          <MessageActions text={item.text} onQuote={onQuote} />
         </div>
       )
     case 'agent':
       return (
-        <div className="px-1 py-2">
-          <div className="mb-1 flex items-center gap-2 text-[11px] text-qn-muted">
-            <span>◆ {agentName ?? 'Agent'}</span>
-            {item.streaming && <Badge tone="accent">生成中</Badge>}
-          </div>
+        <div className="px-1 py-1" aria-label={agentName}>
           <div ref={markdownRef} className="qn-markdown break-words text-sm">
             <Markdown text={item.text} streaming={item.streaming === true} />
             {item.streaming && <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-qn-accent align-middle" />}
@@ -311,7 +331,7 @@ export function MessageItem({
       return <FileChangeItem item={item} onQuote={onQuote} />
     case 'subagent':
       return (
-        <div className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
+        <div className="qn-tool qn-tool-open text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span>{item.title}</span>
             {item.status && <Badge>{item.status}</Badge>}
@@ -321,7 +341,7 @@ export function MessageItem({
       )
     case 'other':
       return (
-        <div className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
+        <div className="qn-tool qn-tool-open text-xs">
           <div className="mb-1 text-[11px] text-qn-muted">{item.type}</div>
           <div className="whitespace-pre-wrap break-words">{item.summary}</div>
           <MessageActions text={item.summary} onQuote={onQuote} />

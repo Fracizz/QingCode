@@ -1,13 +1,15 @@
+import { ArrowDown, ChevronDown, LoaderCircle, PanelLeft } from 'lucide-react'
 import { formatReset, supportsSubagentRequests, type ItemView } from '@qn/codex-client'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, useApp } from '../store'
+import { groupChatItems } from '../chatGroups'
 import { formatTurnError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { FileActionsContext, MessageItem, type FileActions } from './MessageItem'
+import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { RateLimitBadge, RateLimitDetails } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
@@ -67,7 +69,23 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
-  const shownItems = useMemo(() => withoutErrorEcho(items, view?.error, running), [items, view?.error, running])
+  // 手机屏幕小，推理过程不展示，只保留回复、命令和改动。
+  const shownItems = useMemo(
+    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
+    [items, view?.error, running],
+  )
+  // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
+  const blocks = useMemo(() => {
+    let index = 0
+    return groupChatItems(shownItems).map((block) => {
+      const entry = { block, index }
+      index += block.kind === 'item' ? 1 : block.items.length
+      return entry
+    })
+  }, [shownItems])
+  // 打开会话时已有的历史直接显示，之后新到的消息才播放入场动画。
+  const baseline = useRef({ key: '', count: 0 })
+  if (baseline.current.key !== chatKey && shownItems.length > 0) baseline.current = { key: chatKey, count: shownItems.length }
   const project = projects.find((item) => item.id === selectedProjectId)
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
   const firstUser = items.find((item) => item.kind === 'user')
@@ -128,8 +146,8 @@ export function ChatPage() {
           <>
             {selectedAgent === 'codex' && <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate(true)} hideWhenEmpty />}
             {selectedAgent === 'claude' && <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowRate(true)}>用量</Button>}
-            <Button variant="ghost" className="px-2" onClick={() => setSwitching(true)} aria-label="切换会话">
-              <svg aria-hidden="true" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M10 5v14M6.5 9h1M6.5 12h1" /></svg>
+            <Button variant="ghost" className="qn-header-icon" onClick={() => setSwitching(true)} aria-label="切换会话">
+              <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
             </Button>
           </>
         }
@@ -148,7 +166,7 @@ export function ChatPage() {
         <button className="qn-row border-b border-qn-border bg-qn-panel px-3 text-sm" type="button"
           onClick={() => approvalsRef.current?.scrollIntoView({ block: 'nearest' })}>
           <Badge tone="warn">{approvals.length} 项待审批</Badge>
-          <span className="min-w-0 flex-1 truncate text-qn-muted">{approvals[0]?.title}</span><span aria-hidden>↓</span>
+          <span className="min-w-0 flex-1 truncate text-qn-muted">{approvals[0]?.title}</span><ChevronDown size={16} aria-hidden />
         </button>
       )}
       <div className="relative flex min-h-0 flex-1 flex-col">
@@ -160,12 +178,19 @@ export function ChatPage() {
           {items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
           <div className="space-y-4">
             <FileActionsContext.Provider value={fileActions}>
-              {shownItems.map((item) => (
-                <MessageItem key={item.id} item={item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)} />
+              {blocks.map(({ block, index }) => (
+                <div key={block.kind === 'item' ? block.item.id : block.id}
+                  className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
+                  {block.kind === 'item'
+                    ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)} />
+                    : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
+                </div>
               ))}
             </FileActionsContext.Provider>
             {/* 失败原因贴在最后一轮之后，和出错的位置对应；运行中且还没有回复时给出等待提示。 */}
-            {running && items.at(-1)?.kind === 'user' && <div className="qn-thinking" role="status">{agentLabel(selectedAgent)} 正在处理…</div>}
+            {running && shownItems.at(-1)?.kind === 'user' && (
+              <div className="qn-thinking" role="status"><LoaderCircle size={14} className="qn-spin" aria-hidden />{agentLabel(selectedAgent)} 正在处理…</div>
+            )}
             {!running && view?.error && <TurnErrorCard message={view.error} />}
             {approvals.length > 0 && (
               <div ref={approvalsRef} className="space-y-3">
@@ -180,7 +205,7 @@ export function ChatPage() {
           </div>
         </div>
         {!atBottom && (
-          <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <span aria-hidden>↓</span></Button>
+          <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
         )}
       </div>
       {(error || notice) && (

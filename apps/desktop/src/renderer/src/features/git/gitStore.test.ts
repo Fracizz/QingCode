@@ -112,6 +112,20 @@ describe('refresh', () => {
     expect(useGit.getState().repos[key]?.commits).toEqual([commit])
   })
 
+  it('轻量轮询：内容不变不换引用、不切 loading，HEAD 不变不读分支', async () => {
+    await useGit.getState().refresh('local', '/quiet')
+    const key = repoKey('local', '/quiet')
+    const before = useGit.getState().repos[key]
+    callMock.mockClear()
+    const seen: boolean[] = []
+    const unsub = useGit.subscribe((s) => seen.push(s.repos[key]?.loading ?? false))
+    await useGit.getState().refresh('local', '/quiet', false)
+    unsub()
+    expect(useGit.getState().repos[key]).toBe(before)
+    expect(seen).toEqual([])
+    expect(calls().map(([, method]) => method)).toEqual(['git.status'])
+  })
+
   it('not_repo 错误给出空态码并清掉旧状态', async () => {
     await useGit.getState().refresh('local', '/repo')
     hook = (method) =>

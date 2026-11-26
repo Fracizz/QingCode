@@ -297,6 +297,19 @@ export function hostKeyMessage(err: unknown, fallback = '连接失败'): string 
   return isHostKeyError(err) ? HOST_KEY_HINT : friendlyError(err, fallback)
 }
 
+/**
+ * Claude Code 把斜杠命令以 `<command-name>/clear</command-name><command-args>…` 的标记存进首条消息，
+ * 直接当标题会显示一串标签；还原成用户实际输入的命令，其余标签去掉。
+ */
+export function cleanThreadText(value: string): string {
+  const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(value)?.[1]?.trim()
+  if (name) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(value)?.[1]?.trim()
+    return args ? `${name} ${args}` : name
+  }
+  return value.replace(/<\/?[a-z][\w-]*>/gi, '').trim()
+}
+
 export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): ThreadSummary[] {
   const data = Array.isArray(value)
     ? value
@@ -308,7 +321,7 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
     if (!isRecord(entry)) continue
     const id = text(entry.id)
     if (!id) continue
-    const preview = text(entry.preview)
+    const preview = cleanThreadText(text(entry.preview))
     const status = isRecord(entry.status) ? entry.status : null
     const activity = status?.type === 'active'
       ? Array.isArray(status.activeFlags) && status.activeFlags.some((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
@@ -317,7 +330,7 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
       : undefined
     summaries.push({
       id,
-      title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
+      title: cleanThreadText(text(entry.name)) || preview.split('\n')[0]?.trim() || '未命名会话',
       preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),

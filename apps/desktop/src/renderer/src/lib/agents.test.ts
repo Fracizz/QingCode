@@ -5,6 +5,7 @@ import {
   availabilityReason,
   classifyAgentOpenError,
   emptyAgentStatus,
+  exitedAgentOf,
   isAgentKind,
   parseDefaultAgents,
   parseSessionKey,
@@ -68,5 +69,23 @@ describe('agent 可用性', () => {
     expect(availabilityReason('claude', status.claude)).toContain('2.1.331')
     expect(availabilityReason('codex', status.codex)).toBe('未找到 codex')
     expect(availabilityReason('claude', undefined)).toBe('等待连接后检测')
+  })
+})
+
+describe('agent 退出事件', () => {
+  it('新 server：codex.exited 带 agent 字段', () => {
+    expect(exitedAgentOf('codex.exited', { agent: 'pi', code: 1 })).toBe('pi')
+    expect(exitedAgentOf('codex.exited', { agent: 'codex' })).toBe('codex')
+  })
+
+  it('旧 server：codex.exited 不带 agent 只表示 codex，其它 agent 用各自事件名', () => {
+    expect(exitedAgentOf('codex.exited', { code: null })).toBe('codex')
+    expect(exitedAgentOf('pi.exited', { code: 1 })).toBe('pi')
+    expect(exitedAgentOf('claude.exited', null)).toBe('claude')
+  })
+
+  it('非退出事件返回 null', () => {
+    expect(exitedAgentOf('term.exited', {})).toBeNull()
+    expect(exitedAgentOf('git.changed', {})).toBeNull()
   })
 })

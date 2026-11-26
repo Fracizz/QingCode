@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, Target } from './types'
-import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, type WorkspaceThread } from './workspace'
+import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, displayPath, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -67,5 +67,14 @@ describe('threadPreviewLine', () => {
     expect(threadPreviewLine('梳理前端组件 封装...', '梳理前端组件  封装 方便统一维护')).toBe('')
     expect(threadPreviewLine('确认子智能体适配状态', '适配子智能体了吗')).toBe('适配子智能体了吗')
     expect(threadPreviewLine('标题', '  ')).toBe('')
+  })
+})
+
+describe('displayPath', () => {
+  it('Windows 路径去掉前导斜杠并换成反斜杠，其余原样', () => {
+    expect(displayPath('/D:/code/qingcode-next')).toBe('D:\\code\\qingcode-next')
+    expect(displayPath('d:/x')).toBe('D:\\x')
+    expect(displayPath('/D:')).toBe('D:\\')
+    expect(displayPath('/home/code/QingCode')).toBe('/home/code/QingCode')
   })
 })

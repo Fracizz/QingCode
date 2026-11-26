@@ -1,20 +1,38 @@
 @import "tailwindcss";
 
 @theme {
-  --color-qn-bg: #181918;
-  --color-qn-panel: #202120;
-  --color-qn-card: #282a28;
-  --color-qn-border: #3b3f3c;
-  --color-qn-text: #f2f3f1;
-  --color-qn-muted: #aaafad;
-  --color-qn-accent: #65ddc9;
-  --color-qn-danger: #ff9b91;
-  --color-qn-ok: #7bd8b9;
-  --color-qn-warn: #e9b760;
+  /* 中性色与功能色对齐电脑版（apps/desktop/src/renderer/src/styles.css）；强调色沿用品牌青（旧版手机规范：不用蓝色）。 */
+  --color-qn-bg: #181818;
+  --color-qn-panel: #1f1f1f;
+  --color-qn-card: #242424;
+  --color-qn-raised: #2c2c2c;
+  --color-qn-field: #141414;
+  --color-qn-border: #2e2e2e;
+  --color-qn-border-strong: #3a3a3a;
+  --color-qn-text: #e6e6e6;
+  --color-qn-muted: #939393;
+  --color-qn-dim: #6b6b6b;
+  --color-qn-accent: #4ecdb5;
+  --color-qn-danger: #ff6b63;
+  --color-qn-ok: #6fcf8f;
+  --color-qn-warn: #e2b55d;
 }
 
 :root {
   --qn-radius: 12px;
+  --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 16%, transparent);
+  --qn-press: rgb(255 255 255 / 5%);
+  /* 表面层级：靠 1px 边缘高光与投影分层，不靠更多边框或卡片套卡片。 */
+  --qn-edge: rgb(255 255 255 / 6%);
+  --qn-edge-top: rgb(255 255 255 / 10%);
+  --qn-elev-1: 0 1px 2px rgb(0 0 0 / 35%), 0 6px 18px rgb(0 0 0 / 18%);
+  --qn-elev-3: 0 -8px 32px rgb(0 0 0 / 45%);
+  /* 动效：时长与曲线同旧版手机规范（mobile/android/design.md「动效」）。 */
+  --qn-motion-short: 150ms;
+  --qn-motion-medium: 260ms;
+  --qn-motion-long: 380ms;
+  --qn-ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --qn-ease-spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 15.5%, 0.938 20.7%, 1.017 25.1%, 1.043 28.6%, 1.04 32.4%, 1.017 39.5%, 0.999 46.7%, 0.996 55.6%, 1);
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   font-size: 15px;
@@ -111,7 +129,7 @@ body,
   min-height: 44px;
   border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-radius);
-  background: #161816;
+  background: var(--color-qn-field);
   color: var(--color-qn-text);
   padding: 10px 12px;
   font-size: 14px;
@@ -308,7 +326,7 @@ body,
   max-width: 100%;
   overflow-x: auto;
   white-space: pre;
-  background: #161816;
+  background: var(--color-qn-field);
   border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-radius);
   padding: 8px;
@@ -364,7 +382,7 @@ body,
 .qn-bar {
   height: 6px;
   border-radius: 999px;
-  background: #161816;
+  background: var(--color-qn-field);
   overflow: hidden;
 }
 
@@ -414,7 +432,7 @@ body,
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
-  background: #161816;
+  background: var(--color-qn-field);
   border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-radius);
   overflow-x: auto;
@@ -435,7 +453,7 @@ body,
   padding: 0 8px 0 6px;
   text-align: right;
   color: var(--color-qn-muted);
-  background: #161816;
+  background: var(--color-qn-field);
   user-select: none;
 }
 
@@ -551,7 +569,7 @@ body,
 }
 
 .qn-nav-button[aria-current="page"] span {
-  background: #183e37;
+  background: var(--qn-accent-surface);
   color: var(--color-qn-accent);
 }
 
@@ -571,7 +589,7 @@ body,
   position: absolute;
   z-index: 0;
   inset: 0 -16px -20px;
-  background: radial-gradient(ellipse at top right, #65ddc91a 0%, transparent 70%);
+  background: radial-gradient(ellipse at top right, color-mix(in srgb, var(--color-qn-accent) 12%, transparent) 0%, transparent 70%);
   pointer-events: none;
   content: "";
 }
@@ -702,12 +720,12 @@ body,
 }
 
 .qn-list-row[aria-current="true"] {
-  background: #333b36;
+  background: var(--color-qn-raised);
 }
 
 .qn-list-row:active,
 .qn-row-trigger:active {
-  background: #343936;
+  background: var(--qn-press);
 }
 
 .qn-row-trigger {
@@ -759,7 +777,7 @@ body,
 }
 
 .qn-segment button[aria-pressed="true"] {
-  background: #183e37;
+  background: var(--qn-accent-surface);
   color: var(--color-qn-accent);
 }
 
@@ -836,6 +854,9 @@ body,
 }
 
 .qn-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 2px;
   font-size: 13px;
   color: var(--color-qn-muted);
@@ -849,4 +870,315 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   .qn-thinking { animation: none; }
+}
+
+/* ===== 表面层级 ===== */
+.qn-list-group {
+  border: 0;
+  background: var(--color-qn-card);
+  box-shadow: var(--qn-elev-1), inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+}
+
+.qn-card {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+}
+
+.qn-header {
+  border-bottom-color: var(--qn-edge);
+  background: color-mix(in srgb, var(--color-qn-bg) 82%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.qn-nav,
+.qn-footer {
+  border-top-color: var(--qn-edge);
+  background: var(--color-qn-panel);
+}
+
+/* 工作台首屏大标题：小字说明 + 细体大标题（旧版手机规范「工作台首屏」）。 */
+.qn-workspace-title h1 {
+  font-size: 30px;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+}
+
+.qn-workspace-context .qn-inline-action {
+  font-size: 13px;
+  color: var(--color-qn-muted);
+}
+
+/* 顶部氛围光：随连接状态变化，在线常亮、连接中呼吸、离线熄灭；固定在背后，不随列表滚动。 */
+.qn-glow {
+  position: fixed;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: 260px;
+  background:
+    radial-gradient(120% 90% at 85% -10%, color-mix(in srgb, var(--color-qn-accent) 16%, transparent) 0%, transparent 62%),
+    radial-gradient(90% 70% at 10% -20%, color-mix(in srgb, var(--color-qn-accent) 7%, transparent) 0%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+
+.qn-glow[data-state="online"] { opacity: 1; }
+.qn-glow[data-state="connecting"] { animation: qn-breathe 2.4s ease-in-out infinite; }
+
+.qn-workspace-title[data-connected="true"]::before { display: none; }
+.qn-page,
+.qn-nav { position: relative; z-index: 1; }
+
+@keyframes qn-breathe {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.8; }
+}
+
+/* 空状态操作区：虚线框，不套卡片。 */
+.qn-dashed-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 14px;
+  border: 1.5px dashed var(--color-qn-border-strong);
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-text);
+  font-size: 14px;
+}
+
+/* ===== 按下反馈 ===== */
+/* 整行可点：只叠一层淡状态色，按下 150ms 淡入、松手 260ms 淡出，不缩放、不做涟漪。 */
+.qn-list-row,
+.qn-row-trigger,
+.qn-pressable {
+  position: relative;
+  isolation: isolate;
+}
+
+.qn-list-row::after,
+.qn-row-trigger::after,
+.qn-pressable::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--qn-press);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--qn-motion-medium) ease;
+  content: "";
+}
+
+.qn-list-row:active::after,
+.qn-row-trigger:active::after,
+.qn-pressable:active::after {
+  opacity: 1;
+  transition-duration: var(--qn-motion-short);
+}
+
+.qn-list-row:active,
+.qn-row-trigger:active { background: transparent; }
+.qn-list-row[aria-current="true"] { background: var(--color-qn-raised); }
+
+/* 小按钮：0.97 缩放回弹；与行的状态层不叠加。 */
+.qn-button,
+.qn-chip {
+  transition: transform var(--qn-motion-short) var(--qn-ease-spring), background-color var(--qn-motion-short) ease,
+    border-color var(--qn-motion-short) ease, color var(--qn-motion-short) ease;
+}
+
+.qn-button:not(:disabled):active,
+.qn-chip:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.qn-button-ghost { border-color: transparent; }
+.qn-button-ghost:not(:disabled):active { background: var(--qn-press); }
+
+/* ===== 底部导航指示块：从中心横向展开，图标轻弹 ===== */
+.qn-nav-button span {
+  position: relative;
+  isolation: isolate;
+}
+
+.qn-nav-button span::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--qn-radius);
+  background: var(--qn-accent-surface);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition: transform var(--qn-motion-long) var(--qn-ease-spring), opacity var(--qn-motion-medium) ease;
+  content: "";
+}
+
+.qn-nav-button[aria-current="page"] span { background: transparent; }
+
+.qn-nav-button[aria-current="page"] span::before {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.qn-nav-button[aria-current="page"] svg {
+  animation: qn-icon-pop 460ms var(--qn-ease-spring);
+}
+
+@keyframes qn-icon-pop {
+  0% { transform: scale(0.86); }
+  60% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* ===== 页面切换 ===== */
+.qn-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.qn-page[data-dir="forward"] { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-page[data-dir="back"] { animation: qn-back-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-page[data-dir="right"] { animation: qn-tab-right var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-page[data-dir="left"] { animation: qn-tab-left var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+
+@keyframes qn-push-in { from { opacity: 0; transform: translateX(32px); } }
+@keyframes qn-back-in { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes qn-tab-right { from { opacity: 0; transform: translateX(28px); } }
+@keyframes qn-tab-left { from { opacity: 0; transform: translateX(-28px); } }
+
+/* 页面分区上浮 14px，逐段最多延迟 60ms。 */
+.qn-rise > * { animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
+.qn-rise > :nth-child(2) { animation-delay: 20ms; }
+.qn-rise > :nth-child(3) { animation-delay: 40ms; }
+.qn-rise > :nth-child(n + 4) { animation-delay: 60ms; }
+
+@keyframes qn-rise { from { opacity: 0; transform: translateY(14px); } }
+
+/* 消息逐条淡入上浮；历史批量载入时只有最后几条明显。 */
+.qn-message-enter { animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
+
+/* ===== 弹层 ===== */
+.qn-dialog[open]::backdrop { animation: qn-fade var(--qn-motion-medium) ease backwards; }
+.qn-dialog[open] .qn-dialog-panel { animation: qn-sheet-up var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="side"][open] .qn-dialog-panel { animation: qn-drawer-in 240ms var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="full"][open] .qn-dialog-panel { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+
+.qn-dialog-panel {
+  border: 0;
+  box-shadow: var(--qn-elev-3), inset 0 1px 0 var(--qn-edge-top);
+}
+
+/* 底部弹层顶部拖动条，提示可下滑关闭。 */
+.qn-dialog:not([data-placement]) .qn-dialog-panel::before,
+.qn-dialog[data-placement="bottom"] .qn-dialog-panel::before {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: -4px auto 10px;
+  border-radius: 2px;
+  background: var(--color-qn-border-strong);
+  content: "";
+}
+
+.qn-viewer { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+
+@keyframes qn-fade { from { opacity: 0; } }
+@keyframes qn-sheet-up { from { transform: translateY(100%); } }
+@keyframes qn-drawer-in { from { opacity: 0; transform: translateX(-12px); } }
+
+.qn-spin { animation: qn-spin 0.9s linear infinite; }
+@keyframes qn-spin { to { transform: rotate(360deg); } }
+
+/* ===== 减少动效：入场与弹跳不播放，指示块直接切换 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 顶栏图标按钮：无边框，保持 44px 触控区。 */
+.qn-header-icon {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-qn-text);
+}
+
+/* 会话行状态：运行中用转圈 + 文字，有新结果用强调色圆点 + 文字，不只靠颜色。 */
+.qn-row-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.qn-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-qn-accent);
+}
+
+/* ===== 对话 ===== */
+/* 用户消息：右侧灰色气泡，回复无边框（同电脑版）。 */
+.qn-user-bubble {
+  max-width: 86%;
+  padding: 9px 13px;
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-raised);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 工具步骤：一行紧凑摘要，点开看细节。 */
+.qn-tool,
+.qn-tool-group {
+  border-radius: var(--qn-radius);
+  font-size: 12px;
+}
+
+.qn-tool-open {
+  padding: 8px 10px;
+  background: var(--color-qn-panel);
+  box-shadow: inset 0 0 0 1px var(--qn-edge);
+}
+
+.qn-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-muted);
+  list-style: none;
+  cursor: pointer;
+  transition: background-color var(--qn-motion-short) ease;
+}
+
+.qn-tool-row::-webkit-details-marker { display: none; }
+.qn-tool-row:active { background: var(--qn-press); }
+.qn-tool[open] > .qn-tool-row,
+.qn-tool-group[open] > .qn-tool-row { color: var(--color-qn-text); }
+
+.qn-tool-chevron { transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized); }
+.qn-tool-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(90deg); }
+.qn-tool-group > div { padding-left: 12px; border-left: 1px solid var(--color-qn-border); margin-left: 16px; }
+
+.qn-tool-body {
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-panel);
+  animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards;
 }

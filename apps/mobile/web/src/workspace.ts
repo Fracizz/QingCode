@@ -267,3 +267,10 @@ export function threadPreviewLine(title: string, preview: string): string {
   const head = squash(title).replace(/(\.\.\.|…)$/, '').trim()
   return head && body.startsWith(head) ? '' : body
 }
+
+/** 远端 Windows 路径可能以 `/D:/code/x` 形式返回；显示成用户熟悉的 `D:\code\x`，打开时仍用原始路径。 */
+export function displayPath(path: string): string {
+  const windows = /^\/?([A-Za-z]:)([\\\/].*)?$/.exec(path)
+  if (!windows) return path
+  return `${windows[1]!.toUpperCase()}${(windows[2] ?? '\\').replace(/\//g, '\\')}`
+}

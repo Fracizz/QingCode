@@ -1,3 +1,4 @@
+import { ChevronRight, Ellipsis, Folder, LoaderCircle, MessageSquareText, Monitor, RotateCw, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
 import { useApp } from '../store'
@@ -8,6 +9,7 @@ import {
   openWorkspaceThread,
   recentThreadStatus,
   threadPreviewLine,
+  displayPath,
   showWorkspaceProject,
   useWorkspace,
   workspaceThreadKey,
@@ -26,18 +28,18 @@ const tabs: { id: WorkspaceTab; title: string }[] = [
 const emptyProjects: Project[] = []
 const emptyThreads: WorkspaceThread[] = []
 
+const workspaceIcons = {
+  sessions: MessageSquareText,
+  projects: Folder,
+  connections: Monitor,
+  search: Search,
+  refresh: RotateCw,
+  more: Ellipsis,
+} as const
+
 export function WorkspaceIcon({ name }: { name: WorkspaceTab | 'search' | 'refresh' | 'more' }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      {name === 'sessions' && <path d="M20 11a7 7 0 0 1-7 7H5l1.5-2.5A7 7 0 0 1 11 4h2a7 7 0 0 1 7 7Z M9 11h6" />}
-      {name === 'projects' && <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />}
-      {name === 'connections' && <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>}
-      {name === 'search' && <><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 4 4" /></>}
-      {name === 'refresh' && <path d="M20 11a8 8 0 0 0-14-5L4 8m0-5v5h5m-5 5a8 8 0 0 0 14 5l2-2m0 5v-5h-5" />}
-      {name === 'more' && <><circle cx="5" cy="12" r=".9" /><circle cx="12" cy="12" r=".9" /><circle cx="19" cy="12" r=".9" /></>}
-    </svg>
-  )
+  const Icon = workspaceIcons[name]
+  return <Icon size={21} strokeWidth={1.75} aria-hidden />
 }
 
 export function WorkspaceNav() {
@@ -73,7 +75,7 @@ export function WorkspaceSearch({
     <div className="qn-search">
       <WorkspaceIcon name="search" />
       <input type="search" value={query} aria-label={label} placeholder={label} onChange={(event) => onChange(event.target.value)} />
-      {query && <button type="button" aria-label="清空搜索" onClick={() => onChange('')}>×</button>}
+      {query && <button type="button" aria-label="清空搜索" onClick={() => onChange('')}><X size={17} /></button>}
     </div>
   )
 }
@@ -104,9 +106,11 @@ export function WorkspaceThreadRow({
         <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
       </span>
       {status === 'pending' && <Badge tone="warn">待审批</Badge>}
-      {status === 'running' && <Badge tone="accent">运行中</Badge>}
-      {status === 'unread' && <Badge tone="accent">有新结果</Badge>}
-      <span className="text-qn-muted" aria-hidden>›</span>
+      {status === 'running' && (
+        <span className="qn-row-status text-qn-accent"><LoaderCircle size={14} className="qn-spin" aria-hidden />运行中</span>
+      )}
+      {status === 'unread' && <span className="qn-row-status text-qn-muted"><span className="qn-unread-dot" aria-hidden />有新结果</span>}
+      <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
     </button>
   )
 }
@@ -121,9 +125,8 @@ export function WorkspaceProjectRow({ project, target, onOpen }: {
       <button type="button" className="qn-row-trigger" onClick={onOpen} disabled={!target}>
         <span className="qn-row-copy">
           <span className="qn-list-primary">{project.name}</span>
-          <span className="qn-subtitle qn-mono block">{project.path}</span>
+          <span className="qn-subtitle qn-mono block">{displayPath(project.path)}</span>
         </span>
-        <span className="text-qn-muted" aria-hidden>›</span>
       </button>
       <ProjectTools project={project} />
     </div>
@@ -173,13 +176,13 @@ export function WorkspaceHome() {
   }
 
   return (
-    <main className="qn-body qn-scroll qn-workspace" aria-busy={opening}>
+    <main className="qn-body qn-scroll qn-workspace qn-rise" aria-busy={opening}>
       <header className="qn-workspace-title" data-connected={connected}>
         <div className="qn-workspace-context">
           <button type="button" className="qn-inline-action" onClick={() => setTab('connections')}>
             <StatusDot tone={connected ? 'ok' : repairReason ? 'danger' : 'muted'} />
             <span className="truncate">{connection?.name ?? '未连接电脑'} · {connected ? '在线' : repairReason ? '待配对' : '离线'}</span>
-            <span aria-hidden>›</span>
+            <ChevronRight size={14} aria-hidden />
           </button>
           <Button variant="ghost" onClick={refresh} disabled={projectList?.loading} aria-label="刷新项目">
             <WorkspaceIcon name="refresh" />
@@ -207,7 +210,7 @@ export function WorkspaceHome() {
                   <ProjectOrigin target={targets.find((item) => item.id === project.targetId)} />
                   <ProjectTools project={project} />
                   <Button variant="ghost" className="qn-group-action" onClick={() => void open(() => showWorkspaceProject(project.targetId, project.id))}
-                    aria-label={`进入 ${project.name} 项目的会话`}>›</Button>
+                    aria-label={`进入 ${project.name} 项目的会话`}><ChevronRight size={18} /></Button>
                 </div>
                 <div className="qn-list-group">
                   {threads.map((thread) => <WorkspaceThreadRow key={workspaceThreadKey(thread)} thread={thread}
@@ -217,7 +220,7 @@ export function WorkspaceHome() {
             )) : (
               <Empty>
                 <p>{query ? '没有匹配的会话。' : '还没有最近访问的会话。'}</p>
-                <Button variant="primary" className="mt-3" onClick={() => { setQuery(''); setTab('projects') }}>选择项目</Button>
+                <button type="button" className="qn-dashed-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>选择项目</button>
               </Empty>
             )
           ) : (

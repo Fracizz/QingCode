@@ -1,3 +1,4 @@
+import { ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
 import { defaultAgentFor, targetAgents, unavailableAgents, useApp } from '../store'
@@ -50,7 +51,7 @@ function AgentPickerDialog({
                   <span className="block text-[11px] leading-4 text-qn-muted">pi 不经审批直接执行工具</span>
                 )}
               </span>
-              <span className="text-qn-muted">›</span>
+              <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
             </button>
           )
         })}
@@ -142,7 +143,7 @@ export function ThreadsPage() {
       </div>
       <div className="qn-footer flex gap-2">
         <Button className="flex-1" variant="primary" onClick={startNew}>
-          ＋ 新建会话
+          <Plus size={17} aria-hidden />新建会话
         </Button>
       </div>
       {picking && preferred && (

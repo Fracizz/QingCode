@@ -12,7 +12,7 @@ import { sessionsOf, sessionScope, type RpcLike } from '../lib/codexSessions'
 import { friendlyError } from '../lib/errors'
 import { notificationKind } from '../lib/rateLimitView'
 import { costFromNotification } from '../lib/claudeUsage'
-import { DEFAULT_AGENT, parseSessionKey, sessionKey } from '../lib/agents'
+import { DEFAULT_AGENT, exitedAgentOf, parseSessionKey, sessionKey } from '../lib/agents'
 import { useCodex } from './codex'
 
 export type TargetRateLimits = {
@@ -185,7 +185,8 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         }
       })
       const offServerEvt = on('server.evt', (payload) => {
-        if (payload.name === 'codex.exited') get().reset(payload.targetId)
+        const agent = exitedAgentOf(payload.name, payload.payload)
+        if (agent) get().reset(payload.targetId, agent)
       })
 
       return () => {

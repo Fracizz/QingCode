@@ -11,7 +11,21 @@ import { Loading } from './components/ui'
 import { parsePairingLink } from './link'
 import { getWindowNativePort } from './native'
 import { useApp } from './store'
-import { closeTopSheet, startWorkspaceObserver, useWorkspace } from './workspace'
+import { closeTopSheet, startWorkspaceObserver, useWorkspace, type WorkspaceTab } from './workspace'
+
+// 页面层级决定切换方向：进入更深一层从右侧推入，返回从左侧滑入；底部导航按左右顺序滑入。
+const PAGE_DEPTH: Record<string, number> = { workspace: 0, connections: 0, form: 1, targets: 1, projects: 2, threads: 3, chat: 4 }
+const TAB_ORDER: WorkspaceTab[] = ['sessions', 'projects', 'connections']
+type PageDir = 'none' | 'forward' | 'back' | 'left' | 'right'
+
+function pageDirection(from: string, to: string): PageDir {
+  const [fromPage, fromTab] = from.split(':')
+  const [toPage, toTab] = to.split(':')
+  if (fromPage === 'workspace' && toPage === 'workspace') {
+    return TAB_ORDER.indexOf(toTab as WorkspaceTab) > TAB_ORDER.indexOf(fromTab as WorkspaceTab) ? 'right' : 'left'
+  }
+  return (PAGE_DEPTH[toPage!] ?? 0) >= (PAGE_DEPTH[fromPage!] ?? 0) ? 'forward' : 'back'
+}
 
 const ChatPage = lazy(async () => ({ default: (await import('./components/ChatPage')).ChatPage }))
 
@@ -30,6 +44,7 @@ export function App() {
   const init = useApp((s) => s.init)
   const tab = useWorkspace((s) => s.tab)
   const [pairLink, setPairLink] = useState<string | null>(null)
+  const eventsConnected = useApp((s) => s.eventsConnected)
 
   useEffect(() => {
     const stopObserving = startWorkspaceObserver()
@@ -77,21 +92,29 @@ export function App() {
   }, [activeId])
 
   const workspace = paired && page === 'workspace'
+  const pageKey = workspace ? `workspace:${tab}` : page
+  // 方向随页面变化一次性算出，之后的重渲染沿用，避免动画被重复触发。
+  const [nav, setNav] = useState<{ key: string; dir: PageDir }>({ key: pageKey, dir: 'none' })
+  if (nav.key !== pageKey) setNav({ key: pageKey, dir: pageDirection(nav.key, pageKey) })
+  const glow = !activeId ? 'off' : eventsConnected ? 'online' : 'connecting'
 
   return (
     <div className="qn-app">
-      {page === 'connections' && <ConnectionsPage />}
-      {workspace && (tab === 'connections' ? <ConnectionsPage /> : <WorkspaceHome key={tab} />)}
+      {(workspace || page === 'connections') && <div className="qn-glow" data-state={glow} aria-hidden />}
+      <div key={pageKey} className="qn-page" data-dir={nav.key === pageKey ? nav.dir : 'none'}>
+        {page === 'connections' && <ConnectionsPage />}
+        {workspace && (tab === 'connections' ? <ConnectionsPage /> : <WorkspaceHome />)}
+        {page === 'form' && <ConnectionFormPage />}
+        {page === 'targets' && <TargetsPage />}
+        {page === 'projects' && <ProjectsPage />}
+        {page === 'threads' && <ThreadsPage />}
+        {page === 'chat' && (
+          <Suspense fallback={<Loading text="正在打开会话…" />}>
+            <ChatPage />
+          </Suspense>
+        )}
+      </div>
       {(workspace || (page === 'connections' && paired && activeId)) && <WorkspaceNav />}
-      {page === 'form' && <ConnectionFormPage />}
-      {page === 'targets' && <TargetsPage />}
-      {page === 'projects' && <ProjectsPage />}
-      {page === 'threads' && <ThreadsPage />}
-      {page === 'chat' && (
-        <Suspense fallback={<Loading text="正在打开会话…" />}>
-          <ChatPage />
-        </Suspense>
-      )}
       <CredentialDialog />
       <DirectoryDialog />
       <FileViewer />

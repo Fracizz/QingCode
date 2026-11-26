@@ -12,6 +12,7 @@ import { Composer } from './Composer'
 import { MessageItem, ReplyPending } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
+import { TurnErrorNote } from './TurnErrorNote'
 import { Badge, EmptyState, ErrorNote, IconButton } from './ui'
 
 let nextAnnotationId = 0
@@ -69,7 +70,7 @@ export function SideChat() {
         <div className="px-3 pt-2"><ErrorNote message={session.openError} /></div>
       )}
       {view?.error && (
-        <div className="px-3 pt-2"><ErrorNote message={`Turn 失败：${view.error}`} /></div>
+        <div className="px-3 pt-2"><TurnErrorNote error={view.error} compact /></div>
       )}
       <SelectionLayer
         containerRef={scrollRef}

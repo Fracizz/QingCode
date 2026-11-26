@@ -18,6 +18,10 @@ import {
   remoteCheckoutName,
   repoKey,
   shortHash,
+  sameStatus,
+  sameBranches,
+  branchesStale,
+  mergeLogFirstPage,
   statusInfo,
   statusLetter,
   stderrSummary,
@@ -255,5 +259,37 @@ describe('错误提示', () => {
   it('未知错误回退到原始信息', () => {
     expect(describeGitError(new Error('连接已断开')).message).toBe('连接已断开')
     expect(describeGitError(null, '刷新失败').message).toBe('刷新失败')
+  })
+})
+
+describe('轮询比对', () => {
+  const st = (files: GitFileStatus[] = []): GitStatusResult => ({
+    root: '/r', branch: 'main', head: 'a', ahead: 0, behind: 0, files,
+  })
+  const f = (path: string, worktree = 'M'): GitFileStatus => ({ path, index: '.', worktree, conflict: false })
+
+  it('sameStatus 按内容比较', () => {
+    expect(sameStatus(st([f('a')]), st([f('a')]))).toBe(true)
+    expect(sameStatus(st([f('a')]), st([f('a', 'D')]))).toBe(false)
+    expect(sameStatus(st(), { ...st(), ahead: 1 })).toBe(false)
+    expect(sameStatus(null, st())).toBe(false)
+  })
+
+  it('sameBranches / branchesStale', () => {
+    const b = { current: 'main', local: [{ name: 'main', head: 'a' }], remote: [] }
+    expect(sameBranches(b, { ...b, local: [{ name: 'main', head: 'a' }] })).toBe(true)
+    expect(sameBranches(b, { ...b, local: [{ name: 'main', head: 'b' }] })).toBe(false)
+    expect(branchesStale(st(), st([f('x')]))).toBe(false)
+    expect(branchesStale(st(), { ...st(), head: 'b' })).toBe(true)
+    expect(branchesStale(null, st())).toBe(true)
+  })
+
+  it('mergeLogFirstPage 首页一致时保留已分页列表', () => {
+    const c = (hash: string) => ({ hash, parents: [], author: 'a', email: 'e', date: 0, subject: 's' })
+    const prev = [c('1'), c('2'), c('3')]
+    expect(mergeLogFirstPage(prev, [c('1'), c('2')])).toBeNull()
+    expect(mergeLogFirstPage(prev, [c('0'), c('1')])).toEqual([c('0'), c('1')])
+    expect(mergeLogFirstPage([], [])).toBeNull()
+    expect(mergeLogFirstPage([c('1')], [c('1'), c('2')])).toHaveLength(2)
   })
 })

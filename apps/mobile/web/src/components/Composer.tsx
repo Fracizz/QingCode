@@ -1,3 +1,4 @@
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, LoaderCircle, Square, X } from 'lucide-react'
 import type { UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
@@ -189,14 +190,14 @@ export function Composer({
               }}
             />
             <Button variant="primary" className="px-3" onClick={confirmQuote}>引用</Button>
-            <Button variant="ghost" className="px-3" onClick={onCancelQuote} aria-label="取消引用">×</Button>
+            <Button variant="ghost" className="px-3" onClick={onCancelQuote} aria-label="取消引用"><X size={16} /></Button>
           </div>
         </div>
       )}
       {annotations.length > 0 && (
         <div className="mb-2">
           <Button variant="ghost" className="px-2 text-xs" aria-expanded={showAnnotations} onClick={() => setShowAnnotations(!showAnnotations)}>
-            {annotations.length} 条引用 <span aria-hidden>{showAnnotations ? '▴' : '▾'}</span>
+            {annotations.length} 条引用 {showAnnotations ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
           </Button>
           {showAnnotations && (
             <div className="mt-1 max-h-36 space-y-2 overflow-y-auto">
@@ -204,7 +205,7 @@ export function Composer({
                 <div key={annotation.id} className="rounded-xl border border-qn-border bg-qn-card p-2">
                   <div className="mb-1 flex items-start gap-2">
                     <div className="qn-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-qn-muted">{annotation.quote}</div>
-                    <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label="删除引用">×</Button>
+                    <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label="删除引用"><X size={16} /></Button>
                   </div>
                   <input className="qn-input" value={annotation.comment} aria-label="引用评论" placeholder="评论（可空）"
                     onChange={(event) => onUpdateAnnotation(annotation.id, event.target.value)} />
@@ -220,7 +221,7 @@ export function Composer({
           {files.map((file) => (
             <button key={file.path} type="button" className="qn-row border-b border-qn-border px-3 text-sm last:border-0"
               onPointerDown={(event) => event.preventDefault()} onClick={() => selectFile(file.path)}>
-              <span aria-hidden>↳</span><span className="min-w-0 truncate" title={file.path}>{file.path}</span>
+              <FileText size={15} className="shrink-0 text-qn-muted" aria-hidden /><span className="min-w-0 truncate" title={file.path}>{file.path}</span>
             </button>
           ))}
         </div>
@@ -230,7 +231,7 @@ export function Composer({
           {images.map((image, index) => (
             <li className="flex items-center gap-1 rounded-xl border border-qn-border px-1" key={`${image.name}:${index}`}>
               <img className="h-9 w-9 rounded object-cover" src={image.dataUrl} alt={image.name} />
-              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={`移除 ${image.name}`}>×</Button>
+              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={`移除 ${image.name}`}><X size={15} /></Button>
             </li>
           ))}
         </ul>
@@ -257,7 +258,7 @@ export function Composer({
           <div className="qn-composer-tools">
             <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.5" /><path d="m3 17 5-4 3 3 4-5 6 6" /></svg>
+              <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
             </Button>
             {project && <Button variant="ghost" className="qn-icon-button" aria-label="引用项目文件" onClick={beginMention} disabled={disabled}>@</Button>}
             {toolbar}
@@ -273,13 +274,11 @@ export function Composer({
           </div>
           {running ? (
             <Button variant="danger" className="qn-send-button" aria-label="中断" onClick={onInterrupt}>
-              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" /></svg>
+              <Square size={13} fill="currentColor" aria-hidden />
             </Button>
           ) : (
             <Button variant="primary" className="qn-send-button" aria-label={sending ? '发送中' : '发送'} disabled={!canSend} onClick={() => void submit()}>
-              {sending ? <span aria-hidden>…</span> : (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg>
-              )}
+              {sending ? <LoaderCircle size={18} className="qn-spin" aria-hidden /> : <ArrowUp size={19} strokeWidth={2.25} aria-hidden />}
             </Button>
           )}
         </div>

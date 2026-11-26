@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp, Plus } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -373,8 +374,8 @@ function TerminalScreen({ desktopId, project, info }: { desktopId: string; proje
         <div className="flex items-center gap-2">
           <input className="qn-input min-w-0 flex-1" type="search" aria-label="搜索终端输出" value={query}
             onChange={(event) => { setQuery(event.target.value); find(event.target.value) }} />
-          <Button aria-label="上一个匹配" disabled={!query} onClick={() => find(query, true)}>↑</Button>
-          <Button aria-label="下一个匹配" disabled={!query} onClick={() => find(query)}>↓</Button>
+          <Button aria-label="上一个匹配" disabled={!query} onClick={() => find(query, true)}><ChevronUp size={17} /></Button>
+          <Button aria-label="下一个匹配" disabled={!query} onClick={() => find(query)}><ChevronDown size={17} /></Button>
           {query && !found && <span role="status" className="text-xs text-qn-muted">无匹配</span>}
         </div>
       )}
@@ -476,7 +477,7 @@ export function TerminalPanel({ project }: { project: Project }) {
             setClosing(false)
           }}>终端 {index + 1}</Button>
         ))}
-        <Button variant="primary" disabled={!connected || busy || list === null || needsTarget} onClick={() => void open()}>＋ 新建终端</Button>
+        <Button variant="primary" disabled={!connected || busy || list === null || needsTarget} onClick={() => void open()}><Plus size={17} aria-hidden />新建终端</Button>
         {selected && <Button variant="ghost" disabled={!connected || busy} onClick={() => setClosing(true)}>关闭终端</Button>}
       </div>
       {closing && selected && (
