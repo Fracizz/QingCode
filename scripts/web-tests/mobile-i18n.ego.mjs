@@ -61,7 +61,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('settings page shows the language selector', async () => {
       await page.click('#open-settings', { label: 'open settings' })
       await page.waitForSelector('#settings-dialog[open]')
-      assert.equal(await page.evaluate(() => document.querySelector('#app-language [aria-checked="true"]').dataset.locale), 'en')
+      assert.equal(await page.evaluate(() => document.querySelector('#app-language').value), 'en')
       await assertEnglish('settings')
       await shot('settings-en.png')
       await page.click('#settings-dialog [data-close]', { label: 'close settings' })
@@ -112,9 +112,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await step('switching back to Chinese reloads with original text', async () => {
       await page.evaluate(() => { localStorage.setItem('qingcode:mobile:locale', 'en'); location.href = location.pathname })
       await page.waitForFunction(() => document.readyState === 'complete' && !!document.querySelector('#app-language'))
+      await page.click('#dashboard-nav [data-page="connection"]', { label: 'open connections page' })
       await page.click('#open-settings', { label: 'open settings' })
       await page.waitForSelector('#settings-dialog[open]')
-      await page.click('#app-language [data-locale="zh"]', { label: 'choose Chinese' })
+      await page.evaluate(() => (select => { select.value = 'zh'; select.dispatchEvent(new Event('change', { bubbles: true })) })(document.querySelector('#app-language')))
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN' && document.querySelector('#dashboard-nav [data-page="connection"]').textContent.trim() === '连接')
       assert.equal(await page.evaluate(() => localStorage.getItem('qingcode:mobile:locale')), 'zh')
     })

@@ -91,8 +91,8 @@ export async function run({ spaceId, finish = true, base = 'http://127.0.0.1:384
       const row = '#home-session-overview [data-id="term-9"]'
       await page.waitForSelector(row)
       const small = await text(row + ' small')
-      assert.match(small, /电脑终端/)
-      assert.match(small, /在 电脑 上使用中/)
+      assert.doesNotMatch(small, /电脑终端|在 电脑 上使用中/)
+      assert.equal(await page.evaluate(selector => document.querySelector(selector + ' .session-desktop').getAttribute('aria-label'), row), '电脑终端')
       await shot('overview')
     })
 

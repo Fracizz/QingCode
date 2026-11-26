@@ -21,6 +21,7 @@ import {
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import ConnectionEndpointDetails from './ConnectionEndpointDetails'
+import RemoteSystemMetricsPanel from './RemoteSystemMetricsPanel'
 
 type View = 'details' | 'logs' | 'agent'
 
@@ -75,6 +76,8 @@ export default function SshServerDialog({
   const pending = !mismatch && ['authenticating', 'probing', 'installing', 'handshaking'].includes(state.phase)
   const ready = !mismatch && state.phase === 'readyServer'
   const overview = view === 'details'
+  // 系统指标经远端服务读取：兼容模式没有服务，服务未就绪时也不轮询。
+  const metrics = !compatibility && ready && !!state.version && (sshServerUsesGateway(state) || state.transport === 'direct')
   const views: View[] = [...(compatibility ? ['details'] as const : ['details', 'logs'] as const), ...(agentPanel ? ['agent'] as const : [])]
   const restartLabel = sshServerUsesGateway(state) ? t('重新连接 Server') : ready ? t('重启远端服务') : t('重试远端服务')
 
@@ -190,7 +193,13 @@ export default function SshServerDialog({
                     <span className="font-mono text-ui-sm">v{state.version}</span>
                   </Detail>
                 )}
-                <div className="min-w-0 sm:col-span-2">
+                {/* 系统资源占右列并跨两行，项目目录随之收进左列。 */}
+                {metrics && (
+                  <div className="min-w-0 sm:row-span-2">
+                    <RemoteSystemMetricsPanel key={state.rootUri} rootUri={state.rootUri} />
+                  </div>
+                )}
+                <div className={`min-w-0 ${metrics ? '' : 'sm:col-span-2'}`}>
                   <Detail label={t('项目目录')}>
                     <span className="font-mono text-ui-sm">{projectPath}</span>
                   </Detail>

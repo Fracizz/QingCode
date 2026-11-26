@@ -62,6 +62,14 @@ export default function ModalOverlay({
     const overlay = overlayRef.current
     restoreFocusRef.current ??=
       document.activeElement instanceof HTMLElement ? document.activeElement : null
+    // 叠在另一个弹窗之上（嵌套）：不再叠一层全屏遮罩和 backdrop-filter（两层模糊每帧重算，输入和动画掉帧），
+    // 改为父面板压暗退后、子面板上浮入场（见 animations.css）。必须在提交阶段判断：
+    // 一个弹窗直接换成另一个时，旧弹窗的清理先于这里执行，此时栈里已没有它，不会误判为嵌套。
+    const parent = modalStack.at(-1)
+    if (overlay && parent) {
+      overlay.dataset.modalNested = ''
+      parent.overlay.dataset.modalCovered = ''
+    }
     if (overlay) modalStack.push({ id: modalId, overlay })
 
     if (overlay) {
@@ -108,21 +116,25 @@ export default function ModalOverlay({
       window.removeEventListener('keydown', onKeyDown, true)
       const index = modalStack.map(modal => modal.id).lastIndexOf(modalId)
       if (index >= 0) modalStack.splice(index, 1)
-      const parent = modalStack.at(-1)
+      // 只有自己仍是父弹窗最上层的子弹窗时才撤销压暗，避免多层嵌套时提前恢复。
+      if (overlay?.dataset.modalNested !== undefined && modalStack.at(-1) === parent) {
+        delete parent?.overlay.dataset.modalCovered
+      }
+      const parentAfter = modalStack.at(-1)
       const focusHasMoved = () => {
         const active = document.activeElement
         return active instanceof HTMLElement && active !== document.body &&
           active !== document.documentElement && active.isConnected
       }
-      if (parent) {
+      if (parentAfter) {
         window.setTimeout(() => {
-          if (modalStack.at(-1) !== parent || !parent.overlay.isConnected) return
+          if (modalStack.at(-1) !== parentAfter || !parentAfter.overlay.isConnected) return
           // A click or portaled menu may already own focus by the time this runs.
           if (focusHasMoved()) return
-          const preferred = parent.overlay.querySelector<HTMLElement>('[data-modal-autofocus]')
+          const preferred = parentAfter.overlay.querySelector<HTMLElement>('[data-modal-autofocus]')
           const previous = restoreFocusRef.current
-          ;(previous?.isConnected && parent.overlay.contains(previous)
-            ? previous : preferred ?? focusableElements(parent.overlay)[0] ?? parent.overlay).focus()
+          ;(previous?.isConnected && parentAfter.overlay.contains(previous)
+            ? previous : preferred ?? focusableElements(parentAfter.overlay)[0] ?? parentAfter.overlay).focus()
         }, 0)
         return
       }
@@ -146,7 +158,7 @@ export default function ModalOverlay({
       onDoubleClick={stopWindowChromeBubble}
     >
       <div
-        className="modal-overlay-enter absolute inset-0 -z-10 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
+        className="modal-overlay-enter absolute inset-0 -z-10 bg-black/55 backdrop-blur-[3px]"
         aria-hidden
         onMouseDown={onDismiss}
       />

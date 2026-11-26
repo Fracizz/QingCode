@@ -154,14 +154,14 @@ try {
   })()`)
   check('removed projects keep their group labels with project actions unavailable', `document.querySelector('${removed} .session-group-open')?.disabled && document.querySelector('${removed} .session-group-add').hidden && document.querySelector('${removed} .session-group-files').hidden`)
   run('screenshot', resolve(directory, 'home-project-actions-320.png'))
-  run('eval', `document.querySelector('#app-language [data-locale="en"]').click()`)
+  run('eval', `(select => { select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true })) })(document.querySelector('#app-language'))`)
   check('English header actions stay readable on a narrow screen', `(() => {
     const files = document.querySelector('${winGroup} .session-group-files');
     const source = document.querySelector('${winGroup} .project-source-chip');
     return files.getAttribute('aria-label') === 'Browse files in django' &&
       source.textContent === 'WinDev' && source.scrollWidth === source.clientWidth && document.documentElement.scrollWidth <= innerWidth;
   })()`)
-  run('eval', `document.querySelector('#app-language [data-locale="zh"]').click()`)
+  run('eval', `(select => { select.value = 'zh'; select.dispatchEvent(new Event('change', { bubbles: true })) })(document.querySelector('#app-language'))`)
   run('click', '#home-sessions .overview-manage')
   check('manage mode hides project actions', `document.querySelector('${winGroup} .session-group-open').disabled && document.querySelector('${winGroup} .session-group-add').hidden && document.querySelector('${winGroup} .session-group-files').hidden`)
   run('click', '#home-sessions .overview-manage')

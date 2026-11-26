@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attachTerminalTouchScroll, attachTouchMouseGuard, dispatchVirtualMouse, localScrollLines } from '../../mobile/android/web/terminalTouch.js'
+import { TOUCH_LONG_PRESS_FALLBACK_MS, attachTerminalTouchScroll, attachTouchMouseGuard, dispatchVirtualMouse, localScrollLines } from '../../mobile/android/web/terminalTouch.js'
 
 const disposers: Array<() => void> = []
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -45,12 +45,74 @@ describe('Android terminal touch scrolling', () => {
     const select = vi.fn()
     const { wheel, touch, advance } = fixture(() => true, select)
     touch('touchstart', [[20, 100]])
-    vi.advanceTimersByTime(500)
+    vi.advanceTimersByTime(TOUCH_LONG_PRESS_FALLBACK_MS)
     expect(select).toHaveBeenCalledExactlyOnceWith({ x: 20, y: 100 })
     touch('touchmove', [[20, 50]])
     touch('touchend', [])
     advance()
     expect(wheel).not.toHaveBeenCalled()
+  })
+
+  const contextMenu = (target: Element, x: number, y: number, firesTouchEvents?: boolean) => {
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 })
+    if (firesTouchEvents !== undefined) Object.defineProperty(event, 'sourceCapabilities', { value: { firesTouchEvents } })
+    target.dispatchEvent(event)
+    return event
+  }
+
+  it('uses the system long press (touch contextmenu) once and keeps it away from xterm', () => {
+    vi.useFakeTimers()
+    const select = vi.fn()
+    const { element, screen, touch } = fixture(() => true, select)
+    const xterm = vi.fn()
+    element.addEventListener('contextmenu', xterm)
+    touch('touchstart', [[20, 100]])
+    vi.advanceTimersByTime(400)
+    const event = contextMenu(screen, 22, 101)
+    expect(event.defaultPrevented).toBe(true)
+    expect(xterm).not.toHaveBeenCalled()
+    expect(select).toHaveBeenCalledExactlyOnceWith({ x: 22, y: 101 })
+    // 兜底计时器与重复的 contextmenu 都不会再触发第二次。
+    vi.advanceTimersByTime(1000)
+    contextMenu(screen, 22, 101)
+    expect(select).toHaveBeenCalledOnce()
+    touch('touchend', [])
+  })
+
+  it('swallows a touch contextmenu that arrives after the fallback timer without selecting twice', () => {
+    vi.useFakeTimers()
+    const select = vi.fn()
+    const { element, screen, touch } = fixture(() => true, select)
+    const xterm = vi.fn()
+    element.addEventListener('contextmenu', xterm)
+    touch('touchstart', [[20, 100]])
+    vi.advanceTimersByTime(TOUCH_LONG_PRESS_FALLBACK_MS)
+    expect(contextMenu(screen, 20, 100, true).defaultPrevented).toBe(true)
+    expect(xterm).not.toHaveBeenCalled()
+    expect(select).toHaveBeenCalledOnce()
+  })
+
+  it('swallows a touch contextmenu during a scroll without entering selection', () => {
+    const select = vi.fn()
+    const { screen, touch } = fixture(() => true, select)
+    touch('touchstart', [[20, 100]])
+    touch('touchmove', [[20, 60]])
+    expect(contextMenu(screen, 20, 60).defaultPrevented).toBe(true)
+    expect(select).not.toHaveBeenCalled()
+  })
+
+  it('leaves physical mouse right clicks to xterm', () => {
+    const select = vi.fn()
+    const { element, screen, touch } = fixture(() => true, select)
+    const xterm = vi.fn()
+    element.addEventListener('contextmenu', xterm)
+    expect(contextMenu(screen, 20, 100).defaultPrevented).toBe(false)
+    // 刚摸过屏幕但事件明确来自实体鼠标。
+    touch('touchstart', [[20, 100]])
+    touch('touchend', [])
+    expect(contextMenu(screen, 20, 100, false).defaultPrevented).toBe(false)
+    expect(xterm).toHaveBeenCalledTimes(2)
+    expect(select).not.toHaveBeenCalled()
   })
 
   it.each(['move', 'multitouch', 'release', 'cancel', 'dispose'])('cancels long press on %s', action => {

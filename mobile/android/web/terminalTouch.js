@@ -87,7 +87,14 @@ export function dispatchVirtualClick(screen, point, button = 0) {
  * 手指每帧几像素的位移会被反复抹掉，输出中上滑就显得卡顿、发硬；整行滚动不受影响。
  * 滚轮事件仍会派发，历史面板（到顶接电脑端历史、面板内惯性）照常在捕获阶段先处理。
  */
-export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, dispatchWheel = dispatchLineWheel, onProgramWheel, lineHeight, scrollLines } = {}) {
+/**
+ * 长按只走一条路径：系统长按（WebView 发出的触摸 contextmenu，时长跟随系统设置）在捕获阶段被拦下并当作长按信号，
+ * 不再交给 xterm 的右键处理（它会把隐藏输入框挪到手指下全选，引出系统原生选择、复制粘贴工具条和输入法）。
+ * 少数 WebView 不发 contextmenu 时，longPressDelay 计时器兜底；同一次手势只触发一次。实体鼠标右键不受影响。
+ */
+export const TOUCH_LONG_PRESS_FALLBACK_MS = 650;
+
+export function attachTerminalTouchScroll(element, { canInertia = () => true, onLongPress, programWheel, dispatchWheel = dispatchLineWheel, onProgramWheel, lineHeight, scrollLines, longPressDelay = TOUCH_LONG_PRESS_FALLBACK_MS } = {}) {
   const screen = element.querySelector('.xterm-screen');
   if (!screen) return () => {};
   const view = element.ownerDocument.defaultView;
@@ -99,6 +106,9 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   let hold = null;
   let point = { x: 0, y: 0 };
   let gestureId = 0;
+  // 手指是否仍按在终端上（长按触发后 gesture 已清空，但仍需把随后到达的触摸 contextmenu 拦下）。
+  let touching = false;
+  let pressedGesture = 0;
   const wheelState = { remainder: 0, direction: 0 };
   const lineState = { remainder: 0 };
 
@@ -155,8 +165,16 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     dispatch(delta);
   }
 
+  function longPress(origin) {
+    if (!onLongPress || pressedGesture === gestureId) return;
+    pressedGesture = gestureId;
+    cancel();
+    onLongPress(origin);
+  }
+
   function start(event) {
     cancel();
+    touching = event.touches.length > 0;
     if (event.touches.length !== 1 || !screen.contains(event.target)) return;
     const touch = event.touches[0];
     gestureId += 1;
@@ -165,10 +183,21 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
     gesture = { id: touch.identifier, x: point.x, y: point.y, previousY: point.y, at: now, axis: null };
     if (onLongPress) hold = view.setTimeout(() => {
       hold = null;
-      const origin = { ...point };
-      cancel();
-      onLongPress(origin);
-    }, 500);
+      longPress({ ...point });
+    }, longPressDelay);
+  }
+
+  function contextMenu(event) {
+    const firesTouchEvents = event.sourceCapabilities?.firesTouchEvents;
+    if (firesTouchEvents === false || firesTouchEvents !== true && !touching) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+    // 手指已滑动（滚动中）或不是从终端画面开始的触摸：只拦下，不进入选择。
+    if (gesture && !gesture.axis) longPress({ x: event.clientX, y: event.clientY });
+  }
+
+  function release(event) {
+    touching = event.touches?.length > 0;
   }
 
   function move(event) {
@@ -229,15 +258,23 @@ export function attachTerminalTouchScroll(element, { canInertia = () => true, on
   element.addEventListener('touchmove', move, { passive: false });
   element.addEventListener('touchend', end);
   element.addEventListener('touchcancel', cancel);
+  element.addEventListener('touchend', release, true);
+  element.addEventListener('touchcancel', release, true);
+  // 捕获阶段：先于 xterm 挂在同一元素上的冒泡 contextmenu 监听。
+  element.addEventListener('contextmenu', contextMenu, true);
   element.ownerDocument.addEventListener('visibilitychange', visibility);
   view.addEventListener('blur', cancel);
   const dispose = () => {
     cancel();
+    touching = false;
     element.removeEventListener('wheel', localWheel, { capture: true });
     element.removeEventListener('touchstart', start);
     element.removeEventListener('touchmove', move);
     element.removeEventListener('touchend', end);
     element.removeEventListener('touchcancel', cancel);
+    element.removeEventListener('touchend', release, true);
+    element.removeEventListener('touchcancel', release, true);
+    element.removeEventListener('contextmenu', contextMenu, true);
     element.ownerDocument.removeEventListener('visibilitychange', visibility);
     view.removeEventListener('blur', cancel);
   };

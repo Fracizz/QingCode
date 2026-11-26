@@ -447,6 +447,10 @@ export class WebTestBackend {
         return this.serverState(String(args.rootUri))
       case 'ssh_server_latency':
         return 28
+      case 'ssh_server_system_metrics':
+        return {
+          cpuThreads: 20, cpuCores: 12, cpuBaseMhz: 2100, cpuUsage: 23.4, memoryTotal: 34_359_738_368, memoryUsed: 13_314_398_618,
+        }
       case 'ssh_server_restart':
         this.reconnect(this.connectionId(String(args.rootUri)))
         return this.serverState(String(args.rootUri))

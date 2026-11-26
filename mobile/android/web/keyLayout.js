@@ -1,5 +1,5 @@
 // 快捷键栏布局：用户可调整常用键顺序并隐藏不用的键；隐藏的键移入「更多」，不会丢失。
-// 还可添加自定义键：键名 + 实际发送的文本（可选发送后回车）。
+// 还可添加自定义键：键名 + 实际发送的文本（可选发送后回车），或一组特殊按键（如 Ctrl+D、F5、Esc : w q Enter）。
 // 纯逻辑无 DOM，Vitest：src/lib/mobileAndroidKeyLayout.test.ts。
 
 /** 常用键默认顺序（按 AI 编程使用频率），值为按钮的 data-key；方向与退格用 icon 指定的 SVG，字体字形的基线不一致。 */
@@ -32,33 +32,143 @@ export function customKeyId(key) {
   return isCustomKey(key) ? key.slice(CUSTOM_PREFIX.length) : null;
 }
 
+/** 特殊按键序列最多几个按键。 */
+export const SPECIAL_KEY_LIMIT = 16;
+
+const MODIFIER_ALIASES = { ctrl: 'ctrl', control: 'ctrl', alt: 'alt', meta: 'alt', option: 'alt', shift: 'shift' };
+/** 命名键：小写别名 → 规范名。 */
+const NAMED_KEYS = {
+  esc: 'Esc', escape: 'Esc', tab: 'Tab', enter: 'Enter', return: 'Enter', space: 'Space',
+  backspace: 'Backspace', bs: 'Backspace', delete: 'Delete', del: 'Delete', insert: 'Insert', ins: 'Insert',
+  home: 'Home', end: 'End', pgup: 'PgUp', pageup: 'PgUp', pgdn: 'PgDn', pagedown: 'PgDn',
+  up: 'Up', down: 'Down', left: 'Left', right: 'Right', '↑': 'Up', '↓': 'Down', '←': 'Left', '→': 'Right',
+};
+for (let index = 1; index <= 12; index++) NAMED_KEYS['f' + index] = 'F' + index;
+/** 编辑弹层里一键插入的常用特殊按键（规范名；以 + 结尾的是修饰键前缀）。 */
+export const SPECIAL_KEY_PRESETS = Object.freeze([
+  'Ctrl+', 'Alt+', 'Shift+', 'Esc', 'Tab', 'Enter', 'Space', 'Backspace', 'Delete', 'Insert',
+  'Home', 'End', 'PgUp', 'PgDn', 'Up', 'Down', 'Left', 'Right',
+  'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+]);
+const CURSOR_FINAL = { Up: 'A', Down: 'B', Right: 'C', Left: 'D', Home: 'H', End: 'F' };
+const TILDE_CODE = { Insert: 2, Delete: 3, PgUp: 5, PgDn: 6, F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24 };
+const SS3_FINAL = { F1: 'P', F2: 'Q', F3: 'R', F4: 'S' };
+/** Ctrl+符号 / 数字对应的控制字符（与常见终端一致）。 */
+const CTRL_SYMBOLS = { '@': 0, '2': 0, '[': 27, '3': 27, '\\': 28, '4': 28, ']': 29, '5': 29, '^': 30, '6': 30, '_': 31, '/': 31, '7': 31, '?': 127, '8': 127 };
+
+/** 解析一个按键（如 `Ctrl+Alt+X`、`F5`、`^C`、`:`）；无效时返回 null。 */
+export function parseSpecialKey(token) {
+  if (typeof token !== 'string' || !token || /\s/.test(token)) return null;
+  // ^C 是 Ctrl+C 的常见写法；单独的 ^ 仍是普通字符。
+  if (/^\^[A-Za-z@[\\\]^_?]$/.test(token)) token = 'Ctrl+' + token[1];
+  let key;
+  let mods = [];
+  if ([...token].length === 1) key = token;
+  else if (token.endsWith('++')) { key = '+'; mods = token.slice(0, -2).split('+'); }
+  else { const parts = token.split('+'); key = parts.pop(); mods = parts; }
+  const flags = { ctrl: false, alt: false, shift: false };
+  for (const mod of mods) {
+    const name = MODIFIER_ALIASES[mod.toLowerCase()];
+    if (!name || flags[name]) return null;
+    flags[name] = true;
+  }
+  const named = NAMED_KEYS[key.toLowerCase()];
+  if (named) key = named;
+  else if ([...key].length !== 1 || /[\x00-\x20\x7f]/.test(key)) return null;
+  else if (flags.ctrl || flags.shift) key = key.toUpperCase();
+  const parsed = { ...flags, key, named: Boolean(named) };
+  return encodeSpecialKey(parsed) === null ? null : parsed;
+}
+
+function specialKeyName({ ctrl, alt, shift, key }) {
+  return (ctrl ? 'Ctrl+' : '') + (alt ? 'Alt+' : '') + (shift ? 'Shift+' : '') + key;
+}
+
+/** 一个按键写入终端的序列（xterm 约定）；不支持的组合返回 null。 */
+function encodeSpecialKey({ ctrl, alt, shift, key, named }, { applicationCursor = false } = {}) {
+  const mod = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
+  const meta = alt ? '\x1b' : '';
+  if (!named) {
+    if (ctrl) {
+      if (shift) return null;
+      const code = /^[A-Z]$/.test(key) ? key.charCodeAt(0) - 64 : CTRL_SYMBOLS[key];
+      return code === undefined ? null : meta + String.fromCharCode(code);
+    }
+    if (shift && !/^[A-Z]$/.test(key)) return null;
+    return meta + key;
+  }
+  if (key in CURSOR_FINAL) return mod === 1 ? (applicationCursor ? '\x1bO' : '\x1b[') + CURSOR_FINAL[key] : `\x1b[1;${mod}${CURSOR_FINAL[key]}`;
+  if (key in SS3_FINAL) return mod === 1 ? '\x1bO' + SS3_FINAL[key] : `\x1b[1;${mod}${SS3_FINAL[key]}`;
+  if (key in TILDE_CODE) return mod === 1 ? `\x1b[${TILDE_CODE[key]}~` : `\x1b[${TILDE_CODE[key]};${mod}~`;
+  switch (key) {
+    case 'Esc': return mod === 1 ? '\x1b' : null;
+    case 'Tab': return ctrl ? null : shift ? (alt ? null : '\x1b[Z') : meta + '\t';
+    case 'Enter': return ctrl || shift ? null : meta + '\r';
+    case 'Space': return shift ? null : meta + (ctrl ? '\x00' : ' ');
+    case 'Backspace': return shift ? null : meta + (ctrl ? '\x08' : '\x7f');
+    default: return null;
+  }
+}
+
+/**
+ * 校验并规整特殊按键序列：空白分隔的按键（如 `Ctrl+D`、`Esc : w q Enter`），返回规范写法；无效时返回 null。
+ */
+export function normalizeSpecialKeys(raw) {
+  if (typeof raw !== 'string') return null;
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length || tokens.length > SPECIAL_KEY_LIMIT) return null;
+  const names = [];
+  for (const token of tokens) {
+    const parsed = parseSpecialKey(token);
+    if (!parsed) return null;
+    names.push(specialKeyName(parsed));
+  }
+  const keys = names.join(' ');
+  return keys.length > CUSTOM_TEXT_LIMIT ? null : keys;
+}
+
+/** 特殊按键序列逐键对应的写入片段（keys 须已规整）。 */
+export function specialKeySequences(keys, options = {}) {
+  return keys.split(' ').map(token => encodeSpecialKey(parseSpecialKey(token), options));
+}
+
 /**
  * 校验并规整一个自定义键；无效时返回 null。
- * 文本原样保留首尾空格（如 `git commit -m ` 依赖结尾空格），但不能全是空白，不允许换行和控制字符。
+ * 文本键：文本原样保留首尾空格（如 `git commit -m ` 依赖结尾空格），但不能全是空白，不允许换行和控制字符。
+ * 特殊按键键：keys 为规范写法，text 为空、enter 为 false。
  */
 export function normalizeCustomKey(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const id = typeof raw.id === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(raw.id) ? raw.id : null;
   if (!id) return null;
   const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, CUSTOM_NAME_LIMIT) : '';
+  if (typeof raw.keys === 'string' && raw.keys.trim()) {
+    const keys = normalizeSpecialKeys(raw.keys);
+    return keys ? { id, name, text: '', enter: false, keys } : null;
+  }
   if (typeof raw.text !== 'string') return null;
   const text = raw.text;
   if (!text.trim() || text.length > CUSTOM_TEXT_LIMIT || /[\x00-\x1f\x7f]/.test(text)) return null;
   return { id, name, text, enter: raw.enter !== false };
 }
 
-/** 按钮上显示的文字：有名称用名称，否则用发送的文本。 */
+/** 按钮上显示的文字：有名称用名称，否则用发送的文本或按键。 */
 export function customKeyLabel(def) {
-  return def.name || def.text;
+  return def.name || def.keys || def.text;
 }
 
 /** 编辑列表中的说明：实际发送的内容。 */
 export function customKeyDetail(def) {
+  if (def.keys) return def.keys;
   return def.enter ? def.text + ' ↵' : def.text;
 }
 
-/** 按下自定义键时写入终端的内容：data 先发，enter 隔 250ms 再发（避免 TUI 把回车当作粘贴的一部分）。 */
-export function customKeyInput(def) {
+/**
+ * 按下自定义键时写入终端的内容：文本键 data 先发，enter 隔 250ms 再发（避免 TUI 把回车当作粘贴的一部分）；
+ * 特殊按键键返回 keys，由调用方逐键单独写入（避免 Esc 与后续字符被合并成 Alt 组合）。
+ */
+export function customKeyInput(def, options = {}) {
+  if (def.keys) return { data: '', enter: '', keys: specialKeySequences(def.keys, options) };
   return { data: def.text, enter: def.enter ? '\r' : '' };
 }
 
@@ -140,7 +250,7 @@ export function mergeCustomKeys(layout, incoming, random = Math.random) {
   for (const raw of Array.isArray(incoming) ? incoming : []) {
     const candidate = normalizeCustomKey({ ...(raw && typeof raw === 'object' ? raw : {}), id: 'import' });
     if (!candidate) continue;
-    if (next.custom.some(def => def.text === candidate.text && def.enter === candidate.enter)) continue;
+    if (next.custom.some(def => def.text === candidate.text && def.enter === candidate.enter && (def.keys ?? '') === (candidate.keys ?? ''))) continue;
     if (next.custom.length >= CUSTOM_KEY_LIMIT) break;
     next = saveCustomKey(next, { ...candidate, id: newCustomKeyId(next, random) });
     added++;

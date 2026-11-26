@@ -165,6 +165,8 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
     failed = false;
     moreButton.disabled = true;
     moreButton.textContent = t('正在加载历史…');
+    // 加载中只由按钮显示「正在加载历史…」，状态行先清空，避免同一句话出现两次。
+    status.textContent = '';
     panel.setAttribute('aria-busy', 'true');
     try {
       const page = await loadPage(cursor === null ? startCursor : cursor);
@@ -216,7 +218,7 @@ export function attachTerminalHistory({ term, get, loadPage, readOnly = () => fa
     moreButton.hidden = false;
     panel.hidden = false;
     latestButton.hidden = false;
-    status.textContent = t('正在加载历史…');
+    status.textContent = '';
     scroll.scrollTop = scroll.scrollHeight;
     queueMotion(delta);
     void older();

@@ -206,10 +206,11 @@ function createdTime(session) {
  * query 以空白分隔的多个关键词需全部命中（会话名、项目名、来源、创建设备），不区分大小写。
  * order（侧栏）：常驻项目的固定顺序。给出后切换项目不再改变分组位置，常驻项目没有会话时也显示空分组（筛选、搜索时除外）；
  * 只因电脑终端而显示的项目排在常驻项目之后，按项目名排序。
+ * showEmpty：给出 order 时是否补出没有会话的常驻项目空分组（首页传 false，只借用固定顺序）。
  * sessionOrder(projectId)（侧栏）：组内手动顺序；新会话排在已排序会话之前，与默认的新建在上一致；「运行中优先」时不生效。
  * runningFirst：有运行中会话的项目组整体排到最前（含当前项目与侧栏固定顺序），组间保持原有相对顺序，只影响显示、不改保存的顺序。
  */
-export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, sessionOrder = null, pins = null } = {}) {
+export function groupSessionOverview(list, { projects = [], current = null, history = [], filter = 'all', query = '', runningFirst = false, order = null, showEmpty = true, sessionOrder = null, pins = null } = {}) {
   const known = new Map(projects.map(project => [project.id, project]));
   const times = new Map();
   for (const item of Array.isArray(history) ? history : []) {
@@ -241,7 +242,7 @@ export function groupSessionOverview(list, { projects = [], current = null, hist
   // 「运行中优先」：首页先显示的 8 个是跨项目计算的，只在组内提前时，靠后项目里运行中的会话仍会藏在「展开全部」后面。
   const running = group => Number(runningFirst && group.sessions.some(sessionRunning));
   if (order) {
-    if (filter === 'all' && !needles.length) {
+    if (showEmpty && filter === 'all' && !needles.length) {
       for (const id of order) if (!groups.has(id) && known.has(id)) groups.set(id, { project: known.get(id), missing: false, sessions: [] });
     }
     const rank = new Map(order.map((id, index) => [id, index]));
@@ -476,10 +477,16 @@ export function findPortMovedProfile(profiles, host, port, fingerprint) {
   return profiles.find(item => item.host === host && item.port !== port && item.fingerprint === fingerprint) ?? null;
 }
 
-/** 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。 */
+/**
+ * 解析 Windows 设置页生成的配对链接（见 src/lib/mobilePairing.ts）。
+ * 也接受「复制连接信息」的整段文本：从中提取第一个 qingcode://pair 链接，忽略聊天软件附加的前后文字。
+ * 链接带 code（密码）且格式有效时一并返回，手机可直接配对；格式无效的密码忽略，仍由用户手动输入。
+ */
 export function parsePairingLink(text) {
-  const value = String(text ?? '').trim();
-  if (!value.startsWith(PAIRING_PREFIX)) throw new Error(t('这不是 QingCode 配对链接。'));
+  const raw = String(text ?? '').trim();
+  const start = raw.indexOf(PAIRING_PREFIX);
+  if (start < 0) throw new Error(t('这不是 QingCode 配对链接。'));
+  const value = raw.slice(start).split(/\s/, 1)[0];
   const query = new URLSearchParams(value.slice(PAIRING_PREFIX.length));
   if (query.get('v') !== '1') throw new Error(t('配对链接版本不受支持，请升级 QingCode Android。'));
   const host = query.get('host') ?? '';
@@ -488,8 +495,12 @@ export function parsePairingLink(text) {
   if (!validIpv4(host) || !validPort(port)) throw new Error(t('配对链接中的地址无效。'));
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error(t('配对链接中的证书指纹无效。'));
   const name = (query.get('name') ?? '').trim().slice(0, 48) || 'Windows';
-  return { host, port, fingerprint, name };
+  const code = query.get('code') ?? '';
+  return PAIRING_CODE.test(code) ? { host, port, fingerprint, name, code } : { host, port, fingerprint, name };
 }
+
+/** 配对密码格式，与电脑端设置页一致：6–20 位可见 ASCII 字符。 */
+export const PAIRING_CODE = /^[!-~]{6,20}$/;
 
 export function decodeBase64(chunk) {
   return Uint8Array.from(atob(chunk), character => character.charCodeAt(0));
@@ -756,20 +767,23 @@ function idleRemaining(item, now) {
  * 接入方和创建设备只有列出全部会话时才有，缺失时不显示。
  */
 export function sessionStatusLine(session, { fallback = 1, running = false, active = false, last = false, pinned = false, fresh = false, now = Date.now() } = {}) {
-  const identity = session.origin === 'desktop' ? t('电脑终端') : t('终端 {n}', { n: session.number ?? fallback });
+  // 电脑终端的来源由行首显示器图标表达，信息行不写文字，也不显示编号。
+  const desktop = session.origin === 'desktop';
+  const identity = t('终端 {n}', { n: session.number ?? fallback });
   const status = session.exit ? t('已结束')
     : [running ? t('运行中') : '', active ? t('当前会话') : last ? t('上次使用') : ''].filter(Boolean).join(' · ');
+  // 电脑终端默认就在电脑上使用，只有被某台手机或平板占用时才提示。
   const inUse = !session.exit && session.inUseHere === false && session.controllerName
+    && !(desktop && session.controllerName === '电脑')
     ? t('在 {name} 上使用中', { name: t(session.controllerName) }) : '';
   const device = session.ownDevice === false ? t('来自 {device}', { device: session.deviceName || t('其他设备') }) : '';
   const idle = sessionIdleInfo(session, now);
-  const named = sessionName(session, fallback) === identity ? '' : identity;
+  const named = desktop || sessionName(session, fallback) === identity ? '' : identity;
   // 窄屏时行尾会被省略：状态与空闲时长最常用，排在前面；活动时间其次；
-  // 「终端 N」编号只用于区分，放到最后。「电脑终端」表示来源，仍放在前面。
+  // 「终端 N」编号只用于区分，放到最后。
   // 已显示「空闲 N 分钟 / 刚刚有活动」时不再重复活动时间，只给电脑终端、已结束会话等补上。
-  const desktop = session.origin === 'desktop';
   const activity = idle.text ? '' : activeLabel(session, now);
-  return [pinned ? t('已置顶') : '', desktop ? named : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, activity, desktop ? '' : named]
+  return [pinned ? t('已置顶') : '', fresh ? t('有新结果') : '', status, idle.text, inUse, device, activity, named]
     .filter(Boolean).join(' · ');
 }
 

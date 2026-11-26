@@ -1,5 +1,5 @@
 import { LoaderCircle } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { SettingItem } from '@/components/SettingsLayout'
 import { getGitHead, getGitRemotes } from '@/lib/ipc/git'
 import { getPushSyncTracking } from '@/lib/ipc/gitPushSync'
@@ -15,6 +15,9 @@ import { type Inspection, readScanCache, scanCacheKey, writeScanCache } from './
 import { useGitPushSyncStore } from './store'
 
 type Translate = ReturnType<typeof useI18n>['t']
+
+/** 窗口获得焦点触发重扫的最小间隔，避免来回切换窗口时反复对 SSH 项目跑 Git。 */
+const FOCUS_RESCAN_INTERVAL_MS = 10_000
 
 /** 仓库分组的显示名：优先用 origin，其次第一个远程。 */
 function inspect(remotes: Awaited<ReturnType<typeof getGitRemotes>>, branch: string | null): Inspection {
@@ -115,6 +118,21 @@ export default function GitPushSyncSection() {
   )
   const [scanning, setScanning] = useState<{ done: number; total: number } | null>(null)
   const [connectionNames, setConnectionNames] = useState<Record<string, string>>({})
+  // 最近一次扫描的开始时间：比它新的同步结果所带的分支优先显示。
+  const [scannedAt, setScannedAt] = useState(0)
+  // 窗口重新获得焦点时重扫（用户可能在终端或虚拟机里切换了分支）。
+  const [refreshTick, setRefreshTick] = useState(0)
+  const lastScanStart = useRef(0)
+
+  useEffect(() => {
+    if (!config.enabled) return
+    const onFocus = () => {
+      if (Date.now() - lastScanStart.current < FOCUS_RESCAN_INTERVAL_MS) return
+      setRefreshTick(tick => tick + 1)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [config.enabled])
 
   useEffect(() => {
     if (!config.enabled) return
@@ -126,6 +144,8 @@ export default function GitPushSyncSection() {
       })
       .catch(() => undefined)
     void (async () => {
+      const startedAt = Date.now()
+      lastScanStart.current = startedAt
       let done = 0
       setScanning({ done, total: targets.length })
       // 结果全部读完后一次性提交，读取过程中不改动表格。
@@ -141,13 +161,14 @@ export default function GitPushSyncSection() {
       if (cancelled) return
       writeScanCache(targets, next)
       setInspections(next)
+      setScannedAt(startedAt)
       setScanning(null)
     })()
     return () => {
       cancelled = true
       setScanning(null)
     }
-  }, [signature, config.enabled])
+  }, [signature, config.enabled, refreshTick])
 
   // 有项目从未识别过时，先显示加载状态，读取完成后再给出可操作的表格；
   // 全部都有上次结果时直接显示，后台刷新完成后整体替换一次。
@@ -183,6 +204,13 @@ export default function GitPushSyncSection() {
     if (state === 'waiting') return t('等待连接')
     if (state === 'panel-only' || project.kind === 'wsl') return t('仅面板推送')
     return '—'
+  }
+
+  /** 同步检查比上次扫描新时用它读到的分支，否则用扫描结果。 */
+  const branchText = (project: Project) => {
+    const result = results[project.path]
+    if (result && result.branch !== undefined && result.at >= scannedAt) return result.branch ?? '—'
+    return inspections[project.id]?.branch ?? '—'
   }
 
   const locationText = (project: Project) =>
@@ -307,7 +335,7 @@ export default function GitPushSyncSection() {
                             <tr key={project.id} className="border-t border-border hover:bg-bg-hover">
                               <td className="pl-6 pr-3 py-1.5 text-fg truncate">{project.name}</td>
                               <td className="px-3 py-1.5 text-fg-muted truncate">{locationText(project)}</td>
-                              <td className="px-3 py-1.5 truncate">{inspections[project.id]?.branch ?? '—'}</td>
+                              <td className="px-3 py-1.5 truncate">{branchText(project)}</td>
                               <td className="px-3 py-1.5 text-fg-muted truncate">{detectionText(project)}</td>
                               <td className="px-3 py-1.5 text-center">
                                 <input

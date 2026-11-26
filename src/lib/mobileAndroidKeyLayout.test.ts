@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   CUSTOM_KEY_LIMIT,
   SHORTCUT_KEYS,
+  SPECIAL_KEY_LIMIT,
+  normalizeSpecialKeys,
+  specialKeySequences,
   customKeyDetail,
   customKeyInput,
   customKeyLabel,
@@ -201,5 +204,50 @@ describe('mergeCustomKeys', () => {
     for (let index = 0; index < CUSTOM_KEY_LIMIT; index++) full = saveCustomKey(full, { id: `k${index}`, text: `t${index}` })
     expect(mergeCustomKeys(full, [{ text: 'new' }]).added).toBe(0)
     expect(mergeCustomKeys(full, null as unknown as unknown[]).added).toBe(0)
+  })
+})
+
+describe('special-key custom keys', () => {
+  it('normalizes key sequences to canonical names', () => {
+    expect(normalizeSpecialKeys('ctrl+d')).toBe('Ctrl+D')
+    expect(normalizeSpecialKeys('  ^c  escape  :  w q return ')).toBe('Ctrl+C Esc : w q Enter')
+    expect(normalizeSpecialKeys('shift+alt+ctrl+up meta+x alt+X shift+a f12 pagedown ↑')).toBe(
+      'Ctrl+Alt+Shift+Up Alt+x Alt+X Shift+A F12 PgDn Up',
+    )
+    expect(normalizeSpecialKeys('alt++ +')).toBe('Alt++ +')
+    expect(normalizeSpecialKeys('Ctrl++')).toBeNull()
+  })
+
+  it('rejects unknown modifiers, empty keys, unsupported combos and over-long sequences', () => {
+    for (const raw of ['', '   ', 'Ctrl+', 'Hyper+A', 'Ctrl+Ctrl+A', 'Foo', 'Ctrl+Esc', 'Shift+1', 'Ctrl+Shift+A', 'Ctrl+Enter', 'Ctrl+Tab']) {
+      expect(normalizeSpecialKeys(raw), raw).toBeNull()
+    }
+    expect(normalizeSpecialKeys(Array(SPECIAL_KEY_LIMIT).fill('a').join(' '))).not.toBeNull()
+    expect(normalizeSpecialKeys(Array(SPECIAL_KEY_LIMIT + 1).fill('a').join(' '))).toBeNull()
+  })
+
+  it('encodes keys with xterm sequences', () => {
+    expect(specialKeySequences('Ctrl+D Ctrl+[ Ctrl+? Ctrl+Space Ctrl+Backspace Alt+x Alt+Enter Shift+Tab Shift+A')).toEqual([
+      '\x04', '\x1b', '\x7f', '\x00', '\x08', '\x1bx', '\x1b\r', '\x1b[Z', 'A',
+    ])
+    expect(specialKeySequences('Up Ctrl+Left Shift+Alt+End Home')).toEqual(['\x1b[A', '\x1b[1;5D', '\x1b[1;4F', '\x1b[H'])
+    expect(specialKeySequences('Up Home', { applicationCursor: true })).toEqual(['\x1bOA', '\x1bOH'])
+    expect(specialKeySequences('F1 Shift+F4 F5 Ctrl+F12 Delete Alt+PgUp Insert')).toEqual([
+      '\x1bOP', '\x1b[1;2S', '\x1b[15~', '\x1b[24;5~', '\x1b[3~', '\x1b[5;3~', '\x1b[2~',
+    ])
+  })
+
+  it('stores special keys as custom keys and sends them key by key', () => {
+    const def = normalizeCustomKey({ id: 'q', name: '', keys: 'esc : q enter', text: 'ignored', enter: true })
+    expect(def).toEqual({ id: 'q', name: '', text: '', enter: false, keys: 'Esc : q Enter' })
+    expect(normalizeCustomKey({ id: 'q', keys: 'Ctrl+' })).toBeNull()
+    expect(customKeyLabel(def!)).toBe('Esc : q Enter')
+    expect(customKeyDetail(def!)).toBe('Esc : q Enter')
+    expect(customKeyInput(def!)).toEqual({ data: '', enter: '', keys: ['\x1b', ':', 'q', '\r'] })
+
+    const layout = saveCustomKey(defaultKeyLayout(), def)
+    expect(parseKeyLayout(serializeKeyLayout(layout)).custom).toEqual([def])
+    // 已有的特殊按键键不影响从电脑导入同为空文本的键判重。
+    expect(mergeCustomKeys(layout, [{ text: 'git status' }]).added).toBe(1)
   })
 })

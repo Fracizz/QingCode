@@ -1,5 +1,5 @@
 // 配对与连接管理弹窗：扫码 / 粘贴配对链接、首次配对与指纹核对、连接详情（改名、改端口、重新配对、移除）。
-import { DEFAULT_PORT, findPortMovedProfile, parsePairingLink, validIpv4, validPort } from './protocol.js';
+import { DEFAULT_PORT, PAIRING_CODE, findPortMovedProfile, parsePairingLink, validIpv4, validPort } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { get, message, confirmAction } from './dom.js';
 import { t } from './i18n.js';
@@ -69,7 +69,15 @@ export function createPairingFlow({ rpc, profiles, onPaired, onMoved, moveProfil
       }
     }
     openPair(saved && saved.fingerprint === target.fingerprint ? saved : null, target);
-    if (failure) message('pair-error', failure);
+    if (failure) {
+      message('pair-error', failure);
+      return;
+    }
+    // 「复制连接信息」带密码：自动填入并直接配对，失败时留在弹窗显示原因。
+    if (target.code) {
+      get('pair-code').value = target.code;
+      get('pair-form').requestSubmit();
+    }
   }
 
   function openHost(item) {
@@ -179,7 +187,7 @@ export function createPairingFlow({ rpc, profiles, onPaired, onMoved, moveProfil
     try {
       if (!name) throw new Error(t('请输入连接名称。'));
       if (!validIpv4(host) || !validPort(port)) throw new Error(t('请输入有效的电脑 IPv4 地址和端口。'));
-      if (!/^[!-~]{6,20}$/.test(code)) {
+      if (!PAIRING_CODE.test(code)) {
         throw new Error(t('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。'));
       }
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();

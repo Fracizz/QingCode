@@ -4,6 +4,7 @@ import { useExitMotionRef } from '../lib/exitMotion'
 import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
 import { useProjectStore, type Toast } from '../store/projectStore'
 import { ProjectSourceBadge } from './ProjectName'
+import LineIcon from './LineIcon'
 import TransferTasks from './TransferTasks'
 import ServerOperationTasks from './ServerOperationTasks'
 
@@ -49,12 +50,13 @@ export default function Toaster() {
             onBlurCapture={event => {
               if (!event.currentTarget.contains(event.relatedTarget)) resume(t.id, 'focus')
             }}
-            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg w-80 max-w-full self-end [overflow-wrap:anywhere] transition-all duration-150 hover:shadow-elevation-3"
+            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg leading-snug w-80 max-w-full self-end [overflow-wrap:anywhere] transition-all duration-150 hover:shadow-elevation-3"
           >
-            <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
+            {/* 图标与关闭按钮都对齐标题首行：单行提示时三者水平居中对齐 */}
+            <LineIcon icon={Icon} className={color} />
             <div className="flex-1 min-w-0">
               <div role={t.kind === 'error' ? 'alert' : 'status'} aria-atomic="true">
-                <p className="font-medium text-fg leading-snug">{renderToastText(t)}</p>
+                <p className="font-medium text-fg">{renderToastText(t)}</p>
                 {t.detail ? (
                   <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
                 ) : null}
@@ -72,14 +74,16 @@ export default function Toaster() {
                 </button>
               ) : null}
             </div>
-            <button
-              type="button"
-              aria-label={translate('关闭通知')}
-              onClick={() => dismiss(t.id)}
-              className="text-fg-dim hover:text-fg p-0.5 rounded transition-colors hover:bg-bg-hover flex-shrink-0"
-            >
-              <X size={14} />
-            </button>
+            <LineIcon>
+              <button
+                type="button"
+                aria-label={translate('关闭通知')}
+                onClick={() => dismiss(t.id)}
+                className="text-fg-dim hover:text-fg p-0.5 rounded transition-colors hover:bg-bg-hover"
+              >
+                <X size={14} />
+              </button>
+            </LineIcon>
             <span
               aria-hidden="true"
               className={`toast-progress absolute bottom-0 left-0 h-[2px] opacity-80 ${barColor}`}

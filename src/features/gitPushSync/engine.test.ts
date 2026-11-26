@@ -54,6 +54,14 @@ describe('git push sync engine', () => {
     expect(records.at(-1)).toMatchObject({ kind: 'synced', commits: 2 })
   })
 
+  it('records the branch read during the check so the settings table stays current', async () => {
+    const { engine, records } = setup({
+      getTracking: vi.fn().mockResolvedValue(status({ branch: 'feature-x', upstream: 'origin/feature-x' })),
+    })
+    await engine.handlePush({ ...PUSH, branch: 'feature-x' })
+    expect(records.at(-1)).toMatchObject({ kind: 'up-to-date', branch: 'feature-x' })
+  })
+
   it('never fast-forwards the project that pushed', async () => {
     const { deps, engine } = setup({}, { receivers: ['a'] })
     await engine.handlePush(PUSH)

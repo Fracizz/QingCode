@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  groupSshServerStates,
   isAgentCommandUnavailable,
   parseSshServerState,
   parseSshServerTimings,
@@ -215,6 +216,36 @@ describe('sshServerStatus', () => {
     expect(isAgentCommandUnavailable(Object.assign(new Error('command ssh_server_info not found'), { name: 'Error' }))).toBe(true)
     expect(isAgentCommandUnavailable(Object.assign(new Error('browser'), { name: 'NotInTauriError' }))).toBe(true)
     expect(isAgentCommandUnavailable(new Error('连接已断开'))).toBe(false)
+  })
+})
+
+describe('groupSshServerStates', () => {
+  const at = (path: string, extra: Partial<SshServerState> = {}): SshServerState => ({
+    ...readyServer,
+    rootUri: `ssh://c1/${path}`,
+    timings: `${path} 1.0s`,
+    ...extra,
+  })
+
+  it('collapses identical project states into one summary', () => {
+    const states = [at('a'), at('b'), at('c')]
+    const groups = groupSshServerStates(states)
+    expect(groups.summary).toBe(states[0])
+    expect(groups.members).toEqual(states)
+    expect(groups.exceptions).toEqual([])
+  })
+
+  it('lists only projects that differ from the majority state', () => {
+    const fallback = at('b', { phase: 'readyDirect', mode: 'direct', transport: 'direct', reason: '端口转发被禁用' })
+    const states = [fallback, at('a'), at('c')]
+    const groups = groupSshServerStates(states)
+    expect(groups.summary?.rootUri).toBe('ssh://c1/a')
+    expect(groups.members.map(state => state.rootUri)).toEqual(['ssh://c1/a', 'ssh://c1/c'])
+    expect(groups.exceptions).toEqual([fallback])
+  })
+
+  it('handles empty input', () => {
+    expect(groupSshServerStates([])).toEqual({ summary: null, members: [], exceptions: [] })
   })
 })
 

@@ -92,6 +92,9 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
   mockIPC(command => {
     if (command === 'ssh_server_info') return serverState
     if (command === 'ssh_server_latency') return 28
+    if (command === 'ssh_server_system_metrics') return {
+      cpuThreads: 20, cpuCores: 12, cpuBaseMhz: 2100, cpuUsage: 23.4, memoryTotal: 34_359_738_368, memoryUsed: 26_843_545_600,
+    }
     if (command === 'ssh_server_logs') return { text: 'Fixture service ready' }
     throw new Error(`Unexpected status-bar fixture IPC: ${command}`)
   }, { shouldMockEvents: true })

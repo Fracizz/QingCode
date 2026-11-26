@@ -5,6 +5,9 @@ import {
   androidVersionCode,
   formatBytes,
   isAllowedApkUrl,
+  mobileReleaseNotes,
+  noteBlocks,
+  noteInline,
   parseUpdatePrefs,
   pickApkUpdate,
   releaseNotes,
@@ -81,5 +84,28 @@ describe('Android online update', () => {
     expect(formatBytes(2_500_000)).toBe('2.4 MB')
     expect(formatBytes(300)).toBe('1 KB')
     expect(formatBytes(Number.NaN)).toBe('')
+  })
+
+  it('drops the desktop download table and duplicate title from mobile notes', () => {
+    const body = [
+      '## QingCode v0.1.22', '', '稳定版汇总。', '', '#### 下载', '', '| 平台 | 文件 |', '|---|---|',
+      '| Windows x64 | `QingCode_0.1.22-windows-x64.exe` |', '', '#### 主要变更', '', '- 修复 A',
+    ].join('\n')
+    expect(mobileReleaseNotes(body)).toBe(['稳定版汇总。', '', '#### 主要变更', '', '- 修复 A'].join('\n'))
+  })
+
+  it('splits notes into blocks and inline parts', () => {
+    const notes = ['#### 主要变更', '', '- 一', '  续行', '- 二', '', '第一行', '第二行', '', '1. 甲', '', '| a | b |', '|---|---|', '| c | d |']
+    expect(noteBlocks(notes.join('\n'))).toEqual([
+      { type: 'heading', level: 4, text: '主要变更' },
+      { type: 'list', ordered: false, items: ['一续行', '二'] },
+      { type: 'paragraph', text: '第一行第二行' },
+      { type: 'list', ordered: true, items: ['甲'] },
+      { type: 'list', ordered: false, items: ['a · b', 'c · d'] },
+    ])
+    expect(noteInline('版本 `0.1.22` **重要** [链接](https://x) <b>x</b>')).toEqual([
+      { text: '版本 ' }, { text: '0.1.22', code: true }, { text: ' ' }, { text: '重要', strong: true },
+      { text: ' ' }, { text: '链接' }, { text: ' x' },
+    ])
   })
 })

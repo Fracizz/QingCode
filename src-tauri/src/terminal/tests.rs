@@ -665,3 +665,64 @@ fn meaningful_descendants_ignore_console_host_but_count_its_children() {
     ];
     assert_eq!(meaningful_descendant_count(&nested, 10), 1);
 }
+
+/// 终端输出 IPC 编码基准（手动运行，不进 CI）：
+/// `cargo test --release --lib terminal::tests::bench_terminal_emit_encoding -- --ignored --nocapture`
+/// 对比当前 base64 + JSON 事件负载、JSON 数字数组（`Channel<Vec<u8>>` 的默认序列化）
+/// 与原始字节（`ipc::Response` / Raw）的后端编码开销。
+#[test]
+#[ignore = "benchmark"]
+fn bench_terminal_emit_encoding() {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const CHUNK: usize = 32 * 1024;
+    const TOTAL: usize = 256 * 1024 * 1024;
+    let line = "\x1b[32m   Compiling\x1b[0m qingcode v1.2.3 (D:/code/qingcode/src-tauri) 构建日志 \x1b[1;33mwarning\x1b[0m: unused variable `x`\r\n";
+    let mut chunk = Vec::with_capacity(CHUNK);
+    while chunk.len() < CHUNK {
+        chunk.extend_from_slice(line.as_bytes());
+    }
+    chunk.truncate(CHUNK);
+    let rounds = TOTAL / CHUNK;
+    let mb = TOTAL as f64 / (1024.0 * 1024.0);
+
+    let report = |name: &str, out_bytes: usize, elapsed: std::time::Duration| {
+        let secs = elapsed.as_secs_f64();
+        println!(
+            "{name:<34} {:>8.0} MB/s  {:>7.2} us/chunk  输出膨胀 {:.2}x",
+            mb / secs,
+            secs * 1e6 / rounds as f64,
+            out_bytes as f64 / CHUNK as f64
+        );
+    };
+
+    let start = Instant::now();
+    let mut out = 0;
+    for _ in 0..rounds {
+        let payload = super::TerminalDataPayload {
+            id: "terminal-0123456789".into(),
+            data: super::encode_terminal_data(black_box(&chunk)),
+        };
+        out = black_box(serde_json::to_string(&payload).unwrap()).len();
+    }
+    report("当前: base64 + JSON 事件负载", out, start.elapsed());
+
+    let start = Instant::now();
+    for _ in 0..rounds {
+        out = black_box(super::encode_terminal_data(black_box(&chunk))).len();
+    }
+    report("  其中仅 base64", out, start.elapsed());
+
+    let start = Instant::now();
+    for _ in 0..rounds {
+        out = black_box(serde_json::to_string(black_box(&chunk)).unwrap()).len();
+    }
+    report("Channel<Vec<u8>>: JSON 数字数组", out, start.elapsed());
+
+    let start = Instant::now();
+    for _ in 0..rounds {
+        out = black_box(black_box(&chunk).to_vec()).len();
+    }
+    report("Raw 字节: 仅拷贝", out, start.elapsed());
+}

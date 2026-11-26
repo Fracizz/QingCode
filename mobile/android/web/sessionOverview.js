@@ -12,7 +12,7 @@ import {
   sessionRunning,
   sessionStatusLine,
 } from './protocol.js';
-import { fillProjectSource, icon, prewarmMark, rowText, button, setText } from './dom.js';
+import { desktopSessionLine, fillProjectSource, icon, prewarmMark, rowText, button, setText } from './dom.js';
 import { attachDragSort, attachLongPress, attachSwipeReveal, closeRevealedRow } from './gestures.js';
 import { dragTargetIndex } from './keyLayout.js';
 import { onSessionPrefsChange, runningFirst, runningFirstToggle, runningStatusEnabled } from './sessionPrefs.js';
@@ -23,14 +23,15 @@ import { t } from './i18n.js';
  * compactBelow：会话总数不超过该值且未搜索 / 筛选时收起搜索框与状态筛选（首页会话少时不占屏）；0 表示始终显示（抽屉）。
  * header：可选的标题行；收起时「运行中优先」与「管理」移到标题右侧，省掉一整行。
  * state：profile()、projects()、history()、current()（终端页当前项目 id，首页为 null）、
- * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)。
+ * selected()（当前终端会话 id）、lastSession(projectId)（该项目上次使用的会话）、busy()、visible?(item)、
+ * order?()（首页：借用侧栏的固定项目顺序，不补空分组）。
  * open(session) 接入会话；end(sessions) 关闭一个或多个会话（确认与结果提示由调用方负责），返回 Promise。
  * onChange() 在列表或数量变化后通知调用方（如更新标题数量、显示/隐藏所在区块）。
  * groupTools（侧栏）：项目固定顺序与组头操作，含 order()、collapsed(id)、toggle(id)、attention(sessionId)、
  * add(project)、menu(project)、reorder(visibleIds, from, to)、sessionOrder(projectId)、reorderSessions(projectId, visibleIds, from, to)、
  * pins(projectId)、sessionMenu(session)（行内 ⋯ 与长按打开的会话操作）；
  * projectActions（首页）：open(project)、add(project)、files(project) 对应点组头进入项目、新建终端和浏览文件，
- * 右侧按钮与项目列表同款（加号 + 文件夹），保持按最近打开排序。
+ * 右侧按钮与项目列表同款（加号 + 文件夹）。
  */
 export function createSessionOverview({ root, limit = Infinity, compactBelow = 0, header = null, state, open, end, onChange = () => {}, groupTools = null, projectActions = null }) {
   let items = [];
@@ -180,7 +181,9 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     const counts = countSessionOverview(all);
     const grouped = groupSessionOverview(all, {
       projects: state.projects(), current: state.current(), history: state.history(), filter, query, runningFirst: runningFirst(),
-      order: groupTools?.order() ?? null,
+      // 首页没有组头工具，也沿用侧栏的固定项目顺序：使用过的项目不会被挪到最前。
+      order: groupTools?.order() ?? state.order?.() ?? null,
+      showEmpty: !!groupTools,
       sessionOrder: groupTools?.sessionOrder ?? null,
       pins: groupTools?.pins ?? null,
     });
@@ -402,6 +405,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     check.setAttribute('aria-hidden', 'true');
     check.append(icon('check'));
     const text = rowText('', '');
+    desktopSessionLine(text.querySelector('small'));
     const heading = text.querySelector('strong');
     const name = document.createElement('span');
     name.className = 'session-label';
@@ -461,7 +465,7 @@ export function createSessionOverview({ root, limit = Infinity, compactBelow = 0
     if (active) option.setAttribute('aria-current', 'true');
     else option.removeAttribute('aria-current');
     setText(row.querySelector('.session-label'), label);
-    setText(row.querySelector('small'), sessionStatusLine(session, { running, active, last, pinned, fresh }));
+    setText(row.querySelector('.session-line'), sessionStatusLine(session, { running, active, last, pinned, fresh }));
     // 快到自动结束时单独一行提醒。
     const idleInfo = sessionIdleInfo(session);
     const idle = row.querySelector('.session-idle');

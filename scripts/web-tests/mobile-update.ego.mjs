@@ -121,7 +121,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     })
     await step('English UI translates the update flow', async () => {
       await page.goto(baseUrl + '/mobile-android/?lang=en')
-      await page.waitForFunction(() => /Current version/.test(document.querySelector('#update-version').textContent))
+      await page.waitForFunction(() => /Check for updates/.test(document.querySelector('#update-title').textContent))
       await page.click('#open-settings', { label: 'open settings' })
       assert.equal(await text('#update-check'), 'Check for updates')
       await releases([beta4])

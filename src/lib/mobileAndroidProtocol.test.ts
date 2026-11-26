@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { buildPairingLink, formatFingerprint } from './mobilePairing'
+import { buildConnectionInfo, buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
   activeLabel,
@@ -346,6 +346,17 @@ describe('Android pairing link', () => {
     const link = buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: '工作 PC&1' })
     expect(parsePairingLink(link)).toEqual({ host: '192.168.1.8', port: 48764, fingerprint, name: '工作 PC&1' })
     expect(parsePairingLink(link.replace(fingerprint, fingerprint.toUpperCase())).fingerprint).toBe(fingerprint)
+  })
+
+  it('imports the copied connection info with password from surrounding chat text', () => {
+    const info = buildConnectionInfo({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: 'a&b=c#1' })
+    expect(info).toContain('192.168.1.8:48764')
+    expect(parsePairingLink(`转发：
+${info}
+（来自聊天）`)).toEqual({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: 'a&b=c#1' })
+    // 不带密码或密码格式无效时不返回 code，仍需手动输入。
+    expect(parsePairingLink(buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX' }))).not.toHaveProperty('code')
+    expect(parsePairingLink(buildPairingLink({ host: '192.168.1.8', port: 48764, fingerprint, name: 'DEVBOX', code: '12' }))).not.toHaveProperty('code')
   })
 
   it('rejects foreign links and invalid fields', () => {
@@ -712,10 +723,10 @@ describe('Android 会话纵览', () => {
       .toBe('在 Pixel 上使用中 · 来自 Tablet · 终端 3')
     // 已结束的会话没有使用方；电脑终端不显示编号。
     expect(sessionStatusLine({ ...base, exit: { code: 0 }, inUseHere: false, controllerName: 'Pixel' })).toBe('已结束 · 终端 3')
-    expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('电脑终端')
+    expect(sessionStatusLine({ ...base, origin: 'desktop' })).toBe('')
     // 没有编号时用调用方给的序号。
     expect(sessionStatusLine({ id: 'm2', name: 'vim', exit: null }, { fallback: 2 })).toBe('终端 2')
-    // 空闲时长紧跟状态；已有空闲时长时不重复活动时间。「电脑终端」表示来源，仍在最前。
+    // 空闲时长紧跟状态；已有空闲时长时不重复活动时间。
     const now = new Date(2026, 10, 14, 15, 30).getTime()
     expect(sessionStatusLine({
       ...base, createdAt: new Date(2026, 10, 14, 9, 5).getTime(), lastActiveAt: now - 12 * 60000, idleDeadline: now + 3600000,
@@ -724,7 +735,9 @@ describe('Android 会话纵览', () => {
     expect(sessionStatusLine({
       ...base, origin: 'desktop', inUseHere: false, controllerName: '电脑',
       createdAt: new Date(2026, 10, 3, 18, 30).getTime(), lastActiveAt: new Date(2026, 10, 3, 18, 45, 12).getTime(),
-    }, { now })).toBe('电脑终端 · 在 电脑 上使用中 · 活动于 11-03 18:45')
+    }, { now })).toBe('活动于 11-03 18:45')
+    // 电脑终端被手机或平板占用时才提示使用方。
+    expect(sessionStatusLine({ ...base, origin: 'desktop', inUseHere: false, controllerName: 'Pixel' })).toBe('在 Pixel 上使用中')
     expect(sessionStatusLine({
       ...base, exit: { code: 0 }, lastActiveAt: new Date(2026, 10, 14, 15, 20, 5).getTime(),
     }, { now })).toBe('已结束 · 活动于 15:20 · 终端 3')
@@ -757,6 +770,14 @@ describe('Android 会话纵览', () => {
     }).map(group => group.project.id)
     expect(ids('p1', 5)).toEqual(['p2', 'p1', 'p3'])
     expect(ids('p2', 9)).toEqual(['p2', 'p1', 'p3'])
+  })
+
+  it('首页借用侧栏固定顺序：使用过的项目不挪到最前，也不补空分组', () => {
+    const ids = (openedAt: number) => groupSessionOverview(list, {
+      projects, current: null, history: [{ id: 'p1', openedAt }], order: ['p2', 'p9', 'p1'], showEmpty: false,
+    }).map(group => group.project.id)
+    expect(ids(5)).toEqual(['p2', 'p1', 'p3'])
+    expect(ids(99)).toEqual(['p2', 'p1', 'p3'])
   })
 
   it('运行中优先时有运行中会话的项目整体提前，组间保持原顺序，关闭后恢复', () => {

@@ -67,7 +67,7 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '@/lib/git/gitStatus'
-import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
+import { gitPullErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
 import {
   clearFetchAuthFailed,
   markAutoFetchAttempt,
@@ -100,6 +100,7 @@ import { copyPathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
+import LineIcon from './LineIcon'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -204,9 +205,9 @@ function ScmOperationAlert({
       role="alert"
       className="flex shrink-0 flex-col gap-1.5 border-y border-danger/20 bg-danger/5 px-3 py-2"
     >
-      <div className="flex items-start gap-2 text-danger">
-        <AlertCircle size={14} className="mt-0.5 shrink-0" />
-        <p className="text-ui-sm min-w-0 flex-1 leading-[var(--ui-line-height)]">
+      <div className="flex items-start gap-2 text-ui-sm leading-[var(--ui-line-height)] text-danger">
+        <LineIcon icon={AlertCircle} size={14} />
+        <p className="min-w-0 flex-1">
           {display.literal
             ? display.summaryKey
             : t(display.summaryKey, display.summaryParams)}
@@ -1187,14 +1188,11 @@ export default function SourceControlPanel() {
     } catch (reason) {
       if (useProjectStore.getState().currentProject?.path === project.path) {
         setBranchMenuOpen(false)
-        const message = String(reason)
-        setOperationError(message)
-        useProjectStore
-          .getState()
-          .pushToast('error', t('读取分支列表失败：{error}', { error: message }))
+        // 面板内错误横幅会自行格式化原始错误，不再重复弹 toast。
+        setOperationError(String(reason))
       }
     }
-  }, [loading, operation, t])
+  }, [loading, operation])
 
   const switchToBranch = useCallback(
     async (branch: string) => {
@@ -1211,10 +1209,8 @@ export default function SourceControlPanel() {
         }
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
-          const message = String(reason)
-          setOperationError(message)
-          const { key, params } = gitSwitchErrorI18n(message)
-          useProjectStore.getState().pushToast('error', t(key, params))
+          // 横幅按原始错误推断“切换分支”上下文并格式化，不再重复弹 toast。
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1545,16 +1541,7 @@ export default function SourceControlPanel() {
             useGitStatusStore.getState().applyFromGitStatus(project.path, snapshot)
           }
           void refresh({ soft: true })
-          const message = String(reason)
-          setOperationError(message)
-          useProjectStore
-            .getState()
-            .pushToast(
-              'error',
-              isStage
-                ? t('暂存更改失败：{error}', { error: message })
-                : t('取消暂存失败：{error}', { error: message })
-            )
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1631,11 +1618,7 @@ export default function SourceControlPanel() {
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           void refresh({ soft: true })
-          const message = String(reason)
-          setOperationError(message)
-          useProjectStore
-            .getState()
-            .pushToast('error', t('丢弃更改失败：{error}', { error: message }))
+          setOperationError(String(reason))
         }
       } finally {
         setOperation(null)
@@ -1668,10 +1651,9 @@ export default function SourceControlPanel() {
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           await refresh({ soft: false })
+          // 错误已在面板顶部横幅展示，不再重复弹 toast。
           const { key, params } = gitPullErrorI18n(String(reason))
-          const message = t(key, params)
-          setOperationError(message)
-          useProjectStore.getState().pushToast('error', message)
+          setOperationError(t(key, params))
         }
       } finally {
         setOperation(null)
@@ -1744,7 +1726,6 @@ export default function SourceControlPanel() {
             setAutoFetchError({ path, message })
           } else {
             setOperationError(message)
-            useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
           }
         }
         return false
@@ -1834,7 +1815,6 @@ export default function SourceControlPanel() {
             )
             setOperationError(failureMessage)
             setPushRetryAvailable(true)
-            useProjectStore.getState().pushToast('error', failureMessage)
             return
           }
           if (useProjectStore.getState().currentProject?.path !== project.path) return
@@ -1855,7 +1835,6 @@ export default function SourceControlPanel() {
           { error: String(reason) }
         )
         setOperationError(failureMessage)
-        useProjectStore.getState().pushToast('error', failureMessage)
       }
     } finally {
       setOperation(null)
@@ -1883,7 +1862,6 @@ export default function SourceControlPanel() {
         const failureMessage = t('推送失败：{error}。提交信息已保留。', { error: pushError })
         setOperationError(failureMessage)
         setPushRetryAvailable(true)
-        useProjectStore.getState().pushToast('error', failureMessage)
       }
     } finally {
       setOperation(null)

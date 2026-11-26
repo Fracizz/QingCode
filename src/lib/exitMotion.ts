@@ -98,9 +98,23 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
   if (typeof element.animate !== 'function' || motionReduced() || document.visibilityState === 'hidden') return
 
   const opacity = getComputedStyle(element).opacity || '1'
+  const nestedModal = kind === 'modal' && element.dataset.modalNested !== undefined
   const clone = element.cloneNode(true) as HTMLElement
   copyLiveState(element, clone, kind === 'modal')
   sanitize(clone)
+  // sanitize 去掉了根节点 data-modal-nested，嵌套弹窗的透明遮罩要用行内样式保住，否则残影会闪出一层深色模糊遮罩。
+  const nestedPanels: HTMLElement[] = []
+  if (nestedModal) {
+    for (const child of clone.children) {
+      if (!(child instanceof HTMLElement)) continue
+      if (child.classList.contains('modal-overlay-enter')) {
+        child.style.background = 'transparent'
+        child.style.backdropFilter = 'none'
+      } else if (child.classList.contains('modal-content-enter')) {
+        nestedPanels.push(child)
+      }
+    }
+  }
 
   if (kind === 'toast') {
     // 通知在纵向堆栈里，残影脱离堆栈固定在原位，其余通知立即补位。
@@ -126,6 +140,10 @@ export function leaveExitGhost(element: HTMLElement, kind: ExitKind) {
   const duration = exitDuration()
   const timing: KeyframeAnimationOptions = { duration, easing: EASE_EXIT, fill: 'forwards' }
   const animation = clone.animate([{ opacity }, { opacity: 0 }], timing)
+  // 嵌套弹窗面板沿入场方向反向沉下（与 animations.css 的 modal-content-rise 对应），整体透明度仍由根节点统一淡出。
+  for (const panel of nestedPanels) {
+    panel.animate([{ transform: 'none' }, { transform: 'translateY(4px) scale(0.98)' }], timing)
+  }
 
   const ghost: Ghost = { kind, node: clone, animation, timer: setTimeout(() => removeGhost(ghost), duration + 100) }
   ghosts.add(ghost)

@@ -59,6 +59,11 @@ export function setupSelectMenus() {
 
   function open(select, trigger) {
     get('select-dialog-title').textContent = titleOf(select);
+    // 设置页选项行不显示说明，点开后在面板标题下补上，开关类仍在行内显示。
+    const hint = get('select-dialog-hint');
+    const describedBy = select.getAttribute('aria-describedby');
+    hint.textContent = (describedBy && document.getElementById(describedBy)?.textContent.trim()) || '';
+    hint.hidden = !hint.textContent;
     list.setAttribute('aria-label', titleOf(select));
     list.replaceChildren(...Array.from(select.options, option => {
       const row = document.createElement('button');

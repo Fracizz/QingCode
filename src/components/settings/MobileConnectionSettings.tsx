@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CircleAlert, CircleCheck, Copy, Eye, EyeOff, LoaderCircle, Smartphone } from 'lucide-react'
+import { CircleAlert, CircleCheck, ClipboardList, Copy, Eye, EyeOff, LoaderCircle, Smartphone } from 'lucide-react'
 import { safeInvoke } from '@/lib/tauri'
 import { hasBackend } from '@/lib/runtimeCapabilities'
-import { buildPairingLink, formatFingerprint } from '@/lib/mobilePairing'
+import { buildConnectionInfo, buildPairingLink, formatFingerprint } from '@/lib/mobilePairing'
 import { choiceDialog } from '@/store/choiceStore'
 import { SettingItem } from '../SettingsLayout'
+import LineIcon from '../LineIcon'
 import Tooltip from '../Tooltip'
 
 interface Device {
@@ -238,6 +239,19 @@ export default function MobileConnectionSettings() {
     }
   }
 
+  /** 复制含密码的连接信息：手机粘贴后自动填好地址与密码并直接配对。 */
+  async function copyInfo() {
+    if (activePort === null || !host || !status.fingerprint || !savedPassword) return
+    try {
+      await navigator.clipboard.writeText(buildConnectionInfo({
+        host, port: activePort, fingerprint: status.fingerprint, name: status.computer, code: savedPassword,
+      }))
+      setFeedback({ text: '已复制连接信息（含密码）。在手机「添加连接」中点「粘贴配对链接」即可自动配对；发送后请删除聊天中的这条消息。' })
+    } catch (error) {
+      setFeedback({ text: `复制失败：${String(error)}`, error: true })
+    }
+  }
+
   const online = status.devices.filter(device => device.online).length
   const busyText = busy === 'save' ? '正在保存并检查端口…' : busy === 'stop' ? '正在关闭监听…' : '正在移除设备…'
 
@@ -358,7 +372,7 @@ export default function MobileConnectionSettings() {
                   role="alert"
                   className="col-start-2 flex items-start gap-2 rounded border border-danger/40 px-3 py-2 text-ui-sm text-danger"
                 >
-                  <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  <LineIcon icon={CircleAlert} />
                   {status.error}
                 </div>
               )}
@@ -367,17 +381,15 @@ export default function MobileConnectionSettings() {
                   role={feedback?.error && !busy ? 'alert' : 'status'}
                   className={`col-start-2 flex items-start gap-2 text-ui-sm leading-relaxed ${feedback?.error && !busy ? 'rounded border border-danger/40 px-3 py-2 text-danger' : busy ? 'text-fg' : 'text-ok'}`}
                 >
-                  {busy ? (
-                    <LoaderCircle
-                      size={16}
-                      className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : feedback?.error ? (
-                    <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                  ) : (
-                    <CircleCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                  )}
+                  <LineIcon>
+                    {busy ? (
+                      <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    ) : feedback?.error ? (
+                      <CircleAlert size={16} aria-hidden="true" />
+                    ) : (
+                      <CircleCheck size={16} aria-hidden="true" />
+                    )}
+                  </LineIcon>
                   {busy ? busyText : feedback?.text}
                 </div>
               )}
@@ -429,6 +441,7 @@ export default function MobileConnectionSettings() {
                       </code>
                     </div>
                   )}
+                  <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     className={button}
@@ -440,6 +453,20 @@ export default function MobileConnectionSettings() {
                     <Copy size={14} aria-hidden="true" />
                     复制配对链接
                   </button>
+                  <Tooltip label={savedPassword ? '包含密码，手机粘贴后直接配对' : '未记住密码：停止连接后重新设置密码即可使用'}>
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={!link || !savedPassword}
+                      onClick={() => {
+                        void copyInfo()
+                      }}
+                    >
+                      <ClipboardList size={14} aria-hidden="true" />
+                      复制连接信息
+                    </button>
+                  </Tooltip>
+                  </div>
                 </div>
                 <details className="col-span-full min-w-0 border-t border-border pt-3 text-ui-sm text-fg-muted">
                   <summary className="cursor-pointer hover:text-fg">手动核对证书指纹</summary>

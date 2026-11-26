@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 pub mod budget;
+mod system_metrics;
 
 const CHUNK: usize = 256 * 1024;
 const HANDLE_LIMIT: usize = 256;
@@ -213,6 +214,7 @@ fn handle_sync(v: Value) -> Result<Value, String> {
                 .ok_or("无法确定家目录")?;
             Ok(json!({"homePath":display(&PathBuf::from(home)),"os":std::env::consts::OS}))
         }
+        "system_metrics" => system_metrics::snapshot(),
         "canonicalize" => Ok(json!(display(&checked(&v, "path", false, false)?))),
         "exists" => match checked(&v, "path", true, false) {
             Ok(path) => Ok(json!(path.try_exists().map_err(|e| e.to_string())?)),

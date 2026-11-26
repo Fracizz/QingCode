@@ -16,6 +16,7 @@ import {
 import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import {
   followFitFontSize,
+  followTerminalGrid,
   gridForCell,
   readTerminalArea,
   readTerminalCell,
@@ -171,11 +172,9 @@ import TerminalShortcutBar, { TerminalShortcutBarExpand } from './TerminalShortc
 import { useTerminalShortcutBarStore } from '../store/terminalShortcutBarStore'
 import {
   CUSTOM_KEY_ENTER_DELAY_MS,
-  builtinKeySequence,
   customKeyForShortcut,
   customKeyInput,
   type TerminalCustomKey,
-  type TerminalShortcutBuiltinKey,
 } from '@/lib/terminal/terminalShortcutBar'
 import { shortcutFromKeyboardEvent } from '@/lib/shortcuts'
 import { useTerminalDraftStore } from '../store/terminalDraftStore'
@@ -509,20 +508,6 @@ export default function TerminalView({
     term.focus()
   }, [isTerminalWritable, terminalId, writeToTerminal])
 
-  /** 快捷键栏内置键：编辑 / 控制键直接写 PTY，不经过 bracketed paste。 */
-  const sendShortcutKey = useCallback((key: TerminalShortcutBuiltinKey) => {
-    const term = xtermRef.current
-    if (!term || !isTerminalWritable()) return
-    if (key === 'clear-input') {
-      clearInput()
-      return
-    }
-    const sequence = builtinKeySequence(key, { applicationCursor: term.modes.applicationCursorKeysMode })
-    if (!sequence) return
-    void writeToTerminal(terminalId, sequence)
-    term.scrollToBottom()
-  }, [clearInput, isTerminalWritable, terminalId, writeToTerminal])
-
   /** 自定义键：先写文本，需要时隔一会儿再写回车（TUI 会把紧跟的回车当成粘贴的一部分）。 */
   const sendCustomKey = useCallback((def: TerminalCustomKey) => {
     const term = xtermRef.current
@@ -700,18 +685,28 @@ export default function TerminalView({
   }, [resizeTerminal, terminalId])
 
   /**
-   * 跟随其他端网格时按字号把整屏铺满窗口（手机窄网格放大、平板宽网格缩小）。
+   * 跟随其他端网格时，对方整屏放不下就按字号缩小（平板宽网格放进窄窗格）；放得下保持设置字号。
    * 字格不严格按字号成比例（小字号按整像素取整，降一号字格未必变窄），改字号后下一帧按实际字格再校准，最多六次。
    * 返回本次是否改了字号（需要等待重绘）。
    */
   const fitFollowFont = useCallback((): boolean => {
     const step = (term: XTerm, left: number): boolean => {
+      const follow = terminalFollowsRemoteGrid(terminalId)
       const area = readTerminalArea(term)
       const cell = readTerminalCell(term)
       const baseFontSize = getResolvedTerminalFontSize()
       const fontSize = term.options.fontSize ?? baseFontSize
-      if (!area || !cell) return false
-      const next = followFitFontSize({ area, grid: { cols: term.cols, rows: term.rows }, cell, fontSize, baseFontSize })
+      if (!follow || !area || !cell) return false
+      // 按对方网格判断放不放得下；xterm 列数可能比对方宽（见 followTerminalGrid），多出的列只是空白。
+      // 只缩小不放大：maxFont 取设置字号。
+      const next = followFitFontSize({
+        area,
+        grid: { cols: follow.cols, rows: follow.rows },
+        cell,
+        fontSize,
+        baseFontSize,
+        maxFont: baseFontSize,
+      })
       if (next === fontSize) return false
       term.options.fontSize = next
       if (left > 0) {
@@ -746,9 +741,12 @@ export default function TerminalView({
     // 手机终端只上报电脑窗格实测网格，快照与其他设备引发的 xterm resize 不代表本机尺寸。
     if (mobile) void resizeTerminal(terminalId, next.cols, next.rows)
     // 其他设备是尺寸方时网格跟随对方；电脑窗口的行列只报给后端记下，电脑打字成为尺寸方时再用。
-    if (terminalFollowsRemoteGrid(terminalId)) {
+    const follow = terminalFollowsRemoteGrid(terminalId)
+    if (follow) {
       if (!mobile) reportNaturalGrid(next)
-      // 窗口变了，按新窗口重新铺满对方的网格。
+      // 窗口变了：列数随电脑窗口（不小于对方），再按新窗口校准字号。
+      const grid = followTerminalGrid(follow, next)
+      if (term && terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, grid)) term.resize(grid.cols, grid.rows)
       return fitFollowFont()
     }
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
@@ -1925,10 +1923,12 @@ export default function TerminalView({
     const follow = followGridKey ? terminalFollowsRemoteGrid(terminalId) : undefined
     if (follow) {
       wasControlledRef.current = true
-      // 先在设置字号下量出电脑自己的行列，再按对方网格调字号铺满窗口。
+      // 先在设置字号下量出电脑自己的行列；行数跟随对方，列数不缩小（见 followTerminalGrid），
+      // 对方整屏放不下时再缩小字号。
       const natural = readProposedGridSize()
       if (natural) reportNaturalGrid(natural)
-      if (term.cols !== follow.cols || term.rows !== follow.rows) term.resize(follow.cols, follow.rows)
+      const grid = followTerminalGrid(follow, natural ?? { cols: term.cols, rows: term.rows })
+      if (term.cols !== grid.cols || term.rows !== grid.rows) term.resize(grid.cols, grid.rows)
       fitFollowFont()
     } else if (wasControlledRef.current) {
       wasControlledRef.current = false
@@ -1987,7 +1987,6 @@ export default function TerminalView({
       {!shortcutBarCollapsed && (
         <TerminalShortcutBar
           disabled={!shortcutBarWritable}
-          onBuiltinKey={sendShortcutKey}
           onCustomKey={sendCustomKey}
         />
       )}

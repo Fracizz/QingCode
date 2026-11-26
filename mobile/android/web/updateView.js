@@ -1,8 +1,23 @@
 // 在线更新界面：「设置」页的版本与检查按钮、首页新版本提示卡片和更新弹层。
 // 原生层负责下载、校验与调用系统安装器，进度经 window.qingUpdate 回传；挑选逻辑在 appUpdate.js。
-import { pickApkUpdate, parseUpdatePrefs, progressText, formatBytes, shouldAutoCheck, UPDATE_PREFS_KEY } from './appUpdate.js';
+import { pickApkUpdate, parseUpdatePrefs, noteBlocks, noteInline, progressText, formatBytes, shouldAutoCheck, UPDATE_PREFS_KEY } from './appUpdate.js';
 import { get, message, ask } from './dom.js';
 import { t } from './i18n.js';
+
+function element(tag, className = '', text = '') {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+/** 行内片段逐个建节点（textContent），发布说明里的 HTML 不会被执行。 */
+function inline(node, text) {
+  for (const part of noteInline(text)) {
+    node.append(part.code || part.strong ? element(part.code ? 'code' : 'strong', '', part.text) : document.createTextNode(part.text));
+  }
+  return node;
+}
 
 export function createUpdateView({ rpc, storage = localStorage, now = () => Date.now() }) {
   let prefs = parseUpdatePrefs(storage.getItem(UPDATE_PREFS_KEY));
@@ -34,12 +49,38 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
     if (found) get('update-card-version').textContent = found.version;
   }
 
+  // 下载进度会频繁重绘弹窗，说明正文只在内容或语言变化时重建。
+  let paintedNotes = null;
+  function renderNotes(text) {
+    const empty = t('此版本没有更新说明。');
+    const key = text || '\0' + empty;
+    if (key === paintedNotes) return;
+    paintedNotes = key;
+    const box = get('update-notes');
+    box.replaceChildren();
+    box.scrollTop = 0;
+    if (!text) {
+      box.append(element('p', 'update-notes-empty', empty));
+      return;
+    }
+    for (const block of noteBlocks(text)) {
+      if (block.type === 'heading') box.append(inline(element(block.level <= 3 ? 'h3' : 'h4'), block.text));
+      else if (block.type === 'paragraph') box.append(inline(element('p'), block.text));
+      else if (block.type === 'code') box.append(element('pre', '', block.text));
+      else {
+        const list = element(block.ordered ? 'ol' : 'ul');
+        for (const item of block.items) list.append(inline(element('li'), item));
+        box.append(list);
+      }
+    }
+  }
+
   function renderDialog() {
     if (!found) return;
     const size = found.size ? ' · ' + formatBytes(found.size) : '';
     const channel = found.prerelease ? t(' · 测试版') : '';
     get('update-dialog-version').textContent = t('新版本 {version}，当前 {current}', { version: found.version, current: current?.name ?? '' }) + size + channel;
-    get('update-notes').textContent = found.notes || t('此版本没有更新说明。');
+    renderNotes(found.notes || '');
     const busy = phase === 'downloading' || phase === 'installing';
     get('update-progress').hidden = phase !== 'downloading';
     get('update-skip').hidden = busy || phase === 'ready';
@@ -50,7 +91,8 @@ export function createUpdateView({ rpc, storage = localStorage, now = () => Date
   }
 
   function render() {
-    get('update-version').textContent = current ? t('当前版本 {version}', { version: current.name }) : '';
+    get('update-version').textContent = current?.name ?? '';
+    get('update-version').title = current ? t('当前版本 {version}', { version: current.name }) : '';
     get('update-check').disabled = !current || phase === 'checking';
     get('update-auto').checked = prefs.auto;
     paintStatus();

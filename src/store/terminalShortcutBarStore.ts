@@ -1,15 +1,10 @@
 import { create } from 'zustand'
 import {
   defaultShortcutBarState,
-  defaultShortcutLayout,
-  isDefaultShortcutLayout,
   moveShortcutKey,
   parseShortcutBarState,
-  removeAllBuiltinKeys,
   reorderShortcutKey,
-  removeBuiltinKey,
   removeCustomKey,
-  restoreBuiltinKey,
   saveCustomKey,
   serializeShortcutBarState,
   toggleShortcutKeyHidden,
@@ -29,7 +24,7 @@ function load(): TerminalShortcutBarState {
 
 function persist(state: TerminalShortcutBarState) {
   try {
-    if (!state.collapsed && !state.custom.length && isDefaultShortcutLayout(state)) {
+    if (!state.collapsed && !state.custom.length) {
       localStorage.removeItem(TERMINAL_SHORTCUT_BAR_KEY)
     } else {
       localStorage.setItem(TERMINAL_SHORTCUT_BAR_KEY, serializeShortcutBarState(state))
@@ -40,7 +35,7 @@ function persist(state: TerminalShortcutBarState) {
 }
 
 function pick(state: TerminalShortcutBarState): TerminalShortcutBarState {
-  return { order: state.order, hidden: state.hidden, removed: state.removed, custom: state.custom, collapsed: state.collapsed }
+  return { order: state.order, hidden: state.hidden, custom: state.custom, collapsed: state.collapsed }
 }
 
 type Store = TerminalShortcutBarState & {
@@ -48,7 +43,6 @@ type Store = TerminalShortcutBarState & {
   managerOpen: boolean
   openManager: () => void
   closeManager: () => void
-  removeAllBuiltinKeys: () => void
   setCollapsed: (collapsed: boolean) => void
   toggleCollapsed: () => void
   toggleHidden: (key: string) => void
@@ -56,11 +50,7 @@ type Store = TerminalShortcutBarState & {
   reorder: (source: string, target: string, position: 'before' | 'after') => void
   saveCustomKey: (raw: unknown) => void
   removeCustomKey: (id: string) => void
-  removeBuiltinKey: (key: string) => void
-  restoreBuiltinKey: (key: string) => void
-  /** 恢复内置键的默认顺序与可见性（含已删除的内置键），保留自定义键。 */
-  resetLayout: () => void
-  /** 整体替换（导入配置 / 恢复默认 / 其他窗口同步）。 */
+  /** 整体替换（导入配置 / 恢复默认配置 / 其他窗口同步）。 */
   replace: (raw: unknown) => void
 }
 
@@ -75,7 +65,6 @@ export const useTerminalShortcutBarStore = create<Store>((set, get) => {
     managerOpen: false,
     openManager: () => set({ managerOpen: true }),
     closeManager: () => set({ managerOpen: false }),
-    removeAllBuiltinKeys: () => update(removeAllBuiltinKeys(pick(get()))),
     setCollapsed: collapsed => update({ ...pick(get()), collapsed }),
     toggleCollapsed: () => update({ ...pick(get()), collapsed: !get().collapsed }),
     toggleHidden: key => update(toggleShortcutKeyHidden(pick(get()), key)),
@@ -83,9 +72,6 @@ export const useTerminalShortcutBarStore = create<Store>((set, get) => {
     reorder: (source, target, position) => update(reorderShortcutKey(pick(get()), source, target, position)),
     saveCustomKey: raw => update(saveCustomKey(pick(get()), raw)),
     removeCustomKey: id => update(removeCustomKey(pick(get()), id)),
-    removeBuiltinKey: key => update(removeBuiltinKey(pick(get()), key)),
-    restoreBuiltinKey: key => update(restoreBuiltinKey(pick(get()), key)),
-    resetLayout: () => update({ ...defaultShortcutLayout(get().custom), removed: [], collapsed: get().collapsed }),
     replace: raw => update(parseShortcutBarState(raw)),
   }
 })

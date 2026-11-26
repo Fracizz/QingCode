@@ -85,17 +85,13 @@ translateDocument(document.body);
 // 语言切换：立即生效。原生 WebView 拦截了页面内跳转，location.reload() 不会真正重载，
 // 因此改为就地重译静态文案并重绘各视图，同时保留当前页面与终端会话。
 function renderLanguageChoice() {
-  const choice = loadLocalePreference(localStorage);
-  for (const button of document.querySelectorAll('#app-language [data-locale]')) {
-    button.setAttribute('aria-checked', String(button.dataset.locale === choice));
-  }
+  get('app-language').value = loadLocalePreference(localStorage);
 }
 renderLanguageChoice();
-get('app-language').addEventListener('click', event => {
-  const button = event.target.closest?.('[data-locale]');
-  if (!button || button.getAttribute('aria-checked') === 'true') return;
-  saveLocalePreference(localStorage, button.dataset.locale);
-  renderLanguageChoice();
+get('app-language').addEventListener('change', () => {
+  const choice = get('app-language').value;
+  if (choice === loadLocalePreference(localStorage)) return;
+  saveLocalePreference(localStorage, choice);
   applyLocale(initLocale(localStorage, navigator));
 });
 
@@ -340,6 +336,7 @@ const dashboard = createDashboardView({
     list: homeOverview.list(),
     attention: attentionTracker.attention,
     visible: homeSessionsEnabled() && homeSessionsSupported && !!profile && hostState(profile) === 'online',
+    settled: !homeSessionsEnabled() || homeSessionsSettled === profile?.id,
   }),
   openSession: session => openOverviewSession(session, homeOverview),
   copyProjectPath: async item => {
@@ -459,6 +456,8 @@ let homeSessionsTimer = null;
 let homeSessionsLoading = false;
 let homeSessionsEpoch = 0;
 let homeSessionsSupported = false;
+// 已读到会话结果（含失败与旧电脑端）的电脑；读到之前首页不决定是否居中，避免卡片先居中再跳回顶部。
+let homeSessionsSettled = null;
 const homeOverview = createSessionOverview({
   root: get('home-session-overview'),
   limit: HOME_SESSIONS_LIMIT,
@@ -469,6 +468,7 @@ const homeOverview = createSessionOverview({
     projects: () => projects,
     history: () => projectHistory(),
     current: () => null,
+    order: () => drawer.sidebarProjects(),
     selected: () => null,
     lastSession: projectId => lastSessionOf(projectId),
     busy: () => busy,
@@ -554,17 +554,22 @@ async function refreshHomeSessions() {
     if (epoch !== homeSessionsEpoch || profile?.id !== address) return;
     homeSessionsSupported = !!capabilities?.features.includes('all_sessions');
     if (!homeSessionsSupported) {
+      homeSessionsSettled = address;
       homeOverview.clear();
       return;
     }
     const list = await remote('sessions', { desktop: true }, address);
     if (epoch !== homeSessionsEpoch || profile?.id !== address || busy) return;
     homeOverview.setError('');
+    homeSessionsSettled = address;
     // 首页不显示任何终端，停下的会话都算看不到；先更新标记，列表重绘时「待处理」即为最新。
     updateSessionAttention(attentionTracker, list, null);
     homeOverview.setList(list, address);
   } catch (error) {
-    if (epoch === homeSessionsEpoch && profile?.id === address) homeOverview.setError(error.message);
+    if (epoch === homeSessionsEpoch && profile?.id === address) {
+      homeSessionsSettled = address;
+      homeOverview.setError(error.message);
+    }
   } finally {
     homeSessionsLoading = false;
     renderHomeSessions();
@@ -681,9 +686,9 @@ function renderLatency() {
   if (isFreshLatency(snapshot, latencyFlashedAt)) {
     latencyFlashedAt = snapshot.checkedAt;
     const targets = terminalScreen.hidden
-      ? [get('active-host').querySelector('.dot'), get('home-latency')]
+      ? [get('active-host').querySelector('.dot'), get('home-latency'), get('app-head-title').querySelector('.dot'), document.querySelector('.connection-card[data-current="true"] .dot')]
       : [get('terminal-dot'), get('terminal-latency')];
-    for (const element of targets) replayAnimation(element, 'ping-flash');
+    for (const element of targets) if (element) replayAnimation(element, 'ping-flash');
   }
   // 状态圆点已表示与电脑的连接，副行只显示数值，给项目名和连接名留出空间。
   get('terminal-latency').textContent = value;
@@ -729,7 +734,7 @@ function showPage(next) {
   shownScreen = 'dashboard';
   // 旧画面（终端或上一页）以快照退出，同一页刷新不做过渡。
   let placed = Promise.resolve();
-  if (changed) placed = swapScreen(placeScreen, direction, fromTerminal ? 'screen' : 'page');
+  if (changed) placed = swapScreen(placeScreen, direction);
   else placeScreen();
   syncLatency();
   if (next === 'home') {
@@ -747,7 +752,7 @@ function returnToDashboard(next = page) {
 }
 
 window.qingBack = () => {
-  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
+  for (const id of ['select-dialog', 'gesture-guide', 'update-dialog', 'scan-dialog', 'confirm-dialog', 'file-detail-dialog', 'files-dialog', 'rename-session-dialog', 'pair-confirm', 'host-dialog', 'pair-dialog', 'custom-key-dialog', 'key-layout-dialog', 'keys-dialog', 'settings-dialog', 'session-dialog', 'session-actions-dialog', 'project-actions-dialog', 'session-drawer', 'new-session-dialog', 'image-dialog', 'link-dialog', 'share-dialog', 'terminal-menu-dialog', 'expanded-dialog', 'submissions-dialog', 'reader-dialog']) {
     const dialog = get(id);
     if (!dialog.open || (id === 'session-drawer' && drawer.isDocked())) continue;
     if (id === 'files-dialog') return files.back();
@@ -1069,9 +1074,44 @@ function draftKey(id) {
   return profile.id + '/' + id;
 }
 
+// 多行时左侧键盘与图片按钮改为上下排列，输入框变宽。只有变宽后仍需多行才竖排；
+// 并排时放不下一行、变宽后放得下，就保持并排并让输入框长高，换行立刻可见，也不会来回切换。
+const STACKED_MIN_HEIGHT = 92; // 两个 44px 按钮 + 4px 行距
+// 离屏测量用的文本框：在它上面量换行和高度，输入框本身只在竖排状态真正变化时才改布局。
+// 每次输入都切换输入框的网格位置和宽度，会让部分安卓输入法重建输入连接，吞掉刚输入的空格等按键。
+let composeMeasurer = null;
+function measureCompose(width) {
+  if (!composeMeasurer) {
+    composeMeasurer = document.createElement('textarea');
+    composeMeasurer.setAttribute('aria-hidden', 'true');
+    composeMeasurer.tabIndex = -1;
+    composeMeasurer.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;overflow:hidden;resize:none;height:44px;min-height:0;';
+    document.body.append(composeMeasurer);
+  }
+  const style = getComputedStyle(compose);
+  for (const name of ['boxSizing', 'font', 'lineHeight', 'letterSpacing', 'padding', 'border', 'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize']) composeMeasurer.style[name] = style[name];
+  composeMeasurer.style.width = width + 'px';
+  composeMeasurer.value = compose.value;
+  return composeMeasurer.scrollHeight;
+}
+
 function resizeComposer() {
-  compose.style.height = '44px';
-  compose.style.height = Math.min(compose.scrollHeight, 98) + 'px';
+  const form = get('compose-form');
+  const width = compose.offsetWidth;
+  if (width) {
+    const wasStacked = form.dataset.stacked === 'true';
+    // 竖排时输入框多占一列（44px 按钮 + 列间距），据此换算单行布局下的宽度。
+    const extra = 44 + (parseFloat(getComputedStyle(form).columnGap) || 0);
+    const narrow = wasStacked ? width - extra : width;
+    const wide = measureCompose(narrow + extra);
+    const stacked = wide > 44;
+    const height = stacked ? Math.min(Math.max(wide, STACKED_MIN_HEIGHT), 98) : Math.min(measureCompose(narrow), 98);
+    if (stacked !== wasStacked) {
+      if (stacked) form.dataset.stacked = 'true';
+      else delete form.dataset.stacked;
+    }
+    if (compose.style.height !== height + 'px') compose.style.height = height + 'px';
+  }
   updateComposerActions();
   saveDraft();
   if (get('expanded-dialog').open && document.activeElement !== get('expanded-compose')) get('expanded-compose').value = compose.value;
@@ -1146,7 +1186,7 @@ for (const [id, action] of Object.entries({
   menu.close();
   action();
 });
-get('review-submission').addEventListener('click', showSubmissions);
+get('review-submission').addEventListener('click', () => { showSubmissions(); composeStatus.dismiss(); });
 get('expanded-compose').addEventListener('input', () => { compose.value = get('expanded-compose').value; resizeComposer(); });
 get('expanded-compose').addEventListener('compositionstart', () => { editorComposing = true; cancelKeyRepeats(); updateComposerActions(); });
 get('expanded-compose').addEventListener('compositionend', () => { editorComposing = false; updateComposerActions(); });
@@ -1469,7 +1509,12 @@ function makeTerminal() {
     canQuote: () => terminalReady && !!term?.modes.bracketedPasteMode,
   });
   disposeTouchScroll = attachTerminalTouchScroll(term.element, {
-    onLongPress: point => terminalSelection?.start(point),
+    // 系统长按菜单已被拦下，它自带的振动也随之没了：进入选择时补一次触感反馈。
+    onLongPress: point => {
+      if (!terminalSelection) return;
+      void rpc('haptic').catch(() => {});
+      terminalSelection.start(point);
+    },
     // 只读历史与普通终端可惯性滚动；操作程序列表时松手即停，不继续向程序发送滚轮。
     canInertia: () => terminalHistory?.isOpen() || !!term && term.buffer.active.type === 'normal' && term.modes.mouseTrackingMode === 'none',
     // 程序开了鼠标上报：按字符行高把手指位移换成整格滚轮，滑动时顺带露出右侧变速滑块。
@@ -2468,9 +2513,9 @@ function sendInput(value, { raw = false, enter = '', onComplete, wheelDirection 
 }
 
 /** 按键片段逐次写入终端（不合并缓冲、不叠加修饰键），用于清除输入等长按键序列。 */
-function sendKeys(parts) {
+function sendKeys(parts, options) {
   if (!terminalReady) return false;
-  if (!terminalInput.enqueueKeys(parts, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease })) {
+  if (!terminalInput.enqueueKeys(parts, { id: selected, address: profile?.id, epoch: viewEpoch, lease: currentLease }, options)) {
     get('terminal-status').textContent = t('输入过长，请分段粘贴。');
     return false;
   }
@@ -2860,14 +2905,16 @@ for (const container of [get('special-keys'), get('overflow-keys')]) {
   });
 }
 
-/** 自定义键：把文本直接发给终端（不经过手机草稿），需要时隔一会儿再发回车。 */
+/** 自定义键：把文本直接发给终端（不经过手机草稿），需要时隔一会儿再发回车；特殊按键逐键单独写入。 */
 function pressCustomKey(keyButton) {
   if (keyButton.disabled || composing || editorComposing || !terminalReady) return;
   const def = shortcutBar.customKey(keyButton.dataset.customId);
   if (!def) return;
   clearModifiers();
-  const { data, enter } = customKeyInput(def);
-  sendInput(data, { raw: true, enter });
+  const { data, enter, keys } = customKeyInput(def, { applicationCursor: term?.modes.applicationCursorKeysMode });
+  // 按键间隔足够长，Esc 后的字符不会被 TUI 当作 Alt 组合。
+  if (keys) sendKeys(keys, { gap: 60 });
+  else sendInput(data, { raw: true, enter });
 }
 
 function pressKey(keyButton) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FOLLOW_FONT_MAX, FOLLOW_FONT_MIN, followFitFontSize, gridForCell } from './terminalFollowFit'
+import { FOLLOW_FONT_MAX, FOLLOW_FONT_MIN, followFitFontSize, followTerminalGrid, gridForCell } from './terminalFollowFit'
 
 /** 字格近似按字号线性缩放：14px 时 8.4 x 17。 */
 const cellAt = (font: number) => ({ width: font * 0.6, height: font * (17 / 14) })
@@ -68,5 +68,35 @@ describe('followFitFontSize', () => {
     expect(followFitFontSize({
       area: { width: 0, height: 500 }, grid: { cols: 60, rows: 25 }, cell: cellAt(14), fontSize: 14, baseFontSize: 14,
     })).toBe(14)
+  })
+})
+
+describe('followTerminalGrid', () => {
+  it('keeps the desktop cols when following a narrower phone grid so widening back never reflows', () => {
+    expect(followTerminalGrid({ cols: 45, rows: 30 }, { cols: 194, rows: 40 })).toEqual({ cols: 194, rows: 30 })
+  })
+
+  it('widens to a tablet grid that is wider than the desktop pane', () => {
+    expect(followTerminalGrid({ cols: 250, rows: 50 }, { cols: 194, rows: 40 })).toEqual({ cols: 250, rows: 50 })
+  })
+
+  it('falls back to the remote grid without a desktop measurement', () => {
+    expect(followTerminalGrid({ cols: 45, rows: 30 }, undefined)).toEqual({ cols: 45, rows: 30 })
+  })
+})
+
+describe('followFitFontSize with maxFont at the user font', () => {
+  it('does not enlarge a phone grid that already fits', () => {
+    const cell = cellAt(14)
+    expect(followFitFontSize({
+      area: { width: 1200, height: 700 }, grid: { cols: 45, rows: 25 }, cell, fontSize: 14, baseFontSize: 14, maxFont: 14,
+    })).toBe(14)
+  })
+
+  it('still shrinks when the remote rows do not fit', () => {
+    const cell = cellAt(14)
+    expect(followFitFontSize({
+      area: { width: 1200, height: 400 }, grid: { cols: 45, rows: 40 }, cell, fontSize: 14, baseFontSize: 14, maxFont: 14,
+    })).toBeLessThan(14)
   })
 })

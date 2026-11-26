@@ -61,7 +61,7 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
     await page.waitForFunction(() => typeof window.qingLink === 'function')
     await page.evaluate(() => {
       window.__started = []
-      document.addEventListener('animationstart', event => window.__started.push({ name: event.animationName, id: event.target.id, pseudo: event.pseudoElement, className: event.target.className }))
+      document.addEventListener('animationstart', event => window.__started.push({ name: event.animationName, id: event.target.id, parent: event.target.parentElement?.id, pseudo: event.pseudoElement, className: event.target.className }))
       window.qingLink(window.__mobileFixture.link('192.168.1.8', 48764))
     })
     await page.fill('#pair-code', 'A8z2D3')
@@ -75,7 +75,10 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.waitForFunction(() => window.__started.some(item => item.name === 'ping-value' && item.id === 'home-latency'), undefined, { timeout: 13000 })
       await page.waitForTimeout(600)
       const flashes = await started()
-      assert.equal(flashes.filter(item => item.name === 'ping-dot' && String(item.className).includes('dot')).length, 1)
+      // 顶栏电脑徽章与左上角紧凑标题的圆点各闪一次（紧凑标题收起前透明，但保持同步）。
+      for (const parent of ['active-host', 'app-head-title']) {
+        assert.equal(flashes.filter(item => item.name === 'ping-dot' && item.parent === parent).length, 1, parent)
+      }
       assert.equal(flashes.filter(item => item.name === 'ping-value' && item.id === 'home-latency').length, 1)
       // 自动化窗口被节流时 animationend 会延后，等类名清掉即可。
       await page.waitForFunction(() => !document.querySelector('#active-host .dot').classList.contains('ping-flash'), undefined, { timeout: 13000 })
@@ -107,6 +110,20 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       await page.click('#dashboard-nav [data-page="project"]')
       await page.waitForFunction(() => !document.querySelector('#project-screen').hidden && document.querySelector('#dashboard').dataset.direction === 'forward')
       await page.waitForFunction(() => !document.querySelector('#project-screen').getAnimations({ subtree: true }).length)
+      await started()
+    })
+
+    await step('the settings button enters together with the connection page', async () => {
+      // 顶栏不能单独成层：否则新的设置按钮会盖在上一页快照之上，与项目页刷新按钮交叠。
+      const headName = await page.evaluate(() => {
+        document.querySelector('#dashboard-nav [data-page="connection"]').click()
+        return getComputedStyle(document.querySelector('.app-head')).viewTransitionName
+      })
+      assert.equal(headName, 'none')
+      await page.waitForFunction(() => ['page-in', 'lift-in'].every(name => window.__started.some(item => item.id === 'open-settings' && item.name === name)))
+      await page.waitForFunction(() => !document.querySelector('#open-settings').getAnimations().length)
+      await page.click('#dashboard-nav [data-page="project"]')
+      await page.waitForFunction(() => !document.querySelector('#project-screen').hidden && !document.querySelector('#project-screen').getAnimations({ subtree: true }).length)
       await started()
     })
 
@@ -213,7 +230,8 @@ export async function run({ spaceId, baseUrl = 'http://127.0.0.1:38439', artifac
       const flashes = await started()
       assert.equal(flashes.filter(item => item.name === 'ping-dot' && item.id === 'terminal-dot').length, 1)
       assert.equal(flashes.filter(item => item.name === 'ping-value' && item.id === 'terminal-latency').length, 1)
-      assert.equal(await page.evaluate(() => document.querySelector('#terminal-dot').classList.contains('ping-flash')), false)
+      // 自动化窗口被节流时 animationend 会延后，等类名清掉即可（与工作台那一步一致）。
+      await page.waitForFunction(() => !document.querySelector('#terminal-dot').classList.contains('ping-flash'), undefined, { timeout: 13000 })
       const requests = await page.evaluate(() => { window.__mobileFixture.state.latencyError = '模拟探测失败'; return window.__mobileFixture.state.latencyRequests.length })
       await page.waitForFunction(count => window.__mobileFixture.state.latencyRequests.length > count, requests, { timeout: 13000 })
       await page.waitForTimeout(600)

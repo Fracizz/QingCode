@@ -3,7 +3,8 @@
 
 use super::daemon::{daemon_downgrade_retry_ready, ensure_remote_daemon};
 use super::download::{
-    locate_local_server_binary, locate_local_server_binary_with, server_manifest_path,
+    exclude_unverified_server_binary, locate_local_server_binary, locate_local_server_binary_with,
+    server_manifest_path,
 };
 use super::install_cache;
 use super::paths::{
@@ -28,6 +29,21 @@ use qingcode_server::SERVER_VERSION;
 /// No project state directory, project serve process, or legacy cleanup is
 /// needed on the shared-service path.
 pub(super) async fn prepare_shared_daemon(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+    stale: super::daemon::StaleDaemon,
+) -> Result<super::host_runtime::PreparedDaemon, String> {
+    // 无清单的本地旧版被远端核对否决后已被排除，重新定位一次即可改用下载或其他目录。
+    match prepare_shared_daemon_once(manager, root, app, stale).await {
+        Err(error) if is_stale_unverified_error(&error) => {
+            prepare_shared_daemon_once(manager, root, app, stale).await
+        }
+        other => other,
+    }
+}
+
+async fn prepare_shared_daemon_once(
     manager: &SshManager,
     root: &RegisteredRoot,
     app: Option<&AppHandle>,
@@ -75,7 +91,7 @@ pub(super) async fn prepare_shared_daemon(
             ));
         }
     }
-    verify_remote_server_version(manager, root, &remote_bin).await?;
+    verify_remote_server_version(manager, root, &remote_bin, &local_binary, &sha256).await?;
     server_status::note_server_activity(
         manager,
         app,
@@ -95,6 +111,18 @@ pub(super) async fn prepare_shared_daemon(
 /// used by a running daemon. In particular this path must never call the normal
 /// same-version upgrade helper, which stops processes to release Windows locks.
 pub(crate) async fn stage_direct_gateway(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<String, String> {
+    match stage_direct_gateway_once(manager, root).await {
+        Err(error) if is_stale_unverified_error(&error) => {
+            stage_direct_gateway_once(manager, root).await
+        }
+        other => other,
+    }
+}
+
+async fn stage_direct_gateway_once(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<String, String> {
@@ -274,7 +302,7 @@ pub(crate) async fn stage_direct_gateway(
     // 有清单的包已在本地核对过版本；无清单的手工二进制（如 exe 旁残留的旧版）
     // 必须在停止运行中的网关之前核对实际版本，否则会用旧程序执行它不认识的子命令。
     if !server_manifest_path(&local_binary).is_file() {
-        verify_remote_server_version(manager, root, &remote_bin).await?;
+        verify_remote_server_version(manager, root, &remote_bin, &local_binary, &sha256).await?;
     }
     Ok(remote_bin)
 }
@@ -837,10 +865,15 @@ fn remote_binary_digest_matches(
 
 /// 摘要可信只表示文件来自本机，exe 旁的文件可能仍来自旧安装。
 /// 所有启动路径还必须检查实际版本，避免旧文件在新版目录中反复部署。
+///
+/// 无清单的本地二进制版本不符时，按摘要排除该文件并返回带
+/// [`STALE_UNVERIFIED_MARKER`] 的错误，调用方据此重新定位（改用下载或其他目录）一次。
 async fn verify_remote_server_version(
     manager: &SshManager,
     root: &RegisteredRoot,
     remote_bin: &str,
+    local_binary: &Path,
+    local_sha256: &str,
 ) -> Result<(), String> {
     let script = windows_host_path(remote_bin)
         .map(|path| {
@@ -857,7 +890,28 @@ async fn verify_remote_server_version(
         &script,
     )
     .await?;
-    validate_remote_server_version(&result)
+    let Err(error) = validate_remote_server_version(&result) else {
+        return Ok(());
+    };
+    if server_manifest_path(local_binary).is_file() {
+        return Err(error);
+    }
+    exclude_unverified_server_binary(local_sha256);
+    Err(stale_unverified_error(&error, local_binary))
+}
+
+/// 无清单本地二进制被远端版本核对否决后附加在错误里的标记。
+const STALE_UNVERIFIED_MARKER: &str = "已排除本地无清单的旧服务程序";
+
+fn stale_unverified_error(error: &str, local_binary: &Path) -> String {
+    format!(
+        "{error}（{STALE_UNVERIFIED_MARKER}：{}）",
+        local_binary.display()
+    )
+}
+
+fn is_stale_unverified_error(error: &str) -> bool {
+    error.contains(STALE_UNVERIFIED_MARKER)
 }
 
 fn validate_remote_server_version(result: &RemoteExecResult) -> Result<(), String> {
@@ -1047,6 +1101,21 @@ async fn discover_or_deploy_server(
     app: Option<&tauri::AppHandle>,
     timer: &mut StageTimer,
 ) -> Result<(ServerEndpoint, String), ServerDeployError> {
+    match discover_or_deploy_server_once(manager, connection_id, root, app, timer).await {
+        Err(error) if is_stale_unverified_error(&error.reason) => {
+            discover_or_deploy_server_once(manager, connection_id, root, app, timer).await
+        }
+        other => other,
+    }
+}
+
+async fn discover_or_deploy_server_once(
+    manager: &SshManager,
+    connection_id: &str,
+    root: &RegisteredRoot,
+    app: Option<&tauri::AppHandle>,
+    timer: &mut StageTimer,
+) -> Result<(ServerEndpoint, String), ServerDeployError> {
     let sftp = manager.open_sftp(connection_id).await?;
     // 发现和启动 serve 都依赖这里的状态文件与日志目录；干净项目必须先创建
     // 并验证项目内目录，再进入 try_discover 或安装流程。
@@ -1089,9 +1158,22 @@ async fn discover_or_deploy_server(
         sha_known_match = remote_matches;
     }
 
+    // 发现阶段只查本地；若找到的是无清单的手工二进制而自动下载已开启，
+    // 改走完整定位，让当前版本的下载优先于版本未知的残留文件。
     let (arch, local_binary) = match local_candidate {
-        Some(local) => local,
-        None => locate_local_server_binary(manager, root).await?,
+        Some(local)
+            if server_manifest_path(&local.1).is_file()
+                || !manager.server_auto_download_for_root(&root.uri) =>
+        {
+            local
+        }
+        previous => {
+            let located = locate_local_server_binary(manager, root).await?;
+            if previous.as_ref().map(|local| &local.1) != Some(&located.1) {
+                sha_known_match = false;
+            }
+            located
+        }
     };
     let (home, install_dir) = resolve_install_location(manager, &sftp, root, connection_id).await?;
     let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
@@ -1139,7 +1221,7 @@ async fn discover_or_deploy_server(
     } else if !sha_known_match {
         timer.mark("比对(免上传)");
     }
-    verify_remote_server_version(manager, root, &remote_bin)
+    verify_remote_server_version(manager, root, &remote_bin, &local_binary, &local_sha256)
         .await
         .map_err(ServerDeployError::permanent)?;
     // 新版本摘要可信后才清理旧项目目录；清理过程不会执行旧二进制。放在启动
