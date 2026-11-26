@@ -28,6 +28,12 @@ export interface SessionMeta {
   ephemeral?: boolean
 }
 
+/** Thread 的 model / reasoningEffort 是「当前配置」，不是逐轮遥测。 */
+export interface ThreadConfig {
+  model?: string | null
+  reasoningEffort?: string | null
+}
+
 export function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -230,7 +236,7 @@ export function buildTurn(
   }
 }
 
-export function buildThread(meta: SessionMeta, turns: Json[] = []): Json {
+export function buildThread(meta: SessionMeta, turns: Json[] = [], config: ThreadConfig = {}): Json {
   const createdAt = meta.createdAt ?? nowSeconds()
   const updatedAt = meta.updatedAt ?? createdAt
   return {
@@ -245,8 +251,8 @@ export function buildThread(meta: SessionMeta, turns: Json[] = []): Json {
     projectId: null,
     historyMode: 'legacy',
     modelProvider: 'anthropic',
-    model: null,
-    reasoningEffort: null,
+    model: config.model ?? null,
+    reasoningEffort: config.reasoningEffort ?? null,
     createdAt,
     updatedAt,
     recencyAt: null,

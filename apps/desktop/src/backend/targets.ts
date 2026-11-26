@@ -23,7 +23,8 @@ import type {
 } from './types'
 
 function agentOf(params: unknown): AgentKind {
-  return isRecord(params) && params.agent === 'claude' ? 'claude' : 'codex'
+  const value = isRecord(params) ? params.agent : undefined
+  return value === 'claude' ? 'claude' : value === 'pi' ? 'pi' : 'codex'
 }
 
 export interface TargetManagerOptions {
@@ -150,7 +151,7 @@ export class TargetManager {
         remember: false,
         codexOpened: new Set(),
         everReady: false,
-        lastSeq: { codex: 0, claude: 0 },
+        lastSeq: { codex: 0, claude: 0, pi: 0 },
         lastError: '',
         readyWaiters: [],
       }
@@ -360,7 +361,8 @@ export class TargetManager {
       this.resolveWaiters(session)
       if (session.remember && Object.keys(session.credentials).length > 0) {
         session.remember = false
-        void this.saveSecret(session.id, session.credentials, this.options.userData).catch(() => undefined)
+        // 等保存完成再返回，target.connect 回包后渲染进程刷新列表即可看到"已保存"。
+        await this.saveSecret(session.id, session.credentials, this.options.userData).catch(() => undefined)
       }
     } catch (err) {
       if (generation !== session.generation || !session.desired || session.retryTimer) return

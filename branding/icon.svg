@@ -1,10 +1,10 @@
-<!-- QingCode Next 应用图标母版：沿用旧版 QingCode 的炭黑底 + 厚切尖括号 + 光标横条，做扁平精修。
-     512 画布、圆角 112；尖括号收窄并整体居中留白，横条变细与尖括号同宽，转角统一小圆角；
-     底块加一圈极淡描边，避免在深色任务栏 / 进场页上糊成一片。
+<!-- QingCode Next 应用图标母版：直接沿用旧版 QingCode 图标（炭黑底 + 厚切尖括号 + 64px 青色光标条），只做打磨：
+     光标条去掉渐变改纯色，整体下移 6px 让视觉重心落在正中，其余几何与旧版一致。
      改动后运行 pnpm icons 重新生成各平台图标，并同步 Logo.tsx 与 index.html 进场页里的内联 SVG。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="112" fill="#1C1F22"/>
-  <rect x="4" y="4" width="504" height="504" rx="108" stroke="#33383D" stroke-width="8"/>
-  <path d="M136 112H252L372 214L252 316H136L256 214Z" fill="#F3F4F6" stroke="#F3F4F6" stroke-width="14" stroke-linejoin="round"/>
-  <rect x="136" y="358" width="236" height="46" rx="8" fill="#4ECDB5"/>
+  <rect width="512" height="512" rx="112" fill="#121415"/>
+  <g transform="translate(0 6)">
+    <rect x="96" y="344" width="320" height="64" rx="12" fill="#4ECDB5"/>
+    <path fill="#F3F6F8" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
+  </g>
 </svg>

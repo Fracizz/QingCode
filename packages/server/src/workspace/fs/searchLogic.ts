@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { FsSearchMatch, FsSearchResultEvt } from '@qn/protocol'
+import { normalizePathForCompare } from '../paths'
 import { truncateText } from './logic'
 
 export const BATCH_MAX_MATCHES = 200
@@ -66,12 +67,14 @@ export class SearchBatcher {
   private total = 0
   private lastFlushMs: number
   private finished = false
+  private readonly seen = new Set<string>()
 
   constructor(
     private readonly searchId: string,
     private readonly maxResults: number,
     private readonly emit: (evt: FsSearchResultEvt) => void,
     private readonly now: () => number = () => Date.now(),
+    private readonly platform: string = process.platform,
   ) {
     this.lastFlushMs = this.now()
   }
@@ -83,6 +86,12 @@ export class SearchBatcher {
   /** 返回 true 表示已到 maxResults，调用方应立即停止遍历。 */
   push(match: FsSearchMatch): boolean {
     if (this.finished || this.total >= this.maxResults) return true
+    // 文件名模式只按路径去重；Windows 下大小写与斜杠差异视为同一文件。
+    if (match.line === undefined) {
+      const key = normalizePathForCompare(match.path, this.platform)
+      if (this.seen.has(key)) return false
+      this.seen.add(key)
+    }
     this.batch.push(match)
     this.total++
     if (shouldFlushBatch(this.batch.length, this.now() - this.lastFlushMs)) this.flush()

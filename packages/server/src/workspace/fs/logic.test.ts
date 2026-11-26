@@ -37,6 +37,9 @@ describe('绝对路径与参数校验', () => {
     expect(isAbsolutePath('C:\\Users\\a.txt')).toBe(true)
     expect(isAbsolutePath('D:/work/a.ts')).toBe(true)
     expect(isAbsolutePath('\\\\server\\share\\a.ts')).toBe(true)
+    expect(isAbsolutePath('\\\\?\\C:\\Users\\a.txt')).toBe(true)
+    expect(isAbsolutePath('\\\\?\\UNC\\server\\share\\a.txt')).toBe(true)
+    expect(isAbsolutePath('//server/share/a.ts')).toBe(true)
     expect(isAbsolutePath('relative/a.ts')).toBe(false)
     expect(isAbsolutePath('C:a.ts')).toBe(false)
     expect(isAbsolutePath('')).toBe(false)
@@ -160,6 +163,38 @@ describe('二进制判断与 UTF-8 边界', () => {
     expect(truncateText('a'.repeat(301))).toHaveLength(300)
     expect(indexOfText('Hello World', 'hello', false)).toBe(0)
     expect(indexOfText('Hello World', 'hello', true)).toBe(-1)
+  })
+})
+
+describe('Windows 路径与 BOM 参数', () => {
+  it('盘符根、UNC 共享根、长路径与主目录大小写差异都拒绝删除', () => {
+    const home = 'C:\\Users\\Administrator'
+    expect(isProtectedPath('C:\\', home, 'win32')).toBe(true)
+    expect(isProtectedPath('c:/', home, 'win32')).toBe(true)
+    expect(isProtectedPath('\\\\?\\C:\\', home, 'win32')).toBe(true)
+    expect(isProtectedPath('D:\\', home, 'win32')).toBe(true)
+    expect(isProtectedPath('\\\\server\\share', home, 'win32')).toBe(true)
+    expect(isProtectedPath('\\\\?\\UNC\\server\\share', home, 'win32')).toBe(true)
+    expect(isProtectedPath('\\\\server\\share\\work', home, 'win32')).toBe(false)
+    expect(isProtectedPath(home, home, 'win32')).toBe(true)
+    expect(isProtectedPath('c:/users/administrator\\', home, 'win32')).toBe(true)
+    expect(isProtectedPath('C:/Users/Administrator/work', home, 'win32')).toBe(false)
+    expect(isProtectedPath('/', '/somewhere/else', 'linux')).toBe(true)
+  })
+
+  it('fs.write 支持 bom 与 sourceEncoding，非法值报 params', () => {
+    expect(
+      parseWriteParams({ path: '/a', content: 'x', bom: true, sourceEncoding: 'utf16le' }),
+    ).toMatchObject({ bom: true, sourceEncoding: 'utf16le' })
+    expect(
+      parseWriteParams({ path: '/a', content: 'x', bom: false, sourceEncoding: 'utf16be' }),
+    ).toMatchObject({ bom: false, sourceEncoding: 'utf16be' })
+    expect(codeOf(() => parseWriteParams({ path: '/a', content: 'x', bom: 'yes' }))).toBe(
+      'params',
+    )
+    expect(
+      codeOf(() => parseWriteParams({ path: '/a', content: 'x', sourceEncoding: 'utf32' })),
+    ).toBe('params')
   })
 })
 

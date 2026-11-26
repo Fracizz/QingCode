@@ -94,6 +94,13 @@ describe('标签工厂与去重', () => {
     expect(upsertTab([], createTab(fileReq(), 'f3')).created).toBe(true)
   })
 
+  it('错误态但有未保存改动时不重试，避免丢编辑', () => {
+    const broken: Tab = { ...createTab(fileReq(), 'f1'), status: 'error', content: 'local', dirty: true }
+    const result = upsertTab([broken], createTab(fileReq(), 'f2'))
+    expect(result.retry).toBe(false)
+    expect(result.tabs[0]).toMatchObject({ content: 'local', dirty: true, status: 'error' })
+  })
+
   it('关闭标签后把 activeId 挪到相邻标签', () => {
     const tabs = ['f1', 'f2', 'f3'].map((id) => createTab(fileReq(`/repo/${id}.ts`), id))
     expect(closeTab(tabs, 'f2', 'f2')).toMatchObject({ activeId: 'f3' })
@@ -137,6 +144,32 @@ describe('读取结果合并与错误文案', () => {
     expect(loadedLabel(2 * 1024 * 1024)).toBe('仅显示前 2 MiB')
     expect(loadedLabel(3.5 * 1024 * 1024)).toBe('已加载 3.5 MiB')
     expect(loadedLabel(Number.NaN)).toBe('仅显示前 2 MiB')
+  })
+})
+
+describe('编辑态字段（T25）', () => {
+  it('新标签初始化 savedText / dirty / eol / diskChanged', () => {
+    expect(createTab(fileReq(), 'f1')).toMatchObject({ savedText: '', dirty: false, eol: '\n', diskChanged: false })
+  })
+
+  it('mergeRead 检测 CRLF、归一编辑器文本并重置 dirty / mtime', () => {
+    const dirty = { ...createTab(fileReq(), 'f1'), content: 'local edit\n', dirty: true, diskChanged: true, mtimeMs: 1 }
+    const merged = mergeRead(dirty, readResult({ content: 'a\r\nb\r\n', mtimeMs: 999, truncated: false }), false)
+    expect(merged).toMatchObject({
+      content: 'a\nb\n',
+      savedText: 'a\nb\n',
+      eol: '\r\n',
+      dirty: false,
+      diskChanged: false,
+      mtimeMs: 999,
+      status: 'ready',
+    })
+  })
+
+  it('mergeRead 续读拼接原文片段后统一换行', () => {
+    const first = mergeRead(createTab(fileReq(), 'f1'), readResult({ content: 'a\r\n' }), false)
+    const second = mergeRead(first, readResult({ content: 'b\r\n', offset: 3, length: 3, size: 6, truncated: false }), true)
+    expect(second).toMatchObject({ content: 'a\nb\n', savedText: 'a\nb\n', eol: '\r\n', loadedBytes: 6, truncated: false })
   })
 })
 

@@ -59,3 +59,52 @@ export function diffStat(text: string): { add: number; remove: number } {
   }
   return { add, remove }
 }
+
+const PATCH_HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
+export type PatchResult = { text: string; applied: boolean }
+
+/**
+ * 把统一 diff 应用到旧版本，得到新版本文本（staged / commit 差异的右侧内容）。
+ * 上下文与删除行从原文取，新增行从 diff 取；原文与 hunk 行号对不上时标记 applied:false。
+ */
+export function applyUnifiedDiff(original: string, diff: string): PatchResult {
+  const source = original.replace(/\r\n/g, '\n')
+  const lines = source.split('\n')
+  if (lines[lines.length - 1] === '') lines.pop()
+  if (!diff.trim()) return { text: source, applied: true }
+
+  const out: string[] = []
+  let cursor = 0
+  let inHunk = false
+  let applied = true
+  for (const line of diff.replace(/\r\n/g, '\n').split('\n')) {
+    const header = PATCH_HUNK.exec(line)
+    if (header) {
+      inHunk = true
+      const oldStart = Number(header[1]) || 0
+      const target = Math.min(oldStart > 0 ? oldStart - 1 : 0, lines.length)
+      if (target < cursor) applied = false
+      for (; cursor < target; cursor++) out.push(lines[cursor] ?? '')
+      continue
+    }
+    if (!inHunk) continue
+    // 文件头、无换行标记、分隔空行都不占原文行号。
+    if (line === '' || /^(?:diff |index |---|\+\+\+|\\ )/.test(line)) continue
+    const marker = line[0] ?? ''
+    if (marker === ' ') {
+      if (cursor >= lines.length) applied = false
+      out.push(lines[cursor] ?? '')
+      cursor++
+    } else if (marker === '-') {
+      if (cursor >= lines.length) applied = false
+      cursor++
+    } else if (marker === '+') {
+      out.push(line.slice(1))
+    } else {
+      inHunk = false
+    }
+  }
+  for (; cursor < lines.length; cursor++) out.push(lines[cursor] ?? '')
+  return { text: out.join('\n'), applied }
+}

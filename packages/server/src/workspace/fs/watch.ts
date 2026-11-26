@@ -2,13 +2,23 @@ import { watch, type FSWatcher } from 'node:fs'
 import { promises as fsp } from 'node:fs'
 import type { FsChangedEvt } from '@qn/protocol'
 import type { WorkspaceContext } from '../registry'
+import { dedupePaths, isPathInside, normalizePathForCompare } from '../paths'
 import { MAX_WATCH_PATHS, parseWatchPaths, watchChangedPath } from './logic'
 
 const DEBOUNCE_MS = 200
+// Linux 的 fs.watch 不支持 recursive；Windows/macOS 用递归监听项目根减少句柄。
+const RECURSIVE_PLATFORMS = new Set(['win32', 'darwin'])
+
+type WatchListener = (event: string, filename: string | Buffer | null) => void
+
+interface CreatedWatcher {
+  watcher: FSWatcher
+  recursive: boolean
+}
 
 interface WatchState {
   watchers: FSWatcher[]
-  pending: Set<string>
+  pending: Map<string, string>
   timer?: ReturnType<typeof setTimeout>
 }
 
@@ -32,10 +42,26 @@ function closeAll(state: WatchState): void {
 function stateFor(ctx: WorkspaceContext): WatchState {
   const existing = states.get(ctx)
   if (existing) return existing
-  const state: WatchState = { watchers: [], pending: new Set() }
+  const state: WatchState = { watchers: [], pending: new Map() }
   states.set(ctx, state)
   ctx.onClose(() => closeAll(state))
   return state
+}
+
+/** recursive 不被支持或被系统拒绝时退回单目录监听，至少保留基础刷新能力。 */
+function createWatcher(
+  target: string,
+  isDir: boolean,
+  wantRecursive: boolean,
+  listener: WatchListener,
+): CreatedWatcher {
+  const plain = { persistent: false }
+  if (!isDir || !wantRecursive) return { watcher: watch(target, plain, listener), recursive: false }
+  try {
+    return { watcher: watch(target, { ...plain, recursive: true }, listener), recursive: true }
+  } catch {
+    return { watcher: watch(target, plain, listener), recursive: false }
+  }
 }
 
 /** 每次调用全量替换本连接的监听集合；变化 200ms 去抖后合并推送。 */
@@ -47,7 +73,7 @@ export async function fsWatch(
   const state = stateFor(ctx)
   closeAll(state)
 
-  const unique = [...new Set(paths)]
+  const unique = dedupePaths(paths)
   if (unique.length > MAX_WATCH_PATHS) {
     ctx.log(`fs.watch 路径数 ${unique.length} 超过上限 ${MAX_WATCH_PATHS}，已截断`)
   }
@@ -62,6 +88,8 @@ export async function fsWatch(
       }
     }),
   )
+  const wantRecursive = RECURSIVE_PLATFORMS.has(process.platform)
+  const recursiveRoots: string[] = []
   for (let index = 0; index < targets.length; index++) {
     const target = targets[index]!
     const isDir = dirFlags[index]
@@ -70,25 +98,29 @@ export async function fsWatch(
       ctx.log('fs.watch 跳过不存在的路径')
       continue
     }
+    // 已被上层递归监听覆盖的路径不必再开一个句柄。
+    if (recursiveRoots.some((root) => isPathInside(root, target))) continue
     try {
-      // 不启用 recursive：Linux 不支持，且目录非递归已满足刷新需求。
-      const watcher = watch(target, { persistent: false }, (_event, filename) => {
-        state.pending.add(watchChangedPath(target, filename, isDir))
+      const created = createWatcher(target, isDir, wantRecursive, (_event, filename) => {
+        const changed = watchChangedPath(target, filename, isDir)
+        const key = normalizePathForCompare(changed)
+        if (!state.pending.has(key)) state.pending.set(key, changed)
         if (state.timer !== undefined) clearTimeout(state.timer)
         state.timer = setTimeout(() => {
           state.timer = undefined
           if (state.pending.size === 0) return
-          const changedPaths = [...state.pending]
+          const changedPaths = [...state.pending.values()]
           state.pending.clear()
           const payload: FsChangedEvt = { paths: changedPaths }
           ctx.emit('fs.changed', payload)
         }, DEBOUNCE_MS)
       })
-      watcher.on('error', () => {
+      created.watcher.on('error', () => {
         ctx.log('fs.watch 监听出错，已关闭该监听')
-        watcher.close()
+        created.watcher.close()
       })
-      state.watchers.push(watcher)
+      state.watchers.push(created.watcher)
+      if (created.recursive) recursiveRoots.push(target)
     } catch (err) {
       ctx.log(`fs.watch 无法监听: ${err instanceof Error ? err.message : String(err)}`)
     }

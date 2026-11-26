@@ -17,6 +17,7 @@ import {
   type AgentHostHub,
 } from './codexHost'
 import { createClaudeHost } from './claude/bridge'
+import { createPiHost } from './pi/host'
 import { DirectListener } from './direct/listener'
 import { fsHome, fsList } from './fs'
 import { Logger } from './log'
@@ -115,8 +116,9 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     claude: options.createClaudeHost
       ? options.createClaudeHost(hubFor('claude'), options.version)
       : createClaudeHost(hubFor('claude'), options.version),
+    pi: createPiHost(hubFor('pi'), options.version),
   }
-  const allHosts = [hosts.codex, hosts.claude]
+  const allHosts = [hosts.codex, hosts.claude, hosts.pi]
   const direct = new DirectListener({
     stateDir: paths.stateDir,
     log: (message) => logger.info(message),
@@ -162,7 +164,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     const p = asRecord(params)
     const agent = parseAgent(p?.agent)
     if (agent === null) {
-      return sendErr(session, id, 'params', 'agent 只能是 codex 或 claude')
+      return sendErr(session, id, 'params', 'agent 只能是 codex、claude 或 pi')
     }
     if (session.origin === 'direct' && ADMIN_METHODS.has(method)) {
       return sendErr(session, id, 'forbidden', `直连客户端不能调用 ${method}`)
@@ -183,15 +185,20 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         case 'codex.open': {
           const codexPath = typeof p?.codexPath === 'string' ? p.codexPath : undefined
           const claudePath = typeof p?.claudePath === 'string' ? p.claudePath : undefined
-          const opened = await hosts[agent].open({ codexPath, claudePath })
+          const piPath = typeof p?.piPath === 'string' ? p.piPath : undefined
+          // piPath 是 pi 桥的注入点；AgentOpenOptions 未改，用交叉类型透传额外字段。
+          const openOptions = { codexPath, claudePath, ...(piPath ? { piPath } : {}) }
+          const opened = await hosts[agent].open(openOptions)
+          const capabilities = asRecord((opened as { capabilities?: unknown }).capabilities)
           return sendOk(session, id, {
             initialize: opened.initialize ?? null,
             lastSeq: opened.lastSeq,
-            // codexVersion 是旧字段；agentVersion 对两个 agent 统一给出。
+            // codexVersion 是旧字段；agentVersion 对三个 agent 统一给出。
             ...(agent === 'codex' && opened.codexVersion
               ? { codexVersion: opened.codexVersion }
               : {}),
             ...(opened.agentVersion ? { agentVersion: opened.agentVersion } : {}),
+            ...(capabilities ? { capabilities } : {}),
           })
         }
         case 'codex.attach': {

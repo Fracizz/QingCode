@@ -28,6 +28,12 @@ describe('v2 形状构造', () => {
     })
   })
 
+  it('Thread 可以带上当前生效的模型/推理强度', () => {
+    const thread = buildThread({ id: 's1', cwd: '/work' }, [], { model: 'opus', reasoningEffort: 'high' })
+    expect(thread).toMatchObject({ model: 'opus', reasoningEffort: 'high' })
+    expect(buildThread({ id: 's2', cwd: '/work' })).toMatchObject({ model: null, reasoningEffort: null })
+  })
+
   it('Turn 的 inProgress/failed 状态与 error 字段', () => {
     const active = buildTurn('t1', [userMessageItem('u1', 'hi')], 'inProgress')
     expect(active).toMatchObject({ id: 't1', status: 'inProgress', completedAt: null, error: null })

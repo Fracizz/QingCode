@@ -66,6 +66,41 @@ describe('fs.watch', () => {
     expect(fake.logs.some((line) => line.includes('超过上限'))).toBe(true)
   })
 
+  it.skipIf(!['win32', 'darwin'].includes(process.platform))(
+    'Windows/macOS 递归监听项目根，子目录变化也能收到',
+    async () => {
+      const fake = fakeCtx()
+      const dir = tempDir()
+      const nested = path.join(dir, 'nested')
+      fs.mkdirSync(nested)
+      await watch({ paths: [dir] }, fake.ctx)
+      fs.writeFileSync(path.join(nested, 'deep.txt'), 'x')
+      expect(
+        await waitFor(
+          () =>
+            changedEvents(fake)
+              .flatMap((event) => event.paths)
+              .some((item) => item.toLowerCase().endsWith('deep.txt')),
+          4000,
+        ),
+      ).toBe(true)
+    },
+  )
+
+  it('大小写不同的同一目录不会重复推送变化路径', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const alt = process.platform === 'win32' ? dir.toUpperCase() : dir
+    await watch({ paths: [dir, alt] }, fake.ctx)
+    fs.writeFileSync(path.join(dir, 'same.txt'), 'x')
+    expect(await waitFor(() => changedEvents(fake).length > 0, 3000)).toBe(true)
+    const paths = changedEvents(fake).flatMap((event) => event.paths)
+    const keys = new Set(
+      paths.map((item) => (process.platform === 'win32' ? item.toLowerCase() : item)),
+    )
+    expect(keys.size).toBe(paths.length)
+  })
+
   it('非绝对路径报 params', async () => {
     const fake = fakeCtx()
     const err = await watch({ paths: ['relative'] }, fake.ctx).then(

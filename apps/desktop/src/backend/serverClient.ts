@@ -159,7 +159,7 @@ export class ServerClient {
         this.options.handlers.onEvent(msg.name, msg.payload)
         return
       case 'codex.recv':
-        this.options.handlers.onCodexRecv(msg.seq, msg.msg, (msg as { agent?: AgentKind }).agent === 'claude' ? 'claude' : 'codex')
+        this.options.handlers.onCodexRecv(msg.seq, msg.msg, agentOf((msg as { agent?: unknown }).agent))
         return
       case 'error': {
         const err = new ServerClientError(String(msg.code), msg.message)
@@ -219,6 +219,11 @@ export class DuplexStreamAdapter implements FramedStream {
   destroy(): void {
     this.raw.destroy()
   }
+}
+
+/** codex.recv 的 agent 字段：缺省或未知按 codex（旧 server 不带该字段）。 */
+function agentOf(value: unknown): AgentKind {
+  return value === 'claude' || value === 'pi' ? value : 'codex'
 }
 
 export function toFramedStream(stream: unknown): FramedStream {

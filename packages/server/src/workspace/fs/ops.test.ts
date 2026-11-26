@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { WorkspaceError } from '../registry'
 import { findWorkspaceHandler } from '../index'
 import { fsHandlers } from './index'
+import { encodeText } from './encoding'
 import { MAX_UTF8_READ_BYTES } from './logic'
 import { cleanupAll, fakeCtx, tempDir } from './testUtils'
 
@@ -226,5 +227,132 @@ describe('fs.mkdir / createFile / rename / delete', () => {
     expect(await errorCodeOf(handler('fs.stat')({ path: 'rel' }, fake.ctx))).toBe('params')
     expect(await errorCodeOf(handler('fs.mkdir')({ path: '' }, fake.ctx))).toBe('params')
     expect(await errorCodeOf(handler('fs.delete')({ path: 'rel' }, fake.ctx))).toBe('params')
+  })
+})
+
+describe('Windows 常见编码与换行', () => {
+  const read = (fake: ReturnType<typeof fakeCtx>, file: string, extra: Record<string, unknown> = {}) =>
+    handler('fs.read')({ path: file, ...extra }, fake.ctx) as Promise<FsReadResult>
+
+  it('UTF-8 BOM 去掉并标 bom，CRLF 原样保留', async () => {
+    const fake = fakeCtx()
+    const file = path.join(tempDir(), 'bom-crlf.txt')
+    const bytes = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('a\r\n中\r\n', 'utf8'),
+    ])
+    fs.writeFileSync(file, bytes)
+    const result = await read(fake, file)
+    expect(result).toMatchObject({
+      content: 'a\r\n中\r\n',
+      encoding: 'utf8',
+      bom: true,
+      binary: false,
+      length: bytes.length,
+      size: bytes.length,
+      truncated: false,
+    })
+    expect((await read(fake, file, { encoding: 'base64' })).content).toBe(
+      bytes.toString('base64'),
+    )
+  })
+
+  it('fs.write 的 bom 写回 UTF-8 BOM 且不改换行', async () => {
+    const fake = fakeCtx()
+    const file = path.join(tempDir(), 'bom-write.txt')
+    const text = 'a\r\n中\r\n'
+    await handler('fs.write')({ path: file, content: text, bom: true }, fake.ctx)
+    expect(fs.readFileSync(file).subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]))
+    expect((await read(fake, file)).content).toBe(text)
+    await handler('fs.write')({ path: file, content: text, bom: false }, fake.ctx)
+    expect(fs.readFileSync(file).subarray(0, 3)).not.toEqual(Buffer.from([0xef, 0xbb, 0xbf]))
+  })
+
+  for (const encoding of ['utf16le', 'utf16be'] as const) {
+    it(`UTF-16 ${encoding}（含 CRLF 与代理对）解码为 utf8 并可无损写回`, async () => {
+      const fake = fakeCtx()
+      const file = path.join(tempDir(), `u16-${encoding}.txt`)
+      const text = '第一行\r\n第二行 😀\r\n'
+      const bytes = encodeText(text, encoding, true)
+      fs.writeFileSync(file, bytes)
+      const result = await read(fake, file)
+      expect(result).toMatchObject({
+        content: text,
+        encoding: 'utf8',
+        bom: true,
+        sourceEncoding: encoding,
+        binary: false,
+        length: bytes.length,
+        truncated: false,
+      })
+      await handler('fs.write')(
+        {
+          path: file,
+          content: result.content,
+          bom: result.bom,
+          sourceEncoding: result.sourceEncoding,
+        },
+        fake.ctx,
+      )
+      expect(fs.readFileSync(file)).toEqual(bytes)
+    })
+  }
+
+  it('UTF-16 偏移读对齐到码元边界', async () => {
+    const fake = fakeCtx()
+    const file = path.join(tempDir(), 'u16-offset.txt')
+    const bytes = encodeText('abcdef', 'utf16le', true)
+    fs.writeFileSync(file, bytes)
+    const result = await read(fake, file, { offset: 3, length: 6 })
+    expect(result).toMatchObject({ offset: 2, content: 'abc', length: 6, truncated: true })
+  })
+
+  it('UTF-8 BOM 之后是二进制内容时仍判为二进制', async () => {
+    const fake = fakeCtx()
+    const file = path.join(tempDir(), 'bom-binary.bin')
+    fs.writeFileSync(
+      file,
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from([0, 1, 2, 255])]),
+    )
+    expect((await read(fake, file)).binary).toBe(true)
+  })
+
+  it('不支持的 UTF-32 BOM 与无 BOM 的 UTF-16 按二进制处理', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const u32 = path.join(dir, 'u32.bin')
+    fs.writeFileSync(u32, Buffer.from([0xff, 0xfe, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]))
+    expect((await read(fake, u32)).binary).toBe(true)
+    const noBom = path.join(dir, 'u16-nobom.bin')
+    fs.writeFileSync(noBom, Buffer.from([0x41, 0x00, 0x42, 0x00]))
+    expect((await read(fake, noBom)).binary).toBe(true)
+  })
+
+  it.skipIf(process.platform !== 'win32')('盘符大小写与混用斜杠能读取同一文件', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const nested = path.join(dir, 'SubDir')
+    fs.mkdirSync(nested)
+    const file = path.join(nested, 'a.txt')
+    fs.writeFileSync(file, 'x')
+    const alt = path.join(dir.toUpperCase(), 'subdir', 'A.TXT').split(path.sep).join('/')
+    expect((await handler('fs.stat')({ path: alt }, fake.ctx) as FsStat).kind).toBe('file')
+    expect((await read(fake, alt)).content).toBe('x')
+  })
+
+  it.skipIf(process.platform !== 'win32')('\\\\?\\ 长路径前缀可读写', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const longDir = `\\\\?\\${path.resolve(
+      path.join(dir, ...Array.from({ length: 10 }, (_, i) => `deep-${i}-${'x'.repeat(30)}`)),
+    )}`
+    fs.mkdirSync(longDir, { recursive: true })
+    const file = path.join(longDir, 'long.txt')
+    try {
+      await handler('fs.write')({ path: file, content: 'hello' }, fake.ctx)
+      expect((await read(fake, file)).content).toBe('hello')
+    } finally {
+      fs.rmSync(longDir, { recursive: true, force: true })
+    }
   })
 })

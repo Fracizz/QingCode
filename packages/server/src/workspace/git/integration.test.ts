@@ -366,4 +366,52 @@ describe('git.* 集成（os.tmpdir() 下的真实仓库）', () => {
       code: 'params',
     })
   }, 30_000)
+
+  it.skipIf(process.platform !== 'win32')(
+    'Windows 本机验收：中文名不转义、autocrlf=true 不整文件改动、混用斜杠/大小写/长路径',
+    async () => {
+      const dir = makeRepo()
+      git(dir, ['config', 'core.autocrlf', 'true'])
+      const chinese = '中文 文件.txt'
+      write(dir, 'CaseFile.txt', Buffer.from('one\r\ntwo\r\nthree\r\n'))
+      write(dir, chinese, Buffer.from('a\r\nb\r\n'))
+      commitAll(dir, 'init')
+      write(dir, 'CaseFile.txt', Buffer.from('one\r\nTWO\r\nthree\r\n'))
+      write(dir, chinese, Buffer.from('a\r\nB\r\n'))
+
+      const status = await call<GitStatusResult>('git.status', { cwd: dir })
+      expect(status.files.map((item) => item.path)).toContain(chinese)
+      expect(status.files.map((item) => item.path)).toContain('CaseFile.txt')
+
+      // cwd 混用正斜杠并改变大小写，仍能定位同一个仓库。
+      const mixedCwd = dir.replace(/\\/g, '/').toUpperCase()
+      const mixedStatus = await call<GitStatusResult>('git.status', { cwd: mixedCwd })
+      expect(mixedStatus.files).toHaveLength(status.files.length)
+
+      // 文件名大小写不同由根相对路径归一修正，git pathspec 不会静默匹配不到。
+      const diff = await call<{ diff: string; truncated: boolean }>('git.diff', {
+        cwd: dir,
+        path: path.join(dir, 'casefile.txt').replace(/\\/g, '/'),
+      })
+      expect(diff.diff).toContain('-two')
+      expect(diff.diff).toContain('+TWO')
+      expect(diff.diff).not.toContain('+one')
+      expect(diff.truncated).toBe(false)
+
+      const chineseDiff = await call<{ diff: string }>('git.diff', {
+        cwd: dir,
+        path: path.join(dir, chinese),
+      })
+      expect(chineseDiff.diff).toContain(chinese)
+      expect(chineseDiff.diff).not.toContain('\\344')
+
+      // \\?\ 长路径前缀的 cwd 也能跑 git 命令。
+      const longCwd = `\\\\?\\${path.resolve(dir)}`
+      const longStatus = await call<GitStatusResult>('git.status', { cwd: longCwd })
+      expect(longStatus.root.replace(/\\/g, '/').toLowerCase()).toBe(
+        path.resolve(dir).replace(/\\/g, '/').toLowerCase(),
+      )
+    },
+    60_000,
+  )
 })

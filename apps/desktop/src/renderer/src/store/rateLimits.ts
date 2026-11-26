@@ -78,6 +78,8 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
   }
 
   const refresh = async (targetId: string, agent: AgentKind = DEFAULT_AGENT): Promise<void> => {
+    // pi 没有额度接口（capabilities.rateLimits=false），不去请求不存在的 account/* 方法。
+    if (agent === 'pi') return
     const key = sessionKey(targetId, agent)
     const busy = inFlight.get(key)
     if (busy) return busy
@@ -211,6 +213,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
     refresh,
 
     handleNotification: (targetId, agent, msg) => {
+      if (agent === 'pi') return
       const kind = notificationKind(msg)
       if (kind === 'updated') {
         const key = sessionKey(targetId, agent)

@@ -123,6 +123,51 @@ describe('fs.search（Node 兜底遍历）', () => {
     })
     expect(doneOf(fake, id)?.error).toContain('无法访问 root')
   })
+
+  it.skipIf(process.platform !== 'win32')('跳过 Windows 系统目录并按文件名大小写不敏感搜索', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    for (const name of ['$RECYCLE.BIN', 'System Volume Information']) {
+      fs.mkdirSync(path.join(dir, name))
+      fs.writeFileSync(path.join(dir, name, 'hit-HELLO.ts'), 'x')
+    }
+    fs.writeFileSync(path.join(dir, 'HIT-Hello.TXT'), 'x')
+    const id = await runFallback(fake, { root: dir, query: 'hello', mode: 'name' })
+    expect(matchesOf(fake, id).map((match) => path.basename(match.path))).toEqual([
+      'HIT-Hello.TXT',
+    ])
+  })
+
+  it('Node 遍历遵守简化的 .gitignore（含取反与嵌套文件）', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    fs.writeFileSync(
+      path.join(dir, '.gitignore'),
+      'dist/\r\n*.log\r\n!hit-keep.log\r\nsrc/generated/**\r\n',
+    )
+    fs.mkdirSync(path.join(dir, 'dist'))
+    fs.writeFileSync(path.join(dir, 'dist', 'hit.ts'), 'x')
+    fs.mkdirSync(path.join(dir, 'src', 'generated'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'src', '.gitignore'), 'hit-secret.ts\n')
+    fs.writeFileSync(path.join(dir, 'src', 'generated', 'hit.ts'), 'x')
+    fs.writeFileSync(path.join(dir, 'src', 'hit.ts'), 'x')
+    fs.writeFileSync(path.join(dir, 'src', 'hit-secret.ts'), 'x')
+    fs.writeFileSync(path.join(dir, 'hit-secret.ts'), 'x')
+    fs.writeFileSync(path.join(dir, 'hit-a.log'), 'x')
+    fs.writeFileSync(path.join(dir, 'hit-keep.log'), 'x')
+    const id = await runFallback(fake, { root: dir, query: 'HIT', mode: 'name' })
+    const names = matchesOf(fake, id).map((match) => path.basename(match.path)).sort()
+    expect(names).toEqual(['hit-keep.log', 'hit-secret.ts', 'hit.ts'].sort())
+    expect(doneOf(fake, id)?.error).toBeUndefined()
+  })
+
+  it('大小写不同的重复路径不会重复推送', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    fs.writeFileSync(path.join(dir, 'hit.ts'), 'x')
+    const id = await runFallback(fake, { root: dir, query: 'hit', mode: 'name' })
+    expect(matchesOf(fake, id)).toHaveLength(1)
+  })
 })
 
 describe('fs.search 的 rg 路径与取消', () => {

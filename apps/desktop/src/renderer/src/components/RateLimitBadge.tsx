@@ -203,7 +203,8 @@ export function RateLimitBadge({
     return () => clearInterval(timer)
   }, [open])
 
-  if (!targetId) return null
+  // pi 没有额度接口，不显示徽标也不留空胶囊。
+  if (!targetId || agent === 'pi') return null
   const snapshot = entry?.snapshot ?? null
   const level = severity(snapshot)
   const cost = sumCost(entry?.costByThread, threadId)

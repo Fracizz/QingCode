@@ -183,6 +183,6 @@ export function registerTargetMethods(router: BackendRouter): void {
     if (!isRecord(params) || typeof params.targetId !== 'string' || params.targetId === '') {
       throw new RouterError('invalid_params', 'codex.send 参数无效')
     }
-    manager.codexSend(params.targetId, params.msg, params.agent === 'claude' ? 'claude' : 'codex')
+    manager.codexSend(params.targetId, params.msg, params.agent === 'claude' || params.agent === 'pi' ? params.agent : 'codex')
   })
 }

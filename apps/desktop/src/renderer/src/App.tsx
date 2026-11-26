@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { SshTarget } from '../../shared/backendApi'
+import { useEffect, useRef, useState } from 'react'
+import type { DirectTarget, SshTarget } from '../../shared/backendApi'
 import { ChatPanel } from './components/ChatPanel'
 import { CredentialDialog } from './components/CredentialDialog'
 import { DirectoryPicker } from './components/DirectoryPicker'
@@ -13,6 +13,7 @@ import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
 import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
 import { QuickOpen } from './features/explorer'
+import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
 import { useWorkspaceWatch } from './hooks/useWorkspaceWatch'
 import { useDock } from './store/dock'
 import { useBootSplash } from './hooks/useBootSplash'
@@ -45,7 +46,7 @@ export default function App() {
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
   const pickerOpen = useUi((s) => s.directoryPickerOpen)
 
-  const [targetForm, setTargetForm] = useState<{ open: boolean; editing: SshTarget | null }>({
+  const [targetForm, setTargetForm] = useState<{ open: boolean; editing: SshTarget | DirectTarget | null }>({
     open: false,
     editing: null,
   })
@@ -54,6 +55,8 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const workspace = useWorkspaceScope()
+  const settingsDialog = useSettingsDialog()
+  const autoConnectDone = useRef(false)
 
   useWorkspaceWatch()
 
@@ -68,6 +71,7 @@ export default function App() {
       }
     })
     void useLegacy.getState().detectNow()
+    void useSettings.getState().load()
     return useCodex.getState().init()
   }, [load])
 
@@ -90,7 +94,10 @@ export default function App() {
         }
         return
       }
-      if (key === 'p') {
+      if (key === ',') {
+        event.preventDefault()
+        openSettings()
+      } else if (key === 'p') {
         event.preventDefault()
         setQuickOpen(true)
       } else if (key === 'b') {
@@ -111,18 +118,60 @@ export default function App() {
     const state = states[id]?.state ?? 'idle'
     if (state === 'ready' || state === 'connecting' || state === 'deploying') return
     if (target.kind === 'ssh' && target.auth.kind !== 'agent') {
-      setCredentialTarget(target)
+      // 已保存密码/口令时直接连（backend 合并已保存凭据）；认证失败再弹框让用户重输。
+      if (!target.hasSavedSecret) {
+        setCredentialTarget(target)
+        return
+      }
+      void connect(id).then(() => {
+        const info = useTargets.getState().states[id]
+        if (info?.state === 'error' && /auth|认证|密码|password|口令|passphrase/i.test(info.detail ?? '')) {
+          setCredentialTarget(target)
+        }
+      })
       return
     }
     void connect(id)
   }
+
+  /** 带"记住"连接成功后刷新目标列表，让"已保存密码"状态立即生效。 */
+  const connectAndRefresh = (id: string, credentials: ConnectCredentials) =>
+    connect(id, credentials).then(() => {
+      if (credentials.remember) void load()
+    })
 
   const onSelect = (id: string) => {
     select(id)
     requestConnect(id)
   }
 
-  const onSaved = (target: SshTarget, credentials: ConnectCredentials) => {
+  // 记住上次使用的目标；设置里开了"启动时自动连接上次目标"时，目标与设置都加载完后连一次。
+  useEffect(() => {
+    try {
+      localStorage.setItem('qn-last-target', selectedId)
+    } catch {
+      // 存储不可用时只是不能自动连接。
+    }
+  }, [selectedId])
+  const settingsLoaded = useSettings((s) => s.loaded)
+  const autoConnectLast = useSettings((s) => s.settings.general.autoConnectLast)
+  useEffect(() => {
+    if (autoConnectDone.current || !settingsLoaded || targets.length === 0 || window.qn?.isSmoke) return
+    autoConnectDone.current = true
+    if (!autoConnectLast) return
+    let last: string | null = null
+    try {
+      last = localStorage.getItem('qn-last-target')
+    } catch {
+      last = null
+    }
+    if (!last || last === 'local' || !targets.some((item) => item.id === last)) return
+    select(last)
+    requestConnect(last)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在首次满足条件时执行一次
+  }, [settingsLoaded, targets, autoConnectLast])
+
+  const onSaved = (target: SshTarget | DirectTarget, credentials: ConnectCredentials) => {
     setRememberPrefs((prefs) => ({ ...prefs, [target.id]: credentials.remember === true }))
     select(target.id)
     // 走到这里说明试连已通过（密码来自输入或已保存），直接连接即可。
@@ -130,7 +179,7 @@ export default function App() {
       // 改过配置的活动连接要先断开，否则 backend 认为已就绪而沿用旧配置。
       const state = useTargets.getState().states[target.id]?.state
       if (state && state !== 'idle') await disconnect(target.id)
-      await connect(target.id, credentials)
+      await connectAndRefresh(target.id, credentials)
     })()
   }
 
@@ -151,6 +200,7 @@ export default function App() {
             onEdit={(target) => setTargetForm({ open: true, editing: target })}
             onImport={() => useLegacy.getState().open()}
             onMobile={() => setMobileOpen(true)}
+            onSettings={() => openSettings()}
             onSelect={onSelect}
             onConnect={requestConnect}
             onDisconnect={(id) => void disconnect(id)}
@@ -172,13 +222,13 @@ export default function App() {
         <CredentialDialog
           key={credentialTarget.id}
           target={credentialTarget}
-          initialRemember={rememberPrefs[credentialTarget.id] ?? false}
+          initialRemember={rememberPrefs[credentialTarget.id] ?? true}
           onClose={() => setCredentialTarget(null)}
           onSubmit={(credentials) => {
             const target = credentialTarget
             setCredentialTarget(null)
             setRememberPrefs((prefs) => ({ ...prefs, [target.id]: credentials.remember === true }))
-            void connect(target.id, credentials)
+            void connectAndRefresh(target.id, credentials)
           }}
         />
       )}
@@ -201,6 +251,16 @@ export default function App() {
       )}
       <LegacyDialog />
       {mobileOpen && <MobileSettingsDialog onClose={() => setMobileOpen(false)} />}
+      <SettingsDialog
+        open={settingsDialog.open}
+        onClose={closeSettings}
+        initialSection={settingsDialog.section}
+        onEditTarget={(target) => {
+          closeSettings()
+          setTargetForm({ open: true, editing: target })
+        }}
+        onRemoveTarget={(id) => void useTargets.getState().remove(id)}
+      />
       {quickOpen && !('reason' in workspace) && (
         <QuickOpen
           targetId={workspace.targetId}

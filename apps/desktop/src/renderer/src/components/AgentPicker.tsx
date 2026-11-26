@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Pin, PinOff, RotateCw } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { AGENTS, agentLabel, availabilityReason } from '../lib/agents'
+import { agentPrefs, useSettings } from '../features/settings'
 import { useAgentPrefs } from '../store/agentPrefs'
 import { useCodex } from '../store/codex'
 import { useTargets } from '../store/targets'
@@ -20,6 +21,9 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
   const setDefault = useAgentPrefs((s) => s.setDefault)
   const targetName = useTargets((s) => s.targets.find((item) => item.id === targetId)?.name)
   const isDefault = defaultAgent === agent
+  // 设置 → Agent 里对该目标关闭的 Agent 不出现在新建会话的选择里（当前所选除外，避免选中项消失）。
+  const settings = useSettings((s) => s.settings)
+  const visible = AGENTS.filter((item) => item === agent || !targetId || agentPrefs(settings, targetId, item).enabled)
 
   if (locked) {
     return (
@@ -45,7 +49,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
       </MenuTrigger>
       <MenuContent side="top" className="w-72">
         <MenuLabel>新会话使用的 Agent</MenuLabel>
-        {AGENTS.map((item) => {
+        {visible.map((item) => {
           const status = statuses?.[item]
           return (
             <MenuItem

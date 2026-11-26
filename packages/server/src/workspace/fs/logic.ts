@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { WorkspaceError } from '../registry'
+import { normalizePathForCompare } from '../paths'
 
 export interface RecordParams {
   [key: string]: unknown
@@ -68,6 +69,14 @@ function optionalEncoding(value: unknown, field: string): 'utf8' | 'base64' | un
   return value
 }
 
+function optionalSourceEncoding(value: unknown, field: string): 'utf16le' | 'utf16be' | undefined {
+  if (value === undefined) return undefined
+  if (value !== 'utf16le' && value !== 'utf16be') {
+    paramsError(`${field} 只能是 utf16le 或 utf16be`)
+  }
+  return value
+}
+
 export interface ParsedRead {
   path: string
   offset: number
@@ -95,16 +104,22 @@ export interface ParsedWrite {
   encoding?: 'utf8' | 'base64'
   expectedMtimeMs?: number
   create: boolean
+  bom?: boolean
+  sourceEncoding?: 'utf16le' | 'utf16be'
 }
 
 export function parseWriteParams(p: RecordParams): ParsedWrite {
   const encoding = optionalEncoding(p.encoding, 'encoding')
   const expectedMtimeMs = optionalFiniteNumber(p.expectedMtimeMs, 'expectedMtimeMs')
+  const bom = optionalBoolean(p.bom, 'bom')
+  const sourceEncoding = optionalSourceEncoding(p.sourceEncoding, 'sourceEncoding')
   return {
     path: requireAbsolutePath(p.path),
     content: requireString(p.content, 'content', true),
     ...(encoding !== undefined ? { encoding } : {}),
     ...(expectedMtimeMs !== undefined ? { expectedMtimeMs } : {}),
+    ...(bom !== undefined ? { bom } : {}),
+    ...(sourceEncoding !== undefined ? { sourceEncoding } : {}),
     create: optionalBoolean(p.create, 'create') ?? true,
   }
 }
@@ -179,15 +194,16 @@ export function mapNodeError(err: unknown): WorkspaceError {
   }
 }
 
-/** 根目录与用户主目录不允许删除，误传 '/' 或盘符根会毁掉整个环境。 */
-export function isProtectedPath(value: string, home: string = os.homedir()): boolean {
-  const comparable = (input: string): string => {
-    const normalized = input.replace(/\\/g, '/').replace(/\/+$/, '')
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
-  }
-  const target = comparable(path.resolve(value))
-  if (target === '' || target === comparable(path.resolve(home))) return true
-  if (/^[A-Za-z]:$/i.test(target)) return true
+/** 根目录与用户主目录不允许删除；Windows 还要覆盖盘符根、UNC 共享根与长路径写法。 */
+export function isProtectedPath(
+  value: string,
+  home: string = os.homedir(),
+  platform: string = process.platform,
+): boolean {
+  const target = normalizePathForCompare(value, platform)
+  const homeKey = normalizePathForCompare(home, platform)
+  if (target === '' || target === homeKey) return true
+  if (/^[a-z]:$/i.test(target)) return true
   return /^\/\/[^/]+\/[^/]+$/.test(target)
 }
 

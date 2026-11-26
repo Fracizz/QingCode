@@ -81,6 +81,22 @@ describe('搜索结果批处理节流', () => {
     expect(events.at(-1)).toMatchObject({ done: true, truncated: true, matches: [] })
   })
 
+  it('文件名结果按路径去重，Windows 下大小写与斜杠差异视为同一文件', () => {
+    const events: FsSearchResultEvt[] = []
+    const batcher = new SearchBatcher('s-win', 10, (evt) => events.push(evt), () => 0, 'win32')
+    expect(batcher.push({ path: 'C:\\Work\\A.ts' })).toBe(false)
+    expect(batcher.push({ path: 'c:/work/a.ts' })).toBe(false)
+    expect(batcher.count).toBe(1)
+    expect(batcher.push({ path: 'C:\\Work\\B.ts' })).toBe(false)
+    expect(batcher.count).toBe(2)
+    // 内容模式同文件不同行不应被去重。
+    batcher.push({ path: 'C:\\Work\\A.ts', line: 1, column: 1, text: 'a' })
+    batcher.push({ path: 'C:\\Work\\A.ts', line: 2, column: 1, text: 'b' })
+    expect(batcher.count).toBe(4)
+    batcher.finish()
+    expect(events.filter((evt) => !evt.done).flatMap((evt) => evt.matches)).toHaveLength(4)
+  })
+
   it('达到 maxResults 后停止接收，finish 只执行一次', () => {
     const events: FsSearchResultEvt[] = []
     const batcher = new SearchBatcher('s2', 3, (evt) => events.push(evt), () => 0)

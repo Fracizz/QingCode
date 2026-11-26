@@ -1,10 +1,10 @@
 import type { AgentKind } from '../../../shared/backendApi'
 
-export const AGENTS: readonly AgentKind[] = ['codex', 'claude'] as const
+export const AGENTS: readonly AgentKind[] = ['codex', 'claude', 'pi'] as const
 export const DEFAULT_AGENT: AgentKind = 'codex'
 
 export function isAgentKind(value: unknown): value is AgentKind {
-  return value === 'codex' || value === 'claude'
+  return value === 'codex' || value === 'claude' || value === 'pi'
 }
 
 /** 一个目标上的每个 agent 使用独立的 key；目标 id 本身允许包含冒号。 */
@@ -22,7 +22,9 @@ export function parseSessionKey(key: string): { targetId: string; agent: AgentKi
 }
 
 export function agentLabel(agent: AgentKind): string {
-  return agent === 'claude' ? 'Claude' : 'Codex'
+  if (agent === 'claude') return 'Claude'
+  if (agent === 'pi') return 'pi'
+  return 'Codex'
 }
 
 export function agentPlaceholder(agent: AgentKind): string {
@@ -38,7 +40,11 @@ export type AgentAvailability = {
 }
 
 export function emptyAgentStatus(): Record<AgentKind, AgentAvailability> {
-  return { codex: { state: 'unknown' }, claude: { state: 'unknown' } }
+  return {
+    codex: { state: 'unknown' },
+    claude: { state: 'unknown' },
+    pi: { state: 'unknown' },
+  }
 }
 
 function rawMessage(err: unknown): string {

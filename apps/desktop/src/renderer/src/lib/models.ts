@@ -71,6 +71,7 @@ export function filterModels(models: ModelOption[], query: string): ModelOption[
 
 const EFFORT_LABELS: Record<string, string> = {
   none: '关闭',
+  off: '关闭',
   minimal: '最低',
   low: '低',
   medium: '中',
@@ -83,6 +84,7 @@ const EFFORT_LABELS: Record<string, string> = {
 /** 服务端给的强度说明是英文，界面统一用自己的中文说明；未知档位才回落到服务端原文。 */
 const EFFORT_HINTS: Record<string, string> = {
   none: '不做额外推理，响应最快',
+  off: '不做额外推理，响应最快',
   minimal: '几乎不推理，适合简单改动',
   low: '推理较少，响应快',
   medium: '速度与推理深度均衡，适合大多数任务',

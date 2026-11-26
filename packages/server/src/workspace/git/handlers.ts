@@ -12,7 +12,12 @@ import {
   parseStatus,
   splitNul,
 } from './parse'
-import { planSwitch, toRepoRelative } from './pure'
+import {
+  canonicalizeRepoRelative,
+  needCaseCanonicalization,
+  planSwitch,
+  toRepoRelative,
+} from './pure'
 import {
   DIFF_MAX_STDOUT,
   GitRunError,
@@ -93,8 +98,15 @@ function nullDevice(): string {
   return process.platform === 'win32' ? 'NUL' : '/dev/null'
 }
 
+/** 仓库根相对路径；Windows 上再按磁盘真实大小写归一，避免 git pathspec 静默匹配不到。 */
+function toRel(root: string, value: string): string {
+  const rel = toRepoRelative(root, value)
+  if (!needCaseCanonicalization(root)) return rel
+  return canonicalizeRepoRelative(root, rel, (dir) => fs.readdirSync(dir))
+}
+
 function repoPaths(root: string, values: string[]): string[] {
-  return values.map((value) => toRepoRelative(root, value))
+  return values.map((value) => toRel(root, value))
 }
 
 /** 用 ls-files 取「git 已知」的路径，避免把未跟踪路径传给 restore 导致整批失败。 */
@@ -141,7 +153,7 @@ export async function gitDiff(params: Params): Promise<{ diff: string; truncated
   const staged = optionalBool(params, 'staged')
   const contextLines = optionalInt(params, 'contextLines')
   const pathValue = optionalString(params, 'path')
-  const rel = pathValue === undefined ? undefined : toRepoRelative(root, pathValue)
+  const rel = pathValue === undefined ? undefined : toRel(root, pathValue)
   const contextArg = contextLines === undefined ? [] : [`-U${clamp(contextLines, 0, 10_000)}`]
   const opts: RunGitOptions = { readOnly: true, maxStdout: DIFF_MAX_STDOUT }
   let args: string[]
@@ -175,7 +187,7 @@ export async function gitShow(
   params: Params,
 ): Promise<{ content: string; binary: boolean; exists: boolean }> {
   const root = await gitRoot(requireCwd(params))
-  const rel = toRepoRelative(root, requireString(params, 'path'))
+  const rel = toRel(root, requireString(params, 'path'))
   const ref = safeRef(optionalString(params, 'ref') ?? 'HEAD', 'ref')
   try {
     const res = await runGit(root, ['show', `${ref}:${rel}`], {
@@ -317,7 +329,7 @@ export async function gitLog(params: Params): Promise<{ commits: GitCommit[] }> 
   const limit = clamp(optionalInt(params, 'limit') ?? 50, 1, 500)
   const skip = Math.max(0, optionalInt(params, 'skip') ?? 0)
   const pathValue = optionalString(params, 'path')
-  const rel = pathValue === undefined ? undefined : toRepoRelative(root, pathValue)
+  const rel = pathValue === undefined ? undefined : toRel(root, pathValue)
   const args = [
     'log',
     `--format=${LOG_FORMAT}`,

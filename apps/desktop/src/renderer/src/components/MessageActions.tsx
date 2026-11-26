@@ -38,7 +38,7 @@ export function MessageActions({
           </MenuItem>
           {onFork && (
             <MenuItem icon={<Split size={14} />} onSelect={onFork}>
-              从这里开始新会话
+              分支到新聊天
             </MenuItem>
           )}
         </MenuContent>

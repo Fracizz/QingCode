@@ -2,7 +2,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { GitRunError, runGit } from './run'
+import {
+  GIT_GLOBAL_ARGS,
+  GitRunError,
+  gitCandidates,
+  resetGitCommandCache,
+  resolveGitExecutable,
+  runGit,
+  type GitResolveEnv,
+} from './run'
 
 const dirs: string[] = []
 
@@ -29,6 +37,53 @@ const nodeGit = (
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+})
+
+describe('git 可执行文件解析（Windows）', () => {
+  const env: GitResolveEnv = {
+    platform: 'win32',
+    pathValue: 'C:\\bin;C:\\Program Files\\Git\\cmd',
+    delimiter: ';',
+    home: 'C:\\Users\\u',
+    localAppData: 'C:\\Users\\u\\AppData\\Local',
+    programFiles: 'C:\\Program Files',
+  }
+
+  it('候选顺序：PATH → Program Files\\Git\\cmd → LOCALAPPDATA → 裸名字', () => {
+    const candidates = gitCandidates(env)
+    expect(candidates[0]).toBe('C:\\bin\\git.exe')
+    expect(candidates).toContain('C:\\Program Files\\Git\\cmd\\git.exe')
+    expect(candidates).toContain(
+      'C:\\Users\\u\\AppData\\Local\\Programs\\Git\\cmd\\git.exe',
+    )
+    expect(candidates.at(-1)).toBe('git')
+    expect(new Set(candidates.map((item) => item.toLowerCase())).size).toBe(candidates.length)
+  })
+
+  it('存在性检查命中第一个文件；都不存在时退回裸名字', () => {
+    expect(
+      resolveGitExecutable(env, (file) => file === 'C:\\Program Files\\Git\\cmd\\git.exe'),
+    ).toBe('C:\\Program Files\\Git\\cmd\\git.exe')
+    expect(resolveGitExecutable(env, () => false)).toBe('git')
+  })
+
+  it('全局 -c 参数不覆盖 autocrlf', () => {
+    expect(GIT_GLOBAL_ARGS).toEqual([
+      '-c',
+      'core.quotepath=false',
+      '-c',
+      'core.longpaths=true',
+    ])
+    expect(GIT_GLOBAL_ARGS.join(' ')).not.toContain('autocrlf')
+  })
+
+  it('本机真实 git 带全局 -c 参数仍可执行', async () => {
+    resetGitCommandCache()
+    const dir = tempDir()
+    const res = await runGit(dir, ['--version'])
+    expect(res.stdout).toMatch(/git version/)
+    expect(res.code).toBe(0)
+  })
 })
 
 describe('runGit 执行器', () => {

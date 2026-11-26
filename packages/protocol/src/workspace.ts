@@ -49,6 +49,10 @@ export type FsReadResult = {
   truncated: boolean
   /** 自动判断为二进制且未请求 base64 时为 true，content 为空 */
   binary: boolean
+  /** 原文件带 BOM（UTF-8 或 UTF-16）；写回时把该值原样传回 fs.write.bom */
+  bom?: boolean
+  /** UTF-16 源文件已解码成 utf8 内容；写回时把该值原样传回 fs.write.sourceEncoding */
+  sourceEncoding?: 'utf16le' | 'utf16be'
 }
 
 export type FsWriteParams = {
@@ -59,6 +63,10 @@ export type FsWriteParams = {
   expectedMtimeMs?: number
   /** 文件不存在时是否创建，默认 true */
   create?: boolean
+  /** 写文本 BOM：未指定 sourceEncoding 时写 UTF-8 BOM，否则写 FF FE / FE FF */
+  bom?: boolean
+  /** 按 UTF-16 源编码写回（content 仍是 utf8 文本）；base64 写入忽略这两个字段 */
+  sourceEncoding?: 'utf16le' | 'utf16be'
 }
 
 export type FsSearchMode = 'name' | 'content'

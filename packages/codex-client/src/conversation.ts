@@ -12,6 +12,7 @@ import type {
   ServerNotification,
   ServerRequest,
   Thread,
+  UserInput,
 } from './codex-types'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
@@ -24,6 +25,15 @@ export type ThreadView = {
   pendingApprovals: ApprovalView[]
   error?: string
   tokenUsage?: unknown
+  /** 每轮的计时与所含条目，用于"工作了 4m 56s"折叠头。 */
+  turns?: TurnMeta[]
+}
+
+export type TurnMeta = {
+  id: string
+  startedAtMs: number | null
+  durationMs: number | null
+  itemIds: string[]
 }
 
 export type ItemView =
@@ -37,6 +47,8 @@ export type ItemView =
       files?: string[]
       /** 触发的技能名。 */
       skills?: string[]
+      /** 本地先渲染的占位消息；服务端回显到达后按位置替换，避免重复气泡。 */
+      pending?: boolean
     }
   | { kind: 'agent'; id: string; text: string; streaming: boolean }
   | { kind: 'reasoning'; id: string; summary: string; streaming: boolean }
@@ -118,8 +130,100 @@ function emptyThread(id: string): ThreadView {
   return { id, status: 'idle', activeTurnId: null, items: [], pendingApprovals: [] }
 }
 
+/** 草稿态还没有 threadId，借这个 id 先承载用户消息；真正会话建好后搬过去。 */
+export const DRAFT_THREAD_ID = '__qn-draft__'
+
 export function emptyState(): ConversationState {
   return { threads: {} }
+}
+
+/** 把即将发送的 UserInput[] 转成一条本地占位气泡。 */
+export function userItemFromInput(id: string, input: UserInput[]): Extract<ItemView, { kind: 'user' }> {
+  const texts: string[] = []
+  const images: string[] = []
+  const files: string[] = []
+  const skills: string[] = []
+  for (const entry of input) {
+    switch (entry.type) {
+      case 'text':
+        texts.push(entry.text)
+        break
+      case 'image':
+        if ('url' in entry && entry.url) images.push(entry.url)
+        break
+      case 'localImage':
+        images.push(entry.path)
+        break
+      case 'mention':
+        files.push(entry.path)
+        break
+      case 'skill':
+        skills.push(entry.name)
+        break
+      default:
+        break
+    }
+  }
+  const view: Extract<ItemView, { kind: 'user' }> = {
+    kind: 'user',
+    id,
+    text: texts.join('\n'),
+    pending: true,
+  }
+  if (images.length > 0) view.images = images
+  if (files.length > 0) view.files = files
+  if (skills.length > 0) view.skills = skills
+  return view
+}
+
+/** 点击发送时立刻落一条气泡，不等建会话 / turn 的网络回包。 */
+export function addOptimisticUser(
+  s: ConversationState,
+  threadId: string,
+  item: Extract<ItemView, { kind: 'user' }>,
+): ConversationState {
+  if (!threadId) return s
+  return withThread(s, threadId, (thread) => ({ ...thread, items: [...thread.items, item] }))
+}
+
+/** 新会话建好后把草稿里的占位搬进真实 thread，气泡位置不跳动。 */
+export function moveOptimisticUsers(
+  s: ConversationState,
+  fromThreadId: string,
+  toThreadId: string,
+): ConversationState {
+  const from = ownThread(s, fromThreadId)
+  if (!from || !toThreadId) return s
+  const pending = from.items.filter((item) => item.kind === 'user' && item.pending === true)
+  if (pending.length === 0) return s
+  const rest = from.items.filter((item) => !(item.kind === 'user' && item.pending === true))
+  const threads = { ...s.threads }
+  if (rest.length === 0) delete threads[fromThreadId]
+  else threads[fromThreadId] = { ...from, items: rest }
+  const target = threads[toThreadId] ?? emptyThread(toThreadId)
+  threads[toThreadId] = { ...target, items: [...target.items, ...pending] }
+  return { threads }
+}
+
+/** 发送失败时撤掉占位，不留一条并未发出去的消息；顺手清掉空的草稿线程。 */
+export function dropOptimisticUsers(s: ConversationState, threadIds: string[]): ConversationState {
+  const threads = { ...s.threads }
+  let changed = false
+  for (const id of threadIds) {
+    const thread = threads[id]
+    if (!thread) continue
+    const items = thread.items.filter((item) => !(item.kind === 'user' && item.pending === true))
+    if (items.length === thread.items.length) continue
+    changed = true
+    if (items.length === 0 && id === DRAFT_THREAD_ID) delete threads[id]
+    else threads[id] = { ...thread, items }
+  }
+  return changed ? { threads } : s
+}
+
+/** 切换目标 / 会话 / 回到新会话时清掉遗留的草稿占位。 */
+export function clearDraftThread(s: ConversationState): ConversationState {
+  return dropOptimisticUsers(s, [DRAFT_THREAD_ID])
 }
 
 function withThread(
@@ -184,6 +288,19 @@ function itemIdFrom(params: JsonRecord): string {
   )
 }
 
+/** 回显文本可能被桥接加上技能前缀/附件说明，优先按包含原文找对应占位。 */
+function pendingUserIndex(items: ItemView[], text: string): number {
+  const indices = items.flatMap((item, index) =>
+    item.kind === 'user' && item.pending === true ? [index] : [],
+  )
+  if (indices.length === 0) return -1
+  const matched = indices.find((index) => {
+    const item = items[index]
+    return item?.kind === 'user' && item.text.length > 0 && text.includes(item.text)
+  })
+  return matched ?? indices[0] ?? -1
+}
+
 function replaceItem(
   items: ItemView[],
   id: string,
@@ -191,13 +308,24 @@ function replaceItem(
   update: (item: ItemView) => ItemView,
 ): ItemView[] {
   const index = items.findIndex((item) => item.id === id)
-  if (index < 0) return [...items, create()]
-  const existing = items[index]
-  if (!existing) return [...items, create()]
-  const updated = update(existing)
-  if (updated === existing) return items
+  const existing = index >= 0 ? items[index] : undefined
+  const candidate = existing ? update(existing) : create()
+  // 服务端回显的 userMessage 用自己的 id，文本也可能被改写（技能前缀、附件说明）；
+  // 用最早一条本地占位承接它，既保持消息顺序也不会出现两条重复气泡。
+  if (candidate.kind === 'user' && !candidate.pending) {
+    const pendingIndex = pendingUserIndex(items, candidate.text)
+    if (pendingIndex >= 0 && pendingIndex !== index) {
+      const next = items.filter((_, position) => position !== pendingIndex)
+      const target = index < 0 ? pendingIndex : pendingIndex < index ? index - 1 : index
+      if (index < 0) next.splice(target, 0, candidate)
+      else next[target] = candidate
+      return next
+    }
+  }
+  if (index < 0) return [...items, candidate]
+  if (!existing || candidate === existing) return items
   const next = items.slice()
-  next[index] = updated
+  next[index] = candidate
   return next
 }
 
@@ -214,13 +342,18 @@ function withItem(
   const turnId = turnIdFrom(params)
 
   return withThread(s, threadId, (thread) => {
-    const next: ThreadView = {
+    // 新条目出现说明之前的文本/推理已经输出完：有的 Agent 不会为每条消息发 item/completed，
+    // 不收尾的话上一条消息的流式光标会一直挂着。
+    const base = thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
+    let next: ThreadView = {
       ...thread,
-      items: replaceItem(thread.items, itemId, () => create(itemId), update),
+      items: replaceItem(base.items, itemId, () => create(itemId), update),
       status: markRunning ? 'running' : thread.status,
       activeTurnId: turnId || thread.activeTurnId,
     }
     if (markRunning) delete next.error
+    const owner = turnId || thread.activeTurnId
+    if (owner) next = upsertTurnMeta(next, owner, { itemIds: [itemId] })
     return next
   })
 }
@@ -403,7 +536,11 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
     }
   }
   if (existing.kind === 'user' && candidate.kind === 'user') {
-    return { ...candidate, text: longer(existing.text, candidate.text) }
+    return {
+      ...candidate,
+      text: longer(existing.text, candidate.text),
+      ...(existing.pending && candidate.pending ? { pending: true } : {}),
+    }
   }
   if (existing.kind === 'other' && candidate.kind === 'other') {
     return { ...candidate, summary: longer(existing.summary, candidate.summary) }
@@ -411,15 +548,68 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
   return candidate
 }
 
-function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean): ThreadView {
+type TurnPhase = 'started' | 'completed' | 'loaded'
+
+function positive(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** 记录一轮的计时。部分适配器的 startedAt 在完成时才填（等于 completedAt），所以优先沿用 turn/started 时记下的起点。 */
+function upsertTurnMeta(
+  thread: ThreadView,
+  turnId: string,
+  patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
+): ThreadView {
+  if (!turnId) return thread
+  const turns = thread.turns ?? []
+  const index = turns.findIndex((turn) => turn.id === turnId)
+  const existing = index >= 0 ? turns[index] : undefined
+  const record = patch.record ?? null
+  const startedSec = positive(record?.startedAt)
+  const completedSec = positive(record?.completedAt)
+  const startedAtMs =
+    existing?.startedAtMs ?? (startedSec ? startedSec * 1000 : patch.phase === 'started' ? Date.now() : null)
+
+  let durationMs = existing?.durationMs ?? null
+  const explicit = positive(record?.durationMs)
+  if (explicit) durationMs = explicit
+  else if (patch.phase === 'completed' && startedAtMs) {
+    const computed = (completedSec ? completedSec * 1000 : Date.now()) - startedAtMs
+    if (computed > 0) durationMs = computed
+  } else if (patch.phase === 'loaded' && startedSec && completedSec && completedSec > startedSec) {
+    durationMs = durationMs ?? (completedSec - startedSec) * 1000
+  }
+
+  const itemIds = existing ? [...existing.itemIds] : []
+  for (const id of patch.itemIds ?? []) if (id && !itemIds.includes(id)) itemIds.push(id)
+
+  const meta: TurnMeta = { id: turnId, startedAtMs, durationMs, itemIds }
+  if (
+    existing &&
+    existing.startedAtMs === meta.startedAtMs &&
+    existing.durationMs === meta.durationMs &&
+    existing.itemIds.length === meta.itemIds.length
+  ) {
+    return thread
+  }
+  const next = turns.slice()
+  if (index >= 0) next[index] = meta
+  else next.push(meta)
+  return { ...thread, turns: next }
+}
+
+function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, phase?: TurnPhase): ThreadView {
   const record = asRecord(turn)
-  if (!record || !Array.isArray(record.items)) return thread
+  if (!record) return thread
+  const ids: string[] = []
   let items = thread.items
-  for (let index = 0; index < record.items.length; index++) {
-    const candidate = itemViewFromRaw(record.items[index], index, streaming)
+  for (let index = 0; index < arrayOf(record.items).length; index++) {
+    const candidate = itemViewFromRaw(arrayOf(record.items)[index], index, streaming)
+    ids.push(candidate.id)
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
-  return { ...thread, items }
+  const next = items === thread.items ? thread : { ...thread, items }
+  return phase ? upsertTurnMeta(next, idValue(record.id), { record, phase, itemIds: ids }) : next
 }
 
 function finalizeItems(thread: ThreadView): ThreadView {
@@ -491,6 +681,8 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   let status = statusFromValue(raw.status)
   let activeTurnId: string | null = status === 'idle' ? null : previous?.activeTurnId ?? null
   let items: ItemView[] = []
+  // 沿用实时记下的计时：历史里的时间戳可能缺失或只有秒级。
+  let turns: TurnMeta[] | undefined = previous?.turns
 
   for (const turnValue of arrayOf(raw.turns)) {
     const turn = asRecord(turnValue)
@@ -500,8 +692,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
       activeTurnId = idValue(turn?.id) || activeTurnId
     }
     let view: ThreadView = { id, status, activeTurnId, items, pendingApprovals: [] }
-    view = mergeTurnItems(view, turnValue, turnStreaming)
+    if (turns) view.turns = turns
+    view = mergeTurnItems(view, turnValue, turnStreaming, turnStreaming ? 'started' : 'loaded')
     items = view.items
+    turns = view.turns
   }
 
   if (items.length === 0 && Array.isArray(raw.items)) {
@@ -519,6 +713,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     pendingApprovals: previous?.pendingApprovals ?? [],
   }
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
+  if (turns) next.turns = turns
   if (status === 'error') next.error = previous?.error ?? 'Thread error'
   return { threads: { ...s.threads, [id]: next } }
 }
@@ -543,7 +738,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         }
         if (status !== 'error') next = clearError(next)
         if (thread && Array.isArray(thread.turns)) {
-          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false)
+          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false, 'loaded')
         }
         return next
       })
@@ -563,7 +758,9 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
           status: 'running',
           activeTurnId: turnId || current.activeTurnId,
         }
-        next = mergeTurnItems(next, params.turn, true)
+        next = mergeTurnItems(next, params.turn, true, 'started')
+        // turn/started 可能不带 turn 对象，计时起点仍要记下。
+        if (turnId) next = upsertTurnMeta(next, turnId, { phase: 'started' })
         return next
       })
     }
@@ -577,7 +774,9 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         errorText(turn?.error) ??
         (turnStatus === 'interrupted' ? 'Turn interrupted' : turnStatus === 'failed' ? 'Turn failed' : undefined)
       return withThread(s, id, (current) => {
-        let next = mergeTurnItems(current, params.turn, false)
+        let next = mergeTurnItems(current, params.turn, false, 'completed')
+        const completedId = idValue(turn?.id) || idValue(params.turnId) || current.activeTurnId || ''
+        if (completedId && !turn) next = upsertTurnMeta(next, completedId, { phase: 'completed' })
         next = finalizeItems(next)
         next = {
           ...next,

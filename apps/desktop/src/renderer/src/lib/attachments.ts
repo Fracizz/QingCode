@@ -82,10 +82,16 @@ export function basename(path: string): string {
 
 export type SkillRef = { name: string; path: string }
 
-/** 拼 turn/start 的 input：技能在最前（Claude 桥接会转成 /name 前缀），然后文字、图片、附件文件。 */
-export function buildUserInput(text: string, attachments: Attachment[], skill: SkillRef | null): UserInput[] {
+/** 拼 turn/start 的 input：多个技能按选择顺序在最前（Claude 桥接会转成 /name 前缀），然后文字、图片、附件文件。 */
+export function buildUserInput(text: string, attachments: Attachment[], skills: SkillRef[] = []): UserInput[] {
   const input: UserInput[] = []
-  if (skill) input.push({ type: 'skill', name: skill.name, path: skill.path })
+  const seen = new Set<string>()
+  for (const skill of skills) {
+    // 同一技能重复选没有意义，还会让 prompt 里出现两遍 /name。
+    if (!skill.name || seen.has(skill.name)) continue
+    seen.add(skill.name)
+    input.push({ type: 'skill', name: skill.name, path: skill.path })
+  }
   if (text.trim()) input.push({ type: 'text', text, text_elements: [] })
   for (const item of attachments) {
     if (item.kind === 'image') input.push({ type: 'image', url: item.dataUrl })
@@ -109,14 +115,36 @@ export function attachmentsBlocking(attachments: Attachment[]): string | null {
 
 // ---------- 斜杠菜单 ----------
 
+export type SlashToken = { query: string; start: number; end: number }
+
 /**
- * 光标前是否正在输入斜杠命令：只在输入框开头触发（和 Codex 一致），`/` 后到光标之间不能有空白。
- * 返回已输入的查询词；不在命令态返回 null。
+ * 光标前的斜杠片段：`/` 在开头或空白之后即可，这样一条消息里能连续选多个技能。
+ * 返回范围供选中后只删掉这一段，不吞掉已经输入的正文。
  */
-export function slashQuery(value: string, caret: number): string | null {
+export function slashToken(value: string, caret: number): SlashToken | null {
   const before = value.slice(0, caret)
-  const match = /^\/([^\s/]*)$/.exec(before)
-  return match ? match[1]! : null
+  const after = value.slice(caret)
+  // 光标停在词中间时不弹菜单，避免把后面的文字当成命令参数。
+  if (after && !/^\s/.test(after)) return null
+  const match = /(?:^|\s)\/([^\s/]*)$/.exec(before)
+  if (!match) return null
+  const query = match[1] ?? ''
+  return { query, start: before.length - query.length - 1, end: caret }
+}
+
+export function slashQuery(value: string, caret: number): string | null {
+  return slashToken(value, caret)?.query ?? null
+}
+
+/** 选中命令/技能后移除该斜杠片段，保留其余正文与换行。 */
+export function consumeSlashToken(value: string, caret: number): string {
+  const token = slashToken(value, caret)
+  if (!token) return value
+  const left = value.slice(0, token.start).replace(/[ \t]+$/, '')
+  const right = value.slice(token.end).replace(/^[ \t]+/, '')
+  if (!right) return left
+  if (!left) return right
+  return `${left}${left.endsWith('\n') ? '\n' : ' '}${right}`
 }
 
 export type SlashItem = {
@@ -160,7 +188,7 @@ const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
  * Claude 桥接把附件写成文本尾部的说明、把技能写成 `/name` 前缀（SDK 历史里存的就是这段文字）。
  * 展示时拆回附件列表与技能名，正文只保留用户真正输入的部分。
  */
-export function splitUserText(text: string): { text: string; files: string[]; skill: string | null } {
+export function splitUserText(text: string): { text: string; files: string[]; skills: string[] } {
   let body = text
   const files: string[] = []
   const index = body.lastIndexOf(ATTACHMENT_NOTE)
@@ -172,12 +200,14 @@ export function splitUserText(text: string): { text: string; files: string[]; sk
       body = body.slice(0, index).replace(/\s+$/, '')
     }
   }
-  let skill: string | null = null
-  const match = /^\/([\w.:-]+)(?:\s+|$)/.exec(body)
-  if (match) {
-    skill = match[1]!
+  // Claude 桥把多个技能写成 "/a /b 正文"，逐个拆出来展示成标签。
+  const skills: string[] = []
+  for (;;) {
+    const match = /^\/([\w.:-]+)(?:\s+|$)/.exec(body)
+    if (!match) break
+    skills.push(match[1]!)
     body = body.slice(match[0].length)
   }
-  return { text: body, files, skill }
+  return { text: body, files, skills }
 }
 

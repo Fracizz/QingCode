@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffStat, parseUnifiedDiff } from './diffModel'
+import { applyUnifiedDiff, diffStat, parseUnifiedDiff } from './diffModel'
 
 const SAMPLE = [
   'diff --git a/src/a.ts b/src/a.ts',
@@ -66,5 +66,54 @@ describe('diffStat', () => {
   it('只数增删行，忽略 --- / +++ 文件头', () => {
     expect(diffStat(SAMPLE)).toEqual({ add: 3, remove: 2 })
     expect(diffStat('')).toEqual({ add: 0, remove: 0 })
+  })
+})
+
+describe('applyUnifiedDiff', () => {
+  const original = ['first', 'old', 'last', 'd', 'e', 'f', 'g', 'h', 'i', 'context', 'gone', 'z'].join('\n')
+  const patch = [
+    '--- a/a.txt',
+    '+++ b/a.txt',
+    '@@ -1,3 +1,4 @@',
+    ' first',
+    '-old',
+    '+fresh',
+    '+extra',
+    ' last',
+    '@@ -10,2 +11,2 @@',
+    ' context',
+    '-gone',
+    '+added',
+    '',
+  ].join('\n')
+
+  it('按 hunk 还原新版本：上下文取原文、删除跳过、新增取 diff', () => {
+    const result = applyUnifiedDiff(original, patch)
+    expect(result.applied).toBe(true)
+    expect(result.text.split('\n')).toEqual([
+      'first', 'fresh', 'extra', 'last', 'd', 'e', 'f', 'g', 'h', 'i', 'context', 'added', 'z',
+    ])
+  })
+
+  it('空 diff 保持原文；CRLF 原文归一为 \n', () => {
+    expect(applyUnifiedDiff(original, '')).toEqual({ text: original, applied: true })
+    expect(applyUnifiedDiff('a\r\nb\r\n', '').text).toBe('a\nb\n')
+  })
+
+  it('新文件（oldStart=0）与 \\ No newline 标记', () => {
+    const result = applyUnifiedDiff('', [
+      '--- /dev/null',
+      '+++ b/new.txt',
+      '@@ -0,0 +1,2 @@',
+      '+one',
+      '+two',
+      '\\ No newline at end of file',
+    ].join('\n'))
+    expect(result).toEqual({ text: 'one\ntwo', applied: true })
+  })
+
+  it('hunk 行号与原文不匹配时标记 applied:false', () => {
+    const result = applyUnifiedDiff('a\nb\n', '@@ -8 +8 @@\n x\n-y\n+z\n')
+    expect(result.applied).toBe(false)
   })
 })

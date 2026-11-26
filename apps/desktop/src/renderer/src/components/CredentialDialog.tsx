@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { KeyRound } from 'lucide-react'
 import type { SshTarget } from '../../../shared/backendApi'
+import { PasswordInput } from './PasswordInput'
 import type { ConnectCredentials } from '../store/targets'
 import { Checkbox, ErrorNote, Modal } from './ui'
 
 export function CredentialDialog({
   target,
-  initialRemember = false,
+  initialRemember = true,
   onClose,
   onSubmit,
 }: {
@@ -56,9 +57,7 @@ export function CredentialDialog({
           <label className="mb-1 block text-xs text-qn-muted">
             {isKey ? '私钥口令（没有口令可留空）' : '密码'}
           </label>
-          <input
-            className="qn-input"
-            type="password"
+          <PasswordInput
             autoFocus
             value={secret}
             placeholder={isKey ? '私钥口令' : 'SSH 密码'}

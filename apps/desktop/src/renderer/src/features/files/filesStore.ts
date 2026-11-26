@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FsReadParams } from '@qn/protocol'
+import type { FsReadParams, FsWriteParams } from '@qn/protocol'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { subscribeOpen, type OpenRequest } from '../workspace/openers'
 import { dirname, fileKind } from './fileLinks'
@@ -19,12 +19,36 @@ import {
   type TabStatus,
   type TabView,
 } from './filesModel'
+import {
+  applyLocalEdit,
+  isDirty,
+  markDiskChanged,
+  markSaveFailed,
+  markSaved,
+  markSaving,
+  planConflict,
+  readOnlyReason,
+  toDiskText,
+  type ConflictAction,
+  type FilePrompt,
+} from './editModel'
+import { clearEditorStates, forgetEditorState } from './editor/stateCache'
+
+export type SaveOptions = {
+  /** 不带 expectedMtimeMs 直接重写（冲突时的「覆盖」）。 */
+  force?: boolean
+  expectedMtimeMs?: number
+  /** 已是磁盘格式的文本（由冲突计划或合并结果给出）。 */
+  content?: string
+}
 
 export type FilesState = {
   tabs: Tab[]
   activeId: string | null
   /** 面板是否展开；打开任何文件/差异时自动置 true。 */
   open: boolean
+  /** 保存冲突 / 关闭确认 / 合并对话框。 */
+  prompt: FilePrompt | null
   setOpen: (open: boolean) => void
   activate: (id: string) => void
   close: (id: string) => void
@@ -34,6 +58,15 @@ export type FilesState = {
   loadMore: (id: string) => void
   /** 仅供打开请求总线回调使用。 */
   handleOpen: (req: OpenRequest) => void
+  edit: (id: string, text: string) => void
+  save: (id: string, options?: SaveOptions) => Promise<boolean>
+  requestClose: (id: string) => void
+  requestCloseAll: () => void
+  confirmClose: (saveFirst: boolean) => void
+  confirmRefresh: (decision: 'save' | 'discard' | 'cancel') => void
+  resolveConflict: (action: ConflictAction) => void
+  saveCompare: (id: string, text: string) => Promise<void>
+  dismissPrompt: () => void
 }
 
 let nextTabId = 1
@@ -42,17 +75,25 @@ export const useFiles = create<FilesState>((set, get) => ({
   tabs: [],
   activeId: null,
   open: false,
+  prompt: null,
 
   setOpen: (open) => set({ open }),
   activate: (id) => set({ activeId: id, open: true }),
-  close: (id) => set((state) => closeTab(state.tabs, state.activeId, id)),
-  closeAll: () => set({ tabs: [], activeId: null }),
+  close: (id) => forceClose(id),
+  closeAll: () => {
+    set({ tabs: [], activeId: null, prompt: null })
+    clearEditorStates()
+  },
   setView: (id, view) =>
     set((state) => ({ tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, view } : tab)) })),
 
   refresh: (id) => {
     const tab = get().tabs.find((item) => item.id === id)
     if (!tab) return
+    if (tab.kind === 'file' && isDirty(tab)) {
+      set({ prompt: { kind: 'refresh', id } })
+      return
+    }
     if (tab.kind === 'file') startRead(id, false)
     else startDiff(id)
   },
@@ -73,13 +114,46 @@ export const useFiles = create<FilesState>((set, get) => ({
     if (tab.kind === 'file') startRead(tab.id, false)
     else if (tab.status === 'loading') startDiff(tab.id)
   },
+
+  edit: (id, text) =>
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === id ? applyLocalEdit(tab, text) : tab)),
+    })),
+
+  save: (id, options) => saveTab(id, options),
+  requestClose: (id) => {
+    const tab = get().tabs.find((item) => item.id === id)
+    if (!tab) return
+    if (isDirty(tab)) set({ prompt: { kind: 'close', ids: [id] } })
+    else forceClose(id)
+  },
+  requestCloseAll: () => {
+    const tabs = get().tabs
+    if (tabs.length === 0) return
+    if (tabs.some(isDirty)) set({ prompt: { kind: 'close', ids: tabs.map((tab) => tab.id) } })
+    else {
+      set({ tabs: [], activeId: null, prompt: null })
+      clearEditorStates()
+    }
+  },
+  confirmClose: (saveFirst) => void confirmClose(saveFirst),
+  confirmRefresh: (decision) => void confirmRefresh(decision),
+  resolveConflict: (action) => void resolveConflict(action),
+  saveCompare: (id, text) => saveCompare(id, text),
+  dismissPrompt: () => set({ prompt: null }),
 }))
 
 function patchTab(id: string, patch: Partial<Tab>): void {
   useFiles.setState({ tabs: useFiles.getState().tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)) })
 }
 
-/** 保留已显示内容时只置 busy，避免刷新把 CodeView 卸载、丢掉滚动位置。 */
+function forceClose(id: string): void {
+  const result = closeTab(useFiles.getState().tabs, useFiles.getState().activeId, id)
+  useFiles.setState({ tabs: result.tabs, activeId: result.activeId })
+  forgetEditorState(id)
+}
+
+/** 保留已显示内容时只置 busy，避免刷新把编辑器卸载、丢掉滚动位置。 */
 function startRead(id: string, append: boolean): void {
   const tab = useFiles.getState().tabs.find((item) => item.id === id)
   if (!tab || tab.kind !== 'file' || tab.busy) return
@@ -89,7 +163,6 @@ function startRead(id: string, append: boolean): void {
   const params: FsReadParams = { path: tab.path }
   if (append) params.offset = tab.loadedBytes
   if (image) params.encoding = 'base64'
-  // 保留旧内容：刷新/外部变更期间 CodeView 不卸载，滚动位置也就不会丢。
   patchTab(id, { revision, busy: true, status, error: undefined, errorCode: undefined })
 
   void (async () => {
@@ -163,6 +236,126 @@ function startDiff(id: string): void {
   })()
 }
 
+async function saveTab(id: string, options: SaveOptions = {}): Promise<boolean> {
+  const tab = useFiles.getState().tabs.find((item) => item.id === id)
+  if (!tab || tab.kind !== 'file' || tab.saving || readOnlyReason(tab)) return false
+  if (!isDirty(tab) && !options.force && options.expectedMtimeMs === undefined && options.content === undefined) return true
+
+  patchTab(id, markSaving(tab))
+  const written = options.content ?? toDiskText(tab.content, tab.eol)
+  const params: FsWriteParams = { path: tab.path, content: written }
+  if (tab.bom) params.bom = true
+  if (tab.sourceEncoding) params.sourceEncoding = tab.sourceEncoding
+  if (!options.force) {
+    const expected = options.expectedMtimeMs ?? (tab.mtimeMs > 0 ? tab.mtimeMs : undefined)
+    if (expected !== undefined) params.expectedMtimeMs = expected
+  }
+
+  try {
+    const result = await serverCall(tab.targetId, 'fs.write', params)
+    const current = useFiles.getState().tabs.find((item) => item.id === id)
+    if (!current) return true
+    // 保存期间继续输入时，只把"已写盘的那份文本"记为 savedText，dirty 保持为 true。
+    patchTab(id, markSaved(current, result.mtimeMs, tab.content))
+    return true
+  } catch (err) {
+    const current = useFiles.getState().tabs.find((item) => item.id === id)
+    if (!current) return false
+    if (errorCodeOf(err) === 'conflict') {
+      patchTab(id, { ...current, saving: false })
+      await openConflict(id)
+      return false
+    }
+    patchTab(id, markSaveFailed(current, errorMessage(err, '保存失败')))
+    return false
+  }
+}
+
+async function openConflict(id: string): Promise<void> {
+  const tab = useFiles.getState().tabs.find((item) => item.id === id)
+  if (!tab) return
+  let diskText: string | undefined
+  let diskMtimeMs: number | undefined
+  try {
+    const disk = await serverCall(tab.targetId, 'fs.read', { path: tab.path })
+    if (!disk.binary) diskText = disk.content
+    diskMtimeMs = disk.mtimeMs
+  } catch {
+    // 读不到磁盘内容时仍可覆盖 / 重新加载，对比入口按无磁盘文本处理。
+  }
+  useFiles.setState({
+    prompt: { kind: 'conflict', id, message: '文件在打开后被其他程序修改，直接保存会覆盖这些改动。', diskText, diskMtimeMs },
+  })
+}
+
+async function resolveConflict(action: ConflictAction): Promise<void> {
+  const prompt = useFiles.getState().prompt
+  if (prompt?.kind !== 'conflict') return
+  const tab = useFiles.getState().tabs.find((item) => item.id === prompt.id)
+  if (!tab) {
+    useFiles.setState({ prompt: null })
+    return
+  }
+  const plan = planConflict(action, { local: tab.content, eol: tab.eol, diskText: prompt.diskText })
+  switch (plan.kind) {
+    case 'cancel':
+      useFiles.setState({ prompt: null })
+      return
+    case 'overwrite':
+      useFiles.setState({ prompt: null })
+      await saveTab(prompt.id, { force: true, content: plan.content })
+      return
+    case 'reload':
+      useFiles.setState({ prompt: null })
+      startRead(prompt.id, false)
+      return
+    case 'compare':
+      useFiles.setState({
+        prompt: { kind: 'compare', id: prompt.id, local: plan.local, disk: plan.disk, diskMtimeMs: prompt.diskMtimeMs },
+      })
+      return
+  }
+}
+
+async function saveCompare(id: string, text: string): Promise<void> {
+  const prompt = useFiles.getState().prompt
+  if (prompt?.kind !== 'compare') return
+  const tab = useFiles.getState().tabs.find((item) => item.id === id)
+  if (!tab) return
+  patchTab(id, applyLocalEdit(tab, text))
+  const options: SaveOptions =
+    prompt.diskMtimeMs !== undefined ? { expectedMtimeMs: prompt.diskMtimeMs } : { force: true }
+  const ok = await saveTab(id, options)
+  if (ok) useFiles.setState({ prompt: null })
+}
+
+async function confirmClose(saveFirst: boolean): Promise<void> {
+  const prompt = useFiles.getState().prompt
+  if (prompt?.kind !== 'close') return
+  if (saveFirst) {
+    for (const id of prompt.ids) {
+      const tab = useFiles.getState().tabs.find((item) => item.id === id)
+      if (!tab || !isDirty(tab)) continue
+      // 保存失败/冲突时保留标签，由对应对话框接管。
+      if (!(await saveTab(id))) return
+    }
+  }
+  for (const id of prompt.ids) forceClose(id)
+  useFiles.setState({ prompt: null })
+}
+
+async function confirmRefresh(decision: 'save' | 'discard' | 'cancel'): Promise<void> {
+  const prompt = useFiles.getState().prompt
+  if (prompt?.kind !== 'refresh') return
+  if (decision === 'cancel') {
+    useFiles.setState({ prompt: null })
+    return
+  }
+  if (decision === 'save' && !(await saveTab(prompt.id))) return
+  useFiles.setState({ prompt: null })
+  startRead(prompt.id, false)
+}
+
 /** 已打开文件标签的路径；总管把它与文件树/搜索的监听集合合并后统一 fs.watch。 */
 export function getFileWatchPaths(targetId: string): string[] {
   return watchPaths(useFiles.getState().tabs, targetId)
@@ -186,8 +379,9 @@ onServerEvt('fs.changed', (targetId: string, payload: unknown) => {
   const changed = new Set(changedPaths(payload).map(pathWatchKey))
   if (changed.size === 0) return
   for (const tab of useFiles.getState().tabs) {
-    if (tab.kind === 'file' && tab.targetId === targetId && changed.has(pathWatchKey(tab.path))) {
-      startRead(tab.id, false)
-    }
+    if (tab.kind !== 'file' || tab.targetId !== targetId || !changed.has(pathWatchKey(tab.path))) continue
+    // 未改动直接重载（编辑器内整篇替换，光标/滚动不动）；有改动只提示，避免丢本地编辑。
+    if (isDirty(tab)) patchTab(tab.id, markDiskChanged(tab))
+    else startRead(tab.id, false)
   }
 })

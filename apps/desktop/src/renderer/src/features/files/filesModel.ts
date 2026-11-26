@@ -1,6 +1,7 @@
 import type { FsReadResult } from '@qn/protocol'
 import type { OpenRequest } from '../workspace/openers'
 import { basename, dirname } from './fileLinks'
+import { applyDiskText, type Eol } from './editModel'
 
 export type TabStatus = 'loading' | 'ready' | 'error'
 export type DiffMode = 'worktree' | 'staged' | 'commit' | 'text'
@@ -22,8 +23,20 @@ export type Tab = {
   /** 每次发起 IO 自增，结果回来时比对，丢弃过期响应。 */
   revision: number
   busy?: boolean
+  /** 编辑器内部文本（统一 \n 换行）。 */
   content: string
+  /** 上次写盘/载入的文本，content 与之不等即 dirty。 */
+  savedText: string
+  dirty: boolean
+  eol: Eol
+  /** 有未保存改动时磁盘又发生变化；只提示不自动覆盖。 */
+  diskChanged: boolean
+  saving?: boolean
+  saveError?: string
   encoding: 'utf8' | 'base64' | null
+  /** 源文件带 BOM / 是 UTF-16：保存时原样传回 fs.write，避免改掉文件编码。 */
+  bom?: boolean
+  sourceEncoding?: 'utf16le' | 'utf16be'
   size: number
   mtimeMs: number
   offset: number
@@ -74,6 +87,10 @@ export function createTab(req: OpenRequest, id: string): Tab {
     status: 'loading',
     revision: 1,
     content: '',
+    savedText: '',
+    dirty: false,
+    eol: '\n',
+    diskChanged: false,
     encoding: null,
     size: 0,
     mtimeMs: 0,
@@ -115,7 +132,8 @@ export function upsertTab(tabs: Tab[], incoming: Tab): UpsertResult {
   const index = tabs.findIndex((tab) => tabKeyOf(tab) === key)
   const existing = index >= 0 ? tabs[index] : undefined
   if (!existing) return { tabs: [...tabs, incoming], id: incoming.id, created: true, retry: false }
-  const retry = existing.status === 'error'
+  // 错误态且有本地改动时不重试读取，避免重新打开同一文件丢掉未保存编辑。
+  const retry = existing.status === 'error' && !existing.dirty
   const merged: Tab = {
     ...existing,
     cwd: incoming.cwd ?? existing.cwd,
@@ -144,16 +162,19 @@ export function closeTab(
   return { tabs: next, activeId: active }
 }
 
-/** 合并首读/续读结果；utf8 续读时拼接文本。 */
+/** 合并首读/续读结果；utf8 续读时拼接，并同步重建编辑态（换行、mtime、dirty）。 */
 export function mergeRead(tab: Tab, result: FsReadResult, append: boolean): Tab {
+  const raw = append ? tab.content + result.content : result.content
+  const base = applyDiskText(tab, raw, result.mtimeMs)
   return {
-    ...tab,
+    ...base,
     status: 'ready',
     busy: false,
-    content: append ? tab.content + result.content : result.content,
     encoding: result.encoding,
+    // 续读（append）沿用首段读到的编码信息。
+    bom: append ? tab.bom : result.bom,
+    sourceEncoding: append ? tab.sourceEncoding : result.sourceEncoding,
     size: result.size,
-    mtimeMs: result.mtimeMs,
     offset: result.offset,
     loadedBytes: result.offset + result.length,
     truncated: result.truncated,
@@ -211,6 +232,7 @@ export function failedTab(tab: Tab, err: unknown, fallback: string): Tab {
     ...tab,
     status: 'error',
     busy: false,
+    saving: false,
     error: errorMessage(err, fallback),
     errorCode: errorCodeOf(err) || undefined,
   }

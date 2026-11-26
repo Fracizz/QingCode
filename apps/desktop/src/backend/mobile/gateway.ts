@@ -125,8 +125,8 @@ export function parseBearerToken(value: string | string[] | undefined): string |
   return matched?.[1]?.toLowerCase() ?? null
 }
 
-function isAgent(value: unknown): value is 'codex' | 'claude' {
-  return value === 'codex' || value === 'claude'
+function isAgent(value: unknown): value is 'codex' | 'claude' | 'pi' {
+  return value === 'codex' || value === 'claude' || value === 'pi'
 }
 
 /** T14 的 agent 字段可能由原生桥放在 /rpc 顶层；补进目标方法的 params，不改 backend 类型。 */

@@ -6,10 +6,10 @@ export type ClientInfo = { name: string; version: string }
 export type WireError = { code: string | number; message: string }
 
 /** §11.2：缺省 agent 等同 codex，旧客户端不带该字段仍按 codex 处理。 */
-export type AgentKind = 'codex' | 'claude'
+export type AgentKind = 'codex' | 'claude' | 'pi'
 
 export function isAgentKind(x: unknown): x is AgentKind {
-  return x === 'codex' || x === 'claude'
+  return x === 'codex' || x === 'claude' || x === 'pi'
 }
 
 /** 解析可选 agent：缺省为 codex，显式但非法的值返回 null 让调用方报参数错误。 */
@@ -57,12 +57,14 @@ export interface ServerMethods extends WorkspaceMethods {
     result: { path: string; entries: FsEntry[] }
   }
   'codex.open': {
-    params: { codexPath?: string; claudePath?: string; agent?: AgentKind }
+    params: { codexPath?: string; claudePath?: string; piPath?: string; agent?: AgentKind }
     result: {
       initialize: unknown
       lastSeq: number
       codexVersion?: string
       agentVersion?: string
+      /** pi 无审批/额度接口，由前端据此标注与隐藏徽标。 */
+      capabilities?: { approvals: boolean; rateLimits: boolean }
     }
   }
   'codex.attach': {

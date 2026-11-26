@@ -12,7 +12,8 @@ describe('claude 可执行文件解析', () => {
     const candidates = claudeCandidates()
     expect(candidates.length).toBeGreaterThan(2)
     expect(candidates.some((file) => file.includes(path.join('.local', 'bin')))).toBe(true)
-    expect(candidates.some((file) => file.includes('npm-global'))).toBe(true)
+    // Windows 补 %APPDATA%\npm / WindowsApps，POSIX 补 ~/.npm-global/bin。
+    expect(candidates.some((file) => /npm-global|npm|WindowsApps/i.test(file))).toBe(true)
     // Windows 不用 .cmd；SDK 需要可直接 spawn 的 .exe。
     expect(candidates.some((file) => file.endsWith('.cmd'))).toBe(false)
   })

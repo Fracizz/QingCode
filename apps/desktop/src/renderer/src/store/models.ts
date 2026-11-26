@@ -70,5 +70,14 @@ export const useModels = create<ModelsState>((set, get) => ({
 export function overridesFor(targetId: string, agent: AgentKind): TurnOverrides {
   const state = useModels.getState()
   const models = state.lists[sessionKey(targetId, agent)]?.models ?? []
-  return turnOverrides(resolveSelection(models, state.prefs[agent] ?? EMPTY_PREFS))
+  const prefs = state.prefs[agent] ?? EMPTY_PREFS
+  const overrides = turnOverrides(resolveSelection(models, prefs))
+  if (agent === 'codex') return overrides
+  // Claude / pi：用户没主动选过的项不发，沿用 Agent 自身配置（如 Claude settings 里的默认模型与强度）。
+  const { model, effort, ...rest } = overrides
+  return {
+    ...rest,
+    ...(prefs.model && model ? { model } : {}),
+    ...(prefs.effort && effort ? { effort } : {}),
+  }
 }

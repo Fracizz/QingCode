@@ -159,6 +159,8 @@ export const useTargets = create<TargetsState>((set, get) => ({
     try {
       await call('target.forgetSecret', { id })
       set({ notice: '已删除本机保存的密码/口令' })
+      // 刷新"已保存密码"标记，下次连接重新弹框。
+      void get().load()
     } catch (err) {
       set({ notice: friendlyError(err, '忘记已保存的密码失败') })
     }
@@ -181,7 +183,13 @@ function upsertTarget(targets: Target[], target: SshTarget | DirectTarget): Targ
   const index = targets.findIndex((item) => item.id === target.id)
   if (index < 0) return [...targets, target]
   const next = [...targets]
-  next[index] = target
+  const previous = targets[index]
+  // targets.save / enableDirect 的返回不带 hasSavedSecret（只有 targets.list 附带），沿用旧值以免误弹密码框。
+  next[index] =
+    target.kind === 'ssh' && target.hasSavedSecret === undefined && previous?.kind === 'ssh' &&
+    previous.hasSavedSecret !== undefined
+      ? { ...target, hasSavedSecret: previous.hasSavedSecret }
+      : target
   return next
 }
 

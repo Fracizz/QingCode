@@ -20,7 +20,18 @@ import { registerTargetMethods } from './registerTargets'
 
 export const router = new BackendRouter()
 
-router.register('targets.list', () => readTargets(backendConfig.userData))
+router.register('targets.list', async () => {
+  const targets = await readTargets(backendConfig.userData)
+  // 渲染进程据此决定连接时是否还要弹密码框；只回布尔值，明文不出 backend。
+  return Promise.all(
+    targets.map(async (target) => {
+      if (target.kind !== 'ssh' || target.auth.kind === 'agent') return target
+      const secret = await loadSecret(target.id).catch(() => null)
+      const saved = target.auth.kind === 'password' ? Boolean(secret?.password) : Boolean(secret?.passphrase)
+      return { ...target, hasSavedSecret: saved }
+    }),
+  )
+})
 
 router.register('targets.save', async (params) => {
   if (isDirectInput(params)) {

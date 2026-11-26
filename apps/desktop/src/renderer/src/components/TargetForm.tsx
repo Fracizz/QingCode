@@ -10,6 +10,7 @@ import type {
   SshTargetInput,
   TargetProbe,
 } from '../../../shared/backendApi'
+import { PasswordInput } from './PasswordInput'
 import type { ConnectCredentials } from '../store/targets'
 import { useTargets } from '../store/targets'
 import { friendlyError } from '../lib/errors'
@@ -38,7 +39,8 @@ const emptyDraft: Draft = {
   keyPath: '',
   password: '',
   passphrase: '',
-  remember: false,
+  // 默认记住：多数用户期望下次连接不再输入；可取消勾选。
+  remember: true,
 }
 
 function draftFrom(target: SshTarget): Draft {
@@ -121,7 +123,11 @@ export function TargetForm({
   )
   const [codeText, setCodeText] = useState('')
   const [codeError, setCodeError] = useState<string | null>(null)
-  const [directConfig, setDirectConfig] = useState({ listen: '47390', host: '', allowPublic: false })
+  const [directConfig, setDirectConfig] = useState({
+    listen: '47390',
+    host: initial?.kind === 'ssh' ? initial.host : '',
+    allowPublic: false,
+  })
   const [sshDirect, setSshDirect] = useState<SshDirect | undefined>(initial?.kind === 'ssh' ? initial.direct : undefined)
   // 新建后测试失败时对话框保留：记下 id，再次保存是更新而不是又建一条。
   const [sshSavedId, setSshSavedId] = useState(initial?.kind === 'ssh' ? initial.id : undefined)
@@ -452,48 +458,48 @@ export function TargetForm({
           </div>
         ) : (
           <>
-        <input className="qn-input" placeholder="名称" value={draft.name}
-          onChange={(e) => patch({ name: e.target.value })} />
-        <div className="flex gap-2">
-          <input className="qn-input min-w-0 flex-1" placeholder="主机" value={draft.host}
-            onChange={(e) => patch({ host: e.target.value })} />
-          <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={draft.port}
-            onChange={(e) => patch({ port: e.target.value })} />
-        </div>
-        <input className="qn-input" placeholder="用户名" value={draft.username}
-          onChange={(e) => patch({ username: e.target.value })} />
-        <Select
-          aria-label="认证方式"
-          value={draft.authKind}
-          onValueChange={(value) => patch({ authKind: value as Draft['authKind'] })}
-          options={[
-            { value: 'password', label: '密码' },
-            { value: 'key', label: '私钥文件' },
-            { value: 'agent', label: 'ssh-agent' },
-          ]}
-        />
-        {draft.authKind === 'key' && (
+          <input className="qn-input" placeholder="名称" value={draft.name}
+            onChange={(e) => patch({ name: e.target.value })} />
           <div className="flex gap-2">
-            <input className="qn-input min-w-0 flex-1" placeholder="私钥路径" value={draft.keyPath}
-              onChange={(e) => patch({ keyPath: e.target.value })} />
-            <IconButton label="选择私钥文件" onClick={() => void pickKey()}>
-              <Folder size={14} />
-            </IconButton>
+            <input className="qn-input min-w-0 flex-1" placeholder="主机" value={draft.host}
+              onChange={(e) => patch({ host: e.target.value })} />
+            <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={draft.port}
+              onChange={(e) => patch({ port: e.target.value })} />
           </div>
-        )}
-        {(draft.authKind === 'password' || draft.authKind === 'key') && (
-          <>
-            <input className="qn-input" type="password" placeholder={secretLabel}
-              value={draft.authKind === 'key' ? draft.passphrase : draft.password}
-              onChange={(e) => patch(draft.authKind === 'key' ? { passphrase: e.target.value } : { password: e.target.value })} />
-            <Checkbox checked={draft.remember} onChange={(value) => patch({ remember: value })}>
-              记住密码 / 口令（用本机系统加密保存）
-            </Checkbox>
-            <p className="text-[12px] leading-5 text-qn-muted">
-              凭据只在连接时传给 backend，不写入连接配置。
-            </p>
-          </>
-        )}
+          <input className="qn-input" placeholder="用户名" value={draft.username}
+            onChange={(e) => patch({ username: e.target.value })} />
+          <Select
+            aria-label="认证方式"
+            value={draft.authKind}
+            onValueChange={(value) => patch({ authKind: value as Draft['authKind'] })}
+            options={[
+              { value: 'password', label: '密码' },
+              { value: 'key', label: '私钥文件' },
+              { value: 'agent', label: 'ssh-agent' },
+            ]}
+          />
+          {draft.authKind === 'key' && (
+            <div className="flex gap-2">
+              <input className="qn-input min-w-0 flex-1" placeholder="私钥路径" value={draft.keyPath}
+                onChange={(e) => patch({ keyPath: e.target.value })} />
+              <IconButton label="选择私钥文件" onClick={() => void pickKey()}>
+                <Folder size={14} />
+              </IconButton>
+            </div>
+          )}
+          {(draft.authKind === 'password' || draft.authKind === 'key') && (
+            <>
+              <PasswordInput placeholder={initial?.kind === 'ssh' && initial.hasSavedSecret ? `${secretLabel}（已保存，留空沿用）` : secretLabel}
+                value={draft.authKind === 'key' ? draft.passphrase : draft.password}
+                onChange={(e) => patch(draft.authKind === 'key' ? { passphrase: e.target.value } : { password: e.target.value })} />
+              <Checkbox checked={draft.remember} onChange={(value) => patch({ remember: value })}>
+                记住密码 / 口令（用本机系统加密保存）
+              </Checkbox>
+              <p className="text-[12px] leading-5 text-qn-muted">
+                凭据只在连接时传给 backend，不写入连接配置。
+              </p>
+            </>
+          )}
           {initial?.kind === 'ssh' && (
             <div className="mt-3 space-y-2 rounded-lg border border-qn-border px-3 py-2.5">
               <div className="text-[13px] font-medium text-qn-text">直连加速</div>
@@ -521,7 +527,7 @@ export function TargetForm({
                     </label>
                     <label className="min-w-0 flex-1">
                       <span className="mb-1 block text-[12px] text-qn-muted">拨号地址</span>
-                      <input className="qn-input" placeholder={draft.host.trim() || '默认 SSH 主机'} value={directConfig.host}
+                      <input className="qn-input" placeholder="可填 frp / Tailscale 地址" value={directConfig.host}
                         onChange={(event) => setDirectConfig((value) => ({ ...value, host: event.target.value }))} />
                     </label>
                   </div>

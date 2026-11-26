@@ -1,7 +1,12 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { WorkspaceError } from '../registry'
-import { planSwitch, toRepoRelative } from './pure'
+import {
+  canonicalizeRepoRelative,
+  needCaseCanonicalization,
+  planSwitch,
+  toRepoRelative,
+} from './pure'
 
 const root = path.resolve(path.parse(process.cwd()).root, 'repo')
 
@@ -27,6 +32,51 @@ describe('toRepoRelative', () => {
         expect((err as WorkspaceError).code).toBe('params')
       }
     }
+  })
+})
+
+describe('Windows 根相对路径', () => {
+  const winRoot = 'C:\\Repo'
+
+  it('盘符大小写、混用斜杠与长路径前缀都得到同一相对路径', () => {
+    expect(toRepoRelative(winRoot, 'c:/repo/src/a.ts', 'win32')).toBe('src/a.ts')
+    expect(toRepoRelative('C:/Repo', 'C:\\REPO\\src\\中文.ts', 'win32')).toBe('src/中文.ts')
+    expect(toRepoRelative('\\\\?\\C:\\Repo', '\\\\?\\C:\\Repo\\src\\a.ts', 'win32')).toBe(
+      'src/a.ts',
+    )
+    expect(toRepoRelative('\\\\?\\C:\\Repo', 'c:/repo/src/a.ts', 'win32')).toBe('src/a.ts')
+  })
+
+  it('UNC 根与从 POSIX 主机解析 Windows 路径', () => {
+    expect(
+      toRepoRelative('\\\\server\\share\\repo', '\\\\SERVER\\share\\repo\\src\\a.ts', 'win32'),
+    ).toBe('src/a.ts')
+    expect(toRepoRelative(winRoot, 'c:/repo/src/a.ts', 'linux')).toBe('src/a.ts')
+  })
+
+  it('越界路径仍报 params', () => {
+    expect(() => toRepoRelative(winRoot, 'D:\\Other\\a.ts', 'win32')).toThrow(/不在仓库内/)
+  })
+
+  it('按磁盘真实大小写归一相对路径（git pathspec 区分大小写）', () => {
+    const entries: Record<string, string[]> = {
+      'C:\\Repo': ['Src', 'CaseFile.txt', '.git'],
+      'C:\\Repo\\Src': ['Nested', 'A.ts'],
+      'C:\\Repo\\Src\\Nested': ['B.ts'],
+    }
+    const readdir = (dir: string): string[] => entries[dir] ?? []
+    expect(canonicalizeRepoRelative(winRoot, 'src/nested/b.ts', readdir)).toBe(
+      'Src/Nested/B.ts',
+    )
+    expect(canonicalizeRepoRelative(winRoot, 'casefile.txt', readdir)).toBe('CaseFile.txt')
+    // 找不到的段（新建/已删除）保留原写法。
+    expect(canonicalizeRepoRelative(winRoot, 'src/new.txt', readdir)).toBe('Src/new.txt')
+    expect(canonicalizeRepoRelative(winRoot, '.', readdir)).toBe('.')
+    expect(canonicalizeRepoRelative(winRoot, 'Src/Nested/B.ts', readdir, true)).toBe(
+      'Src/Nested/B.ts',
+    )
+    expect(needCaseCanonicalization(winRoot, 'win32')).toBe(true)
+    expect(needCaseCanonicalization('/repo', 'linux')).toBe(false)
   })
 })
 

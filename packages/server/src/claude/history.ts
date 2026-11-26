@@ -10,6 +10,7 @@ import {
   type Json,
   type MapContext,
   type SessionMeta,
+  type ThreadConfig,
   type V2Item,
 } from './v2'
 
@@ -69,7 +70,11 @@ interface OpenTurn {
  * 按用户消息切分 turns：每条带文本的用户消息开启新 turn，
  * tool_result 与 assistant 消息归属当前 turn；item 映射复用 items.ts。
  */
-export function sessionMessagesToThread(meta: SessionMeta, messages: unknown[]): HistoryResult {
+export function sessionMessagesToThread(
+  meta: SessionMeta,
+  messages: unknown[],
+  config: ThreadConfig = {},
+): HistoryResult {
   let state = emptyMapState()
   const open: OpenTurn[] = []
   let current: OpenTurn | null = null
@@ -104,5 +109,5 @@ export function sessionMessagesToThread(meta: SessionMeta, messages: unknown[]):
     buildTurn(turn.id, turn.itemIds.map((id) => state.items[id]).filter(isRecord), 'completed'),
   )
   const items = state.order.map((id) => state.items[id]).filter(isRecord)
-  return { thread: buildThread(meta, finalTurns), turns: finalTurns, items }
+  return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items }
 }

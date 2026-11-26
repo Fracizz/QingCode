@@ -3,13 +3,15 @@ import { ArrowUp, CircleAlert, FileText, LoaderCircle, Paperclip, Slash, Square,
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder } from '../lib/agents'
 import {
+  consumeSlashToken,
   filterSlashItems,
   formatBytes,
-  slashQuery,
+  slashToken,
   type Attachment,
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
+import { useSetting } from '../features/settings'
 import { cn } from '../lib/cn'
 import { Tip } from './primitives'
 import { ErrorNote } from './ui'
@@ -29,8 +31,9 @@ type SlashProps = {
   /** 斜杠菜单候选（内置命令 + 技能）；不传则不启用斜杠菜单。 */
   items: SlashItem[]
   loading?: boolean
-  skill: SkillRef | null
-  onSkillChange: (skill: SkillRef | null) => void
+  /** 一条消息可以同时挂多个技能，按选择顺序发送。 */
+  skills: SkillRef[]
+  onSkillsChange: (skills: SkillRef[]) => void
   onCommand: (id: string) => void
 }
 
@@ -49,6 +52,7 @@ export function Composer({
   value,
   onChange,
   agent,
+  capabilities,
   annotationCount = 0,
   compact = false,
   leading,
@@ -67,6 +71,8 @@ export function Composer({
   value: string
   onChange: (value: string) => void
   agent: AgentKind
+  /** codex.open 的能力字段；pi 为 { approvals: false }，未透传时按 agent 兜底。 */
+  capabilities?: { approvals?: boolean; rateLimits?: boolean } | null
   annotationCount?: number
   compact?: boolean
   leading?: ReactNode
@@ -75,6 +81,7 @@ export function Composer({
   attach?: AttachmentProps
   slash?: SlashProps
 }) {
+  const sendKey = useSetting((settings) => settings.general.sendKey)
   const composing = useRef(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -89,14 +96,15 @@ export function Composer({
     area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
   }, [value])
 
-  const query = slash ? slashQuery(value, caret) : null
+  const token = slash ? slashToken(value, caret) : null
+  const query = token?.query ?? null
   const menuOpen = query !== null && !dismissed && !disabled
   const matches = menuOpen && slash ? filterSlashItems(slash.items, query) : []
 
   useEffect(() => setActive(0), [query])
 
   const attachments = attach?.attachments ?? []
-  const hasExtras = attachments.length > 0 || slash?.skill != null || annotationCount > 0
+  const hasExtras = attachments.length > 0 || (slash?.skills.length ?? 0) > 0 || annotationCount > 0
   const blocked = attach?.blockedReason ?? null
   const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasExtras)
 
@@ -108,11 +116,16 @@ export function Composer({
 
   const choose = (item: SlashItem | undefined) => {
     if (!item || !slash) return
-    // 去掉 "/查询词"，保留光标后的内容。
-    onChange(value.slice(caret).replace(/^\s+/, ''))
-    setCaret(0)
-    if (item.kind === 'skill' && item.path) slash.onSkillChange({ name: item.name, path: item.path })
-    else slash.onCommand(item.id)
+    // 只去掉当前这个 "/片段"，其余正文原样保留；光标落到末尾，剩下的 /技能 可以接着选。
+    const nextValue = consumeSlashToken(value, caret)
+    onChange(nextValue)
+    setCaret(nextValue.length)
+    if (item.kind === 'skill' && item.path) {
+      const picked = { name: item.name, path: item.path }
+      if (!slash.skills.some((skill) => skill.name === picked.name)) {
+        slash.onSkillsChange([...slash.skills, picked])
+      }
+    } else slash.onCommand(item.id)
     areaRef.current?.focus()
   }
 
@@ -136,14 +149,18 @@ export function Composer({
         return
       }
     }
-    // 空输入时退格先移除已选技能，和 Codex 的 chip 行为一致。
-    if (event.key === 'Backspace' && value === '' && slash?.skill) {
-      slash.onSkillChange(null)
+    // 空输入时退格先移除最后选的技能，和 Codex 的 chip 行为一致。
+    if (event.key === 'Backspace' && value === '' && slash && slash.skills.length > 0) {
+      slash.onSkillsChange(slash.skills.slice(0, -1))
       return
     }
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submit()
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      // 设置 → 通用 → 发送快捷键：Enter 发送，或 Ctrl+Enter 发送（此时 Enter 换行）。
+      const ctrl = event.ctrlKey || event.metaKey
+      if (sendKey === 'ctrlEnter' ? ctrl : !ctrl) {
+        event.preventDefault()
+        submit()
+      }
     }
   }
 
@@ -157,6 +174,8 @@ export function Composer({
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
+  // pi 原生没有审批机制，必须如实提示，不能伪造审批卡片。
+  const noApprovals = agent === 'pi' || capabilities?.approvals === false
 
   return (
     <div className={cn('shrink-0', compact ? 'px-3 pb-3 pt-1' : 'px-6 pb-3 pt-1')}>
@@ -171,6 +190,9 @@ export function Composer({
           <SlashMenu items={matches} active={active} loading={slash.loading} onHover={setActive} onChoose={choose} />
         )}
 
+        {noApprovals && (
+          <div className="mb-1.5 px-3 text-[12px] text-qn-dim">pi 不经审批直接执行工具</div>
+        )}
         <div
           className={cn(
             'rounded-[20px] border border-qn-border-strong bg-qn-panel shadow-[0_8px_24px_rgba(0,0,0,0.25)] transition-colors focus-within:border-[#4a4a4a]',
@@ -244,20 +266,20 @@ export function Composer({
               </>
             )}
             {leading}
-            {slash?.skill && (
-              <span className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-[13px] text-qn-brand">
+            {slash?.skills.map((skill) => (
+              <span key={skill.name} className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-[13px] text-qn-brand">
                 <Wand2 size={13} className="shrink-0" />
-                <span className="truncate">{slash.skill.name}</span>
+                <span className="truncate">{skill.name}</span>
                 <button
                   type="button"
                   className="inline-flex h-5 w-5 items-center justify-center rounded-md hover:bg-qn-brand/20"
-                  aria-label="移除技能"
-                  onClick={() => slash.onSkillChange(null)}
+                  aria-label={`移除技能 ${skill.name}`}
+                  onClick={() => slash.onSkillsChange(slash.skills.filter((item) => item.name !== skill.name))}
                 >
                   <X size={12} />
                 </button>
               </span>
-            )}
+            ))}
             {annotationCount > 0 && (
               <span className="rounded-md bg-qn-accent/10 px-2 py-0.5 text-[12px] text-qn-accent">
                 {annotationCount} 条注释随消息发送
@@ -277,7 +299,7 @@ export function Composer({
                 </button>
               </Tip>
             ) : (
-              <Tip label={blocked ?? '发送（Enter）· 换行（Shift+Enter）'}>
+              <Tip label={blocked ?? (sendKey === 'ctrlEnter' ? '发送（Ctrl+Enter）· 换行（Enter）' : '发送（Enter）· 换行（Shift+Enter）')}>
                 {/* 禁用的 button 不触发悬停事件，外包一层让提示仍能显示原因。 */}
                 <span className="inline-flex">
                   <button

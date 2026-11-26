@@ -31,14 +31,17 @@ const VERSION_TIMEOUT_MS = 3_000
 export function piCandidates(explicit?: string, platform: NodeJS.Platform = process.platform): string[] {
   if (explicit) return [explicit]
   const isWindows = platform === 'win32'
+  // 注入 platform 的测试也必须得到对应平台的分隔符，不能只看宿主机的 path。
+  const join = isWindows ? path.win32.join : path.posix.join
+  const delimiter = isWindows ? ';' : ':'
   const names = isWindows ? ['pi.exe', 'pi.cmd', 'pi.ps1', 'pi'] : ['pi']
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
+  const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
   const home = os.homedir()
   const result: string[] = []
-  for (const dir of dirs) for (const name of names) result.push(path.join(dir, name))
-  for (const name of names) result.push(path.join(home, '.local', 'bin', name))
-  for (const dir of ['/usr/local/bin', path.join(home, '.npm-global', 'bin')]) {
-    for (const name of names) result.push(path.join(dir, name))
+  for (const dir of dirs) for (const name of names) result.push(join(dir, name))
+  for (const name of names) result.push(join(home, '.local', 'bin', name))
+  for (const dir of ['/usr/local/bin', join(home, '.npm-global', 'bin')]) {
+    for (const name of names) result.push(join(dir, name))
   }
   return result
 }
@@ -125,6 +128,6 @@ export function resolvePiExecutable(
   }
   throw new AgentHostError(
     'agent_unavailable',
-    `未找到 pi${trimmed ? ` (${trimmed})` : ''}；请在目标机用其原有安装方式安装并登录 pi，或用 piPath 指定可执行文件`,
+    `未找到 pi${trimmed ? ` (${trimmed})` : ''}；请先由用户本人在目标机安装并登录 pi（沿用原安装方式，如 npm i -g @earendil-works/pi-coding-agent），或用 piPath 指定可执行文件；QingCode 不会自动安装`,
   )
 }

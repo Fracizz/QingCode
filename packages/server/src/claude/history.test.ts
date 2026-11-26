@@ -173,6 +173,11 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
     expect(result.turns).toHaveLength(2)
   })
 
+  it('thread/read 的历史线程带上当前模型/推理强度', () => {
+    const result = sessionMessagesToThread(meta, [], { model: 'opus', reasoningEffort: 'max' })
+    expect(result.thread).toMatchObject({ model: 'opus', reasoningEffort: 'max' })
+  })
+
   it('非法条目被跳过', () => {
     expect(sessionMessagesToThread(meta, [null, 1, 'x', {}]).items).toEqual([])
   })

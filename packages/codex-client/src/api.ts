@@ -57,9 +57,9 @@ export function deleteThread(rpc: CodexRpcLike, threadId: string): Promise<unkno
   return rpc.request('thread/delete', { threadId })
 }
 
-/** 从会话完整历史分叉出一个新会话（Codex 的 thread/fork）。 */
-export function forkThread(rpc: CodexRpcLike, threadId: string): Promise<ThreadForkResponse> {
-  return rpc.request('thread/fork', { threadId })
+/** 从会话历史分叉出一个新会话（Codex 的 thread/fork）；给出 lastTurnId 时只保留到该轮（含）。 */
+export function forkThread(rpc: CodexRpcLike, threadId: string, lastTurnId?: string): Promise<ThreadForkResponse> {
+  return rpc.request('thread/fork', lastTurnId ? { threadId, lastTurnId } : { threadId })
 }
 
 /** turn/start 的覆盖项：对本次及之后的 turn 生效；未设置的字段不发送，沿用会话当前配置。 */

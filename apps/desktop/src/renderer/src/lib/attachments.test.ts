@@ -3,6 +3,7 @@ import {
   attachmentsBlocking,
   basename,
   buildUserInput,
+  consumeSlashToken,
   dirname,
   filterSlashItems,
   formatBytes,
@@ -10,6 +11,7 @@ import {
   pathSeparator,
   sanitizeFileName,
   slashQuery,
+  slashToken,
   splitUserText,
   uploadPath,
   type Attachment,
@@ -53,7 +55,7 @@ describe('buildUserInput', () => {
   const failed: Attachment = { id: '3', kind: 'file', name: 'b.log', size: 1, localPath: '', targetPath: null, status: 'error' }
 
   it('技能在前，随后文字、图片、文件', () => {
-    expect(buildUserInput('看看', [ready, image], { name: 'review', path: '/s/SKILL.md' })).toEqual([
+    expect(buildUserInput('看看', [ready, image], [{ name: 'review', path: '/s/SKILL.md' }])).toEqual([
       { type: 'skill', name: 'review', path: '/s/SKILL.md' },
       { type: 'text', text: '看看', text_elements: [] },
       { type: 'image', url: 'data:image/png;base64,AA' },
@@ -61,9 +63,22 @@ describe('buildUserInput', () => {
     ])
   })
 
+  it('多个技能按选择顺序发送并去重', () => {
+    const skills = [
+      { name: 'review', path: '/s/review/SKILL.md' },
+      { name: 'deploy', path: '/s/deploy/SKILL.md' },
+      { name: 'review', path: '/s/review/SKILL.md' },
+    ]
+    expect(buildUserInput('看看', [], skills).slice(0, 3)).toEqual([
+      { type: 'skill', name: 'review', path: '/s/review/SKILL.md' },
+      { type: 'skill', name: 'deploy', path: '/s/deploy/SKILL.md' },
+      { type: 'text', text: '看看', text_elements: [] },
+    ])
+  })
+
   it('空白文字不发送，未就绪文件跳过', () => {
-    expect(buildUserInput('  ', [image, failed], null)).toEqual([{ type: 'image', url: 'data:image/png;base64,AA' }])
-    expect(buildUserInput('', [], null)).toEqual([])
+    expect(buildUserInput('  ', [image, failed], [])).toEqual([{ type: 'image', url: 'data:image/png;base64,AA' }])
+    expect(buildUserInput('', [], [])).toEqual([])
   })
 
   it('上传中或失败时阻止发送', () => {
@@ -74,12 +89,25 @@ describe('buildUserInput', () => {
 })
 
 describe('斜杠菜单', () => {
-  it('只在开头且无空白时进入命令态', () => {
+  it('开头或空白后都能进入命令态，光标停在词中间时不进入', () => {
     expect(slashQuery('/', 1)).toBe('')
     expect(slashQuery('/rev', 4)).toBe('rev')
     expect(slashQuery('/rev x', 6)).toBeNull()
-    expect(slashQuery('a /rev', 6)).toBeNull()
-    expect(slashQuery('/rev', 2)).toBe('r')
+    expect(slashQuery('a /rev', 6)).toBe('rev')
+    expect(slashQuery('/rev', 2)).toBeNull()
+    expect(slashQuery('/a/b', 4)).toBeNull()
+  })
+
+  it('能在一条消息里连续选多个技能，只删掉对应的 /片段', () => {
+    const first = '帮我 /review 看下 /deploy'
+    const token = slashToken(first, 10)
+    expect(token).toEqual({ query: 'review', start: 3, end: 10 })
+    const afterFirst = consumeSlashToken(first, 10)
+    expect(afterFirst).toBe('帮我 看下 /deploy')
+    const second = slashToken(afterFirst, afterFirst.length)
+    expect(second).toEqual({ query: 'deploy', start: 6, end: afterFirst.length })
+    expect(consumeSlashToken(afterFirst, afterFirst.length)).toBe('帮我 看下')
+    expect(consumeSlashToken('/review 帮我看看', 7)).toBe('帮我看看')
   })
 
   it('按前缀 > 包含 > 描述排序，命令优先', () => {
@@ -96,14 +124,18 @@ describe('斜杠菜单', () => {
 })
 
 describe('splitUserText', () => {
-  it('拆出桥接追加的附件说明与技能前缀', () => {
-    const text = '/review 看下这个\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log\n- b c.txt: C:\\x\\b c.txt'
-    expect(splitUserText(text)).toEqual({ text: '看下这个', files: ['/tmp/a.log', 'C:\\x\\b c.txt'], skill: 'review' })
+  it('拆出桥接追加的附件说明与多个技能前缀', () => {
+    const text = '/review /deploy 看下这个\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log\n- b c.txt: C:\\x\\b c.txt'
+    expect(splitUserText(text)).toEqual({
+      text: '看下这个',
+      files: ['/tmp/a.log', 'C:\\x\\b c.txt'],
+      skills: ['review', 'deploy'],
+    })
   })
 
   it('普通文字原样返回', () => {
-    expect(splitUserText('你好 /tmp 路径')).toEqual({ text: '你好 /tmp 路径', files: [], skill: null })
-    expect(splitUserText('/commit-push')).toEqual({ text: '', files: [], skill: 'commit-push' })
+    expect(splitUserText('你好 /tmp 路径')).toEqual({ text: '你好 /tmp 路径', files: [], skills: [] })
+    expect(splitUserText('/commit-push')).toEqual({ text: '', files: [], skills: ['commit-push'] })
   })
 })
 

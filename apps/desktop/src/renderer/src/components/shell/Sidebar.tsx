@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Smartphone, SquarePen, Upload } from 'lucide-react'
+import { Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
 import { useUi } from '../../store/ui'
@@ -13,8 +13,9 @@ import { TargetSwitcher, type TargetActions } from './TargetSwitcher'
 export function Sidebar({
   onImport,
   onMobile,
+  onSettings,
   ...targetActions
-}: TargetActions & { onImport: () => void; onMobile: () => void }) {
+}: TargetActions & { onImport: () => void; onMobile: () => void; onSettings: () => void }) {
   const width = useUi((s) => s.sidebarWidth)
   const setWidth = useUi((s) => s.setSidebarWidth)
   const selectedId = useTargets((s) => s.selectedId)
@@ -61,6 +62,9 @@ export function Sidebar({
         </FooterButton>
         <FooterButton label="导入旧版" onClick={onImport}>
           <Upload size={15} />
+        </FooterButton>
+        <FooterButton label="设置" onClick={onSettings}>
+          <Settings size={15} />
         </FooterButton>
         {version && <span className="ml-auto shrink-0 pr-1.5 text-[11px] text-qn-dim">v{version}</span>}
       </div>

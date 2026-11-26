@@ -57,7 +57,7 @@ describe('probeCandidates', () => {
   it('Windows 下 Claude 只解析 .exe（不解析 .cmd）', () => {
     expect(agentExecutableNames('claude', 'win32')).toEqual(['claude.exe', 'claude'])
     expect(agentExecutableNames('codex', 'win32')).toContain('codex.cmd')
-    expect(agentExecutableNames('pi', 'win32')).toContain('pi.ps1')
+    expect(agentExecutableNames('pi', 'win32')).toEqual(['pi.exe', 'pi.cmd'])
     const candidates = probeCandidates('claude', undefined, winEnv)
     expect(candidates).toContain('C:\\bin\\claude.exe')
     expect(candidates.some((item) => item.endsWith('.cmd'))).toBe(false)

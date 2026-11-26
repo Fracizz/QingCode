@@ -21,7 +21,7 @@ import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
  * 选择按 agent 记在本机，发送时作为 turn/start 的 model / effort / serviceTier 覆盖项。
- * 模型列表为空（如 Claude 桥接不提供 model/list）时不渲染。
+ * Codex / Claude / pi 都走 model/list；列表为空时不渲染。
  */
 export function ModelPicker({ targetId, agent }: { targetId: string; agent: AgentKind }) {
   const key = sessionKey(targetId, agent)

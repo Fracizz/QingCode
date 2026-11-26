@@ -1,6 +1,6 @@
 // 与电脑 backend 的线协议形状保持一致（复制自 apps/desktop/src/shared/backendApi.ts，不跨包 import）。
 
-export type AgentKind = 'codex' | 'claude'
+export type AgentKind = 'codex' | 'claude' | 'pi'
 
 export type SshAuth =
   | { kind: 'password' }

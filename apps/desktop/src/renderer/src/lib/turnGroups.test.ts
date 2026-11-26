@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ItemView } from '@qn/codex-client'
-import { groupFlow, isGroupRunning, summarizeTools } from './turnGroups'
+import { formatDuration, groupFlow, groupTurns, isGroupRunning, summarizeTools } from './turnGroups'
 
 const user = (id: string) => ({ kind: 'user', id, text: 'hi' }) as unknown as ItemView
 const agent = (id: string) => ({ kind: 'agent', id, text: 'ok', streaming: false }) as unknown as ItemView
@@ -39,6 +39,36 @@ describe('summarizeTools', () => {
   it('只有思考时显示思考次数', () => {
     expect(summarizeTools([think('a'), think('b')])).toBe('思考了 2 次')
     expect(summarizeTools([think('a'), cmd('c')])).toBe('已运行 1 条命令')
+  })
+})
+
+describe('groupTurns', () => {
+  const kinds = (entries: ReturnType<typeof groupTurns>) =>
+    entries.map((e) => (e.kind === 'item' ? e.item.id : e.kind === 'tools' ? `tools:${e.items.length}` : `work:${e.entries.length}`))
+
+  it('已结束的轮次把过程收进 work，只露出最终回复', () => {
+    const items = [user('u1'), think('r'), agent('mid'), cmd('c'), agent('a1'), user('u2'), agent('a2')]
+    const turns = [{ id: 't1', startedAtMs: 1, durationMs: 296_000, itemIds: ['u1', 'c'] }]
+    const entries = groupTurns(items, turns, false)
+    expect(kinds(entries)).toEqual(['u1', 'work:3', 'a1', 'u2', 'a2'])
+    expect(entries[1]!.kind === 'work' && entries[1]!.durationMs).toBe(296_000)
+  })
+
+  it('进行中的最后一轮保持展开', () => {
+    const entries = groupTurns([user('u'), cmd('c1'), cmd('c2')], undefined, true)
+    expect(kinds(entries)).toEqual(['u', 'tools:2'])
+  })
+
+  it('没有工具步骤时不折叠', () => {
+    expect(kinds(groupTurns([user('u'), agent('a')], undefined, false))).toEqual(['u', 'a'])
+  })
+})
+
+describe('formatDuration', () => {
+  it('按秒、分、时格式化', () => {
+    expect(formatDuration(4_200)).toBe('4s')
+    expect(formatDuration(296_000)).toBe('4m 56s')
+    expect(formatDuration(3_720_000)).toBe('1h 2m')
   })
 })
 

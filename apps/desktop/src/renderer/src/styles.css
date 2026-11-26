@@ -15,6 +15,8 @@
   --color-qn-border: #2a2a2a;
   --color-qn-border-strong: #3a3a3a;
   --color-qn-text: #e6e6e6;
+  /* 对话正文比界面文字再暗一档：大段阅读时纯亮白太刺眼，参考 Codex 的柔和灰。 */
+  --color-qn-prose: #d0d0d0;
   --color-qn-muted: #939393;
   --color-qn-dim: #6b6b6b;
   --color-qn-brand: #4ecdb5;
@@ -346,6 +348,26 @@ body.qn-resizing webview {
   margin-bottom: 0;
 }
 
+/* 流式光标挂在最后一个段落/列表项文字之后，而不是 Markdown 块之后另起一行。 */
+.qn-streaming > p:last-child::after,
+.qn-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.875rem;
+  margin-left: 0.125rem;
+  border-radius: 2px;
+  vertical-align: middle;
+  background: var(--color-qn-brand);
+  animation: qn-caret-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes qn-caret-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .qn-markdown p,
 .qn-markdown ul,
 .qn-markdown ol,
@@ -373,6 +395,13 @@ body.qn-resizing webview {
 .qn-markdown h4 {
   margin: 0.7rem 0 0.3rem;
   font-weight: 600;
+}
+
+/* 加粗只略提亮、字重 600：避免中文粗体在深色底上发糊、过重。 */
+.qn-markdown strong,
+.qn-markdown b {
+  font-weight: 600;
+  color: #e4e4e4;
 }
 
 .qn-markdown blockquote {

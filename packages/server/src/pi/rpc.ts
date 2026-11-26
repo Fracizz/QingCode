@@ -140,7 +140,7 @@ export class PiRpcProcess {
     child.on('error', (err) => {
       this.options.log(`pi RPC 启动失败: ${redact(err.message)}`)
     })
-    child.on('exit', (code, signal) => this.onExit(code, signal))
+    child.on('exit', (code, signal) => this.handleExit(code, signal))
   }
 
   /** 每条命令分配唯一 id，按响应里的 id 关联（命令处理是异步的，顺序不可依赖）。 */
@@ -250,7 +250,7 @@ export class PiRpcProcess {
     }
   }
 
-  private onExit(code: number | null, signal: NodeJS.Signals | null): void {
+  private handleExit(code: number | null, signal: NodeJS.Signals | null): void {
     if (this.exited) return
     this.exited = true
     this.rejectPending(new Error('pi RPC 已退出'))

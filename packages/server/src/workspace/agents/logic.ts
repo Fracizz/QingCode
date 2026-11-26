@@ -41,8 +41,8 @@ export type ProbeEnv = {
 }
 
 /**
- * Windows 下 Claude 只认 .exe（mvp §11.1：不用 .cmd）；Codex / pi 的 npm 安装形态含 .cmd / .ps1。
- * POSIX 下只有裸名字，交给 PATH 解析。
+ * Windows 下 Claude 只认 .exe（mvp §11.1：不用 .cmd）；Codex / pi 的 npm 安装形态含 .cmd。
+ * .ps1 / 裸脚本无法直接 spawn，不列为候选；POSIX 下只有裸名字，交给 PATH 解析。
  */
 export function agentExecutableNames(agent: ProbeAgent, platform: string): string[] {
   if (platform !== 'win32') return [agent]
@@ -52,7 +52,7 @@ export function agentExecutableNames(agent: ProbeAgent, platform: string): strin
     case 'claude':
       return ['claude.exe', 'claude']
     case 'pi':
-      return ['pi.exe', 'pi.cmd', 'pi.ps1']
+      return ['pi.exe', 'pi.cmd']
   }
 }
 

@@ -1,5 +1,5 @@
-/** 目标上可用的对话 Agent（mvp §11）；缺省为 codex。 */
-export type AgentKind = 'codex' | 'claude'
+/** 目标上可用的对话 Agent（mvp §11、T22）；缺省为 codex。 */
+export type AgentKind = 'codex' | 'claude' | 'pi'
 
 // 渲染进程 ↔ backend 的线协议类型（mvp.md §5）。这里只描述形状，不含任何 IO。
 
@@ -27,6 +27,8 @@ export type SshTarget = {
   auth: SshAuth
   /** 已经 SSH 开启的直连加速：连接时先试 TLS 直连，失败回退 SSH；授权 token 存 secrets（directToken） */
   direct?: SshDirect
+  /** 仅 targets.list 返回时附带（不落盘）：是否已保存可用的密码（password 认证）或私钥口令（key 认证） */
+  hasSavedSecret?: boolean
 }
 
 export type SshDirect = {

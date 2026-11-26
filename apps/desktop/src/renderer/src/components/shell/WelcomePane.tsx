@@ -24,7 +24,8 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
   const active = isTargetActive(state)
 
   return (
-    <div className="flex h-full flex-col items-center justify-center px-6 pb-6">
+    // flex-1 而不是 h-full：父级是 min-h-full 的弹性列，百分比高度解析不出来，内容会贴顶。
+    <div className="flex flex-1 flex-col items-center justify-center px-6 pb-6">
       <div className="relative">
         <div
           className="pointer-events-none absolute -inset-16 -z-10"

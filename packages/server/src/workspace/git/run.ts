@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { normalizePathForCompare } from '../paths'
 import { WorkspaceError } from '../registry'
 import { classifyGitFailure, redactCredentials, type GitFailureCode } from './errors'
 
@@ -10,6 +12,94 @@ export const DEFAULT_MAX_STDOUT = 8 * 1024 * 1024
 export const DIFF_MAX_STDOUT = 4 * 1024 * 1024
 export const SHOW_MAX_STDOUT = 2 * 1024 * 1024
 const MAX_STDERR = 1024 * 1024
+
+/** 中文路径不被转义、Windows 长路径可用；autocrlf 不覆盖，交给仓库自身配置。 */
+export const GIT_GLOBAL_ARGS = ['-c', 'core.quotepath=false', '-c', 'core.longpaths=true'] as const
+
+export interface GitResolveEnv {
+  platform: string
+  pathValue: string
+  delimiter: string
+  home: string
+  programFiles?: string
+  programFilesX86?: string
+  localAppData?: string
+}
+
+export function defaultGitResolveEnv(): GitResolveEnv {
+  return {
+    platform: process.platform,
+    pathValue: process.env['PATH'] ?? '',
+    delimiter: path.delimiter,
+    home: os.homedir(),
+    ...(process.env['ProgramFiles'] ? { programFiles: process.env['ProgramFiles'] } : {}),
+    ...(process.env['ProgramFiles(x86)']
+      ? { programFilesX86: process.env['ProgramFiles(x86)'] }
+      : {}),
+    ...(process.env['LOCALAPPDATA'] ? { localAppData: process.env['LOCALAPPDATA'] } : {}),
+  }
+}
+
+/** 解析顺序：PATH → Program Files\Git\cmd → %LOCALAPPDATA%\Programs\Git\cmd → 裸名字兜底。 */
+export function gitCandidates(env: GitResolveEnv): string[] {
+  const p = env.platform === 'win32' ? path.win32 : path.posix
+  const names = env.platform === 'win32' ? ['git.exe'] : ['git']
+  const dirs = env.pathValue.split(env.delimiter).filter(Boolean)
+  const extras =
+    env.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Git\\cmd',
+          ...(env.programFiles ? [p.join(env.programFiles, 'Git', 'cmd')] : []),
+          ...(env.programFilesX86 ? [p.join(env.programFilesX86, 'Git', 'cmd')] : []),
+          ...(env.localAppData ? [p.join(env.localAppData, 'Programs', 'Git', 'cmd')] : []),
+        ]
+      : ['/usr/local/bin', p.join(env.home, '.local', 'bin')]
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const dir of [...dirs, ...extras]) {
+    for (const name of names) {
+      const candidate = p.join(dir, name)
+      const key = normalizePathForCompare(candidate, env.platform)
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(candidate)
+    }
+  }
+  result.push('git')
+  return result
+}
+
+function gitExists(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 只做文件存在性检查与解析，不调用 git（合规 §7 只针对 Agent，这里同样不下载/安装）。 */
+export function resolveGitExecutable(
+  env: GitResolveEnv = defaultGitResolveEnv(),
+  exists: (file: string) => boolean = gitExists,
+): string {
+  for (const candidate of gitCandidates(env)) {
+    // 裸名字交给 spawn 按 PATH 解析，不做文件检查。
+    if (!/[\\/]/.test(candidate) || exists(candidate)) return candidate
+  }
+  return 'git'
+}
+
+let cachedGitCommand: string | undefined
+
+export function resetGitCommandCache(): void {
+  cachedGitCommand = undefined
+}
+
+function gitCommand(): string {
+  cachedGitCommand ??= resolveGitExecutable()
+  return cachedGitCommand
+}
 
 export interface RunGitOptions {
   /** 只读命令额外设置 GIT_OPTIONAL_LOCKS=0，避免刷新索引 */
@@ -92,9 +182,12 @@ export async function runGit(
     }
   }
 
+  // gitPath 是测试钩子（可用 node 脚本代替 git），此时不注入 git 专属的 -c 参数。
+  const executable = opts.gitPath ?? gitCommand()
+  const spawnArgs = opts.gitPath === undefined ? [...GIT_GLOBAL_ARGS, ...args] : args
   let child: ChildProcess
   try {
-    child = spawn(opts.gitPath ?? 'git', args, {
+    child = spawn(executable, spawnArgs, {
       cwd,
       env: gitEnv(opts),
       shell: false,

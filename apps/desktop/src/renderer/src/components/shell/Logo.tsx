@@ -1,4 +1,4 @@
-/** 应用图标（与 branding/icon.svg 同一几何：炭黑底 + 白色尖括号 + 青色光标条），内联渲染避免额外请求。 */
+/** 应用图标（与 branding/icon.svg 同一几何，沿用旧版 QingCode 图标），内联渲染避免额外请求。 */
 export function Logo({ size = 16, className = '' }: { size?: number; className?: string }) {
   return (
     <svg
@@ -9,16 +9,14 @@ export function Logo({ size = 16, className = '' }: { size?: number; className?:
       aria-hidden="true"
       className={`shrink-0 ${className}`}
     >
-      <rect width="512" height="512" rx="112" fill="#1C1F22" />
-      <rect x="4" y="4" width="504" height="504" rx="108" stroke="#33383D" strokeWidth="8" />
-      <path
-        d="M136 112H252L372 214L252 316H136L256 214Z"
-        fill="#F3F4F6"
-        stroke="#F3F4F6"
-        strokeWidth="14"
-        strokeLinejoin="round"
-      />
-      <rect x="136" y="358" width="236" height="46" rx="8" fill="#4ECDB5" />
+      <rect width="512" height="512" rx="112" fill="#121415" />
+      <g transform="translate(0 6)">
+        <rect x="96" y="344" width="320" height="64" rx="12" fill="#4ECDB5" />
+        <path
+          fill="#F3F6F8"
+          d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"
+        />
+      </g>
     </svg>
   )
 }

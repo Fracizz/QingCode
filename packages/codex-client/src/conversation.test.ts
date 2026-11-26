@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import type { RequestId, ServerNotification, ServerRequest } from './codex-types'
+import type { RequestId, ServerNotification, ServerRequest, UserInput } from './codex-types'
 import {
+  DRAFT_THREAD_ID,
+  addOptimisticUser,
   applyNotification,
   applyServerRequest,
   approvalResponse,
+  clearDraftThread,
+  dropOptimisticUsers,
   emptyState,
   loadThread,
+  moveOptimisticUsers,
   resolveServerRequest,
+  userItemFromInput,
 } from './conversation'
 import type { ConversationState, ItemView, LoadableThread } from './conversation'
 
@@ -470,3 +476,105 @@ describe('conversation reducer', () => {
   })
 })
 
+const textInput = (text: string): UserInput[] => [{ type: 'text', text, text_elements: [] }]
+
+describe('乐观用户消息', () => {
+  it('发送内容先转成占位气泡（含技能、图片、附件）', () => {
+    const input: UserInput[] = [
+      { type: 'skill', name: 'review', path: '/s/review' },
+      { type: 'text', text: '看图', text_elements: [] },
+      { type: 'image', url: 'data:image/png;base64,AAAA' },
+      { type: 'mention', name: 'a.log', path: '/tmp/a.log' },
+    ]
+    expect(userItemFromInput('local-1', input)).toEqual({
+      kind: 'user',
+      id: 'local-1',
+      text: '看图',
+      images: ['data:image/png;base64,AAAA'],
+      files: ['/tmp/a.log'],
+      skills: ['review'],
+      pending: true,
+    })
+  })
+
+  it('草稿态占位搬到真实会话后，被服务端回显替换且不重复', () => {
+    let state = addOptimisticUser(emptyState(), DRAFT_THREAD_ID, userItemFromInput('local-1', textInput('你好')))
+    expect(threadOf(state, DRAFT_THREAD_ID).items[0]).toMatchObject({ id: 'local-1', pending: true })
+    state = moveOptimisticUsers(state, DRAFT_THREAD_ID, 't1')
+    expect(state.threads[DRAFT_THREAD_ID]).toBeUndefined()
+    expect(threadOf(state).items.map((item) => item.id)).toEqual(['local-1'])
+    state = applyNotification(state, note('item/completed', { threadId: 't1', turnId: 'turn1', item: userItem }))
+    expect(threadOf(state).items).toHaveLength(1)
+    expect(threadOf(state).items[0]).toMatchObject({ id: 'i-user', kind: 'user', text: '请执行命令' })
+    expect(threadOf(state).items[0]).not.toHaveProperty('pending', true)
+  })
+
+  it('turn/started 里带回显时同样替换占位', () => {
+    let state = addOptimisticUser(emptyState(), 't1', userItemFromInput('local-1', textInput('你好')))
+    state = applyNotification(state, note('turn/started', {
+      threadId: 't1',
+      turnId: 'turn1',
+      turn: { id: 'turn1', status: 'inProgress', items: [userItem] },
+    }))
+    expect(threadOf(state).items.map((item) => item.id)).toEqual(['i-user'])
+  })
+
+  it('连续两条占位按到达顺序分别被回显替换', () => {
+    let state = addOptimisticUser(emptyState(), 't1', userItemFromInput('l1', textInput('一')))
+    state = addOptimisticUser(state, 't1', userItemFromInput('l2', textInput('二')))
+    state = applyNotification(state, note('item/completed', {
+      threadId: 't1',
+      item: item('userMessage', 'u1', { content: [{ type: 'text', text: '一' }] }),
+    }))
+    expect(threadOf(state).items.map((item) => item.id)).toEqual(['u1', 'l2'])
+    state = applyNotification(state, note('item/completed', {
+      threadId: 't1',
+      item: item('userMessage', 'u2', { content: [{ type: 'text', text: '二' }] }),
+    }))
+    expect(threadOf(state).items.map((item) => item.id)).toEqual(['u1', 'u2'])
+  })
+
+  it('回显带技能前缀与附件说明时按原文找对应占位', () => {
+    let state = addOptimisticUser(emptyState(), 't1', userItemFromInput('l1', textInput('一')))
+    state = addOptimisticUser(state, 't1', userItemFromInput('l2', textInput('二')))
+    state = applyNotification(state, note('item/completed', {
+      threadId: 't1',
+      item: item('userMessage', 'u2', {
+        content: [{ type: 'text', text: '/review 二\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log' }],
+      }),
+    }))
+    expect(threadOf(state).items.map((entry) => entry.id)).toEqual(['l1', 'u2'])
+  })
+
+  it('发送失败时撤掉占位并清掉空草稿线程', () => {
+    let state = addOptimisticUser(emptyState(), DRAFT_THREAD_ID, userItemFromInput('local-1', textInput('你好')))
+    state = applyNotification(state, note('item/started', {
+      threadId: 't1',
+      item: item('agentMessage', 'a1', { text: '', status: 'inProgress' }),
+    }))
+    state = dropOptimisticUsers(state, [DRAFT_THREAD_ID, 't1'])
+    expect(state.threads[DRAFT_THREAD_ID]).toBeUndefined()
+    expect(threadOf(state).items.map((item) => item.id)).toEqual(['a1'])
+    expect(clearDraftThread(addOptimisticUser(emptyState(), DRAFT_THREAD_ID, userItemFromInput('l2', textInput('重试'))))).toEqual(emptyState())
+  })
+})
+
+
+describe('流式光标收尾', () => {
+  it('新条目出现时，上一条未收到 item/completed 的消息结束流式', () => {
+    let state = applyNotification(emptyState(), note('item/agentMessage/delta', {
+      threadId: 't1',
+      turnId: 'turn1',
+      itemId: 'a1',
+      delta: '先说明一下',
+    }))
+    expect(itemOf(state, 'a1')).toMatchObject({ streaming: true })
+    state = applyNotification(state, note('item/commandExecution/outputDelta', {
+      threadId: 't1',
+      turnId: 'turn1',
+      itemId: 'c1',
+      delta: 'ok',
+    }))
+    expect(itemOf(state, 'a1')).toMatchObject({ streaming: false })
+  })
+})

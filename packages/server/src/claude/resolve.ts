@@ -10,25 +10,71 @@ export interface ClaudeExecutable {
   version: string
 }
 
+export interface ClaudeResolveEnv {
+  platform: string
+  pathValue: string
+  delimiter: string
+  home: string
+  appData?: string
+  localAppData?: string
+}
+
+export function defaultClaudeResolveEnv(): ClaudeResolveEnv {
+  return {
+    platform: process.platform,
+    pathValue: process.env['PATH'] ?? '',
+    delimiter: path.delimiter,
+    home: os.homedir(),
+    ...(process.env['APPDATA'] ? { appData: process.env['APPDATA'] } : {}),
+    ...(process.env['LOCALAPPDATA'] ? { localAppData: process.env['LOCALAPPDATA'] } : {}),
+  }
+}
+
 export interface ResolveOptions {
   exists?: (file: string) => boolean
   versionOf?: (file: string) => string
+  env?: ClaudeResolveEnv
 }
 
 const VERSION_TIMEOUT_MS = 3_000
 
-export function claudeCandidates(explicit?: string): string[] {
+/**
+ * 只列目标机已安装的官方 claude：Windows 优先 .exe（SDK 不接受 .cmd），
+ * PATH 之外补上 ~/.local/bin（验收机 10.87）、npm 全局与 WindowsApps 常见安装位置。
+ */
+export function claudeCandidates(
+  explicit?: string,
+  env: ClaudeResolveEnv = defaultClaudeResolveEnv(),
+): string[] {
   if (explicit) return [explicit]
-  const isWindows = process.platform === 'win32'
-  // Windows 优先 .exe；.cmd 需要 shell 且 SDK 不接受，故不列入。
-  const names = isWindows ? ['claude.exe', 'claude'] : ['claude']
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
-  const home = os.homedir()
+  const win = env.platform === 'win32'
+  const p = win ? path.win32 : path.posix
+  const names = win ? ['claude.exe', 'claude'] : ['claude']
+  const dirs = env.pathValue.split(env.delimiter).filter(Boolean)
+  const extras = win
+    ? [
+        p.join(env.home, '.local', 'bin'),
+        ...(env.appData ? [p.join(env.appData, 'npm')] : []),
+        ...(env.localAppData ? [p.join(env.localAppData, 'Programs')] : []),
+        ...(env.localAppData
+          ? [p.join(env.localAppData, 'Microsoft', 'WindowsApps')]
+          : []),
+      ]
+    : [
+        p.join(env.home, '.local', 'bin'),
+        '/usr/local/bin',
+        p.join(env.home, '.npm-global', 'bin'),
+      ]
   const result: string[] = []
-  for (const dir of dirs) for (const name of names) result.push(path.join(dir, name))
-  for (const name of names) result.push(path.join(home, '.local', 'bin', name))
-  for (const dir of ['/usr/local/bin', path.join(home, '.npm-global', 'bin')]) {
-    for (const name of names) result.push(path.join(dir, name))
+  const seen = new Set<string>()
+  for (const dir of [...dirs, ...extras]) {
+    for (const name of names) {
+      const candidate = p.join(dir, name)
+      const key = win ? candidate.toLowerCase() : candidate
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(candidate)
+    }
   }
   return result
 }
@@ -60,7 +106,7 @@ export function resolveClaudeExecutable(
     }
   })
   const versionOf = options.versionOf ?? readClaudeVersion
-  for (const candidate of claudeCandidates(explicit)) {
+  for (const candidate of claudeCandidates(explicit, options.env)) {
     if (!exists(candidate)) continue
     return { path: candidate, version: versionOf(candidate) }
   }

@@ -23,6 +23,30 @@
 | 终端 | 本机 + SSH PTY、后台托管与接回、手机端终端 | 无 |
 | 其他 | 运行配置（RunPanel）、qingcode-cli 子命令、工作区信任、文件上传下载、命令面板、远端 server 管理（日志/重启/更新）、远端系统指标、多窗口、自动更新、Windows 远端 | 无 |
 
+## 进度总览（2026-11-26 更新）
+
+| 卡 | 内容 | 状态 |
+|---|---|---|
+| T16 / T17 | server 文件、Git 协议 | 完成，已在 10.87（Windows）经直连实测 `git.status`、`fs.read` |
+| T18 / T19 / T20 | 文件查看面板、Git 面板、文件树与搜索 | 完成，已接入右侧停靠栏（Ctrl+P、Ctrl+Shift+E/F/G） |
+| T21 | 终端技术验证 | 完成，结论见 `docs/spikes/terminal.md`：远端 python3 pty；本机 Windows 需预编译 node-pty 类包 |
+| 直连 | 服务端直连（TLS + 证书指纹固定），已在 10.87 跑通 Claude | 后端完成；直连界面、并入 daemon、每客户端授权由 qingcode-next-cc 负责 |
+| T22 | pi 适配（`pi --mode rpc`） | 进行中 |
+| T23 | 设置界面 | 进行中 |
+| T24 | Windows 目标 server 行为补齐 + 本机验收 | 进行中（**优先**） |
+| T25 | CodeMirror 6 编辑与保存、冲突合并、差异视图 | 进行中（**优先**） |
+| T26 | 运行配置（兼容旧版 `.qingcode/run.json`，daemon 托管进程） | 进行中（**优先**） |
+| T27 | Claude 模型与推理强度选择（pi 的同类功能在 T22 完成后追加） | 进行中（**优先**） |
+| — | 远程连接记住密码、密码框显示/隐藏 | 完成（总管） |
+
+下一步（按优先级）：
+1. 收尾 T22–T27，统一审查提交；在 10.87（Windows，直连）与 93（Linux，SSH）完整验收。
+2. 终端：先远端（python3 pty）+ daemon 托管与接回 + xterm 界面，再本机 Windows ConPTY。
+3. 旧版迁移能力：CLI 子命令（`qingcode-cli` 技能依赖）、工作区信任。
+4. 对话输入增强：`@` 文件引用、访问模式选择器、命令面板。
+5. 其余 P3：文件传输、远端 server 管理、手机端文件/Git、扫码配对、自动更新、多窗口、浅色主题。
+6. 发版闸门：Claude 订阅登录的合规确认（`docs/agent-adapters.md` §3.3）。
+
 ## 3. 架构原则
 
 - **能力全部放在 qn-server**：本机与远端都是"客户端 → qn-server"，文件与 Git 只实现一次，不再像旧版那样为每个命令维护 `ssh_*` 副本。
@@ -123,10 +147,10 @@ T16/T17/T21 可并行；T18 可与 T16 并行（先用 mock 后端）。backend 
 
 ## 7. 决策（2026-11-25 按推荐定）
 
-1. P0/P1 只读查看用 shiki 高亮（UI 重做已引入）；编辑器选型推迟到 P2 再定（CodeMirror 6 优先）。
-2. 文件查看面板与对话并排分栏，可收起。
+1. P0/P1 只读查看用 shiki 高亮；编辑器定为 CodeMirror 6（T25，2026-11-26 用户确认）。
+2. 文件查看面板与对话并排分栏，可收起（实现为右侧停靠栏：文件面板 + 工具列）。
 3. Git 推送/拉取只依赖远端已有凭据（ssh-agent / credential helper），`GIT_TERMINAL_PROMPT=0` + `BatchMode=yes` 快速失败，返回 `auth_required`。
-4. 终端路线待 T21 结论。
+4. 终端路线：远端 python3 pty 为主、`script` 兜底；本机 Windows 用预编译 node-pty 类包（T21 结论）。
 5. 手机端暂不提供文件 / Git，后续按需只读开放（网关白名单另加）。
 
 ## 8. 实施约定

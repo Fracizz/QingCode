@@ -29,7 +29,10 @@ export function filterRecv(
   if (!isRecord(payload) || payload.targetId !== targetId) return null
   if (agent !== undefined && payload.agent !== undefined && payload.agent !== agent) return null
   if (!Object.prototype.hasOwnProperty.call(payload, 'msg')) return null
-  const agentValue = payload.agent === 'codex' || payload.agent === 'claude' ? payload.agent : undefined
+  const agentValue =
+    payload.agent === 'codex' || payload.agent === 'claude' || payload.agent === 'pi'
+      ? payload.agent
+      : undefined
   return {
     targetId,
     seq: seqOf(payload.seq),

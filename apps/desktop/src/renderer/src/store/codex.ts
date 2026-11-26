@@ -1,22 +1,28 @@
 import { create } from 'zustand'
 import {
   CodexRpc,
+  DRAFT_THREAD_ID,
+  addOptimisticUser,
   applyNotification,
   applyServerRequest,
   approvalResponse,
   archiveThread,
+  clearDraftThread,
   deleteThread,
+  dropOptimisticUsers,
   forkThread,
   emptyState,
   interruptTurn,
   listThreads,
   loadThread,
+  moveOptimisticUsers,
   readThread,
   resolveServerRequest,
   resumeThread,
   sendInput,
   setThreadName,
   startThread,
+  userItemFromInput,
   type ApprovalDecision,
   type ConversationState,
   type RequestId,
@@ -40,6 +46,7 @@ import {
   type AgentAvailability,
 } from '../lib/agents'
 import { quoteBlock } from '../lib/annotations'
+import { agentPrefs, useSettings } from '../features/settings'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
 import { useTargets } from './targets'
@@ -99,7 +106,8 @@ type CodexState = {
   /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
   setDraftAgent: (agent: AgentKind) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
-  send: (text: string, options?: SendOptions) => Promise<void>
+  /** 返回是否成功提交；失败时调用方要把输入框内容还回去。 */
+  send: (text: string, options?: SendOptions) => Promise<boolean>
   sendSide: (text: string) => Promise<void>
   openSideChat: (quote: string) => Promise<void>
   setSideDraft: (draft: string) => void
@@ -113,7 +121,8 @@ type CodexState = {
   archiveThread: (threadId: string, agent: AgentKind) => Promise<boolean>
   deleteThread: (threadId: string, agent: AgentKind) => Promise<boolean>
   /** 分叉出新会话并切换过去。 */
-  forkThread: (threadId: string, agent: AgentKind) => Promise<boolean>
+  /** lastTurnId：只分叉到该轮为止（含），用于"从这条回复分支"。 */
+  forkThread: (threadId: string, agent: AgentKind, lastTurnId?: string) => Promise<boolean>
   clearError: () => void
   clearNotice: () => void
 }
@@ -145,11 +154,38 @@ export const useCodex = create<CodexState>((set, get) => {
     }))
   }
 
+  /** 切换上下文时清掉各会话残留的草稿占位，别把上一条发送中的气泡带到新会话。 */
+  const clearAllDrafts = (): void => {
+    set((state) => {
+      const sessions = { ...state.sessions }
+      let changed = false
+      for (const [key, session] of Object.entries(sessions)) {
+        const next = clearDraftThread(session.state)
+        if (next === session.state) continue
+        sessions[key] = { ...session, state: next }
+        changed = true
+      }
+      return changed ? { sessions } : state
+    })
+  }
+
   const statusFor = (targetId: string, agent: AgentKind): AgentAvailability | undefined =>
     get().agents[targetId]?.[agent]
 
+  // 优先级：该连接设过的默认 > 设置里的全局默认 Agent > 自动挑可用的。
   const defaultFor = (targetId: string): AgentKind =>
-    preferredAgent(get().agents[targetId], useAgentPrefs.getState().byTarget[targetId])
+    preferredAgent(
+      get().agents[targetId],
+      useAgentPrefs.getState().byTarget[targetId] ?? (useSettings.getState().settings.general.defaultAgent as AgentKind),
+    )
+
+  /** 设置里为该目标指定的可执行文件路径（留空 = 由 server 自动解析）。 */
+  const openParams = (targetId: string, agent: AgentKind): Record<string, string> => {
+    const path = agentPrefs(useSettings.getState().settings, targetId, agent).path?.trim()
+    if (!path) return { agent }
+    const key = agent === 'claude' ? 'claudePath' : agent === 'pi' ? 'piPath' : 'codexPath'
+    return { agent, [key]: path }
+  }
 
   const sessionFor = (targetId: string, agent: AgentKind): TargetSession => {
     const key = sessionKey(targetId, agent)
@@ -210,7 +246,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
     const task = (async () => {
       try {
-        const open = () => call('server.req', { targetId, method: 'codex.open', params: { agent } })
+        const open = () => call('server.req', { targetId, method: 'codex.open', params: openParams(targetId, agent) })
         const opened = await open().catch(async (err: unknown) => {
           // 本机目标不需要凭据：链路丢了直接补连一次，不让用户停在"目标 local 未连接"。
           if (targetId !== 'local' || (err as { code?: unknown })?.code !== 'not_connected') throw err
@@ -256,7 +292,7 @@ export const useCodex = create<CodexState>((set, get) => {
         const message =
           agent === 'codex'
             ? describeCodexOpenError(err, targetId)
-            : friendlyError(err, '打开 Claude 失败')
+            : friendlyError(err, agent === 'pi' ? '打开 pi 失败' : '打开 Claude 失败')
         patchSession(key, (value) => ({
           ...value,
           opened: false,
@@ -465,6 +501,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     setContext: (targetId, cwd, refresh = false) => {
+      clearAllDrafts()
       set({
         currentTargetId: targetId,
         currentCwd: cwd,
@@ -532,11 +569,13 @@ export const useCodex = create<CodexState>((set, get) => {
         ephemeral: false,
       })
       if (!threadId) return
+      clearAllDrafts()
       set({ currentThreadId: threadId, currentAgent: picked, error: null })
       void get().refreshThreads()
     },
 
     startDraft: (agent) => {
+      clearAllDrafts()
       const targetId = get().currentTargetId
       // 设过默认的连接，新会话回到默认；没设过则沿用当前 Agent。
       const chosen = targetId && useAgentPrefs.getState().byTarget[targetId] ? defaultFor(targetId) : null
@@ -553,6 +592,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     openThread: async (threadId, agent) => {
+      clearAllDrafts()
       const targetId = get().currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -586,33 +626,58 @@ export const useCodex = create<CodexState>((set, get) => {
     send: async (text, options) => {
       const trimmed = text.trim()
       const input: UserInput[] = options?.input ?? (trimmed ? [{ type: 'text', text: trimmed, text_elements: [] }] : [])
-      if (input.length === 0 || get().sending) return
+      if (input.length === 0 || get().sending) return false
       const targetId = options?.targetId ?? get().currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
-        return
+        return false
       }
       const agent = options?.agent ?? get().currentAgent
       const key = sessionKey(targetId, agent)
-      if (!(await ensureOpen(targetId, agent))) {
-        set({ error: get().sessions[key]?.openError ?? `${agentLabel(agent)} 未就绪` })
-        return
-      }
-      const session = get().sessions[key]
-      if (!session) return
+      const baseThreadId = options?.threadId ?? get().currentThreadId
+      // ensureOpen / thread/start / turn/start 都是网络往返，先本地落一条气泡再发。
+      const holderId = baseThreadId ?? DRAFT_THREAD_ID
+      const pendingId = `local-user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+      sessionFor(targetId, agent)
+      patchSession(key, (value) => ({
+        ...value,
+        state: addOptimisticUser(value.state, holderId, userItemFromInput(pendingId, input)),
+      }))
       set({ sending: true, error: null })
+
+      let createdThreadId: string | null = null
+      const rollback = () => {
+        const ids = [...new Set([
+          DRAFT_THREAD_ID,
+          ...(baseThreadId ? [baseThreadId] : []),
+          ...(createdThreadId ? [createdThreadId] : []),
+        ])]
+        patchSession(key, (value) => ({ ...value, state: dropOptimisticUsers(value.state, ids) }))
+      }
+      const fail = (message: string) => {
+        rollback()
+        set({ sending: false, error: message })
+        return false
+      }
       try {
-        let threadId = options?.threadId ?? get().currentThreadId
+        if (!(await ensureOpen(targetId, agent))) {
+          return fail(get().sessions[key]?.openError ?? `${agentLabel(agent)} 未就绪`)
+        }
+        const session = get().sessions[key]
+        if (!session) return fail(`${agentLabel(agent)} 未就绪`)
+        let threadId = baseThreadId
         if (!threadId) {
           const created = await startThread(
             session.rpc,
             get().currentCwd ? { cwd: get().currentCwd } : {},
           )
+          const newId = created.thread.id
+          createdThreadId = newId
           patchSession(key, (value) => ({
             ...value,
-            state: loadThread(value.state, created.thread),
+            state: moveOptimisticUsers(loadThread(value.state, created.thread), DRAFT_THREAD_ID, newId),
           }))
-          threadId = created.thread.id
+          threadId = newId
           set({ currentThreadId: threadId, currentAgent: agent })
           void get().refreshThreads()
         }
@@ -628,8 +693,9 @@ export const useCodex = create<CodexState>((set, get) => {
           state: applyNotification(value.state, synthetic),
         }))
         set({ sending: false })
+        return true
       } catch (err) {
-        set({ sending: false, error: friendlyError(err, '发送消息失败') })
+        return fail(friendlyError(err, '发送消息失败'))
       }
     },
 
@@ -638,12 +704,12 @@ export const useCodex = create<CodexState>((set, get) => {
       if (!sideTargetId || !sideAgent || !sideThreadId) return
       const value = text.trim()
       if (!value) return
-      await get().send(value, {
+      const sent = await get().send(value, {
         targetId: sideTargetId,
         agent: sideAgent,
         threadId: sideThreadId,
       })
-      set({ sideDraft: '' })
+      set({ sideDraft: sent ? '' : value })
     },
 
     openSideChat: async (quote) => {
@@ -745,9 +811,9 @@ export const useCodex = create<CodexState>((set, get) => {
       return true
     },
 
-    forkThread: async (threadId, agent) => {
+    forkThread: async (threadId, agent, lastTurnId) => {
       const targetId = get().currentTargetId
-      const result = await withSession(agent, '创建分支失败', (session) => forkThread(session.rpc, threadId))
+      const result = await withSession(agent, '创建分支失败', (session) => forkThread(session.rpc, threadId, lastTurnId))
       if (!result || !targetId) return false
       patchSession(sessionKey(targetId, agent), (value) => ({
         ...value,

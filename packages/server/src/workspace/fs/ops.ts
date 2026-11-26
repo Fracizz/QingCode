@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import type { FsKind, FsReadResult, FsStat } from '@qn/protocol'
 import { WorkspaceError } from '../registry'
+import { alignUtf16Offset, decodeText, detectTextEncoding, encodeText } from './encoding'
 import { readByteRange, runFs } from './io'
 import {
   BINARY_SAMPLE_BYTES,
@@ -15,7 +16,6 @@ import {
   parseRenameParams,
   parseWriteParams,
   requireAbsolutePath,
-  utf8SafeLength,
 } from './logic'
 
 export async function fsStat(p: Record<string, unknown>): Promise<FsStat> {
@@ -34,8 +34,11 @@ export async function fsStat(p: Record<string, unknown>): Promise<FsStat> {
 export async function fsRead(p: Record<string, unknown>): Promise<FsReadResult> {
   const params = parseReadParams(p)
   return runFs(async () => {
-    const { data, size, mtimeMs } = await readByteRange(params.path, params.offset, params.length)
+    // BOM 与二进制判定只看文件头，避免把整个大文件读进内存。
+    const head = await readByteRange(params.path, 0, BINARY_SAMPLE_BYTES)
+    const { size, mtimeMs } = head
     if (params.encoding === 'base64') {
+      const { data } = await readByteRange(params.path, params.offset, params.length)
       return {
         path: params.path,
         content: data.toString('base64'),
@@ -48,34 +51,44 @@ export async function fsRead(p: Record<string, unknown>): Promise<FsReadResult> 
         binary: false,
       }
     }
-    if (params.encoding === undefined) {
-      const sample = await readByteRange(params.path, 0, BINARY_SAMPLE_BYTES)
-      if (looksBinary(sample.data)) {
-        return {
-          path: params.path,
-          content: '',
-          encoding: 'utf8',
-          size,
-          mtimeMs,
-          offset: params.offset,
-          length: 0,
-          truncated: params.offset < size,
-          binary: true,
-        }
+    const detected = detectTextEncoding(head.data)
+    // BOM 之后仍可能是二进制内容；UTF-16 的 NUL 是正常码元，不参与二进制抽样。
+    const sample = detected?.encoding === 'utf8' && detected.bom
+      ? head.data.subarray(detected.bomBytes)
+      : head.data
+    const binary =
+      params.encoding === undefined &&
+      (detected === null || (detected.encoding === 'utf8' && looksBinary(sample)))
+    if (binary) {
+      return {
+        path: params.path,
+        content: '',
+        encoding: 'utf8',
+        size,
+        mtimeMs,
+        offset: params.offset,
+        length: 0,
+        truncated: params.offset < size,
+        binary: true,
       }
     }
-    // 字节偏移可能落在多字节字符中间，回退到完整字符边界并据实返回 length。
-    const length = utf8SafeLength(data)
+    const info = detected ?? { encoding: 'utf8' as const, bom: false, bomBytes: 0 }
+    const utf16 = info.encoding !== 'utf8'
+    const offset = utf16 ? alignUtf16Offset(params.offset, info.bomBytes) : params.offset
+    const { data } = await readByteRange(params.path, offset, params.length)
+    const decoded = decodeText(data, info, info.bom && offset === 0)
     return {
       path: params.path,
-      content: data.subarray(0, length).toString('utf8'),
+      content: decoded.content,
       encoding: 'utf8',
       size,
       mtimeMs,
-      offset: params.offset,
-      length,
-      truncated: params.offset + length < size,
+      offset,
+      length: decoded.length,
+      truncated: offset + decoded.length < size,
       binary: false,
+      ...(info.bom ? { bom: true } : {}),
+      ...(utf16 ? { sourceEncoding: info.encoding as 'utf16le' | 'utf16be' } : {}),
     }
   })
 }
@@ -84,7 +97,7 @@ export async function fsWrite(p: Record<string, unknown>): Promise<{ mtimeMs: nu
   const params = parseWriteParams(p)
   const bytes = params.encoding === 'base64'
     ? Buffer.from(params.content, 'base64')
-    : Buffer.from(params.content, 'utf8')
+    : encodeText(params.content, params.sourceEncoding ?? 'utf8', params.bom ?? false)
   return runFs(async () => {
     let mode: number | undefined
     try {

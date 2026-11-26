@@ -76,10 +76,43 @@ interface InitDeferred {
   reject(err: Error): void
 }
 
-interface CodexCommand {
+export interface CodexCommand {
   command: string
   args: string[]
   shell: boolean
+  /** Windows .cmd/.bat 经 cmd.exe 启动时需要原样传参 */
+  windowsVerbatimArguments?: boolean
+}
+
+export interface CodexResolveEnv {
+  platform: string
+  pathValue: string
+  delimiter: string
+  home: string
+  appData?: string
+  localAppData?: string
+  comspec?: string
+}
+
+export function defaultCodexResolveEnv(): CodexResolveEnv {
+  return {
+    platform: process.platform,
+    pathValue: process.env['PATH'] ?? '',
+    delimiter: path.delimiter,
+    home: os.homedir(),
+    ...(process.env['APPDATA'] ? { appData: process.env['APPDATA'] } : {}),
+    ...(process.env['LOCALAPPDATA'] ? { localAppData: process.env['LOCALAPPDATA'] } : {}),
+    ...(process.env['ComSpec'] ? { comspec: process.env['ComSpec'] } : {}),
+  }
+}
+
+// 引号会破坏 cmd /s 的边界，% / ! 会在 cmd 里展开，换行能注入新命令；这些字符一律拒绝。
+const CMD_UNSAFE = /["%!\r\n\0]/
+
+/** 每个 token 单独加引号；cmd /s 剥离最外层引号后，& | < > 等元字符仍在引号内。 */
+export function quoteCmdToken(value: string): string {
+  if (CMD_UNSAFE.test(value)) throw new Error('Windows 脚本参数包含不允许的字符')
+  return `"${value}"`
 }
 
 const INIT_TIMEOUT_MS = 10_000
@@ -344,6 +377,7 @@ export class CodexHost extends JsonRpcAgentHost {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: spec.shell,
+      ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       env: { ...process.env },
     })
     this.child = child
@@ -492,10 +526,57 @@ function deriveAgentVersion(initialize: unknown): string | undefined {
 }
 
 /**
- * 测试钩子：codexPath 为 JSON 数组字符串时按 [可执行文件, ...参数] 原样启动，
- * 便于用假 codex 脚本跑端到端；正常路径解析顺序为参数 → PATH → 常见安装位置。
+ * 解析顺序：参数 → PATH → 常见安装位置。Windows 额外补 npm 全局（codex.cmd）、
+ * WindowsApps（codex.exe）与官方安装器目录；只做存在性检查，不下载/安装（合规 §7）。
  */
-function resolveCodexCommand(codexPath?: unknown): CodexCommand {
+export function codexCandidates(
+  explicit?: string,
+  env: CodexResolveEnv = defaultCodexResolveEnv(),
+): string[] {
+  if (explicit) return [explicit]
+  const win = env.platform === 'win32'
+  const p = win ? path.win32 : path.posix
+  const names = win ? ['codex.exe', 'codex.cmd', 'codex.bat'] : ['codex']
+  const dirs = env.pathValue.split(env.delimiter).filter(Boolean)
+  const extras = win
+    ? [
+        ...(env.appData ? [p.join(env.appData, 'npm')] : []),
+        ...(env.localAppData
+          ? [p.join(env.localAppData, 'Microsoft', 'WindowsApps')]
+          : []),
+        ...(env.localAppData
+          ? [p.join(env.localAppData, 'Programs', 'OpenAI', 'Codex', 'bin')]
+          : []),
+        p.join(env.home, '.local', 'bin'),
+      ]
+    : [
+        p.join(env.home, '.local', 'bin'),
+        '/usr/local/bin',
+        p.join(env.home, '.npm-global', 'bin'),
+      ]
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const dir of [...dirs, ...extras]) {
+    for (const name of names) {
+      const candidate = p.join(dir, name)
+      const key = win ? candidate.toLowerCase() : candidate
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(candidate)
+    }
+  }
+  return result
+}
+
+/**
+ * 测试钩子：codexPath 为 JSON 数组字符串时按 [可执行文件, ...参数] 原样启动，
+ * 便于用假 codex 脚本跑端到端；其余情况按上面的候选顺序解析。
+ */
+export function resolveCodexCommand(
+  codexPath?: unknown,
+  env: CodexResolveEnv = defaultCodexResolveEnv(),
+  exists: (file: string) => boolean = isExecutable,
+): CodexCommand {
   if (typeof codexPath === 'string' && codexPath.trim().startsWith('[')) {
     let parsed: unknown
     try {
@@ -516,31 +597,16 @@ function resolveCodexCommand(codexPath?: unknown): CodexCommand {
   }
 
   const explicit = typeof codexPath === 'string' && codexPath.trim() ? codexPath.trim() : undefined
-  const candidates = explicit ? [explicit] : codexCandidates()
-  for (const candidate of candidates) {
-    if (!isExecutable(candidate)) continue
-    return wrapCommand(candidate, ['app-server'])
+  for (const candidate of codexCandidates(explicit, env)) {
+    if (!exists(candidate)) continue
+    try {
+      return wrapCommand(candidate, ['app-server'], env)
+    } catch {
+      // 路径含 cmd 不允许的字符时跳过，尝试下一个候选。
+    }
   }
   // 找不到实体文件时交给 spawn 走 PATH（Windows 的 codex.cmd 也由 libuv 兜底）。
-  return wrapCommand(explicit ?? 'codex', ['app-server'])
-}
-
-function codexCandidates(): string[] {
-  const isWindows = process.platform === 'win32'
-  const names = isWindows ? ['codex.exe', 'codex.cmd', 'codex.bat'] : ['codex']
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
-  if (isWindows) {
-    const result: string[] = []
-    for (const dir of dirs) for (const name of names) result.push(path.join(dir, name))
-    return result
-  }
-  const home = os.homedir()
-  return [
-    ...dirs.map((dir) => path.join(dir, 'codex')),
-    path.join(home, '.local', 'bin', 'codex'),
-    '/usr/local/bin/codex',
-    path.join(home, '.npm-global', 'bin', 'codex'),
-  ]
+  return wrapCommand(explicit ?? 'codex', ['app-server'], env)
 }
 
 function isExecutable(file: string): boolean {
@@ -552,10 +618,25 @@ function isExecutable(file: string): boolean {
   }
 }
 
-function wrapCommand(command: string, args: string[]): CodexCommand {
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
-    // cmd.exe 才能启动 .cmd；加引号让含空格的路径可用，并去掉引号避免注入。
-    return { command: `"${command.replace(/"/g, '')}"`, args, shell: true }
+/**
+ * .cmd/.bat 只能经 cmd.exe 启动：不用 shell:true（Node 会把未转义参数直接拼接），
+ * 改成 /d /v:off /s /c + 逐 token 加引号 + windowsVerbatimArguments 原样传参。
+ */
+export function wrapCommand(
+  command: string,
+  args: string[],
+  env: CodexResolveEnv = defaultCodexResolveEnv(),
+): CodexCommand {
+  if (env.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
+    const comspec =
+      env.comspec && !CMD_UNSAFE.test(env.comspec) ? env.comspec : 'cmd.exe'
+    const line = `"${[command, ...args].map(quoteCmdToken).join(' ')}"`
+    return {
+      command: comspec,
+      args: ['/d', '/v:off', '/s', '/c', line],
+      shell: false,
+      windowsVerbatimArguments: true,
+    }
   }
   return { command, args, shell: false }
 }

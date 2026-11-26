@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { FolderPlus, RotateCw, SquarePen, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, RotateCw, SquarePen, X } from 'lucide-react'
+import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
@@ -9,6 +10,7 @@ import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
 import { IconButton, Spinner } from '../ui'
 import { ThreadRow } from './ThreadRow'
 
@@ -25,7 +27,6 @@ export function ProjectTree({ targetId }: { targetId: string }) {
   const projectError = useProjects((s) => s.error)
   const load = useProjects((s) => s.load)
   const select = useProjects((s) => s.select)
-  const remove = useProjects((s) => s.remove)
   const openPicker = useUi((s) => s.openDirectoryPicker)
 
   const [collapsed, setCollapsed] = useState(false)
@@ -90,38 +91,14 @@ export function ProjectTree({ targetId }: { targetId: string }) {
           const expanded = active && !collapsed
           return (
             <div key={project.id} className="mb-0.5">
-              <div
-                className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-[14px] ${
-                  active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
-                } ${active && !expanded ? 'bg-qn-hover' : ''}`}
-                title={project.path}
-              >
-                <button
-                  type="button"
-                  className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none"
-                  aria-expanded={expanded}
-                  onClick={() => onProjectClick(project)}
-                >
-                  <ProjectInitial name={project.name} active={expanded} />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                </button>
-                <span className="shrink-0 pr-1.5 text-[12px] text-qn-dim group-hover:hidden">
-                  {formatRelative(project.lastOpenedAt, now)}
-                </span>
-                <span className="hidden shrink-0 items-center group-hover:flex">
-                  <IconButton label="在此项目新建会话" className="h-7 w-7" onClick={() => newDraftIn(project)}>
-                    <SquarePen size={14} />
-                  </IconButton>
-                  <IconButton
-                    label="移除项目（不删除磁盘文件）"
-                    danger
-                    className="h-7 w-7"
-                    onClick={() => void remove(project.id)}
-                  >
-                    <Trash2 size={14} />
-                  </IconButton>
-                </span>
-              </div>
+              <ProjectRow
+                project={project}
+                active={active}
+                expanded={expanded}
+                now={now}
+                onOpen={() => onProjectClick(project)}
+                onNewDraft={() => newDraftIn(project)}
+              />
               {expanded && <ThreadList now={now} />}
             </div>
           )
@@ -140,6 +117,135 @@ export function ProjectTree({ targetId }: { targetId: string }) {
   )
 }
 
+/** 项目行：悬停显示"新建会话"与"更多"菜单（置顶 / 重命名 / 复制路径 / 移除）。 */
+function ProjectRow({
+  project,
+  active,
+  expanded,
+  now,
+  onOpen,
+  onNewDraft,
+}: {
+  project: Project
+  active: boolean
+  expanded: boolean
+  now: number
+  onOpen: () => void
+  onNewDraft: () => void
+}) {
+  const pinned = useProjects((s) => s.pinned.includes(project.id))
+  const togglePin = useProjects((s) => s.togglePin)
+  const rename = useProjects((s) => s.rename)
+  const remove = useProjects((s) => s.remove)
+  // 菜单打开时保持操作区可见，否则鼠标移进浮层后触发器隐藏、菜单会失去锚点。
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(project.name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) return
+    // 等菜单关闭、焦点归还后再聚焦，否则会被 Radix 抢回去。
+    const timer = setTimeout(() => inputRef.current?.select(), 0)
+    return () => clearTimeout(timer)
+  }, [editing])
+
+  const commit = () => {
+    setEditing(false)
+    void rename(project, draft)
+  }
+
+  if (editing) {
+    return (
+      <div className="flex h-8 items-center gap-2 pl-2 pr-1">
+        <ProjectInitial name={project.name} />
+        <input
+          ref={inputRef}
+          value={draft}
+          aria-label="项目名称"
+          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-[13px]"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commit()
+            else if (event.key === 'Escape') setEditing(false)
+          }}
+        />
+      </div>
+    )
+  }
+
+  const shortcut = (event: KeyboardEvent) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return
+    const key = event.key.toLowerCase()
+    const action =
+      key === 'p' ? () => togglePin(project.id) : key === 'e' ? () => beginRename() : key === 'c' ? copyPath : null
+    if (!action) return
+    event.preventDefault()
+    setMenuOpen(false)
+    action()
+  }
+  const beginRename = () => {
+    setDraft(project.name)
+    setEditing(true)
+  }
+  const copyPath = () => void copyText(project.path)
+
+  return (
+    <div
+      className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-[14px] ${
+        active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
+      } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
+      title={project.path}
+    >
+      <button
+        type="button"
+        className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none"
+        aria-expanded={expanded}
+        onClick={onOpen}
+      >
+        <ProjectInitial name={project.name} />
+        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+        {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
+      </button>
+      <span className={`shrink-0 pr-1.5 text-[12px] text-qn-dim group-hover:hidden ${menuOpen ? 'hidden' : ''}`}>
+        {formatRelative(project.lastOpenedAt, now)}
+      </span>
+      <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
+        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
+          <MenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="更多操作"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text data-[state=open]:text-qn-text"
+            >
+              <Ellipsis size={15} />
+            </button>
+          </MenuTrigger>
+          <MenuContent align="start" className="min-w-52" onKeyDown={shortcut}>
+            <MenuItem icon={pinned ? <PinOff size={14} /> : <Pin size={14} />} hint="P" onSelect={() => togglePin(project.id)}>
+              {pinned ? '取消置顶' : '置顶'}
+            </MenuItem>
+            <MenuItem icon={<Pencil size={14} />} hint="E" onSelect={beginRename}>
+              重命名
+            </MenuItem>
+            <MenuItem icon={<Copy size={14} />} hint="C" onSelect={copyPath}>
+              复制路径
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem icon={<X size={14} />} title="不删除磁盘文件" onSelect={() => void remove(project.id)}>
+              移除项目
+            </MenuItem>
+          </MenuContent>
+        </Menu>
+        <IconButton label="在此项目新建会话" className="h-7 w-7" onClick={onNewDraft}>
+          <SquarePen size={14} />
+        </IconButton>
+      </span>
+    </div>
+  )
+}
+
 // 首字母头像配色：按项目名哈希取色，保证同名项目颜色稳定。
 const INITIAL_COLORS = [
   'bg-sky-500/20 text-sky-300',
@@ -152,19 +258,29 @@ const INITIAL_COLORS = [
   'bg-indigo-500/20 text-indigo-300',
 ]
 
-function ProjectInitial({ name, active }: { name: string; active: boolean }) {
-  const ch = Array.from(name.replace(/^[^\p{L}\p{N}]+/u, ''))[0] ?? Array.from(name)[0] ?? '?'
+function ProjectInitial({ name }: { name: string }) {
+  const ch = (Array.from(name.replace(/^[^\p{L}\p{N}]+/u, ''))[0] ?? Array.from(name)[0] ?? '?').toUpperCase()
   let hash = 0
   for (const c of name) hash = (hash * 31 + c.codePointAt(0)!) | 0
   const color = INITIAL_COLORS[Math.abs(hash) % INITIAL_COLORS.length]
+  // 用 SVG 按字形几何居中：CSS 行盒按 ascent/descent 居中，Segoe UI 的大写字母会明显偏上。
+  // 拉丁字母/数字以基线 + 约 0.36em 让大写字高居中；中日韩字符用 central 基线。
+  const latin = /^[\p{Script=Latin}\p{N}]$/u.test(ch)
   return (
-    <span
-      aria-hidden
-      className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] text-[11px] font-semibold leading-none ${color} ${
-        active ? 'ring-1 ring-qn-brand/70' : ''
-      }`}
-    >
-      {ch.toUpperCase()}
+    <span aria-hidden className={`inline-flex h-[18px] w-[18px] shrink-0 rounded-[5px] ${color}`}>
+      <svg width="18" height="18" viewBox="0 0 18 18" className="block">
+        <text
+          x="9"
+          y={latin ? 13 : 9}
+          textAnchor="middle"
+          dominantBaseline={latin ? 'alphabetic' : 'central'}
+          fontSize="11"
+          fontWeight="600"
+          fill="currentColor"
+        >
+          {ch}
+        </text>
+      </svg>
     </span>
   )
 }

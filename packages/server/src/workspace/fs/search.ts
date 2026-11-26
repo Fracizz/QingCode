@@ -6,15 +6,23 @@ import path from 'node:path'
 import readline from 'node:readline'
 import type { FsSearchResultEvt } from '@qn/protocol'
 import type { WorkspaceContext } from '../registry'
+import { decodeText, detectTextEncoding, type TextEncoding } from './encoding'
+import {
+  MAX_IGNORE_FILE_BYTES,
+  isIgnored,
+  isSkippedDir,
+  parseIgnore,
+  type IgnoreRule,
+} from './ignore'
 import { readByteRange } from './io'
 import {
   indexOfText,
   looksBinary,
   matchGlob,
   MAX_SEARCH_FILE_BYTES,
+  nodeErrorCode,
   parseSearchId,
   parseSearchParams,
-  SKIP_DIRS,
   truncateText,
   type ParsedSearch,
 } from './logic'
@@ -49,7 +57,14 @@ interface SearchDeps {
   ctx: WorkspaceContext
 }
 
-const EXCLUDE_GLOBS = ['!**/.git/**', '!**/node_modules/**', '!**/.hg/**', '!**/.svn/**']
+const EXCLUDE_GLOBS = [
+  '!**/.git/**',
+  '!**/node_modules/**',
+  '!**/.hg/**',
+  '!**/.svn/**',
+  '!**/$RECYCLE.BIN/**',
+  '!**/System Volume Information/**',
+]
 const states = new WeakMap<WorkspaceContext, SearchState>()
 
 function stateFor(ctx: WorkspaceContext): SearchState {
@@ -328,7 +343,7 @@ async function runNodeSearch(
     return false
   }
 
-  const walk = async (dir: string): Promise<boolean> => {
+  const walk = async (dir: string, inherited: readonly IgnoreRule[]): Promise<boolean> => {
     if (deps.isCancelled()) return true
     let entries
     try {
@@ -337,13 +352,17 @@ async function runNodeSearch(
       deps.ctx.log('fs.search 跳过不可读目录')
       return false
     }
+    const rules = await loadIgnoreRules(dir, inherited, params, deps)
     for (const entry of entries) {
       if (deps.isCancelled()) return true
       const absolute = path.join(dir, entry.name)
+      const relative = relativeOf(absolute)
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue
-        if (await walk(absolute)) return true
+        if (isSkippedDir(entry.name)) continue
+        if (isIgnored(relative, true, rules, params.caseSensitive)) continue
+        if (await walk(absolute, rules)) return true
       } else if (entry.isFile()) {
+        if (isIgnored(relative, false, rules, params.caseSensitive)) continue
         if (await searchFile(absolute)) return true
       }
       // 符号链接不跟随，避免循环与重复结果。
@@ -354,11 +373,32 @@ async function runNodeSearch(
   if (rootStat.isFile()) {
     await searchFile(params.root)
   } else if (isDir) {
-    await walk(params.root)
+    await walk(params.root, [])
   } else {
     return { truncated: false, error: 'root 既不是文件也不是目录' }
   }
   return { truncated: deps.isCancelled() ? false : truncated }
+}
+
+/** 每进入一层目录追加该层的 .gitignore 规则；UTF-8/UTF-16 BOM 都能解析。 */
+async function loadIgnoreRules(
+  dir: string,
+  inherited: readonly IgnoreRule[],
+  params: ParsedSearch,
+  deps: SearchDeps,
+): Promise<IgnoreRule[]> {
+  try {
+    const range = await readByteRange(path.join(dir, '.gitignore'), 0, MAX_IGNORE_FILE_BYTES)
+    const detected = detectTextEncoding(range.data)
+    const info: TextEncoding = detected ?? { encoding: 'utf8', bom: false, bomBytes: 0 }
+    const { content } = decodeText(range.data, info, info.bom)
+    const base = cleanRelPath(path.relative(params.root, dir))
+    return [...inherited, ...parseIgnore(content, base)]
+  } catch (err) {
+    // 大多数目录没有 .gitignore，ENOENT 属于正常情况，不刷日志。
+    if (nodeErrorCode(err) !== 'ENOENT') deps.ctx.log('fs.search 跳过不可读的 .gitignore')
+    return [...inherited]
+  }
 }
 
 function describe(err: unknown): string {

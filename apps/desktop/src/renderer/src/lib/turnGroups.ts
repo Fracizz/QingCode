@@ -1,4 +1,4 @@
-import type { ItemView } from '@qn/codex-client'
+import type { ItemView, TurnMeta } from '@qn/codex-client'
 
 // 消息流分组（参考 Codex / Orca 的"已运行 3 条命令 · 1 个失败"）：
 // 连续的工具类条目（命令、文件改动、思考、其他）折叠成一行摘要，对话正文不被过程信息淹没。
@@ -6,6 +6,70 @@ import type { ItemView } from '@qn/codex-client'
 export type FlowEntry =
   | { kind: 'item'; key: string; item: ItemView }
   | { kind: 'tools'; key: string; items: ItemView[] }
+
+export type TurnEntry =
+  | FlowEntry
+  /** 已结束一轮的过程（思考、工具、中间说明）收成"工作了 4m 56s"，只露出最终回复。 */
+  | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[] }
+
+/** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
+export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): TurnEntry[] {
+  const segments: ItemView[][] = []
+  for (const item of items) {
+    if (item.kind === 'user' || segments.length === 0) segments.push([item])
+    else segments[segments.length - 1]!.push(item)
+  }
+  const out: TurnEntry[] = []
+  segments.forEach((segment, index) => {
+    const head = segment[0]!.kind === 'user' ? segment[0]! : null
+    const rest = head ? segment.slice(1) : segment
+    if (head) out.push({ kind: 'item', key: head.id, item: head })
+    const live = running && index === segments.length - 1
+    let finalIndex = -1
+    for (let i = rest.length - 1; i >= 0; i--) {
+      if (rest[i]!.kind === 'agent') {
+        finalIndex = i
+        break
+      }
+    }
+    const process = finalIndex >= 0 ? rest.slice(0, finalIndex) : rest
+    if (live || process.length === 0 || !process.some(isTool)) {
+      out.push(...groupFlow(rest))
+      return
+    }
+    out.push({
+      kind: 'work',
+      key: `work-${process[0]!.id}`,
+      durationMs: turnDuration(segment, turns),
+      entries: groupFlow(process),
+    })
+    if (finalIndex >= 0) out.push(...groupFlow(rest.slice(finalIndex)))
+  })
+  return out
+}
+
+function turnDuration(segment: ItemView[], turns: TurnMeta[] | undefined): number | null {
+  if (!turns?.length) return null
+  const ids = new Set(segment.map((item) => item.id))
+  let total = 0
+  let found = false
+  // 一条用户消息可能对应多轮（重试、续跑），累加起来。
+  for (const turn of turns) {
+    if (turn.durationMs && turn.itemIds.some((id) => ids.has(id))) {
+      total += turn.durationMs
+      found = true
+    }
+  }
+  return found ? total : null
+}
+
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
 
 const isTool = (item: ItemView): boolean =>
   item.kind === 'command' || item.kind === 'fileChange' || item.kind === 'reasoning' || item.kind === 'other'

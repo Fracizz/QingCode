@@ -1,12 +1,13 @@
 import { Children, isValidElement, memo, useMemo, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Brain, ChevronRight, FileDiff, FileText, ImageIcon, ListChecks, LoaderCircle, Terminal, Wand2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Terminal, Wand2 } from 'lucide-react'
 import type { ItemView } from '@qn/codex-client'
 import { basename, splitUserText } from '../lib/attachments'
+import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
-import { isGroupRunning, summarizeTools } from '../lib/turnGroups'
+import { formatDuration, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
@@ -216,18 +217,17 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
   )
 }
 
-function AgentMessage({ text, streaming, onFork }: { text: string; streaming: boolean; onFork?: (markdown: string) => void }) {
+function AgentMessage({ id, text, streaming, onFork }: { id: string; text: string; streaming: boolean; onFork?: (itemId: string, markdown: string) => void }) {
   const context = useLinkContext()
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     <div className="group/msg">
-      <div className="qn-markdown break-words text-[14px] leading-[1.7] text-qn-text">
+      <div className={cn('qn-markdown break-words text-[14px] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
           {text}
         </ReactMarkdown>
-        {streaming && <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-qn-brand align-middle" />}
       </div>
-      {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(text) : undefined} />}
+      {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(id, text) : undefined} />}
     </div>
   )
 }
@@ -237,17 +237,17 @@ export const MessageItem = memo(function MessageItem({
   onFork,
 }: {
   item: ItemView
-  onFork?: (markdown: string) => void
+  onFork?: (itemId: string, markdown: string) => void
 }) {
   switch (item.kind) {
     case 'user':
       return <UserMessage item={item} />
     case 'agent':
-      return <AgentMessage text={item.text} streaming={item.streaming === true} onFork={onFork} />
+      return <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true} onFork={onFork} />
     case 'reasoning':
       return (
         <ToolRow
-          icon={<Brain size={14} className={item.streaming ? 'animate-pulse text-qn-brand' : ''} />}
+          icon={<Lightbulb size={14} strokeWidth={1.75} className={item.streaming ? 'animate-pulse text-qn-brand' : ''} />}
           summary={item.streaming ? '正在思考…' : '思考过程'}
         >
           <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[13px] leading-6 text-qn-muted">
@@ -287,11 +287,40 @@ export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] 
   )
 })
 
+/** 已结束一轮的过程折叠头（"工作了 4m 56s ⌄"），展开后按原样显示思考与工具步骤。 */
+export const WorkGroup = memo(function WorkGroup({
+  durationMs,
+  entries,
+  onFork,
+}: {
+  durationMs: number | null
+  entries: FlowEntry[]
+  onFork?: (itemId: string, markdown: string) => void
+}) {
+  return (
+    <details className="group/work text-[13px]">
+      <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
+        <span>{durationMs ? `工作了 ${formatDuration(durationMs)}` : '工作过程'}</span>
+        <ChevronDown size={14} className="shrink-0 text-qn-dim transition-transform group-open/work:rotate-180" />
+      </summary>
+      <div className="mt-2 space-y-3">
+        {entries.map((entry) =>
+          entry.kind === 'tools' ? (
+            <ToolGroup key={entry.key} items={entry.items} />
+          ) : (
+            <MessageItem key={entry.key} item={entry.item} onFork={onFork} />
+          ),
+        )}
+      </div>
+    </details>
+  )
+})
+
 /** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
 function UserMessage({ item }: { item: Extract<ItemView, { kind: 'user' }> }) {
   const parsed = splitUserText(item.text)
   const files = [...(item.files ?? []), ...parsed.files.filter((path) => !item.files?.includes(path))]
-  const skills = item.skills?.length ? item.skills : parsed.skill ? [parsed.skill] : []
+  const skills = item.skills?.length ? item.skills : parsed.skills
   // data / http 图片能直接显示；目标机本地路径只显示文件名。
   const images = item.images ?? []
   const visible = images.filter((src) => src.startsWith('data:image/'))
@@ -330,7 +359,7 @@ function UserMessage({ item }: { item: Extract<ItemView, { kind: 'user' }> }) {
         </div>
       )}
       {parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[14px] leading-6 text-qn-text">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[14px] leading-6 text-qn-prose">
           {parsed.text}
         </div>
       )}

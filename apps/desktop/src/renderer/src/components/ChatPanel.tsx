@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
+import { DRAFT_THREAD_ID } from '@qn/codex-client'
 import { buildAnnotatedMessage, quoteBlock, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
 import {
@@ -17,7 +18,7 @@ import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
-import { groupFlow } from '../lib/turnGroups'
+import { groupTurns } from '../lib/turnGroups'
 import { useCodex } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
@@ -26,7 +27,7 @@ import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem, ToolGroup } from './MessageItem'
+import { MessageItem, ToolGroup, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { MainHeader } from './shell/MainHeader'
@@ -62,18 +63,21 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
   const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [skill, setSkill] = useState<SkillRef | null>(null)
+  const [skills, setSkills] = useState<SkillRef[]>([])
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 
   const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
-  const view = currentThreadId ? session?.state.threads[currentThreadId] : undefined
+  // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
+  const view = currentThreadId
+    ? session?.state.threads[currentThreadId]
+    : session?.state.threads[DRAFT_THREAD_ID]
   const items: ItemView[] = useMemo(() => view?.items ?? [], [view?.items])
-  const flow = useMemo(() => groupFlow(items), [items])
-  const approvals: ApprovalView[] = view
+  const approvals: ApprovalView[] = currentThreadId && view
     ? view.pendingApprovals
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
+  const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
 
   const lastItem = items[items.length - 1]
   const signature = `${items.length}:${approvals.length}:${
@@ -129,13 +133,19 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const submit = (text: string) => {
     const message = buildAnnotatedMessage(annotations, text)
-    const input = buildUserInput(message, attachments, skill)
+    const input = buildUserInput(message, attachments, skills)
     if (input.length === 0) return
-    void send(message, { input })
-    setAnnotations([])
-    setHighlights({})
-    setAttachments([])
-    setSkill(null)
+    void send(message, { input }).then((sent) => {
+      // 发送失败时把文字放回输入框，注释/附件/技能都保留，方便直接重试。
+      if (!sent) {
+        setDraft(text)
+        return
+      }
+      setAnnotations([])
+      setHighlights({})
+      setAttachments([])
+      setSkills([])
+    })
   }
 
   const notify = (message: string) => useCodex.setState({ notice: message })
@@ -213,10 +223,20 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   }
 
   // "从这里开始新会话"：回到草稿态并把引用填进输入框，用户补充后发送才真正建会话。
-  const forkFromMessage = (markdown: string) => {
+  const forkThread = useCodex((s) => s.forkThread)
+  // 分支到新聊天：Codex 用 thread/fork 截到这条回复所在的轮次，与侧栏"创建聊天分支"同一能力；
+  // 其他 Agent 没有分叉 RPC，退化为带引用的新草稿。
+  const forkFromMessage = (itemId: string, markdown: string) => {
+    const turnId = view?.turns?.find((turn) => turn.itemIds.includes(itemId))?.id
+    if (currentAgent === 'codex' && currentThreadId && turnId) {
+      void forkThread(currentThreadId, currentAgent, turnId)
+      return
+    }
     startDraft(currentAgent)
     setDraft(quoteBlock(markdown))
   }
+  // 进行中的轮次不能分叉（Codex 会拒绝），运行期间先不提供入口。
+  const canFork = !(currentAgent === 'codex' && running)
 
   const target = targets.find((item) => item.id === currentTargetId)
   const project = projects.find((item) => item.id === selectedProjectId)
@@ -254,7 +274,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   // 切换目标或 Agent 后，旧目标上传的附件路径不再有效。
   useEffect(() => {
     setAttachments([])
-    setSkill(null)
+    setSkills([])
   }, [currentTargetId, currentAgent])
   const agentStatus = session?.opening
     ? `${agentLabel(currentAgent)} 启动中…`
@@ -304,7 +324,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             )}
 
             {isDraft && items.length === 0 && approvals.length === 0 ? (
-              <div className="flex-1">
+              <div className="flex flex-1 flex-col">
                 <WelcomePane onConnect={onConnect} onAddTarget={onAddTarget} />
               </div>
             ) : items.length === 0 && approvals.length === 0 ? (
@@ -316,8 +336,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 {flow.map((entry) =>
                   entry.kind === 'tools' ? (
                     <ToolGroup key={entry.key} items={entry.items} />
+                  ) : entry.kind === 'work' ? (
+                    <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries} onFork={canFork ? forkFromMessage : undefined} />
                   ) : (
-                    <MessageItem key={entry.key} item={entry.item} onFork={forkFromMessage} />
+                    <MessageItem key={entry.key} item={entry.item} onFork={canFork ? forkFromMessage : undefined} />
                   ),
                 )}
                 {approvals.map((approval) => (
@@ -364,8 +386,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         slash={{
           items: slashItems,
           loading: skillList?.loading,
-          skill,
-          onSkillChange: setSkill,
+          skills,
+          onSkillsChange: setSkills,
           onCommand: runCommand,
         }}
         leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft} />}
