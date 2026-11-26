@@ -21,12 +21,14 @@ import {
   summarizeInput,
   tokenUsage,
   userMessageItem,
+  userMessageContentItem,
   buildTurn,
   type Json,
   type MapContext,
   type V2Item,
   type V2Notification,
 } from './v2'
+import { imageBlockToEcho } from './userInput'
 
 export interface MapState {
   nextItem: number
@@ -312,11 +314,30 @@ function mapUser(
   const payload = asRecord(message.message)
   const content = payload?.content ?? message.content
   const blocks: unknown[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
+  // 带图片的用户消息合并成一个 userMessage（图片在前），否则界面会把文字与缩略图拆成两条气泡。
+  if (options.includeUserText && blocks.some((raw) => asRecord(raw)?.type === 'image')) {
+    const echo: Json[] = []
+    for (const raw of blocks) {
+      const block = asRecord(raw)
+      if (block?.type === 'image') {
+        const image = imageBlockToEcho(block)
+        if (image) echo.push(image)
+      } else if (block?.type === 'text' && scalarText(block.text)) {
+        echo.push({ type: 'text', text: scalarText(block.text), text_elements: [] })
+      }
+    }
+    if (echo.length > 0) {
+      const item = userMessageContentItem(newItemId(ctx, state, 'user'), echo)
+      recordItem(state, item)
+      out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
+    }
+  }
+  const hasImage = options.includeUserText && blocks.some((raw) => asRecord(raw)?.type === 'image')
   for (const raw of blocks) {
     const block = asRecord(raw)
     if (!block) continue
     const type = scalarText(block.type)
-    if (type === 'text' && options.includeUserText) {
+    if (type === 'text' && options.includeUserText && !hasImage) {
       const id = newItemId(ctx, state, 'user')
       const item = userMessageItem(id, scalarText(block.text))
       recordItem(state, item)
@@ -412,16 +433,4 @@ export function mapSdkMessage(
       break
   }
   return { notifications: out, state }
-}
-
-/** 把 v2 用户输入（UserInput[]）拼成 SDK 的纯文本 prompt。 */
-export function turnInputText(input: unknown): string {
-  if (!Array.isArray(input)) return ''
-  return input
-    .map((entry) => {
-      const record = asRecord(entry)
-      return record?.type === 'text' ? scalarText(record.text) : ''
-    })
-    .filter(Boolean)
-    .join('\n')
 }

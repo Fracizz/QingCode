@@ -6,6 +6,8 @@ import type {
   ModelListParams,
   ModelListResponse,
   RequestId,
+  SkillsListParams,
+  SkillsListResponse,
   ServerNotification,
   ServerRequest,
   ThreadListParams,
@@ -30,6 +32,7 @@ export type ClientRequestMap = {
   'turn/start': { params: TurnStartParams; result: TurnStartResponse }
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
   'model/list': { params: ModelListParams; result: ModelListResponse }
+  'skills/list': { params: SkillsListParams; result: SkillsListResponse }
   'account/read': { params: GetAccountParams; result: GetAccountResponse }
   'account/rateLimits/read': {
     params: GetAccountRateLimitsParams

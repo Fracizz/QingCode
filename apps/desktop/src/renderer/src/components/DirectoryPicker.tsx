@@ -122,7 +122,7 @@ export function DirectoryPicker({
       onClose={onClose}
       footer={
         <div className="flex items-center justify-between gap-3">
-          <span className="min-w-0 truncate font-mono text-[11px] text-qn-muted">
+          <span className="min-w-0 truncate font-mono text-[12px] text-qn-muted">
             {currentPath(history) || input || '（未选择）'}
           </span>
           <div className="flex shrink-0 gap-2">
@@ -183,11 +183,11 @@ export function DirectoryPicker({
             >
               <Folder size={13} className="shrink-0 text-amber-300" />
               <span className="truncate">{entry.name}</span>
-              {entry.kind === 'symlink' && <span className="text-[10px] text-qn-muted">链接</span>}
+              {entry.kind === 'symlink' && <span className="text-[11px] text-qn-muted">链接</span>}
             </button>
           ))}
         </div>
-        <p className="text-[11px] text-qn-muted">单击选中、双击进入目录；也可直接在上方输入路径。</p>
+        <p className="text-[12px] text-qn-muted">单击选中、双击进入目录；也可直接在上方输入路径。</p>
       </div>
     </Modal>
   )

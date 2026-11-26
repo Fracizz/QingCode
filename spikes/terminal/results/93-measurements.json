@@ -1,0 +1,239 @@
+{
+  "meta": {
+    "host": "192.168.10.93",
+    "uname": "Linux 7.0.0-44-generic",
+    "node": "v26.13.0",
+    "python3": "Python 3.14.4",
+    "python3ProbeVersion": "3.14.4",
+    "script": "script from util-linux 2.41.3",
+    "utilLinuxFlags": "ok",
+    "bash": "GNU bash, version 5.3.9(1)-release (x86_64-pc-linux-gnu)",
+    "locale": "en_US.UTF-8",
+    "term": "xterm-256color",
+    "tools": {
+      "vim": null,
+      "htop": null,
+      "vi": "/usr/bin/vi",
+      "nano": "/usr/bin/nano",
+      "top": "/usr/bin/top",
+      "less": "/usr/bin/less",
+      "screen": "/usr/bin/screen",
+      "python3": "/usr/bin/python3",
+      "script": "/usr/bin/script"
+    },
+    "scratch": "/tmp/qn-spike-boAG1PtV/work"
+  },
+  "cases": [
+    {
+      "name": "中文 UTF-8",
+      "backend": "python",
+      "ok": false,
+      "ms": 8171.89,
+      "error": "等待超时: 中文输出"
+    },
+    {
+      "name": "Ctrl+C",
+      "backend": "python",
+      "ok": false,
+      "ms": 8179.89,
+      "error": "等待超时: sleep 启动"
+    },
+    {
+      "name": "resize / SIGWINCH",
+      "backend": "python",
+      "ok": false,
+      "ms": 8179.86,
+      "error": "等待超时: 初始尺寸"
+    },
+    {
+      "name": "exit 退出码 7",
+      "backend": "python",
+      "ok": true,
+      "ms": 14.58,
+      "detail": {
+        "code": 7,
+        "signal": null,
+        "source": "control",
+        "okCode": true
+      }
+    },
+    {
+      "name": "10MB 吞吐",
+      "backend": "python",
+      "ok": false,
+      "ms": 90177.18,
+      "error": "等待超时: 10MB 输出结束"
+    },
+    {
+      "name": "往返延迟",
+      "backend": "python",
+      "ok": false,
+      "ms": 5186.63,
+      "error": "等待超时: ping 0"
+    },
+    {
+      "name": "全屏 vim",
+      "backend": "python",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 vim（按约束不安装）"
+    },
+    {
+      "name": "全屏 htop",
+      "backend": "python",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 htop（按约束不安装）"
+    },
+    {
+      "name": "全屏 less",
+      "backend": "python",
+      "ok": false,
+      "ms": 10182.06,
+      "error": "等待超时: less 进入全屏"
+    },
+    {
+      "name": "全屏 vi(vim.tiny)",
+      "backend": "python",
+      "ok": false,
+      "ms": 10183.17,
+      "error": "等待超时: vi(vim.tiny) 进入全屏"
+    },
+    {
+      "name": "全屏 nano",
+      "backend": "python",
+      "ok": false,
+      "ms": 10182.65,
+      "error": "等待超时: nano 进入全屏"
+    },
+    {
+      "name": "全屏 top",
+      "backend": "python",
+      "ok": false,
+      "ms": 10187.74,
+      "error": "等待超时: top 进入全屏"
+    },
+    {
+      "name": "全屏 python curses",
+      "backend": "python",
+      "ok": false,
+      "ms": 10186.86,
+      "error": "等待超时: python curses 进入全屏"
+    },
+    {
+      "name": "探测与兜底顺序",
+      "backend": "python",
+      "ok": true,
+      "ms": 14.97,
+      "detail": {
+        "autoBackend": "python",
+        "pythonUsable": true,
+        "scriptUsable": true,
+        "scriptResizeReturnsFalse": true,
+        "bothMissingMessage": "未找到可用的 PTY 后端：需要 python3（pty.fork + fcntl.ioctl）或 util-linux script"
+      }
+    },
+    {
+      "name": "中文 UTF-8",
+      "backend": "script",
+      "ok": false,
+      "ms": 8171.38,
+      "error": "等待超时: 中文输出"
+    },
+    {
+      "name": "Ctrl+C",
+      "backend": "script",
+      "ok": false,
+      "ms": 8163.74,
+      "error": "等待超时: sleep 启动"
+    },
+    {
+      "name": "resize / SIGWINCH",
+      "backend": "script",
+      "ok": false,
+      "ms": 8169.95,
+      "error": "等待超时: 初始尺寸"
+    },
+    {
+      "name": "exit 退出码 7",
+      "backend": "script",
+      "ok": true,
+      "ms": 17.14,
+      "detail": {
+        "code": 7,
+        "signal": null,
+        "source": "process",
+        "okCode": true
+      }
+    },
+    {
+      "name": "10MB 吞吐",
+      "backend": "script",
+      "ok": false,
+      "ms": 90168.82,
+      "error": "等待超时: 10MB 输出结束"
+    },
+    {
+      "name": "往返延迟",
+      "backend": "script",
+      "ok": false,
+      "ms": 5160.48,
+      "error": "等待超时: ping 0"
+    },
+    {
+      "name": "全屏 vim",
+      "backend": "script",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 vim（按约束不安装）"
+    },
+    {
+      "name": "全屏 htop",
+      "backend": "script",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 htop（按约束不安装）"
+    },
+    {
+      "name": "全屏 less",
+      "backend": "script",
+      "ok": false,
+      "ms": 12170.26,
+      "error": "等待超时: less 进入全屏"
+    },
+    {
+      "name": "全屏 vi(vim.tiny)",
+      "backend": "script",
+      "ok": false,
+      "ms": 12170.53,
+      "error": "等待超时: vi(vim.tiny) 进入全屏"
+    },
+    {
+      "name": "全屏 nano",
+      "backend": "script",
+      "ok": false,
+      "ms": 12168.12,
+      "error": "等待超时: nano 进入全屏"
+    },
+    {
+      "name": "全屏 top",
+      "backend": "script",
+      "ok": false,
+      "ms": 12164.22,
+      "error": "等待超时: top 进入全屏"
+    },
+    {
+      "name": "全屏 python curses",
+      "backend": "script",
+      "ok": false,
+      "ms": 12166.26,
+      "error": "等待超时: python curses 进入全屏"
+    }
+  ],
+  "summary": {
+    "total": 27,
+    "ok": 3,
+    "failed": 20,
+    "skipped": 4
+  }
+}

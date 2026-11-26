@@ -434,4 +434,39 @@ describe('conversation reducer', () => {
     }))
     expect(itemOf(state, 'i-agent')).toMatchObject({ text: '已有，新增', streaming: false })
   })
+
+  it('用户消息解析图片、附件文件与技能', () => {
+    const thread = {
+      id: 't1',
+      status: { type: 'idle' },
+      turns: [
+        {
+          id: 'turn0',
+          status: 'completed',
+          error: null,
+          items: [
+            item('userMessage', 'u1', {
+              content: [
+                { type: 'skill', name: 'commit-push', path: '/s/SKILL.md' },
+                { type: 'text', text: '看图' },
+                { type: 'image', url: 'data:image/png;base64,AAAA' },
+                { type: 'localImage', path: '/tmp/a.png' },
+                { type: 'mention', name: 'a.log', path: '/tmp/a.log' },
+              ],
+            }),
+          ],
+        },
+      ],
+    } as unknown as LoadableThread
+    const state = loadThread(emptyState(), thread)
+    expect(itemOf(state, 'u1')).toEqual({
+      kind: 'user',
+      id: 'u1',
+      text: '看图',
+      images: ['data:image/png;base64,AAAA', '/tmp/a.png'],
+      files: ['/tmp/a.log'],
+      skills: ['commit-push'],
+    })
+  })
 })
+

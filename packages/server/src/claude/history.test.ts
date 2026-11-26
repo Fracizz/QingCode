@@ -137,6 +137,42 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
     expect(sessionMessagesToThread(meta, []).turns).toEqual([])
   })
 
+  it('带图片的用户消息合并为单个 userMessage，base64 还原成 data URL，url 源原样给出', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage(
+        'user',
+        [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'image', source: { type: 'url', url: 'https://x.test/a.png' } },
+          { type: 'text', text: '看图' },
+        ],
+        'u1',
+      ),
+      sessionMessage('assistant', [{ type: 'text', text: '好' }], 'a1'),
+    ])
+    expect(result.turns).toHaveLength(1)
+    const users = (result.items as Json[]).filter((item) => item.type === 'userMessage')
+    expect(users).toHaveLength(1)
+    expect(users[0]?.content).toEqual([
+      { type: 'image', url: 'data:image/png;base64,QUJD' },
+      { type: 'image', url: 'https://x.test/a.png' },
+      { type: 'text', text: '看图', text_elements: [] },
+    ])
+  })
+
+  it('只有图片没有文字的用户消息同样开启新 turn', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', [{ type: 'text', text: '先问' }], 'u0'),
+      sessionMessage('assistant', [{ type: 'text', text: '答' }], 'a0'),
+      sessionMessage(
+        'user',
+        [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QQ==' } }],
+        'u1',
+      ),
+    ])
+    expect(result.turns).toHaveLength(2)
+  })
+
   it('非法条目被跳过', () => {
     expect(sessionMessagesToThread(meta, [null, 1, 'x', {}]).items).toEqual([])
   })

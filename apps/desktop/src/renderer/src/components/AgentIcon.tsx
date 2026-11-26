@@ -18,7 +18,7 @@ export function AgentIcon({
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 ${color} ${className}`} title={agentLabel(agent)}>
       <Icon size={size} />
-      {label && <span className="text-[10px]">{agentLabel(agent)}</span>}
+      {label && <span className="text-[11px]">{agentLabel(agent)}</span>}
     </span>
   )
 }

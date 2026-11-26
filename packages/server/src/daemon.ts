@@ -29,6 +29,7 @@ import {
 } from './paths'
 import { SocketStream } from './socketStream'
 import { checkHello } from './validation'
+import { WorkspaceError, findWorkspaceHandler, type WorkspaceContext } from './workspace/index'
 
 export interface DaemonOptions {
   stateDir?: string
@@ -47,6 +48,9 @@ interface ClientSession {
   conn: FramedConnection
   hello: boolean
   attached: Set<AgentKind>
+  /** 文件/Git 处理函数登记的连接级清理（监听、搜索） */
+  cleanups: Array<() => void>
+  workspace?: WorkspaceContext
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
@@ -122,6 +126,22 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     setTimeout(() => session.conn.close(), 40).unref()
   }
 
+  const workspaceContext = (session: ClientSession): WorkspaceContext => {
+    session.workspace ??= {
+      clientId: session.id,
+      emit(name, payload) {
+        if (clients.has(session.id)) session.conn.send({ t: 'evt', name, payload: payload ?? null })
+      },
+      onClose(cleanup) {
+        session.cleanups.push(cleanup)
+      },
+      log(message) {
+        logger.info(message)
+      },
+    }
+    return session.workspace
+  }
+
   const handleReq = async (session: ClientSession, req: Req): Promise<void> => {
     const { id, method, params } = req
     const p = asRecord(params)
@@ -169,11 +189,15 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           sendOk(session, id, {})
           scheduleShutdown('server.shutdown')
           return
-        default:
-          return sendErr(session, id, 'method', `未知方法: ${method}`)
+        default: {
+          const handler = findWorkspaceHandler(method)
+          if (!handler) return sendErr(session, id, 'method', `未知方法: ${method}`)
+          return sendOk(session, id, await handler(p ?? {}, workspaceContext(session)))
+        }
       }
     } catch (err) {
-      const code = err instanceof AgentHostError ? err.code : 'internal'
+      const code =
+        err instanceof AgentHostError || err instanceof WorkspaceError ? err.code : 'internal'
       return sendErr(session, id, code, describe(err))
     }
   }
@@ -259,9 +283,16 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       onClose() {
         clients.delete(id)
         for (const host of allHosts) host.detach(id)
+        for (const cleanup of session.cleanups.splice(0)) {
+          try {
+            cleanup()
+          } catch (err) {
+            logger.warn(`连接清理失败: ${describe(err)}`)
+          }
+        }
       },
     })
-    session = { id, socket, conn, hello: false, attached: new Set() }
+    session = { id, socket, conn, hello: false, attached: new Set(), cleanups: [] }
     clients.set(id, session)
   })
 

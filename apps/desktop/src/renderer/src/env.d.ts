@@ -9,6 +9,7 @@ declare global {
       requestPort(): void
       isSmoke: boolean
       platform: string
+      pathForFile?: (file: File) => string
     }
   }
 }

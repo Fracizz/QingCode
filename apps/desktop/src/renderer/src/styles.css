@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
-/* 色彩分层参考 Codex 桌面版石墨灰 + 旧版 QingCode 的"青轨"：
-   chrome（标题栏/状态栏）< bg（对话区）< sidebar < panel（卡片/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
+/* 色彩分层优先参考 Codex 桌面版石墨灰，辅以旧版 QingCode 的"青轨"：
+   chrome（标题栏）< bg（对话区）< sidebar < panel（卡片/输入框/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
    brand 青色只表达产品身份与"当前上下文"（青轨、当前会话），accent 蓝色用于主操作、焦点与链接。 */
 @theme {
   --color-qn-chrome: #141414;
@@ -26,8 +26,10 @@
 
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  font-size: 14px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 保持浏览器默认 16px 根字号：Tailwind 尺寸全是 rem，根字号缩小会让 text-xs 只剩 10.5px。 */
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
 }
 
 html,
@@ -44,40 +46,50 @@ button:disabled {
   opacity: 0.55;
 }
 
-.qn-input {
-  width: 100%;
-  border: 1px solid var(--color-qn-border-strong);
-  border-radius: 6px;
-  background: #161616;
-  color: var(--color-qn-text);
-  padding: 6px 8px;
-  font-size: 12px;
-  outline: none;
-}
+/* 组件类放进 components 层：调用处的 Tailwind 工具类（px-2、text-[12px] 等）才能覆盖它们。 */
+@layer components {
+  .qn-input {
+    width: 100%;
+    border: 1px solid var(--color-qn-border-strong);
+    border-radius: 6px;
+    background: #161616;
+    color: var(--color-qn-text);
+    padding: 7px 10px;
+    font-size: 13px;
+    line-height: 20px;
+    outline: none;
+  }
 
-.qn-input:focus {
-  border-color: var(--color-qn-accent);
-}
+  .qn-input:focus {
+    border-color: var(--color-qn-accent);
+  }
 
-.qn-button {
-  border-radius: 6px;
-  background: var(--color-qn-accent);
-  color: #fff;
-  font-size: 12px;
-  padding: 6px 10px;
-}
+  .qn-button {
+    border-radius: 8px;
+    background: var(--color-qn-accent);
+    color: #fff;
+    font-size: 13px;
+    line-height: 20px;
+    padding: 6px 12px;
+  }
 
-.qn-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-qn-accent) 88%, white);
-}
+  .qn-button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-qn-accent) 88%, white);
+  }
 
-.qn-button-subtle {
-  border: 1px solid var(--color-qn-border-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-qn-text);
-  font-size: 12px;
-  padding: 6px 10px;
+  .qn-button-subtle {
+    border: 1px solid var(--color-qn-border-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-qn-text);
+    font-size: 13px;
+    line-height: 20px;
+    padding: 6px 12px;
+  }
+
+  .qn-button-subtle:hover:not(:disabled) {
+    background: var(--color-qn-hover);
+  }
 }
 
 .qn-scroll::-webkit-scrollbar {
@@ -94,9 +106,6 @@ button:disabled {
   background: transparent;
 }
 
-.qn-button-subtle:hover:not(:disabled) {
-  background: var(--color-qn-hover);
-}
 
 /* ---------- 外壳 ---------- */
 
@@ -197,16 +206,13 @@ button:disabled {
 }
 
 .qn-pre {
-  margin: 0.5rem 0;
+  margin: 0;
   overflow-x: auto;
   white-space: pre;
-  border: 1px solid var(--color-qn-border);
-  border-radius: 4px;
-  background: #121212;
-  padding: 8px 10px;
+  padding: 10px 14px;
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 .qn-pre code {
@@ -227,7 +233,11 @@ button:disabled {
 .qn-markdown ul,
 .qn-markdown ol,
 .qn-markdown blockquote {
-  margin: 0.4rem 0;
+  margin: 0.6rem 0;
+}
+
+.qn-markdown li + li {
+  margin-top: 0.2rem;
 }
 
 .qn-markdown ul {
@@ -257,4 +267,70 @@ button:disabled {
 .qn-markdown hr {
   border-color: var(--color-qn-border);
   margin: 0.6rem 0;
+}
+
+.qn-markdown h1 {
+  font-size: 1.25em;
+}
+
+.qn-markdown h2 {
+  font-size: 1.12em;
+}
+
+/* ---------- Radix 浮层动效（读 data-state / data-side） ---------- */
+
+.qn-overlay[data-state="open"] {
+  animation: qn-fade-in 160ms ease-out both;
+}
+
+.qn-overlay[data-state="closed"] {
+  animation: qn-fade-out 120ms ease-in both;
+}
+
+.qn-dialog[data-state="open"] {
+  animation: qn-dialog-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qn-dialog[data-state="closed"] {
+  animation: qn-fade-out 120ms ease-in both;
+}
+
+.qn-float[data-state="open"],
+.qn-float[data-state="delayed-open"] {
+  animation: qn-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qn-float[data-side="top"] {
+  transform-origin: bottom center;
+}
+
+.qn-float[data-state="closed"] {
+  animation: qn-fade-out 100ms ease-in both;
+}
+
+@keyframes qn-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes qn-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes qn-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qn-overlay,
+  .qn-dialog,
+  .qn-float {
+    animation: none !important;
+  }
 }

@@ -166,7 +166,7 @@ export function TargetForm({
             <Checkbox checked={draft.remember} onChange={(value) => patch({ remember: value })}>
               记住密码 / 口令（用本机系统加密保存）
             </Checkbox>
-            <p className="text-[11px] leading-5 text-qn-muted">
+            <p className="text-[12px] leading-5 text-qn-muted">
               凭据只在连接时传给 backend，不写入连接配置。
             </p>
           </>

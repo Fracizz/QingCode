@@ -16,7 +16,7 @@ export function ApprovalCard({
         <span className="text-sm font-medium">{approval.title}</span>
         <Badge tone="warn">等待处理</Badge>
       </div>
-      <pre className="qn-scroll mb-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-qn-border bg-black/30 p-2 font-mono text-[11px] leading-5">
+      <pre className="qn-scroll mb-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-qn-border bg-black/30 p-2 font-mono text-[12px] leading-5">
         {approval.detail}
       </pre>
       <div className="flex flex-wrap gap-2">

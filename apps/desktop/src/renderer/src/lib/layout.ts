@@ -1,7 +1,6 @@
 // 外壳布局的尺寸约束与偏好解析（纯逻辑）。
 
 export const TITLEBAR_HEIGHT = 38
-export const STATUSBAR_HEIGHT = 24
 export const SIDEBAR_DEFAULT_WIDTH = 288
 export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 460

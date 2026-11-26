@@ -1,36 +1,46 @@
-import { useEffect, useRef, useState, type UIEvent } from 'react'
-import { ArrowDown } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
+import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
 import { buildAnnotatedMessage, quoteBlock, type Annotation } from '../lib/annotations'
-import { sessionKey } from '../lib/agents'
+import { agentLabel, sessionKey } from '../lib/agents'
+import {
+  attachmentsBlocking,
+  buildUserInput,
+  isImageFile,
+  MAX_ATTACHMENTS,
+  MAX_FILE_BYTES,
+  type Attachment,
+  type SkillRef,
+  type SlashItem,
+} from '../lib/attachments'
+import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
+import { targetDotClass } from '../lib/targetStatus'
+import { groupFlow } from '../lib/turnGroups'
 import { useCodex } from '../store/codex'
 import { useProjects } from '../store/projects'
+import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
-import { AgentIcon } from './AgentIcon'
+import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem } from './MessageItem'
-import { RateLimitBadge } from './RateLimitBadge'
+import { MessageItem, ToolGroup } from './MessageItem'
+import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
+import { MainHeader } from './shell/MainHeader'
+import { WelcomePane } from './shell/WelcomePane'
 import { SideChat } from './SideChat'
-import { Badge, EmptyState, ErrorNote } from './ui'
+import { EmptyState, ErrorNote } from './ui'
 
-function stateBadge(status: string | undefined) {
-  if (status === 'running') return <Badge tone="accent">运行中</Badge>
-  if (status === 'error') return <Badge tone="danger">失败</Badge>
-  return <Badge tone="ok">就绪</Badge>
-}
-
-export function ChatPanel() {
+export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
   const targets = useTargets((s) => s.targets)
+  const targetState = useTargets((s) => s.states[s.selectedId]?.state ?? 'idle')
   const sessions = useCodex((s) => s.sessions)
   const currentTargetId = useCodex((s) => s.currentTargetId)
   const currentThreadId = useCodex((s) => s.currentThreadId)
   const currentAgent = useCodex((s) => s.currentAgent)
-  const threads = useCodex((s) => s.threads)
   const sending = useCodex((s) => s.sending)
   const error = useCodex((s) => s.error)
   const clearError = useCodex((s) => s.clearError)
@@ -40,7 +50,8 @@ export function ChatPanel() {
   const ensureOpen = useCodex((s) => s.ensureOpen)
   const refreshThreads = useCodex((s) => s.refreshThreads)
   const openSideChat = useCodex((s) => s.openSideChat)
-  const newThread = useCodex((s) => s.newThread)
+  const startDraft = useCodex((s) => s.startDraft)
+  const currentCwd = useCodex((s) => s.currentCwd)
   const selectedProjectId = useProjects((s) => s.selectedId)
   const projects = useProjects((s) => s.projects)
 
@@ -50,12 +61,15 @@ export function ChatPanel() {
   const [draft, setDraft] = useState('')
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [skill, setSkill] = useState<SkillRef | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
 
-  const session = currentTargetId
-    ? sessions[sessionKey(currentTargetId, currentAgent)]
-    : undefined
+  const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
   const view = currentThreadId ? session?.state.threads[currentThreadId] : undefined
-  const items: ItemView[] = view?.items ?? []
+  const items: ItemView[] = useMemo(() => view?.items ?? [], [view?.items])
+  const flow = useMemo(() => groupFlow(items), [items])
   const approvals: ApprovalView[] = view
     ? view.pendingApprovals
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
@@ -81,6 +95,11 @@ export function ChatPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [signature, pinned])
+
+  // 切换会话时回到底部，不沿用上一个会话的滚动位置。
+  useEffect(() => {
+    setPinned(true)
+  }, [currentThreadId])
 
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const node = event.currentTarget
@@ -110,95 +129,214 @@ export function ChatPanel() {
 
   const submit = (text: string) => {
     const message = buildAnnotatedMessage(annotations, text)
-    if (!message.trim()) return
-    void send(message)
+    const input = buildUserInput(message, attachments, skill)
+    if (input.length === 0) return
+    void send(message, { input })
     setAnnotations([])
     setHighlights({})
+    setAttachments([])
+    setSkill(null)
   }
 
+  const notify = (message: string) => useCodex.setState({ notice: message })
+
+  const patchAttachment = (id: string, patch: Partial<Attachment>) =>
+    setAttachments((prev) => prev.map((item) => (item.id === id ? ({ ...item, ...patch } as Attachment) : item)))
+
+  /** 图片读成 data URL 随消息发送；其他文件本机目标直接引用路径，远端目标先上传到目标机。 */
+  const addFiles = (files: File[]) => {
+    if (!currentTargetId) return
+    const targetId = currentTargetId
+    const room = MAX_ATTACHMENTS - attachments.length
+    if (room <= 0) {
+      notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件')
+      return
+    }
+    if (files.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (files.length - room) + ' 个')
+    const isLocal = targets.find((item) => item.id === targetId)?.kind !== 'ssh'
+    for (const file of files.slice(0, room)) {
+      const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
+      if (isImageFile(file)) {
+        void readImage(file)
+          .then(({ dataUrl, size }) =>
+            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }]),
+          )
+          .catch((err: unknown) => notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败')))
+        continue
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        notify(file.name + ' 超过 ' + MAX_FILE_BYTES / 1024 / 1024 + ' MB，未添加')
+        continue
+      }
+      const localPath = window.qn?.pathForFile?.(file) ?? ''
+      if (isLocal && localPath) {
+        setAttachments((prev) => [
+          ...prev,
+          { id, kind: 'file', name: file.name, size: file.size, localPath, targetPath: localPath, status: 'ready' },
+        ])
+        continue
+      }
+      setAttachments((prev) => [
+        ...prev,
+        { id, kind: 'file', name: file.name, size: file.size, localPath, targetPath: null, status: 'uploading' },
+      ])
+      uploadToTarget(targetId, file)
+        .then((path) => patchAttachment(id, { status: 'ready', targetPath: path }))
+        .catch((err: unknown) =>
+          patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : '上传失败' }),
+        )
+    }
+  }
+
+  const removeAttachment = (id: string) => setAttachments((prev) => prev.filter((item) => item.id !== id))
+
+  // 拖入文件：dragenter/leave 在子元素间会成对触发，用计数判断是否真正离开主区。
+  const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
+  const onDragEnter = (event: DragEvent) => {
+    if (!hasFiles(event) || !currentTargetId) return
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+  const onDragLeave = (event: DragEvent) => {
+    if (!hasFiles(event)) return
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+  const onDrop = (event: DragEvent) => {
+    if (!hasFiles(event)) return
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    addFiles([...event.dataTransfer.files])
+  }
+
+  // "从这里开始新会话"：回到草稿态并把引用填进输入框，用户补充后发送才真正建会话。
   const forkFromMessage = (markdown: string) => {
-    void (async () => {
-      await newThread(currentAgent)
-      setDraft(quoteBlock(markdown))
-    })()
+    startDraft(currentAgent)
+    setDraft(quoteBlock(markdown))
   }
 
-  const targetName = targets.find((target) => target.id === currentTargetId)?.name ?? '未选择目标'
-  const projectName = projects.find((project) => project.id === selectedProjectId)?.name
-  const threadTitle = threads.find(
-    (thread) => thread.id === currentThreadId && thread.agent === currentAgent,
-  )?.title
+  const target = targets.find((item) => item.id === currentTargetId)
+  const project = projects.find((item) => item.id === selectedProjectId)
+  const TargetIcon = target?.kind === 'ssh' ? Server : Monitor
+  const isDraft = !currentThreadId
+
+  const skillList = useSkills((s) =>
+    currentTargetId ? s.lists[skillsKey(currentTargetId, currentAgent, currentCwd)] : undefined,
+  )
+  const loadSkills = useSkills((s) => s.load)
+  const sessionOpened = session?.opened === true
+  useEffect(() => {
+    if (currentTargetId && sessionOpened && session) void loadSkills(currentTargetId, currentAgent, currentCwd, session.rpc)
+  }, [currentTargetId, currentAgent, currentCwd, sessionOpened, session, loadSkills])
+
+  const slashItems = useMemo<SlashItem[]>(
+    () => [
+      { id: 'new', kind: 'command', name: 'new', description: '开始新会话' },
+      ...(running ? [{ id: 'stop', kind: 'command' as const, name: 'stop', description: '停止当前运行' }] : []),
+      { id: 'refresh', kind: 'command', name: 'refresh', description: '刷新会话列表与技能' },
+      ...(skillList?.items ?? []),
+    ],
+    [running, skillList],
+  )
+
+  const runCommand = (id: string) => {
+    if (id === 'new') startDraft(currentAgent)
+    else if (id === 'stop') void interrupt()
+    else if (id === 'refresh') {
+      void refreshThreads()
+      if (currentTargetId && session) void loadSkills(currentTargetId, currentAgent, currentCwd, session.rpc, true)
+    }
+  }
+
+  // 切换目标或 Agent 后，旧目标上传的附件路径不再有效。
+  useEffect(() => {
+    setAttachments([])
+    setSkill(null)
+  }, [currentTargetId, currentAgent])
+  const agentStatus = session?.opening
+    ? `${agentLabel(currentAgent)} 启动中…`
+    : session?.openError && !session.opened
+      ? `${agentLabel(currentAgent)} 不可用`
+      : null
 
   return (
-    <main className="relative flex min-w-0 flex-1 flex-col bg-qn-bg">
-      <div className="flex shrink-0 items-center gap-2 border-b border-qn-border px-5 py-3 text-xs">
-        <span className="font-medium">{targetName}</span>
-        {projectName && <span className="text-qn-muted">/ {projectName}</span>}
-        {threadTitle && <span className="min-w-0 truncate text-qn-muted">/ {threadTitle}</span>}
-        <span className="ml-auto flex items-center gap-2">
-          <AgentIcon agent={currentAgent} label />
-          <RateLimitBadge targetId={currentTargetId} agent={currentAgent} threadId={currentThreadId} />
-          {currentThreadId ? stateBadge(view?.status) : <Badge tone="muted">未打开会话</Badge>}
-        </span>
-      </div>
+    <main
+      className="qn-enter relative flex min-w-0 flex-1 flex-col bg-qn-bg"
+      style={{ ['--qn-enter-order' as string]: 2 }}
+      onDragEnter={onDragEnter}
+      onDragOver={(event) => {
+        if (hasFiles(event)) event.preventDefault()
+      }}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <MainHeader />
 
       <div className="relative min-h-0 flex-1">
         <SelectionLayer
           containerRef={scrollRef}
-          className="qn-scroll h-full overflow-y-auto px-5 py-4"
+          className="qn-scroll h-full overflow-y-auto px-6 pb-6 pt-2"
           onScroll={onScroll}
           highlights={Object.values(highlights).flat()}
           onAdd={addAnnotation}
           onSide={(quote) => void openSideChat(quote)}
         >
-          {session?.openError && (
-            <div className="mb-3">
-              <ErrorNote
-                message={session.openError}
-                onRetry={() => {
-                  if (currentTargetId) {
-                    void ensureOpen(currentTargetId, currentAgent).then(() => void refreshThreads())
-                  }
-                }}
-              />
-            </div>
-          )}
-          {view?.error && (
-            <div className="mb-3">
-              <ErrorNote message={`Turn 失败：${view.error}`} />
-            </div>
-          )}
-          {items.length === 0 && approvals.length === 0 && (
-            <div className="flex h-full items-center justify-center">
-              <EmptyState>
-                {currentThreadId
-                  ? '会话暂无消息，发送一条开始对话。'
-                  : '选择已有会话或新建会话；也可以直接输入消息创建会话。'}
-              </EmptyState>
-            </div>
-          )}
-          <div className="mx-auto max-w-3xl space-y-3">
-            {items.map((item) => (
-              <MessageItem key={item.id} item={item} onFork={forkFromMessage} />
-            ))}
-            {approvals.map((approval) => (
-              <ApprovalCard
-                key={String(approval.requestId)}
-                approval={approval}
-                onDecide={(decision: ApprovalDecision) =>
-                  respondApproval(approval.requestId as RequestId, decision)
-                }
-              />
-            ))}
+          <div className="mx-auto flex min-h-full max-w-3xl flex-col">
+            {session?.openError && (
+              <div className="mb-3">
+                <ErrorNote
+                  message={session.openError}
+                  onRetry={() => {
+                    if (currentTargetId) {
+                      void ensureOpen(currentTargetId, currentAgent).then(() => void refreshThreads())
+                    }
+                  }}
+                />
+              </div>
+            )}
+            {view?.error && (
+              <div className="mb-3">
+                <ErrorNote message={`Turn 失败：${view.error}`} />
+              </div>
+            )}
+
+            {isDraft && items.length === 0 && approvals.length === 0 ? (
+              <div className="flex-1">
+                <WelcomePane onConnect={onConnect} onAddTarget={onAddTarget} />
+              </div>
+            ) : items.length === 0 && approvals.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center">
+                <EmptyState>会话暂无消息，发送一条开始对话。</EmptyState>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-4">
+                {flow.map((entry) =>
+                  entry.kind === 'tools' ? (
+                    <ToolGroup key={entry.key} items={entry.items} />
+                  ) : (
+                    <MessageItem key={entry.key} item={entry.item} onFork={forkFromMessage} />
+                  ),
+                )}
+                {approvals.map((approval) => (
+                  <ApprovalCard
+                    key={String(approval.requestId)}
+                    approval={approval}
+                    onDecide={(decision: ApprovalDecision) => respondApproval(approval.requestId as RequestId, decision)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </SelectionLayer>
         {!pinned && (
           <button
             type="button"
-            className="absolute bottom-4 right-6 flex items-center gap-1 rounded-full border border-qn-border bg-qn-panel px-3 py-1.5 text-xs shadow-lg hover:bg-white/10"
+            className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-qn-border-strong bg-qn-elevated px-3 py-1.5 text-[12px] text-qn-text shadow-lg hover:bg-qn-hover"
             onClick={scrollToBottom}
           >
-            <ArrowDown size={13} /> 回到底部
+            <ArrowDown size={14} /> 回到底部
           </button>
         )}
       </div>
@@ -216,8 +354,55 @@ export function ChatPanel() {
         onChange={setDraft}
         agent={currentAgent}
         annotationCount={annotations.length}
+        attach={{
+          attachments,
+          onAddFiles: addFiles,
+          onRemoveAttachment: removeAttachment,
+          blockedReason: attachmentsBlocking(attachments),
+        }}
+        slash={{
+          items: slashItems,
+          loading: skillList?.loading,
+          skill,
+          onSkillChange: setSkill,
+          onCommand: runCommand,
+        }}
+        leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft} />}
+        trailing={
+          currentTargetId && (
+            <>
+              <ContextRing tokenUsage={view?.tokenUsage} />
+              <ModelPicker targetId={currentTargetId} agent={currentAgent} />
+            </>
+          )
+        }
+        footer={
+          <>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${targetDotClass[targetState]}`} />
+              <TargetIcon size={13} className="shrink-0" />
+              <span className="truncate">{target?.name ?? '未选择目标'}</span>
+            </span>
+            {project && (
+              <span className="flex min-w-0 items-center gap-1.5" title={project.path}>
+                <FolderGit2 size={13} className="shrink-0" />
+                <span className="truncate font-mono text-[11.5px]">{project.path}</span>
+              </span>
+            )}
+            {agentStatus && <span className="shrink-0 text-qn-warn">{agentStatus}</span>}
+          </>
+        }
       />
       <SideChat />
+      {dragging && (
+        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-[14px] text-qn-text">
+          <ImagePlus size={28} className="text-qn-accent" />
+          松开以添加图片或文件
+          <span className="text-[12px] text-qn-muted">
+            图片随消息发送；其他文件{target?.kind === 'ssh' ? '会先上传到目标机' : '按本机路径引用'}
+          </span>
+        </div>
+      )}
     </main>
   )
 }

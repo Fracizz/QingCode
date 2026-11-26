@@ -7,8 +7,8 @@ import { HostKeyDialog } from './components/HostKeyDialog'
 import { LegacyDialog } from './components/LegacyImport'
 import { MobileSettingsDialog } from './components/MobileSettings'
 import { Notice } from './components/Notice'
+import { TooltipProvider } from './components/primitives'
 import { Sidebar } from './components/shell/Sidebar'
-import { StatusBar } from './components/shell/StatusBar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
 import { useBootSplash } from './hooks/useBootSplash'
@@ -20,10 +20,9 @@ import { useTargets, type ConnectCredentials } from './store/targets'
 import { useUi } from './store/ui'
 
 /**
- * 外壳布局（docs/design/ui-shell.md）：
- * ┌ TitleBar：品牌 + 侧栏开关 │ 目标 › 项目 › 会话 │ 额度 │ 系统窗口按钮 ┐
- * ├ Sidebar：目标切换器 / 项目→会话树 / 底部入口 │ Main：消息流 + 输入框 ┤
- * └ StatusBar：连接状态 · Codex 进程 · 当前目录 · 版本 ┘
+ * 外壳布局（docs/design/ui-shell.md，优先参考 Codex 桌面版）：
+ * ┌ TitleBar：侧栏开关 + 品牌 │ 目标 · 额度胶囊 │ 系统窗口按钮 ┐
+ * ├ Sidebar：目标切换 / 新会话 / 项目→会话树 / 底部入口 │ Main：会话顶栏 + 消息流 + 输入框 ┤
  */
 export default function App() {
   const entered = useBootSplash()
@@ -69,7 +68,7 @@ export default function App() {
     useRateLimits.getState().setActiveTarget(selectedId)
   }, [selectedId])
 
-  // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话。
+  // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话（草稿态，发第一条消息时才创建）。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
@@ -79,7 +78,7 @@ export default function App() {
         useUi.getState().toggleSidebar()
       } else if (key === 'n') {
         event.preventDefault()
-        void useCodex.getState().newThread()
+        useCodex.getState().startDraft()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -119,6 +118,7 @@ export default function App() {
   const hostKeyPrompt = prompts[0]
 
   return (
+    <TooltipProvider delayDuration={400} skipDelayDuration={200}>
     <div
       className="qn-shell flex h-screen w-screen flex-col overflow-hidden bg-qn-bg text-qn-text"
       data-entered={entered}
@@ -139,7 +139,6 @@ export default function App() {
         )}
         <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
       </div>
-      <StatusBar onConnect={requestConnect} />
 
       {targetForm.open && (
         <TargetForm
@@ -183,5 +182,6 @@ export default function App() {
       {mobileOpen && <MobileSettingsDialog onClose={() => setMobileOpen(false)} />}
       <Notice />
     </div>
+    </TooltipProvider>
   )
 }

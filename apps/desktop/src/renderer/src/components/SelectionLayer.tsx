@@ -130,7 +130,7 @@ export function SelectionLayer({
       {snapshot && (
         <div
           data-qn-selection
-          className="absolute z-30 flex items-center gap-1 rounded-md border border-qn-border bg-[#282828] p-1 text-[11px] shadow-xl"
+          className="absolute z-30 flex items-center gap-1 rounded-md border border-qn-border bg-[#282828] p-1 text-[12px] shadow-xl"
           style={{ top: snapshot.position.top, left: snapshot.position.left }}
         >
           {!commenting ? (
@@ -158,7 +158,7 @@ export function SelectionLayer({
             <>
               <input
                 autoFocus
-                className="qn-input w-44 px-2 py-1 text-[11px]"
+                className="qn-input w-44 px-2 py-1 text-[12px]"
                 placeholder="添加可选评论…"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}

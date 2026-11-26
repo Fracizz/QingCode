@@ -34,11 +34,11 @@ export function AnnotationBar({
             <div key={annotation.id} className="rounded border border-qn-border bg-black/20 p-2">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-qn-muted">
+                  <div className="whitespace-pre-wrap break-words font-mono text-[12px] leading-4 text-qn-muted">
                     {quoteBlock(annotationExcerpt(annotation, 200))}
                   </div>
                   {annotation.comment && (
-                    <div className="mt-1 break-words text-[11px]">{annotation.comment}</div>
+                    <div className="mt-1 break-words text-[12px]">{annotation.comment}</div>
                   )}
                 </div>
                 <button

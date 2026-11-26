@@ -45,14 +45,14 @@ export function HostKeyDialog({
           {changed && prompt.previous && (
             <div className="mt-2">
               <div className="text-qn-muted">已保存的指纹</div>
-              <code className="mt-1 block break-all font-mono text-[11px] text-qn-danger">
+              <code className="mt-1 block break-all font-mono text-[12px] text-qn-danger">
                 {prompt.previous}
               </code>
             </div>
           )}
           <div className="mt-2">
             <div className="text-qn-muted">{changed ? '本次收到的指纹' : '主机指纹（SHA256）'}</div>
-            <code className="mt-1 block break-all font-mono text-[11px] text-qn-text">
+            <code className="mt-1 block break-all font-mono text-[12px] text-qn-text">
               {prompt.fingerprint}
             </code>
           </div>

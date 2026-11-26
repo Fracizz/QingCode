@@ -16,12 +16,10 @@ import { redact } from '../log'
 import { VERSION } from '../version'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
-import {
-  emptyMapState,
-  mapSdkMessage,
-  turnInputText,
-  type MapState,
-} from './items'
+import { BridgeRpcError } from './errors'
+import { emptyMapState, mapSdkMessage, type MapState } from './items'
+import { SkillsCatalog } from './skills'
+import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import {
   asRecord,
@@ -31,7 +29,7 @@ import {
   isRecord,
   rateLimitSnapshot,
   scalarText,
-  userMessageItem,
+  userMessageContentItem,
   type Json,
   type SessionMeta,
   type V2Notification,
@@ -125,16 +123,6 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   }
 }
 
-class BridgeRpcError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'BridgeRpcError'
-  }
-}
-
 export function createClaudeHost(
   hub: AgentHostHub,
   version: string = VERSION,
@@ -154,6 +142,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly idleTimeoutMs: number
   private rateLimits: Json = emptyRateLimitsResponse()
   private requestCounter = 0
+  private readonly skills = new SkillsCatalog()
 
   constructor(
     hub: AgentHostHub,
@@ -283,10 +272,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
-        const text = turnInputText(params.input)
-        if (!text) throw new BridgeRpcError(-32602, 'turn/start 需要文本输入')
+        const content = await resolveTurnInput(params.input)
         const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
-        return this.startTurn(session, text)
+        return this.startTurn(session, content)
+      }
+      case 'skills/list': {
+        const requested = Array.isArray(params.cwds)
+          ? params.cwds.filter((c): c is string => typeof c === 'string' && c.length > 0)
+          : []
+        const cwds = requested.length > 0 ? requested : [this.defaultCwd()]
+        return this.skills.list(cwds, params.forceReload === true)
       }
       case 'turn/interrupt': {
         const threadId = scalarText(params.threadId)
@@ -301,16 +296,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     }
   }
 
-  private async startTurn(session: BridgeSession, text: string): Promise<Json> {
+  private async startTurn(session: BridgeSession, content: TurnContent): Promise<Json> {
     if (session.turnId) {
       // 同一会话已有进行中的 turn 时，输入直接推入同一 query 的队列，由 Claude 自行排队。
-      this.pushInput(session, text)
+      this.pushInput(session, content.blocks)
       return { turn: buildTurn(session.turnId, [], 'inProgress') }
     }
     const turnId = randomUUID()
     session.turnId = turnId
     session.state = emptyMapState()
-    const userItem = userMessageItem(`${turnId}-user`, text)
+    const userItem = userMessageContentItem(`${turnId}-user`, content.echo)
     session.state.items[scalarText(userItem.id)] = userItem
     session.state.order.push(scalarText(userItem.id))
     const turn = buildTurn(turnId, [userItem], 'inProgress')
@@ -318,7 +313,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (!this.claude) throw new AgentHostError('agent_unavailable', 'claude 尚未就绪')
     try {
       this.ensureQuery(session)
-      this.pushInput(session, text)
+      this.pushInput(session, content.blocks)
     } catch (err) {
       // 已经广播了 turn/started，失败也必须补 turn/completed，否则界面会一直显示运行中。
       session.turnId = null
@@ -335,11 +330,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     return { turn }
   }
 
-  private pushInput(session: BridgeSession, text: string): void {
+  private pushInput(session: BridgeSession, content: ContentBlock[]): void {
     if (!session.input) throw new BridgeRpcError(-32603, 'claude 输入队列不可用')
     const message = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: session.meta.id,
       uuid: randomUUID(),
@@ -532,6 +527,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       session.input = null
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
+  }
+
+  /** 没有显式 cwd 时取任一已知会话的工作目录，其次进程目录。 */
+  private defaultCwd(): string {
+    for (const session of this.sessions.values()) return session.meta.cwd
+    return process.cwd()
   }
 
   private requireDeps(): ClaudeDeps {

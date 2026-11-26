@@ -1,3 +1,4 @@
+import type { WorkspaceMethods } from './workspace'
 import { PROTOCOL_VERSION } from './constants'
 import { hasOwn, isErrorMessage, isNumber, isRecord, isString } from './guards'
 
@@ -48,7 +49,7 @@ export type WireMessage = ClientMessage | ServerMessage
 
 export type FsEntry = { name: string; kind: 'dir' | 'file' | 'symlink' }
 
-export interface ServerMethods {
+export interface ServerMethods extends WorkspaceMethods {
   ping: { params: void; result: { serverVersion: string; protocol: number } }
   'fs.home': { params: void; result: { path: string } }
   'fs.list': {

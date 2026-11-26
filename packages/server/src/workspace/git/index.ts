@@ -1,0 +1,34 @@
+import type { WorkspaceHandlers } from '../registry'
+import {
+  gitBranches,
+  gitCommit,
+  gitCommitFiles,
+  gitDiff,
+  gitDiscard,
+  gitFetch,
+  gitLog,
+  gitPull,
+  gitPush,
+  gitShow,
+  gitStage,
+  gitStatus,
+  gitSwitch,
+  gitUnstage,
+} from './handlers'
+
+export const gitHandlers: WorkspaceHandlers = {
+  'git.status': gitStatus,
+  'git.diff': gitDiff,
+  'git.show': gitShow,
+  'git.stage': gitStage,
+  'git.unstage': gitUnstage,
+  'git.discard': gitDiscard,
+  'git.commit': gitCommit,
+  'git.branches': gitBranches,
+  'git.switch': gitSwitch,
+  'git.fetch': gitFetch,
+  'git.pull': gitPull,
+  'git.push': gitPush,
+  'git.log': gitLog,
+  'git.commitFiles': gitCommitFiles,
+}

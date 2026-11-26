@@ -21,7 +21,7 @@ export function Notice() {
 
   if (!message) return null
   return (
-    <div className="fixed bottom-9 right-4 z-40 flex max-w-sm items-start gap-2 rounded-lg border border-qn-border-strong bg-qn-elevated px-3 py-2 text-xs shadow-xl">
+    <div className="qn-no-drag qn-pop fixed right-4 top-12 z-40 flex max-w-sm items-start gap-2 rounded-xl border border-qn-border-strong bg-qn-elevated px-3.5 py-2.5 text-[13px] shadow-xl">
       <span className="min-w-0 flex-1 whitespace-pre-wrap">{message}</span>
       <button
         type="button"

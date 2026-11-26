@@ -11,13 +11,14 @@ import {
   readThread,
   resolveServerRequest,
   resumeThread,
-  sendText,
+  sendInput,
   startThread,
   type ApprovalDecision,
   type ConversationState,
   type RequestId,
   type ServerNotification,
   type ServerRequest,
+  type UserInput,
 } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { call, on } from '../lib/backend'
@@ -35,6 +36,7 @@ import {
   type AgentAvailability,
 } from '../lib/agents'
 import { quoteBlock } from '../lib/annotations'
+import { overridesFor } from './models'
 
 type TargetSession = {
   key: string
@@ -56,6 +58,8 @@ export type SendOptions = {
   agent?: AgentKind
   targetId?: string
   threadId?: string
+  /** 完整输入（含图片/附件/技能）；不传则只发 text。 */
+  input?: UserInput[]
 }
 
 type CodexState = {
@@ -84,6 +88,10 @@ type CodexState = {
   probeAgents: (targetId: string) => Promise<void>
   refreshThreads: () => Promise<void>
   newThread: (agent?: AgentKind) => Promise<void>
+  /** 回到"新会话"草稿态（参考 Codex 的 New thread）：不立即建会话，发第一条消息时再创建，避免留下空会话。 */
+  startDraft: (agent?: AgentKind) => void
+  /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
+  setDraftAgent: (agent: AgentKind) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
   send: (text: string, options?: SendOptions) => Promise<void>
   sendSide: (text: string) => Promise<void>
@@ -470,6 +478,19 @@ export const useCodex = create<CodexState>((set, get) => {
       void get().refreshThreads()
     },
 
+    startDraft: (agent) => {
+      set((state) => ({
+        currentThreadId: null,
+        currentAgent: agent ?? state.currentAgent,
+        error: null,
+      }))
+    },
+
+    setDraftAgent: (agent) => {
+      if (get().currentThreadId) return
+      set({ currentAgent: agent, error: null })
+    },
+
     openThread: async (threadId, agent) => {
       const targetId = get().currentTargetId
       if (!targetId) {
@@ -503,7 +524,8 @@ export const useCodex = create<CodexState>((set, get) => {
 
     send: async (text, options) => {
       const trimmed = text.trim()
-      if (!trimmed || get().sending) return
+      const input: UserInput[] = options?.input ?? (trimmed ? [{ type: 'text', text: trimmed, text_elements: [] }] : [])
+      if (input.length === 0 || get().sending) return
       const targetId = options?.targetId ?? get().currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -533,7 +555,7 @@ export const useCodex = create<CodexState>((set, get) => {
           set({ currentThreadId: threadId, currentAgent: agent })
           void get().refreshThreads()
         }
-        const started = await sendText(session.rpc, threadId, trimmed)
+        const started = await sendInput(session.rpc, threadId, input, overridesFor(targetId, agent))
         // turn/started 通知可能晚于响应，先按返回值把状态置为运行中，保证中断按钮可用。
         const synthetic = {
           method: 'turn/started',

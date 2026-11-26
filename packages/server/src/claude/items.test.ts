@@ -6,7 +6,6 @@ import {
   mapSdkMessage,
   toolResultText,
   toolUseItem,
-  turnInputText,
   unifiedDiff,
 } from './items'
 import type { Json, MapContext, V2Notification } from './v2'
@@ -342,16 +341,6 @@ describe('result / rate_limit_event / turn 收尾', () => {
 })
 
 describe('纯函数杂项', () => {
-  it('turnInputText 只取文本块并换行拼接', () => {
-    expect(
-      turnInputText([
-        { type: 'text', text: '第一行' },
-        { type: 'image', url: 'x' },
-        { type: 'text', text: '第二行' },
-      ]),
-    ).toBe('第一行\n第二行')
-  })
-
   it('无法识别的消息返回空通知且保持 state 引用不变', () => {
     const state = emptyMapState()
     const mapped = mapSdkMessage(null, ctx, state)

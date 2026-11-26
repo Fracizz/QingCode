@@ -323,6 +323,62 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     expect((early.error as Json).code).toBe(-32000)
   })
 
+  it('turn/start 支持图片输入：SDK 收到图片块在前、文本在后，回显含 image 项', async () => {
+    const h = harness()
+    await h.bridge.open({})
+    request(h, 'r-start', 'thread/start', { cwd: '/work' })
+    const threadId = (((await response(h, 'r-start')).result as Json).thread as Json).id as string
+    request(h, 'r-turn', 'turn/start', {
+      threadId,
+      input: [
+        { type: 'text', text: '看这张图', text_elements: [] },
+        { type: 'image', url: 'data:image/png;base64,QUJD' },
+        { type: 'skill', name: 'review', path: '/x/SKILL.md' },
+        { type: 'mention', name: 'a.txt', path: '/w/a.txt' },
+      ],
+    })
+    const turn = ((await response(h, 'r-turn')).result as Json).turn as Json
+    expect(((turn.items as Json[])[0]?.content as Json[])[0]).toEqual({
+      type: 'image',
+      url: 'data:image/png;base64,QUJD',
+    })
+    const prompt = h.queries[0]?.prompt as AsyncQueue<SDKUserMessage>
+    const first = await prompt[Symbol.asyncIterator]().next()
+    const content = (first.value as unknown as { message: { content: Json[] } }).message.content
+    expect(content[0]).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+    })
+    expect(content[1]?.type).toBe('text')
+    expect(content[1]?.text).toBe('/review 看这张图\n\n附件文件（请按需读取）：\n- a.txt: /w/a.txt')
+  })
+
+  it('turn/start 没有文本/图片/附件，或图片类型不支持时返回 -32602', async () => {
+    const h = harness()
+    await h.bridge.open({})
+    request(h, 'r-start', 'thread/start', { cwd: '/work' })
+    const threadId = (((await response(h, 'r-start')).result as Json).thread as Json).id as string
+    request(h, 'r-empty', 'turn/start', { threadId, input: [] })
+    expect(((await response(h, 'r-empty')).error as Json).code).toBe(-32602)
+    request(h, 'r-bad', 'turn/start', {
+      threadId,
+      input: [{ type: 'image', url: 'data:image/bmp;base64,QUJD' }],
+    })
+    expect(((await response(h, 'r-bad')).error as Json).code).toBe(-32602)
+  })
+
+  it('skills/list 扫描传入 cwd 并返回 data 结构', async () => {
+    const h = harness()
+    await h.bridge.open({})
+    request(h, 'r-skills', 'skills/list', { cwds: ['/definitely/not/here'] })
+    const result = (await response(h, 'r-skills')).result as Json
+    const data = result.data as Json[]
+    expect(data).toHaveLength(1)
+    expect(data[0]?.cwd).toBe('/definitely/not/here')
+    expect(Array.isArray(data[0]?.skills)).toBe(true)
+    expect(data[0]?.errors).toEqual([])
+  })
+
   it('shutdown 会拒绝未决审批并清理会话', async () => {
     const h = harness()
     await h.bridge.open({})

@@ -1,14 +1,11 @@
-<!-- QingCode Next 应用图标母版（方案 C：反色青底）。元素与几何沿用旧版 QingCode：
-     512 画布、圆角 112、厚切尖括号 + 64px 横条；只把底色换成青色渐变、尖括号改炭黑、横条改白，
-     让新旧两版并装时在 16px 任务栏里也能一眼区分。改动后运行 pnpm icons 重新生成各平台图标。 -->
+<!-- QingCode Next 应用图标母版（扁平版）：纯色青底 + 单色白色 ">_" 终端提示符。
+     512 画布、圆角 112；线条统一 46px 圆头圆角，字形整体居中并留足边距，16px 任务栏下仍清晰。
+     与旧版 QingCode（深底）靠青色底区分。改动后运行 pnpm icons 重新生成各平台图标，
+     并同步 apps/desktop/src/renderer/src/components/shell/Logo.tsx。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6EE7CE"/>
-      <stop offset="1" stop-color="#1F9C88"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <rect x="96" y="344" width="320" height="64" rx="12" fill="#F3F6F8"/>
-  <path fill="#121415" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
+  <rect width="512" height="512" rx="112" fill="#13A68E"/>
+  <g stroke="#FFFFFF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M150 168L242 256L150 344"/>
+    <path d="M282 344H366"/>
+  </g>
 </svg>

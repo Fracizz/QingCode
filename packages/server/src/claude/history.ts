@@ -55,6 +55,7 @@ function hasUserText(content: unknown): boolean {
   if (!Array.isArray(content)) return false
   return content.some((entry) => {
     const record = asRecord(entry)
+    if (record?.type === 'image') return true
     return record?.type === 'text' && scalarText(record.text).length > 0
   })
 }

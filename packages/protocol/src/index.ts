@@ -38,3 +38,23 @@ export type {
 
 export { attachFramedStream } from './node'
 export type { FramedStream, FramedHandlers, FramedConnection } from './node'
+
+export type {
+  WorkspaceErrorCode,
+  FsKind,
+  FsStat,
+  FsReadParams,
+  FsReadResult,
+  FsWriteParams,
+  FsSearchMode,
+  FsSearchParams,
+  FsSearchMatch,
+  FsSearchResultEvt,
+  FsChangedEvt,
+  GitFileStatus,
+  GitStatusResult,
+  GitBranch,
+  GitCommit,
+  WorkspaceMethods,
+  WorkspaceMethod,
+} from './workspace'

@@ -27,7 +27,17 @@ export type ThreadView = {
 }
 
 export type ItemView =
-  | { kind: 'user'; id: string; text: string }
+  | {
+      kind: 'user'
+      id: string
+      text: string
+      /** 图片：data URL / http URL（可直接显示），或目标机上的本地图片路径（只显示文件名）。 */
+      images?: string[]
+      /** 用户附加的文件（目标机绝对路径）。 */
+      files?: string[]
+      /** 触发的技能名。 */
+      skills?: string[]
+    }
   | { kind: 'agent'; id: string; text: string; streaming: boolean }
   | { kind: 'reasoning'; id: string; summary: string; streaming: boolean }
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
@@ -215,6 +225,36 @@ function withItem(
   })
 }
 
+/** userMessage.content 里的非文本项：图片、附加文件、技能。 */
+function userExtras(value: unknown): { images?: string[]; files?: string[]; skills?: string[] } {
+  const images: string[] = []
+  const files: string[] = []
+  const skills: string[] = []
+  for (const entry of arrayOf(value)) {
+    const record = asRecord(entry)
+    if (!record) continue
+    const type = scalarText(record.type)
+    if (type === 'image') {
+      const url = scalarText(record.url)
+      if (url) images.push(url)
+    } else if (type === 'localImage') {
+      const path = scalarText(record.path)
+      if (path) images.push(path)
+    } else if (type === 'mention') {
+      const path = scalarText(record.path)
+      if (path) files.push(path)
+    } else if (type === 'skill') {
+      const name = scalarText(record.name)
+      if (name) skills.push(name)
+    }
+  }
+  return {
+    ...(images.length ? { images } : {}),
+    ...(files.length ? { files } : {}),
+    ...(skills.length ? { skills } : {}),
+  }
+}
+
 function userText(value: unknown): string {
   const parts: string[] = []
   for (const entry of arrayOf(value)) {
@@ -273,7 +313,7 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean): ItemV
 
   switch (type) {
     case 'userMessage':
-      return { kind: 'user', id, text: userText(item.content) || scalarText(item.text) }
+      return { kind: 'user', id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content) }
     case 'agentMessage':
       return { kind: 'agent', id, text: scalarText(item.text), streaming }
     case 'reasoning':
@@ -334,7 +374,11 @@ function mergeFileChanges(existing: FileChange[], candidate: FileChange[]): File
 function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
   if (existing.id !== candidate.id) return candidate
   if (existing.kind === 'agent' && candidate.kind === 'agent') {
-    return { ...candidate, text: longer(existing.text, candidate.text) }
+    return {
+      ...existing,
+      ...candidate,
+      text: longer(existing.text, candidate.text),
+    }
   }
   if (existing.kind === 'reasoning' && candidate.kind === 'reasoning') {
     return { ...candidate, summary: longer(existing.summary, candidate.summary) }
