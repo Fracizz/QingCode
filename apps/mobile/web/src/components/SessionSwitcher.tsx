@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../store'
-import { groupWorkspaceThreads, openWorkspaceThread, useWorkspace, workspaceThreadKey, type WorkspaceThread } from '../workspace'
+import { groupWorkspaceThreads, openWorkspaceThread, useWorkspace, visibleWorkspaceThreads, workspaceThreadKey, type WorkspaceThread } from '../workspace'
 import { ProjectOrigin, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
 import { Button, Dialog } from './ui'
 
@@ -8,6 +8,7 @@ const emptyThreads: WorkspaceThread[] = []
 
 export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   const activeId = useApp((s) => s.activeId)
+  const archived = useApp((s) => s.archivedThreads)
   const targetId = useApp((s) => s.selectedTargetId)
   const projectId = useApp((s) => s.selectedProjectId)
   const threadId = useApp((s) => s.selectedThreadId)
@@ -31,8 +32,8 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
     const candidates = scope === 'all' ? [...cached.values()] : [...cached.values()]
       .filter((thread) => thread.targetId === targetId && thread.projectId === projectId)
     const byId = new Map([...(allProjects ?? []), ...currentProjects].map((project) => [project.id, project]))
-    return groupWorkspaceThreads(candidates, [...byId.values()], query)
-  }, [scope, recentThreads, currentThreads, targetId, projectId, allProjects, currentProjects, query])
+    return groupWorkspaceThreads(visibleWorkspaceThreads(candidates, activeId, archived), [...byId.values()], query)
+  }, [scope, recentThreads, currentThreads, targetId, projectId, allProjects, currentProjects, activeId, archived, query])
 
   return (
     <Dialog title="切换会话" onClose={onClose} placement="side">

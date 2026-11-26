@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { archivedThreadKey } from './agents'
 import type { Project, Target } from './types'
-import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, type WorkspaceThread } from './workspace'
+import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -35,6 +36,15 @@ describe('移动工作台', () => {
       [project.id, threads.map((item) => item.agent)]
     ))).toEqual([['remote', ['codex', 'claude']], ['laptop', ['codex']]])
     expect(groupWorkspaceThreads(status, [laptop, remote], 'Claude')[0]?.threads).toEqual([status[2]])
+  })
+
+  it('归档只隐藏当前电脑、目标和 Agent 的对应会话', () => {
+    const archivedThread = thread(laptop)
+    const otherThreads = [thread(remote), thread(laptop, { agent: 'claude' })]
+    const all = [archivedThread, ...otherThreads]
+    const archived = { [archivedThreadKey('desktop-a', laptop.targetId, archivedThread)]: true } as const
+    expect(visibleWorkspaceThreads(all, 'desktop-a', archived)).toEqual(otherThreads)
+    expect(visibleWorkspaceThreads(all, 'desktop-b', archived)).toEqual(all)
   })
 
   it('实时审批高于运行状态并覆盖列表中的旧状态', () => {

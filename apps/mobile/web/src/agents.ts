@@ -104,3 +104,7 @@ export function mergeThreadSummaries(lists: readonly ThreadSummary[][]): ThreadS
 export function threadKey(agent: AgentKind, id: string): string {
   return `${agent}:${id}`
 }
+
+export function archivedThreadKey(desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): string {
+  return JSON.stringify([desktopId, targetId, thread.agent, thread.id])
+}

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { sessionKey } from './agents'
+import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
 import { parseProjects, type ThreadSummary } from './state'
 import { useApp } from './store'
@@ -36,6 +36,10 @@ export function closeTopSheet(): boolean {
 
 export function workspaceThreadKey(thread: Pick<WorkspaceThread, 'targetId' | 'projectId' | 'agent' | 'id'>): string {
   return JSON.stringify([thread.targetId, thread.projectId, thread.agent, thread.id])
+}
+
+export function visibleWorkspaceThreads(threads: WorkspaceThread[], desktopId: string | null, archived: Record<string, true>): WorkspaceThread[] {
+  return desktopId ? threads.filter((thread) => !archived[archivedThreadKey(desktopId, thread.targetId, thread)]) : threads
 }
 
 export function filterProjects(projects: Project[], targets: Target[], query: string): Project[] {
@@ -81,14 +85,17 @@ const isThread = (row: unknown): row is WorkspaceThread => {
     && (value.agent === 'codex' || value.agent === 'claude' || value.agent === 'pi')
 }
 
-function mergeThreads(previous: WorkspaceThread[], next: WorkspaceThread[]): WorkspaceThread[] {
+function mergeThreads(
+  desktopId: string, previous: WorkspaceThread[], next: WorkspaceThread[], archived: Record<string, true>,
+): WorkspaceThread[] {
   const merged = new Map(previous.map((item) => [workspaceThreadKey(item), item]))
   for (const item of next) {
     const key = workspaceThreadKey(item)
     const old = merged.get(key)
     merged.set(key, { ...old, ...item, updatedAt: Math.max(old?.updatedAt ?? 0, item.updatedAt) })
   }
-  return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS)
+  return visibleWorkspaceThreads([...merged.values()], desktopId, archived)
+    .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS)
 }
 
 let writeTimer: ReturnType<typeof setTimeout> | undefined
@@ -130,8 +137,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (get().tab !== 'sessions' || useApp.getState().activeId !== desktopId) return
       const discovered = await useApp.getState().discoverWorkspaceSessions(items)
       if (useApp.getState().activeId === desktopId && discovered.length) {
+        const archived = useApp.getState().archivedThreads
         set((state) => ({
-          threads: { ...state.threads, [desktopId]: mergeThreads(state.threads[desktopId] ?? [], discovered) },
+          threads: { ...state.threads, [desktopId]: mergeThreads(desktopId, state.threads[desktopId] ?? [], discovered, archived) },
         }))
         persistThreads()
       }
@@ -147,10 +155,11 @@ export function startWorkspaceObserver(): () => void {
     if (!raw || stop) return
     const data: unknown = JSON.parse(raw)
     if (!data || typeof data !== 'object' || Array.isArray(data)) return
+    const archived = useApp.getState().archivedThreads
     useWorkspace.setState((state) => {
       const threads = { ...state.threads }
       for (const [id, rows] of Object.entries(data)) {
-        if (Array.isArray(rows)) threads[id] = mergeThreads(rows.filter(isThread), threads[id] ?? [])
+        if (Array.isArray(rows)) threads[id] = mergeThreads(id, rows.filter(isThread), threads[id] ?? [], archived)
       }
       return { threads }
     })
@@ -212,7 +221,7 @@ export function startWorkspaceObserver(): () => void {
 
     if (snapshots.length) {
       useWorkspace.setState((state) => ({
-        threads: { ...state.threads, [desktopId]: mergeThreads(desktopThreads, snapshots) },
+        threads: { ...state.threads, [desktopId]: mergeThreads(desktopId, desktopThreads, snapshots, now.archivedThreads) },
       }))
       persistThreads()
     }

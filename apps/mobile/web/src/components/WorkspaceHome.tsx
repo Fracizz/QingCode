@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
@@ -10,11 +10,13 @@ import {
   threadPreviewLine,
   showWorkspaceProject,
   useWorkspace,
+  visibleWorkspaceThreads,
   workspaceThreadKey,
   type WorkspaceTab,
   type WorkspaceThread,
 } from '../workspace'
-import { formatTime } from '../state'
+import { formatTime, friendlyError } from '../state'
+import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
 import { AgentTag, Badge, Button, Empty, Loading, Note, StatusDot } from './ui'
 import { ProjectTools } from './ProjectTools'
 
@@ -91,23 +93,113 @@ export function WorkspaceThreadRow({
   selected?: boolean
 }) {
   const view = useApp((s) => s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id])
+  const desktopId = useApp((s) => s.activeId)
+  const archiveConversation = useApp((s) => s.archiveConversation)
   const status = recentThreadStatus(thread, view)
   const preview = threadPreviewLine(thread.title, thread.preview)
+  const row = useRef<HTMLDivElement>(null)
+  const gesture = useRef<{ id: number; x: number; y: number; axis: ReturnType<typeof threadSwipeAxis> } | null>(null)
+  const suppressClick = useRef(false)
+  const [revealedDesktop, setRevealedDesktop] = useState<string | null>(null)
+  const [dragOffset, setDragOffset] = useState<number | null>(null)
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const revealed = desktopId !== null && revealedDesktop === desktopId
+  const offset = dragOffset ?? (revealed ? -ARCHIVE_ACTION_WIDTH : 0)
+
+  useEffect(() => {
+    if (!revealed) return
+    const closeOutside = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !row.current?.contains(event.target)) setRevealedDesktop(null)
+    }
+    document.addEventListener('pointerdown', closeOutside, true)
+    return () => document.removeEventListener('pointerdown', closeOutside, true)
+  }, [revealed])
+
+  function startSwipe(event: PointerEvent<HTMLButtonElement>) {
+    if (!event.isPrimary || event.button !== 0) return
+    suppressClick.current = false
+    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, axis: null }
+  }
+
+  function moveSwipe(event: PointerEvent<HTMLButtonElement>) {
+    const start = gesture.current
+    if (!start || start.id !== event.pointerId) return
+    const dx = event.clientX - start.x
+    if (!start.axis) {
+      start.axis = threadSwipeAxis(dx, event.clientY - start.y)
+      if (start.axis) suppressClick.current = true
+      if (start.axis === 'horizontal' && event.pointerType === 'mouse') {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }
+    }
+    if (start.axis === 'horizontal') setDragOffset(threadSwipeOffset(revealed, dx))
+  }
+
+  function finishSwipe(event: PointerEvent<HTMLButtonElement>, cancelled = false) {
+    const start = gesture.current
+    if (!start || start.id !== event.pointerId) return
+    gesture.current = null
+    setDragOffset(null)
+    if (cancelled || start.axis !== 'horizontal') return
+    const end = threadSwipeOffset(revealed, event.clientX - start.x)
+    setRevealedDesktop(end <= -ARCHIVE_ACTION_WIDTH / 2 ? desktopId : null)
+  }
+
+  async function archive() {
+    if (archiving) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await archiveConversation(thread.targetId, thread)
+    } catch (err) {
+      setArchiveError(`归档失败。${friendlyError(err, '请重试')}`)
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   return (
-    <button type="button" className="qn-row qn-list-row" aria-current={selected ? 'true' : undefined} onClick={onOpen}>
-      <span className="qn-row-copy">
-        <span className="qn-list-primary">
-          <span className="truncate">{thread.title}</span>
-          <AgentTag agent={thread.agent} />
-        </span>
-        {preview && <span className="qn-subtitle block">{preview}</span>}
-        <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
-      </span>
-      {status === 'pending' && <Badge tone="warn">待审批</Badge>}
-      {status === 'running' && <Badge tone="accent">运行中</Badge>}
-      {status === 'unread' && <Badge tone="accent">有新结果</Badge>}
-      <span className="text-qn-muted" aria-hidden>›</span>
-    </button>
+    <div className="qn-thread-row" ref={row} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setRevealedDesktop(null)
+    }}>
+      <div className="qn-thread-swipe">
+        <button type="button" className="qn-row qn-list-row qn-thread-content" aria-current={selected ? 'true' : undefined}
+          data-dragging={dragOffset !== null} style={{ transform: offset ? `translateX(${offset}px)` : undefined }}
+          onPointerDown={startSwipe} onPointerMove={moveSwipe} onPointerUp={finishSwipe}
+          onPointerCancel={(event) => finishSwipe(event, true)} onLostPointerCapture={(event) => {
+            if (event.target === event.currentTarget) finishSwipe(event, true)
+          }}
+          onClick={(event) => {
+            if (event.detail !== 0 && suppressClick.current) {
+              suppressClick.current = false
+              return
+            }
+            if (revealed) setRevealedDesktop(null)
+            else onOpen()
+          }}>
+          <span className="qn-row-copy">
+            <span className="qn-list-primary">
+              <span className="truncate">{thread.title}</span>
+              <AgentTag agent={thread.agent} />
+            </span>
+            {preview && <span className="qn-subtitle block">{preview}</span>}
+            <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
+          </span>
+          {status === 'pending' && <Badge tone="warn">待审批</Badge>}
+          {status === 'running' && <Badge tone="accent">运行中</Badge>}
+          {status === 'unread' && <Badge tone="accent">有新结果</Badge>}
+          <span className="text-qn-muted" aria-hidden>›</span>
+        </button>
+        <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
+          aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
+          aria-disabled={archiving} onFocus={() => setRevealedDesktop(desktopId)} onClick={() => void archive()}>
+          {archiving ? '归档中…' : '归档'}
+          {thread.agent !== 'codex' && !archiving && <small>仅此手机</small>}
+        </button>
+      </div>
+      {archiveError && <p className="qn-thread-archive-error" role="alert">{archiveError}</p>}
+    </div>
   )
 }
 
@@ -134,6 +226,7 @@ export function WorkspaceHome() {
   const tab = useWorkspace((s) => s.tab)
   const setTab = useWorkspace((s) => s.setTab)
   const desktopId = useApp((s) => s.activeId)
+  const archived = useApp((s) => s.archivedThreads)
   const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
   const connected = useApp((s) => s.eventsConnected)
   const repairReason = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
@@ -150,7 +243,8 @@ export function WorkspaceHome() {
   const [opening, setOpening] = useState(false)
   const projects = projectList?.items ?? emptyProjects
   const matchedProjects = useMemo(() => filterProjects(projects, targets, query), [projects, targets, query])
-  const groups = useMemo(() => groupWorkspaceThreads(threadList, projects, query), [threadList, projects, query])
+  const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query),
+    [threadList, desktopId, archived, projects, query])
 
   useEffect(() => {
     if (desktopId) void loadProjects(desktopId)

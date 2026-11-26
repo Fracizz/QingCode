@@ -525,12 +525,30 @@ export class MockNativePort implements NativePort {
     const threadId = str(inner.threadId, threads[0] ? str(threads[0].id) : 't-demo')
     const nowSec = Math.floor(Date.now() / SECOND)
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
+    const archiveKey = (id: unknown) => `mock.archive:${JSON.stringify([targetId, id])}`
 
     switch (msg.method) {
       case 'thread/list': {
         const cwds = Array.isArray(inner.cwd) ? inner.cwd : typeof inner.cwd === 'string' ? [inner.cwd] : null
-        const data = cwds ? threads.filter((thread) => cwds.includes(thread.cwd)) : threads
+        const data = threads.filter((thread) => {
+          const archived = agent === 'codex' && this.readStorage(archiveKey(thread.id)) === '1'
+          return (!cwds || cwds.includes(thread.cwd)) && archived === (inner.archived === true)
+        })
         recv({ id, result: { data } })
+        return
+      }
+      case 'thread/archive':
+      case 'thread/unarchive': {
+        if (agent !== 'codex') {
+          recv({ id, error: { code: -32601, message: 'Method not found' } })
+        } else if (!threads.some((thread) => thread.id === threadId)) {
+          recv({ id, error: { code: -32602, message: '会话不存在' } })
+        } else {
+          const archived = msg.method === 'thread/archive'
+          this.writeStorage(archiveKey(threadId), archived ? '1' : null)
+          recv({ id, result: {} })
+          recv({ method: archived ? 'thread/archived' : 'thread/unarchived', params: { threadId } })
+        }
         return
       }
       case 'thread/start': {

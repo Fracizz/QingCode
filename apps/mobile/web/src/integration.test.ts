@@ -1,5 +1,6 @@
 // 浏览器开发模式的端到端冒烟：粘贴导入 → 配对 → 目标/项目/多 Agent 会话 → 流式对话 → 模型覆盖 → 只读查看文件/差异。
 import { describe, expect, it, vi } from 'vitest'
+import { archivedThreadKey } from './agents'
 import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
@@ -12,6 +13,7 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 describe('模拟网关全链路', () => {
   it('从剪贴板导入到流式回复都能走通', async () => {
     const gateway = createGateway()
+    const writeStorage = gateway.storageSet.bind(gateway)
     const pair = vi.spyOn(gateway, 'pair')
     setGateway(gateway)
 
@@ -329,6 +331,44 @@ describe('模拟网关全链路', () => {
     approvalEvent({ method: 'serverRequest/resolved', params: { threadId: claudeThread, requestId: approvalRequestId } }, 10001)
     expect(state().approvalSubmitting).toEqual({})
     expect(pending()).toHaveLength(0)
+
+    const codexThread = { id: 't-demo', agent: 'codex' } as const
+    const claudeConversation = { id: claudeThread!, agent: 'claude' } as const
+    const archiveRpc = vi.spyOn(gateway, 'rpc').mockRejectedValueOnce(new Error('模拟归档网络失败'))
+    await expect(state().archiveConversation('local', codexThread)).rejects.toThrow('模拟归档网络失败')
+    expect(state().threads).toEqual(expect.arrayContaining([expect.objectContaining(codexThread)]))
+    await state().archiveConversation('local', codexThread)
+    expect(archiveRpc).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
+      targetId: 'local', agent: 'codex', msg: expect.objectContaining({
+        method: 'thread/archive', params: { threadId: codexThread.id },
+      }),
+    }))
+    archiveRpc.mockClear()
+    await vi.waitFor(async () => expect(await gateway.storageGet('archivedThreads')).toBeTruthy())
+    const storage = vi.spyOn(gateway, 'storageSet').mockImplementation((key, value) => key === 'archivedThreads'
+      ? Promise.reject(new Error('模拟本地归档失败')) : writeStorage(key, value))
+    await expect(state().archiveConversation('local', claudeConversation)).rejects.toThrow('模拟本地归档失败')
+    storage.mockRestore()
+    expect(state()).toMatchObject({ page: 'chat', selectedThreadId: claudeThread })
+    await state().archiveConversation('local', claudeConversation)
+    expect(archiveRpc).not.toHaveBeenCalled()
+    expect(state()).toMatchObject({ page: 'threads', selectedThreadId: null })
+    await state().refreshThreads({ skipFailed: true })
+    expect(state().threads.some((thread) => thread.id === codexThread.id || thread.id === claudeThread)).toBe(false)
+    await vi.waitFor(async () => {
+      const archives = JSON.parse((await gateway.storageGet('archivedThreads')) ?? '{}')
+      expect(archives).toEqual({
+        [archivedThreadKey(edited.id, 'local', codexThread)]: true,
+        [archivedThreadKey(edited.id, 'local', claudeConversation)]: true,
+      })
+      const saved = JSON.parse((await gateway.storageGet('savedChats')) ?? '{}')
+      expect(saved[edited.id]).toBeUndefined()
+    })
+    await gateway.rpc(edited, 'codex.send', {
+      targetId: 'local', agent: 'codex', msg: { id: 'external-unarchive', method: 'thread/unarchive', params: { threadId: codexThread.id } },
+    })
+    await vi.waitFor(() => expect(state().threads).toEqual(expect.arrayContaining([expect.objectContaining(codexThread)])))
+    archiveRpc.mockRestore()
 
     state().handleGatewayEvent({ name: 'unauthorized' })
     expect(state().needsRepair[edited.id]).toBe('unauthorized')

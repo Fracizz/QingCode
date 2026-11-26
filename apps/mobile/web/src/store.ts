@@ -3,6 +3,7 @@ import {
   applyNotification,
   applyRateLimitsUpdate,
   applyServerRequest,
+  archiveThread,
   CodexRpc,
   emptyState,
   interruptTurn,
@@ -29,6 +30,7 @@ import {
 import { create } from 'zustand'
 import {
   agentLabel,
+  archivedThreadKey,
   DEFAULT_AGENT,
   enabledAgents,
   exitedAgent,
@@ -130,6 +132,7 @@ const STORAGE_MODEL_PREFS = 'modelPrefs'
 const STORAGE_DESKTOP_MODEL_PREFS = 'desktopModelPrefs'
 const STORAGE_DRAFTS = 'chatDrafts'
 const STORAGE_SAVED_CHATS = 'savedChats'
+const STORAGE_ARCHIVED_THREADS = 'archivedThreads'
 const REFRESH_INTERVAL_MS = 60_000
 // pi 等 Agent 在会话进程启动前返回空模型列表，空列表隔一段时间允许重取。
 const EMPTY_MODELS_RETRY_MS = 15_000
@@ -230,6 +233,7 @@ type AppState = {
   /** null = 桌面不支持 mobile.agents（旧版本），只用 Codex。 */
   agentSettings: MobileAgentSettings | null
   threads: ThreadSummary[]
+  archivedThreads: Record<string, true>
   threadsLoading: boolean
   threadsError: string | null
   /** 单个 Agent 打开或列会话失败的提示，不影响其他 Agent。 */
@@ -287,6 +291,7 @@ type AppState = {
   discoverWorkspaceSessions: (projects: readonly Project[]) => Promise<DiscoveredThread[]>
   newThread: (agent?: AgentKind) => Promise<void>
   openThread: (id: string, agent?: AgentKind) => Promise<void>
+  archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   setDraftText: (text: string) => void
   send: (text: string, attachments?: UserInput[], delegate?: boolean) => Promise<boolean>
   interrupt: () => Promise<void>
@@ -394,16 +399,29 @@ export const useApp = create<AppState>((set, get) => {
   const claudeCostPerTurn = new Map<string, number>()
   const completedTurns = new WeakMap<MobileCodexTransport, Set<string>>()
   const approvalFlights = new WeakMap<MobileCodexTransport, Map<RequestId, string>>()
+  const archiveFlights = new Set<string>()
   const storageWrites = new Map<string, Promise<void>>()
 
-  const saveRecord = (key: string, data: unknown): void => {
-    const json = JSON.stringify(data)
+  const queueStorageWrite = (key: string, write: () => Promise<void>): Promise<void> => {
     const previous = storageWrites.get(key) ?? Promise.resolve()
-    const task = previous.catch(() => undefined).then(() => getGateway().storageSet(key, json))
+    const task = previous.catch(() => undefined).then(write)
     storageWrites.set(key, task)
     void task.catch(() => undefined).finally(() => {
       if (storageWrites.get(key) === task) storageWrites.delete(key)
     })
+    return task
+  }
+
+  const saveRecord = (key: string, data: unknown): void => {
+    const json = JSON.stringify(data)
+    void queueStorageWrite(key, () => getGateway().storageSet(key, json))
+  }
+
+  const writeArchives = (archivedThreads: AppState['archivedThreads']): Promise<void> =>
+    getGateway().storageSet(STORAGE_ARCHIVED_THREADS, JSON.stringify(archivedThreads))
+
+  const persistArchives = (): void => {
+    void queueStorageWrite(STORAGE_ARCHIVED_THREADS, () => writeArchives(get().archivedThreads))
   }
 
   const currentDraftKey = (state = get()): string | null => {
@@ -444,6 +462,69 @@ export const useApp = create<AppState>((set, get) => {
     saveRecord(STORAGE_SAVED_CHATS, savedChats)
   }
 
+  const isArchived = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): boolean =>
+    get().archivedThreads[archivedThreadKey(desktopId, targetId, thread)] === true
+
+  const forgetArchivedChat = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): void => {
+    const matches = (chat: SavedChat | null | undefined) =>
+      chat?.targetId === targetId && chat.agent === thread.agent && chat.threadId === thread.id
+    const current = get()
+    if (current.activeId === desktopId) {
+      if (matches(pendingRestore)) pendingRestore = null
+      if (current.selectedTargetId === targetId) {
+        const threads = current.threads.filter((item) => item.agent !== thread.agent || item.id !== thread.id)
+        if (current.page === 'chat' && current.selectedAgent === thread.agent && current.selectedThreadId === thread.id) {
+          navigationEpoch += 1
+          viewerToken += 1
+          set({ page: 'threads', selectedThreadId: null, viewer: null, threads })
+          showDraft()
+        } else if (threads.length !== current.threads.length) {
+          set({ threads })
+        }
+      }
+    }
+    if (matches(savedChats[desktopId])) {
+      delete savedChats[desktopId]
+      saveRecord(STORAGE_SAVED_CHATS, savedChats)
+    }
+  }
+
+  const recordArchive = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): void => {
+    const key = archivedThreadKey(desktopId, targetId, thread)
+    if (get().archivedThreads[key]) return
+    const archivedThreads: AppState['archivedThreads'] = { ...get().archivedThreads, [key]: true }
+    set({ archivedThreads })
+    persistArchives()
+    forgetArchivedChat(desktopId, targetId, thread)
+  }
+
+  const listVisibleThreads = async (desktopId: string, session: AgentSession, cwd?: string | string[], limit?: number) => {
+    const before = get().archivedThreads
+    const threads = toThreadSummaries(await listThreads(session.rpc, cwd, limit), session.agent)
+    if (session.agent === 'codex' && get().activeId === desktopId && get().sessions[session.key]?.transport === session.transport) {
+      // 归档之后发出的查询可以确认用户已在电脑上恢复会话。
+      const restored = threads.map((thread) => archivedThreadKey(desktopId, session.targetId, thread))
+        .filter((key) => before[key] && get().archivedThreads[key])
+      if (restored.length) {
+        const archivedThreads = { ...get().archivedThreads }
+        for (const key of restored) delete archivedThreads[key]
+        set({ archivedThreads })
+        persistArchives()
+      }
+    }
+    return threads.filter((thread) => !isArchived(desktopId, session.targetId, thread))
+  }
+
+  const clearArchivedThreads = (desktopId: string): void => {
+    const prefix = `[${JSON.stringify(desktopId)},`
+    const entries = Object.entries(get().archivedThreads)
+    const remaining = entries.filter(([key]) => !key.startsWith(prefix))
+    if (entries.length === remaining.length) return
+    const archivedThreads = Object.fromEntries(remaining)
+    set({ archivedThreads })
+    persistArchives()
+  }
+
   const removeSavedDesktopState = (id: string): void => {
     delete savedChats[id]
     delete desktopModelPrefs[id]
@@ -453,6 +534,7 @@ export const useApp = create<AppState>((set, get) => {
     saveRecord(STORAGE_SAVED_CHATS, savedChats)
     saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
     saveRecord(STORAGE_DRAFTS, drafts)
+    clearArchivedThreads(id)
   }
 
   const markRepair = (id: string, reason: RepairReason, message: string): void => {
@@ -492,7 +574,8 @@ export const useApp = create<AppState>((set, get) => {
         ])
         const projects = parseProjects(result)
         if (!isCurrent()) return
-        if (!projects.some((project) => project.id === chat.projectId) || !targetAgents(get(), chat.targetId).includes(chat.agent)) {
+        if (isArchived(conn.id, chat.targetId, { id: chat.threadId, agent: chat.agent })
+          || !projects.some((project) => project.id === chat.projectId) || !targetAgents(get(), chat.targetId).includes(chat.agent)) {
           pendingRestore = null
           return
         }
@@ -644,7 +727,16 @@ export const useApp = create<AppState>((set, get) => {
         ...current,
         state: resolved !== null ? resolveServerRequest(current.state, resolved) : applyNotification(current.state, notification),
       }), session)
-      if (agent === 'codex') handleRateLimitNotification(targetId, notification)
+      if (agent === 'codex') {
+        handleRateLimitNotification(targetId, notification)
+        if (method === 'thread/archived' && typeof params?.threadId === 'string') {
+          session.resumedCodexThreads.delete(params.threadId)
+          recordArchive(conn.id, targetId, { id: params.threadId, agent })
+        }
+        if (method === 'thread/unarchived' && get().selectedTargetId === targetId) {
+          void get().refreshThreads({ skipFailed: true })
+        }
+      }
       if (method === 'turn/completed') {
         const turnId = isRecord(params?.turn) ? params.turn.id : params?.turnId
         if (typeof turnId === 'string') {
@@ -814,6 +906,7 @@ export const useApp = create<AppState>((set, get) => {
     selectedProjectId: null,
     agentSettings: null,
     threads: [],
+    archivedThreads: {},
     threadsLoading: false,
     threadsError: null,
     agentErrors: {},
@@ -871,13 +964,14 @@ export const useApp = create<AppState>((set, get) => {
       void (async () => {
         try {
           const optional = (key: string) => gateway.storageGet(key).catch(() => null)
-          const [raw, active, legacyPrefs, prefs, storedDrafts, chats] = await Promise.all([
+          const [raw, active, legacyPrefs, prefs, storedDrafts, chats, archives] = await Promise.all([
             gateway.storageGet(STORAGE_CONNECTIONS),
             gateway.storageGet(STORAGE_ACTIVE),
             optional(STORAGE_MODEL_PREFS),
             optional(STORAGE_DESKTOP_MODEL_PREFS),
             optional(STORAGE_DRAFTS),
             optional(STORAGE_SAVED_CHATS),
+            optional(STORAGE_ARCHIVED_THREADS),
           ])
           const connections = parseConnections(raw)
           const activeId = active && connections.some((item) => item.id === active) ? active : null
@@ -889,7 +983,9 @@ export const useApp = create<AppState>((set, get) => {
             desktopModelPrefs[activeId] = parsePrefs(legacyPrefs)
             saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
           }
-          set({ connections, booting: false })
+          const archivedThreads = Object.fromEntries(Object.entries(parseStoredRecord(archives))
+            .flatMap(([key, value]) => value === true ? [[key, true] as const] : []))
+          set({ connections, archivedThreads, booting: false })
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
@@ -1118,6 +1214,7 @@ export const useApp = create<AppState>((set, get) => {
           // 新证书只能证明刚确认的电脑，旧会话及草稿不能自动带过去。
           delete savedChats[conn.id]
           saveRecord(STORAGE_SAVED_CHATS, savedChats)
+          clearArchivedThreads(conn.id)
         }
         set({ connections, needsRepair, form: null, page: 'connections' })
         void get().refreshStatuses()
@@ -1670,8 +1767,8 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshThreads: async (options) => {
       const token = ++refreshToken
-      const { selectedProjectId, selectedTargetId: targetId } = get()
-      if (!targetId) {
+      const { activeId, selectedProjectId, selectedTargetId: targetId } = get()
+      if (!activeId || !targetId) {
         set({ threads: [], threadsLoading: false, threadsError: null, agentErrors: {} })
         return
       }
@@ -1691,7 +1788,7 @@ export const useApp = create<AppState>((set, get) => {
           const session = get().sessions[sessionKey(targetId, agent)]
           if (!session) return { agent, threads: [], error: `${agentLabel(agent)} 未就绪` }
           try {
-            return { agent, threads: toThreadSummaries(await listThreads(session.rpc, cwd), agent), error: null }
+            return { agent, threads: await listVisibleThreads(activeId, session, cwd), error: null }
           } catch (err) {
             return { agent, threads: [], error: friendlyError(err, '加载会话列表失败') }
           }
@@ -1706,7 +1803,8 @@ export const useApp = create<AppState>((set, get) => {
       for (const result of results) if (result.error) agentErrors[result.agent] = result.error
       const allFailed = skipped.size === 0 && results.length > 0 && results.every((result) => result.error !== null)
       set({
-        threads: mergeThreadSummaries(results.map((result) => result.threads)),
+        threads: mergeThreadSummaries(results.map((result) => result.threads))
+          .filter((thread) => !isArchived(activeId, targetId, thread)),
         threadsLoading: false,
         agentErrors,
         threadsError: allFailed
@@ -1737,8 +1835,8 @@ export const useApp = create<AppState>((set, get) => {
         targetAgents(get(), targetId).map(async (agent): Promise<DiscoveredThread[]> => {
           const session = await attachExisting(conn, targetId, agent, epoch)
           if (!session || get().page !== 'workspace') return []
-          const result = await listThreads(session.rpc, [...paths.values()].map((project) => project.path), 100)
-          return toThreadSummaries(result, agent).flatMap((thread) => {
+          const threads = await listVisibleThreads(conn.id, session, [...paths.values()].map((project) => project.path), 100)
+          return threads.flatMap((thread) => {
             const project = paths.get(normalized(thread.cwd))
             return project ? [{ ...thread, targetId, projectId: project.id }] : []
           })
@@ -1780,12 +1878,14 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     openThread: async (id, agent) => {
-      const targetId = get().selectedTargetId
-      if (!targetId) return
+      const { activeId, selectedTargetId: targetId } = get()
+      if (!activeId || !targetId) return
       const navigation = ++navigationEpoch
       const picked = agent ?? get().threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
+      const archived = () => isArchived(activeId, targetId, { id, agent: picked })
+      if (archived()) return
       const session = await withSession(targetId, picked, navigation)
-      if (!session || navigation !== navigationEpoch) return
+      if (!session || navigation !== navigationEpoch || archived()) return
       try {
         let result: { thread: Parameters<typeof loadThread>[1] }
         let resumed = true
@@ -1796,7 +1896,7 @@ export const useApp = create<AppState>((set, get) => {
           resumed = false
           result = await readThread(session.rpc, id)
         }
-        if (navigation !== navigationEpoch) return
+        if (navigation !== navigationEpoch || archived()) return
         if (picked === 'codex') {
           if (resumed) session.resumedCodexThreads.add(id)
           else session.resumedCodexThreads.delete(id)
@@ -1807,6 +1907,40 @@ export const useApp = create<AppState>((set, get) => {
         saveActiveChat()
       } catch (err) {
         if (navigation === navigationEpoch) set({ error: friendlyError(err, '打开会话失败') })
+      }
+    },
+
+    archiveConversation: async (targetId, thread) => {
+      const conn = activeConnection(get())
+      if (!conn) throw new Error('尚未选择电脑')
+      const key = archivedThreadKey(conn.id, targetId, thread)
+      if (get().archivedThreads[key] || archiveFlights.has(key)) return
+      const epoch = desktopEpoch
+      const stillPaired = () => get().connections.some((item) => item.id === conn.id && item.fp === conn.fp)
+      archiveFlights.add(key)
+      try {
+        if (thread.agent !== 'codex') {
+          await queueStorageWrite(STORAGE_ARCHIVED_THREADS, async () => {
+            if (!stillPaired()) throw new Error('电脑连接已移除或重新配对')
+            await writeArchives({ ...get().archivedThreads, [key]: true })
+            if (stillPaired()) {
+              set({ archivedThreads: { ...get().archivedThreads, [key]: true } })
+              forgetArchivedChat(conn.id, targetId, thread)
+            } else {
+              persistArchives()
+            }
+          })
+          return
+        }
+        const ready = await get().ensureOpen(targetId, thread.agent)
+        const session = get().sessions[sessionKey(targetId, thread.agent)]
+        if (epoch !== desktopEpoch) throw new Error('电脑连接已切换')
+        if (!ready || !session) throw new Error(session?.openError ?? '会话连接未就绪')
+        await archiveThread(session.rpc, thread.id)
+        session.resumedCodexThreads.delete(thread.id)
+        if (stillPaired()) recordArchive(conn.id, targetId, thread)
+      } finally {
+        archiveFlights.delete(key)
       }
     },
 
