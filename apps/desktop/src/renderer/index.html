@@ -51,15 +51,32 @@
           qn-splash-fade 900ms ease-out both,
           qn-splash-breathe 3.2s 900ms ease-in-out infinite;
       }
-      .qn-splash__grid {
+      /* 信号波纹：从 Logo 向外扩散的细环，呼应“远程连接”，替代原来的网格底纹。 */
+      .qn-splash__ripples {
         position: absolute;
-        inset: 0;
-        background-image:
-          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-        background-size: 44px 44px;
-        mask-image: radial-gradient(ellipse at 50% 45%, #000 0%, transparent 62%);
-        animation: qn-splash-fade 1200ms ease-out both;
+        left: 50%;
+        /* 对齐 Logo 中心：内容列总高约 232px，Logo 中心在其顶部 46px 处。 */
+        top: calc(50% - 70px);
+        width: 0;
+        height: 0;
+        animation: qn-splash-fade 900ms 300ms ease-out both;
+      }
+      .qn-splash__ripples i {
+        position: absolute;
+        left: -60px;
+        top: -60px;
+        width: 120px;
+        height: 120px;
+        border-radius: 36px;
+        border: 1px solid rgba(78, 205, 181, 0.32);
+        opacity: 0;
+        animation: qn-splash-ripple 3.6s cubic-bezier(0.25, 0.6, 0.35, 1) infinite;
+      }
+      .qn-splash__ripples i:nth-child(2) {
+        animation-delay: 1.2s;
+      }
+      .qn-splash__ripples i:nth-child(3) {
+        animation-delay: 2.4s;
       }
       .qn-splash__inner {
         position: relative;
@@ -157,6 +174,11 @@
         0%, 100% { transform: scale(1); opacity: 1; }
         50% { transform: scale(1.08); opacity: 0.72; }
       }
+      @keyframes qn-splash-ripple {
+        0% { opacity: 0; transform: scale(0.9); border-radius: 36px; }
+        12% { opacity: 1; }
+        100% { opacity: 0; transform: scale(4.2); border-radius: 50%; }
+      }
       @keyframes qn-splash-tile {
         from { opacity: 0; transform: scale(0.72) rotate(-6deg); }
         to { opacity: 1; transform: scale(1) rotate(0); }
@@ -196,7 +218,7 @@
   </head>
   <body>
     <div id="qn-splash" class="qn-splash" role="status" aria-live="polite" aria-label="QingCode Next 正在启动">
-      <div class="qn-splash__grid"></div>
+      <div class="qn-splash__ripples" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="qn-splash__glow"></div>
       <div class="qn-splash__inner">
         <!-- 与 branding/icon.svg 同一几何；拆成底块 / 尖括号 / 光标三层分别入场。 -->

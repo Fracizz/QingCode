@@ -169,9 +169,17 @@ export function ThreadRow({
               }
             }}
           >
-            {/* 青轨：当前会话的唯一强调，沿用旧版 QingCode 的 Qing Rail。 */}
-            {current && <span className="absolute bottom-2 left-[15px] top-2 w-[2px] rounded-full bg-qn-brand" />}
-            {unread && (
+            {/* 左侧槽位：运行中显示转圈，否则显示未读圆点；当前会话只靠背景高亮，不再画竖杠。 */}
+            {running && !waiting ? (
+              <LoadingIcon
+                size={13}
+                strokeWidth={2.5}
+                className="absolute left-[14px] top-1/2 -mt-[6.5px] text-qn-brand [animation-duration:2s]"
+                role="img"
+                aria-hidden={false}
+                aria-label="运行中"
+              />
+            ) : unread && (
               <span className="absolute left-[18px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-qn-brand" aria-label="未读" />
             )}
             {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
@@ -179,15 +187,6 @@ export function ThreadRow({
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
             {waiting ? (
               <Badge tone="warn">待审批</Badge>
-            ) : running ? (
-              <LoadingIcon
-                size={13}
-                strokeWidth={2.5}
-                className="text-qn-muted [animation-duration:2s]"
-                role="img"
-                aria-hidden={false}
-                aria-label="运行中"
-              />
             ) : (
               <>
                 <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">
@@ -201,9 +200,11 @@ export function ThreadRow({
                   >
                     {pinned ? <PinOff size={13} /> : <Pin size={13} />}
                   </IconButton>
-                  <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
-                    <Archive size={13} />
-                  </IconButton>
+                  {!running && (
+                    <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
+                      <Archive size={13} />
+                    </IconButton>
+                  )}
                 </span>
               </>
             )}
