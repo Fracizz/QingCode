@@ -42,11 +42,11 @@ export function sessionInfoToMeta(info: unknown, fallbackCwd: string): SessionMe
   }
 }
 
-export function threadListResponse(infos: unknown[], fallbackCwd: string): Json {
-  const data = infos
-    .map((info) => sessionInfoToMeta(info, fallbackCwd))
+export function threadListResponse(sessions: SessionMeta[], limit?: number): Json {
+  const data = sessions
     .filter((meta) => meta.id.length > 0)
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .slice(0, limit)
     .map((meta) => buildThread(meta))
   return { data, nextCursor: null, backwardsCursor: null }
 }

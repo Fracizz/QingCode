@@ -51,7 +51,7 @@ export const PI_CAPABILITIES: PiCapabilities = { approvals: false, rateLimits: f
 export interface PiHostOptions {
   resolve?: (piPath?: string) => PiExecutable
   createRpc?: (options: PiRpcOptions) => PiRpcProcess
-  listSessions?: (cwd: string) => Promise<PiSessionInfo[]>
+  listSessions?: (cwd?: string | string[], threadId?: string) => Promise<PiSessionInfo[]>
   idleTimeoutMs?: number
 }
 
@@ -60,6 +60,7 @@ type PiSessionMeta = SessionMeta & { sessionFile?: string }
 interface PiSession {
   meta: PiSessionMeta
   rpc: PiRpcProcess | null
+  starting: Promise<PiRpcProcess> | null
   turnId: string | null
   state: MapState
   idleTimer: ReturnType<typeof setTimeout> | null
@@ -83,7 +84,6 @@ export class PiHost extends JsonRpcAgentHost {
   private pi: PiExecutable | null = null
   private readonly sessions = new Map<string, PiSession>()
   private readonly metas = new Map<string, PiSessionMeta>()
-  private readonly sessionFiles = new Map<string, string>()
   private readonly idleTimeoutMs: number
   private counter = 0
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
@@ -191,14 +191,21 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private async threadList(params: Json): Promise<Json> {
-    const cwd = typeof params.cwd === 'string' && params.cwd ? params.cwd : process.cwd()
+    const cwd = Array.isArray(params.cwd)
+      ? params.cwd.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0)
+      : typeof params.cwd === 'string' && params.cwd ? params.cwd : undefined
+    const limit = typeof params.limit === 'number' && Number.isSafeInteger(params.limit) && params.limit > 0
+      ? params.limit : undefined
     const infos = await this.safeListSessions(cwd)
+    const metas = new Map<string, PiSessionMeta>()
     for (const info of infos) {
-      this.metas.set(info.meta.id, info.meta)
-      this.sessionFiles.set(info.meta.id, info.sessionFile)
+      if (metas.has(info.meta.id)) continue
+      const meta = { ...info.meta, sessionFile: info.sessionFile }
+      metas.set(meta.id, meta)
+      this.metas.set(meta.id, meta)
     }
     return {
-      data: infos.map((info) => piThread(info.meta)),
+      data: [...metas.values()].slice(0, limit).map((meta) => piThread(meta)),
       nextCursor: null,
       backwardsCursor: null,
     }
@@ -226,7 +233,6 @@ export class PiHost extends JsonRpcAgentHost {
     }
     this.sessions.set(id, session)
     this.metas.set(id, session.meta)
-    if (sessionFile) this.sessionFiles.set(id, sessionFile)
     this.touch(session)
     return threadStartResult(session.meta)
   }
@@ -239,8 +245,10 @@ export class PiHost extends JsonRpcAgentHost {
     const rpc = await this.ensureRpc(session)
     const response = await rpc.command('get_messages')
     const messagesValue = asRecord(response.data)?.messages
-    const messages = Array.isArray(messagesValue) ? messagesValue : []
-    const history = messagesToThread(meta, messages)
+    if (response.success !== true || !Array.isArray(messagesValue)) {
+      throw new PiRpcError(-32603, '读取 pi 会话消息失败')
+    }
+    const history = messagesToThread(meta, messagesValue)
     this.touch(session)
     return { thread: history.thread }
   }
@@ -369,19 +377,19 @@ export class PiHost extends JsonRpcAgentHost {
   private async metaFor(threadId: string, cwdHint?: string): Promise<PiSessionMeta> {
     const known = this.metas.get(threadId)
     if (known) return known
-    const infos = await this.safeListSessions(cwdHint ?? process.cwd())
-    for (const info of infos) {
-      this.metas.set(info.meta.id, info.meta)
-      this.sessionFiles.set(info.meta.id, info.sessionFile)
-    }
-    return this.metas.get(threadId) ?? { id: threadId, cwd: cwdHint ?? process.cwd(), preview: '' }
+    const find = async (cwd?: string) => (await this.safeListSessions(cwd, threadId)).find((info) => info.meta.id === threadId)
+    const info = (cwdHint ? await find(cwdHint) : undefined) ?? await find()
+    if (!info) throw new PiRpcError(-32602, '未找到 pi 会话')
+    const meta = { ...info.meta, sessionFile: info.sessionFile }
+    this.metas.set(threadId, meta)
+    return meta
   }
 
-  private async safeListSessions(cwd: string): Promise<PiSessionInfo[]> {
+  private async safeListSessions(cwd?: string | string[], threadId?: string): Promise<PiSessionInfo[]> {
     try {
       return this.options.listSessions
-        ? await this.options.listSessions(cwd)
-        : listPiSessions(cwd)
+        ? await this.options.listSessions(cwd, threadId)
+        : listPiSessions(cwd, undefined, undefined, threadId)
     } catch (err) {
       this.hub.log(`pi 会话目录读取失败: ${redact(describe(err))}`)
       return []
@@ -391,13 +399,10 @@ export class PiHost extends JsonRpcAgentHost {
   private sessionFor(threadId: string, meta: PiSessionMeta): PiSession {
     const existing = this.sessions.get(threadId)
     if (existing) return existing
-    const sessionFile = this.sessionFiles.get(threadId)
     const session: PiSession = {
-      meta: {
-        ...meta,
-        ...(sessionFile && !meta.sessionFile ? { sessionFile } : {}),
-      },
+      meta,
       rpc: null,
+      starting: null,
       turnId: null,
       state: emptyMapState(),
       idleTimer: null,
@@ -407,8 +412,14 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private async ensureRpc(session: PiSession): Promise<PiRpcProcess> {
+    if (session.starting) return session.starting
     const current = session.rpc
     if (current?.running) return current
+    session.starting = this.startRpc(session).finally(() => { session.starting = null })
+    return session.starting
+  }
+
+  private async startRpc(session: PiSession): Promise<PiRpcProcess> {
     const pi = this.pi
     if (!pi) throw new AgentHostError('agent_unavailable', 'pi 尚未就绪')
     const rpcOptions: PiRpcOptions = {
@@ -425,16 +436,24 @@ export class PiHost extends JsonRpcAgentHost {
     delete session.thinkingLevel
     rpc.onEvent((event) => this.onPiEvent(session, event))
     rpc.onExit((info) => this.onRpcExit(session, rpc, info))
-    rpc.start()
-    // 空闲关闭后重新拉起的进程是全新会话，必须按官方命令切回原会话文件。
-    if (!session.meta.ephemeral && session.meta.sessionFile) {
-      await rpc
-        .command('switch_session', { sessionPath: session.meta.sessionFile })
-        .catch((err: unknown) => {
-          this.hub.log(`pi switch_session 失败: ${redact(describe(err))}`)
-        })
+    try {
+      rpc.start()
+      // 会话文件被移走或切换被扩展取消时，禁止把新进程当作原会话使用。
+      if (!session.meta.ephemeral && session.meta.sessionFile) {
+        const response = await rpc.command('switch_session', { sessionPath: session.meta.sessionFile })
+        if (response.success !== true || asRecord(response.data)?.cancelled === true) {
+          throw new PiRpcError(-32603, '切换到 pi 历史会话失败')
+        }
+        const state = await rpc.command('get_state')
+        if (asRecord(state.data)?.sessionId !== session.meta.id) {
+          throw new PiRpcError(-32603, 'pi 返回的会话与所选会话不一致')
+        }
+      }
+      return rpc
+    } catch (err) {
+      if (session.rpc === rpc) this.closeRpc(session)
+      throw err
     }
-    return rpc
   }
 
   private closeRpc(session: PiSession): void {

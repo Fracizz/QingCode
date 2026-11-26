@@ -527,9 +527,12 @@ export class MockNativePort implements NativePort {
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
 
     switch (msg.method) {
-      case 'thread/list':
-        recv({ id, result: { data: threads } })
+      case 'thread/list': {
+        const cwds = Array.isArray(inner.cwd) ? inner.cwd : typeof inner.cwd === 'string' ? [inner.cwd] : null
+        const data = cwds ? threads.filter((thread) => cwds.includes(thread.cwd)) : threads
+        recv({ id, result: { data } })
         return
+      }
       case 'thread/start': {
         const created = {
           id: `${agent === 'codex' ? 't' : agent}-${++this.counter}`,

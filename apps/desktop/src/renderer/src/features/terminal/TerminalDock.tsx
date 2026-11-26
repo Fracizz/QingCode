@@ -169,7 +169,7 @@ export function TerminalDock() {
   return (
     <section
       aria-label="终端面板"
-      className={cn('relative flex max-h-[65%] shrink-0 flex-col border-t border-qn-border bg-qn-bg', !open && 'hidden')}
+      className={cn('relative flex max-h-[min(65%,calc(100%-24rem))] shrink-0 flex-col border-t border-qn-border bg-qn-bg', !open && 'hidden')}
       style={{ height }}
     >
       <ResizeHandle

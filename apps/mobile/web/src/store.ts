@@ -1719,10 +1719,10 @@ export const useApp = create<AppState>((set, get) => {
         const value = normalizePath(path, kind).replace(/\\/g, '/')
         return kind === 'windows' ? value.toLowerCase() : value
       }
-      const candidates = new Map<string, Map<string, string>>()
+      const candidates = new Map<string, Map<string, Project>>()
       for (const project of projects) {
-        const paths = candidates.get(project.targetId) ?? new Map<string, string>()
-        paths.set(normalized(project.path), project.id)
+        const paths = candidates.get(project.targetId) ?? new Map<string, Project>()
+        paths.set(normalized(project.path), project)
         candidates.set(project.targetId, paths)
       }
       await get().loadAgentSettings()
@@ -1731,10 +1731,10 @@ export const useApp = create<AppState>((set, get) => {
         targetAgents(get(), targetId).map(async (agent): Promise<DiscoveredThread[]> => {
           const session = await attachExisting(conn, targetId, agent, epoch)
           if (!session || get().page !== 'workspace') return []
-          const result = await session.rpc.request('thread/list', { limit: 100, sortKey: 'updated_at' })
+          const result = await listThreads(session.rpc, [...paths.values()].map((project) => project.path), 100)
           return toThreadSummaries(result, agent).flatMap((thread) => {
-            const projectId = paths.get(normalized(thread.cwd))
-            return projectId ? [{ ...thread, targetId, projectId, activity: thread.activity }] : []
+            const project = paths.get(normalized(thread.cwd))
+            return project ? [{ ...thread, targetId, projectId: project.id }] : []
           })
         }),
       ))

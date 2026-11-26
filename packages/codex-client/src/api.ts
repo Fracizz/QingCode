@@ -3,6 +3,7 @@ import type {
   ModelListResponse,
   SkillMetadata,
   SkillsListResponse,
+  Thread,
   ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
@@ -18,11 +19,33 @@ import type { CodexRpc } from './rpc'
 
 export type CodexRpcLike = Pick<CodexRpc, 'request'>
 
-export function listThreads(
+export async function listThreads(
   rpc: CodexRpcLike,
-  cwd?: string | null,
+  cwd?: string | string[] | null,
+  limit?: number,
 ): Promise<ThreadListResponse> {
-  return rpc.request('thread/list', cwd === undefined ? {} : { cwd })
+  if (limit !== undefined && limit <= 0) return { data: [], nextCursor: null, backwardsCursor: null }
+  const threads = new Map<string, Thread>()
+  const seenCursors = new Set<string>()
+  let nextCursor: string | null = null
+  let backwardsCursor: string | null = null
+  do {
+    const page: ThreadListResponse = await rpc.request('thread/list', {
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(limit === undefined ? {} : { limit: limit - threads.size }),
+      ...(nextCursor ? { cursor: nextCursor } : {}),
+      sortKey: 'updated_at',
+    })
+    if (!nextCursor) backwardsCursor = page?.backwardsCursor ?? null
+    for (const thread of Array.isArray(page?.data) ? page.data : []) {
+      if (thread?.id && !threads.has(thread.id)) threads.set(thread.id, thread)
+      if (limit !== undefined && threads.size >= limit) break
+    }
+    nextCursor = page?.nextCursor ?? null
+    if (!nextCursor || seenCursors.has(nextCursor) || (limit !== undefined && threads.size >= limit)) break
+    seenCursors.add(nextCursor)
+  } while (nextCursor)
+  return { data: [...threads.values()], nextCursor, backwardsCursor }
 }
 
 export function startThread(

@@ -32,9 +32,8 @@ const MAX_SESSIONS = 2000
 /** pi 的会话目录名：去掉前导分隔符，把 / \\ : 换成 -，再包一层 --。 */
 export function encodeCwdDir(cwd: string): string {
   const flat = cwd
-    .replace(/^[/\\]+/, '')
+    .replace(/^[/\\]/, '')
     .replace(/[\\/:]/g, '-')
-    .replace(/^-+|-+$/g, '')
   return `--${flat}--`
 }
 
@@ -72,7 +71,7 @@ export function parseSessionLines(lines: string[]): ParsedSessionHeader | null {
       header = record
       continue
     }
-    if (record.type === 'session_info' && !name) name = scalarText(record.name)
+    if (record.type === 'session_info') name = scalarText(record.name) || name
     if (record.type === 'message' && !preview) {
       const message = asRecord(record.message)
       if (scalarText(message?.role) !== 'user') continue
@@ -104,9 +103,12 @@ export function parseSessionLines(lines: string[]): ParsedSessionHeader | null {
 }
 
 const defaultIo: SessionIo = {
-  readDir: (dir) => fs.readdirSync(dir),
+  readDir: (dir) => fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() || entry.isDirectory())
+    .map((entry) => entry.name),
   stat: (file) => fs.statSync(file),
   readHead: (file, bytes) => {
+    if (!fs.lstatSync(file).isFile()) return ''
     const fd = fs.openSync(file, 'r')
     try {
       const buffer = Buffer.alloc(bytes)
@@ -119,25 +121,26 @@ const defaultIo: SessionIo = {
 }
 
 export function listPiSessions(
-  cwd: string,
+  cwd?: string | string[],
   io: SessionIo = defaultIo,
   root: string = sessionRoot(),
+  threadId?: string,
 ): PiSessionInfo[] {
-  const dirs = [root, path.join(root, encodeCwdDir(cwd))]
-  const seen = new Set<string>()
+  const cwds = cwd === undefined ? undefined : Array.isArray(cwd) ? cwd : [cwd]
+  const rootEntries = readEntries(io, root)
+  const groupKey = (dir: string) => process.platform === 'win32' ? dir.toLowerCase() : dir
+  const groups = cwds && new Set(cwds.map((dir) => groupKey(encodeCwdDir(path.resolve(dir)))))
+  const dirs = new Map([[root, rootEntries]])
+  for (const group of rootEntries) {
+    if (!group.startsWith('--') || !group.endsWith('--') || (groups && !groups.has(groupKey(group)))) continue
+    const dir = path.join(root, group)
+    dirs.set(dir, readEntries(io, dir))
+  }
   const out: PiSessionInfo[] = []
-  for (const dir of dirs) {
-    let entries: string[]
-    try {
-      entries = io.readDir(dir)
-    } catch {
-      continue
-    }
+  for (const [dir, entries] of dirs) {
     for (const entry of entries) {
       if (!entry.endsWith('.jsonl')) continue
       const file = path.join(dir, entry)
-      if (seen.has(file)) continue
-      seen.add(file)
       let head: string
       try {
         head = io.readHead(file, HEAD_BYTES)
@@ -145,9 +148,11 @@ export function listPiSessions(
         continue
       }
       const parsed = parseSessionLines(head.split('\n'))
-      if (!parsed) continue
+      if (!parsed || (threadId && parsed.id !== threadId)) continue
       // 自定义 session-dir 会把文件平铺，按 header 的 cwd 过滤保证只列当前项目。
-      if (parsed.cwd && !sameCwd(parsed.cwd, cwd)) continue
+      if (cwds && !cwds.some((dir) => parsed.cwd ? sameCwd(parsed.cwd, dir) : cwds.length === 1)) continue
+      const sessionCwd = parsed.cwd || cwds?.[0]
+      if (!sessionCwd) continue
       let updatedAt: number | undefined
       try {
         updatedAt = Math.floor(io.stat(file).mtimeMs / 1000)
@@ -156,7 +161,7 @@ export function listPiSessions(
       }
       const meta: SessionMeta = {
         id: parsed.id,
-        cwd: parsed.cwd || cwd,
+        cwd: sessionCwd,
         preview: parsed.preview ?? '',
         ...(parsed.name ? { name: parsed.name } : {}),
         ...(parsed.createdAt !== undefined ? { createdAt: parsed.createdAt } : {}),
@@ -166,4 +171,12 @@ export function listPiSessions(
     }
   }
   return out.sort((a, b) => (b.meta.updatedAt ?? 0) - (a.meta.updatedAt ?? 0)).slice(0, MAX_SESSIONS)
+}
+
+function readEntries(io: SessionIo, dir: string): string[] {
+  try {
+    return io.readDir(dir)
+  } catch {
+    return []
+  }
 }

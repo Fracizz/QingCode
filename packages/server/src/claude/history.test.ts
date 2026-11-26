@@ -56,8 +56,7 @@ describe('SDKSessionInfo → Thread 元数据', () => {
         { sessionId: 'a', summary: 'A', lastModified: 1_000 },
         { sessionId: 'b', summary: 'B', lastModified: 3_000 },
         { summary: '无 id', lastModified: 4_000 },
-      ],
-      '/fallback',
+      ].map((info) => sessionInfoToMeta(info, '/fallback')),
     )
     expect(response.nextCursor).toBeNull()
     const data = response.data as Json[]

@@ -185,6 +185,7 @@ export const useCodex = create<CodexState>((set, get) => {
   const replacing = new Set<string>()
   let nextPendingId = 0
   let refreshToken = 0
+  let openThreadToken = 0
 
   const patchSession = (key: string, update: (session: TargetSession) => TargetSession): void => {
     set((state) => {
@@ -715,6 +716,8 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     setContext: (targetId, cwd, refresh = false) => {
+      ++refreshToken
+      ++openThreadToken
       clearAllDrafts()
       set({
         currentTargetId: targetId,
@@ -722,6 +725,7 @@ export const useCodex = create<CodexState>((set, get) => {
         currentThreadId: null,
         currentAgent: targetId ? defaultFor(targetId) : DEFAULT_AGENT,
         threads: [],
+        threadsLoading: false,
         threadsError: null,
         error: null,
         sideOpen: false,
@@ -737,7 +741,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
     refreshThreads: async () => {
       const token = ++refreshToken
-      const targetId = get().currentTargetId
+      const { currentTargetId: targetId, currentCwd: cwd } = get()
       if (!targetId) {
         set({ threads: [], threadsLoading: false, threadsError: null })
         return
@@ -752,12 +756,12 @@ export const useCodex = create<CodexState>((set, get) => {
           if (statusFor(targetId, agent)?.state !== 'ready' || !session?.opened) return []
           try {
             return toThreadSummaries(
-              await listThreads(session.rpc, get().currentCwd ?? undefined),
+              await listThreads(session.rpc, cwd ?? undefined),
               agent,
             )
           } catch (err) {
             const detail = `${agentLabel(agent)}：${friendlyError(err, '加载会话列表失败')}`
-            set((state) => ({ threadsError: state.threadsError ?? detail }))
+            if (token === refreshToken) set((state) => ({ threadsError: state.threadsError ?? detail }))
             return []
           }
         }),
@@ -767,6 +771,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     newThread: async (agent) => {
+      const token = ++openThreadToken
       const targetId = get().currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -782,13 +787,14 @@ export const useCodex = create<CodexState>((set, get) => {
         cwd: get().currentCwd,
         ephemeral: false,
       })
-      if (!threadId) return
+      if (!threadId || token !== openThreadToken) return
       clearAllDrafts()
       set({ currentThreadId: threadId, currentAgent: picked, error: null })
       void get().refreshThreads()
     },
 
     startDraft: (agent) => {
+      ++openThreadToken
       clearAllDrafts()
       const targetId = get().currentTargetId
       // 设过默认的连接，新会话回到默认；没设过则沿用当前 Agent。
@@ -822,6 +828,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     openThread: async (threadId, agent) => {
+      const token = ++openThreadToken
       clearAllDrafts()
       const targetId = get().currentTargetId
       if (!targetId) {
@@ -831,9 +838,10 @@ export const useCodex = create<CodexState>((set, get) => {
       const picked = agent ?? get().currentAgent
       const key = sessionKey(targetId, picked)
       if (!(await ensureOpen(targetId, picked))) {
-        set({ error: get().sessions[key]?.openError ?? `${agentLabel(picked)} 未就绪` })
+        if (token === openThreadToken) set({ error: get().sessions[key]?.openError ?? `${agentLabel(picked)} 未就绪` })
         return
       }
+      if (token !== openThreadToken) return
       const session = get().sessions[key]
       if (!session) return
       try {
@@ -843,8 +851,10 @@ export const useCodex = create<CodexState>((set, get) => {
           result = await resumeThread(session.rpc, threadId)
         } catch (err) {
           writerConflict = picked === 'codex' && isActiveWriterError(err)
+          if (token !== openThreadToken) return
           result = await readThread(session.rpc, threadId)
         }
+        if (token !== openThreadToken) return
         patchSession(key, (value) => {
           const threadsAwaitingResume = new Set(value.threadsAwaitingResume)
           if (writerConflict) threadsAwaitingResume.add(threadId)
@@ -861,7 +871,7 @@ export const useCodex = create<CodexState>((set, get) => {
           void flushPending(chat)
         }
       } catch (err) {
-        set({ error: friendlyError(err, '打开会话失败') })
+        if (token === openThreadToken) set({ error: friendlyError(err, '打开会话失败') })
       }
     },
 

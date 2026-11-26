@@ -263,7 +263,7 @@ export function Composer({
   return (
     <div className={cn('shrink-0', compact ? 'px-3 pb-3 pt-1' : 'px-6 pb-3 pt-1')}>
       <div className={cn('relative mx-auto', !compact && contentWidthClassName)}>
-        <ErrorNote message={error} className="mb-2" onClose={onClearError} />
+        <ErrorNote message={error} className="qn-scroll mb-2 max-h-[min(5rem,10cqh)] overflow-y-auto" onClose={onClearError} />
 
         {menuOpen && slash && (
           <SlashMenu items={matches} active={active} loading={slash.loading} onHover={setActive} onChoose={choose} />
@@ -296,7 +296,7 @@ export function Composer({
           )}
         >
           {attachments.length > 0 && attach && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3">
+            <div className="qn-scroll flex max-h-[min(6rem,12cqh)] flex-wrap gap-2 overflow-y-auto px-3 pt-3">
               {attachments.map((item) => (
                 <AttachmentChip
                   key={item.id}
@@ -311,7 +311,7 @@ export function Composer({
             ref={areaRef}
             className={cn(
               'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] leading-6 text-qn-text outline-none placeholder:text-qn-dim',
-              compact ? 'min-h-[48px]' : 'min-h-[56px]',
+              compact ? 'min-h-[48px]' : 'min-h-[56px] max-h-[max(56px,25cqh)]',
             )}
             rows={1}
             value={value}

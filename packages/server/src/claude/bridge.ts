@@ -61,7 +61,8 @@ export interface QueryLike extends AsyncIterable<unknown> {
 /** 可注入的 SDK 门面：真机走动态 import，测试注入假的 query 工厂。 */
 export interface ClaudeDeps {
   query(params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: Options }): QueryLike
-  listSessions(options?: { dir?: string }): Promise<unknown[]>
+  listSessions(options?: { dir?: string; limit?: number; includeWorktrees?: boolean }): Promise<unknown[]>
+  getSessionInfo?(sessionId: string): Promise<unknown>
   getSessionMessages(sessionId: string, options?: { dir?: string }): Promise<unknown[]>
 }
 
@@ -105,6 +106,7 @@ async function loadSdk(): Promise<ClaudeDeps> {
     return {
       query: (params) => sdk.query(params) as QueryLike,
       listSessions: (options) => sdk.listSessions(options),
+      getSessionInfo: (sessionId) => sdk.getSessionInfo(sessionId),
       getSessionMessages: (sessionId, options) => sdk.getSessionMessages(sessionId, options),
     }
   })()
@@ -265,14 +267,23 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       case 'account/rateLimits/read':
         return this.rateLimits
       case 'thread/list': {
-        const cwd = typeof params.cwd === 'string' ? params.cwd : undefined
-        const infos = await deps.listSessions(cwd ? { dir: cwd } : {})
-        const fallback = cwd ?? process.cwd()
-        for (const info of infos) {
-          const meta = sessionInfoToMeta(info, fallback)
-          if (meta.id) this.metas.set(meta.id, meta)
+        const limit = typeof params.limit === 'number' && Number.isSafeInteger(params.limit) && params.limit > 0
+          ? params.limit : undefined
+        const cwd = typeof params.cwd === 'string' && params.cwd ? params.cwd : undefined
+        const dirs = Array.isArray(params.cwd)
+          ? [...new Set(params.cwd.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0))]
+          : [cwd]
+        const metas = new Map<string, SessionMeta>()
+        for (const dir of dirs) {
+          const infos = await deps.listSessions({ dir, limit, ...(Array.isArray(params.cwd) ? { includeWorktrees: false } : {}) })
+          for (const info of infos) {
+            const meta = sessionInfoToMeta(info, dir ?? process.cwd())
+            if (!meta.id || metas.has(meta.id)) continue
+            metas.set(meta.id, meta)
+            this.metas.set(meta.id, meta)
+          }
         }
-        return threadListResponse(infos, fallback)
+        return threadListResponse([...metas.values()], limit)
       }
       case 'thread/start': {
         const id = randomUUID()
@@ -638,20 +649,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   ): Promise<BridgeSession> {
     const existing = this.sessions.get(threadId)
     if (existing) return existing
-    if (!this.metas.has(threadId)) {
-      const infos = await deps.listSessions(cwdHint ? { dir: cwdHint } : {})
-      const fallback = cwdHint ?? process.cwd()
-      for (const info of infos) {
-        const meta = sessionInfoToMeta(info, fallback)
-        if (meta.id) this.metas.set(meta.id, meta)
-      }
+    let meta = this.metas.get(threadId)
+    if (!meta) {
+      const info = deps.getSessionInfo
+        ? await deps.getSessionInfo(threadId)
+        : (await deps.listSessions()).find((info) => asRecord(info)?.sessionId === threadId)
       const concurrent = this.sessions.get(threadId)
       if (concurrent) return concurrent
-    }
-    const meta: SessionMeta = this.metas.get(threadId) ?? {
-      id: threadId,
-      cwd: cwdHint ?? process.cwd(),
-      preview: '',
+      if (!info) throw new BridgeRpcError(-32602, '未找到 Claude 会话')
+      meta = sessionInfoToMeta(info, cwdHint ?? process.cwd())
+      this.metas.set(threadId, meta)
     }
     const session = makeSession(meta, true)
     this.sessions.set(threadId, session)

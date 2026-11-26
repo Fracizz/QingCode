@@ -9,7 +9,7 @@ interface FakeRpc extends PiRpcProcess {
   emit(record: RpcRecord): void
 }
 
-function fakeRpc(state: { commands: string[]; closed: boolean }): FakeRpc {
+function fakeRpc(state: { commands: string[]; closed: boolean; cancelSwitch: boolean }): FakeRpc {
   const listeners = new Set<(record: RpcRecord) => void>()
   const rpc = {
     running: true,
@@ -31,7 +31,7 @@ function fakeRpc(state: { commands: string[]; closed: boolean }): FakeRpc {
             data: { sessionId: 'fake-session', sessionFile: '/tmp/fake-session.jsonl' },
           }
         case 'switch_session':
-          return { type: 'response', success: true, data: { cancelled: false } }
+          return { type: 'response', success: true, data: { cancelled: state.cancelSwitch } }
         case 'get_messages':
           return { type: 'response', success: true, data: { messages: [] } }
         case 'prompt':
@@ -65,7 +65,7 @@ function harness(sessions: PiSessionInfo[] = []) {
     broadcastEvt: (name, payload) => evts.push({ name, payload }),
     log: (message) => logs.push(message),
   }
-  const state = { commands: [] as string[], closed: false }
+  const state = { commands: [] as string[], closed: false, cancelSwitch: false }
   let rpc = fakeRpc(state)
   const rpcOptions: PiRpcOptions[] = []
   const host = createPiHost(hub, '0.0.1', {
@@ -180,6 +180,35 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     )
     expect(state.commands).toContain('switch_session')
     expect(state.commands).toContain('get_messages')
+  })
+
+  it('未列过会话时也能按 ID 恢复，取消切换后允许重试', async () => {
+    const { host, sent, state, rpcOptions } = harness([
+      { meta: { id: 'fake-session', cwd: '/other/project', preview: '历史' }, sessionFile: '/tmp/old.jsonl' },
+    ])
+    await host.open({})
+
+    state.cancelSwitch = true
+    host.handleClientMessage(1, { id: 1, method: 'thread/resume', params: { threadId: 'fake-session' } })
+    await flush()
+    expect(responseFor(sent, 1)?.error).toMatchObject({ message: '切换到 pi 历史会话失败' })
+    expect(state.commands).toEqual(['switch_session'])
+    expect(state.closed).toBe(true)
+
+    state.cancelSwitch = false
+    host.handleClientMessage(1, { id: 2, method: 'thread/read', params: { threadId: 'fake-session' } })
+    host.handleClientMessage(2, { id: 3, method: 'thread/resume', params: { threadId: 'fake-session' } })
+    await flush()
+    expect(responseFor(sent, 2)?.result).toMatchObject({ thread: { id: 'fake-session', cwd: '/other/project' } })
+    expect(responseFor(sent, 3)?.result).toEqual(responseFor(sent, 2)?.result)
+    expect(state.commands).toEqual(['switch_session', 'switch_session', 'get_state', 'get_messages', 'get_messages'])
+    expect(rpcOptions.map((options) => options.cwd)).toEqual(['/other/project', '/other/project'])
+
+    host.handleClientMessage(1, { id: 4, method: 'thread/read', params: { threadId: 'missing' } })
+    await flush()
+    expect(responseFor(sent, 4)?.error).toMatchObject({ message: '未找到 pi 会话' })
+    expect(rpcOptions).toHaveLength(2)
+    host.shutdown()
   })
 
   it('shutdown 结束全部 pi 子进程', async () => {

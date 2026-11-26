@@ -38,8 +38,8 @@ describe('codex api', () => {
     await interruptTurn(rpc, 'thread-1', 'turn-1')
 
     expect(calls).toEqual([
-      { method: 'thread/list', params: { cwd: '/repo' } },
-      { method: 'thread/list', params: {} },
+      { method: 'thread/list', params: { cwd: '/repo', sortKey: 'updated_at' } },
+      { method: 'thread/list', params: { sortKey: 'updated_at' } },
       { method: 'thread/start', params: { cwd: '/repo' } },
       { method: 'thread/resume', params: { threadId: 'thread-1' } },
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
@@ -61,6 +61,25 @@ describe('codex api', () => {
         },
       },
       { method: 'turn/interrupt', params: { threadId: 'thread-1', turnId: 'turn-1' } },
+    ])
+  })
+
+  it('跨页列出历史，保留项目过滤并去除重叠的会话', async () => {
+    const calls: unknown[] = []
+    const rpc = {
+      request: async (_method: string, params: { cursor?: string }) => {
+        calls.push(params)
+        return params.cursor
+          ? { data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], nextCursor: null }
+          : { data: [{ id: 'a' }], nextCursor: 'p2' }
+      },
+    } as CodexRpcLike
+
+    const { data } = await listThreads(rpc, ['/repo', '/other'], 2)
+    expect(data.map((thread) => thread.id)).toEqual(['a', 'b'])
+    expect(calls).toEqual([
+      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 2 },
+      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 1, cursor: 'p2' },
     ])
   })
 

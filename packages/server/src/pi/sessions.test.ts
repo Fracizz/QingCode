@@ -72,9 +72,9 @@ describe('listPiSessions（只读会话文件）', () => {
       // Windows 下 path.join 用反斜杠，假 IO 统一按正斜杠查表。
       readDir: (rawDir) => {
         const dir = rawDir.replace(/\\/g, '/')
-        return Object.keys(files)
-          .filter((file) => file.startsWith(`${dir}/`) && !file.slice(dir.length + 1).includes('/'))
-          .map((file) => file.slice(dir.length + 1))
+        return [...new Set(Object.keys(files)
+          .filter((file) => file.startsWith(`${dir}/`))
+          .map((file) => file.slice(dir.length + 1).split('/')[0]!))]
       },
       stat: () => ({ mtimeMs: 1_700_000_000_000 }),
       readHead: (file) => files[file.replace(/\\/g, '/')] ?? '',
@@ -87,6 +87,8 @@ describe('listPiSessions（只读会话文件）', () => {
     // 认证文件从不在读取列表里。
     expect(Object.keys(files).filter((file) => file.endsWith('auth.json'))).toHaveLength(1)
     expect(result.some((info) => info.sessionFile.endsWith('auth.json'))).toBe(false)
+    expect(listPiSessions([cwd, '/somewhere/else'], io, 'ROOT')).toHaveLength(3)
+    expect(listPiSessions(undefined, io, 'ROOT')).toHaveLength(3)
   })
 
   it('会话目录不存在时返回空列表，不抛错', () => {

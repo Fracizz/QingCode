@@ -321,7 +321,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   return (
     <main
-      className="qn-enter relative flex min-w-0 flex-1 flex-col bg-qn-bg"
+      className="qn-enter relative flex min-h-0 min-w-0 flex-1 flex-col bg-qn-bg [container-type:size]"
       style={{ ['--qn-enter-order' as string]: 2 }}
       onDragEnter={onDragEnter}
       onDragOver={(event) => {
@@ -332,11 +332,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     >
       <MainHeader />
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-12 flex-1">
         <SelectionLayer
           containerRef={scrollRef}
           layoutKey={chatWidth}
-          className={`qn-scroll h-full overflow-y-auto px-6 pb-6 pt-2 [scrollbar-gutter:stable_both-edges]${pinned ? ' [overflow-anchor:none]' : ''}`}
+          className={`qn-scroll min-w-0 flex-1 overflow-y-auto px-6 pb-6 pt-2 [scrollbar-gutter:stable_both-edges]${pinned ? ' [overflow-anchor:none]' : ''}`}
           onScroll={onScroll}
           highlights={Object.values(highlights).flat()}
           onAdd={addAnnotation}
@@ -408,14 +408,17 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         )}
       </div>
 
-      <SendQueue
-        targetId={currentTargetId}
-        agent={currentAgent}
-        threadId={currentThreadId}
-        running={running}
-        contentWidthClassName={contentWidthClassName}
-      />
-      <AnnotationBar annotations={annotations} onRemove={removeAnnotation} />
+      {/* 队列和注释在剩余空间内滚动，避免把消息列表或输入框挤出窗口。 */}
+      <div className="qn-scroll min-h-0 overflow-y-auto">
+        <SendQueue
+          targetId={currentTargetId}
+          agent={currentAgent}
+          threadId={currentThreadId}
+          running={running}
+          contentWidthClassName={contentWidthClassName}
+        />
+        <AnnotationBar annotations={annotations} onRemove={removeAnnotation} />
+      </div>
       <Composer
         contentWidthClassName={contentWidthClassName}
         onSend={submit}
