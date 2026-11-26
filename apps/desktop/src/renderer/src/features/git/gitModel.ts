@@ -1,4 +1,4 @@
-import type { GitBranch, GitFileStatus } from '@qn/protocol'
+import type { GitBranch, GitCommit, GitFileStatus, GitStatusResult } from '@qn/protocol'
 
 // Git 面板的展示语义与路径换算全部收在这里，避免组件里散落 porcelain 字母判断。
 
@@ -247,4 +247,72 @@ export function describeGitError(
   }
   const summary = stderrSummary(message)
   return { code, message: summary || fallback }
+}
+
+// —— 轮询结果比对：内容不变就复用旧引用，避免每 5s 触发整面板重渲染 ——
+
+function sameFile(a: GitFileStatus, b: GitFileStatus): boolean {
+  return (
+    a.path === b.path &&
+    a.origPath === b.origPath &&
+    a.index === b.index &&
+    a.worktree === b.worktree &&
+    a.conflict === b.conflict
+  )
+}
+
+export function sameStatus(a: GitStatusResult | null, b: GitStatusResult | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (
+    a.root !== b.root ||
+    a.branch !== b.branch ||
+    a.head !== b.head ||
+    a.upstream !== b.upstream ||
+    a.ahead !== b.ahead ||
+    a.behind !== b.behind ||
+    a.files.length !== b.files.length
+  ) {
+    return false
+  }
+  for (let i = 0; i < a.files.length; i += 1) {
+    if (!sameFile(a.files[i]!, b.files[i]!)) return false
+  }
+  return true
+}
+
+function sameBranchList(a: GitBranch[], b: GitBranch[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i]!
+    const y = b[i]!
+    if (x.name !== y.name || x.head !== y.head || x.upstream !== y.upstream) return false
+  }
+  return true
+}
+
+export type BranchSet = { current: string | null; local: GitBranch[]; remote: GitBranch[] }
+
+export function sameBranches(a: BranchSet | null, b: BranchSet | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.current === b.current && sameBranchList(a.local, b.local) && sameBranchList(a.remote, b.remote)
+}
+
+/** 分支、HEAD、upstream 都没变时分支列表不会变（远端分支只在 fetch 等操作后变，操作后会整刷）。 */
+export function branchesStale(prev: GitStatusResult | null, next: GitStatusResult): boolean {
+  return !prev || prev.branch !== next.branch || prev.head !== next.head || prev.upstream !== next.upstream
+}
+
+/**
+ * 刷新拿到的首页与已有列表开头一致时保留已有列表：既不丢掉已分页加载的提交，也不换引用。
+ * 返回 null 表示无需更新。
+ */
+export function mergeLogFirstPage(prev: GitCommit[], page: GitCommit[]): GitCommit[] | null {
+  if (page.length === 0) return prev.length === 0 ? null : page
+  if (prev.length < page.length) return page
+  for (let i = 0; i < page.length; i += 1) {
+    if (prev[i]!.hash !== page[i]!.hash) return page
+  }
+  return null
 }
