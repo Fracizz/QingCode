@@ -86,6 +86,34 @@ describe('跨端会话状态', () => {
     expect(sessionStatus(threadOf(next), undefined, true)).toBe('running')
     expect(threadOf(next).error).toBeUndefined()
   })
+
+  it('旧轮次迟到的条目和中断结果保留当前轮的运行状态', () => {
+    const started = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: { id: 'old', status: 'inProgress', items: [] } }),
+      note('turn/started', { threadId: 't1', turn: { id: 'current', status: 'inProgress', items: [] } }),
+      note('item/agentMessage/delta', { threadId: 't1', turnId: 'current', itemId: 'reply', delta: '还在运行' }),
+    ])
+    const running = applyServerRequest(started, request('item/commandExecution/requestApproval', 'approval', {
+      threadId: 't1', turnId: 'current', command: 'echo test',
+    }))
+    const updated = reduce(running, [
+      note('item/completed', { threadId: 't1', turnId: 'old', item: userItem }),
+      note('error', { threadId: 't1', turnId: 'old', willRetry: false, error: { message: '上一轮出错' } }),
+      note('turn/completed', { threadId: 't1', turn: { id: 'old', status: 'interrupted', items: [] } }),
+    ])
+    const view = threadOf(updated)
+    expect(view).toMatchObject({ status: 'running', activeTurnId: 'current' })
+    expect(view.error).toBeUndefined()
+    expect(view.pendingApprovals).toHaveLength(1)
+    expect(itemOf(updated, 'reply')).toMatchObject({ streaming: true })
+    expect(itemOf(updated, 'i-user')).toMatchObject({ kind: 'user' })
+
+    const finished = applyNotification(updated, note('turn/completed', {
+      threadId: 't1', turn: { id: 'current', status: 'interrupted', items: [] },
+    }))
+    expect(threadOf(finished)).toMatchObject({ activity: 'interrupted', activeTurnId: null, pendingApprovals: [] })
+    expect(itemOf(finished, 'reply')).toMatchObject({ streaming: false })
+  })
 })
 
 describe('子代理条目', () => {

@@ -60,7 +60,11 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
   const rpc = new CodexRpc(transport)
   const thread: ThreadView = {
     id: 'thread', status: 'running', activity: 'running', activeTurnId: 'turn', pendingApprovals: [],
-    items: [{ kind: 'user', id: 'message', text: '开始' }],
+    items: [
+      { kind: 'user', id: 'message', text: '开始' },
+      { kind: 'agent', id: 'reply', text: '已检查项目，继续处理', streaming: false },
+      { kind: 'command', id: 'command', command: 'git status --short', output: '', status: 'completed', exitCode: 0 },
+    ],
   }
   const session: AgentSession = {
     key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
@@ -87,6 +91,11 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
       setTurn(thread)
       root.render(<ChatPage />)
     })
+    const progress = () => host.querySelector('.qn-thinking[role="status"]')?.textContent
+    expect(progress()).toContain('Codex 正在处理…')
+    await act(() => setTurn({ ...thread, activity: 'input' }))
+    expect(progress()).toContain('等待输入…')
+    await act(() => setTurn(thread))
     await act(() => stopButton('停止运行').click())
     expect(stopButton('正在中断').disabled).toBe(true)
     await act(() => rejectStop(new Error('连接超时')))
@@ -95,6 +104,7 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     await act(() => stopButton('停止运行').click())
     await act(() => setTurn({ ...thread, status: 'error', activity: 'interrupted', activeTurnId: null, error: 'Turn interrupted' }))
     await act(() => rejectStop(new Error('迟到的中断请求错误')))
+    expect(progress()).toBeUndefined()
     expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
     expect(host.textContent).not.toMatch(/Turn interrupted|本轮失败|未能中断本轮/)
     expect(host.querySelector('[role="alert"]')).toBeNull()
