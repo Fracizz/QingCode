@@ -357,7 +357,7 @@ export class TargetManager {
         link.close()
         return
       }
-      this.setState(session, 'ready')
+      this.setState(session, 'ready', link.notice)
       this.resolveWaiters(session)
       if (session.remember && Object.keys(session.credentials).length > 0) {
         session.remember = false

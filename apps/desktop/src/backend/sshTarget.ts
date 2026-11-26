@@ -26,6 +26,7 @@ import {
   isPosixProbe,
   parentPosixPath,
   parseEnsureResult,
+  STALE_SERVER_NOTICE,
   parseJsonLine,
   parseManifest,
   parseProbe,
@@ -581,6 +582,7 @@ export async function connectSshTarget(context: SshLinkContext): Promise<TargetL
     })
 
     return {
+      ...(deployed.ensure.stale ? { notice: STALE_SERVER_NOTICE } : {}),
       request: (method, params) => server.request(method, params),
       codexSend: (msg, agent) => server.codexSend(msg, agent),
       close: () => {

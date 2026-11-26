@@ -115,6 +115,12 @@ describe('清单 / 校验 / ensure 输出', () => {
     expect(parseRemoteSha('')).toBeNull()
   })
 
+  it('ensure 结果带出旧版 daemon 未替换标记', () => {
+    const base = { token: TOKEN, version: '0.0.1+aaa', pid: 42, started: false, endpoint: '/tmp/qn.sock' }
+    expect(parseEnsureResult(JSON.stringify({ ...base, stale: true })).stale).toBe(true)
+    expect(parseEnsureResult(JSON.stringify(base))).not.toHaveProperty('stale')
+  })
+
   it('ensure 结果解析且不泄漏 token', () => {
     const line = JSON.stringify({ token: TOKEN, version: '0.0.1', pid: 42, started: true, endpoint: '\\\\.\\pipe\\qn' })
     expect(parseEnsureResult(`noise\n${line}\n`)).toEqual({

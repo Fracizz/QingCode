@@ -1,7 +1,7 @@
 import path from 'node:path'
 import type { ServerMessage } from '@qn/protocol'
 import { describe, expect, it, vi } from 'vitest'
-import { agentConfigEnv, CodexHost, parseAgentConfigDir } from './codexHost'
+import { agentConfigEnv, CodexHost, describeCodexExit, parseAgentConfigDir } from './codexHost'
 
 const fakeCodex = JSON.stringify([process.execPath, '-e', `
   const readline = require('node:readline');
@@ -39,6 +39,17 @@ function harness() {
   }
   return { host, request, messages }
 }
+
+describe('codex 退出原因', () => {
+  it('找不到命令时提示安装或指定路径', () => {
+    expect(describeCodexExit(null, 'spawn codex ENOENT')).toContain('未找到 codex 命令')
+  })
+  it('其它启动失败与非零退出码都带上原因', () => {
+    expect(describeCodexExit(null, 'spawn EACCES')).toBe('codex 启动失败: spawn EACCES')
+    expect(describeCodexExit(1, null)).toBe('codex app-server 已退出（退出码 1）')
+    expect(describeCodexExit(null, null)).toBe('codex app-server 已退出')
+  })
+})
 
 describe('Codex 权限覆盖', () => {
   it('原样向 Codex 发送 v2 覆盖项，普通发送恢复原会话权限', async () => {

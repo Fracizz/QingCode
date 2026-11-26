@@ -27,6 +27,8 @@ export interface EnsureResult {
   started: boolean
   /** 本地 IPC 地址（Windows 命名管道 / POSIX socket），本机客户端直接连它，避免复制命名规则。 */
   endpoint: string
+  /** 要求替换但旧版 daemon 仍有进行中的任务/终端，暂时沿用旧版；只在为 true 时出现。 */
+  stale?: true
 }
 
 interface Probe {
@@ -47,10 +49,10 @@ export async function ensure(options: EnsureOptions = {}): Promise<EnsureResult>
   let probe = await probeDaemon(paths)
   if (probe) {
     if (options.replace && probe.serverVersion !== VERSION) {
-      if (!(await requestIdleShutdown(probe.client))) return finish(probe, paths, false)
+      if (!(await requestIdleShutdown(probe.client))) return finish(probe, paths, false, undefined, true)
       probe.client.close()
       probe = await waitForExit(paths)
-      if (probe) return finish(probe, paths, false)
+      if (probe) return finish(probe, paths, false, undefined, probe.serverVersion !== VERSION)
       // Windows 命名管道实例释放会略晚于进程退出。
       await sleep(RETRY_INTERVAL_MS)
     } else {
@@ -77,6 +79,7 @@ function finish(
   paths: ServerPaths,
   started: boolean,
   token = readToken(paths),
+  stale = false,
 ): EnsureResult {
   const result: EnsureResult = {
     token: token ?? '',
@@ -84,6 +87,7 @@ function finish(
     pid: probe.client.pid,
     started,
     endpoint: paths.endpoint,
+    ...(stale ? { stale: true as const } : {}),
   }
   probe.client.close()
   return result

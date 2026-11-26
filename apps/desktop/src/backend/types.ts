@@ -13,6 +13,8 @@ export type TargetCredentials = {
 }
 
 export interface TargetLink {
+  /** 连接可用但需要提醒用户的情况（如旧版 server 未能替换），就绪时随状态展示。 */
+  notice?: string
   request(method: string, params?: unknown): Promise<unknown>
   codexSend(msg: unknown, agent?: AgentKind): void
   close(): void

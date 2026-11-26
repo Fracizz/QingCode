@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import net from 'node:net'
-import { parseEnsureResult, redactToken, type EnsureResult } from './remoteCommands'
+import { STALE_SERVER_NOTICE, parseEnsureResult, redactToken, type EnsureResult } from './remoteCommands'
 import { ServerClient, toFramedStream } from './serverClient'
 import type { LocalLinkContext, TargetLink } from './types'
 
@@ -14,7 +14,8 @@ export function runLocalEnsure(
   timeoutMs = DEFAULT_ENSURE_TIMEOUT_MS
 ): Promise<EnsureResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(electronPath, [serverScript, 'ensure'], {
+    // --replace：安装新版后若旧版 daemon 仍在（且空闲），换成新版，否则会一直跑旧代码。
+    const child = spawn(electronPath, [serverScript, 'ensure', '--replace'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -105,6 +106,7 @@ export async function connectLocalTarget(context: LocalLinkContext): Promise<Tar
       },
     })
     return {
+      ...(ensure.stale ? { notice: STALE_SERVER_NOTICE } : {}),
       request: (method, params) => server.request(method, params),
       codexSend: (msg, agent) => server.codexSend(msg, agent),
       close: () => {

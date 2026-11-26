@@ -11,6 +11,9 @@ const desktopDir = path.resolve(here, '../../apps/desktop')
 const outDir = path.join(desktopDir, 'resources/server')
 const outFile = path.join(outDir, 'qn-server.cjs')
 
+// 构建 ID 取产物内容哈希：先用占位符构建，再按内容哈希回填，同一份源码产物仍然可复现。
+const BUILD_ID_PLACEHOLDER = 'QN_BUILD_ID_PLACEHOLDER'
+
 await mkdir(outDir, { recursive: true })
 await build({
   entryPoints: [path.join(here, 'src/main.ts')],
@@ -23,7 +26,7 @@ await build({
   format: 'cjs',
   // SDK 的 ESM 顶层用了 createRequire(import.meta.url)；CJS 产物没有 import.meta，
   // 用 define + banner 补一个等价的 file URL，否则 qn-server.cjs 一启动就抛错。
-  define: { 'import.meta.url': '__qn_import_meta_url' },
+  define: { 'import.meta.url': '__qn_import_meta_url', __QN_BUILD_ID__: JSON.stringify(BUILD_ID_PLACEHOLDER) },
   banner: {
     js: `/* qingcode-next server v${pkg.version} (protocol 1) */
 const __qn_import_meta_url = require('node:url').pathToFileURL(__filename).href;`,
@@ -33,6 +36,11 @@ const __qn_import_meta_url = require('node:url').pathToFileURL(__filename).href;
   logLevel: 'warning',
 })
 
+const draft = await readFile(outFile, 'utf8')
+if (!draft.includes(BUILD_ID_PLACEHOLDER)) throw new Error('qn-server.cjs 中缺少构建 ID 占位符')
+const buildId = createHash('sha256').update(draft).digest('hex').slice(0, 12)
+await writeFile(outFile, draft.replaceAll(BUILD_ID_PLACEHOLDER, buildId), 'utf8')
+
 const bytes = await readFile(outFile)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 await writeFile(
@@ -40,7 +48,7 @@ await writeFile(
   `${JSON.stringify({ version: pkg.version, sha256 }, null, 2)}\n`,
   'utf8',
 )
-console.log(`built ${outFile} (${bytes.byteLength} bytes, sha256 ${sha256.slice(0, 12)})`)
+console.log(`built ${outFile} v${pkg.version}+${buildId} (${bytes.byteLength} bytes, sha256 ${sha256.slice(0, 12)})`)
 
 if (process.platform === 'win32') {
   const destination = path.join(outDir, 'conpty')

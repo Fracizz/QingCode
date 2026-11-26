@@ -312,7 +312,10 @@ export abstract class JsonRpcAgentHost implements AgentHost {
         },
       })
     }
-    this.hub.broadcastEvt(`${this.eventName}.exited`, {
+    // 所有 agent 统一用 codex.exited（mvp 约定的事件名），靠 agent 字段区分；
+    // 客户端据此只处理对应 agent 的会话，不会因 codex 启动失败误伤正在用的 pi/Claude。
+    this.hub.broadcastEvt('codex.exited', {
+      agent: this.eventName,
       code: info.code ?? null,
       signal: info.signal ?? null,
       ...(info.message ? { message: redact(info.message) } : {}),
@@ -636,7 +639,7 @@ export class CodexHost extends JsonRpcAgentHost {
   ): void {
     this.child = null
     this.initDone = false
-    this.init?.reject(new Error('codex app-server 已退出'))
+    this.init?.reject(new Error(describeCodexExit(code, errorMessage)))
     this.init = null
     this.clearRequestState()
     this.emitExit({
@@ -645,6 +648,15 @@ export class CodexHost extends JsonRpcAgentHost {
       ...(errorMessage ? { message: redact(errorMessage) } : {}),
     })
   }
+}
+
+/** 启动失败要说清原因：笼统的"已退出"让用户无从排查（如目标机根本没装 codex）。 */
+export function describeCodexExit(code: number | null, errorMessage: string | null): string {
+  if (errorMessage && /\bENOENT\b/.test(errorMessage)) {
+    return '未找到 codex 命令：请先安装 Codex CLI（npm i -g @openai/codex），或在设置中指定 codex 路径'
+  }
+  if (errorMessage) return `codex 启动失败: ${redact(errorMessage)}`
+  return code === null ? 'codex app-server 已退出' : `codex app-server 已退出（退出码 ${String(code)}）`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

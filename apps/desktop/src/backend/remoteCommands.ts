@@ -25,7 +25,12 @@ export interface EnsureResult {
   pid: number
   started: boolean
   endpoint: string
+  /** 旧版 daemon 有进行中的任务，未能替换为新版。 */
+  stale?: true
 }
+
+/** 旧版 daemon 未能替换时给用户的提示（连接仍可用）。 */
+export const STALE_SERVER_NOTICE = '旧版 server 仍在运行（有进行中的任务或终端），空闲后重新连接即可升级'
 
 const PROBE_PREFIX = 'QN_'
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/
@@ -173,7 +178,7 @@ export function parseEnsureResult(stdout: string): EnsureResult {
       continue
     }
     if (!isRecord(parsed)) continue
-    const { token, version, pid, started, endpoint } = parsed
+    const { token, version, pid, started, endpoint, stale } = parsed
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) continue
     if (typeof endpoint !== 'string' || endpoint.length === 0) continue
     return {
@@ -182,6 +187,7 @@ export function parseEnsureResult(stdout: string): EnsureResult {
       pid: typeof pid === 'number' ? pid : 0,
       started: started === true,
       endpoint,
+      ...(stale === true ? { stale: true as const } : {}),
     }
   }
   throw new Error('无法解析远端 daemon 的启动结果')
