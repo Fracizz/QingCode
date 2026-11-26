@@ -54,7 +54,7 @@
 | A3 / T38 | 设置生效：配置目录 → `CODEX_HOME` / `CLAUDE_CONFIG_DIR` | 🔄 | 与 T36 合卡（`docs/tasks/T36-access-mode.md` 第二部分），Claude 子代理执行中，未完成 |
 | A4 | pi 模型/思考强度选择 | ✅ | 选择器本已通用；空列表每 15 秒可重取，pi 会话启动后自动出现 |
 | A5 | pi 模型列表不再临时起进程 | ✅ | 只借用运行中的会话进程并缓存（`packages/server/src/pi/host.ts`） |
-| T29 | 终端 server：协议、daemon 托管、python3 pty、接回 | 🔄 | Claude 子代理执行中，含 93 实测 |
+| T29 | 终端 server：协议、daemon 托管、python3 pty、接回 | ✅ | `packages/server/src/terminal/`；93 真实 daemon 端到端 34 项通过（10 MB 输出约 99 MB/s、断线接回、script 兜底）；Windows 返回 `pty_unavailable` 待 T31。遗留：`ensure --replace` 升级会结束终端（需改 `ensure.ts`） |
 | T30 | 桌面终端界面（xterm） | ⏸ | 依赖已装（`@xterm/xterm` + fit/search/web-links/unicode11）；等 T29 协议定稿后写卡 |
 | T31 | 本机 Windows ConPTY | ⏸ | 需安装预编译 node-pty 类包并验证打包 |
 | T32 | 手机端终端 | ❌ | 本波不做 |
@@ -64,7 +64,7 @@
 | T37 | 命令面板（Ctrl+Shift+P / F1） | ✅ | `features/palette/`，已接入 App.tsx；界面待人工确认 |
 | E / F 组 | 远端运维、自动更新、浅色主题等 | ❌ | 本波不做 |
 
-本次提交说明（2026-11-26）：按用户要求，未完成项（T26、T28、T29、T36/T38）不再等待，以当前工作区状态一并提交；这些卡的文件可能是半成品，后续继续完成后再提交，状态以上表为准。
+本次提交说明（2026-11-26）：按用户要求，未完成项（T26、T28、T36/T38）不再等待，以当前工作区状态一并提交；这些卡的文件可能是半成品，后续继续完成后再提交，状态以上表为准。
 
 执行资源：pi（OpenCode Go）周额度 2026-11-26 用尽，约 3.5 天后恢复；期间任务卡由 Claude 子代理执行，总管审查、接入、提交。
 

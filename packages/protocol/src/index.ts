@@ -57,6 +57,21 @@ export type {
   GitCommit,
   WorkspaceMethods,
   WorkspaceMethod,
+  TermErrorCode,
+  TermBackend,
+  TermBackendPreference,
+  TermOpenParams,
+  TermExitInfo,
+  TermInfo,
+  TermOpenResult,
+  TermOutputChunk,
+  TermSnapshot,
+  TermAttachParams,
+  TermAttachResult,
+  TermDataEvt,
+  TermExitEvt,
+  TermResizedEvt,
+  TermErrorEvt,
 } from './workspace'
 
 export {
