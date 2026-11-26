@@ -6,6 +6,38 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-11-26
+
+The stable release after v0.1.22, rolling up the 0.1.21-beta.52 beta line: phone-side connection pairing, a redesigned settings page and shortcut-bar manager, a centered Markdown update dialog, steadier text input, a remote hardware overview, more accurate Git multi-device sync, and a terminal-output IPC encoding benchmark.
+
+### Added
+
+- Copy connection details (including the saved password) on the desktop and paste them on the phone to import and pair the connection automatically.
+- The phone shortcut-bar manager lists a delete button for each custom key; presets use keycap styling with emphasized modifier prefixes, and the desktop shortcut bar now only holds user-defined keys.
+- The phone update prompt is a centered dialog that renders release notes as Markdown and drops the desktop download table.
+- The remote connection overview shows CPU core count, nominal frequency, total memory and live usage.
+- A terminal-output IPC encoding benchmark (front-end script and Rust test) evaluates whether base64 event payloads are a bottleneck.
+- `LineIcon` keeps icons and text aligned in single-line hints such as toasts.
+- An Electron migration plan documents a phased route that keeps the Rust host, with workload and component choices.
+
+### Changed
+
+- Phone settings are now an icon list with card borders and rounded corners in the light theme; multi-line inputs stack their buttons vertically only when widening is not enough, trailing spaces stay visible and wrap, and the project page shows the remote connection count.
+- Home sessions keep the sidebar project order instead of jumping to the top after use; the primary action group sits slightly higher when the page is short, and the resume-terminal and upgrade cards have their own spacing.
+- The connection page's settings button enters with the page and appears only on that page; home terminals are identified by icons.
+- Remote Server status is aggregated per connection, SCM errors no longer raise duplicate toasts, and old local server binaries without a manifest no longer hide the current version and automatic download.
+- Git multi-device sync: the branch column reflects a branch switch immediately, and a "cannot fast-forward" error is now one short reason instead of a file list and instructions.
+- Paused CLI prewarm pools retry automatically after five minutes, with the stuck step recorded in the timeout diagnostic.
+- The experiment that merged intermediate TUI frames after burst input/paste on the phone was reverted after causing regressions.
+
+### Fixed
+
+- Long-pressing on the phone no longer triggers both the native text selection and the terminal's own selection; multi-line input no longer switches layout per keystroke (which made IMEs swallow spaces), and trailing spaces stay visible and wrap.
+- Tapping a settings row no longer flashes the WebView highlight; custom-key dialogs put their button label first and no longer lag while typing; narrow screens no longer wrap key labels character by character.
+- Nested dialogs and collapsing the shortcut bar no longer flicker; the settings button no longer appears early on the connection page and covers the project page refresh button.
+- Project group outlines no longer cover the sticky header, folder icons align with the first line of project names, "result unknown" hints collapse after being opened, and probing dots breathe once slowly instead of pulsing.
+- Buttons on pages with actions align horizontally with the settings button; the desktop no longer shrinks terminal columns when following a phone grid.
+
 ## [0.1.22] - 2026-11-24
 
 The stable release after v0.1.20, rolling up the 0.1.21 beta line: automatic terminal reattachment after restart, prewarming and terminal profiles configured per host and connection, unified remote Server updates, and a long round of terminal-list, editor, and mobile polish.
