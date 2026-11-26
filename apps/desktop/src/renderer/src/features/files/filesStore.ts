@@ -11,7 +11,9 @@ import {
   errorMessage,
   failedTab,
   mergeRead,
+  pathWatchKey,
   upsertTab,
+  watchKey,
   watchPaths,
   type Tab,
   type TabStatus,
@@ -166,13 +168,26 @@ export function getFileWatchPaths(targetId: string): string[] {
   return watchPaths(useFiles.getState().tabs, targetId)
 }
 
+/** 打开/关闭文件标签时通知总管重新合并登记 fs.watch（本模块始终不直接调用 fs.watch）。 */
+export function subscribeFileWatch(listener: () => void): () => void {
+  let previous = watchKey(useFiles.getState().tabs)
+  return useFiles.subscribe((state) => {
+    const next = watchKey(state.tabs)
+    if (next === previous) return
+    previous = next
+    listener()
+  })
+}
+
 // 模块加载即订阅：聊天、Git 面板、文件树随时可以 openFile/openDiff，无需先挂载面板。
 subscribeOpen((req) => useFiles.getState().handleOpen(req))
 
 onServerEvt('fs.changed', (targetId: string, payload: unknown) => {
-  const changed = new Set(changedPaths(payload))
+  const changed = new Set(changedPaths(payload).map(pathWatchKey))
   if (changed.size === 0) return
   for (const tab of useFiles.getState().tabs) {
-    if (tab.kind === 'file' && tab.targetId === targetId && changed.has(tab.path)) startRead(tab.id, false)
+    if (tab.kind === 'file' && tab.targetId === targetId && changed.has(pathWatchKey(tab.path))) {
+      startRead(tab.id, false)
+    }
   }
 })

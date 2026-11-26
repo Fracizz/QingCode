@@ -6,6 +6,7 @@ import {
   classifyAgentOpenError,
   emptyAgentStatus,
   isAgentKind,
+  parseDefaultAgents,
   parseSessionKey,
   preferredAgent,
   sessionKey,
@@ -27,6 +28,24 @@ describe('agent 会话键与标签', () => {
     expect(isAgentKind('other')).toBe(false)
     expect(agentLabel('codex')).toBe('Codex')
     expect(agentPlaceholder('claude')).toBe('和 Claude 一起工作')
+  })
+})
+
+describe('连接的默认 Agent', () => {
+  it('默认优先于自动选择，确认不可用时才回退', () => {
+    const status = emptyAgentStatus()
+    expect(preferredAgent(undefined, 'claude')).toBe('claude')
+    status.codex = { state: 'ready' }
+    expect(preferredAgent(status, 'claude')).toBe('claude')
+    status.claude = { state: 'unavailable' }
+    expect(preferredAgent(status, 'claude')).toBe('codex')
+  })
+
+  it('只保留合法条目', () => {
+    expect(parseDefaultAgents('{"local":"claude","a":"other","b":1}')).toEqual({ local: 'claude' })
+    expect(parseDefaultAgents('[1]')).toEqual({})
+    expect(parseDefaultAgents('{')).toEqual({})
+    expect(parseDefaultAgents(null)).toEqual({})
   })
 })
 

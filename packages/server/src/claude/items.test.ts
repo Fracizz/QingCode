@@ -60,6 +60,61 @@ describe('SDK 流式事件 → v2 item', () => {
     expect((result.notifications[0]?.params.item as Json).id).toBe(itemId)
   })
 
+  it('流式块与完整 assistant 消息描述同一块时 started/completed 各只发一次（两种先后顺序）', () => {
+    const run = (assistantFirst: boolean): string[] => {
+      let state = emptyMapState()
+      const all: string[] = []
+      const feed = (msg: Json): void => {
+        const r = mapSdkMessage(msg, ctx, state)
+        state = r.state
+        all.push(...methods(r.notifications))
+      }
+      const assistant = { type: 'assistant', message: { id: 'msg-1', content: [{ type: 'text', text: '你好' }] }, session_id: 'thread-1' }
+      feed(streamEvent('message_start', { message: { id: 'msg-1' } }))
+      feed(streamEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }))
+      feed(streamEvent('content_block_delta', { index: 0, delta: { type: 'text_delta', text: '你好' } }))
+      if (assistantFirst) feed(assistant)
+      feed(streamEvent('content_block_stop', { index: 0 }))
+      if (!assistantFirst) feed(assistant)
+      return all
+    }
+    expect(run(true)).toEqual(['item/started', 'item/agentMessage/delta', 'item/completed'])
+    expect(run(false)).toEqual(['item/started', 'item/agentMessage/delta', 'item/completed'])
+  })
+
+  it('SDK 把思考与文本拆成两条 assistant 消息（下标都为 0）时，按类型对应各自的流式块', () => {
+    let state = emptyMapState()
+    const notes: Array<{ method: string; id: unknown; type: unknown }> = []
+    const feed = (msg: Json): void => {
+      const r = mapSdkMessage(msg, ctx, state)
+      state = r.state
+      for (const n of r.notifications) {
+        const item = n.params.item as Json | undefined
+        notes.push({ method: n.method, id: n.params.itemId, type: item?.type })
+      }
+    }
+    const assistant = (block: Json): Json => ({ type: 'assistant', message: { id: 'msg-2', content: [block] }, session_id: 'thread-1' })
+    feed(streamEvent('message_start', { message: { id: 'msg-2' } }))
+    feed(streamEvent('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } }))
+    feed(streamEvent('content_block_delta', { index: 0, delta: { type: 'thinking_delta', thinking: '想' } }))
+    feed(assistant({ type: 'thinking', thinking: '想' }))
+    feed(streamEvent('content_block_stop', { index: 0 }))
+    feed(streamEvent('content_block_start', { index: 1, content_block: { type: 'text', text: '' } }))
+    feed(streamEvent('content_block_delta', { index: 1, delta: { type: 'text_delta', text: '答' } }))
+    feed(assistant({ type: 'text', text: '答' }))
+    feed(streamEvent('content_block_stop', { index: 1 }))
+    const lifecycle = notes.filter((n) => n.method === 'item/started' || n.method === 'item/completed')
+    expect(lifecycle.map((n) => `${n.method}:${String(n.type)}`)).toEqual([
+      'item/started:reasoning',
+      'item/completed:reasoning',
+      'item/started:agentMessage',
+      'item/completed:agentMessage',
+    ])
+    expect(lifecycle[0]?.id).toBe(lifecycle[1]?.id)
+    expect(lifecycle[2]?.id).toBe(lifecycle[3]?.id)
+    expect(lifecycle[0]?.id).not.toBe(lifecycle[2]?.id)
+  })
+
   it('thinking 增量映射为 reasoning/summaryTextDelta', () => {
     const state = emptyMapState()
     const mapped = mapSdkMessage(

@@ -232,3 +232,25 @@ export function watchPaths(tabs: Tab[], targetId: string): string[] {
   }
   return [...paths]
 }
+
+/** 所有目标的文件标签集合指纹：只有增删标签才需要重新登记 fs.watch。 */
+export function watchKey(tabs: Tab[]): string {
+  const keys = new Set<string>()
+  for (const tab of tabs) {
+    if (tab.kind === 'file') keys.add(`${tab.targetId}\u0000${tab.path}`)
+  }
+  return [...keys].sort().join('\n')
+}
+
+/** Windows 路径大小写/分隔符不敏感，POSIX 严格区分；仅用于 fs.changed 匹配。 */
+export function pathWatchKey(path: string): string {
+  const windows = /^[A-Za-z]:[\\/]/.test(path) || path.includes('\\')
+  return windows ? path.replace(/\//g, '\\').toLowerCase() : path
+}
+
+/** 续读后改口显示已加载量，避免大文件提示与实际内容不符。 */
+export function loadedLabel(loadedBytes: number): string {
+  const limit = 2 * 1024 * 1024
+  if (!Number.isFinite(loadedBytes) || loadedBytes <= limit) return '仅显示前 2 MiB'
+  return `已加载 ${(loadedBytes / (1024 * 1024)).toFixed(1)} MiB`
+}

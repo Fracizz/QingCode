@@ -3,10 +3,18 @@ import { CliError, parseArgs } from './args'
 import { runConnect } from './connect'
 import { runDaemon } from './daemon'
 import { ensure } from './ensure'
+import { runDirect, runServe } from './serve'
 import { VERSION } from './version'
 
-const USAGE =
-  '用法: qn-server.cjs version | ensure [--state-dir D] [--replace] | daemon [--state-dir D] | connect --stdio [--state-dir D]'
+const USAGE = [
+  '用法: qn-server.cjs version',
+  '  | ensure [--state-dir D] [--replace]',
+  '  | daemon [--state-dir D]',
+  '  | connect --stdio [--state-dir D]',
+  '  | direct enable --listen [host:]port [--allow-public] | direct disable',
+  '  | direct grant [--name N] [--host H]... | direct revoke --id ID | direct status',
+  '  | serve --listen [host:]port [--allow-public] [--name N] [--host H]...（= enable + grant）',
+].join('\n')
 
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`)
@@ -26,6 +34,12 @@ async function main(): Promise<void> {
       return
     case 'connect':
       await runConnect({ stateDir: args.stateDir })
+      return
+    case 'direct':
+      print(await runDirect(args))
+      return
+    case 'serve':
+      print(await runServe(args))
       return
   }
 }

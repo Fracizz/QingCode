@@ -8,6 +8,7 @@ import {
   BINARY_SAMPLE_BYTES,
   isProtectedPath,
   looksBinary,
+  mtimeConflicts,
   nodeErrorCode,
   parseDeleteParams,
   parseReadParams,
@@ -88,10 +89,7 @@ export async function fsWrite(p: Record<string, unknown>): Promise<{ mtimeMs: nu
     let mode: number | undefined
     try {
       const stat = await fsp.stat(params.path)
-      if (
-        params.expectedMtimeMs !== undefined &&
-        Math.abs(stat.mtimeMs - params.expectedMtimeMs) > 1
-      ) {
+      if (mtimeConflicts(stat.mtimeMs, params.expectedMtimeMs)) {
         throw new WorkspaceError('conflict', '文件已被外部修改')
       }
       // Windows 的 mode 只有只读位，保留权限没有意义。

@@ -97,6 +97,21 @@ describe('refresh', () => {
     expect(calls().filter(([, method]) => method === 'git.log')).toHaveLength(1)
   })
 
+  it('git.log 失败不挡住 status / branches，成功后清掉历史错误', async () => {
+    hook = (method) =>
+      method === 'git.log' ? Promise.reject({ code: 'params', message: 'git log 参数无效' }) : null
+    await useGit.getState().refresh('local', '/log-fail')
+    const key = repoKey('local', '/log-fail')
+    expect(useGit.getState().repos[key]?.status).toEqual(status())
+    expect(useGit.getState().repos[key]?.error).toBeNull()
+    expect(useGit.getState().repos[key]?.historyError).toContain('git log 参数无效')
+
+    hook = null
+    await useGit.getState().refresh('local', '/log-fail')
+    expect(useGit.getState().repos[key]?.historyError).toBeNull()
+    expect(useGit.getState().repos[key]?.commits).toEqual([commit])
+  })
+
   it('not_repo 错误给出空态码并清掉旧状态', async () => {
     await useGit.getState().refresh('local', '/repo')
     hook = (method) =>

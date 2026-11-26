@@ -1,6 +1,6 @@
-import { Bot, Sparkles } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentLabel } from '../lib/agents'
+import { AGENT_MARKS } from './agentMarks'
 
 export function AgentIcon({
   agent,
@@ -13,12 +13,13 @@ export function AgentIcon({
   label?: boolean
   className?: string
 }) {
-  const Icon = agent === 'claude' ? Sparkles : Bot
-  const color = agent === 'claude' ? 'text-amber-300' : 'text-qn-accent'
+  const mark = AGENT_MARKS[agent]
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1 ${color} ${className}`} title={agentLabel(agent)}>
-      <Icon size={size} />
-      {label && <span className="text-[11px]">{agentLabel(agent)}</span>}
+    <span className={`inline-flex shrink-0 items-center gap-1 ${className}`} title={agentLabel(agent)}>
+      <svg width={size} height={size} viewBox={mark.viewBox} fill={mark.fill} aria-hidden="true">
+        <path d={mark.path} />
+      </svg>
+      {label && <span className="text-[11px] text-qn-muted">{agentLabel(agent)}</span>}
     </span>
   )
 }

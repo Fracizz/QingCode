@@ -295,7 +295,8 @@ export function findPathsInText(text: string): PathMatch[] {
     const path = decode(location.path)
     if (!path || /^[A-Za-z]$/.test(path)) continue
     if (!/[\\/]/.test(path)) continue
-    if (/:/.test(path) && !/^[A-Za-z]:/.test(path)) continue
+    // 盘符（C:\ 或 /C:/）里的冒号合法，其他冒号多半是 URL / 时间戳。
+    if (/:/.test(path) && !/^\/?[A-Za-z]:[\\/]/.test(path)) continue
     const segments = path.split(SEPARATORS).filter(Boolean)
     const last = segments[segments.length - 1] ?? ''
     const special = SPECIAL_PREFIX.test(path)

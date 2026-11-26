@@ -9,9 +9,12 @@ import {
   errorCodeOf,
   errorMessage,
   failedTab,
+  loadedLabel,
   mergeRead,
+  pathWatchKey,
   tabKeyOf,
   upsertTab,
+  watchKey,
   watchPaths,
   type Tab,
 } from './filesModel'
@@ -128,6 +131,13 @@ describe('读取结果合并与错误文案', () => {
     const failed = failedTab(tab, { code: 'not_found' }, '读取文件失败')
     expect(failed).toMatchObject({ status: 'error', error: '文件不存在', errorCode: 'not_found', busy: false })
   })
+
+  it('大文件提示在续读后显示已加载量', () => {
+    expect(loadedLabel(0)).toBe('仅显示前 2 MiB')
+    expect(loadedLabel(2 * 1024 * 1024)).toBe('仅显示前 2 MiB')
+    expect(loadedLabel(3.5 * 1024 * 1024)).toBe('已加载 3.5 MiB')
+    expect(loadedLabel(Number.NaN)).toBe('仅显示前 2 MiB')
+  })
 })
 
 describe('监听路径', () => {
@@ -148,5 +158,21 @@ describe('监听路径', () => {
     expect(watchPaths(tabs, 'local')).toEqual(['/repo/a.ts'])
     expect(watchPaths(tabs, 'ssh-1')).toEqual(['/repo/b.ts'])
     expect(watchPaths(tabs, 'none')).toEqual([])
+  })
+
+  it('路径匹配忽略 Windows 大小写与分隔符差异，POSIX 仍区分大小写', () => {
+    expect(pathWatchKey('C:\\Work\\A.ts')).toBe(pathWatchKey('c:/work/a.ts'))
+    expect(pathWatchKey('/repo/A.ts')).not.toBe(pathWatchKey('/repo/a.ts'))
+    expect(pathWatchKey('/repo/a.ts')).toBe('/repo/a.ts')
+  })
+
+  it('watchKey 只在文件标签集合增删时变化', () => {
+    const file = createTab(fileReq('/repo/a.ts', 'local'), 'f1')
+    const baseline = watchKey([file])
+    expect(watchKey([file, { ...file, status: 'ready', content: 'x' }])).toBe(baseline)
+    expect(watchKey([file, createTab(diffReq(), 'd1')])).toBe(baseline)
+    expect(watchKey([file, createTab(fileReq('/repo/b.ts', 'local'), 'f2')])).not.toBe(baseline)
+    expect(watchKey([{ ...file, targetId: 'ssh-1' }])).not.toBe(baseline)
+    expect(watchKey([])).toBe('')
   })
 })

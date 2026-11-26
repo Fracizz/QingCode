@@ -12,8 +12,9 @@ import {
   Trash2,
   Unplug,
   Wifi,
+  Zap,
 } from 'lucide-react'
-import type { SshTarget, Target, TargetState } from '../../../../shared/backendApi'
+import type { DirectTarget, SshTarget, Target, TargetState } from '../../../../shared/backendApi'
 import { isTargetActive, matchTarget, targetDotClass, targetStateLabel } from '../../lib/targetStatus'
 import { useTargets } from '../../store/targets'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
@@ -22,7 +23,7 @@ import { IconButton } from '../ui'
 
 export type TargetActions = {
   onAdd: () => void
-  onEdit: (target: SshTarget) => void
+  onEdit: (target: SshTarget | DirectTarget) => void
   onSelect: (id: string) => void
   onConnect: (id: string) => void
   onDisconnect: (id: string) => void
@@ -30,7 +31,7 @@ export type TargetActions = {
 }
 
 function TargetGlyph({ target, state, size = 28 }: { target: Target; state: TargetState; size?: number }) {
-  const Icon = target.kind === 'ssh' ? Server : Monitor
+  const Icon = target.kind === 'ssh' ? Server : target.kind === 'direct' ? Zap : Monitor
   return (
     <span
       className="relative inline-flex shrink-0 items-center justify-center rounded-lg border border-qn-border bg-qn-panel text-qn-muted"
@@ -45,7 +46,11 @@ function TargetGlyph({ target, state, size = 28 }: { target: Target; state: Targ
 }
 
 function subtitle(target: Target): string {
-  return target.kind === 'ssh' ? `${target.username}@${target.host}${target.port === 22 ? '' : `:${target.port}`}` : '这台电脑'
+  if (target.kind === 'direct') return `${target.host}:${target.port} · 直连`
+  if (target.kind === 'ssh') {
+    return `${target.username}@${target.host}${target.port === 22 ? '' : `:${target.port}`}${target.direct ? ' · 直连加速' : ''}`
+  }
+  return '这台电脑'
 }
 
 /**
@@ -156,7 +161,7 @@ export function TargetSwitcher(actions: TargetActions) {
                   </button>
                   <div className="hidden shrink-0 items-center group-hover:flex group-has-[[data-state=open]]:flex">
                     {isTargetActive(state) ? (
-                      target.kind === 'ssh' && (
+                      target.kind !== 'local' && (
                         <IconButton label="断开" className="h-7 w-7" onClick={() => run(() => actions.onDisconnect(target.id))}>
                           <Unplug size={14} />
                         </IconButton>
@@ -166,7 +171,7 @@ export function TargetSwitcher(actions: TargetActions) {
                         <Wifi size={14} />
                       </IconButton>
                     )}
-                    {target.kind === 'ssh' && (
+                    {target.kind !== 'local' && (
                       <Menu>
                         <MenuTrigger asChild>
                           <IconButton label="更多操作" className="h-7 w-7">

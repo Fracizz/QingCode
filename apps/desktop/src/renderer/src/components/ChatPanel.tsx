@@ -153,7 +153,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       return
     }
     if (files.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (files.length - room) + ' 个')
-    const isLocal = targets.find((item) => item.id === targetId)?.kind !== 'ssh'
+    // 只有本机目标能直接引用本机路径；SSH 与直连目标都要先上传。
+    const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
     for (const file of files.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
@@ -219,7 +220,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const target = targets.find((item) => item.id === currentTargetId)
   const project = projects.find((item) => item.id === selectedProjectId)
-  const TargetIcon = target?.kind === 'ssh' ? Server : Monitor
+  const TargetIcon = target && target.kind !== 'local' ? Server : Monitor
   const isDraft = !currentThreadId
 
   const skillList = useSkills((s) =>
@@ -399,7 +400,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           <ImagePlus size={28} className="text-qn-accent" />
           松开以添加图片或文件
           <span className="text-[12px] text-qn-muted">
-            图片随消息发送；其他文件{target?.kind === 'ssh' ? '会先上传到目标机' : '按本机路径引用'}
+            图片随消息发送；其他文件{target && target.kind !== 'local' ? '会先上传到目标机' : '按本机路径引用'}
           </span>
         </div>
       )}

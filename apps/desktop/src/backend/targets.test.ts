@@ -225,3 +225,123 @@ describe('TargetManager', () => {
     }
   })
 })
+
+describe('TargetManager.test', () => {
+  const target = { id: 'ssh-1', kind: 'ssh' as const, name: 'w', host: 'h', port: 22, username: 'u', auth: { kind: 'password' as const } }
+
+  it('已保存的凭据打底，表单里新填的覆盖它，且不建立会话', async () => {
+    const seen: unknown[] = []
+    const manager = new TargetManager({
+      userData: '',
+      resourcesPath: '',
+      electronPath: '',
+      appVersion: '1',
+      emit: () => {},
+      loadSecret: async () => ({ password: 'saved' }),
+      testSsh: async (context) => {
+        seen.push(context.credentials)
+        return { os: 'Windows', nodeVersion: 'v24.0.0' }
+      },
+    })
+    await manager.test(target, {})
+    await manager.test(target, { password: 'typed' })
+    // 尚未保存的新连接没有 id，不能读到别的目标的凭据。
+    await manager.test({ ...target, id: '' }, {})
+    expect(seen).toEqual([{ password: 'saved' }, { password: 'typed' }, {}])
+    expect(manager.getState('ssh-1')).toBe('idle')
+    manager.shutdown()
+  })
+})
+
+describe('TargetManager 直连加速', () => {
+  const direct = { host: '10.0.0.5', port: 47390, fingerprint: 'f'.repeat(64), grantId: 'g1' }
+  const target = {
+    id: 'ssh-d',
+    kind: 'ssh' as const,
+    name: 'w',
+    host: 'h',
+    port: 22,
+    username: 'u',
+    auth: { kind: 'password' as const },
+    direct,
+  }
+
+  function make(directOk: boolean, saved: Record<string, string>) {
+    const used: string[] = []
+    const directSeen: unknown[] = []
+    const manager = new TargetManager({
+      userData: '',
+      resourcesPath: '',
+      electronPath: '',
+      appVersion: '1',
+      emit: () => {},
+      loadSecret: async () => saved,
+      createDirect: async (ctx) => {
+        directSeen.push({ host: ctx.target.host, port: ctx.target.port, token: ctx.token, timeout: ctx.connectTimeoutMs })
+        if (!directOk) throw new Error('ECONNREFUSED')
+        used.push('direct')
+        return new FakeLink()
+      },
+      createSsh: async () => {
+        used.push('ssh')
+        return new FakeLink()
+      },
+      gate: { verify: async () => true, respond: () => true, close: () => {} },
+    })
+    return { manager, used, directSeen }
+  }
+
+  it('有直连配置和 token 时先走直连', async () => {
+    const { manager, used, directSeen } = make(true, { directToken: 't'.repeat(64) })
+    await manager.connect(target, {})
+    expect(used).toEqual(['direct'])
+    expect(directSeen).toEqual([{ host: '10.0.0.5', port: 47390, token: 't'.repeat(64), timeout: 5000 }])
+    expect(manager.getState('ssh-d')).toBe('ready')
+    manager.shutdown()
+  })
+
+  it('直连失败回退 SSH', async () => {
+    const { manager, used } = make(false, { directToken: 't'.repeat(64) })
+    await manager.connect(target, {})
+    expect(used).toEqual(['ssh'])
+    expect(manager.getState('ssh-d')).toBe('ready')
+    manager.shutdown()
+  })
+
+  it('没有 token 时不试直连', async () => {
+    const { manager, used, directSeen } = make(true, {})
+    await manager.connect(target, {})
+    expect(directSeen).toEqual([])
+    expect(used).toEqual(['ssh'])
+    manager.shutdown()
+  })
+
+  it('remoteServer 合并已保存凭据，setDirectToken 只改 directToken', async () => {
+    const saved: Record<string, string> = { password: 'p' }
+    const runs: unknown[] = []
+    const manager = new TargetManager({
+      userData: '',
+      resourcesPath: '/res',
+      electronPath: '',
+      appVersion: '1',
+      emit: () => {},
+      loadSecret: async () => ({ ...saved }),
+      saveSecret: async (_id, creds) => {
+        for (const key of Object.keys(saved)) delete saved[key]
+        Object.assign(saved, creds)
+      },
+      runRemote: async (ctx, commands) => {
+        runs.push({ creds: ctx.credentials, res: ctx.resourcesPath, commands })
+        return [{ ok: true }]
+      },
+      gate: { verify: async () => true, respond: () => true, close: () => {} },
+    })
+    expect(await manager.remoteServer(target, { passphrase: 'x' }, [['direct', 'status']])).toEqual([{ ok: true }])
+    expect(runs).toEqual([{ creds: { password: 'p', passphrase: 'x' }, res: '/res', commands: [['direct', 'status']] }])
+    await manager.setDirectToken('ssh-d', 'tok')
+    expect(saved).toEqual({ password: 'p', directToken: 'tok' })
+    await manager.setDirectToken('ssh-d', undefined)
+    expect(saved).toEqual({ password: 'p' })
+    manager.shutdown()
+  })
+})

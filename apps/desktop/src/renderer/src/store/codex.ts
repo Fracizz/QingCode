@@ -40,7 +40,9 @@ import {
   type AgentAvailability,
 } from '../lib/agents'
 import { quoteBlock } from '../lib/annotations'
+import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
+import { useTargets } from './targets'
 
 type TargetSession = {
   key: string
@@ -146,6 +148,9 @@ export const useCodex = create<CodexState>((set, get) => {
   const statusFor = (targetId: string, agent: AgentKind): AgentAvailability | undefined =>
     get().agents[targetId]?.[agent]
 
+  const defaultFor = (targetId: string): AgentKind =>
+    preferredAgent(get().agents[targetId], useAgentPrefs.getState().byTarget[targetId])
+
   const sessionFor = (targetId: string, agent: AgentKind): TargetSession => {
     const key = sessionKey(targetId, agent)
     const existing = get().sessions[key]
@@ -205,10 +210,14 @@ export const useCodex = create<CodexState>((set, get) => {
 
     const task = (async () => {
       try {
-        const opened = await call('server.req', {
-          targetId,
-          method: 'codex.open',
-          params: { agent },
+        const open = () => call('server.req', { targetId, method: 'codex.open', params: { agent } })
+        const opened = await open().catch(async (err: unknown) => {
+          // 本机目标不需要凭据：链路丢了直接补连一次，不让用户停在"目标 local 未连接"。
+          if (targetId !== 'local' || (err as { code?: unknown })?.code !== 'not_connected') throw err
+          const state = useTargets.getState().states[targetId]?.state
+          if (state === 'connecting' || state === 'deploying') throw err
+          await useTargets.getState().connect(targetId)
+          return open()
         })
         const version =
           typeof (opened as { agentVersion?: unknown })?.agentVersion === 'string'
@@ -293,7 +302,7 @@ export const useCodex = create<CodexState>((set, get) => {
       }
       // 只有 Claude 可用时，输入框与新建会话应默认落在 Claude 上。
       if (get().currentTargetId === targetId && !get().currentThreadId) {
-        set({ currentAgent: preferredAgent(get().agents[targetId]) })
+        set({ currentAgent: defaultFor(targetId) })
       }
     })()
     probing.set(targetId, task)
@@ -435,7 +444,14 @@ export const useCodex = create<CodexState>((set, get) => {
           }
         }),
         on('target.state', (payload) => {
-          if (payload.state !== 'ready') return
+          if (payload.state !== 'ready') {
+            // 链路断过之后 agent 进程可能已经换了，下次操作必须重新 codex.open。
+            for (const session of Object.values(get().sessions)) {
+              if (session.targetId !== payload.id || !session.opened) continue
+              patchSession(session.key, (value) => ({ ...value, opened: false }))
+            }
+            return
+          }
           if (get().currentTargetId !== payload.id) return
           // 连接就绪后检测两个 agent，用于新建会话的可选项与占位符。
           void get().probeAgents(payload.id)
@@ -453,7 +469,7 @@ export const useCodex = create<CodexState>((set, get) => {
         currentTargetId: targetId,
         currentCwd: cwd,
         currentThreadId: null,
-        currentAgent: targetId ? preferredAgent(get().agents[targetId]) : DEFAULT_AGENT,
+        currentAgent: targetId ? defaultFor(targetId) : DEFAULT_AGENT,
         threads: [],
         threadsError: null,
         error: null,
@@ -521,9 +537,12 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     startDraft: (agent) => {
+      const targetId = get().currentTargetId
+      // 设过默认的连接，新会话回到默认；没设过则沿用当前 Agent。
+      const chosen = targetId && useAgentPrefs.getState().byTarget[targetId] ? defaultFor(targetId) : null
       set((state) => ({
         currentThreadId: null,
-        currentAgent: agent ?? state.currentAgent,
+        currentAgent: agent ?? chosen ?? state.currentAgent,
         error: null,
       }))
     },

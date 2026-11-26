@@ -33,6 +33,8 @@ const restore = () => {
       // 已经脱离 TTY。
     }
   }
+  // raw 模式下 resume() 会让 stdin 一直持有事件循环，退出前必须停掉。
+  process.stdin.pause()
 }
 
 let bytesIn = 0
@@ -55,8 +57,11 @@ if (stdinIsTty && typeof process.stdout.getWindowSize === 'function') {
   // tty.WriteStream#getWindowSize() 返回 [columns, rows]。
   const applyTerminalSize = () => {
     const size = process.stdout.getWindowSize() ?? [80, 24]
-    lastSize = { cols: size[0], rows: size[1] }
-    pty.resize(lastSize.cols, lastSize.rows)
+    // 某些 ssh -tt 场景报 0x0，此时保持启动尺寸，别把 PTY 缩成 1x1。
+    if (size[0] > 0 && size[1] > 0) {
+      lastSize = { cols: size[0], rows: size[1] }
+      pty.resize(lastSize.cols, lastSize.rows)
+    }
     return lastSize
   }
   applyTerminalSize()

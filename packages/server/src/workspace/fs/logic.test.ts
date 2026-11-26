@@ -12,12 +12,14 @@ import {
   looksBinary,
   mapNodeError,
   matchGlob,
+  mtimeConflicts,
   parseReadParams,
   parseSearchParams,
   parseWatchPaths,
   parseWriteParams,
   truncateText,
   utf8SafeLength,
+  watchChangedPath,
 } from './logic'
 
 const codeOf = (fn: () => unknown): string | undefined => {
@@ -158,6 +160,29 @@ describe('二进制判断与 UTF-8 边界', () => {
     expect(truncateText('a'.repeat(301))).toHaveLength(300)
     expect(indexOfText('Hello World', 'hello', false)).toBe(0)
     expect(indexOfText('Hello World', 'hello', true)).toBe(-1)
+  })
+})
+
+describe('冲突阈值与 watch 路径计算', () => {
+  it('expectedMtimeMs 只有差 >1ms 才算冲突', () => {
+    expect(mtimeConflicts(1000, undefined)).toBe(false)
+    expect(mtimeConflicts(1000, 1000)).toBe(false)
+    expect(mtimeConflicts(1000, 1000.8)).toBe(false)
+    expect(mtimeConflicts(1000, 1001)).toBe(false)
+    expect(mtimeConflicts(1000, 1001.5)).toBe(true)
+    expect(mtimeConflicts(1000, 900)).toBe(true)
+  })
+
+  it('watch 变化路径优先用文件名，拿不到时退回被监听路径', () => {
+    const dir = path.join(path.parse(process.cwd()).root, 'work')
+    expect(watchChangedPath(dir, 'a.ts', true)).toBe(path.join(dir, 'a.ts'))
+    expect(watchChangedPath(dir, Buffer.from('b.ts'), true)).toBe(path.join(dir, 'b.ts'))
+    expect(watchChangedPath(dir, null, true)).toBe(dir)
+    expect(watchChangedPath(dir, undefined, true)).toBe(dir)
+    expect(watchChangedPath(dir, '', true)).toBe(dir)
+    const file = path.join(dir, 'a.ts')
+    expect(watchChangedPath(file, 'a.ts', false)).toBe(file)
+    expect(watchChangedPath(file, null, false)).toBe(file)
   })
 })
 

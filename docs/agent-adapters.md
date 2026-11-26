@@ -32,6 +32,7 @@
 |---|---|---|
 | Codex | `codex app-server`（JSON-RPC over **stdio**） | 只用 v2 稳定面；schema 来自 `codex app-server generate-ts / generate-json-schema`，固定在 `vendor/codex-protocol`，升级 codex 版本时重新生成 |
 | Claude | `@anthropic-ai/claude-agent-sdk`（固定版本），`pathToClaudeCodeExecutable` 指向目标机**用户自己安装的未修改** `claude` | 不用 SDK 自带二进制（已在构建中排除）；备选为官方 `claude -p --output-format stream-json`，不得逆向其它私有协议 |
+| pi | `pi --mode rpc`（官方 RPC 模式，JSONL over stdio；文档见 pi 包内 `docs/rpc.md`、`docs/rpc-commands.md`） | 驱动用户已安装的 pi；会话列表可只读解析其官方公开的会话格式（`docs/session-format.md`），不碰认证文件；pi 无审批机制，界面须如实标注，不得伪造审批 |
 | 其他 | ACP（Agent Client Protocol）标准实现 | 严格按规范：不做 agent-id 特判、不加厂商私有扩展 |
 
 禁止：WebSocket 等官方标注 experimental/unsupported 的传输（Codex WebSocket 传输明确 "experimental and unsupported"）；未开启前提下调用 experimental 方法。

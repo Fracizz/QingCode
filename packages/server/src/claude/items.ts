@@ -39,6 +39,11 @@ export interface MapState {
   toolItems: Record<string, V2Item>
   items: Record<string, V2Item>
   order: string[]
+  /**
+   * 文本/思考块已发出的通知阶段。流式 content_block_* 与完整 assistant 消息会描述同一个块，
+   * 且二者先后不定（SDK 常先给完整消息再给 content_block_stop），据此保证 started/completed 各一次。
+   */
+  blockPhase?: Record<string, 'started' | 'done'>
 }
 
 export interface MapResult {
@@ -77,6 +82,7 @@ function cloneState(state: MapState): MapState {
     toolItems: { ...state.toolItems },
     items: { ...state.items },
     order: [...state.order],
+    ...(state.blockPhase ? { blockPhase: { ...state.blockPhase } } : {}),
   }
 }
 
@@ -231,6 +237,8 @@ function mapStreamEvent(message: Json, ctx: MapContext, state: MapState, out: V2
       const kind = scalarText(block?.type)
       if (kind !== 'text' && kind !== 'thinking') return
       const id = ensureBlockItem(ctx, blockKey(state.messageId, index), kind, state)
+      if (state.blockPhase?.[id]) return
+      state.blockPhase = { ...(state.blockPhase ?? {}), [id]: 'started' }
       // 增量通知会自行创建 item，但显式 started 让界面在首个 delta 前就能显示气泡。
       out.push(itemStarted(ctx, state.items[id] as V2Item))
       return
@@ -257,17 +265,63 @@ function mapStreamEvent(message: Json, ctx: MapContext, state: MapState, out: V2
     case 'content_block_stop': {
       const index = finite(event.index) ?? 0
       const id = state.blockIds[blockKey(state.messageId, index)]
-      if (!id) return
+      if (!id || state.blockPhase?.[id] === 'done') return
       const text = state.blockText[id] ?? ''
       const item =
         state.blockKinds[id] === 'thinking' ? reasoningItem(id, text) : agentMessageItem(id, text)
       recordItem(state, item)
+      state.blockPhase = { ...(state.blockPhase ?? {}), [id]: 'done' }
       out.push(itemCompleted(ctx, item))
       return
     }
     default:
       return
   }
+}
+
+/** 完整消息里的块：未通知过 → started+completed；流式已 started → 只补 completed；已 done 且文本一致 → 不再通知。 */
+function emitFinalBlock(
+  ctx: MapContext,
+  state: MapState,
+  id: string,
+  item: V2Item,
+  text: string,
+  out: V2Notification[],
+): void {
+  const phase = state.blockPhase?.[id]
+  const unchanged = phase === 'done' && state.blockText[id] === text
+  state.blockText[id] = text
+  recordItem(state, item)
+  state.blockPhase = { ...(state.blockPhase ?? {}), [id]: 'done' }
+  if (unchanged) return
+  if (phase === undefined) out.push(itemStarted(ctx, item))
+  out.push(itemCompleted(ctx, item))
+}
+
+/**
+ * 完整 assistant 消息里的块对应哪个流式块。SDK 会把一条消息的每个内容块拆成单独的 assistant 消息，
+ * 下标都从 0 开始，与流式 content_block 的 index 不一致；按下标对不上类型时，按类型 + 文本回找。
+ */
+function assistantBlockId(
+  ctx: MapContext,
+  state: MapState,
+  messageId: string,
+  index: number,
+  kind: 'text' | 'thinking',
+  text: string,
+): string {
+  const key = blockKey(messageId, index)
+  const direct = state.blockIds[key]
+  if (direct && state.blockKinds[direct] === kind) return direct
+  const prefix = `${messageId}:`
+  let fallback: string | undefined
+  for (const [k, id] of Object.entries(state.blockIds)) {
+    if (!k.startsWith(prefix) || state.blockKinds[id] !== kind) continue
+    if (state.blockText[id] === text) return id
+    if (!fallback && state.blockPhase?.[id] !== 'done') fallback = id
+  }
+  if (fallback) return fallback
+  return ensureBlockItem(ctx, direct ? `${key}:${kind}` : key, kind, state)
 }
 
 function mapAssistant(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
@@ -280,17 +334,13 @@ function mapAssistant(message: Json, ctx: MapContext, state: MapState, out: V2No
     if (!block) continue
     const type = scalarText(block.type)
     if (type === 'text') {
-      const id = ensureBlockItem(ctx, blockKey(messageId, index), 'text', state)
+      const id = assistantBlockId(ctx, state, messageId, index, 'text', scalarText(block.text))
       const item = agentMessageItem(id, scalarText(block.text))
-      state.blockText[id] = scalarText(block.text)
-      recordItem(state, item)
-      out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
+      emitFinalBlock(ctx, state, id, item, scalarText(block.text), out)
     } else if (type === 'thinking') {
-      const id = ensureBlockItem(ctx, blockKey(messageId, index), 'thinking', state)
+      const id = assistantBlockId(ctx, state, messageId, index, 'thinking', scalarText(block.thinking))
       const item = reasoningItem(id, scalarText(block.thinking))
-      state.blockText[id] = scalarText(block.thinking)
-      recordItem(state, item)
-      out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
+      emitFinalBlock(ctx, state, id, item, scalarText(block.thinking), out)
     } else if (type === 'tool_use') {
       const name = scalarText(block.name)
       const toolId = scalarText(block.id) || `${messageId}:${index}`

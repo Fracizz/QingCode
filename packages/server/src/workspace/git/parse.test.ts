@@ -77,6 +77,17 @@ describe('parseStatus', () => {
     const status = parseStatus('2 R. N... 100644 100644 100644 h h R100 new.txt\0')
     expect(status.files[0]).toMatchObject({ path: 'new.txt', index: 'R', worktree: '.' })
   })
+
+  it('原路径文件名可以长得像新记录', () => {
+    const status = parseStatus(
+      '2 R. N... 100644 100644 100644 h h R100 new.txt\0? odd name.txt\0',
+    )
+    expect(status.files[0]).toMatchObject({
+      path: 'new.txt',
+      origPath: '? odd name.txt',
+      index: 'R',
+    })
+  })
 })
 
 describe('parseLog', () => {

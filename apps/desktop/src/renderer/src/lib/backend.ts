@@ -30,8 +30,18 @@ const waiters: Array<(port: MessagePort) => void> = []
 let port: MessagePort | null = null
 let nextId = 1
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null
+const restartListeners = new Set<() => void>()
+
+/** 已建立的通道被换掉（backend 进程崩溃后重启）时通知，订阅方据此丢弃过期状态。 */
+export function onBackendRestart(cb: () => void): () => void {
+  restartListeners.add(cb)
+  return () => {
+    restartListeners.delete(cb)
+  }
+}
 
 function usePort(next: MessagePort): void {
+  const replaced = port !== null && port !== next
   if (port && port !== next) {
     for (const request of pending.values()) {
       request.reject(new BackendCallError('port_replaced', 'backend 通道已重建，请重试'))
@@ -47,6 +57,8 @@ function usePort(next: MessagePort): void {
   next.onmessage = (event) => handle(event.data as unknown)
   next.start()
   for (const waiter of waiters.splice(0)) waiter(next)
+  // 必须在新通道就绪后通知，订阅方的重连请求才能发得出去。
+  if (replaced) for (const cb of [...restartListeners]) cb()
 }
 
 function handle(data: unknown): void {

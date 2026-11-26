@@ -28,11 +28,6 @@ function fieldAfter(token: string, count: number): string {
   return token.slice(offset)
 }
 
-function isRecordStart(token: string | undefined): boolean {
-  if (token === undefined) return false
-  return /^(?:# |[12u?!] )/.test(token)
-}
-
 /**
  * 解析 `status --porcelain=v2 -z --branch --untracked-files=all`。
  * -z 下头部行与条目同样以 NUL 结尾，重命名的原路径是紧跟其后的独立字段。
@@ -79,7 +74,8 @@ export function parseStatus(output: string): Omit<GitStatusResult, 'root'> {
       const xy = token.slice(2, 4)
       const path = fieldAfter(token, kind === '1' ? 8 : kind === '2' ? 9 : 10)
       let origPath: string | undefined
-      if (kind === '2' && !isRecordStart(tokens[i + 1])) {
+      // porcelain v2 的 2 记录必定紧跟原路径字段；文件名可能以 '? ' 等开头，不能再猜。
+      if (kind === '2' && tokens[i + 1] !== undefined) {
         origPath = tokens[i + 1]
         i++
       }

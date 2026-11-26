@@ -58,3 +58,12 @@ export type {
   WorkspaceMethods,
   WorkspaceMethod,
 } from './workspace'
+
+export {
+  DIRECT_CODE_PREFIX,
+  encodeDirectCode,
+  decodeDirectCode,
+  normalizeFingerprint,
+  isValidFingerprint,
+} from './direct'
+export type { DirectInfo } from './direct'

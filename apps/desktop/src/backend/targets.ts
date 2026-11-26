@@ -1,19 +1,23 @@
 import type { AgentKind } from '../shared/backendApi'
 import { join } from 'node:path'
-import type { SshTarget, Target, TargetState } from '../shared/backendApi'
+import type { DirectTarget, SshTarget, Target, TargetProbe, TargetState } from '../shared/backendApi'
 import { loadTargetSecret, saveTargetSecret } from './credentials'
 import { HostKeyGate, type HostKeyDecider } from './hostKeyGate'
+import { connectDirectTarget } from './directTarget'
 import { connectLocalTarget } from './localTarget'
 import { redactToken } from './remoteCommands'
 import { RouterError } from './router'
 import { ServerClientError } from './serverClient'
-import { connectSshTarget } from './sshTarget'
+import { connectSshTarget, runRemoteServerCommands, testSshTarget } from './sshTarget'
 import type {
   BackendEmit,
+  DirectLinkContext,
   LinkFactory,
   LinkHooks,
   LocalLinkContext,
   SshLinkContext,
+  SshRemoteContext,
+  SshTestContext,
   TargetCredentials,
   TargetLink,
 } from './types'
@@ -33,7 +37,26 @@ export interface TargetManagerOptions {
   saveSecret?: (id: string, credentials: TargetCredentials, userData?: string) => Promise<void>
   createSsh?: LinkFactory<SshLinkContext>
   createLocal?: LinkFactory<LocalLinkContext>
+  createDirect?: LinkFactory<DirectLinkContext>
+  testSsh?: (context: SshTestContext) => Promise<TargetProbe>
+  runRemote?: (context: SshRemoteContext, commands: ReadonlyArray<readonly string[]>) => Promise<Array<Record<string, unknown>>>
   gate?: HostKeyDecider
+}
+
+// SSH 目标开了直连加速时，直连只给较短的时间；不通就回退 SSH，避免每次重连都卡满默认超时。
+const DIRECT_FALLBACK_TIMEOUT_MS = 5_000
+
+/** SSH 目标上的直连配置换算成直连目标形状，复用 connectDirectTarget。 */
+export function directViewOf(target: SshTarget): DirectTarget | null {
+  if (!target.direct) return null
+  return {
+    id: target.id,
+    kind: 'direct',
+    name: target.name,
+    host: target.direct.host,
+    port: target.direct.port,
+    fingerprint: target.direct.fingerprint,
+  }
 }
 
 interface ReadyWaiter {
@@ -61,6 +84,11 @@ interface Session {
   readyWaiters: ReadyWaiter[]
 }
 
+function requireToken(token: string | undefined): string {
+  if (!token) throw new Error('缺少直连令牌，请重新粘贴连接码')
+  return token
+}
+
 /** 断线重连退避：1s → 2s → 4s → … → 30s 封顶。 */
 export function retryDelay(attempt: number): number {
   const exponent = Math.max(0, Math.min(attempt, 5))
@@ -80,6 +108,9 @@ export class TargetManager {
   private readonly gate: HostKeyDecider
   private readonly createSsh: LinkFactory<SshLinkContext>
   private readonly createLocal: LinkFactory<LocalLinkContext>
+  private readonly createDirect: LinkFactory<DirectLinkContext>
+  private readonly testSsh: (context: SshTestContext) => Promise<TargetProbe>
+  private readonly runRemote: NonNullable<TargetManagerOptions['runRemote']>
   private readonly loadSecret: (id: string, userData?: string) => Promise<TargetCredentials | null>
   private readonly saveSecret: (id: string, credentials: TargetCredentials, userData?: string) => Promise<void>
 
@@ -91,6 +122,9 @@ export class TargetManager {
     })
     this.createSsh = options.createSsh ?? connectSshTarget
     this.createLocal = options.createLocal ?? connectLocalTarget
+    this.createDirect = options.createDirect ?? connectDirectTarget
+    this.testSsh = options.testSsh ?? testSshTarget
+    this.runRemote = options.runRemote ?? runRemoteServerCommands
     this.loadSecret = options.loadSecret ?? loadTargetSecret
     this.saveSecret = options.saveSecret ?? saveTargetSecret
   }
@@ -129,7 +163,7 @@ export class TargetManager {
     this.clearRetry(session)
 
     let effective = credentials
-    if (target.kind === 'ssh') {
+    if (target.kind === 'ssh' || target.kind === 'direct') {
       const saved = await this.readSecret(target.id, this.options.userData)
       effective = { ...(saved ?? {}), ...credentials }
     }
@@ -137,6 +171,45 @@ export class TargetManager {
 
     // open 内部自行处理失败与重试，避免过期的一次连接失败覆盖后续重连结果。
     await this.open(session)
+  }
+
+  /** 试连一次，不影响现有会话；凭据合并规则与 connect 一致。 */
+  async test(target: SshTarget, credentials: TargetCredentials): Promise<TargetProbe> {
+    const saved = target.id ? await this.readSecret(target.id, this.options.userData) : null
+    return this.testSsh({ target, credentials: { ...(saved ?? {}), ...credentials }, gate: this.gate })
+  }
+
+  /** 经 SSH 执行 server 子命令；凭据合并规则与 connect 一致，结果可能含 token，调用方不得记录。 */
+  async remoteServer(
+    target: SshTarget,
+    credentials: TargetCredentials,
+    commands: ReadonlyArray<readonly string[]>
+  ): Promise<Array<Record<string, unknown>>> {
+    const saved = await this.readSecret(target.id, this.options.userData)
+    return this.runRemote({
+      target,
+      credentials: { ...(saved ?? {}), ...credentials },
+      gate: this.gate,
+      resourcesPath: this.options.resourcesPath,
+    }, commands)
+  }
+
+  /** 更新直连 token（undefined 为清除），保留其它已保存凭据。 */
+  async setDirectToken(id: string, token: string | undefined): Promise<void> {
+    const saved = (await this.readSecret(id, this.options.userData)) ?? {}
+    const { directToken: _old, ...rest } = saved
+    await this.saveSecret(id, token ? { ...rest, directToken: token } : rest, this.options.userData)
+    const session = this.sessions.get(id)
+    if (session) {
+      const { directToken: _stale, ...creds } = session.credentials
+      session.credentials = token ? { ...creds, directToken: token } : creds
+    }
+  }
+
+  /** 目标配置变更（如开启/关闭直连）后同步给现有会话，下次重连生效。 */
+  updateTarget(target: Target): void {
+    const session = this.sessions.get(target.id)
+    if (session) session.target = target
   }
 
   disconnect(id: string): void {
@@ -246,22 +319,21 @@ export class TargetManager {
     }
 
     try {
-      const link = session.target.kind === 'local'
+      const link = session.target.kind === 'direct'
+        ? await this.createDirect({
+            target: session.target,
+            token: requireToken(session.credentials.token),
+            hooks,
+            appVersion: this.options.appVersion,
+          })
+        : session.target.kind === 'local'
         ? await this.createLocal({
             hooks,
             electronPath: this.options.electronPath,
             serverScript: join(this.options.resourcesPath, 'server', 'qn-server.cjs'),
             appVersion: this.options.appVersion,
           })
-        : await this.createSsh({
-            target: session.target as SshTarget,
-            credentials: session.credentials,
-            hooks,
-            userData: this.options.userData,
-            resourcesPath: this.options.resourcesPath,
-            appVersion: this.options.appVersion,
-            gate: this.gate,
-          })
+        : await this.openSshPreferDirect(session, hooks)
 
       if (generation !== session.generation || !session.desired) {
         link.close()
@@ -294,6 +366,35 @@ export class TargetManager {
       if (generation !== session.generation || !session.desired || session.retryTimer) return
       this.handleFailure(session, err)
     }
+  }
+
+  /** 开了直连加速的 SSH 目标先试 TLS 直连，失败（含指纹不符）回退 SSH，并把原因写进状态说明。 */
+  private async openSshPreferDirect(session: Session, hooks: LinkHooks): Promise<TargetLink> {
+    const target = session.target as SshTarget
+    const view = directViewOf(target)
+    const token = session.credentials.directToken
+    if (view && token) {
+      try {
+        return await this.createDirect({
+          target: view,
+          token,
+          hooks,
+          appVersion: this.options.appVersion,
+          connectTimeoutMs: DIRECT_FALLBACK_TIMEOUT_MS,
+        })
+      } catch (err) {
+        hooks.onState('connecting', `直连不可用（${describe(err)}），改用 SSH`)
+      }
+    }
+    return this.createSsh({
+      target,
+      credentials: session.credentials,
+      hooks,
+      userData: this.options.userData,
+      resourcesPath: this.options.resourcesPath,
+      appVersion: this.options.appVersion,
+      gate: this.gate,
+    })
   }
 
   private handleFailure(session: Session, err: unknown): void {

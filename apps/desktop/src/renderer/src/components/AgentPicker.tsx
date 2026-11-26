@@ -1,9 +1,12 @@
-import { Check, ChevronDown, RotateCw } from 'lucide-react'
+import { Check, ChevronDown, Pin, PinOff, RotateCw } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { AGENTS, agentLabel, availabilityReason } from '../lib/agents'
+import { useAgentPrefs } from '../store/agentPrefs'
 import { useCodex } from '../store/codex'
+import { useTargets } from '../store/targets'
 import { AgentIcon } from './AgentIcon'
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from './primitives'
+import { Badge } from './ui'
 
 /**
  * 新会话草稿态下选择 Agent（Codex / Claude）。会话一旦创建 Agent 就固定，只显示不可切换。
@@ -13,6 +16,10 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
   const statuses = useCodex((s) => (targetId ? s.agents[targetId] : undefined))
   const setDraftAgent = useCodex((s) => s.setDraftAgent)
   const probeAgents = useCodex((s) => s.probeAgents)
+  const defaultAgent = useAgentPrefs((s) => (targetId ? s.byTarget[targetId] : undefined))
+  const setDefault = useAgentPrefs((s) => s.setDefault)
+  const targetName = useTargets((s) => s.targets.find((item) => item.id === targetId)?.name)
+  const isDefault = defaultAgent === agent
 
   if (locked) {
     return (
@@ -36,7 +43,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
           <ChevronDown size={14} />
         </button>
       </MenuTrigger>
-      <MenuContent side="top" className="w-64">
+      <MenuContent side="top" className="w-72">
         <MenuLabel>新会话使用的 Agent</MenuLabel>
         {AGENTS.map((item) => {
           const status = statuses?.[item]
@@ -45,16 +52,31 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
               key={item}
               className="py-1.5"
               disabled={status?.state === 'unavailable'}
-              icon={<AgentIcon agent={item} size={15} />}
+              icon={<AgentIcon agent={item} size={16} />}
               hint={item === agent ? <Check size={14} className="text-qn-text" /> : undefined}
               onSelect={() => setDraftAgent(item)}
             >
-              <span className="block">{agentLabel(item)}</span>
+              <span className="flex items-center gap-1.5">
+                {agentLabel(item)}
+                {item === defaultAgent && <Badge>默认</Badge>}
+              </span>
               <span className="block truncate text-[12px] text-qn-dim">{availabilityReason(item, status)}</span>
             </MenuItem>
           )
         })}
         <MenuSeparator />
+        <MenuItem
+          icon={isDefault ? <PinOff size={14} /> : <Pin size={14} />}
+          disabled={!targetId}
+          onSelect={(event) => {
+            event.preventDefault()
+            if (targetId) setDefault(targetId, isDefault ? null : agent)
+          }}
+        >
+          {isDefault
+            ? `取消「${targetName ?? '此连接'}」的默认 Agent`
+            : `将 ${agentLabel(agent)} 设为「${targetName ?? '此连接'}」默认`}
+        </MenuItem>
         <MenuItem
           icon={<RotateCw size={14} />}
           disabled={!targetId}

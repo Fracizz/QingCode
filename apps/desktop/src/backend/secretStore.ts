@@ -136,7 +136,9 @@ export function parseStoredSecret(raw: unknown): StoredSecret | null {
   const secret: StoredSecret = {}
   if (typeof value.password === 'string' && value.password !== '') secret.password = value.password
   if (typeof value.passphrase === 'string' && value.passphrase !== '') secret.passphrase = value.passphrase
-  return secret.password || secret.passphrase ? secret : null
+  if (typeof value.token === 'string' && value.token !== '') secret.token = value.token
+  if (typeof value.directToken === 'string' && value.directToken !== '') secret.directToken = value.directToken
+  return secret.password || secret.passphrase || secret.token || secret.directToken ? secret : null
 }
 
 export function serializeStoredSecret(secret: StoredSecret): string {

@@ -25,10 +25,59 @@ export type SshTarget = {
   port: number
   username: string
   auth: SshAuth
+  /** 已经 SSH 开启的直连加速：连接时先试 TLS 直连，失败回退 SSH；授权 token 存 secrets（directToken） */
+  direct?: SshDirect
+}
+
+export type SshDirect = {
+  /** 直连拨号地址（缺省为 SSH 主机），可填 frp/Tailscale 地址 */
+  host: string
+  port: number
+  /** 证书 DER 的 SHA-256，小写十六进制 */
+  fingerprint: string
+  /** 远端授权 id，关闭时用于撤销 */
+  grantId: string
+}
+
+export type EnableDirectParams = {
+  id: string
+  /** 远端监听地址，host:port 或 port；缺省 47390 */
+  listen?: string
+  /** 写进连接配置的拨号地址；缺省为 SSH 主机 */
+  host?: string
+  /** 允许公网来源（默认只接受局域网/Tailscale/本机转发） */
+  allowPublic?: boolean
+  password?: string
+  passphrase?: string
+}
+
+/** 连接测试结果：认证通过且远端环境满足部署要求。 */
+export type TargetProbe = { os: string; nodeVersion: string }
+
+/** 服务端直连：远端自行运行 `qn-server.cjs serve`，桌面端经 TLS（证书指纹固定）连接；token 存 secrets。 */
+export type DirectTarget = {
+  id: string
+  kind: 'direct'
+  name: string
+  host: string
+  port: number
+  /** 证书 DER 的 SHA-256，小写十六进制 */
+  fingerprint: string
+}
+
+export type DirectTargetInput = {
+  id?: string
+  kind: 'direct'
+  name: string
+  host: string
+  port: number
+  fingerprint: string
+  /** 新建时必填；编辑时不传则沿用已保存的 */
+  token?: string
 }
 
 export type LocalTarget = { id: 'local'; kind: 'local'; name: string }
-export type Target = LocalTarget | SshTarget
+export type Target = LocalTarget | SshTarget | DirectTarget
 
 export const LOCAL_TARGET: LocalTarget = { id: 'local', kind: 'local', name: '本机' }
 
@@ -84,6 +133,10 @@ export type MobileRegenerateResult = { fingerprint: string }
 export type SavedSecret = {
   password?: string
   passphrase?: string
+  /** 直连目标的授权 token */
+  token?: string
+  /** SSH 目标开启直连加速后的授权 token */
+  directToken?: string
 }
 
 export type LegacyCounts = {
@@ -106,15 +159,54 @@ export type LegacyImportResult = {
   skipped: LegacySkipped[]
 }
 
+// T23 设置界面：字段名是写入 userData/settings.json 的白名单，未知字段一律丢弃。
+export type SettingsSendKey = 'enter' | 'ctrlEnter'
+export type SettingsDensity = 'comfortable' | 'compact'
+export type SettingsAgentKind = 'codex' | 'claude' | 'pi'
+export type AgentPrefs = {
+  enabled: boolean
+  /** 可执行文件绝对路径；留空表示由目标机自动解析 */
+  path?: string
+  /** 仅 Codex / Claude：CODEX_HOME / CLAUDE_CONFIG_DIR，只存路径字符串，不读其中内容 */
+  configDir?: string
+}
+export type AppSettings = {
+  general: {
+    sendKey: SettingsSendKey
+    autoConnectLast: boolean
+    defaultAgent: SettingsAgentKind
+    density: SettingsDensity
+  }
+  /** 按目标 id 分组，每个 agent 一份偏好 */
+  agents: Record<string, Partial<Record<SettingsAgentKind, AgentPrefs>>>
+}
+export type AppSettingsPatch = {
+  general?: Partial<AppSettings['general']>
+  agents?: Record<string, Partial<Record<SettingsAgentKind, Partial<AgentPrefs>>>>
+}
+export type AppInfo = { name: string; version: string }
+
 export interface BackendMethods {
   'targets.list': { params: void; result: Target[] }
-  'targets.save': { params: SshTargetInput; result: SshTarget }
+  'targets.save': { params: SshTargetInput | DirectTargetInput; result: SshTarget | DirectTarget }
   'targets.remove': { params: { id: string }; result: void }
   'target.connect': {
     params: { id: string; password?: string; passphrase?: string; remember?: boolean }
     result: void
   }
+  /** 用表单里的当前值试连，不保存、不部署；带 id 时未填的密码/口令取已保存的。 */
+  'target.test': {
+    params: SshTargetInput & { password?: string; passphrase?: string }
+    result: TargetProbe
+  }
   'target.forgetSecret': { params: { id: string }; result: void }
+  /** 经 SSH 在远端开启直连并为本机签发授权，结果写回目标配置；之后连接优先直连 */
+  'target.enableDirect': { params: EnableDirectParams; result: SshTarget }
+  /** 经 SSH 撤销本机授权并清除直连配置（远端监听保留给其它客户端） */
+  'target.disableDirect': {
+    params: { id: string; password?: string; passphrase?: string }
+    result: SshTarget
+  }
   'projects.list': { params: { targetId?: string }; result: Project[] }
   'projects.save': {
     params: { id?: string; targetId: string; name?: string; path: string }
@@ -139,6 +231,9 @@ export interface BackendMethods {
   'mobile.devices': { params: void; result: MobileDevice[] }
   'mobile.revokeDevice': { params: { id: string }; result: void }
   'mobile.regenerateCert': { params: void; result: MobileRegenerateResult }
+  'settings.get': { params: void; result: AppSettings }
+  'settings.save': { params: AppSettingsPatch; result: AppSettings }
+  'app.info': { params: void; result: AppInfo }
 }
 
 export type BackendMethod = keyof BackendMethods

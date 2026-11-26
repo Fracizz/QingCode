@@ -281,6 +281,21 @@ export function matchGlob(relativePath: string, pattern: string, caseSensitive =
   return new RegExp(`${source}$`, caseSensitive ? '' : 'i').test(target)
 }
 
+/** 外部修改判定：给定期望 mtime 时，差 >1ms 才算冲突。 */
+export function mtimeConflicts(current: number, expected: number | undefined): boolean {
+  return expected !== undefined && Math.abs(current - expected) > 1
+}
+
+/** watch 回调拿不到文件名时退回被监听路径；目录事件拼出变化文件的绝对路径。 */
+export function watchChangedPath(
+  target: string,
+  filename: string | Buffer | null | undefined,
+  isDir: boolean,
+): string {
+  const name = filename === null || filename === undefined ? null : String(filename)
+  return isDir && name !== null && name.length > 0 ? path.join(target, name) : target
+}
+
 export function indexOfText(haystack: string, needle: string, caseSensitive: boolean): number {
   return caseSensitive
     ? haystack.indexOf(needle)

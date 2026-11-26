@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn'
 import { shouldHighlight } from '../../lib/highlight'
 import { highlightTokens } from '../../lib/shiki'
 import { langForPath } from './fileLinks'
+import { loadedLabel } from './filesModel'
 
 type Props = {
   content: string
@@ -11,6 +12,7 @@ type Props = {
   line?: number
   column?: number
   truncated?: boolean
+  loadedBytes?: number
   busy?: boolean
   onLoadMore?: () => void
   className?: string
@@ -31,7 +33,7 @@ function tokenStyle(token: ThemedToken) {
  * 只读代码视图：行号 + shiki 高亮（超长退化为纯文本），跳转行滚动居中并高亮。
  * 内容更新时保持同一棵 DOM，外部刷新不会丢滚动位置。
  */
-export function CodeView({ content, path, line, column, truncated, busy, onLoadMore, className }: Props) {
+export function CodeView({ content, path, line, column, truncated, loadedBytes = 0, busy, onLoadMore, className }: Props) {
   const value = content.replace(/\n$/, '')
   const lang = useMemo(() => langForPath(path), [path])
   const [tokens, setTokens] = useState<ThemedToken[][] | null>(null)
@@ -51,17 +53,23 @@ export function CodeView({ content, path, line, column, truncated, busy, onLoadM
 
   const lines = useMemo(() => value.split('\n'), [value])
   const count = Math.max(lines.length, tokens?.length ?? 0)
+  // 刷新内容时不要再跳回目标行，否则会覆盖用户手动滚到的位置。
+  const scrolledFor = useRef<string | null>(null)
 
   useEffect(() => {
     if (!line) return
+    const key = `${path}:${line}:${column ?? ''}`
+    if (scrolledFor.current === key) return
     const frame = requestAnimationFrame(() => {
       const container = containerRef.current
       const node = container?.querySelector<HTMLElement>(`[data-line="${line}"]`)
+      // 目标行可能还没读到（大文件续读），count 变化时会再试。
       if (!container || !node) return
+      scrolledFor.current = key
       container.scrollTop = Math.max(0, node.offsetTop - container.clientHeight / 2 + node.clientHeight / 2)
     })
     return () => cancelAnimationFrame(frame)
-  }, [line, column, value, tokens])
+  }, [line, column, path, count])
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -104,7 +112,7 @@ export function CodeView({ content, path, line, column, truncated, busy, onLoadM
       </div>
       {truncated && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-[12px] text-qn-muted">
-          <span>仅显示前 2 MiB</span>
+          <span>{loadedLabel(loadedBytes)} ·</span>
           <button
             type="button"
             className="rounded-md px-2 py-0.5 text-qn-accent hover:bg-qn-hover disabled:opacity-50"

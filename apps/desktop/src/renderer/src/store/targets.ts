@@ -1,12 +1,16 @@
 import { create } from 'zustand'
 import type {
+  DirectTarget,
+  DirectTargetInput,
+  EnableDirectParams,
   HostKeyPrompt,
   SshTarget,
   SshTargetInput,
   Target,
+  TargetProbe,
   TargetStateEvent,
 } from '../../../shared/backendApi'
-import { call, on } from '../lib/backend'
+import { call, on, onBackendRestart } from '../lib/backend'
 import { friendlyError } from '../lib/errors'
 
 export type ConnectCredentials = {
@@ -26,7 +30,10 @@ type TargetsState = {
   notice: string | null
   load: () => Promise<void>
   select: (id: string) => void
-  save: (input: SshTargetInput) => Promise<SshTarget>
+  save: (input: SshTargetInput | DirectTargetInput) => Promise<SshTarget | DirectTarget>
+  test: (input: SshTargetInput, credentials: ConnectCredentials) => Promise<TargetProbe>
+  enableDirect: (params: EnableDirectParams) => Promise<SshTarget>
+  disableDirect: (id: string, credentials?: { password?: string; passphrase?: string }) => Promise<SshTarget>
   remove: (id: string) => Promise<void>
   connect: (id: string, credentials?: ConnectCredentials) => Promise<void>
   disconnect: (id: string) => Promise<void>
@@ -50,6 +57,13 @@ export const useTargets = create<TargetsState>((set, get) => ({
   load: async () => {
     if (!subscribed) {
       subscribed = true
+      onBackendRestart(() => {
+        // 新的 backend 进程里没有任何连接，界面上残留的"已连接"是假的：清掉后按原样补连。
+        const { states, connect } = get()
+        const active = Object.values(states).filter((item) => item.state !== 'idle')
+        set({ states: {}, prompts: [] })
+        for (const item of active) void connect(item.id)
+      })
       on('target.state', (payload) => {
         useTargets.setState((s) => ({
           states: { ...s.states, [payload.id]: payload },
@@ -76,10 +90,34 @@ export const useTargets = create<TargetsState>((set, get) => ({
   select: (id) => set({ selectedId: id }),
 
   save: async (input) => {
+    // 后端返回的就是已落库的目标，就地按 id 合并，省一次全量拉取。
     const target = await call('targets.save', input)
-    await get().load()
+    set((s) => ({ targets: upsertTarget(s.targets, target) }))
     return target
   },
+
+  enableDirect: async (params) => {
+    const target = await call('target.enableDirect', params)
+    set((s) => ({ targets: upsertTarget(s.targets, target) }))
+    return target
+  },
+
+  disableDirect: async (id, credentials) => {
+    const target = await call('target.disableDirect', {
+      id,
+      ...(credentials?.password ? { password: credentials.password } : {}),
+      ...(credentials?.passphrase ? { passphrase: credentials.passphrase } : {}),
+    })
+    set((s) => ({ targets: upsertTarget(s.targets, target) }))
+    return target
+  },
+
+  test: (input, { password, passphrase }) =>
+    call('target.test', {
+      ...input,
+      ...(password ? { password } : {}),
+      ...(passphrase ? { passphrase } : {}),
+    }),
 
   remove: async (id) => {
     await call('targets.remove', { id })
@@ -138,6 +176,14 @@ export const useTargets = create<TargetsState>((set, get) => ({
 
   dismissNotice: () => set({ notice: null }),
 }))
+
+function upsertTarget(targets: Target[], target: SshTarget | DirectTarget): Target[] {
+  const index = targets.findIndex((item) => item.id === target.id)
+  if (index < 0) return [...targets, target]
+  const next = [...targets]
+  next[index] = target
+  return next
+}
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!Object.prototype.hasOwnProperty.call(record, key)) return record

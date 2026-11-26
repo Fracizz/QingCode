@@ -27,6 +27,7 @@ function sanitize(raw: unknown): TargetCredentials | null {
   const result: TargetCredentials = {}
   if (typeof raw.password === 'string' && raw.password !== '') result.password = raw.password
   if (typeof raw.passphrase === 'string' && raw.passphrase !== '') result.passphrase = raw.passphrase
+  if (typeof raw.token === 'string' && raw.token !== '') result.token = raw.token
   return Object.keys(result).length > 0 ? result : null
 }
 

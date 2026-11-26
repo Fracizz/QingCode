@@ -59,10 +59,18 @@ button:disabled {
     font-size: 13px;
     line-height: 20px;
     outline: none;
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .qn-input:hover:not(:disabled, :focus) {
+    border-color: #505050;
   }
 
   .qn-input:focus {
     border-color: var(--color-qn-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-qn-accent) 22%, transparent);
   }
 
   .qn-button {

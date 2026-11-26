@@ -3,7 +3,10 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   LOCAL_TARGET,
+  type DirectTarget,
+  type DirectTargetInput,
   type SshAuth,
+  type SshDirect,
   type SshTarget,
   type SshTargetInput,
   type Target,
@@ -31,6 +34,7 @@ function parseSshTarget(x: unknown): SshTarget | null {
   if (typeof x.username !== 'string') return null
   const auth = parseAuth(x.auth)
   if (!auth) return null
+  const direct = parseSshDirect(x.direct)
   // 只保留已知字段，避免把旧版本残留的密码写回磁盘。
   return {
     id: x.id,
@@ -40,7 +44,47 @@ function parseSshTarget(x: unknown): SshTarget | null {
     port: x.port,
     username: x.username,
     auth,
+    ...(direct ? { direct } : {}),
   }
+}
+
+const FINGERPRINT = /^[0-9a-f]{64}$/
+
+function parseSshDirect(x: unknown): SshDirect | null {
+  if (!isRecord(x)) return null
+  if (typeof x.host !== 'string' || x.host === '') return null
+  if (typeof x.port !== 'number' || !Number.isInteger(x.port) || x.port < 1 || x.port > 65535) return null
+  if (typeof x.fingerprint !== 'string' || !FINGERPRINT.test(x.fingerprint)) return null
+  if (typeof x.grantId !== 'string' || x.grantId === '') return null
+  return { host: x.host, port: x.port, fingerprint: x.fingerprint, grantId: x.grantId }
+}
+
+/** 设置或清除 SSH 目标的直连配置；目标不存在或不是 SSH 时返回 null。 */
+export function setSshDirect(
+  targets: readonly Target[],
+  id: string,
+  direct: SshDirect | undefined
+): { targets: Target[]; target: SshTarget } | null {
+  const current = targets.find((t) => t.id === id)
+  if (!current || current.kind !== 'ssh') return null
+  const { direct: _old, ...rest } = current
+  const next: SshTarget = direct ? { ...rest, direct } : rest
+  const list = targets.map((t) => (t.id === id ? next : t))
+  return { targets: normalizeTargets(list.filter((t) => t.kind !== 'local')), target: next }
+}
+
+function parseDirectTarget(x: unknown): DirectTarget | null {
+  if (!isRecord(x) || x.kind !== 'direct') return null
+  if (typeof x.id !== 'string' || x.id.length === 0 || x.id === 'local') return null
+  if (typeof x.name !== 'string' || typeof x.host !== 'string') return null
+  if (typeof x.port !== 'number' || !Number.isInteger(x.port)) return null
+  if (typeof x.fingerprint !== 'string' || !FINGERPRINT.test(x.fingerprint)) return null
+  // token 只在 secrets 里，白名单重建避免写回磁盘。
+  return { id: x.id, kind: 'direct', name: x.name, host: x.host, port: x.port, fingerprint: x.fingerprint }
+}
+
+function parseRemoteTarget(x: unknown): SshTarget | DirectTarget | null {
+  return parseSshTarget(x) ?? parseDirectTarget(x)
 }
 
 // 本机目标永远存在且排在首位；无效或损坏的条目直接忽略。
@@ -49,7 +93,7 @@ export function normalizeTargets(raw: unknown): Target[] {
   const result: Target[] = [LOCAL_TARGET]
   const seen = new Set<string>([LOCAL_TARGET.id])
   for (const item of items) {
-    const target = parseSshTarget(item)
+    const target = parseRemoteTarget(item)
     if (!target || seen.has(target.id)) continue
     seen.add(target.id)
     result.push(target)
@@ -60,9 +104,9 @@ export function normalizeTargets(raw: unknown): Target[] {
 export function serializeTargets(targets: readonly Target[]): string {
   // 经 parseSshTarget 白名单重建，避免把上游附带的密码等字段写回磁盘。
   const stored = targets
-    .filter((t): t is SshTarget => t.kind === 'ssh')
-    .map((t) => parseSshTarget(t))
-    .filter((t): t is SshTarget => t !== null)
+    .filter((t) => t.kind !== 'local')
+    .map((t) => parseRemoteTarget(t))
+    .filter((t): t is SshTarget | DirectTarget => t !== null)
   return JSON.stringify(stored, null, 2) + '\n'
 }
 
@@ -72,6 +116,9 @@ export function upsertTarget(
   newId: string
 ): { targets: Target[]; target: SshTarget } {
   const id = input.id && input.id !== 'local' ? input.id : newId
+  // 表单不携带直连配置；编辑连接信息时保留已开启的直连。
+  const previous = targets.find((t) => t.id === id)
+  const direct = previous?.kind === 'ssh' ? previous.direct : undefined
   const next: SshTarget = {
     id,
     kind: 'ssh',
@@ -80,16 +127,38 @@ export function upsertTarget(
     port: input.port,
     username: input.username,
     auth: input.auth,
+    ...(direct ? { direct } : {}),
   }
   const list = [...targets]
   const existing = list.findIndex((t) => t.id === id)
   if (existing >= 0) list[existing] = next
   else list.push(next)
-  return { targets: normalizeTargets(list.filter((t) => t.kind === 'ssh')), target: next }
+  return { targets: normalizeTargets(list.filter((t) => t.kind !== 'local')), target: next }
+}
+
+export function upsertDirectTarget(
+  targets: readonly Target[],
+  input: DirectTargetInput,
+  newId: string
+): { targets: Target[]; target: DirectTarget } {
+  const id = input.id && input.id !== 'local' ? input.id : newId
+  const next: DirectTarget = {
+    id,
+    kind: 'direct',
+    name: input.name,
+    host: input.host,
+    port: input.port,
+    fingerprint: input.fingerprint,
+  }
+  const list = [...targets]
+  const existing = list.findIndex((t) => t.id === id)
+  if (existing >= 0) list[existing] = next
+  else list.push(next)
+  return { targets: normalizeTargets(list.filter((t) => t.kind !== 'local')), target: next }
 }
 
 export function removeTarget(targets: readonly Target[], id: string): Target[] {
-  return normalizeTargets(targets.filter((t) => t.kind === 'ssh' && t.id !== id))
+  return normalizeTargets(targets.filter((t) => t.kind !== 'local' && t.id !== id))
 }
 
 export function createTargetId(): string {

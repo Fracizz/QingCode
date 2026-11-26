@@ -7,6 +7,8 @@ import { basename, splitUserText } from '../lib/attachments'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
 import { isGroupRunning, summarizeTools } from '../lib/turnGroups'
+import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
+import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
 import { MessageActions } from './MessageActions'
 import { Badge } from './ui'
@@ -17,13 +19,17 @@ function plainText(children: ReactNode): string {
     .join('')
 }
 
-function markdownComponents(streaming: boolean): Components {
+/** 当前项目（目标 + 目录）：消息里的本地文件链接、路径按它解析并在文件面板打开。 */
+function useLinkContext(): LinkContext | null {
+  const targetId = useCodex((s) => s.currentTargetId)
+  const cwd = useCodex((s) => s.currentCwd)
+  return useMemo(() => (targetId ? { targetId, cwd: cwd ?? '' } : null), [targetId, cwd])
+}
+
+function markdownComponents(streaming: boolean, context: LinkContext | null): Components {
   return {
-    a: ({ href, children }) => (
-      <a href={href} target="_blank" rel="noreferrer" className="text-qn-accent underline-offset-2 hover:underline">
-        {children}
-      </a>
-    ),
+    // 本地文件链接在文件面板打开；外链仍走系统浏览器（main 的 setWindowOpenHandler）。
+    a: createMarkdownLink(() => context),
     // 围栏代码块交给 CodeBlock（语言条 + 复制 + shiki 高亮）；行内代码走下面的 code。
     pre: ({ children }) => {
       const child = Children.toArray(children)[0]
@@ -36,9 +42,18 @@ function markdownComponents(streaming: boolean): Components {
         />
       )
     },
-    code: ({ className, children }) => (
-      <code className={`rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.86em] ${className ?? ''}`}>{children}</code>
-    ),
+    code: ({ className, children }) => {
+      const text = typeof children === 'string' ? children : null
+      return (
+        <code className={`rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.86em] ${className ?? ''}`}>
+          {text !== null && context && !streaming ? (
+            <PathText text={text} targetId={context.targetId} cwd={context.cwd} />
+          ) : (
+            children
+          )}
+        </code>
+      )
+    },
     table: ({ children }) => (
       <div className="qn-scroll my-3 overflow-x-auto rounded-lg border border-qn-border">
         <table className="w-full border-collapse text-[13px]">{children}</table>
@@ -163,6 +178,7 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
 }
 
 function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange' }> }) {
+  const context = useLinkContext()
   const stats = item.changes.map((change) => diffStat(change.diff))
   const add = stats.reduce((sum, stat) => sum + stat.add, 0)
   const del = stats.reduce((sum, stat) => sum + stat.del, 0)
@@ -182,6 +198,15 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
             <div className="flex items-center gap-2 py-1">
               <span className="min-w-0 truncate font-mono text-[12.5px] text-qn-text/90">{change.path}</span>
               <Badge>{change.kind}</Badge>
+              {context && (
+                <FileChangeActions
+                  targetId={context.targetId}
+                  cwd={context.cwd || undefined}
+                  path={change.path}
+                  {...(typeof change.diff === 'string' ? { diff: change.diff } : {})}
+                  className="ml-auto"
+                />
+              )}
             </div>
             {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
           </div>
@@ -192,11 +217,12 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
 }
 
 function AgentMessage({ text, streaming, onFork }: { text: string; streaming: boolean; onFork?: (markdown: string) => void }) {
-  const components = useMemo(() => markdownComponents(streaming), [streaming])
+  const context = useLinkContext()
+  const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     <div className="group/msg">
       <div className="qn-markdown break-words text-[14px] leading-[1.7] text-qn-text">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
           {text}
         </ReactMarkdown>
         {streaming && <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-qn-brand align-middle" />}

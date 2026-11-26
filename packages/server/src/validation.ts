@@ -6,7 +6,10 @@ export type HelloCheck =
   | { ok: false; code: 'protocol' | 'auth'; message: string }
 
 export interface HelloRule {
-  token: string
+  /** 本机连接：与 daemon 主 token 常数时间比较 */
+  token?: string
+  /** 直连：由授权表判定；提供时优先于 token */
+  authorize?: (token: unknown) => boolean
   protocol?: number
 }
 
@@ -19,7 +22,10 @@ export function checkHello(raw: unknown, rule: HelloRule): HelloCheck {
   if (raw.protocol !== expectedProtocol) {
     return protocolError(`协议版本不符，需要 ${expectedProtocol}`)
   }
-  if (typeof raw.token !== 'string' || !tokensEqual(raw.token, rule.token)) {
+  const authorized = rule.authorize
+    ? rule.authorize(raw.token)
+    : typeof raw.token === 'string' && rule.token !== undefined && tokensEqual(raw.token, rule.token)
+  if (!authorized) {
     return { ok: false, code: 'auth', message: 'token 校验失败' }
   }
   const client = raw.client

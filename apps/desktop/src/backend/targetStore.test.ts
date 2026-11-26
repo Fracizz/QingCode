@@ -7,6 +7,7 @@ import {
   readTargets,
   removeTarget,
   serializeTargets,
+  setSshDirect,
   upsertTarget,
   writeTargets,
 } from './targetStore'
@@ -119,5 +120,28 @@ describe('readTargets / writeTargets', () => {
 
     await writeFile(join(dir, 'targets.json'), '{bad json', 'utf8')
     expect(ids(await readTargets(dir))).toEqual(['local'])
+  })
+})
+
+describe('setSshDirect', () => {
+  const direct = { host: '10.0.0.5', port: 47390, fingerprint: 'a'.repeat(64), grantId: 'g' }
+
+  it('设置、保留（编辑表单时）与清除直连配置', () => {
+    const base = normalizeTargets([ssh('a', 'h1')])
+    const set = setSshDirect(base, 'a', direct)
+    expect(set?.target.direct).toEqual(direct)
+    // 编辑连接信息不应丢掉直连配置。
+    const edited = upsertTarget(set?.targets ?? [], { id: 'a', name: 'n', host: 'h2', port: 22, username: 'r', auth: { kind: 'agent' } }, 'x')
+    expect(edited.target.direct).toEqual(direct)
+    // 落盘再读回仍在。
+    expect(normalizeTargets(JSON.parse(serializeTargets(edited.targets)))[1]).toMatchObject({ direct })
+    const cleared = setSshDirect(edited.targets, 'a', undefined)
+    expect(cleared?.target.direct).toBeUndefined()
+    expect(setSshDirect(base, 'missing', direct)).toBeNull()
+  })
+
+  it('丢弃格式不对的直连配置', () => {
+    const [, parsed] = normalizeTargets([{ ...ssh('a', 'h'), direct: { host: 'x', port: 1, fingerprint: 'bad', grantId: 'g' } }])
+    expect(parsed).not.toHaveProperty('direct')
   })
 })

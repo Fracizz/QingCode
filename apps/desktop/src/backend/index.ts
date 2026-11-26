@@ -1,62 +1,41 @@
-import type { BackendMethod, SshAuth, SshTargetInput } from '../shared/backendApi'
+import { randomUUID } from 'node:crypto'
+import type { BackendMethod } from '../shared/backendApi'
 import { backendConfig } from './config'
 import { BackendRouter, RouterError, type WirePort } from './router'
 import {
   createTargetId,
   readTargets,
   removeTarget,
+  upsertDirectTarget,
   upsertTarget,
   writeTargets,
 } from './targetStore'
-import { removeSecret } from './secretStore'
+import { loadSecret, removeSecret, saveSecret } from './secretStore'
+import { isDirectInput, validateDirectInput } from './directInput'
+import { validateTargetInput } from './targetInput'
 import { registerDataMethods } from './registerData'
 import { registerMobileMethods } from './registerMobile'
+import { registerSettingsMethods } from './registerSettings'
 import { registerTargetMethods } from './registerTargets'
 
 export const router = new BackendRouter()
 
-function parseAuth(auth: SshAuth): SshAuth {
-  if (!auth || typeof auth !== 'object') {
-    throw new RouterError('invalid_params', '认证方式无效')
-  }
-  if (auth.kind === 'password' || auth.kind === 'agent') return { kind: auth.kind }
-  if (auth.kind === 'key' && typeof auth.keyPath === 'string' && auth.keyPath !== '') {
-    return { kind: 'key', keyPath: auth.keyPath }
-  }
-  throw new RouterError('invalid_params', '认证方式无效')
-}
-
-function validateInput(params: SshTargetInput): SshTargetInput {
-  if (!params || typeof params !== 'object') {
-    throw new RouterError('invalid_params', '连接参数无效')
-  }
-  const { name, host, port, username } = params
-  if (typeof name !== 'string' || name.trim() === '') {
-    throw new RouterError('invalid_params', '名称不能为空')
-  }
-  if (typeof host !== 'string' || host.trim() === '') {
-    throw new RouterError('invalid_params', '主机不能为空')
-  }
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new RouterError('invalid_params', '端口无效')
-  }
-  if (typeof username !== 'string' || username.trim() === '') {
-    throw new RouterError('invalid_params', '用户名不能为空')
-  }
-  return {
-    ...(typeof params.id === 'string' && params.id !== 'local' ? { id: params.id } : {}),
-    name: name.trim(),
-    host: host.trim(),
-    port,
-    username: username.trim(),
-    auth: parseAuth(params.auth),
-  }
-}
-
 router.register('targets.list', () => readTargets(backendConfig.userData))
 
 router.register('targets.save', async (params) => {
-  const input = validateInput(params)
+  if (isDirectInput(params)) {
+    const direct = validateDirectInput(params)
+    const current = await readTargets(backendConfig.userData)
+    const { targets, target } = upsertDirectTarget(current, direct, `direct-${randomUUID()}`)
+    if (direct.token) {
+      // 只更新 token，保留同 id 下可能存在的其他凭据字段。
+      const saved = await loadSecret(target.id).catch(() => null)
+      await saveSecret(target.id, { ...(saved ?? {}), token: direct.token })
+    }
+    await writeTargets(backendConfig.userData, targets)
+    return target
+  }
+  const input = validateTargetInput(params)
   const current = await readTargets(backendConfig.userData)
   const { targets, target } = upsertTarget(current, input, createTargetId())
   await writeTargets(backendConfig.userData, targets)
@@ -90,6 +69,7 @@ const notImplemented: BackendMethod[] = [
 registerTargetMethods(router)
 registerDataMethods(router)
 registerMobileMethods(router)
+registerSettingsMethods(router)
 router.registerNotImplemented(notImplemented)
 
 function adaptPort(port: Electron.MessagePortMain): WirePort {

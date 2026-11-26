@@ -9,6 +9,7 @@ import {
   type ServerPaths,
 } from './paths'
 import { VERSION } from './version'
+import { needsJobBreakaway, spawnOutsideJob } from './windowsDetach'
 
 export interface EnsureOptions {
   stateDir?: string
@@ -127,7 +128,9 @@ async function waitForExit(paths: ServerPaths): Promise<void> {
 function spawnDaemon(paths: ServerPaths, options: EnsureOptions): void {
   const script = options.scriptPath ?? path.resolve(process.argv[1] ?? 'qn-server.cjs')
   const args = [script, 'daemon', '--state-dir', paths.stateDir]
-  const child = spawn(options.spawnProgram ?? process.execPath, args, {
+  const program = options.spawnProgram ?? process.execPath
+  if (needsJobBreakaway() && spawnOutsideJob(program, args)) return
+  const child = spawn(program, args, {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

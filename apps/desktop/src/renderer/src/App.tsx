@@ -11,6 +11,10 @@ import { TooltipProvider } from './components/primitives'
 import { Sidebar } from './components/shell/Sidebar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
+import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
+import { QuickOpen } from './features/explorer'
+import { useWorkspaceWatch } from './hooks/useWorkspaceWatch'
+import { useDock } from './store/dock'
 import { useBootSplash } from './hooks/useBootSplash'
 import { useCodex } from './store/codex'
 import { useLegacy } from './store/legacy'
@@ -48,6 +52,10 @@ export default function App() {
   const [credentialTarget, setCredentialTarget] = useState<SshTarget | null>(null)
   const [rememberPrefs, setRememberPrefs] = useState<Record<string, boolean>>({})
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
+  const workspace = useWorkspaceScope()
+
+  useWorkspaceWatch()
 
   useEffect(() => useRateLimits.getState().init(), [])
 
@@ -68,12 +76,24 @@ export default function App() {
     useRateLimits.getState().setActiveTarget(selectedId)
   }, [selectedId])
 
-  // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话（草稿态，发第一条消息时才创建）。
+  // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话（草稿态，发第一条消息时才创建）、Ctrl+P 快速打开文件；
+  // Ctrl+Shift+E/F/G 切换右侧资源管理器 / 搜索 / 源代码管理。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
       const key = event.key.toLowerCase()
-      if (key === 'b') {
+      if (event.shiftKey) {
+        const tool = key === 'e' ? 'explorer' : key === 'f' ? 'search' : key === 'g' ? 'git' : null
+        if (tool) {
+          event.preventDefault()
+          useDock.getState().toggleTool(tool)
+        }
+        return
+      }
+      if (key === 'p') {
+        event.preventDefault()
+        setQuickOpen(true)
+      } else if (key === 'b') {
         event.preventDefault()
         useUi.getState().toggleSidebar()
       } else if (key === 'n') {
@@ -105,13 +125,13 @@ export default function App() {
   const onSaved = (target: SshTarget, credentials: ConnectCredentials) => {
     setRememberPrefs((prefs) => ({ ...prefs, [target.id]: credentials.remember === true }))
     select(target.id)
-    if (credentials.password || credentials.passphrase) {
-      void connect(target.id, credentials)
-    } else if (target.kind === 'ssh' && target.auth.kind !== 'agent') {
-      setCredentialTarget(target)
-    } else {
-      void connect(target.id)
-    }
+    // 走到这里说明试连已通过（密码来自输入或已保存），直接连接即可。
+    void (async () => {
+      // 改过配置的活动连接要先断开，否则 backend 认为已就绪而沿用旧配置。
+      const state = useTargets.getState().states[target.id]?.state
+      if (state && state !== 'idle') await disconnect(target.id)
+      await connect(target.id, credentials)
+    })()
   }
 
   const openAddTarget = () => setTargetForm({ open: true, editing: null })
@@ -138,6 +158,7 @@ export default function App() {
           />
         )}
         <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+        <WorkspaceDock />
       </div>
 
       {targetForm.open && (
@@ -180,6 +201,14 @@ export default function App() {
       )}
       <LegacyDialog />
       {mobileOpen && <MobileSettingsDialog onClose={() => setMobileOpen(false)} />}
+      {quickOpen && !('reason' in workspace) && (
+        <QuickOpen
+          targetId={workspace.targetId}
+          root={workspace.cwd}
+          open={quickOpen}
+          onClose={() => setQuickOpen(false)}
+        />
+      )}
       <Notice />
     </div>
     </TooltipProvider>

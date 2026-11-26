@@ -17,6 +17,7 @@ import {
   type AgentHostHub,
 } from './codexHost'
 import { createClaudeHost } from './claude/bridge'
+import { DirectListener } from './direct/listener'
 import { fsHome, fsList } from './fs'
 import { Logger } from './log'
 import {
@@ -51,10 +52,18 @@ interface ClientSession {
   /** 文件/Git 处理函数登记的连接级清理（监听、搜索） */
   cleanups: Array<() => void>
   workspace?: WorkspaceContext
+  /** ipc：本机命名管道/unix socket（持主 token）；direct：TLS 直连（持可撤销授权） */
+  origin: 'ipc' | 'direct'
+  peer?: string
+  grantId?: string
 }
+
+// 只允许本机持主 token 的连接调用的管理方法；直连客户端不能关停 daemon 或改直连配置。
+const ADMIN_METHODS = new Set(['server.shutdown', 'direct.reload', 'direct.status'])
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_IDLE_CHECK_MS = 5_000
+const HELLO_TIMEOUT_MS = 10_000
 
 export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> {
   const paths = resolvePaths(options.stateDir)
@@ -108,6 +117,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       : createClaudeHost(hubFor('claude'), options.version),
   }
   const allHosts = [hosts.codex, hosts.claude]
+  const direct = new DirectListener({
+    stateDir: paths.stateDir,
+    log: (message) => logger.info(message),
+    onSocket: (socket, peer) => acceptSocket(socket, 'direct', peer),
+    onRevoked: (ids) => closeDirectSessions((session) => session.grantId !== undefined && ids.has(session.grantId), '授权已撤销'),
+  })
   let nextClientId = 1
   let shuttingDown = false
 
@@ -149,6 +164,9 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     if (agent === null) {
       return sendErr(session, id, 'params', 'agent 只能是 codex 或 claude')
     }
+    if (session.origin === 'direct' && ADMIN_METHODS.has(method)) {
+      return sendErr(session, id, 'forbidden', `直连客户端不能调用 ${method}`)
+    }
     try {
       switch (method) {
         case 'ping':
@@ -185,6 +203,10 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         }
         case 'codex.status':
           return sendOk(session, id, hosts[agent].status())
+        case 'direct.reload':
+          return sendOk(session, id, await direct.reload().then(afterDirectReload))
+        case 'direct.status':
+          return sendOk(session, id, direct.status())
         case 'server.shutdown':
           sendOk(session, id, {})
           scheduleShutdown('server.shutdown')
@@ -220,6 +242,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     clearInterval(idleTimer)
     for (const host of allHosts) host.shutdown()
     server.close()
+    void direct.close()
     for (const session of clients.values()) session.conn.close()
     clients.clear()
     cleanup()
@@ -237,7 +260,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   let idleSince: number | null = null
   const idleTimer = setInterval(() => {
     const activeTurns = allHosts.reduce((total, host) => total + host.activeTurns, 0)
-    const idle = clients.size === 0 && activeTurns === 0
+    // 开着直连时 daemon 就是对外服务，不能空闲退出（否则远端客户端无处可连）。
+    const idle = clients.size === 0 && activeTurns === 0 && !direct.listening
     if (!idle) {
       idleSince = null
       return
@@ -251,17 +275,29 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   idleTimer.unref()
 
   server.on('error', (err: Error) => logger.warn(`IPC server error: ${err.message}`))
-  server.on('connection', (socket: net.Socket) => {
+  const acceptSocket = (socket: net.Socket, origin: 'ipc' | 'direct', peer?: string): void => {
     const id = nextClientId++
     let session!: ClientSession
     const conn = attachFramedStream(new SocketStream(socket), {
       onMessage(raw: unknown) {
         if (!session.hello) {
-          const check = checkHello(raw, { token })
+          let grantId: string | null = null
+          const check = origin === 'ipc'
+            ? checkHello(raw, { token })
+            : checkHello(raw, {
+                authorize: (candidate) => {
+                  if (peer && direct.isLocked(peer)) return false
+                  grantId = direct.authorize(candidate, peer ?? '')
+                  return grantId !== null
+                },
+              })
           if (!check.ok) {
+            if (origin === 'direct') logger.warn(`直连 ${peer ?? '?'} 握手失败: ${check.message}`)
             fail(session, check.code, check.message)
             return
           }
+          if (grantId) session.grantId = grantId
+          if (origin === 'direct') logger.info(`直连 ${peer ?? '?'} 已接入（授权 ${grantId ?? '?'}）`)
           session.hello = true
           session.conn.send({
             t: 'welcome',
@@ -292,9 +328,36 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         }
       },
     })
-    session = { id, socket, conn, hello: false, attached: new Set(), cleanups: [] }
+    session = {
+      id,
+      socket,
+      conn,
+      hello: false,
+      attached: new Set(),
+      cleanups: [],
+      origin,
+      ...(peer !== undefined ? { peer } : {}),
+    }
     clients.set(id, session)
-  })
+    // 直连未完成握手的连接限时，避免空连接占位。
+    if (origin === 'direct') {
+      setTimeout(() => {
+        if (clients.get(id) === session && !session.hello) fail(session, 'auth', 'hello 超时')
+      }, HELLO_TIMEOUT_MS).unref()
+    }
+  }
+  server.on('connection', (socket: net.Socket) => acceptSocket(socket, 'ipc'))
+
+  const closeDirectSessions = (match: (session: ClientSession) => boolean, reason: string): void => {
+    for (const session of clients.values()) {
+      if (session.origin === 'direct' && match(session)) fail(session, 'auth', reason)
+    }
+  }
+  const afterDirectReload = <T>(status: T): T => {
+    if (!direct.listening) closeDirectSessions(() => true, '直连已关闭')
+    return status
+  }
+  await direct.reload().then(afterDirectReload)
 
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))

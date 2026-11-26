@@ -152,6 +152,9 @@ importers:
       '@qn/protocol':
         specifier: workspace:*
         version: link:../protocol
+      selfsigned:
+        specifier: 5.5.0
+        version: 5.5.0
 
 packages:
 

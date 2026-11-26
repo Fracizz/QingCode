@@ -1,11 +1,15 @@
 import type { AgentKind } from '../shared/backendApi'
-import type { SshTarget, TargetState } from '../shared/backendApi'
+import type { DirectTarget, SshTarget, TargetState } from '../shared/backendApi'
 
 // 后端与具体传输（本机命名管道 / SSH exec 通道）之间只依赖这组形状，便于单测替换。
 
 export type TargetCredentials = {
   password?: string
   passphrase?: string
+  /** 直连目标的授权 token */
+  token?: string
+  /** SSH 目标开启直连加速后的授权 token */
+  directToken?: string
 }
 
 export interface TargetLink {
@@ -25,14 +29,33 @@ export interface HostKeyVerifier {
   verify(host: string, port: number, fingerprint: string): Promise<boolean>
 }
 
-export interface SshLinkContext {
+/** 建立 SSH 连接所需的最小信息；连接测试只需要这些。 */
+export interface SshTestContext {
   target: SshTarget
   credentials: TargetCredentials
+  gate: HostKeyVerifier
+}
+
+/** 经 SSH 执行远端 server 子命令（开启/关闭直连等）所需的信息。 */
+export interface SshRemoteContext extends SshTestContext {
+  resourcesPath: string
+  onState?(detail: string): void
+}
+
+export interface SshLinkContext extends SshTestContext {
   hooks: LinkHooks
   userData: string
   resourcesPath: string
   appVersion: string
-  gate: HostKeyVerifier
+}
+
+export interface DirectLinkContext {
+  target: DirectTarget
+  token: string
+  hooks: LinkHooks
+  appVersion: string
+  /** 缺省 10s；SSH 目标试直连时用更短的值以便尽快回退 */
+  connectTimeoutMs?: number
 }
 
 export interface LocalLinkContext {

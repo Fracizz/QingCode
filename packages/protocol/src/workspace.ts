@@ -185,6 +185,25 @@ export interface WorkspaceMethods {
     params: { cwd: string; commit: string }
     result: { files: Array<{ path: string; origPath?: string; status: string }> }
   }
+  /** 可用性探测：只运行 `<exe> --version`（docs/agent-adapters.md §7）。 */
+  'agent.probe': { params: AgentProbeParams; result: AgentProbeResult }
 }
 
 export type WorkspaceMethod = keyof WorkspaceMethods
+
+/** 探测目标机上用户已安装的 Agent；不开会话、不读凭据、不下载安装。 */
+export type AgentProbeAgent = 'codex' | 'claude' | 'pi'
+
+export type AgentProbeParams = {
+  agent: AgentProbeAgent
+  /** 留空则按 PATH / 常见安装目录解析 */
+  path?: string
+}
+
+export type AgentProbeResult = {
+  found: boolean
+  /** 实际找到的可执行文件；未找到时为传入路径或空串 */
+  path: string
+  version?: string
+  error?: string
+}

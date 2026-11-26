@@ -6,7 +6,7 @@
 
 做：
 
-1. **远程连接**：SSH 连接 Linux 主机（密码 / 私钥文件 / ssh-agent），首次连接确认主机指纹、指纹变化拒绝；自动部署并拉起远端常驻 server（参考 qingcode 的 `qingcode-server`：SSH exec 里跑 `connect --stdio` 代理，daemon 常驻，断线不丢会话）。
+1. **远程连接**：SSH 连接 Linux 或 Windows 主机（密码 / 私钥文件 / ssh-agent），首次连接确认主机指纹、指纹变化拒绝；自动部署并拉起远端常驻 server（参考 qingcode 的 `qingcode-server`：SSH exec 里跑 `connect --stdio` 代理，daemon 常驻，断线不丢会话）。
 2. **Codex 对话式**：本机与远端都能用。server 拉起 `codex app-server`（JSON-RPC over stdio），客户端经 server 中继：会话列表、新建/继续会话、流式消息、推理摘要、命令执行与文件改动展示、审批（允许/拒绝）、中断。
 3. **项目**：每个目标（本机 / SSH 连接）下保存若干项目目录，Codex 会话按项目目录（cwd）组织。
 4. **导入旧版 QingCode 数据**：远程连接（含主机指纹）、项目（本机与 SSH），可选导入已保存的 SSH 密码/口令（§8）。
@@ -16,7 +16,7 @@
 8. **对话交互参考 Codex 桌面版**：选中文字浮出"添加到对话 / 在侧边聊天中提问"、行内评论、输入框注释条、消息操作（§12）。
 9. Windows x64 安装包（electron-builder NSIS）+ Android APK。
 
-不做（MVP 之后）：终端、文件树/编辑器、Git、Windows 远端、手机端终端/文件、扫码配对、Claude/pi 适配、自动更新、多窗口。
+不做（MVP 之后）：终端、文件树/编辑器、Git、手机端终端/文件、扫码配对、Claude/pi 适配、自动更新、多窗口。
 
 验收主机：93（`192.168.10.93`，root，已装 Node v26、codex-cli 0.172.0 并已登录）。
 
@@ -38,8 +38,11 @@ vendor/codex-protocol  `codex app-server generate-ts / generate-json-schema` 生
 
 ```
 renderer ──MessagePort(JSON)──▶ backend ──┬─ 本机：命名管道 \\.\pipe\qingcode-next-<user> ──▶ 本机 daemon ──stdio──▶ codex app-server
-                                          └─ 远端：ssh2 exec `node qn-server.cjs connect --stdio` ──unix socket──▶ 远端 daemon ──stdio──▶ codex app-server
+                                          ├─ 远端（SSH）：ssh2 streamlocal 转发到 daemon 的 unix socket；被拒/Windows 时退回 exec `node qn-server.cjs connect --stdio` ──▶ 远端 daemon
+                                          └─ 远端（直连，可选）：TLS（证书指纹固定）──▶ 远端 daemon 内置直连监听（默认 47390）
 ```
+
+传输分层（参考 Orca）：SSH 负责安装、启动、修复，以及直连不可用时的数据通道；daemon 是唯一状态中心，三种传输都只搬字节，鉴权在 daemon 的 `hello` 里统一完成（本机 IPC 用主 token，直连用每客户端可撤销授权，见 §3.4）。
 
 本机与远端跑**同一份** `qn-server.cjs`：本机用 Electron 自带 Node（`ELECTRON_RUN_AS_NODE=1`）以 detached 方式拉起 daemon，backend 直接连命名管道；远端用远端 `node`（要求 ≥ 18）。
 
@@ -53,6 +56,12 @@ renderer ──MessagePort(JSON)──▶ backend ──┬─ 本机：命名�
 | `node qn-server.cjs ensure [--state-dir D] [--replace]` | daemon 不在则 detached 拉起并等就绪（≤10s）；输出 `{"token","version","pid","started":bool,"endpoint"}`（endpoint 为本地 IPC 地址）。`--replace`：已运行版本不同且无进行中的 turn 时让旧 daemon 退出后重启 |
 | `node qn-server.cjs daemon [--state-dir D]` | 常驻进程（一般由 ensure 拉起） |
 | `node qn-server.cjs connect --stdio [--state-dir D]` | 把 stdin/stdout 与 daemon 的本地 IPC 双向对接，**不解析帧**；任一端 EOF 即退出 |
+| `node qn-server.cjs direct enable --listen [host:]port [--allow-public]` | 写 `<stateDir>/direct/config.json` 并让 daemon 重读（`direct.reload`）开始 TLS 监听；输出直连状态 |
+| `node qn-server.cjs direct disable` | 删除配置，daemon 停止监听并断开所有直连会话 |
+| `node qn-server.cjs direct grant [--name N] [--host H]...` | 新建一个客户端授权，输出 `{grantId, code, fingerprint, hosts, port}`；`code` 为连接码 `qn-direct:` + base64url(JSON `{v,hosts,port,token,fingerprint,name}`)，含明文 token，只写 stdout |
+| `node qn-server.cjs direct revoke --id ID` | 撤销授权，daemon 立即断开使用该授权的会话 |
+| `node qn-server.cjs direct status` | 输出 `{enabled, listening, listen, allowPublic, fingerprint, grants:[{id,name,createdAt}], error?}` |
+| `node qn-server.cjs serve --listen [host:]port [--name N] [--host H]...` | 兼容旧用法：= `direct enable` + `direct grant`，连接码另写 `<stateDir>/direct-code.txt`（0600），随后退出（监听由 daemon 常驻） |
 
 ### 3.2 运行目录
 
@@ -69,6 +78,14 @@ renderer ──MessagePort(JSON)──▶ backend ──┬─ 本机：命名�
 - codex 发来的通知与 server→client 请求：分配递增 `seq`，存入环形缓冲（最多 20000 条或 32MB），并广播给所有已 attach 的客户端。
 - server→client 请求（审批等）：广播给所有客户端，**第一个响应生效**并转给 codex；未决请求在新客户端 attach 时随回放下发。codex 本身会发 `serverRequest/resolved` 通知，客户端据此关闭卡片。
 - codex 进程退出：广播 `evt codex.exited {code,signal}`，未完成的转发请求全部以错误响应；下次 `codex.open` 重启。
+
+### 3.4 直连（daemon 内置，可选）
+
+- 只有 `direct/config.json` 存在时监听；监听中 daemon **不空闲退出**（它就是对外服务）。证书：EC P-256 自签，10 年，存 `<stateDir>/tls/{cert,key}.pem`，指纹 = 证书 DER 的 SHA-256；删除 `tls/` 即轮换（所有客户端需重新开启/导入）。
+- 授权：`direct/grants.json` 只存 token 的 SHA-256（`{id,name,tokenSha256,createdAt}`），比较用常数时间；daemon 主 token **不能**用于直连。
+- 来源检查在 TCP accept 阶段：默认只接受 loopback、私网（10/8、172.16/12、192.168/16、fc00::/7）、链路本地与 100.64/10（Tailscale），公网来源直接断开，`--allow-public` 放开；frp/SSH 转发进来的连接在服务端是 127.0.0.1。
+- 鉴权失败按来源 IP 计数，连续 5 次锁 60 秒；未完成 `hello` 的直连 10 秒后断开。
+- 直连会话禁止调用管理方法（`server.shutdown`、`direct.reload`、`direct.status`），返回 `forbidden`。
 
 ## 4. 协议（packages/protocol，protocol = 1）
 
@@ -111,6 +128,7 @@ renderer ──MessagePort(JSON)──▶ backend ──┬─ 本机：命名�
 | `targets.save` | `SshTargetInput`（`id?, name, host, port, username, auth:{kind:"password"}\|{kind:"key",keyPath}\|{kind:"agent"}`） | 保存到 `userData/targets.json`（不含密码） |
 | `targets.remove` | `{id}` | — |
 | `target.connect` | `{id, password?, passphrase?, remember?}` | 连接 + 部署 + 握手；进度经 `evt target.state` 推送。未传密码/口令时使用已保存的凭据；`remember:true` 且认证成功后加密保存 |
+| `target.test` | `SshTargetInput` + `{password?, passphrase?}` | 试连：认证 + 主机指纹 + 远端环境探测，不保存、不部署；返回 `{os, nodeVersion}`。带 `id` 时未传的凭据取已保存的。连接表单的"测试连接"与"保存"都走它 |
 | `target.forgetSecret` | `{id}` | 删除已保存的密码/口令 |
 | `projects.list` | `{targetId?}` | `Project[]`：`{id, targetId, name, path, lastOpenedAt}`，按 lastOpenedAt 降序 |
 | `projects.save` | `{id?, targetId, name?, path}` | 新增或更新（同 targetId+path 去重，name 缺省取目录名）；打开项目时也调用以刷新 lastOpenedAt |
@@ -131,8 +149,17 @@ renderer ──MessagePort(JSON)──▶ backend ──┬─ 本机：命名�
 1. 一次 exec 探测：`uname -s`、`$HOME`、`command -v node`、`node -v`；node 缺失或 < 18 → 报错"远端需要 Node ≥ 18"。
 2. 目标路径 `~/.qingcode-next/server/bin/<version>-<sha256 前 12 位>/qn-server.cjs`；`sha256sum` 校验，不符或缺失 → SFTP 上传到 `.tmp` 再 `mv`，权限 0600。
 3. exec `node <path> ensure --replace` 取 token。
-4. 开 exec 通道 `node <path> connect --stdio`，发 `hello`，收 `welcome` 即 ready。
+4. 先用 OpenSSH streamlocal 转发（`direct-streamlocal@openssh.com`）连 ensure 返回的 unix socket；sshd 拒绝转发时开 exec 通道 `node <path> connect --stdio`。发 `hello`，收 `welcome` 即 ready。
+   - 远端无 Node 或 < 18 时：若 `resources/node-runtime/manifest.json` 有对应平台（`linux-x64` 等）的内置 Node，经 SFTP 推送到 `~/.qingcode-next/runtimes/node-<sha256 前 16 位>/bin/node`（sha256 校验 + `-e 0` 自检，识别 noexec），之后命令都用它；没有则报"远端需要 Node ≥ 18"。
+
+**直连加速（SSH 目标可选）**：`target.enableDirect {id, listen?, host?, allowPublic?}` 经 SSH 执行 `direct enable` + `direct grant --name "QingCode Next @ <本机名>" --host <拨号地址>`，把 `{host, port, fingerprint, grantId}` 写入目标的 `direct` 字段、token 存 secrets（`directToken`）。之后连接该目标先试 TLS 直连（5 秒超时），失败（含指纹不符）回退 SSH，状态说明里写原因。`target.disableDirect {id}` 经 SSH 撤销本机授权并清除配置（不关远端监听）。独立的直连目标（`kind:'direct'`，粘贴连接码导入）用于没有 SSH 权限的场景。
 5. 断线自动重连（指数退避 1s→30s），重连后 `codex.attach {sinceSeq: lastSeq}`。
+
+**部署（Windows 远端）**：POSIX 探测无输出（cmd / PowerShell）或 `uname` 为 `MINGW*` 时改走此分支，流程同上，差异：
+
+- 默认 shell 不确定，文件操作用 `node -e` 执行 base64url 脚本；`node` 须在 SSH 会话的 `PATH` 中（≥ 18）。
+- SFTP 路径写作 `/C:/...`；state dir 为 `%LOCALAPPDATA%\qingcode-next\server`。
+- sshd 会话结束会结束其子进程：`ensure` 在 SSH 会话内经 WMI（`Win32_Process.Create`）拉起 daemon，WMI 不可用时退回普通拉起（断开后 daemon 不常驻）。
 
 **本机**：`ELECTRON_RUN_AS_NODE=1 <electron.exe> <resources>/server/qn-server.cjs ensure` 后连命名管道。
 

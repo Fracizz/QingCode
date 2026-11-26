@@ -97,6 +97,36 @@ describe('git.* 集成（os.tmpdir() 下的真实仓库）', () => {
     )
   }, 30_000)
 
+  it('cwd 可以是仓库内任意子目录；空仓库 branches 仍有当前分支', async () => {
+    const dir = makeRepo()
+    fs.mkdirSync(path.join(dir, 'src', 'nested'), { recursive: true })
+    write(dir, path.join('src', 'nested', 'a.txt'), 'a\n')
+    commitAll(dir, 'init')
+    const sub = path.join(dir, 'src', 'nested')
+
+    const status = await call<GitStatusResult>('git.status', { cwd: sub })
+    expect(status.root.replace(/\\/g, '/').toLowerCase()).toBe(
+      path.resolve(dir).replace(/\\/g, '/').toLowerCase(),
+    )
+    expect(status.files).toEqual([])
+
+    write(dir, path.join('src', 'nested', 'a.txt'), 'a\nb\n')
+    const changed = await call<GitStatusResult>('git.status', { cwd: sub })
+    expect(changed.files[0]?.path).toBe('src/nested/a.txt')
+    const diff = await call<{ diff: string }>('git.diff', {
+      cwd: sub,
+      path: path.join(sub, 'a.txt'),
+    })
+    expect(diff.diff).toContain('+b')
+
+    const empty = makeRepo()
+    expect(await call('git.branches', { cwd: empty })).toEqual({
+      current: 'main',
+      local: [],
+      remote: [],
+    })
+  }, 30_000)
+
   it('git.status：修改、暂存、未跟踪、重命名', async () => {
     const dir = makeRepo()
     write(dir, 'base.txt', 'one\n')

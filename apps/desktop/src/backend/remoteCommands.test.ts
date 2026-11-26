@@ -4,6 +4,9 @@ import {
   buildEnsureCommand,
   buildMkdirCommand,
   buildProbeCommand,
+  buildServerCommand,
+  buildWindowsServerCommand,
+  parseJsonLine,
   buildShaCommand,
   buildUploadCommand,
   formatSize,
@@ -16,6 +19,20 @@ import {
   posixQuote,
   redactToken,
   serverInstallPath,
+  buildWindowsConnectCommand,
+  buildWindowsEnsureCommand,
+  buildWindowsMkdirCommand,
+  buildWindowsProbeCommand,
+  buildWindowsShaCommand,
+  buildWindowsUploadCommand,
+  isPosixProbe,
+  parseWindowsProbe,
+  windowsSftpPath,
+  runtimeTargetKey,
+  parseRuntimeManifest,
+  runtimeInstallPath,
+  buildRuntimeSelfTestCommand,
+  buildRuntimeInstallCommand,
 } from './remoteCommands'
 
 const SHA = 'a'.repeat(64)
@@ -44,6 +61,7 @@ describe('远端探测解析', () => {
   const probe = [
     'QN_OS=Linux',
     'QN_HOME=/root',
+    'QN_ARCH=x86_64',
     'QN_NODE=/usr/bin/node',
     'QN_NODE_VER=v26.1.0',
     'QN_SHA256SUM=/usr/bin/sha256sum',
@@ -53,6 +71,7 @@ describe('远端探测解析', () => {
     expect(parseProbe(`banner\n${probe}\n`)).toEqual({
       os: 'Linux',
       home: '/root',
+      arch: 'x86_64',
       nodePath: '/usr/bin/node',
       nodeVersion: 'v26.1.0',
       sha256sumPath: '/usr/bin/sha256sum',
@@ -60,9 +79,13 @@ describe('远端探测解析', () => {
     expect(buildProbeCommand()).toContain('QN_HOME=%s')
   })
 
-  it('Node 缺失 / 低于 18 / 非 POSIX / 缺 sha256sum 都给出可读错误', () => {
-    expect(() => parseProbe(probe.replace('/usr/bin/node\n', '\n'))).toThrow('远端需要 Node ≥ 18')
-    expect(() => parseProbe(probe.replace('v26.1.0', 'v16.20.0'))).toThrow('远端需要 Node ≥ 18')
+  it('Node 缺失 / 低于 18 返回空 nodePath，其它校验仍然报错', () => {
+    const noNode = parseProbe(probe.replace('/usr/bin/node\n', '\n'))
+    expect(noNode.nodePath).toBe('')
+    expect(noNode.nodeVersion).toBe('')
+    const oldNode = parseProbe(probe.replace('v26.1.0', 'v16.20.0'))
+    expect(oldNode.nodePath).toBe('')
+    expect(oldNode.nodeVersion).toBe('')
     expect(() => parseProbe(probe.replace('Linux', 'MINGW64_NT-10.0'))).toThrow('远端需要 POSIX 主机')
     expect(() => parseProbe(probe.replace('QN_SHA256SUM=/usr/bin/sha256sum', 'QN_SHA256SUM='))).toThrow('sha256sum')
     expect(() => parseProbe(probe.replace('QN_HOME=/root', 'QN_HOME='))).toThrow('$HOME')
@@ -117,5 +140,127 @@ describe('清单 / 校验 / ensure 输出', () => {
     expect(formatSize(1536)).toBe('1.5 KB')
     expect(formatSize(1258291)).toBe('1.2 MB')
     expect(redactToken(`failed ${TOKEN}`)).toBe('failed ***')
+  })
+})
+
+describe('Windows 远端', () => {
+  const decode = (command: string): string => {
+    const match = /Buffer\.from\('([A-Za-z0-9_-]+)','base64'\)/.exec(command)
+    return Buffer.from(match?.[1] ?? '', 'base64url').toString('utf8')
+  }
+  const probe = 'QN_OS=win32\r\nQN_HOME=C:/Users/Administrator\r\nQN_ARCH=x64\r\nQN_NODE_VER=v24.18.0\r\n'
+
+  it('Git Bash 的 MINGW 与 cmd/PowerShell 的空输出都不算 POSIX', () => {
+    expect(isPosixProbe('QN_OS=Linux\n')).toBe(true)
+    expect(isPosixProbe('QN_OS=Darwin\n')).toBe(true)
+    expect(isPosixProbe('QN_OS=MINGW64_NT-10.0-28000\n')).toBe(false)
+    expect(isPosixProbe('QN_OS=$(uname -s)\n')).toBe(false)
+    expect(isPosixProbe('')).toBe(false)
+  })
+
+  it('解析探测输出并校验 Node 版本', () => {
+    expect(parseWindowsProbe(probe)).toMatchObject({ os: 'Windows', home: 'C:/Users/Administrator', arch: 'x64' })
+    expect(() => parseWindowsProbe(probe.replace('v24.18.0', 'v16.0.0'))).toThrow('远端需要 Node ≥ 18')
+    expect(() => parseWindowsProbe(probe.replace('win32', 'linux'))).toThrow('无法识别远端系统')
+  })
+
+  it('文件操作命令不含任何需要按 shell 转义的字符', () => {
+    const path = "C:/Users/o'brien $x/.qingcode-next/qn-server.cjs"
+    for (const command of [
+      buildWindowsProbeCommand(),
+      buildWindowsMkdirCommand(path),
+      buildWindowsShaCommand(path),
+      buildWindowsUploadCommand(`${path}.tmp`, path),
+    ]) {
+      expect(command).toMatch(/^node -e "eval\(Buffer\.from\('[A-Za-z0-9_-]+','base64'\)\.toString\(\)\)"$/)
+    }
+    expect(decode(buildWindowsMkdirCommand(path))).toContain(JSON.stringify(path))
+  })
+
+  it('启动命令拒绝双引号内仍会展开的路径，SFTP 路径补前导斜杠', () => {
+    expect(buildWindowsEnsureCommand('C:/Users/a b/qn.cjs')).toBe('node "C:/Users/a b/qn.cjs" ensure --replace')
+    for (const bad of ['C:/a$b', 'C:/%TEMP%', 'C:/a`b', 'C:/a"b']) {
+      expect(() => buildWindowsConnectCommand(bad)).toThrow('不支持的字符')
+    }
+    expect(windowsSftpPath('C:/Users/a/x')).toBe('/C:/Users/a/x')
+    expect(windowsSftpPath('/root/x')).toBe('/root/x')
+  })
+})
+
+describe('server 子命令', () => {
+  it('POSIX 逐个引用参数', () => {
+    expect(buildServerCommand('/usr/bin/node', '/h/q.cjs', ['direct', 'grant', '--name', "a'b"]))
+      .toBe(`'/usr/bin/node' '/h/q.cjs' 'direct' 'grant' '--name' 'a'\\''b'`)
+  })
+
+  it('Windows 用双引号并拒绝危险字符', () => {
+    expect(buildWindowsServerCommand('C:/q.cjs', ['direct', 'status'])).toBe('node "C:/q.cjs" "direct" "status"')
+    expect(() => buildWindowsServerCommand('C:/q.cjs', ['%PATH%'])).toThrow()
+  })
+
+  it('取最后一行 JSON，失败时不回显原文', () => {
+    expect(parseJsonLine('noise\n{"a":1}\n{"b":2}\n')).toEqual({ b: 2 })
+    expect(() => parseJsonLine('secret-token')).toThrow('远端 server 输出无法解析')
+  })
+})
+
+describe('内置 Node 运行时', () => {
+  it('探测命令采集 arch 并在缺 sha256sum 时回退 shasum', () => {
+    const cmd = buildProbeCommand()
+    expect(cmd).toContain('QN_ARCH=%s')
+    expect(cmd).toContain('uname -m')
+    expect(cmd).toContain('shasum -a 256')
+  })
+
+  it('带参数的 sha 命令逐个引用，普通路径整体引用', () => {
+    expect(buildShaCommand('shasum -a 256', '/root/node')).toContain("'shasum' '-a' '256'")
+    expect(buildShaCommand('/usr/bin/sha256sum', '/root/node')).toContain("'/usr/bin/sha256sum'")
+  })
+
+  it('runtimeTargetKey 只接受受支持的平台', () => {
+    expect(runtimeTargetKey('Linux', 'x86_64')).toBe('linux-x64')
+    expect(runtimeTargetKey('Linux', 'amd64')).toBe('linux-x64')
+    expect(runtimeTargetKey('Linux', 'aarch64')).toBe('linux-arm64')
+    expect(runtimeTargetKey('Linux', 'arm64')).toBe('linux-arm64')
+    expect(runtimeTargetKey('Darwin', 'x86_64')).toBe('darwin-x64')
+    expect(runtimeTargetKey('Darwin', 'arm64')).toBe('darwin-arm64')
+    expect(runtimeTargetKey('Darwin', 'aarch64')).toBe('darwin-arm64')
+    expect(runtimeTargetKey('Windows', 'x86_64')).toBeNull()
+    expect(runtimeTargetKey('Linux', 'riscv64')).toBeNull()
+    expect(runtimeTargetKey('FreeBSD', 'amd64')).toBeNull()
+  })
+
+  it('parseRuntimeManifest 校验 sha256 与本地文件路径', () => {
+    const manifest = {
+      version: 'v20.11.1',
+      targets: { 'linux-x64': { file: 'node-linux-x64', sha256: SHA } },
+    }
+    expect(parseRuntimeManifest(manifest)).toEqual(manifest)
+    for (const bad of [
+      null,
+      { version: 1, targets: {} },
+      { version: 'v20', targets: [] },
+      { version: 'v20', targets: { x: { file: 'a', sha256: 'abc' } } },
+      { version: 'v20', targets: { x: { file: 'a', sha256: SHA.toUpperCase() } } },
+      { version: 'v20', targets: { x: { file: '../node', sha256: SHA } } },
+      { version: 'v20', targets: { x: { file: '/etc/node', sha256: SHA } } },
+      { version: 'v20', targets: { x: { file: 'C:/node', sha256: SHA } } },
+      { version: 'v20', targets: { x: { file: 'a', sha256: SHA }, y: { file: 'b' } } },
+    ]) {
+      expect(() => parseRuntimeManifest(bad)).toThrow('内置 Node 清单无效')
+    }
+  })
+
+  it('运行时路径按 sha256 内容寻址', () => {
+    expect(runtimeInstallPath('/root', SHA)).toBe(`/root/.qingcode-next/runtimes/node-${SHA.slice(0, 16)}/bin/node`)
+    expect(parentPosixPath(runtimeInstallPath('/root', SHA))).toBe(`/root/.qingcode-next/runtimes/node-${SHA.slice(0, 16)}/bin`)
+  })
+
+  it('自检与安装命令转义所有路径', () => {
+    const node = "/root/it's/bin/node"
+    expect(buildRuntimeSelfTestCommand(node)).toBe(`${posixQuote(node)} -e 0 && echo QN_NODE_OK`)
+    expect(buildRuntimeInstallCommand(node + '.tmp', node)).toBe(
+      `chmod 755 ${posixQuote(node + '.tmp')} && mv -f ${posixQuote(node + '.tmp')} ${posixQuote(node)}`
+    )
   })
 })

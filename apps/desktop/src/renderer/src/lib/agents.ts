@@ -71,14 +71,34 @@ export function classifyAgentOpenError(agent: AgentKind, err: unknown): AgentAva
   return { state: 'error', detail: raw || '打开失败' }
 }
 
+/** `chosen` 是用户为该连接指定的默认 Agent：只要没有确认它不可用就用它。 */
 export function preferredAgent(
   statuses: Partial<Record<AgentKind, AgentAvailability>> | undefined,
+  chosen?: AgentKind,
 ): AgentKind {
+  if (chosen && statuses?.[chosen]?.state !== 'unavailable') return chosen
   if (statuses) {
     for (const agent of AGENTS) if (statuses[agent]?.state === 'ready') return agent
     for (const agent of AGENTS) if (statuses[agent]?.state !== 'unavailable') return agent
   }
   return DEFAULT_AGENT
+}
+
+/** 解析本地保存的"连接 → 默认 Agent"；损坏或未知的条目直接丢弃。 */
+export function parseDefaultAgents(raw: string | null): Record<string, AgentKind> {
+  if (!raw) return {}
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const result: Record<string, AgentKind> = {}
+  for (const [targetId, agent] of Object.entries(value)) {
+    if (isAgentKind(agent)) result[targetId] = agent
+  }
+  return result
 }
 
 export function availabilityReason(agent: AgentKind, status: AgentAvailability | undefined): string {

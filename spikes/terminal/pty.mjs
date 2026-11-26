@@ -82,7 +82,16 @@ export function spawnPty(options = {}) {
   })
   child.stderr?.on('data', (chunk) => emitter.emit('stderr', Buffer.from(chunk)))
   child.on('error', (err) => emitter.emit('stderr', Buffer.from(String(err))))
-  child.on('close', (code, signal) => finish({ code, signal: signal ?? null, source: 'process' }))
+  child.on('close', (code, signal) => {
+    // 宿主管道的写端不显式收掉时，调用方进程可能等不到事件循环空转结束。
+    try {
+      child.stdin?.destroy()
+      control?.destroy()
+    } catch {
+      // 已关闭。
+    }
+    finish({ code, signal: signal ?? null, source: 'process' })
+  })
 
   control?.on('data', (chunk) => {
     for (const msg of decoder.push(Buffer.from(chunk))) {

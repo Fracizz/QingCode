@@ -89,6 +89,7 @@ function TabBody({
         line={tab.line}
         column={tab.column}
         truncated={tab.truncated}
+        loadedBytes={tab.loadedBytes}
         busy={tab.busy}
         onLoadMore={onLoadMore}
       />

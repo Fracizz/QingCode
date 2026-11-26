@@ -74,7 +74,8 @@ class Output extends EventEmitter {
     this.kept = 0
     this.chunks = []
     this.tail = ''
-    this.off = pty.onData((chunk) => {
+    // 不能把返回值挂在 this.off 上，那会覆盖 EventEmitter.off。
+    this.detachData = pty.onData((chunk) => {
       this.total += chunk.byteLength
       if (this.kept < 12 * 1024 * 1024) {
         this.chunks.push(chunk)
@@ -111,7 +112,7 @@ class Output extends EventEmitter {
           resolve(this)
         } else if (Date.now() - started > timeoutMs) {
           cleanup()
-          reject(new Error(`等待超时: ${label}`))
+          reject(new Error(`等待超时: ${label}; 总字节=${this.total}; 尾部=${JSON.stringify(this.plain().slice(-400))}`))
         }
       }
       cleanup = () => {
@@ -159,8 +160,15 @@ function waitForExit(pty, getExit, timeoutMs = 4000) {
 }
 
 const cases = []
+const only = process.env.QN_SPIKE_ONLY
+  ? new Set(process.env.QN_SPIKE_ONLY.split(',').map((s) => s.trim()))
+  : null
 
 async function runCase(name, backend, fn) {
+  if (only && !only.has(name)) {
+    cases.push({ name, backend, ok: false, skipped: true, error: 'QN_SPIKE_ONLY 过滤' })
+    return
+  }
   const started = performance.now()
   try {
     const detail = await fn(backend)
@@ -206,6 +214,7 @@ async function withPty(backend, fn, options = {}) {
       pty.kill()
     }
     await waitForExit(pty, () => exit, 3500).catch(() => pty.kill('SIGKILL'))
+    out.detachData?.()
   }
 }
 
@@ -237,14 +246,30 @@ async function caseCtrlC(backend) {
     await initShell(pty, out, token)
     pty.write(`printf 'QN_SLEEP_%s\\n' "$QN_TOKEN"; sleep 30; printf 'QN_NOINT_%s\\n' "$QN_TOKEN"\n`)
     await out.waitFor((o) => o.has(marker('QN_SLEEP', token)), 8000, 'sleep 启动')
+    // 让 shell 真正进入 sleep 再发中断：过早的 ^C 可能落在命令行尾部而非前台进程组。
+    await sleep(150)
     const t0 = performance.now()
     pty.write('\u0003')
-    await sleep(120)
-    pty.write(`${doneLine('QN_AFTER')}\n`)
-    await out.waitFor((o) => o.has(marker('QN_AFTER', token)), 8000, 'Ctrl+C 后继续接受输入')
+    // bash 处理 SIGINT 时会丢弃 typeahead，过早写入的标记命令会被吞掉。
+    let afterSeen = false
+    let backToPromptMs = null
+    for (let attempt = 0; attempt < 24 && !afterSeen; attempt += 1) {
+      await sleep(150)
+      pty.write(`${doneLine('QN_AFTER')}\n`)
+      afterSeen = await out
+        .waitFor((o) => o.has(marker('QN_AFTER', token)), 250, 'Ctrl+C 后继续接受输入')
+        .then(() => true)
+        .catch(() => false)
+      if (afterSeen && backToPromptMs === null) backToPromptMs = round(performance.now() - t0)
+    }
+    if (!afterSeen) {
+      throw new Error(
+        `Ctrl+C 后未回到 shell（exited=${pty.exited}）: ${JSON.stringify(out.plain().slice(-300))}`,
+      )
+    }
     return {
       interrupted: !out.has(marker('QN_NOINT', token)),
-      backToPromptMs: round(performance.now() - t0),
+      backToPromptMs,
     }
   })
 }
@@ -265,12 +290,18 @@ async function caseResize(backend) {
     await out.waitFor((o) => size2Pattern.test(o.plain()), 8000, 'resize 后 stty size')
     const size2Match = size2Pattern.exec(out.plain())
     const size2 = size2Match ? `${size2Match[1]}x${size2Match[2]}` : null
-    const trapLine = `trap 'printf "QN_WINCH_%s\\n" "$QN_TOKEN"' WINCH\n`
+    const trapLine = `trap 'printf "QN_WINCH_%s\\n" "$QN_TOKEN"' WINCH; printf 'QN_TRAPSET_%s\\n' "$QN_TOKEN"\n`
     pty.write(trapLine)
+    await out.waitFor((o) => o.has(marker('QN_TRAPSET', token)), 4000, 'SIGWINCH trap 安装完成')
     const winch = supported
       ? out.waitFor((o) => o.has(marker('QN_WINCH', token)), 5000, 'SIGWINCH trap').then(() => true).catch(() => false)
       : Promise.resolve(false)
-    if (supported) pty.resize(100, 30)
+    if (supported) {
+      pty.resize(100, 30)
+      // bash 只在命令边界执行 trap，补一个空行让它有机会处理挂起的信号。
+      await sleep(120)
+      pty.write('\n')
+    }
     return {
       resizeSupported: supported,
       controlAck: control ? control.cols : null,

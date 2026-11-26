@@ -15,13 +15,15 @@ FILES=(
   demo.mjs
   measure.mjs
   smoke.mjs
+  debug.mjs
 )
 
 REMOTE_DIR="$(ssh -o BatchMode=yes "$HOST" 'mktemp -d /tmp/qn-spike-XXXXXXXX')"
 cleanup() {
   ssh -o BatchMode=yes "$HOST" "rm -rf '$REMOTE_DIR'" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+# timeout / Ctrl+C 也要删掉远端临时目录，否则会在 93 上留垃圾。
+trap cleanup EXIT INT TERM HUP
 
 # 用 tar 走 ssh stdin，避免 Windows/MSYS 路径转换问题；不安装任何软件。
 tar -cf - -C "$HERE" "${FILES[@]}" | ssh -o BatchMode=yes "$HOST" "tar -xf - -C '$REMOTE_DIR'"
@@ -29,8 +31,12 @@ tar -cf - -C "$HERE" "${FILES[@]}" | ssh -o BatchMode=yes "$HOST" "tar -xf - -C 
 case "$MODE" in
   measure)
     mkdir -p "$HERE/results"
+    FILTER_ENV=""
+    if [[ -n "${QN_SPIKE_ONLY:-}" ]]; then
+      FILTER_ENV="QN_SPIKE_ONLY='${QN_SPIKE_ONLY}'"
+    fi
     ssh -o BatchMode=yes "$HOST" \
-      "cd '$REMOTE_DIR' && QN_SPIKE_DIR='$REMOTE_DIR' node measure.mjs > '$REMOTE_DIR/report.json'" \
+      "cd '$REMOTE_DIR' && QN_SPIKE_DIR='$REMOTE_DIR' $FILTER_ENV node measure.mjs > '$REMOTE_DIR/report.json'" \
       2>&1 | tee "$HERE/results/93-measure.log"
     ssh -o BatchMode=yes "$HOST" "cat '$REMOTE_DIR/report.json'" > "$HERE/results/93-measurements.json"
     echo "结果: $HERE/results/93-measurements.json；诊断: $HERE/results/93-measure.log"
@@ -40,6 +46,14 @@ case "$MODE" in
     ;;
   smoke)
     ssh -o BatchMode=yes "$HOST" "cd '$REMOTE_DIR' && node smoke.mjs ${2:-python}"
+    ;;
+  debug)
+    ssh -o BatchMode=yes "$HOST" "cd '$REMOTE_DIR' && node debug.mjs ${2:-python}"
+    ;;
+  demo-auto)
+    # 非交互验收：强制分配远端 pty，喂两行命令看 demo.mjs 是否转发。
+    printf 'printf "QN_DEMO_%%s\\n" "$((40+2))"\nexit\n' | \
+      ssh -tt -o BatchMode=yes "$HOST" "cd '$REMOTE_DIR' && node demo.mjs"
     ;;
   *)
     echo "用法: bash run-remote.sh measure | demo" >&2

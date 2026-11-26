@@ -178,6 +178,8 @@ describe('findPathsInText', () => {
   it('识别绝对路径、Windows 路径、./ ../ ~/ 前缀', () => {
     expect(findPathsInText('/abs/a.ts:12')[0]).toMatchObject({ path: '/abs/a.ts', line: 12 })
     expect(findPathsInText('C:\\work\\a.ts:9')[0]).toMatchObject({ path: 'C:\\work\\a.ts', line: 9 })
+    expect(findPathsInText('C:/work/a.ts')[0]).toMatchObject({ path: 'C:/work/a.ts' })
+    expect(findPathsInText('/C:/work/a.ts')[0]).toMatchObject({ path: '/C:/work/a.ts' })
     expect(findPathsInText('./scripts/build')[0]).toMatchObject({ path: './scripts/build' })
     expect(findPathsInText('~/notes/todo.md')[0]).toMatchObject({ path: '~/notes/todo.md' })
   })
