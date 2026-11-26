@@ -24,6 +24,7 @@ import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../thr
 import { AgentTag, Badge, Button, Empty, Loading, LoadingIcon, Note } from './ui'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
+import { PullToRefresh } from './PullToRefresh'
 
 const tabs: { id: WorkspaceTab; title: string }[] = [
   { id: 'sessions', title: '会话' },
@@ -375,11 +376,11 @@ export function WorkspaceHome() {
   const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query),
     [threadList, desktopId, archived, projects, query])
 
-  const refresh = useCallback(() => {
-    if (desktopId) void Promise.all([loadTargets(), loadProjects(desktopId)])
+  const refresh = useCallback(async () => {
+    if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])
   }, [desktopId, loadTargets, loadProjects])
 
-  useEffect(refresh, [connected, tab, refresh])
+  useEffect(() => { void refresh() }, [connected, tab, refresh])
 
   const isSessions = tab === 'sessions'
   const searching = query.trim().length > 0
@@ -388,7 +389,8 @@ export function WorkspaceHome() {
     useApp.setState({ page: 'targets', targetsReturnPage: 'workspace' })
   }
   return (
-    <main className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise" aria-label={isSessions ? '会话' : '项目'}>
+    <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
+      label={isSessions ? '会话' : '项目'} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
       {repairReason && desktopId && (
         <Note message={repairReason === 'fingerprint' ? '电脑证书已变化，请核对后重新配对。' : '电脑已撤销此设备的授权。'}
           tone="error" actionLabel="重新配对" onAction={() => beginRepair(desktopId)} />
@@ -396,7 +398,7 @@ export function WorkspaceHome() {
       {notice && <Note message={notice} tone="warn" />}
       {error && <Note message={error} tone="error" onClose={clearError} />}
       {projectList?.error && !repairReason && (
-        <Note message="读取项目失败，请检查电脑和网络。" tone="error" actionLabel="重试" onAction={refresh} />
+        <Note message="读取项目失败，请检查电脑和网络。" tone="error" actionLabel="重试" onAction={() => void refresh()} />
       )}
       {projectList?.loading && projects.length === 0 ? <Loading text="正在读取项目…" /> : (
         <>
@@ -461,6 +463,6 @@ export function WorkspaceHome() {
           )}
         </>
       )}
-    </main>
+    </PullToRefresh>
   )
 }

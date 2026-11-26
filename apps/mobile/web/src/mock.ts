@@ -532,6 +532,20 @@ export class MockNativePort implements NativePort {
     const turns = this.turns.get(key) ?? []
     const last = turns.at(-1)
     const active = last?.status === 'inProgress' ? last : null
+    const history = (): MockTurn[] => threadId === 't-demo' || threadId === 'c-demo' ? [
+      {
+        id: `turn-history-${threadId}`, status: 'completed',
+        items: [
+          { type: 'userMessage', id: `u-${threadId}`, content: [{ type: 'text', text: '你好' }] },
+          {
+            type: 'agentMessage',
+            id: `a-${threadId}`,
+            text: `你好！这是 ${agentName(agent)} 的模拟历史消息，可点击 [README.md](README.md:3) 或 \`apps/mobile/web/src/store.ts:42\` 查看文件。`,
+          },
+        ],
+      },
+      ...turns,
+    ] : turns
 
     switch (msg.method) {
       case 'thread/list': {
@@ -573,6 +587,27 @@ export class MockNativePort implements NativePort {
         recv({ method: 'thread/started', params: { thread } })
         return
       }
+      case 'thread/fork': {
+        if (agent !== 'codex') {
+          recv({ id, error: { code: -32601, message: '当前 Agent 不支持会话分支' } })
+          return
+        }
+        const source = threads.find((entry) => entry.id === threadId)
+        const sourceTurns = history()
+        const end = inner.lastTurnId ? sourceTurns.findIndex((turn) => turn.id === inner.lastTurnId) : sourceTurns.length - 1
+        if (!source || (inner.lastTurnId && end < 0) || sourceTurns[end]?.status === 'inProgress') {
+          recv({ id, error: { code: -32602, message: '无法从指定轮次创建分支' } })
+          return
+        }
+        const branchTurns = structuredClone(sourceTurns.slice(0, end + 1))
+        const created = { id: `t-${++this.counter}`, cwd: source.cwd, name: '', preview: source.preview, updatedAt: nowSec }
+        threads.unshift(created)
+        this.turns.set(JSON.stringify([targetId, agent, created.id]), branchTurns)
+        const thread = { ...created, status: { type: 'idle' }, turns: inner.excludeTurns === true ? [] : branchTurns }
+        recv({ id, result: { thread } })
+        recv({ method: 'thread/started', params: { thread } })
+        return
+      }
       case 'thread/resume':
       case 'thread/read':
         recv({
@@ -585,21 +620,7 @@ export class MockNativePort implements NativePort {
               preview: '',
               updatedAt: nowSec,
               status: { type: active ? 'active' : 'idle' },
-              turns: [
-                {
-                  id: `turn-history-${threadId}`,
-                  status: 'completed',
-                  items: [
-                    { type: 'userMessage', id: `u-${threadId}`, content: [{ type: 'text', text: '你好' }] },
-                    {
-                      type: 'agentMessage',
-                      id: `a-${threadId}`,
-                      text: `你好！这是 ${agentName(agent)} 的模拟历史消息，可点击 [README.md](README.md:3) 或 \`apps/mobile/web/src/store.ts:42\` 查看文件。`,
-                    },
-                  ],
-                },
-                ...turns,
-              ],
+              turns: inner.excludeTurns === true || inner.includeTurns === false ? [] : history(),
             },
           },
         })

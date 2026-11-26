@@ -7,6 +7,49 @@ import { type AgentSession, useApp } from '../store'
 import { MobileCodexTransport } from '../transport'
 import { ChatPage } from './ChatPage'
 
+it('长会话先显示最新消息，可以逐批查看完整历史', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const thread: ThreadView = {
+    id: 'long', status: 'idle', activeTurnId: null, pendingApprovals: [],
+    items: Array.from({ length: 125 }, (_, i) => ({ kind: 'agent', id: String(i), text: `记录[${i}]`, streaming: false })),
+  }
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { long: thread } },
+  }
+  const earlier = () => [...host.querySelectorAll('button')].find((button) => button.textContent === '查看更早消息')
+  try {
+    await act(() => {
+      useApp.setState({
+        selectedTargetId: 'local', selectedThreadId: thread.id, eventsConnected: true,
+        sessions: { [session.key]: session },
+      })
+      root.render(<ChatPage />)
+    })
+    expect(host.textContent).toContain('记录[124]')
+    expect(host.textContent).toContain('记录[65]')
+    expect(host.textContent).not.toContain('记录[64]')
+    await act(() => earlier()?.click())
+    expect(host.textContent).toContain('记录[5]')
+    expect(host.textContent).not.toContain('记录[4]')
+    await act(() => earlier()?.click())
+    expect(host.textContent).toContain('记录[0]')
+    expect(earlier()).toBeUndefined()
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(initial)
+    rpc.dispose()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('中断请求失败可重试，确认中断后只显示一条状态，真正的轮次失败仍保留详情', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })

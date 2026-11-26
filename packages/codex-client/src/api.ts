@@ -10,12 +10,13 @@ import type {
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
+  Turn,
   TurnInterruptResponse,
   TurnStartResponse,
   TurnSteerResponse,
   UserInput,
 } from './codex-types'
-import type { CodexRpc } from './rpc'
+import { CodexRpcError, type CodexRpc } from './rpc'
 import { emptyState, loadThread } from './conversation'
 
 export type CodexRpcLike = Pick<CodexRpc, 'request'>
@@ -56,18 +57,84 @@ export function startThread(
   return rpc.request('thread/start', options)
 }
 
+export function isOversizeHistoryResponse(error: unknown): boolean {
+  return error instanceof CodexRpcError && error.data === 'response_too_large'
+}
+
+async function withHistory<T extends { thread: Thread }>(
+  rpc: CodexRpcLike,
+  threadId: string,
+  request: (metadataOnly: boolean) => Promise<T>,
+  isCurrent?: () => boolean,
+): Promise<T> {
+  const checkCurrent = () => {
+    if (isCurrent && !isCurrent()) throw new Error('已取消打开会话')
+  }
+  try {
+    return await request(false)
+  } catch (error) {
+    if (!isOversizeHistoryResponse(error)) throw error
+    checkCurrent()
+    const result = await request(true)
+    if (result.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+    if (result.thread.turns?.length) return result
+
+    // 单页超限时缩小页长，保留命令输出、文件改动和其他完整条目。
+    const turns = new Map<string, Turn>()
+    const seenCursors = new Set<string>()
+    let cursor: string | null = null
+    let limit = 20
+    for (;;) {
+      checkCurrent()
+      if (cursor) seenCursors.add(cursor)
+      let page
+      try {
+        page = await rpc.request('thread/turns/list', {
+          // 最后读取正在变化的最新轮次，缩短历史与实时事件重叠的时间。
+          threadId, cursor, limit, sortDirection: 'asc', itemsView: 'full',
+        })
+      } catch (pageError) {
+        if (pageError instanceof CodexRpcError && pageError.code === -32601) throw error
+        if (!isOversizeHistoryResponse(pageError) || limit === 1) throw pageError
+        limit = Math.max(1, Math.floor(limit / 2))
+        continue
+      }
+      for (const turn of page.data) {
+        if (!turns.has(turn.id)) turns.set(turn.id, turn)
+      }
+      cursor = page.nextCursor
+      if (!cursor) break
+      if (seenCursors.has(cursor)) throw new Error('会话历史分页未前进，请重试')
+    }
+    checkCurrent()
+    const history = [...turns.values()]
+    let status = result.thread.status
+    if (status?.type === 'active' && history.at(-1)?.status !== 'inProgress') {
+      const latest = await rpc.request('thread/read', { threadId, includeTurns: false })
+      if (latest.thread?.id === threadId) status = latest.thread.status
+    }
+    return { ...result, thread: { ...result.thread, turns: history, status } }
+  }
+}
+
 export function resumeThread(
   rpc: CodexRpcLike,
   threadId: string,
+  isCurrent?: () => boolean,
 ): Promise<ThreadResumeResponse> {
-  return rpc.request('thread/resume', { threadId })
+  return withHistory(rpc, threadId, (metadataOnly) => rpc.request(
+    'thread/resume', metadataOnly ? { threadId, excludeTurns: true } : { threadId },
+  ), isCurrent)
 }
 
 export function readThread(
   rpc: CodexRpcLike,
   threadId: string,
+  isCurrent?: () => boolean,
 ): Promise<ThreadReadResponse> {
-  return rpc.request('thread/read', { threadId, includeTurns: true })
+  return withHistory(rpc, threadId, (metadataOnly) => rpc.request(
+    'thread/read', { threadId, includeTurns: !metadataOnly },
+  ), isCurrent)
 }
 
 export async function readSubagentThread(rpc: CodexRpcLike, threadId: string) {

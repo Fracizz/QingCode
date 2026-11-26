@@ -19,6 +19,7 @@ import { SubagentRpcContext } from './SubagentDetails'
 import { Badge, Button, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
+const HISTORY_BATCH_SIZE = 60
 
 export function ChatPage() {
   const activeId = useApp((s) => s.activeId)
@@ -66,7 +67,9 @@ export function ChatPage() {
   const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string; error: string | null } | null>(null)
   const [switching, setSwitching] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
+  const [historyStart, setHistoryStart] = useState<{ key: string; index: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const historyScroll = useRef<{ key: string; height: number; top: number } | null>(null)
   const approvalsRef = useRef<HTMLDivElement>(null)
   const following = useRef(true)
   const previousChat = useRef(chatKey)
@@ -75,6 +78,10 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
+  const progress = running && approvals.length === 0
+    ? view.activity === 'input' ? '等待输入…'
+      : view.activity === 'pending' ? '等待审批…' : `${agentLabel(selectedAgent)} 正在处理…`
+    : null
   const interrupted = !running && view?.activity === 'interrupted'
   const turnError = !running && !interrupted ? view?.error : undefined
   const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === view.activeTurnId ? stopRequest : null
@@ -96,6 +103,8 @@ export function ChatPage() {
       return entry
     })
   }, [shownItems])
+  const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
+  const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
   // 打开会话时已有的历史直接显示，之后新到的消息才播放入场动画。
   const baseline = useRef({ key: '', count: 0 })
   if (baseline.current.key !== chatKey && shownItems.length > 0) baseline.current = { key: chatKey, count: shownItems.length }
@@ -124,7 +133,14 @@ export function ChatPage() {
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
-  }, [chatKey, items, approvals.length, interrupted, turnError])
+  }, [chatKey, items, approvals.length, progress, interrupted, turnError])
+
+  useLayoutEffect(() => {
+    const previous = historyScroll.current
+    historyScroll.current = null
+    const scroll = scrollRef.current
+    if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
+  }, [chatKey, firstVisible])
 
   useLayoutEffect(() => {
     const node = scrollRef.current
@@ -141,6 +157,14 @@ export function ChatPage() {
     if (!node) return
     following.current = nearBottom(node)
     setAtBottom(following.current)
+  }
+
+  function showEarlier() {
+    const node = scrollRef.current
+    if (node) historyScroll.current = { key: chatKey, height: node.scrollHeight, top: node.scrollTop }
+    following.current = false
+    setAtBottom(false)
+    setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
   }
 
   function jumpToLatest() {
@@ -209,11 +233,14 @@ export function ChatPage() {
             <Note message={session.openError} tone="error" actionLabel="重试"
               onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
           )}
-          {items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
+          {!running && items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
           <div className="space-y-4">
+            {firstVisible > 0 && (
+              <Button variant="ghost" className="mx-auto flex" onClick={showEarlier}>查看更早消息</Button>
+            )}
             <SubagentRpcContext.Provider key={chatKey} value={session?.rpc ?? null}>
               <FileActionsContext.Provider value={fileActions}>
-                {blocks.map(({ block, index }) => (
+                {blocks.slice(firstVisible).map(({ block, index }) => (
                   <div key={block.kind === 'item' ? block.item.id : block.id}
                     className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
                     {block.kind === 'item'
@@ -225,9 +252,8 @@ export function ChatPage() {
                 ))}
               </FileActionsContext.Provider>
             </SubagentRpcContext.Provider>
-            {/* 失败原因贴在最后一轮之后，和出错的位置对应；运行中且还没有回复时给出等待提示。 */}
-            {running && shownItems.at(-1)?.kind === 'user' && (
-              <div className="qn-thinking" role="status"><LoadingIcon />{agentLabel(selectedAgent)} 正在处理…</div>
+            {progress && (
+              <div className="qn-thinking" role="status"><LoadingIcon aria-hidden />{progress}</div>
             )}
             {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
             {turnError && <TurnErrorCard message={turnError} />}

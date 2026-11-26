@@ -12,18 +12,24 @@ export type TurnEntry =
   /** 已结束一轮的过程（思考、工具、中间说明）收成"工作了 4m 56s"，只露出最终回复。 */
   | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[] }
 
-export function hasPendingReply(items: ItemView[], running: boolean, submitting: boolean): boolean {
-  if (!running && !submitting) return false
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index]!
-    if (item.kind === 'agent' && item.text.trim()) return false
-    if (item.kind === 'user') return running || (submitting && item.pending === true)
-  }
-  return false
+export function hasPendingSubmission(items: ItemView[], submitting: boolean): boolean {
+  if (!submitting) return false
+  const item = items.findLast((entry) => entry.kind === 'user' || (entry.kind === 'agent' && entry.text.trim()))
+  return item?.kind === 'user' && item.pending === true
 }
 
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
 export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): TurnEntry[] {
+  // 多轮共用一个条目索引，避免长会话的每个折叠组都扫描整份历史。
+  const turnsByItem = new Map<string, TurnMeta[]>()
+  for (const turn of turns ?? []) {
+    if (!turn.durationMs) continue
+    for (const id of turn.itemIds) {
+      const matches = turnsByItem.get(id)
+      if (matches) matches.push(turn)
+      else turnsByItem.set(id, [turn])
+    }
+  }
   const segments: ItemView[][] = []
   for (const item of items) {
     if (item.kind === 'user' || segments.length === 0) segments.push([item])
@@ -50,7 +56,7 @@ export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, run
     out.push({
       kind: 'work',
       key: `work-${process[0]!.id}`,
-      durationMs: turnDuration(segment, turns),
+      durationMs: turnDuration(segment, turnsByItem),
       entries: groupFlow(process),
     })
     if (finalIndex >= 0) out.push(...groupFlow(rest.slice(finalIndex)))
@@ -58,19 +64,15 @@ export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, run
   return out
 }
 
-function turnDuration(segment: ItemView[], turns: TurnMeta[] | undefined): number | null {
-  if (!turns?.length) return null
-  const ids = new Set(segment.map((item) => item.id))
-  let total = 0
-  let found = false
-  // 一条用户消息可能对应多轮（重试、续跑），累加起来。
-  for (const turn of turns) {
-    if (turn.durationMs && turn.itemIds.some((id) => ids.has(id))) {
-      total += turn.durationMs
-      found = true
-    }
+function turnDuration(segment: ItemView[], turnsByItem: Map<string, TurnMeta[]>): number | null {
+  const matching = new Set<TurnMeta>()
+  for (const item of segment) {
+    for (const turn of turnsByItem.get(item.id) ?? []) matching.add(turn)
   }
-  return found ? total : null
+  let total = 0
+  // 一条用户消息可能对应多轮（重试、续跑），累加起来。
+  for (const turn of matching) total += turn.durationMs ?? 0
+  return matching.size ? total : null
 }
 
 export function formatDuration(ms: number): string {

@@ -11,7 +11,7 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
     if (!id) return;
     if (method === 'initialize') return send({ id, result: { fakeHome: process.env.CODEX_HOME } });
     if (method === 'thread/resume' && params.historySize) {
-      const history = '历史😀'.repeat(params.historySize);
+      const history = (params.ascii ? 'a' : '历史😀').repeat(params.historySize);
       const bytes = Buffer.from(JSON.stringify({ id, result: { thread: { id: params.threadId, history } } }) + '\\n');
       const split = bytes.indexOf(Buffer.from('历')) + 1;
       return process.stdout.write(bytes.subarray(0, split), () => {
@@ -78,13 +78,16 @@ describe('Codex 历史回包', () => {
     }
   })
 
-  it('历史超过协议帧时返回明确错误，后续请求仍可用', async () => {
+  it.each([
+    { historySize: Math.ceil(MAX_FRAME_BYTES / 10) },
+    { historySize: MAX_FRAME_BYTES, ascii: true },
+  ])('历史超过协议帧时返回明确错误，后续请求仍可用（%j）', async (params) => {
     const { host, request } = harness()
     try {
       await host.open({ codexPath: fakeCodex })
       await expect(request('large', 'thread/resume', {
-        threadId: 'thread', historySize: Math.ceil(MAX_FRAME_BYTES / 10),
-      })).resolves.toMatchObject({ error: { message: '会话数据超过传输大小上限' } })
+        threadId: 'thread', ...params,
+      })).resolves.toMatchObject({ error: { message: '会话数据超过传输大小上限', data: 'response_too_large' } })
       await expect(request('next', 'thread/read', { threadId: 'thread' })).resolves.toHaveProperty('result.threadId', 'thread')
     } finally {
       host.shutdown()

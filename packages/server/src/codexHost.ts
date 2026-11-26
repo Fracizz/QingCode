@@ -149,6 +149,11 @@ export function quoteCmdToken(value: string): string {
 const INIT_TIMEOUT_MS = 10_000
 const MAX_STDERR_CHARS = 1024 * 1024
 const MAX_REPLAY_EVENT_BYTES = MAX_FRAME_BYTES - 128
+const OVERSIZE_RESPONSE = {
+  code: -32000,
+  message: '会话数据超过传输大小上限',
+  data: 'response_too_large',
+}
 
 /**
  * 一个 agent 独占一套 id 映射 / 回放缓冲 / 未决请求 / turn 计数。
@@ -284,7 +289,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
         this.hub.send(forwarded.clientId, {
           t: 'codex.recv',
           seq: null,
-          msg: { id: forwarded.originalId, error: { code: -32000, message: '会话数据超过传输大小上限' } },
+          msg: { id: forwarded.originalId, error: OVERSIZE_RESPONSE },
         })
       }
       return
@@ -525,9 +530,13 @@ export class CodexHost extends JsonRpcAgentHost {
       if (!this.skippingStdoutLine) {
         // 历史回包可接近协议帧上限，必须按整行计数，且跳过超长行的后续片段。
         if (this.stdoutRemainder.length + end - start > MAX_FRAME_BYTES) {
+          const head = this.stdoutRemainder.slice(0, 128) + chunk.slice(start, Math.min(end, start + 128))
+          const responseId = /^\s*\{\s*"id"\s*:\s*"(qn-c\d+)"\s*,\s*"(?:result|error)"\s*:/.exec(head)?.[1]
           this.stdoutRemainder = ''
           this.skippingStdoutLine = true
-          this.hub.log('codex stdout 单行过长，已丢弃')
+          // app-server 的响应把 id 放在内容之前，超限时仍可结束这条请求。
+          if (responseId) this.handleCodexMessage({ id: responseId, error: OVERSIZE_RESPONSE })
+          else this.hub.log('codex stdout 单行过长，已丢弃')
         } else {
           this.stdoutRemainder += chunk.slice(start, end)
         }

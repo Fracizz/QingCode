@@ -19,7 +19,7 @@ import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
-import { groupTurns, hasPendingReply } from '../lib/turnGroups'
+import { groupTurns, hasPendingSubmission } from '../lib/turnGroups'
 import { pendingSendKey, useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
@@ -29,7 +29,8 @@ import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem, ReplyPending, ToolGroup, WorkGroup } from './MessageItem'
+import { LoadingIcon } from './LoadingIcon'
+import { MessageItem, ToolGroup, TurnProgress, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
@@ -40,6 +41,8 @@ import { SubagentRpcContext } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { EmptyState, ErrorNote } from './ui'
 
+const HISTORY_BATCH_SIZE = 60
+
 export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
   const targets = useTargets((s) => s.targets)
   const targetState = useTargets((s) => s.states[s.selectedId]?.state ?? 'idle')
@@ -47,6 +50,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const currentTargetId = useCodex((s) => s.currentTargetId)
   const currentThreadId = useCodex((s) => s.currentThreadId)
   const currentAgent = useCodex((s) => s.currentAgent)
+  const openingThread = useCodex((s) => s.openingThread)
   const sending = useCodex((s) => s.sending)
   const error = useCodex((s) => s.error)
   const clearError = useCodex((s) => s.clearError)
@@ -65,8 +69,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const historyScroll = useRef<{ key: string | null; height: number; top: number } | null>(null)
   const annotationCounter = useRef(0)
   const [pinned, setPinned] = useState(true)
+  const [historyStart, setHistoryStart] = useState<{ key: string | null; index: number } | null>(null)
   const [draft, setDraft] = useState('')
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
@@ -81,7 +87,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
   const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
-  const chatKey = currentTargetId && pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId })
+  const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
   const view = session?.state.threads[visibleThreadId]
@@ -91,8 +97,13 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     ? view.pendingApprovals
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
-  const showReplyPending = approvals.length === 0 && hasPendingReply(items, running && !session?.openError, !!sendingMessage || sendingQueued)
+  const interrupted = !running && view?.activity === 'interrupted'
+  const showProgress = approvals.length === 0 && !session?.openError
+    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
+  const empty = items.length === 0 && approvals.length === 0 && !running && !showProgress && !interrupted
   const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
+  const defaultStart = Math.max(0, flow.length - HISTORY_BATCH_SIZE)
+  const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
 
   // 宽度改变会让文字换行，旧的高亮坐标会指向别处。
   useLayoutEffect(() => {
@@ -119,6 +130,20 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     observer.observe(content)
     return () => observer.disconnect()
   }, [pinned, currentTargetId, currentAgent, currentThreadId])
+
+  useLayoutEffect(() => {
+    const previous = historyScroll.current
+    historyScroll.current = null
+    const scroll = scrollRef.current
+    if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
+  }, [chatKey, firstVisible])
+
+  const showEarlier = () => {
+    const scroll = scrollRef.current
+    if (scroll) historyScroll.current = { key: chatKey, height: scroll.scrollHeight, top: scroll.scrollTop }
+    setPinned(false)
+    setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
+  }
 
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const node = event.currentTarget
@@ -334,6 +359,12 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     >
       <MainHeader />
 
+      {openingThread && (
+        <div className="flex items-center gap-2 border-b border-qn-border px-6 py-2 text-sm text-qn-muted" role="status">
+          <LoadingIcon size={14} aria-hidden /> 正在加载会话历史…
+        </div>
+      )}
+
       <div className="relative flex min-h-12 flex-1">
         <SelectionLayer
           containerRef={scrollRef}
@@ -357,24 +388,29 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 />
               </div>
             )}
-            {view?.error && (
+            {!running && !interrupted && view?.error && (
               <div className="mb-3">
                 <TurnErrorNote error={view.error} />
               </div>
             )}
 
-            {isDraft && items.length === 0 && approvals.length === 0 ? (
+            {isDraft && empty ? (
               <div className="flex flex-1 flex-col">
                 <WelcomePane onConnect={onConnect} onAddTarget={onAddTarget} />
               </div>
-            ) : items.length === 0 && approvals.length === 0 ? (
+            ) : empty ? (
               <div className="flex flex-1 items-center justify-center">
                 <EmptyState>会话暂无消息，发送一条开始对话。</EmptyState>
               </div>
             ) : (
               <div className="space-y-4 pt-4">
+                {firstVisible > 0 && (
+                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-sm text-qn-muted hover:bg-qn-hover" onClick={showEarlier}>
+                    查看更早消息
+                  </button>
+                )}
                 <SubagentRpcContext.Provider key={chatKey ?? undefined} value={session?.rpc ?? null}>
-                  {flow.map((entry) =>
+                  {flow.slice(firstVisible).map((entry) =>
                     entry.kind === 'tools' ? (
                       <ToolGroup key={entry.key} items={entry.items} />
                     ) : entry.kind === 'work' ? (
@@ -389,7 +425,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                     ),
                   )}
                 </SubagentRpcContext.Provider>
-                {showReplyPending && <ReplyPending />}
+                {showProgress ? <TurnProgress activity={running ? view.activity : undefined} />
+                  : interrupted && <TurnProgress activity="interrupted" />}
                 {approvals.map((approval) => (
                   <ApprovalCard
                     key={String(approval.requestId)}

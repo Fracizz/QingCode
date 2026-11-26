@@ -4,12 +4,12 @@ import type { ApprovalDecision, ItemView, RequestId } from '@qn/codex-client'
 import { DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { buildAnnotatedMessage } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
-import { hasPendingReply } from '../lib/turnGroups'
+import { hasPendingSubmission } from '../lib/turnGroups'
 import { pendingSendKey, useCodex } from '../store/codex'
 import { AgentIcon } from './AgentIcon'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem, ReplyPending } from './MessageItem'
+import { MessageItem, TurnProgress } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { SubagentRpcContext } from './SubagentDetails'
@@ -46,14 +46,16 @@ export function SideChat() {
   const items: ItemView[] = preview ? [...(view?.items ?? []), preview] : view?.items ?? []
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
-  const showReplyPending = approvals.length === 0 && hasPendingReply(items, running && !session?.openError, !!sendingMessage || sendingQueued)
+  const interrupted = !running && view?.activity === 'interrupted'
+  const showProgress = approvals.length === 0 && !session?.openError
+    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const agent = sideAgent ?? DEFAULT_AGENT
 
   useLayoutEffect(() => { pinned.current = true }, [sideThreadId])
   useLayoutEffect(() => {
     const scroll = scrollRef.current
     if (scroll && pinned.current) scroll.scrollTop = scroll.scrollHeight
-  }, [sideOpen, sideThreadId, view?.items, view?.pendingApprovals, preview, showReplyPending])
+  }, [sideOpen, sideThreadId, view?.items, view?.pendingApprovals, preview, showProgress, interrupted])
 
   if (!sideOpen || !sideTargetId || !sideAgent) return null
 
@@ -70,7 +72,7 @@ export function SideChat() {
       {session?.openError && (
         <div className="px-3 pt-2"><ErrorNote message={session.openError} /></div>
       )}
-      {view?.error && (
+      {!running && !interrupted && view?.error && (
         <div className="px-3 pt-2"><TurnErrorNote error={view.error} compact /></div>
       )}
       <SelectionLayer
@@ -91,7 +93,7 @@ export function SideChat() {
           )
         }}
       >
-        {items.length === 0 && approvals.length === 0 && (
+        {items.length === 0 && approvals.length === 0 && !running && !interrupted && (
           <EmptyState>临时会话已就绪，输入框里已填入引用文字。</EmptyState>
         )}
         <div className="space-y-3">
@@ -107,7 +109,8 @@ export function SideChat() {
               />
             ))}
           </SubagentRpcContext.Provider>
-          {showReplyPending && <ReplyPending />}
+          {showProgress ? <TurnProgress activity={running ? view.activity : undefined} />
+            : interrupted && <TurnProgress activity="interrupted" />}
           {approvals.map((approval) => (
             <ApprovalCard
               key={String(approval.requestId)}

@@ -6,6 +6,7 @@ import { getWindowNativePort } from '../native'
 import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { ConnectionStatus } from '../types'
+import { PullToRefresh } from './PullToRefresh'
 import { Badge, Button, Card, Dialog, Empty, Field, Header, Loading, Note, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
 
@@ -161,7 +162,8 @@ export function ConnectionsPage() {
   }
   return (
     <>
-      <main className="qn-body qn-scroll qn-workspace qn-rise" aria-label="连接">
+      <PullToRefresh className="qn-body qn-scroll qn-workspace qn-rise"
+        label="连接" disabled={booting || connections.length === 0} onRefresh={refreshStatuses}>
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
             <span className="text-[13px]">{mock ? '浏览器预览' : connections.length ? `已配对 ${connections.length} 台电脑` : 'QingCode Next'}</span>
@@ -228,7 +230,7 @@ export function ConnectionsPage() {
             </button>
           </>
         )}
-      </main>
+      </PullToRefresh>
       {settings && <MobileSettings onClose={() => setSettings(false)} />}
       {selected && (
         <Dialog title={selected.name} onClose={() => setMenu(null)}>

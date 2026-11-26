@@ -597,15 +597,11 @@ function positive(value: unknown): number | null {
 }
 
 /** 记录一轮的计时。部分适配器的 startedAt 在完成时才填（等于 completedAt），所以优先沿用 turn/started 时记下的起点。 */
-function upsertTurnMeta(
-  thread: ThreadView,
+function turnMeta(
+  existing: TurnMeta | undefined,
   turnId: string,
   patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
-): ThreadView {
-  if (!turnId) return thread
-  const turns = thread.turns ?? []
-  const index = turns.findIndex((turn) => turn.id === turnId)
-  const existing = index >= 0 ? turns[index] : undefined
+): TurnMeta {
   const record = patch.record ?? null
   const startedSec = positive(record?.startedAt)
   const completedSec = positive(record?.completedAt)
@@ -622,18 +618,30 @@ function upsertTurnMeta(
     durationMs = durationMs ?? (completedSec - startedSec) * 1000
   }
 
-  const itemIds = existing ? [...existing.itemIds] : []
-  for (const id of patch.itemIds ?? []) if (id && !itemIds.includes(id)) itemIds.push(id)
-
-  const meta: TurnMeta = { id: turnId, startedAtMs, durationMs, itemIds }
+  const itemIds = new Set(existing?.itemIds)
+  for (const id of patch.itemIds ?? []) if (id) itemIds.add(id)
   if (
     existing &&
-    existing.startedAtMs === meta.startedAtMs &&
-    existing.durationMs === meta.durationMs &&
-    existing.itemIds.length === meta.itemIds.length
+    existing.startedAtMs === startedAtMs &&
+    existing.durationMs === durationMs &&
+    existing.itemIds.length === itemIds.size
   ) {
-    return thread
+    return existing
   }
+  return { id: turnId, startedAtMs, durationMs, itemIds: [...itemIds] }
+}
+
+function upsertTurnMeta(
+  thread: ThreadView,
+  turnId: string,
+  patch: Parameters<typeof turnMeta>[2],
+): ThreadView {
+  if (!turnId) return thread
+  const turns = thread.turns ?? []
+  const index = turns.findIndex((turn) => turn.id === turnId)
+  const existing = turns[index]
+  const meta = turnMeta(existing, turnId, patch)
+  if (meta === existing) return thread
   const next = turns.slice()
   if (index >= 0) next[index] = meta
   else next.push(meta)
@@ -726,9 +734,18 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   const reportedActivity = threadActivityFromStatus(raw.status)
   let status = statusFromActivity(reportedActivity)
   let activeTurnId: string | null = status === 'idle' ? null : previous?.activeTurnId ?? null
-  let items: ItemView[] = []
+  // 历史一次性构建索引，避免每条条目都扫描并复制已加载的消息。
+  const items = new Map<string, ItemView>()
   // 沿用实时记下的计时：历史里的时间戳可能缺失或只有秒级。
-  let turns: TurnMeta[] | undefined = previous?.turns
+  const turns = new Map(previous?.turns?.map((turn) => [turn.id, turn]))
+  const appendItems = (rawItems: unknown[], streaming: boolean, startedAt?: number | null) =>
+    rawItems.map((rawItem, index) => {
+      const timestamp = index === 0 && startedAt ? startedAt * 1000 : undefined
+      const candidate = itemViewFromRaw(rawItem, index, streaming, timestamp)
+      const existing = items.get(candidate.id)
+      items.set(candidate.id, existing ? mergeItemView(existing, candidate) : candidate)
+      return candidate.id
+    })
 
   // 只看最后一轮：历史里早先失败、之后又成功的轮次不该让整个会话显示为失败。
   let lastTurnError: string | undefined
@@ -742,29 +759,27 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
       status = 'running'
       activeTurnId = idValue(turn?.id) || activeTurnId
     }
-    let view: ThreadView = { id, status, activeTurnId, items, pendingApprovals: [] }
-    if (turns) view.turns = turns
-    view = mergeTurnItems(view, turnValue, turnStreaming, turnStreaming ? 'started' : 'loaded')
-    items = view.items
-    turns = view.turns
-  }
-
-  if (items.length === 0 && Array.isArray(raw.items)) {
-    for (let index = 0; index < raw.items.length; index++) {
-      const candidate = itemViewFromRaw(raw.items[index], index, false)
-      items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
+    if (!turn) continue
+    const turnId = idValue(turn.id)
+    const itemIds = appendItems(arrayOf(turn.items), turnStreaming, optionalNumber(turn.startedAt))
+    if (turnId) {
+      turns.set(turnId, turnMeta(turns.get(turnId), turnId, {
+        record: turn, phase: turnStreaming ? 'started' : 'loaded', itemIds,
+      }))
     }
   }
+
+  if (!items.size) appendItems(arrayOf(raw.items), false)
 
   const next: ThreadView = {
     id,
     status,
     activeTurnId,
-    items,
+    items: [...items.values()],
     pendingApprovals: previous?.pendingApprovals ?? [],
   }
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
-  if (turns) next.turns = turns
+  if (turns.size || previous?.turns) next.turns = [...turns.values()]
   if (status === 'running') {
     next.activity = reportedActivity === 'pending' || reportedActivity === 'input' ? reportedActivity : 'running'
   } else {

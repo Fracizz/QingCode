@@ -11,6 +11,7 @@ import {
   startThread,
 } from './api'
 import type { CodexRpcLike } from './api'
+import { CodexRpcError } from './rpc'
 
 type Call = { method: string; params: unknown }
 
@@ -82,6 +83,55 @@ describe('codex api', () => {
       { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 2 },
       { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 1, cursor: 'p2' },
     ])
+  })
+
+  it('整份历史超限时缩小单页，按时间顺序恢复完整条目', async () => {
+    const oversize = new CodexRpcError('会话数据超过传输大小上限', -32000, 'response_too_large')
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: { excludeTurns?: boolean; limit?: number; cursor?: string }) => {
+        calls.push({ method, params })
+        if (method === 'thread/resume') {
+          if (!params.excludeTurns) throw oversize
+          return { thread: { id: 'long', turns: [] }, model: 'current' }
+        }
+        if (params.limit === 20) throw oversize
+        const older = { id: 'older', items: [] }
+        const newer = { id: 'newer', items: [{ id: 'reply', text: '完整内容' }] }
+        return params.cursor
+          ? { data: [older, newer], nextCursor: null }
+          : { data: [older], nextCursor: 'newer-page' }
+      },
+    } as unknown as CodexRpcLike
+
+    await expect(resumeThread(rpc, 'long')).resolves.toMatchObject({
+      thread: { turns: [{ id: 'older' }, { id: 'newer', items: [{ text: '完整内容' }] }] },
+      model: 'current',
+    })
+    expect(calls).toEqual([
+      { method: 'thread/resume', params: { threadId: 'long' } },
+      { method: 'thread/resume', params: { threadId: 'long', excludeTurns: true } },
+      { method: 'thread/turns/list', params: { threadId: 'long', limit: 20, cursor: null, sortDirection: 'asc', itemsView: 'full' } },
+      { method: 'thread/turns/list', params: { threadId: 'long', limit: 10, cursor: null, sortDirection: 'asc', itemsView: 'full' } },
+      { method: 'thread/turns/list', params: { threadId: 'long', limit: 10, cursor: 'newer-page', sortDirection: 'asc', itemsView: 'full' } },
+    ])
+  })
+
+  it('切走会话后停止读取后续历史页', async () => {
+    let current = true
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: { includeTurns?: boolean }) => {
+        calls.push({ method, params })
+        if (params.includeTurns) throw new CodexRpcError('超限', -32000, 'response_too_large')
+        if (method === 'thread/read') return { thread: { id: 'long', turns: [] } }
+        current = false
+        return { data: [], nextCursor: 'next-page' }
+      },
+    } as unknown as CodexRpcLike
+
+    await expect(readThread(rpc, 'long', () => current)).rejects.toThrow('已取消打开会话')
+    expect(calls.map((call) => call.method)).toEqual(['thread/read', 'thread/read', 'thread/turns/list'])
   })
 
   it('用只读请求加载指定子代理的对话记录', async () => {

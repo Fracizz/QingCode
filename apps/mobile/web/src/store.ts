@@ -8,6 +8,8 @@ import {
   emptyState,
   failActiveThreads,
   interruptTurn,
+  isOversizeHistoryResponse,
+  isThreadOutcome,
   listModels,
   listThreads,
   loadThread,
@@ -101,7 +103,7 @@ import {
   MobileCodexTransport,
   openSeq,
 } from './transport'
-import { mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, restoreQueues, serializeQueues, type QueuedSend } from './queuedSends'
+import { mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type QueuedSend } from './queuedSends'
 import { deliverTerminalEvent } from './terminalEvents'
 import type {
   AgentKind,
@@ -213,6 +215,7 @@ export type ViewerState = {
 
 export type DiffRequest = { path: string; diff?: string | null }
 export type SendMode = 'queue' | 'steer' | 'immediate'
+export type QueuedThreadMode = 'start' | 'continue'
 
 type SendAddress = { desktopId: string; targetId: string; agent: AgentKind; threadId: string }
 
@@ -320,9 +323,10 @@ type AppState = {
   setDraftText: (text: string) => void
   send: (text: string, attachments?: UserInput[], delegate?: boolean, mode?: SendMode, options?: { keepDraft?: boolean }) => Promise<boolean>
   removeQueuedSend: (id: string) => void
-  beginQueuedEdit: (id: string) => (() => void) | null
+  beginQueuedEdit: (id: string) => ((resume?: boolean) => void) | null
   editQueuedSend: (id: string, text: string) => Promise<boolean>
   steerQueuedSend: (id: string) => Promise<boolean>
+  sendQueuedInNewThread: (id: string, mode: QueuedThreadMode) => Promise<boolean>
   retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
@@ -458,6 +462,7 @@ const OPEN_THREAD_TIMEOUT_MS = 30_000
 
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
+  let eventStreamEpoch = 0
   let navigationEpoch = 0
   const beginNavigation = (openingThread: SendAddress | null = null): number => {
     const navigation = ++navigationEpoch
@@ -663,6 +668,7 @@ export const useApp = create<AppState>((set, get) => {
       }
     })
     if (get().activeId === id) {
+      eventStreamEpoch += 1
       pauseQueues([id], '电脑需要重新配对，队列已暂停')
       controller?.stop()
     }
@@ -775,7 +781,7 @@ export const useApp = create<AppState>((set, get) => {
     for (const key of Object.keys(get().queuedSends)) {
       if (!key.startsWith(prefix)) continue
       if (resetFlights) void updateQueue(key, (list) => list.map((item) => item.sending
-        ? { ...item, sending: false, error: '上次发送结果未确认，请核对对话后再继续' } : item))
+        ? { ...item, sending: false, error: UNCONFIRMED_QUEUED_SEND } : item))
       pauseQueue(key, message)
     }
   }
@@ -794,8 +800,17 @@ export const useApp = create<AppState>((set, get) => {
     return !!(snapshot?.rateLimitReachedType || snapshot?.spendControlReached)
   }
 
-  async function resumeCodexConversation(session: AgentSession, threadId: string): Promise<void> {
-    const { thread } = await resumeThread(session.rpc, threadId)
+  function pendingQueueAddresses(desktopId: string): SendAddress[] {
+    return Object.entries(get().queuedSends).flatMap(([key, items]) => {
+      if (!items.length || items[0]?.error) return []
+      const [owner, targetId, agent, threadId] = JSON.parse(key) as [string, string, AgentKind, string]
+      return owner === desktopId ? [{ desktopId, targetId, agent, threadId }] : []
+    })
+  }
+
+  async function resumeCodexConversation(session: AgentSession, threadId: string, isCurrent = () => true): Promise<void> {
+    const { thread } = await resumeThread(session.rpc, threadId, isCurrent)
+    if (!isCurrent()) return
     session.resumedCodexThreads.add(threadId)
     patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
   }
@@ -837,30 +852,51 @@ export const useApp = create<AppState>((set, get) => {
     if (!retry && (view.status !== 'idle' || next.error)) return
 
     const epoch = desktopEpoch
+    const streamEpoch = eventStreamEpoch
     submitting.add(key)
+    let preparing = false
+    let submitted = false
+    const readyToSend = (): boolean => {
+      if (!get().eventsConnected || reconnectTask) return false
+      const current = get().sessions[session.key]
+      if (!current?.opened || current.transport !== session.transport) throw new Error('目标连接中断，队列已暂停')
+      if (queueLimited(address)) throw new Error('当前额度已用完，队列已暂停')
+      const thread = current.state.threads[threadId]
+      if (thread?.status === 'running') return false
+      if (!retry && (thread?.status !== 'idle' || thread.activity === 'interrupted')) {
+        throw new Error('上一轮未完成，队列已暂停')
+      }
+      return true
+    }
+    const settle = (error?: string) => updateQueue(key, (list) => list.map((item) => item.id === next.id
+      ? { ...item, sending: false, error } : item))
     try {
       await updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: true, error: undefined } : item))
       if (epoch !== desktopEpoch) return
-      if (!get().eventsConnected || !get().sessions[session.key]?.opened) throw new Error('连接中断，队列已暂停')
-      if (queueLimited(address)) throw new Error('当前额度已用完，队列已暂停')
-      if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
-        await resumeCodexConversation(session, threadId)
+      let ready = readyToSend()
+      if (ready && agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
+        preparing = true
+        await resumeCodexConversation(session, threadId, () => epoch === desktopEpoch && streamEpoch === eventStreamEpoch)
+        preparing = false
         if (epoch !== desktopEpoch) return
-        if (!get().eventsConnected || !get().sessions[session.key]?.opened) throw new Error('连接中断，队列已暂停')
-        const status = get().sessions[session.key]?.state.threads[threadId]?.status
-        if (status === 'running') {
-          updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: false } : item))
-          return
-        }
-        if (status !== 'idle' && !retry) throw new Error('上一轮未完成，队列已暂停')
+        ready = streamEpoch === eventStreamEpoch && readyToSend()
       }
-      await startMessageTurn(session, address, queuedInput(agent, next), next.overrides)
-      if (epoch === desktopEpoch) void dropQueuedSend(key, next.id)
+      if (!ready) {
+        void settle(next.error)
+      } else {
+        submitted = true
+        await startMessageTurn(session, address, queuedInput(agent, next), next.overrides)
+        if (epoch === desktopEpoch) void dropQueuedSend(key, next.id)
+      }
     } catch (err) {
       if (epoch === desktopEpoch) {
-        updateQueue(key, (list) => list.map((item) => item.id === next.id
-          ? { ...item, sending: false, error: friendlyError(err, '排队消息未发送') }
-          : item))
+        const streamChanged = streamEpoch !== eventStreamEpoch
+        const code = isRecord(err) ? errorCode(err.data) : ''
+        const message = friendlyError(err, '排队消息未发送')
+        const replyLost = code === 'network' || code === 'timeout' || message.startsWith('Codex request timed out:')
+        // turn/start 的回包不参加事件回放，发出后丢失回包可能已经在电脑执行。
+        void settle(submitted && (streamChanged || replyLost) ? UNCONFIRMED_QUEUED_SEND
+          : preparing && streamChanged && replyLost ? next.error : message)
       }
     } finally {
       if (epoch === desktopEpoch) submitting.delete(key)
@@ -1100,16 +1136,19 @@ export const useApp = create<AppState>((set, get) => {
     return get().sessions[sessionKey(targetId, agent)] ?? null
   }
 
-  const reloadConversation = async (session: AgentSession, threadId: string): Promise<void> => {
+  const reloadConversation = async (session: AgentSession, threadId: string, isCurrent = () => true): Promise<boolean> => {
     try {
-      const result = await readThread(session.rpc, threadId)
-      if (result?.thread?.id !== threadId) return
+      const result = await readThread(session.rpc, threadId, isCurrent)
+      if (!isCurrent() || result?.thread?.id !== threadId || get().sessions[session.key]?.transport !== session.transport) return false
       if (get().eventsConnected && get().sessions[session.key]?.opened) session.loadedThreads.add(threadId)
       patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+      return true
     } catch (err) {
-      if (get().sessions[session.key]?.transport === session.transport) {
+      if (isCurrent() && showsConversation(session) && get().selectedThreadId === threadId
+        && get().sessions[session.key]?.transport === session.transport) {
         set({ notice: friendlyError(err, '暂时无法补齐会话历史，可再次打开会话') })
       }
+      return false
     }
   }
 
@@ -1255,21 +1294,25 @@ export const useApp = create<AppState>((set, get) => {
         onEvent: (event) => get().handleGatewayEvent(event),
         onOpen: (reconnected) => {
           if (reconnected) {
+            const epoch = eventStreamEpoch
+            const desktopId = get().activeId
             for (const session of Object.values(get().sessions)) session.loadedThreads.clear()
             const task = get().attachOpened()
             reconnectTask = task
-            void task.finally(() => {
-              if (reconnectTask === task) reconnectTask = null
-            })
+            void task.then(() => {
+              if (reconnectTask !== task) return
+              reconnectTask = null
+              if (!desktopId || epoch !== eventStreamEpoch || get().activeId !== desktopId || !get().eventsConnected) return
+              for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
+            }, () => { if (reconnectTask === task) reconnectTask = null })
           }
           set({ eventsConnected: true, eventsError: null })
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
         },
         onClose: (error) => {
+          eventStreamEpoch += 1
           set({ eventsConnected: false, eventsError: error })
-          const activeId = get().activeId
-          if (activeId) pauseQueues([activeId], '连接中断，队列已暂停')
         },
         onRepair: (reason, message) => {
           const id = get().activeId
@@ -1578,6 +1621,7 @@ export const useApp = create<AppState>((set, get) => {
         ...(changedEndpoint ? { connectionLatencyMs: { ...state.connectionLatencyMs, [updated.id]: null } } : {}),
       }))
       if (get().activeId === previous.id && changedEndpoint) {
+        eventStreamEpoch += 1
         set({ eventsConnected: false, eventsError: null, targets: [], error: null })
         controller?.stop()
         pauseQueues([previous.id], '电脑连接已切换，队列已暂停')
@@ -2064,19 +2108,23 @@ export const useApp = create<AppState>((set, get) => {
       const conn = activeConnection(get())
       if (!conn) return
       const epoch = desktopEpoch
+      const streamEpoch = eventStreamEpoch
+      const isCurrent = () => epoch === desktopEpoch && streamEpoch === eventStreamEpoch
       await Promise.all(Object.values(get().sessions).filter((session) => session.opened).map(async (session) => {
+        const queued = () => pendingQueueAddresses(conn.id)
+          .filter((address) => address.targetId === session.targetId && address.agent === session.agent)
         try {
           const cursor = session.transport.getLastSeq() ?? 0
           let info
           try {
             info = attachResult(await attachSession(conn, session, cursor))
           } catch (err) {
-            if (epoch !== desktopEpoch || !showsConversation(session) || errorCode(err) !== 'not_connected') throw err
+            if (!isCurrent() || !showsConversation(session) || errorCode(err) !== 'not_connected') throw err
             await connectSavedTarget(conn, session.targetId)
-            if (epoch !== desktopEpoch) return
+            if (!isCurrent()) return
             info = attachResult(await attachSession(conn, session, cursor))
           }
-          if (epoch !== desktopEpoch) return
+          if (!isCurrent()) return
           const restarted = info.lastSeq !== null && info.lastSeq < cursor
           if (restarted) {
             session.transport.resetSequence()
@@ -2089,22 +2137,39 @@ export const useApp = create<AppState>((set, get) => {
                 method: 'codex.open',
                 params: { agent: session.agent },
               })
-              if (epoch !== desktopEpoch) return
+              if (!isCurrent()) return
             }
             info = attachResult(await attachSession(conn, session, 0))
-            if (epoch !== desktopEpoch) return
+            if (!isCurrent()) return
           }
-          session.transport.setLastSeq(info.lastSeq)
+          const queueNeedsSnapshot = restarted || info.truncated || info.lastSeq === null
+            || info.lastSeq > (session.transport.getLastSeq() ?? 0)
           patchSession(session.key, (value) => ({
             ...value,
             opened: true,
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
-          if (restarted || info.truncated) await reloadActiveConversation(session)
+          const queueAddresses = queueNeedsSnapshot ? queued() : []
+          const threadIds = new Set(queueAddresses.map((address) => address.threadId))
+          const selected = get().selectedThreadId
+          if ((restarted || info.truncated) && selected && showsConversation(session)) threadIds.add(selected)
+          // attach 的 HTTP 回包可能早于事件流；有缺口时先读会话，再判断队列能否发送。
+          await Promise.all([...threadIds].map(async (threadId) => {
+            const loaded = await reloadConversation(session, threadId, isCurrent)
+            if (!isCurrent()) return
+            const address = queueAddresses.find((item) => item.threadId === threadId)
+            if (!address) return
+            const key = sendKey(address)
+            const view = get().sessions[session.key]?.state.threads[threadId]
+            if (!loaded) pauseQueue(key, '未能确认会话状态，队列已暂停')
+            else if (view?.status === 'error' || view?.activity === 'interrupted') pauseQueue(key, '上一轮未完成，队列已暂停')
+          }))
         } catch (err) {
-          if (epoch === desktopEpoch) markRepairError(conn, epoch, err)
+          if (!isCurrent()) return
+          markRepairError(conn, epoch, err)
           patchSession(session.key, (value) => ({ ...value, opened: false, openError: '会话连接已断开，操作时会尝试重新连接' }), session)
+          for (const address of queued()) pauseQueue(sendKey(address), '会话连接未能恢复，队列已暂停')
         }
       }))
     },
@@ -2251,6 +2316,7 @@ export const useApp = create<AppState>((set, get) => {
       if (workspace) pendingRestore = null
       const isCurrent = () => navigation === navigationEpoch
         && get().openingThread === openingThread && get().page === source.page
+      const shouldLoad = () => isCurrent() && !archived()
       const showConversation = () => {
         const movedProject = workspace &&
           (source.selectedTargetId !== targetId || source.selectedProjectId !== workspace.project.id)
@@ -2282,13 +2348,13 @@ export const useApp = create<AppState>((set, get) => {
         let result: { thread: Thread }
         let resumed = true
         try {
-          result = await resumeThread(session.rpc, id)
+          result = await resumeThread(session.rpc, id, shouldLoad)
         } catch (err) {
-          if (!isCurrent() || archived()) return false
-          if (isTargetDisconnected(err) || picked !== 'codex') throw err
+          if (!shouldLoad()) return false
+          if (isTargetDisconnected(err) || picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
           if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
           resumed = false
-          result = await readThread(session.rpc, id)
+          result = await readThread(session.rpc, id, shouldLoad)
         }
         if (!isCurrent() || archived()) return false
         if (result?.thread?.id !== id) throw new Error('电脑返回的会话与所选会话不一致，请重试')
@@ -2495,7 +2561,7 @@ export const useApp = create<AppState>((set, get) => {
       }
       const enqueue = async (chat: SendAddress, sentDraftKey: string) => {
         const chatKey = sendKey(chat)
-        const item = { ...message, id: makeId(), overrides, saving: true, error: !get().eventsConnected ? '连接中断，队列已暂停' : undefined }
+        const item = { ...message, id: makeId(), overrides, saving: true }
         if (!keepDraft) queueingDrafts.add(sentDraftKey)
         try {
           await updateQueue(chatKey, (list) => [...list, item])
@@ -2607,8 +2673,8 @@ export const useApp = create<AppState>((set, get) => {
       const item = get().queuedSends[sendKey(address)]?.find((entry) => entry.id === id)
       if (!item || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
       editingQueue.add(id)
-      return () => {
-        if (editingQueue.delete(id)) void flushQueue(address)
+      return (resume = true) => {
+        if (editingQueue.delete(id) && resume) void flushQueue(address)
       }
     },
 
@@ -2676,6 +2742,102 @@ export const useApp = create<AppState>((set, get) => {
       } finally {
         if (epoch === desktopEpoch) {
           submitting.delete(key)
+          void flushQueue(address)
+        }
+      }
+    },
+
+    sendQueuedInNewThread: async (id, mode) => {
+      const state = get()
+      const address = selectedSendAddress(state)
+      if (!address || !state.eventsConnected || reconnectTask || state.sending) return false
+      const { targetId, agent, threadId } = address
+      if (mode === 'continue' && agent !== 'codex') return false
+      const key = sendKey(address)
+      const session = state.sessions[sessionKey(targetId, agent)]
+      const item = state.queuedSends[key]?.find((entry) => entry.id === id)
+      if (!session?.opened || !item || item.sending || item.saving || submitting.has(key)
+        || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]) return false
+      if (queueLimited(address)) {
+        set({ error: '当前额度已用完，排队消息已保留' })
+        return false
+      }
+      const input = queuedInput(agent, item)
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      const streamEpoch = eventStreamEpoch
+      const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch
+      const checkConnection = () => {
+        const current = get().sessions[session.key]
+        if (streamEpoch !== eventStreamEpoch || !get().eventsConnected || reconnectTask
+          || !current?.opened || current.transport !== session.transport) {
+          throw new Error('连接已中断，排队消息已保留')
+        }
+      }
+      let submitted = false
+      let created = false
+      submitting.add(key)
+      set({ error: null })
+      try {
+        // 先持久化发送状态，防止断线或进程重开后在原队列再次自动发送。
+        await updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true } : entry))
+        if (!isCurrent()) return false
+        checkConnection()
+        let result: { thread: Thread }
+        if (mode === 'continue') {
+          const { thread: source } = await readThread(session.rpc, threadId, isCurrent)
+          if (!isCurrent()) return false
+          checkConnection()
+          const lastTurn = source?.id === threadId && source.turns?.filter((turn) => isThreadOutcome(turn.status)).at(-1)
+          if (!lastTurn) throw new Error('当前还没有已结束的一轮，可用「新会话开始」')
+          // 指定已结束的轮次，分支时不会带入原会话正在执行的工作。
+          result = await session.rpc.request('thread/fork', { threadId, lastTurnId: lastTurn.id, excludeTurns: true })
+        } else {
+          const cwd = currentCwd(state)
+          result = await startThread(session.rpc, cwd ? { cwd } : {})
+        }
+        const { thread } = result
+        if (!isCurrent()) return false
+        if (!thread?.id || thread.id === threadId) throw new Error('未确认新会话已创建，排队消息已保留')
+        created = true
+        checkConnection()
+        if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
+        if (!mobileTurnFits(targetId, agent, thread.id, input, item.overrides)) {
+          throw new Error('消息和附件合计超过 1 MiB，请重新编辑后再发送')
+        }
+        if (agent === 'codex') session.resumedCodexThreads.add(thread.id)
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+        submitted = true
+        await startMessageTurn(session, { ...address, threadId: thread.id }, input, item.overrides)
+        if (epoch !== desktopEpoch) return true
+        void dropQueuedSend(key, id)
+        if (isCurrent()) {
+          const opened = beginNavigation()
+          pendingRestore = null
+          set({ selectedThreadId: thread.id, error: null })
+          showDraft()
+          saveActiveChat()
+          if (mode === 'continue') {
+            void reloadConversation(session, thread.id, () => epoch === desktopEpoch && opened === navigationEpoch)
+          }
+        }
+        return true
+      } catch (err) {
+        if (epoch === desktopEpoch) {
+          const error = submitted ? UNCONFIRMED_QUEUED_SEND : friendlyError(err, '新会话发送失败，排队消息已保留')
+          // 创建或发送失败时保留这条消息，待用户确认后再发送。
+          void updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
+          if (isCurrent()) set({ error })
+        }
+        return false
+      } finally {
+        if (epoch === desktopEpoch) {
+          submitting.delete(key)
+          if (!isCurrent() && !submitted) {
+            void updateQueue(key, (list) => list.map((entry) => entry.id === id && entry.sending
+              ? { ...entry, sending: false, error: '已切换会话，排队消息已保留' } : entry))
+          }
+          if (created && get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
           void flushQueue(address)
         }
       }

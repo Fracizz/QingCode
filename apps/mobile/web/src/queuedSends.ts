@@ -14,6 +14,7 @@ export type QueuedSend = ChatDraft & {
 }
 
 export const QUEUE_STORAGE_KEY = 'queuedSends'
+export const UNCONFIRMED_QUEUED_SEND = '上次发送结果未确认，请核对对话后再继续'
 
 type Queues = Record<string, QueuedSend[]>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -62,7 +63,7 @@ export function restoreQueues(raw: string | null, connections: readonly Connecti
     queues[key] = items.map((item, index) => ({
       ...item,
       sending: false,
-      error: item.sending ? '上次发送结果未确认，请核对对话后再继续'
+      error: item.sending ? UNCONFIRMED_QUEUED_SEND
         : typeof item.error === 'string' ? item.error : index === 0 ? '已恢复排队消息，等待继续发送' : undefined,
     }))
   }

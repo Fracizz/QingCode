@@ -1,8 +1,8 @@
 import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
-import type { ItemView, UserInput } from '@qn/codex-client'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Square, Terminal, Wand2 } from 'lucide-react'
+import type { ItemView, ThreadActivity, UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
@@ -237,8 +237,12 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
   )
 }
 
-export function ReplyPending() {
-  return <FeedbackRow message="正在准备回复…" icon={<LoadingIcon />} className="text-[13px] leading-6 text-qn-muted" />
+export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
+  if (activity === 'interrupted') {
+    return <FeedbackRow message="本轮已中断" icon={<Square size={13} />} className="text-[13px] leading-6 text-qn-muted" />
+  }
+  const message = activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
+  return <FeedbackRow message={message} icon={<LoadingIcon />} className="text-[13px] leading-6 text-qn-muted" />
 }
 
 export const MessageItem = memo(function MessageItem({

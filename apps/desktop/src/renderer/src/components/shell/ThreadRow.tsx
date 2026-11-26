@@ -91,6 +91,7 @@ export function ThreadRow({
 }) {
   const targetId = useCodex((s) => s.currentTargetId)
   const openThread = useCodex((s) => s.openThread)
+  const opening = useCodex(({ openingThread }) => openingThread?.agent === thread.agent && openingThread.threadId === thread.id)
   const renameThread = useCodex((s) => s.renameThread)
   const archiveThread = useCodex((s) => s.archiveThread)
   const deleteThread = useCodex((s) => s.deleteThread)
@@ -191,6 +192,7 @@ export function ThreadRow({
           <div
             role="button"
             tabIndex={0}
+            aria-busy={opening}
             className={`group relative flex h-8 w-full cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover ${
               current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
             }`}
@@ -205,7 +207,9 @@ export function ThreadRow({
               }
             }}
           >
-            <ThreadStatusIcon status={status} />
+            {opening ? (
+              <LoadingIcon size={13} className="absolute left-[14px] top-1/2 -translate-y-1/2 text-qn-brand" aria-hidden />
+            ) : <ThreadStatusIcon status={status} />}
             {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
             {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>

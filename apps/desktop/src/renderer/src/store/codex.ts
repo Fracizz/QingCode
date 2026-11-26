@@ -14,6 +14,7 @@ import {
   emptyState,
   failActiveThreads,
   interruptTurn,
+  isOversizeHistoryResponse,
   listThreads,
   loadThread,
   moveOptimisticUsers,
@@ -33,6 +34,7 @@ import {
   type RequestId,
   type ServerNotification,
   type ServerRequest,
+  type Thread,
   type UserInput,
   type TurnOverrides,
 } from '@qn/codex-client'
@@ -156,6 +158,7 @@ type CodexState = {
   setDraftAgent: (agent: AgentKind) => void
   setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessMode) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
+  openingThread: ChatAddress | null
   /** 返回是否成功提交；失败时调用方要把输入框内容还回去。 */
   send: (text: string, options?: SendOptions) => Promise<boolean>
   sendSide: (text: string, mode: SendMode) => Promise<void>
@@ -679,6 +682,8 @@ export const useCodex = create<CodexState>((set, get) => {
     sideDraft: '',
     sideError: null,
 
+    openingThread: null,
+
     init: () => {
       if (subscribed) return () => undefined
       subscribed = true
@@ -731,6 +736,7 @@ export const useCodex = create<CodexState>((set, get) => {
         currentTargetId: targetId,
         currentCwd: cwd,
         currentThreadId: null,
+        openingThread: null,
         currentAgent: targetId ? defaultFor(targetId) : DEFAULT_AGENT,
         threads: [],
         threadsLoading: false,
@@ -780,6 +786,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
     newThread: async (agent) => {
       const token = ++openThreadToken
+      set({ openingThread: null })
       const targetId = get().currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -809,6 +816,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const chosen = targetId && useAgentPrefs.getState().byTarget[targetId] ? defaultFor(targetId) : null
       set((state) => ({
         currentThreadId: null,
+        openingThread: null,
         currentAgent: agent ?? chosen ?? state.currentAgent,
         error: null,
       }))
@@ -836,36 +844,41 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     openThread: async (threadId, agent) => {
-      const token = ++openThreadToken
-      clearAllDrafts()
-      const targetId = get().currentTargetId
+      const { currentTargetId: targetId, currentAgent, openingThread } = get()
       if (!targetId) {
         set({ error: '请先选择目标' })
         return
       }
-      const picked = agent ?? get().currentAgent
+      const picked = agent ?? currentAgent
+      if (openingThread?.targetId === targetId && openingThread.agent === picked && openingThread.threadId === threadId) return
+      const token = ++openThreadToken
+      const isCurrent = () => token === openThreadToken
+      const chat = { targetId, agent: picked, threadId }
       const key = sessionKey(targetId, picked)
-      if (!(await ensureOpen(targetId, picked))) {
-        if (token === openThreadToken) set({ error: get().sessions[key]?.openError ?? `${agentLabel(picked)} 未就绪` })
-        return
-      }
-      if (token !== openThreadToken) return
-      const session = get().sessions[key]
-      if (!session) return
+      clearAllDrafts()
+      set({ openingThread: chat, error: null })
       try {
-        let result: { thread: Parameters<typeof loadThread>[1] }
+        const ready = await ensureOpen(targetId, picked)
+        if (!isCurrent()) return
+        const session = get().sessions[key]
+        if (!ready || !session) {
+          set({ error: session?.openError ?? `${agentLabel(picked)} 未就绪` })
+          return
+        }
+        let result: { thread: Thread }
         let readOnly = false
         let writerConflict = false
         try {
-          result = await resumeThread(session.rpc, threadId)
+          result = await resumeThread(session.rpc, threadId, isCurrent)
         } catch (err) {
-          if (picked !== 'codex') throw err
+          if (!isCurrent()) return
+          if (picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
           readOnly = true
           writerConflict = isActiveWriterError(err)
-          if (token !== openThreadToken) return
-          result = await readThread(session.rpc, threadId)
+          result = await readThread(session.rpc, threadId, isCurrent)
         }
-        if (token !== openThreadToken) return
+        if (!isCurrent()) return
+        if (result.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
         patchSession(key, (value) => {
           const threadsAwaitingResume = new Set(value.threadsAwaitingResume)
           if (readOnly) threadsAwaitingResume.add(threadId)
@@ -874,7 +887,6 @@ export const useCodex = create<CodexState>((set, get) => {
         })
         set({ currentThreadId: threadId, currentAgent: picked, error: null })
         useThreadPrefs.getState().setUnread(targetId, threadKey(picked, threadId), false)
-        const chat = { targetId, agent: picked, threadId }
         if (writerConflict) {
           const message = '会话被另一个 Codex 进程占用，当前可查看历史。释放会话后可再次发送'
           pausePending(chat, message)
@@ -883,7 +895,9 @@ export const useCodex = create<CodexState>((set, get) => {
           void flushPending(chat)
         }
       } catch (err) {
-        if (token === openThreadToken) set({ error: friendlyError(err, '打开会话失败') })
+        if (isCurrent()) set({ error: friendlyError(err, '打开会话失败') })
+      } finally {
+        if (isCurrent()) set({ openingThread: null })
       }
     },
 

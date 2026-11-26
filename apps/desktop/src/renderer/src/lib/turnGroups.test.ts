@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ItemView } from '@qn/codex-client'
-import { formatDuration, groupFlow, groupTurns, hasPendingReply, isGroupRunning, summarizeTools } from './turnGroups'
+import { formatDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, summarizeTools } from './turnGroups'
 
 const user = (id: string) => ({ kind: 'user', id, text: 'hi' }) as unknown as ItemView
 const agent = (id: string) => ({ kind: 'agent', id, text: 'ok', streaming: false }) as unknown as ItemView
@@ -10,21 +10,18 @@ const file = (id: string, n = 1) =>
   ({ kind: 'fileChange', id, status: 'completed', changes: Array.from({ length: n }, (_, i) => ({ path: `f${i}`, kind: 'update' })) }) as unknown as ItemView
 const think = (id: string, streaming = false) => ({ kind: 'reasoning', id, summary: '', streaming }) as unknown as ItemView
 
-describe('hasPendingReply', () => {
+describe('hasPendingSubmission', () => {
   const pendingUser: ItemView = { kind: 'user', id: 'new-user', text: '新问题', pending: true }
 
   it('提交时立即显示占位，上一轮回复不影响新一轮', () => {
     const items = [user('u'), agent('old-reply'), pendingUser]
-    expect(hasPendingReply(items, false, true)).toBe(true)
-    expect(hasPendingReply(items, false, false)).toBe(false)
+    expect(hasPendingSubmission(items, true)).toBe(true)
+    expect(hasPendingSubmission(items, false)).toBe(false)
   })
 
-  it('回显后继续等待，直到收到本轮的第一段正文', () => {
-    const items: ItemView[] = [user('u'), think('r'), { kind: 'agent', id: 'a', text: ' \n', streaming: true }]
-    expect(hasPendingReply(items, true, false)).toBe(true)
-    expect(hasPendingReply(items, false, false)).toBe(false)
-    items[2] = { kind: 'agent', id: 'a', text: '回复', streaming: true }
-    expect(hasPendingReply(items, true, false)).toBe(false)
+  it('已有实际回显时结束本地提交占位', () => {
+    expect(hasPendingSubmission([user('u'), think('r')], true)).toBe(false)
+    expect(hasPendingSubmission([pendingUser, agent('a')], true)).toBe(false)
   })
 })
 

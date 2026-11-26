@@ -115,6 +115,39 @@ body,
   padding: 12px;
 }
 
+.qn-pull-refresh {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qn-body.qn-pull-scroll {
+  overscroll-behavior-y: none;
+}
+
+.qn-pull-indicator {
+  position: absolute;
+  z-index: 3;
+  top: -36px;
+  left: 50%;
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--qn-edge-top);
+  border-radius: 999px;
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1);
+  color: var(--color-qn-accent);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .qn-footer {
   flex-shrink: 0;
   border-top: 1px solid var(--color-qn-border);
