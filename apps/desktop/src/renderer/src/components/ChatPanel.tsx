@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
 import { DRAFT_THREAD_ID } from '@qn/codex-client'
@@ -19,10 +19,11 @@ import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
 import { groupTurns } from '../lib/turnGroups'
-import { useCodex } from '../store/codex'
+import { useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
+import { useUi } from '../store/ui'
 import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
@@ -30,6 +31,7 @@ import { Composer } from './Composer'
 import { MessageItem, ToolGroup, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
+import { SendQueue } from './SendQueue'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SideChat } from './SideChat'
@@ -55,8 +57,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const currentCwd = useCodex((s) => s.currentCwd)
   const selectedProjectId = useProjects((s) => s.selectedId)
   const projects = useProjects((s) => s.projects)
+  const chatWidth = useUi((s) => s.chatWidth)
+  const contentWidthClassName = chatWidth === 'wide' ? 'max-w-5xl' : 'max-w-3xl'
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const annotationCounter = useRef(0)
   const [pinned, setPinned] = useState(true)
   const [draft, setDraft] = useState('')
@@ -79,31 +84,31 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const running = view?.status === 'running'
   const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
 
-  const lastItem = items[items.length - 1]
-  const signature = `${items.length}:${approvals.length}:${
-    lastItem?.kind === 'agent'
-      ? lastItem.text.length
-      : lastItem?.kind === 'command'
-        ? lastItem.output.length
-        : lastItem?.kind === 'reasoning'
-          ? lastItem.summary.length
-          : lastItem?.kind === 'fileChange'
-            ? lastItem.changes.reduce((total, change) => total + (change.diff?.length ?? 0), 0)
-            : lastItem?.kind === 'other'
-              ? lastItem.summary.length
-              : 0
-  }`
-
-  useEffect(() => {
-    if (pinned && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [signature, pinned])
+  // 宽度改变会让文字换行，旧的高亮坐标会指向别处。
+  useLayoutEffect(() => {
+    setHighlights({})
+  }, [chatWidth])
 
   // 切换会话时回到底部，不沿用上一个会话的滚动位置。
-  useEffect(() => {
+  useLayoutEffect(() => {
     setPinned(true)
-  }, [currentThreadId])
+  }, [currentTargetId, currentAgent, currentThreadId])
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current
+    const content = contentRef.current
+    if (!pinned || !scroll || !content) return
+
+    // 图片、折叠工具组和输入框都会改变可见范围，在浏览器绘制前跟随底部。
+    const followBottom = () => {
+      scroll.scrollTop = scroll.scrollHeight
+    }
+    followBottom()
+    const observer = new ResizeObserver(followBottom)
+    observer.observe(scroll)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [pinned, currentTargetId, currentAgent, currentThreadId])
 
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const node = event.currentTarget
@@ -131,21 +136,15 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     })
   }
 
-  const submit = (text: string) => {
+  const submit = async (text: string, mode: SendMode) => {
     const message = buildAnnotatedMessage(annotations, text)
     const input = buildUserInput(message, attachments, skills)
     if (input.length === 0) return
-    void send(message, { input }).then((sent) => {
-      // 发送失败时把文字放回输入框，注释/附件/技能都保留，方便直接重试。
-      if (!sent) {
-        setDraft(text)
-        return
-      }
-      setAnnotations([])
-      setHighlights({})
-      setAttachments([])
-      setSkills([])
-    })
+    if (!(await send(message, { input, mode }))) return
+    setDraft((current) => current === text ? '' : current)
+    for (const annotation of annotations) removeAnnotation(annotation.id)
+    setAttachments((current) => current.filter((item) => !attachments.some((sent) => sent.id === item.id)))
+    setSkills((current) => current.filter((item) => !skills.includes(item)))
   }
 
   const notify = (message: string) => useCodex.setState({ notice: message })
@@ -298,13 +297,14 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       <div className="relative min-h-0 flex-1">
         <SelectionLayer
           containerRef={scrollRef}
-          className="qn-scroll h-full overflow-y-auto px-6 pb-6 pt-2"
+          layoutKey={chatWidth}
+          className={`qn-scroll h-full overflow-y-auto px-6 pb-6 pt-2 [scrollbar-gutter:stable_both-edges]${pinned ? ' [overflow-anchor:none]' : ''}`}
           onScroll={onScroll}
           highlights={Object.values(highlights).flat()}
           onAdd={addAnnotation}
           onSide={(quote) => void openSideChat(quote)}
         >
-          <div className="mx-auto flex min-h-full max-w-3xl flex-col">
+          <div ref={contentRef} className={`mx-auto flex min-h-full flex-col ${contentWidthClassName}`}>
             {session?.openError && (
               <div className="mb-3">
                 <ErrorNote
@@ -339,7 +339,12 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                   ) : entry.kind === 'work' ? (
                     <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries} onFork={canFork ? forkFromMessage : undefined} />
                   ) : (
-                    <MessageItem key={entry.key} item={entry.item} onFork={canFork ? forkFromMessage : undefined} />
+                    <MessageItem
+                      key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
+                      item={entry.item}
+                      onFork={canFork ? forkFromMessage : undefined}
+                      onEdit={(text, input) => send(text, { input })}
+                    />
                   ),
                 )}
                 {approvals.map((approval) => (
@@ -364,8 +369,16 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         )}
       </div>
 
+      <SendQueue
+        targetId={currentTargetId}
+        agent={currentAgent}
+        threadId={currentThreadId}
+        running={running}
+        contentWidthClassName={contentWidthClassName}
+      />
       <AnnotationBar annotations={annotations} onRemove={removeAnnotation} />
       <Composer
+        contentWidthClassName={contentWidthClassName}
         onSend={submit}
         onInterrupt={() => void interrupt()}
         running={running}

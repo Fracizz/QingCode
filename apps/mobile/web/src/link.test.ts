@@ -109,6 +109,7 @@ describe('formatAddress / parseAddress', () => {
     expect(parseAddress('192.168.10.87')).toEqual({ host: '192.168.10.87', port: null })
     expect(parseAddress('[2001:db8::1]:7001')).toEqual({ host: '[2001:db8::1]', port: 7001 })
     expect(parseAddress('[2001:db8::1]')).toEqual({ host: '[2001:db8::1]', port: null })
+    expect(parseAddress('2001:db8::1:7001')).toEqual({ host: '2001:db8::1:7001', port: null })
     expect(parseAddress('')).toBeNull()
     expect(parseAddress('host:99999')).toBeNull()
   })

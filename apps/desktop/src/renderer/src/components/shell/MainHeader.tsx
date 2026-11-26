@@ -1,13 +1,19 @@
-import { FileText, FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen } from 'lucide-react'
+import { Check, FileText, FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen } from 'lucide-react'
 import { useFiles } from '../../features/files'
 import { useDock } from '../../store/dock'
 import { sessionKey } from '../../lib/agents'
 import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
+import { useUi } from '../../store/ui'
 import { AgentIcon } from '../AgentIcon'
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
+import { Menu, MenuContent, MenuGroup, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../primitives'
 import { IconButton } from '../ui'
 import { DOCK_TOOLS } from './WorkspaceDock'
+
+const CHAT_WIDTH_OPTIONS = [
+  { value: 'default', label: '默认' },
+  { value: 'wide', label: '宽屏' },
+] as const
 
 /** 主区顶栏（参考 Codex）：当前会话标题 + 所在项目，右侧会话级操作。 */
 export function MainHeader() {
@@ -26,6 +32,8 @@ export function MainHeader() {
   const dockTool = useDock((s) => s.tool)
   const filesOpen = useFiles((s) => s.open)
   const fileTabs = useFiles((s) => s.tabs.length)
+  const chatWidth = useUi((s) => s.chatWidth)
+  const setChatWidth = useUi((s) => s.setChatWidth)
   const project = projects.find((item) => item.id === projectId)
   const title = threadId
     ? (threads.find((item) => item.id === threadId && item.agent === agent)?.title ?? '新会话')
@@ -80,6 +88,21 @@ export function MainHeader() {
           <MenuItem icon={<RotateCw size={14} />} onSelect={() => void refreshThreads()}>
             刷新会话列表
           </MenuItem>
+          <MenuSeparator />
+          <MenuGroup aria-label="聊天宽度">
+            <MenuLabel>聊天宽度</MenuLabel>
+            {CHAT_WIDTH_OPTIONS.map(({ value, label }) => (
+              <MenuItem
+                key={value}
+                role="menuitemradio"
+                aria-checked={chatWidth === value}
+                hint={chatWidth === value ? <Check size={14} aria-hidden /> : undefined}
+                onSelect={() => setChatWidth(value)}
+              >
+                {label}
+              </MenuItem>
+            ))}
+          </MenuGroup>
         </MenuContent>
       </Menu>
     </div>

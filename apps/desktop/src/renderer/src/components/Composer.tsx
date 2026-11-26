@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, CircleAlert, FileText, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder } from '../lib/agents'
 import {
@@ -11,7 +11,7 @@ import {
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
-import { useSetting } from '../features/settings'
+import { useSetting } from '../features/settings/settingsStore'
 import {
   applyMention,
   imageSendBlock,
@@ -24,8 +24,9 @@ import {
 } from '../features/composer'
 import { useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
-import { Tip } from './primitives'
-import { ErrorNote } from './ui'
+import type { SendMode } from '../store/codex'
+import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
+import { ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
 const MAX_HEIGHT_RATIO = 0.4
@@ -50,8 +51,7 @@ type SlashProps = {
 
 /**
  * 输入框（参考 Codex）：圆角卡片里是附件托盘 + 自动增高的文本框，底部一行左侧放附件按钮/上下文工具、右侧放模型选择/上下文占用/发送。
- * 支持粘贴/拖入图片与文件；行首输入 `/` 弹出命令与技能菜单，输入 `@` 搜索并引用项目文件。
- * 运行中发送键变成停止键；卡片下方一行放环境信息。
+ * 支持粘贴/拖入图片与文件；行首输入 `/` 弹出命令与技能菜单，输入 `@` 搜索并引用项目文件。卡片下方一行放环境信息。
  */
 export function Composer({
   onSend,
@@ -67,13 +67,14 @@ export function Composer({
   capabilities,
   annotationCount = 0,
   compact = false,
+  contentWidthClassName = 'max-w-3xl',
   leading,
   trailing,
   footer,
   attach,
   slash,
 }: {
-  onSend: (text: string) => void
+  onSend: (text: string, mode: SendMode) => void
   onInterrupt: () => void
   running: boolean
   sending: boolean
@@ -87,6 +88,7 @@ export function Composer({
   capabilities?: { approvals?: boolean; rateLimits?: boolean } | null
   annotationCount?: number
   compact?: boolean
+  contentWidthClassName?: string
   leading?: ReactNode
   trailing?: ReactNode
   footer?: ReactNode
@@ -117,7 +119,7 @@ export function Composer({
       area.setSelectionRange(pendingCaret.current, pendingCaret.current)
       pendingCaret.current = null
     }
-  }, [value])
+  }, [value, contentWidthClassName])
 
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
@@ -138,12 +140,14 @@ export function Composer({
   const imageBlock = imageSendBlock(images, imageSupport.allowed, imageSupport.reason ?? undefined)
   const hasExtras = attachments.length > 0 || (slash?.skills.length ?? 0) > 0 || annotationCount > 0
   const blocked = attach?.blockedReason ?? imageBlock
+  const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
+  const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
+  const sendHint = running ? `排队（${shortcut}）· 本轮结束后发送` : `发送（${shortcut}）· 换行（${newlineShortcut}）`
   const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasExtras)
 
-  const submit = () => {
+  const submit = (mode: SendMode = 'queue') => {
     if (!canSend) return
-    onSend(value)
-    onChange('')
+    onSend(value, mode)
   }
 
   const choose = (item: SlashItem | undefined) => {
@@ -254,7 +258,7 @@ export function Composer({
 
   return (
     <div className={cn('shrink-0', compact ? 'px-3 pb-3 pt-1' : 'px-6 pb-3 pt-1')}>
-      <div className={cn('relative mx-auto', !compact && 'max-w-3xl')}>
+      <div className={cn('relative mx-auto', !compact && contentWidthClassName)}>
         {error && (
           <div className="mb-2">
             <ErrorNote message={error} onClose={onClearError} />
@@ -386,33 +390,45 @@ export function Composer({
             )}
             <div className="flex-1" />
             {trailing}
-            {running ? (
-              <Tip label="停止运行">
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-qn-text text-black hover:bg-white"
-                  aria-label="停止运行"
-                  onClick={onInterrupt}
-                >
-                  <Square size={12} fill="currentColor" />
-                </button>
-              </Tip>
-            ) : (
-              <Tip label={blocked ?? (sendKey === 'ctrlEnter' ? '发送（Ctrl+Enter）· 换行（Enter）' : '发送（Enter）· 换行（Shift+Enter）')}>
-                {/* 禁用的 button 不触发悬停事件，外包一层让提示仍能显示原因。 */}
+            {running && (
+              <IconButton label="停止运行" className="size-7.5" disabled={sending} onClick={onInterrupt}>
+                <Square size={12} fill="currentColor" />
+              </IconButton>
+            )}
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Tip label={blocked ?? sendHint}>
                 <span className="inline-flex">
                   <button
                     type="button"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-qn-text text-black hover:bg-white disabled:bg-white/15 disabled:text-qn-dim disabled:opacity-100"
+                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-[12px] font-medium text-black hover:bg-white disabled:bg-white/15 disabled:text-qn-dim disabled:opacity-100"
                     disabled={!canSend}
-                    aria-label="发送"
-                    onClick={submit}
+                    aria-label={running ? '排队' : '发送'}
+                    onClick={() => submit()}
                   >
                     <ArrowUp size={16} strokeWidth={2.2} />
+                    {running && <span className="pr-0.5">排队</span>}
                   </button>
                 </span>
               </Tip>
-            )}
+              {running && (
+                <Menu>
+                  <MenuTrigger asChild>
+                    <IconButton label="发送方式" size="sm" disabled={!canSend}>
+                      <ChevronDown size={14} />
+                    </IconButton>
+                  </MenuTrigger>
+                  <MenuContent side="top" align="end">
+                    <MenuItem hint="默认 · 本轮结束后发送" onSelect={() => submit('queue')}>排队</MenuItem>
+                    <MenuItem
+                      disabled={agent !== 'codex'}
+                      hint={agent === 'codex' ? '补充到当前一轮' : '当前 Agent 不支持'}
+                      onSelect={() => submit('steer')}
+                    >引导</MenuItem>
+                    <MenuItem hint="中断当前一轮后发送" onSelect={() => submit('immediate')}>立即发送</MenuItem>
+                  </MenuContent>
+                </Menu>
+              )}
+            </div>
           </div>
         </div>
         {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-[12px] text-qn-dim">{footer}</div>}
@@ -514,7 +530,7 @@ function SlashMenu({
       role="listbox"
       aria-label="命令与技能"
     >
-      <div ref={listRef} className="qn-scroll max-h-[min(320px,45vh)] overflow-y-auto p-1.5">
+      <div ref={listRef} className="qn-scroll max-h-[min(320px,45vh)] space-y-1 overflow-y-auto p-1.5">
         {items.length === 0 && (
           <div className="px-3 py-3 text-center text-[13px] text-qn-muted">
             {loading ? '正在加载技能…' : '没有匹配的命令或技能'}

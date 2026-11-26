@@ -170,11 +170,17 @@ export function ConnectionFormPage() {
 
   return (
     <>
-      <Header title={isEdit ? '编辑连接' : '添加连接'} subtitle="导入后可编辑，无需重新配对" onBack={closeForm} />
-      <div className="qn-body qn-scroll">
-        {!isEdit && (
+      <Header
+        title={isEdit ? '编辑连接' : '添加连接'}
+        subtitle={isEdit ? '修改地址无需重新配对' : '导入后可修改，再配对保存'}
+        onBack={form.saving ? undefined : closeForm}
+      />
+      <fieldset className="qn-body qn-scroll min-w-0" disabled={form.saving}>
           <Card className="mb-3">
-            <Field label="粘贴连接信息" hint="支持从聊天软件转发的整段文字，会自动提取 qingcode-next://pair 链接">
+            <Field
+              label={isEdit ? '粘贴新的连接地址' : '粘贴连接信息'}
+              hint={isEdit ? '粘贴同一台电脑新复制的信息，可更新主机和端口。' : '可粘贴电脑端复制的整段文字。'}
+            >
               <textarea
                 className="qn-textarea"
                 rows={3}
@@ -187,13 +193,12 @@ export function ConnectionFormPage() {
               <Button className="flex-1" onClick={() => void pasteFromClipboard()}>
                 读取剪贴板
               </Button>
-              <Button className="flex-1" onClick={parsePaste}>
-                解析
+              <Button className="flex-1" disabled={!form.paste.trim()} onClick={parsePaste}>
+                {isEdit ? '导入地址' : '导入信息'}
               </Button>
             </div>
-            {mock && <p className="mt-2 text-[11px] text-qn-muted">模拟密码：mock1234</p>}
+            {mock && !isEdit && <p className="mt-2 text-[11px] text-qn-muted">模拟密码：mock1234</p>}
           </Card>
-        )}
 
         <Card>
           <Field label="名称">
@@ -220,7 +225,7 @@ export function ConnectionFormPage() {
             <input
               className="qn-input qn-mono"
               inputMode="numeric"
-              value={String(form.draft.port)}
+              value={form.draft.port}
               onChange={(event) => updateDraft('port', event.target.value)}
             />
           </Field>
@@ -264,19 +269,19 @@ export function ConnectionFormPage() {
             <Button
               className="flex-1"
               variant="primary"
-              disabled={form.pairing}
+              disabled={form.testing || form.saving || form.fpMismatch !== null}
               onClick={() => void (isEdit ? saveEdit() : pairAndSave())}
             >
-              {form.pairing ? '配对中…' : isEdit ? '保存修改' : '配对并保存'}
+              {isEdit ? (form.saving ? '保存中…' : '保存修改') : (form.saving ? '配对中…' : '配对并保存')}
             </Button>
           </div>
         </Card>
         {isEdit && (
           <p className="mt-3 text-xs text-qn-muted">
-            修改名称 / 主机 / 端口不需要重新配对；token 与证书指纹保持不变。
+            修改名称、主机或端口后，仍使用原来的配对。
           </p>
         )}
-      </div>
+      </fieldset>
     </>
   )
 }

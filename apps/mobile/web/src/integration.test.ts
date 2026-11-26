@@ -1,7 +1,9 @@
 // 浏览器开发模式的端到端冒烟：粘贴导入 → 配对 → 目标/项目/多 Agent 会话 → 流式对话 → 模型覆盖 → 只读查看文件/差异。
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createGateway, setGateway } from './client'
+import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
+import { parseConnections } from './state'
 import { useApp } from './store'
 import { EventStreamController } from './transport'
 
@@ -10,6 +12,7 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 describe('模拟网关全链路', () => {
   it('从剪贴板导入到流式回复都能走通', async () => {
     const gateway = createGateway()
+    const pair = vi.spyOn(gateway, 'pair')
     setGateway(gateway)
 
     const state = () => useApp.getState()
@@ -17,6 +20,8 @@ describe('模拟网关全链路', () => {
     await state().pasteFromClipboard()
     expect(state().form?.draft.fp).toBe(MOCK_FP)
     expect(state().form?.error).toBeNull()
+    expect(state().form?.paste).toBe('')
+    state().updateDraft('name', '我的电脑')
 
     await state().testConnection()
     expect(state().form?.probe?.fingerprint).toBe(MOCK_FP)
@@ -26,6 +31,35 @@ describe('模拟网关全链路', () => {
     expect(state().connections).toHaveLength(1)
     expect(state().activeId).toBe(state().connections[0]?.id)
     expect(state().targets.map((item) => item.id)).toEqual(['local', 'ssh-93'])
+
+    const original = state().connections[0]!
+    state().openEditForm(original.id)
+    const forwarded = { name: original.name, host: 'frp.example.com', port: 7001, code: 'mock1234' }
+    state().setFormPaste(buildConnectionInfo({ ...forwarded, fp: 'ef'.repeat(32) }).text)
+    state().parsePaste()
+    expect(state().form?.error).toContain('证书指纹不同')
+    expect(state().form?.draft.host).toBe(original.host)
+    state().setFormPaste(buildConnectionInfo({ ...forwarded, fp: MOCK_FP }).text)
+    state().parsePaste()
+    expect(state().form?.draft).toMatchObject({ host: 'frp.example.com', port: '7001', code: '' })
+    state().updateDraft('name', '转发后的电脑')
+    state().updateDraft('port', '')
+    expect(state().form?.draft.port).toBe('')
+    await state().saveEdit()
+    expect(state().form?.error).toContain('端口')
+    state().updateDraft('port', '7002')
+    await state().testConnection()
+    expect(state().form?.probe?.fingerprint).toBe(MOCK_FP)
+    vi.spyOn(gateway, 'storageSet').mockRejectedValueOnce(new Error('本地存储暂不可用'))
+    await state().saveEdit()
+    expect(state().form?.error).toBe('本地存储暂不可用')
+    expect(state().connections[0]).toEqual(original)
+    await state().saveEdit()
+    expect(state().page).toBe('targets')
+    const edited = { ...original, name: '转发后的电脑', host: 'frp.example.com', port: 7002 }
+    expect(state().connections[0]).toEqual(edited)
+    expect(parseConnections(await gateway.storageGet('connections'))).toEqual([edited])
+    expect(pair).toHaveBeenCalledTimes(1)
 
     // 事件流由页面 init 建立，这里手动建立等价的订阅。
     const controller = new EventStreamController(

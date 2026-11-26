@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  barWidth,
   notificationKind,
   severityBarClass,
   severityTextClass,
@@ -15,14 +14,6 @@ describe('额度界面纯逻辑', () => {
     expect(notificationKind({ method: 'turn/started' })).toBeNull()
     expect(notificationKind(null)).toBeNull()
     expect(notificationKind('turn/completed')).toBeNull()
-  })
-
-  it('进度条宽度裁剪到 0–100', () => {
-    expect(barWidth(32)).toBe(32)
-    expect(barWidth(-1)).toBe(0)
-    expect(barWidth(120)).toBe(100)
-    expect(barWidth(null)).toBe(0)
-    expect(barWidth(Number.NaN)).toBe(0)
   })
 
   it('阈值对应配色类', () => {

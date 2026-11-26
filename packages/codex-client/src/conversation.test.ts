@@ -449,6 +449,7 @@ describe('conversation reducer', () => {
         {
           id: 'turn0',
           status: 'completed',
+          startedAt: 1760000000,
           error: null,
           items: [
             item('userMessage', 'u1', {
@@ -472,6 +473,13 @@ describe('conversation reducer', () => {
       images: ['data:image/png;base64,AAAA', '/tmp/a.png'],
       files: ['/tmp/a.log'],
       skills: ['commit-push'],
+      inputExtras: [
+        { type: 'skill', name: 'commit-push', path: '/s/SKILL.md' },
+        { type: 'image', url: 'data:image/png;base64,AAAA' },
+        { type: 'localImage', path: '/tmp/a.png' },
+        { type: 'mention', name: 'a.log', path: '/tmp/a.log' },
+      ],
+      sentAt: 1760000000000,
     })
   })
 })

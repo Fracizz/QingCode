@@ -199,14 +199,9 @@ export function ThreadRow({
               }
             }}
           >
-            {/* 左侧槽位：运行中显示转圈，否则显示未读圆点；当前会话只靠背景高亮。 */}
-            {running && !waiting ? (
-              <LoaderCircle
-                size={13}
-                className="absolute left-[14px] top-1/2 -mt-[6.5px] animate-spin text-qn-brand"
-                aria-label="运行中"
-              />
-            ) : unread && (
+            {/* 青轨：当前会话的唯一强调，沿用旧版 QingCode 的 Qing Rail。 */}
+            {current && <span className="absolute bottom-2 left-[15px] top-2 w-[2px] rounded-full bg-qn-brand" />}
+            {unread && (
               <span className="absolute left-[18px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-qn-brand" aria-label="未读" />
             )}
             {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
@@ -214,6 +209,13 @@ export function ThreadRow({
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
             {waiting ? (
               <span className="shrink-0 rounded-md bg-qn-warn/15 px-1.5 text-[11px] leading-5 text-qn-warn">待审批</span>
+            ) : running ? (
+              <LoaderCircle
+                size={13}
+                strokeWidth={2.5}
+                className="shrink-0 animate-spin text-qn-muted [animation-duration:2s] motion-reduce:animate-none"
+                aria-label="运行中"
+              />
             ) : (
               <>
                 <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">
@@ -227,11 +229,9 @@ export function ThreadRow({
                   >
                     {pinned ? <PinOff size={13} /> : <Pin size={13} />}
                   </IconButton>
-                  {!running && (
-                    <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
-                      <Archive size={13} />
-                    </IconButton>
-                  )}
+                  <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
+                    <Archive size={13} />
+                  </IconButton>
                 </span>
               </>
             )}
@@ -260,7 +260,7 @@ export function ThreadRow({
             <Separator />
             <Item
               icon={<GitBranch size={14} />}
-              hint="B"
+              hint="X"
               disabled={!native || running}
               onSelect={() => void forkThread(thread.id, thread.agent)}
             >

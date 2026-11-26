@@ -183,6 +183,7 @@ export function filterSlashItems(items: SlashItem[], query: string): SlashItem[]
 // ---------- 用户消息展示 ----------
 
 const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
+const SKILL_PREFIX = /^\/([\w.:-]+)(?:\s+|$)/
 
 /**
  * Claude 桥接把附件写成文本尾部的说明、把技能写成 `/name` 前缀（SDK 历史里存的就是这段文字）。
@@ -203,11 +204,18 @@ export function splitUserText(text: string): { text: string; files: string[]; sk
   // Claude 桥把多个技能写成 "/a /b 正文"，逐个拆出来展示成标签。
   const skills: string[] = []
   for (;;) {
-    const match = /^\/([\w.:-]+)(?:\s+|$)/.exec(body)
+    const match = SKILL_PREFIX.exec(body)
     if (!match) break
     skills.push(match[1]!)
     body = body.slice(match[0].length)
   }
   return { text: body, files, skills }
+}
+
+export function editUserText(original: string, text: string): string {
+  const parsed = splitUserText(original)
+  const body = [...parsed.skills.map((skill) => `/${skill}`), text].filter(Boolean).join(' ')
+  if (!parsed.files.length) return body
+  return `${body}\n\n${original.slice(original.lastIndexOf(ATTACHMENT_NOTE))}`.trim()
 }
 

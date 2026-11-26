@@ -36,15 +36,20 @@ describe('parseLayoutPrefs', () => {
     expect(parseLayoutPrefs('{oops')).toEqual(DEFAULT_LAYOUT)
   })
 
-  it('读取并约束已保存的值', () => {
+  it('旧布局保留侧栏偏好，聊天宽度使用默认值', () => {
     expect(parseLayoutPrefs('{"sidebarWidth":9999,"sidebarCollapsed":true}')).toEqual({
       sidebarWidth: SIDEBAR_MAX_WIDTH,
       sidebarCollapsed: true,
+      chatWidth: 'default',
     })
   })
 
+  it('读取已保存的宽屏偏好', () => {
+    expect(parseLayoutPrefs('{"chatWidth":"wide"}')).toEqual({ ...DEFAULT_LAYOUT, chatWidth: 'wide' })
+  })
+
   it('字段类型不对时逐项回落', () => {
-    expect(parseLayoutPrefs('{"sidebarWidth":"wide","sidebarCollapsed":"yes"}')).toEqual(DEFAULT_LAYOUT)
+    expect(parseLayoutPrefs('{"sidebarWidth":"wide","sidebarCollapsed":"yes","chatWidth":true}')).toEqual(DEFAULT_LAYOUT)
   })
 })
 

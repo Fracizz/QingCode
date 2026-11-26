@@ -8,6 +8,7 @@ import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { MessageItem } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
+import { SendQueue } from './SendQueue'
 import { Badge, EmptyState, ErrorNote, IconButton } from './ui'
 
 let nextAnnotationId = 0
@@ -24,6 +25,7 @@ export function SideChat() {
   const setSideDraft = useCodex((s) => s.setSideDraft)
   const clearSideError = useCodex((s) => s.clearSideError)
   const sendSide = useCodex((s) => s.sendSide)
+  const send = useCodex((s) => s.send)
   const closeSideChat = useCodex((s) => s.closeSideChat)
   const interruptSide = useCodex((s) => s.interruptSide)
   const respondApproval = useCodex((s) => s.respondApproval)
@@ -71,7 +73,11 @@ export function SideChat() {
         )}
         <div className="space-y-3">
           {items.map((item) => (
-            <MessageItem key={item.id} item={item} />
+            <MessageItem
+              key={`${sideThreadId}:${item.id}`}
+              item={item}
+              onEdit={sideThreadId ? (text, input) => send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input }) : undefined}
+            />
           ))}
           {approvals.map((approval) => (
             <ApprovalCard
@@ -84,9 +90,10 @@ export function SideChat() {
           ))}
         </div>
       </SelectionLayer>
+      <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} compact />
       <Composer
         compact
-        onSend={(text) => void sendSide(text)}
+        onSend={(text, mode) => void sendSide(text, mode)}
         onInterrupt={() => void interruptSide()}
         running={running}
         sending={sending}

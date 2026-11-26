@@ -14,11 +14,6 @@ export function notificationKind(msg: unknown): RateLimitNotificationKind {
   return null
 }
 
-export function barWidth(percent: number | null | undefined): number {
-  if (typeof percent !== 'number' || !Number.isFinite(percent)) return 0
-  return Math.min(100, Math.max(0, percent))
-}
-
 export function severityTextClass(level: RateLimitSeverity): string {
   if (level === 'danger') return 'border-qn-danger/50 text-qn-danger'
   if (level === 'warn') return 'border-amber-400/50 text-amber-300'

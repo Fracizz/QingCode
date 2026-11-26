@@ -237,6 +237,10 @@ export function tightestPercent(snapshot: RateLimitSnapshot | null | undefined):
   return values.length === 0 ? null : Math.max(...values)
 }
 
+export function remainingQuotaPercent(usedPercent: number): number {
+  return Math.min(100, Math.max(0, 100 - usedPercent))
+}
+
 function countdownText(diffSeconds: number): string {
   if (diffSeconds < 60) return `${diffSeconds} 秒`
   const mins = Math.floor(diffSeconds / 60)
@@ -277,21 +281,26 @@ export function formatReset(resetsAt: number | null | undefined, now: number): s
   return `${countdownText(diff)}后重置（${when}）`
 }
 
-/** 徽标文本："5h 32% · 周 12%"。 */
-export function compactText(snapshot: RateLimitSnapshot | null | undefined): string {
+export function compactText(
+  snapshot: RateLimitSnapshot | null | undefined,
+  mode: 'used' | 'remaining' = 'used',
+): string {
   if (!snapshot) return '暂无额度数据'
+  const displayPercent = mode === 'remaining' ? remainingQuotaPercent : (used: number) => used
   const parts: string[] = []
   const primary = snapshot.primary
   const secondary = snapshot.secondary
   if (primary) {
     parts.push(
-      `${windowShortLabel(primary.windowDurationMins, '5h')} ${Math.round(primary.usedPercent)}%`,
+      `${windowShortLabel(primary.windowDurationMins, '5h')} ${Math.round(displayPercent(primary.usedPercent))}%`,
     )
   }
   if (secondary) {
     parts.push(
-      `${windowShortLabel(secondary.windowDurationMins, '周')} ${Math.round(secondary.usedPercent)}%`,
+      `${windowShortLabel(secondary.windowDurationMins, '周')} ${Math.round(displayPercent(secondary.usedPercent))}%`,
     )
   }
-  return parts.length === 0 ? '暂无额度数据' : parts.join(' · ')
+  if (parts.length === 0) return '暂无额度数据'
+  const text = parts.join(' · ')
+  return mode === 'remaining' ? `剩余 ${text}` : text
 }

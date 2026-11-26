@@ -1,9 +1,10 @@
-import { Children, isValidElement, memo, useMemo, type ReactNode } from 'react'
+import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronDown, ChevronRight, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Terminal, Wand2 } from 'lucide-react'
-import type { ItemView } from '@qn/codex-client'
-import { basename, splitUserText } from '../lib/attachments'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Pencil, Terminal, Wand2 } from 'lucide-react'
+import type { ItemView, UserInput } from '@qn/codex-client'
+import { basename, editUserText, splitUserText } from '../lib/attachments'
+import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
@@ -12,7 +13,8 @@ import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type L
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
 import { MessageActions } from './MessageActions'
-import { Badge } from './ui'
+import { MessageImage } from './MessageImage'
+import { Badge, IconButton } from './ui'
 
 function plainText(children: ReactNode): string {
   return Children.toArray(children)
@@ -235,13 +237,15 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
 export const MessageItem = memo(function MessageItem({
   item,
   onFork,
+  onEdit,
 }: {
   item: ItemView
   onFork?: (itemId: string, markdown: string) => void
+  onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
 }) {
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} />
+      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
     case 'agent':
       return <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true} onFork={onFork} />
     case 'reasoning':
@@ -268,11 +272,11 @@ export const MessageItem = memo(function MessageItem({
   }
 })
 
-/** 连续工具步骤的折叠组：一行摘要，展开后逐条显示；仍在运行时默认展开，方便看进度。 */
+// 展开状态交给原生 details，避免步骤状态变化时打断用户查看。
 export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] }) {
   const running = isGroupRunning(items)
   return (
-    <details className="group/steps text-[13px]" open={running || undefined}>
+    <details className="group/steps text-[13px]">
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
         {running ? <LoaderCircle size={14} className="animate-spin text-qn-brand" /> : <ListChecks size={14} />}
         <span className="min-w-0 truncate">{summarizeTools(items)}</span>
@@ -317,25 +321,45 @@ export const WorkGroup = memo(function WorkGroup({
 })
 
 /** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
-function UserMessage({ item }: { item: Extract<ItemView, { kind: 'user' }> }) {
+function UserMessage({ item, onEdit }: {
+  item: Extract<ItemView, { kind: 'user' }>
+  onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
+}) {
+  const [edit, setEdit] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [editFailed, setEditFailed] = useState(false)
+  const [copied, setCopied] = useState(false)
   const parsed = splitUserText(item.text)
   const files = [...(item.files ?? []), ...parsed.files.filter((path) => !item.files?.includes(path))]
   const skills = item.skills?.length ? item.skills : parsed.skills
-  // data / http 图片能直接显示；目标机本地路径只显示文件名。
+  // 消息内嵌的图片可以直接预览；目标机路径仅用于显示附件名。
   const images = item.images ?? []
   const visible = images.filter((src) => src.startsWith('data:image/'))
   const named = images.filter((src) => !src.startsWith('data:image/'))
+  const canSave = edit !== null && edit !== parsed.text && Boolean(edit.trim() || item.inputExtras?.length || parsed.files.length)
+  const timestamp = item.sentAt ? new Date(item.sentAt) : null
+
+  const resend = async () => {
+    if (!onEdit || edit === null || !canSave || saving) return
+    setSaving(true)
+    setEditFailed(false)
+    const text = editUserText(item.text, edit)
+    const input: UserInput[] = [...(item.inputExtras ?? [])]
+    if (text.trim()) input.unshift({ type: 'text', text, text_elements: [] })
+    try {
+      if (await onEdit(edit, input)) setEdit(null)
+      else setEditFailed(true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="flex flex-col items-end gap-1.5">
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {visible.map((src, index) => (
-            <img
-              key={index}
-              src={src}
-              alt={'图片 ' + (index + 1)}
-              className="max-h-48 max-w-[16rem] rounded-xl border border-qn-border object-contain"
-            />
+            <MessageImage key={index} src={src} label={`图片 ${index + 1}`} />
           ))}
         </div>
       )}
@@ -358,9 +382,55 @@ function UserMessage({ item }: { item: Extract<ItemView, { kind: 'user' }> }) {
           ))}
         </div>
       )}
-      {parsed.text.trim() && (
+      {edit !== null ? (
+        <form
+          className="w-full max-w-[80%] rounded-2xl border border-qn-border bg-qn-elevated px-3 py-2 focus-within:border-qn-border-strong"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void resend()
+          }}
+        >
+          <textarea
+            ref={(area) => { area?.focus() }}
+            aria-label="编辑已发送的消息"
+            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[14px] leading-6 outline-none"
+            value={edit}
+            disabled={saving}
+            onChange={(event) => setEdit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
+            }}
+          />
+          {editFailed && <div role="status" className="px-1 text-[12px] text-qn-warn">发送失败，修改已保留</div>}
+          <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-[12px]">
+            <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>取消</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-black disabled:opacity-40">{saving ? '提交中…' : '发送修订'}</button>
+          </div>
+        </form>
+      ) : parsed.text.trim() && (
         <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[14px] leading-6 text-qn-prose">
           {parsed.text}
+        </div>
+      )}
+      {edit === null && (timestamp || parsed.text.trim() || onEdit) && (
+        <div className="flex h-6 items-center gap-1 text-[12px] text-qn-muted">
+          {timestamp && <time className="mr-1" dateTime={timestamp.toISOString()}>{timestamp.toLocaleString('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</time>}
+          {parsed.text.trim() && (
+            <IconButton label={copied ? '已复制' : '复制消息'} size="sm" onClick={() => void copyText(parsed.text).then((ok) => {
+              setCopied(ok)
+              if (ok) window.setTimeout(() => setCopied(false), 1600)
+            })}>
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </IconButton>
+          )}
+          {onEdit && (
+            <IconButton label="编辑消息" size="sm" onClick={() => {
+              setEditFailed(false)
+              setEdit(parsed.text)
+            }}>
+              <Pencil size={14} />
+            </IconButton>
+          )}
         </div>
       )}
     </div>

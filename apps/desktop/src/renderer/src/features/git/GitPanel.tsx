@@ -209,7 +209,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 onChange={(event) => setBranchQuery(event.target.value)}
               />
             </div>
-            <div className="qn-scroll min-h-0 flex-1 overflow-y-auto p-1" role="listbox">
+            <div className="qn-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1" role="listbox">
               <div className="px-2.5 py-1 text-[11px] text-qn-dim">本地分支</div>
               {localBranches.length === 0 && (
                 <div className="px-2.5 py-1.5 text-[12px] text-qn-dim">无匹配分支</div>
@@ -477,7 +477,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
 
       {menu && (
         <div
-          className="qn-surface-float absolute z-30 w-44 p-1 text-[12px]"
+          className="qn-surface-float absolute z-30 w-44 space-y-0.5 p-1 text-[12px]"
           style={{
             left: Math.max(0, Math.min(menu.x, (rootRef.current?.clientWidth ?? 400) - 180)),
             top: menu.y,

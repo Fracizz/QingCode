@@ -11,6 +11,7 @@ import type {
   ThreadStartResponse,
   TurnInterruptResponse,
   TurnStartResponse,
+  TurnSteerResponse,
   UserInput,
 } from './codex-types'
 import type { CodexRpc } from './rpc'
@@ -90,6 +91,15 @@ export function sendInput(
   if (overrides.effort) extra.effort = overrides.effort
   if (overrides.serviceTier !== undefined) extra.serviceTier = overrides.serviceTier
   return rpc.request('turn/start', { threadId, input, ...extra })
+}
+
+export function steerTurn(
+  rpc: CodexRpcLike,
+  threadId: string,
+  expectedTurnId: string,
+  input: UserInput[],
+): Promise<TurnSteerResponse> {
+  return rpc.request('turn/steer', { threadId, expectedTurnId, input })
 }
 
 /** 拉取全部可见模型（自动翻页，最多 10 页防止服务端游标异常导致死循环）。 */

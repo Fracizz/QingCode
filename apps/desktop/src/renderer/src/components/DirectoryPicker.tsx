@@ -167,7 +167,7 @@ export function DirectoryPicker({
           {loading && <Spinner label="读取目录…" />}
         </div>
         <ErrorNote message={error} onClose={() => setError(null)} />
-        <div className="h-64 overflow-y-auto rounded-lg border border-qn-border bg-black/20">
+        <div className="qn-scroll h-64 space-y-0.5 overflow-y-auto rounded-lg border border-qn-border bg-black/20 p-1">
           {directories.length === 0 && !loading && (
             <EmptyState>没有子目录，可返回上级或输入完整路径。</EmptyState>
           )}
@@ -175,7 +175,7 @@ export function DirectoryPicker({
             <button
               key={entry.name}
               type="button"
-              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs ${
                 selected === entry.name ? 'bg-qn-accent/20' : 'hover:bg-white/5'
               }`}
               onClick={() => setSelected(entry.name)}

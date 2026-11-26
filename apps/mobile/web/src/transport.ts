@@ -164,11 +164,11 @@ export class EventStreamController {
     private readonly cancel: (handle: TimerHandle) => void = (handle) => clearTimeout(handle),
   ) {}
 
-  start(): void {
+  start(reconnected = this.attempts > 0): void {
     this.stopped = false
     this.generation += 1
     this.clearTimer()
-    void this.open(this.generation, this.attempts > 0)
+    void this.open(this.generation, reconnected)
   }
 
   stop(): void {

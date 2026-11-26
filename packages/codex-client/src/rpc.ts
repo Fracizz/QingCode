@@ -30,6 +30,8 @@ import type {
   TurnInterruptResponse,
   TurnStartParams,
   TurnStartResponse,
+  TurnSteerParams,
+  TurnSteerResponse,
 } from './codex-types'
 
 export type ClientRequestMap = {
@@ -43,6 +45,7 @@ export type ClientRequestMap = {
   'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse }
   'turn/start': { params: TurnStartParams; result: TurnStartResponse }
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
+  'turn/steer': { params: TurnSteerParams; result: TurnSteerResponse }
   'model/list': { params: ModelListParams; result: ModelListResponse }
   'skills/list': { params: SkillsListParams; result: SkillsListResponse }
   'account/read': { params: GetAccountParams; result: GetAccountResponse }

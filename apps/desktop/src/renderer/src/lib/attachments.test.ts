@@ -13,6 +13,7 @@ import {
   slashQuery,
   slashToken,
   splitUserText,
+  editUserText,
   uploadPath,
   type Attachment,
   type SlashItem,
@@ -124,6 +125,10 @@ describe('斜杠菜单', () => {
 })
 
 describe('splitUserText', () => {
+  it('编辑 Claude 历史正文时保留技能和附件', () => {
+    const original = '/review 看这个\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log'
+    expect(editUserText(original, '先看错误日志')).toBe('/review 先看错误日志\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log')
+  })
   it('拆出桥接追加的附件说明与多个技能前缀', () => {
     const text = '/review /deploy 看下这个\n\n附件文件（请按需读取）：\n- a.log: /tmp/a.log\n- b c.txt: C:\\x\\b c.txt'
     expect(splitUserText(text)).toEqual({
