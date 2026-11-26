@@ -151,7 +151,7 @@ function MessageActions({ text, onQuote, getPlainText }: {
   return (
     <div className="mt-1 flex items-center justify-end gap-1">
       {status && <span className="text-xs text-qn-muted" role="status">{status}</span>}
-      <Button variant="ghost" className="p-0! text-qn-muted" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}>⋯</Button>
+      <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}>⋯</Button>
       {open && (
         <Dialog title="消息操作" onClose={() => setOpen(false)}>
           <div className="grid gap-1">

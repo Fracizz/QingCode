@@ -7,6 +7,7 @@ import {
   groupWorkspaceThreads,
   openWorkspaceThread,
   recentThreadStatus,
+  threadPreviewLine,
   showWorkspaceProject,
   useWorkspace,
   workspaceThreadKey,
@@ -91,6 +92,7 @@ export function WorkspaceThreadRow({
 }) {
   const view = useApp((s) => s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id])
   const status = recentThreadStatus(thread, view)
+  const preview = threadPreviewLine(thread.title, thread.preview)
   return (
     <button type="button" className="qn-row qn-list-row" aria-current={selected ? 'true' : undefined} onClick={onOpen}>
       <span className="qn-row-copy">
@@ -98,7 +100,7 @@ export function WorkspaceThreadRow({
           <span className="truncate">{thread.title}</span>
           <AgentTag agent={thread.agent} />
         </span>
-        {thread.preview && <span className="qn-subtitle block">{thread.preview}</span>}
+        {preview && <span className="qn-subtitle block">{preview}</span>}
         <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
       </span>
       {status === 'pending' && <Badge tone="warn">待审批</Badge>}

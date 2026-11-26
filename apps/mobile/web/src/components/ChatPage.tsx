@@ -4,6 +4,7 @@ import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, useApp } from '../store'
+import { formatTurnError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { FileActionsContext, MessageItem, type FileActions } from './MessageItem'
@@ -66,8 +67,12 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
+  const shownItems = useMemo(() => withoutErrorEcho(items, view?.error, running), [items, view?.error, running])
   const project = projects.find((item) => item.id === selectedProjectId)
+  // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
+  const firstUser = items.find((item) => item.kind === 'user')
   const threadTitle = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)?.title
+    || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
   const cwd = currentCwd({ projects, selectedProjectId })
   const imageUnavailable = selectedAgent === 'pi'
     ? '当前 Agent 暂不支持图片'
@@ -152,14 +157,16 @@ export function ChatPage() {
             <Note message={session.openError} tone="error" actionLabel="重试"
               onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
           )}
-          {view?.error && <Note message={view.error} tone="error" />}
           {items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
           <div className="space-y-4">
             <FileActionsContext.Provider value={fileActions}>
-              {items.map((item) => (
+              {shownItems.map((item) => (
                 <MessageItem key={item.id} item={item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)} />
               ))}
             </FileActionsContext.Provider>
+            {/* 失败原因贴在最后一轮之后，和出错的位置对应；运行中且还没有回复时给出等待提示。 */}
+            {running && items.at(-1)?.kind === 'user' && <div className="qn-thinking" role="status">{agentLabel(selectedAgent)} 正在处理…</div>}
+            {!running && view?.error && <TurnErrorCard message={view.error} />}
             {approvals.length > 0 && (
               <div ref={approvalsRef} className="space-y-3">
                 {approvals.map((approval) => (
@@ -230,5 +237,22 @@ export function ChatPage() {
         </Dialog>
       )}
     </>
+  )
+}
+
+/** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */
+function withoutErrorEcho(items: readonly ItemView[], error: string | undefined, running: boolean): readonly ItemView[] {
+  const last = items.at(-1)
+  if (running || !error || last?.kind !== 'agent' || last.text.trim() !== error.trim()) return items
+  return items.slice(0, -1)
+}
+
+function TurnErrorCard({ message }: { message: string }) {
+  const { title, detail } = formatTurnError(message)
+  return (
+    <div className="qn-note qn-note-error qn-turn-error" role="alert">
+      <div className="font-semibold">{title}</div>
+      {detail && <div className="mt-1 text-xs whitespace-pre-wrap">{detail}</div>}
+    </div>
   )
 }

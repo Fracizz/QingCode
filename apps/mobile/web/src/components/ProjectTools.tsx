@@ -186,7 +186,13 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
             {listing.entries.map((entry) => (
               <button key={entry.path} className="qn-row border-b border-qn-border px-3 py-2 last:border-0" type="button" disabled={Boolean(progress)}
                 onClick={() => entry.kind === 'dir' ? browse(entry.path) : setSelected(entry)}>
-                <span aria-hidden className="text-qn-muted">{entry.kind === 'dir' ? '▸' : '·'}</span>
+                <span aria-hidden className={entry.kind === 'dir' ? 'text-qn-accent' : 'text-qn-muted'}>
+                  {entry.kind === 'dir' ? (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M3 8a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M14 3v5h5" /></svg>
+                  )}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-sm">{query ? entry.path : entry.name}</span>
                 {entry.kind === 'file' && <span className="text-xs whitespace-nowrap text-qn-muted">{formatBytes(entry.size)}</span>}
               </button>

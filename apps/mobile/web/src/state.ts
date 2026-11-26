@@ -273,6 +273,15 @@ export function friendlyError(err: unknown, fallback: string): string {
   return fallback
 }
 
+/** 目标机上常驻的旧版 server 不认识新 Agent 时，原始报错只说"agent 只能是 …"，看不出该怎么办。 */
+export function agentOpenErrorText(label: string, err: unknown, fallback: string): string {
+  const message = friendlyError(err, fallback)
+  if (/agent 只能是/.test(message)) {
+    return `目标机上的 QingCode 服务是旧版本，还不支持 ${label}。等该目标的会话都结束后，在电脑上重新连接即可更新。`
+  }
+  return message
+}
+
 export function errorCode(err: unknown): string {
   if (!isRecord(err)) return ''
   return text(err.code)
@@ -364,4 +373,38 @@ export function formatQuotedMessage(annotations: readonly Annotation[], input: s
     })
     .filter((block) => block.trim() !== '')
   return blocks.length === 0 ? body : `${blocks.join('\n\n')}\n\n${body}`
+}
+
+export type TurnErrorView = { title: string; detail: string }
+
+const statusTitle = (status: number): string =>
+  status === 429 ? '已达用量上限或请求过多'
+    : status === 401 || status === 403 ? '模型服务认证失败或无权限'
+      : status >= 500 ? '模型服务暂时不可用'
+        : '模型服务拒绝了请求'
+
+/**
+ * 上游失败串常见形如 `429: {"message":"…"}`，原样显示是一大段 JSON。
+ * 抽出状态码和说明文字；格式认不出时保留原文，不丢信息。
+ */
+export function formatTurnError(raw: string): TurnErrorView {
+  const source = raw.trim()
+  // Claude Code 的格式：`API Error: Request rejected (429) · 说明`
+  const claude = /^API Error:[^(]*\(([45]\d\d)\)\s*(?:·\s*)?([\s\S]*)$/.exec(source)
+  if (claude) return { title: `${statusTitle(Number(claude[1]))}（${claude[1]}）`, detail: claude[2]!.trim() }
+  const match = /^([45]\d\d)(?:\s*[:：]\s*|\s+)([\s\S]+)$/.exec(source)
+  if (!match) return { title: '本轮失败', detail: source }
+  const status = Number(match[1])
+  let detail = match[2]!.trim()
+  try {
+    const parsed: unknown = JSON.parse(detail)
+    if (isRecord(parsed)) {
+      const nested = isRecord(parsed.error) ? parsed.error : undefined
+      const message = text(parsed.message) || text(nested?.message) || (typeof parsed.error === 'string' ? parsed.error : '')
+      if (message) detail = message
+    }
+  } catch {
+    // 非 JSON 正文直接展示
+  }
+  return { title: `${statusTitle(status)}（${status}）`, detail }
 }

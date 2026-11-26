@@ -562,8 +562,8 @@ export interface HistoryResult {
 /** get_messages 的完整历史 → v2 thread；按带文本的用户消息切分 turns（与 Claude 桥一致）。 */
 export function messagesToThread(meta: SessionMeta, messages: unknown[]): HistoryResult {
   const state = emptyMapState()
-  const open: { id: string; itemIds: string[] }[] = []
-  let current: { id: string; itemIds: string[] } | null = null
+  const open: { id: string; itemIds: string[]; error?: string }[] = []
+  let current: { id: string; itemIds: string[]; error?: string } | null = null
   const ctxFor = (turnId: string): MapContext => ({
     threadId: meta.id,
     turnId,
@@ -611,6 +611,13 @@ export function messagesToThread(meta: SessionMeta, messages: unknown[]): Histor
         }
       }
       state.totalUsage = addUsage(state.totalUsage, message.usage)
+      // 出错的回复（如上游 429）没有内容块；不记下原因的话历史里只剩用户消息，看不出发生了什么。
+      // pi 自动重试成功后以最后一条为准。
+      if (message.stopReason === 'error' || message.errorMessage) {
+        current.error = scalarText(message.errorMessage) || 'pi assistant 消息出错'
+      } else {
+        delete current.error
+      }
       continue
     }
     // toolResult：把对应 tool item 标为完成，不再额外产生 item。
@@ -632,7 +639,8 @@ export function messagesToThread(meta: SessionMeta, messages: unknown[]): Histor
     buildTurn(
       turn.id,
       turn.itemIds.map((id) => state.items[id]).filter(isRecord),
-      'completed',
+      turn.error ? 'failed' : 'completed',
+      turn.error ?? null,
     ),
   )
   const items = state.order.map((id) => state.items[id]).filter(isRecord)

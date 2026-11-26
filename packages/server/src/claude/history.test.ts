@@ -127,6 +127,19 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
     expect((thread.turns as Json[])).toHaveLength(2)
   })
 
+  it('Claude Code 写入的 API 失败消息把该轮标为 failed，之后成功的轮次不受影响', () => {
+    const failure = sessionMessage('assistant', [{ type: 'text', text: 'API Error: Request rejected (429) · limit' }], 'e1')
+    ;(failure.message as Json).model = '<synthetic>'
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', [{ type: 'text', text: '你好' }], 'u1'),
+      failure,
+      sessionMessage('user', [{ type: 'text', text: '再试' }], 'u2'),
+      sessionMessage('assistant', [{ type: 'text', text: 'ok' }], 'a2'),
+    ])
+    expect(result.turns[0]).toMatchObject({ status: 'failed', error: { message: 'API Error: Request rejected (429) · limit' } })
+    expect(result.turns[1]).toMatchObject({ status: 'completed', error: null })
+  })
+
   it('没有用户文本时所有消息归为一个 turn；空历史返回空 turns', () => {
     const result = sessionMessagesToThread(meta, [
       sessionMessage('assistant', [{ type: 'text', text: '孤立回复' }], 'm1'),

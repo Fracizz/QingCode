@@ -64,6 +64,21 @@ function hasUserText(content: unknown): boolean {
 interface OpenTurn {
   id: string
   itemIds: string[]
+  error?: string
+}
+
+/**
+ * Claude Code 在 API 失败时写入一条 model 为 `<synthetic>`、正文以 `API Error` 开头的 assistant 消息，
+ * 历史里没有其它失败标记；据此把该轮标为 failed，与实时失败时的展示一致。
+ */
+function syntheticApiError(message: Record<string, unknown>): string | undefined {
+  if (message.role !== 'assistant' || message.model !== '<synthetic>') return undefined
+  const blocks = Array.isArray(message.content) ? message.content : [message.content]
+  const text = blocks
+    .map((block) => (typeof block === 'string' ? block : scalarText(asRecord(block)?.text)))
+    .join('')
+    .trim()
+  return text.startsWith('API Error') ? text : undefined
 }
 
 /**
@@ -100,13 +115,23 @@ export function sessionMessagesToThread(
     }
     const ctx: MapContext = { threadId: meta.id, turnId: current.id, cwd: meta.cwd }
     const before = state.order.length
+    if (role === 'assistant') {
+      const apiError = syntheticApiError(apiMessage)
+      if (apiError) current.error = apiError
+      else delete current.error
+    }
     const mapped = mapSdkMessage(sdkMessage, ctx, state, { includeUserText: true })
     state = mapped.state
     for (const id of state.order.slice(before)) current.itemIds.push(id)
   }
   // item 的 completed 状态可能在后续消息里才补齐，turn 对象必须最后一次性生成。
   const finalTurns: Json[] = open.map((turn) =>
-    buildTurn(turn.id, turn.itemIds.map((id) => state.items[id]).filter(isRecord), 'completed'),
+    buildTurn(
+      turn.id,
+      turn.itemIds.map((id) => state.items[id]).filter(isRecord),
+      turn.error ? 'failed' : 'completed',
+      turn.error ?? null,
+    ),
   )
   const items = state.order.map((id) => state.items[id]).filter(isRecord)
   return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, Target } from './types'
-import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, type WorkspaceThread } from './workspace'
+import { closeTopSheet, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -58,5 +58,14 @@ describe('移动工作台', () => {
       second()
     }
     expect(closeTopSheet()).toBe(false)
+  })
+})
+
+describe('threadPreviewLine', () => {
+  it('预览与标题相同或只是标题的延续时不重复显示', () => {
+    expect(threadPreviewLine('额度不用两地方都显示', '额度不用两地方都显示')).toBe('')
+    expect(threadPreviewLine('梳理前端组件 封装...', '梳理前端组件  封装 方便统一维护')).toBe('')
+    expect(threadPreviewLine('确认子智能体适配状态', '适配子智能体了吗')).toBe('适配子智能体了吗')
+    expect(threadPreviewLine('标题', '  ')).toBe('')
   })
 })

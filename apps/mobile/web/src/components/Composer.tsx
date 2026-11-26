@@ -252,28 +252,34 @@ export function Composer({
           onCompositionStart={() => { composing.current = true }}
           onCompositionEnd={() => { composing.current = false }}
         />
-        <div className="flex min-w-0 flex-wrap items-center gap-1 px-1 pb-1">
-          <Button variant="ghost" className="p-0!" aria-label="添加图片" title={imageUnavailable}
-            onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.5" /><path d="m3 17 5-4 3 3 4-5 6 6" /></svg>
-          </Button>
-          {project && <Button variant="ghost" className="p-0!" aria-label="引用项目文件" onClick={beginMention} disabled={disabled}>@</Button>}
-          {toolbar}
-          {canRequestSubagents && (
-            <Button variant={delegate ? 'primary' : 'ghost'} className="px-2 text-xs"
-              aria-label="本条消息请求子代理" aria-pressed={delegate}
-              title="随本条消息请求子代理协作，由当前智能体决定如何委派"
-              disabled={disabled || sending || running} onClick={() => setDelegate(!delegate)}>
-              子代理
+        {/* 一行放下：左侧工具可横向滚动，发送键固定在右侧，不会被模型名等挤到下一行。 */}
+        <div className="flex min-w-0 items-center gap-1 px-1 pb-1">
+          <div className="qn-composer-tools">
+            <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
+              onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
+              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.5" /><path d="m3 17 5-4 3 3 4-5 6 6" /></svg>
             </Button>
-          )}
-          <span className="flex-1" />
-          {picking && <span className="text-xs text-qn-muted" role="status">选图中…</span>}
+            {project && <Button variant="ghost" className="qn-icon-button" aria-label="引用项目文件" onClick={beginMention} disabled={disabled}>@</Button>}
+            {toolbar}
+            {canRequestSubagents && (
+              <button type="button" className={`qn-chip ${delegate ? 'qn-chip-active' : ''}`}
+                aria-label="本条消息请求子代理" aria-pressed={delegate}
+                title="随本条消息请求子代理协作，由当前智能体决定如何委派"
+                disabled={disabled || sending || running} onClick={() => setDelegate(!delegate)}>
+                子代理
+              </button>
+            )}
+            {picking && <span className="shrink-0 text-xs text-qn-muted" role="status">选图中…</span>}
+          </div>
           {running ? (
-            <Button variant="danger" className="px-2" onClick={onInterrupt}>■ 中断</Button>
+            <Button variant="danger" className="qn-send-button" aria-label="中断" onClick={onInterrupt}>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" /></svg>
+            </Button>
           ) : (
-            <Button variant="primary" className="px-3" disabled={!canSend} onClick={() => void submit()}>
-              {sending ? '发送中…' : '发送'} <span aria-hidden>↑</span>
+            <Button variant="primary" className="qn-send-button" aria-label={sending ? '发送中' : '发送'} disabled={!canSend} onClick={() => void submit()}>
+              {sending ? <span aria-hidden>…</span> : (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg>
+              )}
             </Button>
           )}
         </div>

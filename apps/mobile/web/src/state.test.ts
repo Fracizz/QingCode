@@ -4,6 +4,7 @@ import {
   applyTargetState,
   availableApprovalDecisions,
   buildMobileTurnInput,
+  formatTurnError,
   connectionRepairReason,
   draftKey,
   errorCode,
@@ -194,5 +195,27 @@ describe('会话恢复、草稿和审批', () => {
       resource, image,
     ])
     expect(buildMobileTurnInput('claude', '', [file])).toEqual([file])
+  })
+})
+
+describe('formatTurnError', () => {
+  it('从 429 JSON 中提取说明', () => {
+    const view = formatTurnError('429: {"code":null,"message":"usage limit reached","type":"rate_limit_error"}')
+    expect(view).toEqual({ title: '已达用量上限或请求过多（429）', detail: 'usage limit reached' })
+  })
+  it('嵌套 error.message 与非 JSON 正文', () => {
+    expect(formatTurnError('401 {"error":{"message":"bad key"}}').detail).toBe('bad key')
+    expect(formatTurnError('503: upstream down')).toEqual({ title: '模型服务暂时不可用（503）', detail: 'upstream down' })
+  })
+  it('认不出格式时保留原文', () => {
+    expect(formatTurnError('2026年配额用尽')).toEqual({ title: '本轮失败', detail: '2026年配额用尽' })
+  })
+})
+
+describe('formatTurnError Claude 格式', () => {
+  it('识别 API Error 中的状态码', () => {
+    expect(formatTurnError('API Error: Request rejected (429) · usage limit reached')).toEqual({
+      title: '已达用量上限或请求过多（429）', detail: 'usage limit reached',
+    })
   })
 })

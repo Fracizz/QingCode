@@ -785,3 +785,68 @@ body,
   .qn-nav-button { min-height: 47px; }
   .qn-workspace-title { padding-bottom: 12px; }
 }
+
+/* 输入框工具行：工具区可横向滑动，发送键保持在同一行右侧。 */
+.qn-composer-tools {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.qn-composer-tools::-webkit-scrollbar {
+  display: none;
+}
+
+.qn-composer-tools > * {
+  flex-shrink: 0;
+}
+
+.qn-composer-tools .qn-chip {
+  max-width: 13rem;
+}
+
+.qn-icon-button {
+  padding: 0;
+  border-color: transparent;
+  color: var(--color-qn-muted);
+}
+
+.qn-send-button {
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 999px;
+}
+
+/* 消息菜单入口是次要操作，去掉边框并压低高度，避免把短消息气泡撑高。 */
+.qn-message-more {
+  min-height: 32px;
+  min-width: 40px;
+  margin: -4px -6px -6px 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.qn-turn-error {
+  overflow-wrap: anywhere;
+}
+
+.qn-thinking {
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--color-qn-muted);
+  animation: qn-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes qn-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qn-thinking { animation: none; }
+}

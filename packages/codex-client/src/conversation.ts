@@ -704,8 +704,11 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   // 沿用实时记下的计时：历史里的时间戳可能缺失或只有秒级。
   let turns: TurnMeta[] | undefined = previous?.turns
 
+  // 只看最后一轮：历史里早先失败、之后又成功的轮次不该让整个会话显示为失败。
+  let lastTurnError: string | undefined
   for (const turnValue of arrayOf(raw.turns)) {
     const turn = asRecord(turnValue)
+    lastTurnError = scalarText(turn?.status) === 'failed' ? errorText(turn?.error) ?? 'Turn failed' : undefined
     const turnStreaming = scalarText(turn?.status) === 'inProgress'
     if (turnStreaming) {
       status = 'running'
@@ -734,7 +737,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   }
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   if (turns) next.turns = turns
-  if (status === 'error') next.error = previous?.error ?? 'Thread error'
+  if (status === 'idle' && lastTurnError) {
+    next.status = 'error'
+    next.error = lastTurnError
+  } else if (status === 'error') next.error = previous?.error ?? 'Thread error'
   return { threads: { ...s.threads, [id]: next } }
 }
 

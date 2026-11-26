@@ -78,6 +78,17 @@ describe('子代理条目', () => {
       { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档' },
     ])
   })
+
+  it('历史最后一轮失败时显示失败原因，之前失败而后成功则不显示', () => {
+    const failed = { id: 'a', status: 'failed', error: { message: '429: usage limit' }, items: [] }
+    const ok = { id: 'b', status: 'completed', error: null, items: [] }
+    const load = (turns: unknown[]) =>
+      threadOf(loadThread(emptyState(), { id: 't1', status: { type: 'idle' }, turns } as unknown as LoadableThread))
+    expect(load([ok, failed])).toMatchObject({ status: 'error', error: '429: usage limit' })
+    const recovered = load([failed, ok])
+    expect(recovered.status).toBe('idle')
+    expect(recovered.error).toBeUndefined()
+  })
 })
 
 const reasoningStart = item('reasoning', 'i-reason', { summary: [], content: [] })

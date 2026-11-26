@@ -243,6 +243,21 @@ describe('用量与历史', () => {
     expect(history.thread).toMatchObject({ modelProvider: 'pi', cliVersion: 'pi-rpc' })
   })
 
+  it('历史里出错的回复把 turn 标为 failed 并保留原因，重试成功后恢复', () => {
+    const failed = { role: 'assistant', content: [], stopReason: 'error', errorMessage: '429: usage limit reached' }
+    const history = messagesToThread({ id: 's1', cwd: '/work' }, [
+      { role: 'user', content: '你好' },
+      failed,
+      failed,
+      { role: 'user', content: '再试' },
+      failed,
+      { role: 'assistant', content: [{ type: 'text', text: '好了' }], stopReason: 'stop' },
+    ])
+    const turns = history.turns as { status: string; error: { message: string } | null }[]
+    expect(turns[0]).toMatchObject({ status: 'failed', error: { message: '429: usage limit reached' } })
+    expect(turns[1]).toMatchObject({ status: 'completed', error: null })
+  })
+
   it('piThread 不冒充 codex/claude 的归属字段', () => {
     const thread = piThread({ id: 's1', cwd: '/work' })
     expect(thread).toMatchObject({

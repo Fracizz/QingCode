@@ -255,3 +255,15 @@ export function recentThreadStatus(thread: WorkspaceThread, view?: {
   if (thread.unread) return 'unread'
   return null
 }
+
+/**
+ * 会话标题多由首条消息截断而来，预览往往与标题相同或只是它的延续；
+ * 这种情况下再显示一行预览只是重复，不提供新信息。
+ */
+export function threadPreviewLine(title: string, preview: string): string {
+  const squash = (value: string) => value.replace(/\s+/g, ' ').trim()
+  const body = squash(preview)
+  if (!body) return ''
+  const head = squash(title).replace(/(\.\.\.|…)$/, '').trim()
+  return head && body.startsWith(head) ? '' : body
+}

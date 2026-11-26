@@ -66,6 +66,7 @@ import {
   draftKey,
   errorCode,
   formatQuotedMessage,
+  agentOpenErrorText,
   friendlyError,
   HOST_KEY_HINT,
   hostKeyMessage,
@@ -368,7 +369,8 @@ export const defaultAgentFor = (
 }
 
 const openFailureMessage = (agent: AgentKind, err: unknown): string =>
-  friendlyError(
+  agentOpenErrorText(
+    agentLabel(agent),
     err,
     agent === 'codex' ? 'Codex 未就绪，请确认目标已连接' : `${agentLabel(agent)} 打开失败，请确认目标机已安装并登录`,
   )
