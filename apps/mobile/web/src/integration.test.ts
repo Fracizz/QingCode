@@ -96,6 +96,8 @@ describe('模拟网关全链路', () => {
     expect(state().rateLimits['local']?.snapshot?.primary?.usedPercent).toBeGreaterThan(0)
     const port = (gateway as unknown as { native: { port: MockNativePort } }).native.port
     expect(port.lastTurnParams).toMatchObject({ agent: 'codex', model: 'gpt-5.5-mini', effort: 'minimal' })
+    // turn 完成后的后台刷新不重试打不开的 pi，但保留它的提示。
+    expect(state().agentErrors.pi).toContain('pi')
 
     // Claude 未显式选模型时不带覆盖项。
     await state().newThread('claude')

@@ -249,7 +249,8 @@ type AppState = {
   chooseDirectory: () => Promise<void>
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
   attachOpened: () => Promise<void>
-  refreshThreads: () => Promise<void>
+  /** skipFailed：后台刷新（如 turn 完成后）不重试已确认打不开的 Agent，避免反复拉起。 */
+  refreshThreads: (options?: { skipFailed?: boolean }) => Promise<void>
   newThread: (agent?: AgentKind) => Promise<void>
   openThread: (id: string, agent?: AgentKind) => Promise<void>
   send: (text: string) => Promise<void>
@@ -439,7 +440,7 @@ export const useApp = create<AppState>((set, get) => {
       if (agent === 'codex') handleRateLimitNotification(targetId, notification)
       const method = (notification as unknown as JsonRecord).method
       if (method === 'turn/completed' || method === 'thread/started') {
-        if (get().selectedTargetId === targetId) void get().refreshThreads()
+        if (get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
       }
     })
     rpc.onServerRequest((request: ServerRequest) => {
@@ -1107,7 +1108,7 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    refreshThreads: async () => {
+    refreshThreads: async (options) => {
       const token = ++refreshToken
       const targetId = get().selectedTargetId
       if (!targetId) {
@@ -1115,7 +1116,10 @@ export const useApp = create<AppState>((set, get) => {
         return
       }
       const cwd = currentCwd(get()) || undefined
-      const agents = targetAgents(get(), targetId)
+      const all = targetAgents(get(), targetId)
+      const skipped = options?.skipFailed ? unavailableAgents(get(), targetId, all) : new Set<AgentKind>()
+      const agents = all.filter((agent) => !skipped.has(agent))
+      const previousErrors = get().agentErrors
       set({ threadsLoading: true, threadsError: null })
       // 各 Agent 并行打开、各自列会话；某个失败只记在它自己名下。
       const results = await Promise.all(
@@ -1135,8 +1139,12 @@ export const useApp = create<AppState>((set, get) => {
       )
       if (token !== refreshToken || get().selectedTargetId !== targetId) return
       const agentErrors: Partial<Record<AgentKind, string>> = {}
+      for (const agent of skipped) {
+        const previous = previousErrors[agent]
+        if (previous) agentErrors[agent] = previous
+      }
       for (const result of results) if (result.error) agentErrors[result.agent] = result.error
-      const allFailed = results.length > 0 && results.every((result) => result.error !== null)
+      const allFailed = skipped.size === 0 && results.length > 0 && results.every((result) => result.error !== null)
       set({
         threads: mergeThreadSummaries(results.map((result) => result.threads)),
         threadsLoading: false,
@@ -1168,7 +1176,7 @@ export const useApp = create<AppState>((set, get) => {
           error: null,
           annotations: [],
         })
-        void get().refreshThreads()
+        void get().refreshThreads({ skipFailed: true })
       } catch (err) {
         set({ error: friendlyError(err, '新建会话失败') })
       }
@@ -1215,7 +1223,7 @@ export const useApp = create<AppState>((set, get) => {
           patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }))
           threadId = created.thread.id
           set({ selectedThreadId: threadId })
-          void get().refreshThreads()
+          void get().refreshThreads({ skipFailed: true })
         }
         const models = get().models[session.key]?.models ?? []
         const prefs = get().modelPrefs[session.key] ?? EMPTY_PREFS

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PeerCertificate } from 'node:tls'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { AppSettings } from '../../shared/backendApi'
 import { BackendRouter } from '../router'
 import type { SecretCipher } from '../secretStore'
 import { loadOrCreateCertificate, type MobileCertificate } from './cert'
@@ -40,7 +41,7 @@ const cipher: SecretCipher = {
 
 const PAIR_CODE = 'Pair.Code!'
 const LOCAL_TARGET = { id: 'local' as const, kind: 'local' as const, name: '本机' }
-const APP_SETTINGS = {
+const APP_SETTINGS: AppSettings = {
   general: { sendKey: 'enter', autoConnectLast: false, defaultAgent: 'claude', density: 'comfortable' },
   agents: {
     local: {

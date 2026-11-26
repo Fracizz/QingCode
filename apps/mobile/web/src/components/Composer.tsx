@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { Annotation } from '../state'
 import { Button, Note } from './ui'
 
@@ -16,6 +16,10 @@ export type ComposerProps = {
   quoteDraft: string | null
   onConfirmQuote: (quote: string, comment: string) => void
   onCancelQuote: () => void
+  /** 占位符随 Agent 变化（"和 Claude 一起工作"）。 */
+  placeholder?: string
+  /** 输入框上方的工具条（Agent 标识、模型选择）。 */
+  toolbar?: ReactNode
 }
 
 export function Composer({
@@ -32,6 +36,8 @@ export function Composer({
   quoteDraft,
   onConfirmQuote,
   onCancelQuote,
+  placeholder = '和 Codex 一起工作',
+  toolbar,
 }: ComposerProps) {
   const [text, setText] = useState('')
   const [comment, setComment] = useState('')
@@ -136,12 +142,14 @@ export function Composer({
         </div>
       )}
 
+      {toolbar && <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>}
+
       <textarea
         className="qn-textarea"
         rows={3}
         value={text}
         disabled={disabled}
-        placeholder={disabled ? '请先连接目标' : '和 Codex 一起工作'}
+        placeholder={disabled ? '请先连接目标' : placeholder}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
         onCompositionStart={() => {

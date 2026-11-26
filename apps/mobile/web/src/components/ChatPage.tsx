@@ -1,11 +1,13 @@
 import type { ApprovalDecision, ItemView, RequestId } from '@qn/codex-client'
-import { useEffect, useRef, useState } from 'react'
-import { useApp } from '../store'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
+import { currentCwd, useApp } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem } from './MessageItem'
+import { FileActionsContext, MessageItem, type FileActions } from './MessageItem'
+import { ModelPicker } from './ModelSheet'
 import { RateLimitBadge, RateLimitDetails } from './RateLimitView'
-import { Badge, Empty, Header, Note } from './ui'
+import { AgentTag, Badge, Empty, Header, Note } from './ui'
 
 function stateBadge(status: string | undefined) {
   if (status === 'running') return <Badge tone="accent">运行中</Badge>
@@ -18,6 +20,9 @@ export function ChatPage() {
   const selectedProjectId = useApp((s) => s.selectedProjectId)
   const selectedTargetId = useApp((s) => s.selectedTargetId)
   const selectedThreadId = useApp((s) => s.selectedThreadId)
+  const selectedAgent = useApp((s) => s.selectedAgent)
+  const openFile = useApp((s) => s.openFile)
+  const openDiff = useApp((s) => s.openDiff)
   const sessions = useApp((s) => s.sessions)
   const threads = useApp((s) => s.threads)
   const sending = useApp((s) => s.sending)
@@ -40,7 +45,7 @@ export function ChatPage() {
   const [showRate, setShowRate] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const session = selectedTargetId ? sessions[selectedTargetId] : undefined
+  const session = selectedTargetId ? sessions[sessionKey(selectedTargetId, selectedAgent)] : undefined
   const view = selectedThreadId ? session?.state.threads[selectedThreadId] : undefined
   const items: ItemView[] = view?.items ?? []
   const approvals = view
@@ -48,7 +53,16 @@ export function ChatPage() {
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
   const project = projects.find((item) => item.id === selectedProjectId)
-  const threadTitle = threads.find((item) => item.id === selectedThreadId)?.title
+  const threadTitle = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)?.title
+  const cwd = currentCwd({ projects, selectedProjectId })
+  const fileActions = useMemo<FileActions>(
+    () => ({
+      cwd,
+      openFile: (location) => void openFile(location),
+      openDiff: (path, diff) => void openDiff({ path, diff: diff ?? null }),
+    }),
+    [cwd, openFile, openDiff],
+  )
 
   const last = items[items.length - 1]
   const signature = `${items.length}:${approvals.length}:${
@@ -78,7 +92,9 @@ export function ChatPage() {
         onBack={goBack}
         right={
           <>
-            <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate((value) => !value)} />
+            {selectedAgent === 'codex' && (
+              <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate((value) => !value)} />
+            )}
             {stateBadge(view?.status)}
           </>
         }
@@ -93,7 +109,7 @@ export function ChatPage() {
             tone="error"
             actionLabel="重试"
             onAction={() => {
-              if (selectedTargetId) void ensureOpen(selectedTargetId).then(() => void refreshThreads())
+              if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent).then(() => void refreshThreads())
             }}
           />
         )}
@@ -106,9 +122,11 @@ export function ChatPage() {
           </Empty>
         )}
         <div className="space-y-3">
-          {items.map((item) => (
-            <MessageItem key={item.id} item={item} onQuote={setQuoteDraft} />
-          ))}
+          <FileActionsContext.Provider value={fileActions}>
+            {items.map((item) => (
+              <MessageItem key={item.id} item={item} onQuote={setQuoteDraft} agentName={agentLabel(selectedAgent)} />
+            ))}
+          </FileActionsContext.Provider>
           {approvals.map((approval) => (
             <ApprovalCard
               key={String(approval.requestId)}
@@ -135,6 +153,14 @@ export function ChatPage() {
           setQuoteDraft(null)
         }}
         onCancelQuote={() => setQuoteDraft(null)}
+        placeholder={agentPlaceholder(selectedAgent)}
+        toolbar={
+          <>
+            <AgentTag agent={selectedAgent} />
+            {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">pi 不经审批直接执行工具</span>}
+            {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
+          </>
+        }
       />
     </>
   )
