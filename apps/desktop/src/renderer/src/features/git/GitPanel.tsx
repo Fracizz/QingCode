@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { GitFileStatus } from '@qn/protocol'
 import {
   ArrowDown,
@@ -66,9 +67,26 @@ const toneClass: Record<StatusTone, string> = {
 
 type ContextMenu = { x: number; y: number; file: GitFileStatus; group: GitGroupKey }
 
+// 大量改动（如未忽略的构建产物）时分批渲染，避免一次挂上万行 DOM 卡死面板。
+const GROUP_PAGE = 200
+
 export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   const key = repoKey(targetId, cwd)
-  const state = useGit((s) => s.repos[key])
+  // 只订阅面板用到的字段：历史分页/提交文件变化不再触发变更列表重渲染。
+  const state = useGit(
+    useShallow((s) => {
+      const repo = s.repos[key]
+      return {
+        status: repo?.status ?? null,
+        branches: repo?.branches ?? null,
+        loading: repo?.loading ?? false,
+        operation: repo?.operation ?? null,
+        operationError: repo?.operationError ?? null,
+        error: repo?.error ?? null,
+        errorCode: repo?.errorCode ?? null,
+      }
+    }),
+  )
   const refresh = useGit((s) => s.refresh)
   const clearError = useGit((s) => s.clearError)
   const stage = useGit((s) => s.stage)
@@ -80,8 +98,6 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   const pull = useGit((s) => s.pull)
   const push = useGit((s) => s.push)
 
-  const [message, setMessage] = useState('')
-  const [amend, setAmend] = useState(false)
   const [branchOpen, setBranchOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [newBranch, setNewBranch] = useState('')
@@ -90,17 +106,16 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   const [visible, setVisible] = useState(true)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const status = state?.status ?? null
-  const branches = state?.branches ?? null
-  const busy = Boolean(state?.operation)
-  const error = state?.operationError ?? state?.error ?? null
+  const status = state.status
+  const branches = state.branches
+  const busy = Boolean(state.operation)
+  const error = state.operationError ?? state.error
   const root = status?.root ?? cwd
   const ahead = status?.ahead ?? 0
   const behind = status?.behind ?? 0
   const groups = useMemo(() => groupStatusFiles(status?.files ?? []), [status?.files])
   const total = groups.conflicts.length + groups.staged.length + groups.unstaged.length
-  const check = validateCommitMessage(message)
-  const blocked = state?.errorCode === 'not_repo' || state?.errorCode === 'git_missing'
+  const blocked = state.errorCode === 'not_repo' || state.errorCode === 'git_missing'
 
   useEffect(() => {
     void refresh(targetId, cwd)
@@ -131,19 +146,34 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [menu])
 
-  const openRowDiff = (file: GitFileStatus, group: GitGroupKey): void => {
-    const mode: 'worktree' | 'staged' = group === 'staged' ? 'staged' : 'worktree'
-    openDiff({ targetId, cwd, path: joinRepoPath(root, file.path), mode })
-  }
-
-  const submit = async (): Promise<void> => {
-    if (!check.ok || busy) return
-    const ok = await commit(targetId, cwd, message.trim(), amend)
-    if (ok) {
-      setMessage('')
-      setAmend(false)
-    }
-  }
+  // 行组件用 memo，传入的回调必须稳定。
+  const openRowDiff = useCallback(
+    (file: GitFileStatus, group: GitGroupKey): void => {
+      const mode: 'worktree' | 'staged' = group === 'staged' ? 'staged' : 'worktree'
+      openDiff({ targetId, cwd, path: joinRepoPath(root, file.path), mode })
+    },
+    [targetId, cwd, root],
+  )
+  const stageFile = useCallback(
+    (file: GitFileStatus) => void stage(targetId, cwd, filePaths(file)),
+    [stage, targetId, cwd],
+  )
+  const unstageFile = useCallback(
+    (file: GitFileStatus) => void unstage(targetId, cwd, filePaths(file)),
+    [unstage, targetId, cwd],
+  )
+  const askDiscard = useCallback((file: GitFileStatus) => setDiscardFiles([file]), [])
+  const openMenu = useCallback((event: MouseEvent, file: GitFileStatus, group: GitGroupKey) => {
+    event.preventDefault()
+    const rect = rootRef.current?.getBoundingClientRect()
+    setMenu({
+      x: event.clientX - (rect?.left ?? 0),
+      y: event.clientY - (rect?.top ?? 0),
+      file,
+      group,
+    })
+  }, [])
+  const closeMenu = useCallback(() => setMenu(null), [])
 
   const selectBranch = async (name: string, remote: boolean): Promise<void> => {
     const branch = remote ? remoteCheckoutName(name) : name
@@ -167,15 +197,22 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
     void discard(targetId, cwd, pathsFor(files), files.some(isUntracked))
   }
 
-  const localBranches = filterBranches(branches?.local ?? [], branchQuery)
-  const remoteBranches = filterBranches(branches?.remote ?? [], branchQuery)
+  // 弹层关闭时不做过滤，轮询刷新不会为看不见的分支列表付费。
+  const localBranches = useMemo(
+    () => (branchOpen ? filterBranches(branches?.local ?? [], branchQuery) : []),
+    [branchOpen, branches?.local, branchQuery],
+  )
+  const remoteBranches = useMemo(
+    () => (branchOpen ? filterBranches(branches?.remote ?? [], branchQuery) : []),
+    [branchOpen, branches?.remote, branchQuery],
+  )
   const current = status?.branch ?? branches?.current ?? null
 
   return (
     <div
       ref={rootRef}
       className="relative flex h-full min-h-0 flex-col bg-qn-panel text-qn-text"
-      onClick={() => setMenu(null)}
+      onClick={closeMenu}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-qn-border px-2 py-2">
         <PopoverRoot
@@ -285,8 +322,8 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           <IconButton label={`推送（push）${ahead || behind ? ` · ${aheadBehindText(ahead, behind)}` : ''}`} className="h-7 w-7" disabled={busy || !status} onClick={() => void push(targetId, cwd)}>
             <ArrowUp size={14} />
           </IconButton>
-          <IconButton label="刷新" className="h-7 w-7" disabled={state?.loading} onClick={() => void refresh(targetId, cwd)}>
-            <RotateCw size={14} className={state?.loading ? 'animate-spin' : ''} />
+          <IconButton label="刷新" className="h-7 w-7" disabled={state.loading} onClick={() => void refresh(targetId, cwd)}>
+            <RotateCw size={14} className={state.loading ? 'animate-spin' : ''} />
           </IconButton>
         </div>
       </div>
@@ -302,7 +339,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
       {blocked ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <EmptyState>
-            {state?.errorCode === 'git_missing'
+            {state.errorCode === 'git_missing'
               ? '未找到 git：请在目标机器安装 Git 后点击刷新。'
               : '当前目录不是 Git 仓库。请切换到仓库内目录，或先在远端初始化仓库。'}
           </EmptyState>
@@ -320,150 +357,36 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           </TabsList>
 
           <TabsContent value="changes" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 border-b border-qn-border px-2 py-2">
-              <textarea
-                className="qn-input min-h-[64px] resize-none text-[12px]"
-                placeholder={`提交信息（Ctrl+Enter 提交${amend ? '，修改上次提交' : ''}）`}
-                value={message}
-                disabled={busy}
-                onChange={(event) => setMessage(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    event.key === 'Enter' &&
-                    (event.ctrlKey || event.metaKey) &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault()
-                    void submit()
-                  }
-                }}
-              />
-              <div className="mt-1.5 flex items-center gap-2">
-                <Checkbox checked={amend} onChange={setAmend} disabled={busy}>
-                  修改上次提交
-                </Checkbox>
-                <button
-                  type="button"
-                  className="qn-button ml-auto flex items-center gap-1 px-3 py-1 text-[12px]"
-                  disabled={!check.ok || busy}
-                  onClick={() => void submit()}
-                >
-                  {state?.operation === 'commit' ? (
-                    <LoaderCircle size={13} className="animate-spin" />
-                  ) : (
-                    <GitCommitHorizontal size={13} />
-                  )}
-                  提交
-                </button>
-              </div>
-              {check.error && <div className="mt-1 text-[11px] text-qn-danger">{check.error}</div>}
-              {check.warning && <div className="mt-1 text-[11px] text-qn-warn">{check.warning}</div>}
-            </div>
+            <CommitBox
+              targetId={targetId}
+              cwd={cwd}
+              busy={busy}
+              committing={state.operation === 'commit'}
+            />
 
-            <div className="qn-scroll min-h-0 flex-1 overflow-y-auto py-1" onScroll={() => setMenu(null)}>
-              {state?.loading && !status && <Spinner label="读取 Git 状态…" />}
-              {!state?.loading && total === 0 && status && (
+            <div className="qn-scroll min-h-0 flex-1 overflow-y-auto py-1" onScroll={menu ? closeMenu : undefined}>
+              {state.loading && !status && <Spinner label="读取 Git 状态…" />}
+              {!state.loading && total === 0 && status && (
                 <EmptyState>工作区干净，没有待提交的改动。</EmptyState>
               )}
               {gitGroups.map((group) => {
                 const files = groups[group.key]
                 if (files.length === 0) return null
                 return (
-                  <section key={group.key} className="mb-1.5">
-                    <div className="flex items-center gap-1.5 px-2 py-1">
-                      <span className="text-[12px] font-medium">{group.label}</span>
-                      <Badge>{files.length}</Badge>
-                      <div className="ml-auto flex items-center gap-0.5">
-                        {group.key !== 'staged' && (
-                          <IconButton
-                            label={`全部暂存${group.label}`}
-                            className="h-6 w-6"
-                            disabled={busy}
-                            onClick={() => void stage(targetId, cwd, pathsFor(files))}
-                          >
-                            <Plus size={13} />
-                          </IconButton>
-                        )}
-                        {group.key === 'staged' && (
-                          <IconButton
-                            label="全部取消暂存"
-                            className="h-6 w-6"
-                            disabled={busy}
-                            onClick={() => void unstage(targetId, cwd, pathsFor(files))}
-                          >
-                            <Minus size={13} />
-                          </IconButton>
-                        )}
-                      </div>
-                    </div>
-                    {files.map((file) => {
-                      const letter = statusLetter(file, group.key)
-                      const info = statusInfo(letter)
-                      const label = file.origPath ? `${file.origPath} → ${file.path}` : file.path
-                      return (
-                        <div
-                          key={`${group.key}:${file.path}`}
-                          className="group flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-qn-hover"
-                          onContextMenu={(event) => {
-                            event.preventDefault()
-                            const rect = rootRef.current?.getBoundingClientRect()
-                            setMenu({
-                              x: event.clientX - (rect?.left ?? 0),
-                              y: event.clientY - (rect?.top ?? 0),
-                              file,
-                              group: group.key,
-                            })
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent"
-                            onClick={() => openRowDiff(file, group.key)}
-                            title="查看差异"
-                          >
-                            <span
-                              className={cn('w-4 shrink-0 text-center font-mono text-[12px]', toneClass[info.tone])}
-                              title={info.label}
-                            >
-                              {letter.trim() === '.' ? '·' : letter.trim()}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-[12px]">{label}</span>
-                          </button>
-                          <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
-                            {group.key !== 'staged' && (
-                              <IconButton
-                                label="暂存"
-                                className="h-6 w-6"
-                                disabled={busy}
-                                onClick={() => void stage(targetId, cwd, filePaths(file))}
-                              >
-                                <Plus size={12} />
-                              </IconButton>
-                            )}
-                            {group.key === 'staged' && (
-                              <IconButton
-                                label="取消暂存"
-                                className="h-6 w-6"
-                                disabled={busy}
-                                onClick={() => void unstage(targetId, cwd, filePaths(file))}
-                              >
-                                <Minus size={12} />
-                              </IconButton>
-                            )}
-                            <IconButton
-                              label="放弃更改"
-                              danger
-                              className="h-6 w-6"
-                              disabled={busy}
-                              onClick={() => setDiscardFiles([file])}
-                            >
-                              <RotateCcw size={12} />
-                            </IconButton>
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </section>
+                  <FileGroup
+                    key={group.key}
+                    groupKey={group.key}
+                    label={group.label}
+                    files={files}
+                    busy={busy}
+                    onStageAll={() => void stage(targetId, cwd, pathsFor(files))}
+                    onUnstageAll={() => void unstage(targetId, cwd, pathsFor(files))}
+                    onOpen={openRowDiff}
+                    onStage={stageFile}
+                    onUnstage={unstageFile}
+                    onDiscard={askDiscard}
+                    onMenu={openMenu}
+                  />
                 )
               })}
             </div>
@@ -553,3 +476,184 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
     </div>
   )
 }
+
+function CommitBox({
+  targetId,
+  cwd,
+  busy,
+  committing,
+}: {
+  targetId: string
+  cwd: string
+  busy: boolean
+  committing: boolean
+}) {
+  // 输入状态下沉到独立组件：打字只重渲染输入框，不连带整个文件列表。
+  const commit = useGit((s) => s.commit)
+  const [message, setMessage] = useState('')
+  const [amend, setAmend] = useState(false)
+  const check = useMemo(() => validateCommitMessage(message), [message])
+
+  const submit = async (): Promise<void> => {
+    if (!check.ok || busy) return
+    const ok = await commit(targetId, cwd, message.trim(), amend)
+    if (ok) {
+      setMessage('')
+      setAmend(false)
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-b border-qn-border px-2 py-2">
+      <textarea
+        className="qn-input min-h-[64px] resize-none text-[12px]"
+        placeholder={`提交信息（Ctrl+Enter 提交${amend ? '，修改上次提交' : ''}）`}
+        value={message}
+        disabled={busy}
+        onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            event.key === 'Enter' &&
+            (event.ctrlKey || event.metaKey) &&
+            !event.nativeEvent.isComposing
+          ) {
+            event.preventDefault()
+            void submit()
+          }
+        }}
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <Checkbox checked={amend} onChange={setAmend} disabled={busy}>
+          修改上次提交
+        </Checkbox>
+        <button
+          type="button"
+          className="qn-button ml-auto flex items-center gap-1 px-3 py-1 text-[12px]"
+          disabled={!check.ok || busy}
+          onClick={() => void submit()}
+        >
+          {committing ? (
+            <LoaderCircle size={13} className="animate-spin" />
+          ) : (
+            <GitCommitHorizontal size={13} />
+          )}
+          提交
+        </button>
+      </div>
+      {check.error && <div className="mt-1 text-[11px] text-qn-danger">{check.error}</div>}
+      {check.warning && <div className="mt-1 text-[11px] text-qn-warn">{check.warning}</div>}
+    </div>
+  )
+}
+
+type RowHandlers = {
+  onOpen: (file: GitFileStatus, group: GitGroupKey) => void
+  onStage: (file: GitFileStatus) => void
+  onUnstage: (file: GitFileStatus) => void
+  onDiscard: (file: GitFileStatus) => void
+  onMenu: (event: MouseEvent, file: GitFileStatus, group: GitGroupKey) => void
+}
+
+function FileGroup({
+  groupKey,
+  label,
+  files,
+  busy,
+  onStageAll,
+  onUnstageAll,
+  ...handlers
+}: {
+  groupKey: GitGroupKey
+  label: string
+  files: GitFileStatus[]
+  busy: boolean
+  onStageAll: () => void
+  onUnstageAll: () => void
+} & RowHandlers) {
+  const [limit, setLimit] = useState(GROUP_PAGE)
+  const shown = files.length > limit ? files.slice(0, limit) : files
+  const rest = files.length - shown.length
+  return (
+    <section className="mb-1.5">
+      <div className="flex items-center gap-1.5 px-2 py-1">
+        <span className="text-[12px] font-medium">{label}</span>
+        <Badge>{files.length}</Badge>
+        <div className="ml-auto flex items-center gap-0.5">
+          {groupKey !== 'staged' && (
+            <IconButton label={`全部暂存${label}`} className="h-6 w-6" disabled={busy} onClick={onStageAll}>
+              <Plus size={13} />
+            </IconButton>
+          )}
+          {groupKey === 'staged' && (
+            <IconButton label="全部取消暂存" className="h-6 w-6" disabled={busy} onClick={onUnstageAll}>
+              <Minus size={13} />
+            </IconButton>
+          )}
+        </div>
+      </div>
+      {shown.map((file) => (
+        <FileRow key={file.path} file={file} group={groupKey} busy={busy} {...handlers} />
+      ))}
+      {rest > 0 && (
+        <button
+          type="button"
+          className="mx-2 my-1 flex w-[calc(100%-1rem)] items-center justify-center rounded-lg px-2 py-1 text-[12px] text-qn-muted hover:bg-qn-hover"
+          onClick={() => setLimit((value) => value + GROUP_PAGE * 5)}
+        >
+          还有 {rest} 个文件，继续显示
+        </button>
+      )}
+    </section>
+  )
+}
+
+const FileRow = memo(function FileRow({
+  file,
+  group,
+  busy,
+  onOpen,
+  onStage,
+  onUnstage,
+  onDiscard,
+  onMenu,
+}: { file: GitFileStatus; group: GitGroupKey; busy: boolean } & RowHandlers) {
+  const letter = statusLetter(file, group)
+  const info = statusInfo(letter)
+  const label = file.origPath ? `${file.origPath} → ${file.path}` : file.path
+  return (
+    <div
+      className="group flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-qn-hover"
+      onContextMenu={(event) => onMenu(event, file, group)}
+    >
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent"
+        onClick={() => onOpen(file, group)}
+        title="查看差异"
+      >
+        <span
+          className={cn('w-4 shrink-0 text-center font-mono text-[12px]', toneClass[info.tone])}
+          title={info.label}
+        >
+          {letter.trim() === '.' ? '·' : letter.trim()}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12px]">{label}</span>
+      </button>
+      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
+        {group !== 'staged' && (
+          <IconButton label="暂存" className="h-6 w-6" disabled={busy} onClick={() => onStage(file)}>
+            <Plus size={12} />
+          </IconButton>
+        )}
+        {group === 'staged' && (
+          <IconButton label="取消暂存" className="h-6 w-6" disabled={busy} onClick={() => onUnstage(file)}>
+            <Minus size={12} />
+          </IconButton>
+        )}
+        <IconButton label="放弃更改" danger className="h-6 w-6" disabled={busy} onClick={() => onDiscard(file)}>
+          <RotateCcw size={12} />
+        </IconButton>
+      </span>
+    </div>
+  )
+})

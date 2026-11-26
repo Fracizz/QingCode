@@ -1,7 +1,14 @@
 import { create } from 'zustand'
 import type { GitBranch, GitCommit, GitStatusResult } from '@qn/protocol'
 import { serverCall } from '../workspace/serverCall'
-import { describeGitError, repoKey } from './gitModel'
+import {
+  branchesStale,
+  describeGitError,
+  mergeLogFirstPage,
+  repoKey,
+  sameBranches,
+  sameStatus,
+} from './gitModel'
 
 // 面板可见期间轮询与窗口聚焦刷新在模块级维护，组件挂载/卸载只登记与注销。
 const POLL_MS = 5_000
@@ -31,7 +38,6 @@ export type GitRepoState = {
   historyError: string | null
   /** 非空时表示有操作在跑，按钮据此禁用，防止重复点击。 */
   operation: string | null
-  lastUpdated: number | null
 }
 
 const emptyRepo = (): GitRepoState => ({
@@ -47,7 +53,6 @@ const emptyRepo = (): GitRepoState => ({
   operationError: null,
   historyError: null,
   operation: null,
-  lastUpdated: null,
 })
 
 type RepoPatch = Partial<GitRepoState> | ((prev: GitRepoState) => Partial<GitRepoState>)
@@ -143,6 +148,8 @@ export const useGit = create<GitStore>((set, get) => {
     set((state) => {
       const prev = state.repos[key] ?? emptyRepo()
       const next = typeof update === 'function' ? update(prev) : update
+      // 空补丁不产生新引用，订阅方不会重渲染。
+      if (state.repos[key] && Object.keys(next).length === 0) return state
       return { repos: { ...state.repos, [key]: { ...prev, ...next } } }
     })
   }
@@ -185,19 +192,34 @@ export const useGit = create<GitStore>((set, get) => {
       }
       refreshWithLog.set(key, includeLog)
       const task = (async () => {
-        patch(key, { loading: true })
+        const before = repo(key)
+        // 后台轻量轮询不切 loading：否则每 5s 两次无意义重渲染，刷新按钮也会一直闪转。
+        const quiet = !includeLog && before.status !== null
+        if (!quiet) patch(key, { loading: true })
         try {
-          const [status, branches] = await Promise.all([
-            serverCall(targetId, 'git.status', { cwd }),
-            serverCall(targetId, 'git.branches', { cwd }),
-          ])
-          patch(key, {
-            status,
-            branches,
-            loading: false,
-            error: null,
-            errorCode: null,
-            lastUpdated: Date.now(),
+          let status: GitStatusResult
+          let branches: GitBranches | null
+          if (quiet) {
+            status = await serverCall(targetId, 'git.status', { cwd })
+            // 分支列表只在 HEAD/分支变化时重读，轮询从 2 个请求降为 1 个。
+            branches =
+              before.branches && !branchesStale(before.status, status)
+                ? before.branches
+                : await serverCall(targetId, 'git.branches', { cwd })
+          } else {
+            ;[status, branches] = await Promise.all([
+              serverCall(targetId, 'git.status', { cwd }),
+              serverCall(targetId, 'git.branches', { cwd }),
+            ])
+          }
+          patch(key, (prev) => {
+            const next: Partial<GitRepoState> = {}
+            if (!sameStatus(prev.status, status)) next.status = status
+            if (!sameBranches(prev.branches, branches)) next.branches = branches
+            if (prev.loading) next.loading = false
+            if (prev.error !== null) next.error = null
+            if (prev.errorCode !== null) next.errorCode = null
+            return next
           })
         } catch (err) {
           const info = describeGitError(err)
@@ -214,10 +236,15 @@ export const useGit = create<GitStore>((set, get) => {
         if (!(refreshWithLog.get(key) ?? includeLog)) return
         try {
           const log = await serverCall(targetId, 'git.log', { cwd, limit: LOG_PAGE, skip: 0 })
-          patch(key, {
-            commits: log.commits,
-            hasMore: log.commits.length >= LOG_PAGE,
-            historyError: null,
+          patch(key, (prev) => {
+            const next: Partial<GitRepoState> = {}
+            const merged = mergeLogFirstPage(prev.commits, log.commits)
+            if (merged) {
+              next.commits = merged
+              next.hasMore = log.commits.length >= LOG_PAGE
+            }
+            if (prev.historyError !== null) next.historyError = null
+            return next
           })
         } catch (err) {
           patch(key, { historyError: describeGitError(err, '读取提交历史失败').message })
