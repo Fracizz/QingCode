@@ -131,3 +131,26 @@ describe('发送时的乐观用户消息', () => {
     expect(viewItems('t1').filter((item) => item.kind === 'user')).toEqual([])
   })
 })
+
+describe('打开历史会话', () => {
+  it('回包丢失时超时报错并释放打开状态，可再次点击', async () => {
+    vi.useFakeTimers()
+    try {
+      // 旧版 server 丢弃超长 thread/resume 回包：永远不回。
+      callMock.mockImplementation((method: string, params?: CallParams) =>
+        method === 'codex.send' && params?.msg?.method === 'thread/resume' ? Promise.resolve({}) : fakeCall(method, params),
+      )
+      const opening = useCodex.getState().openThread('old')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(useCodex.getState().openingThread?.threadId).toBe('old')
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await opening
+      expect(useCodex.getState().openingThread).toBeNull()
+      expect(useCodex.getState().error).toContain('打开会话超时')
+      expect(useCodex.getState().currentThreadId).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
