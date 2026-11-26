@@ -38,7 +38,7 @@ export function HostKeyDialog({
               : '首次连接该主机，请核对指纹后再信任。'}
           </span>
         </div>
-        <div className="rounded border border-qn-border bg-black/25 p-3 text-xs">
+        <div className="rounded-lg border border-qn-border bg-black/25 p-3 text-xs">
           <div className="text-qn-muted">
             主机：{prompt.host}:{prompt.port}
           </div>

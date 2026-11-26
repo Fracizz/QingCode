@@ -8,7 +8,7 @@ import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { MessageItem } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
-import { Badge, EmptyState, ErrorNote } from './ui'
+import { Badge, EmptyState, ErrorNote, IconButton } from './ui'
 
 let nextAnnotationId = 0
 
@@ -42,15 +42,9 @@ export function SideChat() {
         <AgentIcon agent={agent} size={14} />
         <span className="font-medium">侧边临时会话</span>
         <Badge tone="muted">不进入会话列表</Badge>
-        <button
-          type="button"
-          className="ml-auto rounded p-1 text-qn-muted hover:bg-white/10 hover:text-white"
-          title="关闭侧边聊天"
-          aria-label="关闭侧边聊天"
-          onClick={closeSideChat}
-        >
+        <IconButton label="关闭侧边聊天" size="sm" className="ml-auto" onClick={closeSideChat}>
           <X size={14} />
-        </button>
+        </IconButton>
       </div>
       {session?.openError && (
         <div className="px-3 pt-2"><ErrorNote message={session.openError} /></div>

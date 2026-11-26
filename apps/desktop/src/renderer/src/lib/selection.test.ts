@@ -40,10 +40,10 @@ describe('选区坐标与浮层位置', () => {
 
   it('浮层在选区上方居中，且不越出容器左右边界', () => {
     expect(toolbarPosition({ top: 200, left: 300, width: 60, height: 18 }, 800, 200, 30))
-      .toEqual({ top: 162, left: 230 })
+      .toEqual({ top: 192, left: 230, above: true })
     expect(toolbarPosition({ top: 10, left: 2, width: 20, height: 18 }, 300, 200, 30))
-      .toEqual({ top: 36, left: 8 })
+      .toEqual({ top: 36, left: 8, above: false })
     expect(toolbarPosition({ top: 200, left: 290, width: 20, height: 18 }, 300, 200, 30))
-      .toEqual({ top: 162, left: 92 })
+      .toEqual({ top: 192, left: 92, above: true })
   })
 })

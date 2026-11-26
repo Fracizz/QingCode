@@ -10,12 +10,20 @@ import type {
   SkillsListResponse,
   ServerNotification,
   ServerRequest,
+  ThreadArchiveParams,
+  ThreadArchiveResponse,
+  ThreadDeleteParams,
+  ThreadDeleteResponse,
+  ThreadForkParams,
+  ThreadForkResponse,
   ThreadListParams,
   ThreadListResponse,
   ThreadReadParams,
   ThreadReadResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
+  ThreadSetNameParams,
+  ThreadSetNameResponse,
   ThreadStartParams,
   ThreadStartResponse,
   TurnInterruptParams,
@@ -29,6 +37,10 @@ export type ClientRequestMap = {
   'thread/start': { params: ThreadStartParams; result: ThreadStartResponse }
   'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse }
   'thread/read': { params: ThreadReadParams; result: ThreadReadResponse }
+  'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse }
+  'thread/archive': { params: ThreadArchiveParams; result: ThreadArchiveResponse }
+  'thread/delete': { params: ThreadDeleteParams; result: ThreadDeleteResponse }
+  'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse }
   'turn/start': { params: TurnStartParams; result: TurnStartResponse }
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
   'model/list': { params: ModelListParams; result: ModelListResponse }

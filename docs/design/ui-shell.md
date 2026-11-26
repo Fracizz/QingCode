@@ -64,7 +64,9 @@
 | 工具步骤 | 连续 ≥2 个命令/文件改动/思考折叠成"已运行 N 条命令 · M 个失败 · 编辑了 K 个文件"，运行中默认展开 |
 | 代码块 | 顶部语言名 + 复制；生成结束后用 shiki 高亮（JS 正则引擎，按需加载语言，>60K 字符不高亮） |
 | 回复操作 | 悬停回复显出：复制 Markdown、"…"（复制纯文本、从这里开始新会话） |
-| 侧栏 | `Ctrl+B` / 标题栏按钮收起；右缘拖宽，双击复位；存 `localStorage['qn-layout']` |
+| 侧栏 | `Ctrl+B` / 标题栏按钮收起；右缘拖宽（`ResizeHandle`，见 §6 拖拽分隔条），双击复位；存 `localStorage['qn-layout']` |
+| 项目行 | 图标为项目名首字母方块（按名字哈希取色，展开时加青色描边），不用文件夹图标 |
+| 会话行 | 悬停显出置顶 / 归档；右键菜单：重命名 `R`、置顶 `P`、标记未读 `U`、创建聊天分支 `B`、复制（标题 / 会话 ID / 工作目录 / 恢复命令）、归档 `A`、永久删除（二次确认）。菜单打开时按字母直接触发。Codex 走 `thread/name/set`、`thread/fork`、`thread/archive`、`thread/delete`；Claude 桥接无对应 RPC，重命名/归档退化为本机记录，分支与删除置灰。置顶、未读、本地名称、本地归档存 `localStorage['qn-thread-prefs']`（按目标隔离），置顶会话排在最前 |
 | 目标 | 本机启动自动连接；SSH 目标点选后按认证方式弹密码框或直接连接 |
 
 ## 5. 窗口外观与进场页
@@ -84,7 +86,8 @@
 | `qn-bg` | `#181818` | 主区 |
 | `qn-sidebar` | `#1b1b1b` | 侧栏 |
 | `qn-panel` | `#1f1f1f` | 输入框、卡片、弹窗 |
-| `qn-elevated` | `#242424` | 菜单、Popover、Tooltip、Toast、用户消息气泡 |
+| `qn-elevated` | `#242424` | 用户消息气泡等抬高块 |
+| `qn-float` | `#262626` | 浮层底色（配合 `.qn-surface-float`，见下文“浮层”） |
 | `qn-hover` / `qn-active` | `#262626` / `#2c2c2c` | 悬停 / 选中 |
 | `qn-border` / `qn-border-strong` | `#2a2a2a` / `#3a3a3a` | 分隔线 / 控件与浮层边界 |
 | `qn-text` / `qn-muted` / `qn-dim` | `#e6e6e6` / `#939393` / `#6b6b6b` | 正文 / 次要 / 辅助 |
@@ -110,9 +113,46 @@ Tailwind 尺寸全是 rem，**根字号不得改小**（v1 用 14px 导致 `text
 
 ### 尺寸
 
-- 圆角：6px 输入框；8px 按钮、列表行、菜单项（`rounded-lg`）；12px 浮层、代码块（`rounded-xl`）；16px 弹窗；20px 输入框卡片；圆形只用于状态点与圆形图标按钮。
-- 控件高度：图标按钮 32（紧凑 28）；列表行 32；菜单项 ≥32。
+- 圆角（只用下表几档，新代码不再出现裸 `rounded` / 任意值，输入框卡片除外）：
+
+| 档位 | 用途 |
+|---|---|
+| `rounded-sm` 4px | 文字级高亮：划词框、搜索命中、行内文件链接、光标 |
+| `rounded-md` 6px | ≤24px 的小元素：Badge、标签/chip、kbd、行内代码、`IconButton size="sm"` |
+| `rounded-lg` 8px | 标准控件：按钮、输入框（`.qn-input`）、菜单项、标签页、列表行、Tooltip、弹窗/浮层内的信息块 |
+| `rounded-xl` 12px | 独立容器：代码块、卡片、所有浮层（菜单、Popover、斜杠菜单、划词工具条、右键菜单、Toast） |
+| `rounded-2xl` 16px | 弹窗、用户消息气泡、拖放遮罩 |
+| `rounded-[20px]` | 仅输入框卡片 |
+| `rounded-full` | 状态点、圆形按钮、进度条、胶囊 |
+
+- 控件高度：图标按钮 32（`IconButton` 默认）/ 24（`size="sm"`）；列表行 32；菜单项 ≥32。
 - 图标：12–13（徽标/环境行）、14–15（列表/工具条/菜单）、16（标题与主按钮）。
+
+### 拖拽分隔条（`components/ResizeHandle.tsx`）
+
+所有可拖动调整尺寸的地方（侧栏宽度、后续的面板/终端高度等）**只用 `ResizeHandle`**，不再手写 `col-resize` 手柄；外观与手感沿用旧版 QingCode 的 PanelResizer：
+
+- 光标：竖条 `ew-resize`、横条 `ns-resize`（双向箭头），不用 `col-resize` / `row-resize`；拖动期间 `body.qn-resizing` 锁定全局光标并禁止选中文字，指针划过其它元素光标也不变。
+- 外观：平时不可见；悬停显示 1px 细线 + 三点握把；拖动或键盘聚焦时细线变 2px 青色（`qn-brand`）。热区 8px。
+- 交互：指针捕获拖动；双击或聚焦后 `Enter` 复位；方向键按 `step` 调整（`Shift` 五倍），`Home/End` 到最小/最大；带 `role="separator"` 与 `aria-value*`。
+- 用法：`orientation` 指分隔条走向（`vertical` 改宽度、`horizontal` 改高度）；右侧/底部面板传 `direction={-1}`；定位由调用方给 `className`（如侧栏 `absolute inset-y-0 -right-1`），不传时默认 `relative`，可直接放进 flex 布局。
+
+### 浮层（`.qn-surface-float`）
+
+浮层压在正文上，必须一眼分出前后景：`qn-float` 底色 + 10% 白描边 + 1px 外圈暗边 + 大投影，圆角 12px。
+类内把 `--color-qn-hover / -active / -border` 重定向到更亮的值，所以浮层里照常写 `hover:bg-qn-hover` 就能看清高亮。
+Radix 浮层经 `primitives.tsx` 自动带上；非 Radix 浮层（斜杠菜单、划词工具条、Toast、文件树右键菜单）直接加这个类。
+划词工具条以选区上沿为锚点向上展开（`translateY(-100%)`），切到评论输入态变高也不会压住选中文字。
+
+### 提示（Tooltip）
+
+- 按钮、图标按钮的说明一律用 `Tip`（`IconButton` 传 `label` 自带），不用原生 `title`：原生提示延迟长、样式不可控。
+- 例外：密集列表/行内文本（会话行、文件树路径、Git 状态字母、消息里的文件链接）的“全文/路径”补充可保留原生 `title`，避免成百上千个 Tooltip 实例。
+- 提示文案用中文；服务端返回的英文说明（模型、推理强度）在 `lib/models.ts` 统一转中文（`localizeModelDescription`、`effortHint`）。
+
+### 图标约定
+
+刷新 / 重新检测 / 重试统一用 `RotateCw`（加载中加 `animate-spin`）；`RotateCcw` 只表示“放弃/撤销更改”。
 
 ### 状态语义（`lib/targetStatus.ts` 统一）
 
@@ -125,12 +165,14 @@ Tailwind 尺寸全是 rem，**根字号不得改小**（v1 用 14px 导致 `text
 | 层 | 选型 | 说明 |
 |---|---|---|
 | 原语 | **Radix Primitives**（`radix-ui` 统一包） | Dialog / DropdownMenu / Popover / Tooltip / Tabs；焦点锁定、键盘导航、Esc/外点关闭、读屏语义由 Radix 负责 |
-| 封装 | `components/primitives.tsx`、`components/ui.tsx` | `Menu*`、`Popover*`、`Tip`、`Tabs*`；`Modal`（Radix Dialog，高度封顶 `min(680px, 100vh-80px)`，只滚正文）、`IconButton`（自带 Tooltip）、`Badge`、`ErrorNote`、`Checkbox` |
+| 封装 | `components/primitives.tsx`、`components/ui.tsx` | `Menu*`、`Popover*`、`Tip`、`Tabs*`、`Select`（Radix Select，支持分组/说明）；`Checkbox`（Radix Checkbox）；`Modal`（Radix Dialog，高度封顶 `min(680px, 100vh-80px)`，只滚正文）、`IconButton`（自带 Tooltip）、`Badge`、`ErrorNote`、`Checkbox` |
 | 样式 | Tailwind 4 + `@theme` token；`cn()` = `clsx` + `tailwind-merge` | `.qn-input / .qn-button / .qn-button-subtle` 在 `@layer components`，调用处工具类可覆盖 |
 | 高亮 | **shiki**（`shiki/core` + JS 正则引擎） | 不需要 WASM，CSP 不放开 `wasm-unsafe-eval` |
 | 图标 / 状态 | lucide-react / zustand | — |
 
 新增浮层一律用 `primitives.tsx` 的封装，不再手写 `absolute` 弹层 + document 监听。
+
+**禁用原生表单浮层控件**：不写 `<select>`、`<input type="checkbox|radio">`（Windows 下是系统白底高亮，圆角、字号、配色都不受控），分别用 `Select`、`Checkbox`；需要单选组时用分段按钮（参考模型选择器的推理强度）。
 
 ## 8. 代码结构
 

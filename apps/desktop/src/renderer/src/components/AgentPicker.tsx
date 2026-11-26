@@ -1,4 +1,4 @@
-import { Check, ChevronDown, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, RotateCw } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { AGENTS, agentLabel, availabilityReason } from '../lib/agents'
 import { useCodex } from '../store/codex'
@@ -56,7 +56,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
         })}
         <MenuSeparator />
         <MenuItem
-          icon={<RefreshCw size={14} />}
+          icon={<RotateCw size={14} />}
           disabled={!targetId}
           onSelect={(event) => {
             event.preventDefault()

@@ -167,7 +167,7 @@ export function DirectoryPicker({
           {loading && <Spinner label="读取目录…" />}
         </div>
         <ErrorNote message={error} onClose={() => setError(null)} />
-        <div className="h-64 overflow-y-auto rounded border border-qn-border bg-black/20">
+        <div className="h-64 overflow-y-auto rounded-lg border border-qn-border bg-black/20">
           {directories.length === 0 && !loading && (
             <EmptyState>没有子目录，可返回上级或输入完整路径。</EmptyState>
           )}

@@ -15,6 +15,7 @@ import {
   type Box,
   type SelectionSnapshot,
 } from '../lib/selection'
+import { IconButton } from './ui'
 
 export function SelectionLayer({
   children,
@@ -130,14 +131,19 @@ export function SelectionLayer({
       {snapshot && (
         <div
           data-qn-selection
-          className="absolute z-30 flex items-center gap-1 rounded-md border border-qn-border bg-[#282828] p-1 text-[12px] shadow-xl"
-          style={{ top: snapshot.position.top, left: snapshot.position.left }}
+          className="absolute z-30"
+          style={{
+            top: snapshot.position.top,
+            left: snapshot.position.left,
+            transform: snapshot.position.above ? 'translateY(-100%)' : undefined,
+          }}
         >
+        <div className="qn-pop qn-surface-float flex items-center gap-1 p-1 text-[12px]">
           {!commenting ? (
             <>
               <button
                 type="button"
-                className="flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10"
+                className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 hover:bg-qn-hover"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setCommenting(true)}
               >
@@ -146,7 +152,7 @@ export function SelectionLayer({
               {showSideAction && (
                 <button
                   type="button"
-                  className="flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10"
+                  className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 hover:bg-qn-hover"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openSide}
                 >
@@ -158,34 +164,31 @@ export function SelectionLayer({
             <>
               <input
                 autoFocus
-                className="qn-input w-44 px-2 py-1 text-[12px]"
+                className="qn-input h-7 w-52 px-2.5 py-0 text-[12px]"
                 placeholder="添加可选评论…"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
                 onKeyDown={commentKeyDown}
               />
-              <button
-                type="button"
-                className="rounded p-1 text-emerald-300 hover:bg-white/10"
-                title="确认注释（Enter）"
-                aria-label="确认注释"
+              <IconButton
+                label="确认注释（Enter）"
+                className="h-7 w-7 text-qn-ok"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={confirm}
               >
-                <Check size={13} />
-              </button>
-              <button
-                type="button"
-                className="rounded p-1 text-qn-muted hover:bg-white/10 hover:text-white"
-                title="取消（Esc）"
-                aria-label="取消注释"
+                <Check size={14} />
+              </IconButton>
+              <IconButton
+                label="取消（Esc）"
+                className="h-7 w-7"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => dismiss()}
               >
-                <X size={13} />
-              </button>
+                <X size={14} />
+              </IconButton>
             </>
           )}
+        </div>
         </div>
       )}
       {children}

@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react'
-import { DropdownMenu, Popover, Tabs, Tooltip } from 'radix-ui'
+import { Check, ChevronDown } from 'lucide-react'
+import { DropdownMenu, Popover, Select as RadixSelect, Tabs, Tooltip } from 'radix-ui'
 import { cn } from '../lib/cn'
 
 /*
@@ -7,8 +8,8 @@ import { cn } from '../lib/cn'
  * 浮层都 Portal 到 body，所以必须带 qn-no-drag，否则落在标题栏拖动区上会点不中。
  */
 
-const floatSurface =
-  'qn-no-drag qn-float z-50 rounded-xl border border-qn-border-strong bg-qn-elevated text-[13px] text-qn-text shadow-[0_12px_40px_rgba(0,0,0,0.45)]'
+/** 浮层统一外观（见 styles.css 的 .qn-surface-float）；导出给非 Radix 浮层（斜杠菜单、划词工具条、右键菜单）复用。 */
+export const floatSurface = 'qn-no-drag qn-float qn-surface-float z-50 text-[13px]'
 
 // ---------- 下拉菜单 ----------
 
@@ -115,12 +116,99 @@ export function Tip({
           side={side}
           sideOffset={6}
           collisionPadding={8}
-          className="qn-no-drag qn-float z-[60] max-w-xs rounded-md border border-qn-border-strong bg-qn-elevated px-2 py-1 text-[12px] text-qn-text shadow-lg"
+          className="qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-[12px] leading-4"
         >
           {label}
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>
+  )
+}
+
+// ---------- 下拉选择 ----------
+
+export type SelectOption = { value: string; label: ReactNode; description?: ReactNode; disabled?: boolean }
+export type SelectGroup = { label?: ReactNode; options: SelectOption[] }
+
+/**
+ * 下拉选择（Radix Select），替代原生 <select>：原生下拉在 Windows 上是系统白底高亮、圆角与字号都不受控。
+ * 触发器外观与 .qn-input 一致；下拉面板用浮层表面，宽度跟随触发器。传 options 或分组 groups 二选一。
+ */
+export function Select({
+  value,
+  onValueChange,
+  options,
+  groups,
+  placeholder = '请选择',
+  disabled,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  value: string
+  onValueChange: (value: string) => void
+  options?: SelectOption[]
+  groups?: SelectGroup[]
+  placeholder?: string
+  disabled?: boolean
+  className?: string
+  'aria-label'?: string
+}) {
+  const list: SelectGroup[] = groups ?? [{ options: options ?? [] }]
+  return (
+    <RadixSelect.Root value={value || undefined} onValueChange={onValueChange} disabled={disabled}>
+      <RadixSelect.Trigger
+        aria-label={ariaLabel}
+        className={cn(
+          'qn-input flex items-center justify-between gap-2 text-left data-[placeholder]:text-qn-dim data-[state=open]:border-qn-accent disabled:cursor-not-allowed disabled:opacity-55',
+          className,
+        )}
+      >
+        <span className="min-w-0 flex-1 truncate">
+          <RadixSelect.Value placeholder={placeholder} />
+        </span>
+        <RadixSelect.Icon className="shrink-0 text-qn-muted">
+          <ChevronDown size={15} />
+        </RadixSelect.Icon>
+      </RadixSelect.Trigger>
+      <RadixSelect.Portal>
+        <RadixSelect.Content
+          position="popper"
+          sideOffset={4}
+          collisionPadding={8}
+          className={cn(
+            floatSurface,
+            'max-h-[min(320px,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)] overflow-hidden',
+          )}
+        >
+          <RadixSelect.Viewport className="qn-scroll p-1">
+            {list.map((group, index) => (
+              <RadixSelect.Group key={index}>
+                {index > 0 && <RadixSelect.Separator className="mx-1 my-1 h-px bg-qn-border" />}
+                {group.label && (
+                  <RadixSelect.Label className="px-2.5 pb-1 pt-1.5 text-[12px] text-qn-dim">{group.label}</RadixSelect.Label>
+                )}
+                {group.options.map((option) => (
+                  <RadixSelect.Item
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                    className="relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-lg py-1.5 pl-2.5 pr-8 text-[13px] text-qn-text outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <RadixSelect.ItemText>{option.label}</RadixSelect.ItemText>
+                      {option.description && <span className="block text-[12px] text-qn-dim">{option.description}</span>}
+                    </span>
+                    <RadixSelect.ItemIndicator className="absolute right-2.5 text-qn-text">
+                      <Check size={14} />
+                    </RadixSelect.ItemIndicator>
+                  </RadixSelect.Item>
+                ))}
+              </RadixSelect.Group>
+            ))}
+          </RadixSelect.Viewport>
+        </RadixSelect.Content>
+      </RadixSelect.Portal>
+    </RadixSelect.Root>
   )
 }
 

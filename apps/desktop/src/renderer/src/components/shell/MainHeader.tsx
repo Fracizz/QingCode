@@ -1,4 +1,4 @@
-import { FolderGit2, MessageSquareText, MoreHorizontal, RefreshCw, SquarePen } from 'lucide-react'
+import { FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen } from 'lucide-react'
 import { sessionKey } from '../../lib/agents'
 import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
@@ -52,7 +52,7 @@ export function MainHeader() {
             新会话
           </MenuItem>
           <MenuSeparator />
-          <MenuItem icon={<RefreshCw size={14} />} onSelect={() => void refreshThreads()}>
+          <MenuItem icon={<RotateCw size={14} />} onSelect={() => void refreshThreads()}>
             刷新会话列表
           </MenuItem>
         </MenuContent>

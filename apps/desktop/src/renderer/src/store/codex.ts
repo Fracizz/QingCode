@@ -4,6 +4,9 @@ import {
   applyNotification,
   applyServerRequest,
   approvalResponse,
+  archiveThread,
+  deleteThread,
+  forkThread,
   emptyState,
   interruptTurn,
   listThreads,
@@ -12,6 +15,7 @@ import {
   resolveServerRequest,
   resumeThread,
   sendInput,
+  setThreadName,
   startThread,
   type ApprovalDecision,
   type ConversationState,
@@ -102,6 +106,12 @@ type CodexState = {
   interrupt: () => Promise<void>
   interruptSide: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: ApprovalDecision) => void
+  /** 以下会话管理操作只对支持对应 RPC 的 agent（Codex）生效；成功返回 true 并刷新列表。 */
+  renameThread: (threadId: string, agent: AgentKind, name: string) => Promise<boolean>
+  archiveThread: (threadId: string, agent: AgentKind) => Promise<boolean>
+  deleteThread: (threadId: string, agent: AgentKind) => Promise<boolean>
+  /** 分叉出新会话并切换过去。 */
+  forkThread: (threadId: string, agent: AgentKind) => Promise<boolean>
   clearError: () => void
   clearNotice: () => void
 }
@@ -344,6 +354,38 @@ export const useCodex = create<CodexState>((set, get) => {
       set({ notice: '已请求中断当前 turn' })
     } catch (err) {
       set({ error: friendlyError(err, '中断失败') })
+    }
+  }
+
+  /** 在当前目标的指定 agent 会话上执行一次 RPC；失败写入 error。 */
+  const withSession = async <T,>(
+    agent: AgentKind,
+    fallback: string,
+    run: (session: TargetSession) => Promise<T>,
+  ): Promise<T | null> => {
+    const targetId = get().currentTargetId
+    if (!targetId) {
+      set({ error: '请先选择目标' })
+      return null
+    }
+    if (!(await ensureOpen(targetId, agent))) {
+      set({ error: get().sessions[sessionKey(targetId, agent)]?.openError ?? `${agentLabel(agent)} 未就绪` })
+      return null
+    }
+    const session = get().sessions[sessionKey(targetId, agent)]
+    if (!session) return null
+    try {
+      return await run(session)
+    } catch (err) {
+      set({ error: friendlyError(err, fallback) })
+      return null
+    }
+  }
+
+  /** 当前会话被归档/删除后回到草稿态，避免对话区停在一个已不存在的会话上。 */
+  const leaveIfCurrent = (threadId: string, agent: AgentKind): void => {
+    if (get().currentThreadId === threadId && get().currentAgent === agent) {
+      set({ currentThreadId: null })
     }
   }
 
@@ -657,6 +699,44 @@ export const useCodex = create<CodexState>((set, get) => {
         }
       }
       set({ error: '该审批请求已失效' })
+    },
+
+    renameThread: async (threadId, agent, name) => {
+      const ok = await withSession(agent, '重命名失败', (session) => setThreadName(session.rpc, threadId, name).then(() => true))
+      if (ok === null) return false
+      void get().refreshThreads()
+      return true
+    },
+
+    archiveThread: async (threadId, agent) => {
+      const ok = await withSession(agent, '归档失败', (session) => archiveThread(session.rpc, threadId).then(() => true))
+      if (ok === null) return false
+      leaveIfCurrent(threadId, agent)
+      set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
+      void get().refreshThreads()
+      return true
+    },
+
+    deleteThread: async (threadId, agent) => {
+      const ok = await withSession(agent, '删除失败', (session) => deleteThread(session.rpc, threadId).then(() => true))
+      if (ok === null) return false
+      leaveIfCurrent(threadId, agent)
+      set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
+      void get().refreshThreads()
+      return true
+    },
+
+    forkThread: async (threadId, agent) => {
+      const targetId = get().currentTargetId
+      const result = await withSession(agent, '创建分支失败', (session) => forkThread(session.rpc, threadId))
+      if (!result || !targetId) return false
+      patchSession(sessionKey(targetId, agent), (value) => ({
+        ...value,
+        state: loadThread(value.state, result.thread),
+      }))
+      set({ currentThreadId: result.thread.id, currentAgent: agent, error: null, notice: '已创建聊天分支' })
+      void get().refreshThreads()
+      return true
     },
 
     clearError: () => set({ error: null }),

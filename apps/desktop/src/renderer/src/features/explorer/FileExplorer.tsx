@@ -28,7 +28,7 @@ import {
   FolderSymlink,
   Image as ImageIcon,
   Pencil,
-  RefreshCw,
+  RotateCw,
   Trash2,
   X,
 } from 'lucide-react'
@@ -425,7 +425,7 @@ export function FileExplorer({
           <button
             type="button"
             aria-label="确认"
-            className="shrink-0 rounded p-0.5 text-qn-ok hover:bg-qn-hover"
+            className="shrink-0 rounded-md p-0.5 text-qn-ok hover:bg-qn-hover"
             onClick={() => void commitEditing()}
           >
             <Check size={13} />
@@ -433,7 +433,7 @@ export function FileExplorer({
           <button
             type="button"
             aria-label="取消"
-            className="shrink-0 rounded p-0.5 text-qn-muted hover:bg-qn-hover"
+            className="shrink-0 rounded-md p-0.5 text-qn-muted hover:bg-qn-hover"
             onClick={() => setEditing(null)}
           >
             <X size={13} />
@@ -470,7 +470,7 @@ export function FileExplorer({
           <button
             type="button"
             aria-label={node.expanded ? '折叠' : '展开'}
-            className="flex h-4 w-3 shrink-0 items-center justify-center rounded text-qn-muted hover:text-qn-text"
+            className="flex h-4 w-3 shrink-0 items-center justify-center rounded-sm text-qn-muted hover:text-qn-text"
             onClick={(event) => {
               event.stopPropagation()
               setSelectedIndex(index)
@@ -499,7 +499,7 @@ export function FileExplorer({
           <FolderPlus size={14} />
         </IconButton>
         <IconButton label="刷新" onClick={() => void actions.refresh(targetId, root)}>
-          <RefreshCw size={14} />
+          <RotateCw size={14} />
         </IconButton>
         <IconButton label="折叠全部" onClick={() => actions.collapse(targetId, root)}>
           <ChevronsDownUp size={14} />
@@ -542,7 +542,7 @@ export function FileExplorer({
           </div>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
-          <ContextMenu.Content className="qn-no-drag qn-float z-50 min-w-48 rounded-xl border border-qn-border-strong bg-qn-elevated p-1 text-[13px] text-qn-text shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
+          <ContextMenu.Content className="qn-no-drag qn-float qn-surface-float z-50 min-w-48 p-1 text-[13px]">
             <ContextItem
               icon={<FilePlus2 size={14} />}
               onSelect={() => beginCreate(menuTarget.current.dir, 'file')}

@@ -4,11 +4,11 @@
 export const SPLASH_MIN_VISIBLE_MS = 1200
 export const SPLASH_REDUCED_MIN_VISIBLE_MS = 300
 /** 与 index.html 中 .qn-splash 的 transition 时长一致。 */
-export const SPLASH_FADE_MS = 360
+export const SPLASH_FADE_MS = 440
 /** 后台迟迟不就绪也不能把用户挡在进场页外。 */
 export const SPLASH_MAX_WAIT_MS = 8000
 /** 进度条从"滑动"切到"填满"后停留一下再淡出，让用户看到完成态。 */
-export const SPLASH_READY_HOLD_MS = 220
+export const SPLASH_READY_HOLD_MS = 260
 
 export type BootPhase = 'starting' | 'backend' | 'targets' | 'ready'
 

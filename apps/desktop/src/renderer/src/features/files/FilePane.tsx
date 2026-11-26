@@ -10,10 +10,10 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   PanelRightClose,
-  RefreshCw,
+  RotateCw,
   X,
 } from 'lucide-react'
-import { ErrorNote, Spinner } from '../../components/ui'
+import { ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/clipboard'
 import { openFile } from '../workspace/openers'
@@ -24,9 +24,6 @@ import { basename, dirname, fileKind } from './fileLinks'
 import { createMarkdownLink, qnUrlTransform } from './integrations'
 import { useFiles } from './filesStore'
 import type { Tab } from './filesModel'
-
-const smallButton =
-  'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent'
 
 function MarkdownPreview({ content, targetId, cwd }: { content: string; targetId: string; cwd: string }) {
   const link = useMemo(() => createMarkdownLink(() => ({ targetId, cwd })), [targetId, cwd])
@@ -138,7 +135,7 @@ export function FilePane({ className }: { className?: string }) {
                 }
               }}
               className={cn(
-                'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                 tab.id === activeId ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
               )}
             >
@@ -156,7 +153,7 @@ export function FilePane({ className }: { className?: string }) {
               <button
                 type="button"
                 aria-label={`关闭 ${basename(tab.path)}`}
-                className="ml-auto shrink-0 rounded p-0.5 text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+                className="ml-auto shrink-0 rounded-md p-0.5 text-qn-dim hover:bg-qn-hover hover:text-qn-text"
                 onClick={(event) => {
                   event.stopPropagation()
                   close(tab.id)
@@ -170,43 +167,29 @@ export function FilePane({ className }: { className?: string }) {
         <div className="flex shrink-0 items-center gap-0.5 border-l border-qn-border pl-1">
           {active && (
             <>
-              <button
-                type="button"
-                title="复制完整路径"
-                aria-label="复制完整路径"
-                className={smallButton}
-                onClick={() => void copyText(active.path)}
-              >
+              <IconButton label="复制完整路径" size="sm" onClick={() => void copyText(active.path)}>
                 <Copy size={13} />
-              </button>
-              <button type="button" title="刷新" aria-label="刷新" className={smallButton} onClick={() => refresh(active.id)}>
-                <RefreshCw size={13} />
-              </button>
+              </IconButton>
+              <IconButton label="刷新" size="sm" onClick={() => refresh(active.id)}>
+                <RotateCw size={13} />
+              </IconButton>
               {markdown && (
-                <button
-                  type="button"
-                  title={active.view === 'preview' ? '查看源码' : 'Markdown 预览'}
-                  aria-label={active.view === 'preview' ? '查看源码' : 'Markdown 预览'}
-                  className={smallButton}
+                <IconButton
+                  label={active.view === 'preview' ? '查看源码' : 'Markdown 预览'}
+                  size="sm"
                   onClick={() => setView(active.id, active.view === 'preview' ? 'source' : 'preview')}
                 >
                   {active.view === 'preview' ? <Code size={13} /> : <Eye size={13} />}
-                </button>
+                </IconButton>
               )}
-              <button type="button" title="关闭全部标签" aria-label="关闭全部标签" className={smallButton} onClick={closeAll}>
+              <IconButton label="关闭全部标签" size="sm" onClick={closeAll}>
                 <X size={13} />
-              </button>
+              </IconButton>
             </>
           )}
-          <button
-            type="button"
-            title="收起文件查看面板"
-            aria-label="收起文件查看面板"
-            className={smallButton}
-            onClick={() => setOpen(false)}
-          >
+          <IconButton label="收起文件查看面板" size="sm" onClick={() => setOpen(false)}>
             <PanelRightClose size={13} />
-          </button>
+          </IconButton>
         </div>
       </div>
 

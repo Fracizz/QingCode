@@ -3,6 +3,7 @@ import type {
   ModelListResponse,
   SkillMetadata,
   SkillsListResponse,
+  ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
   ThreadResumeResponse,
@@ -42,6 +43,23 @@ export function readThread(
   threadId: string,
 ): Promise<ThreadReadResponse> {
   return rpc.request('thread/read', { threadId, includeTurns: true })
+}
+
+export function setThreadName(rpc: CodexRpcLike, threadId: string, name: string): Promise<unknown> {
+  return rpc.request('thread/name/set', { threadId, name })
+}
+
+export function archiveThread(rpc: CodexRpcLike, threadId: string): Promise<unknown> {
+  return rpc.request('thread/archive', { threadId })
+}
+
+export function deleteThread(rpc: CodexRpcLike, threadId: string): Promise<unknown> {
+  return rpc.request('thread/delete', { threadId })
+}
+
+/** 从会话完整历史分叉出一个新会话（Codex 的 thread/fork）。 */
+export function forkThread(rpc: CodexRpcLike, threadId: string): Promise<ThreadForkResponse> {
+  return rpc.request('thread/fork', { threadId })
 }
 
 /** turn/start 的覆盖项：对本次及之后的 turn 生效；未设置的字段不发送，沿用会话当前配置。 */

@@ -9,6 +9,7 @@
   --color-qn-sidebar: #1b1b1b;
   --color-qn-panel: #1f1f1f;
   --color-qn-elevated: #242424;
+  --color-qn-float: #262626;
   --color-qn-hover: #262626;
   --color-qn-active: #2c2c2c;
   --color-qn-border: #2a2a2a;
@@ -51,7 +52,7 @@ button:disabled {
   .qn-input {
     width: 100%;
     border: 1px solid var(--color-qn-border-strong);
-    border-radius: 6px;
+    border-radius: 8px;
     background: #161616;
     color: var(--color-qn-text);
     padding: 7px 10px;
@@ -89,6 +90,24 @@ button:disabled {
 
   .qn-button-subtle:hover:not(:disabled) {
     background: var(--color-qn-hover);
+  }
+
+  /*
+   * 浮层表面（菜单、弹出面板、提示、斜杠菜单、划词工具条、Toast）：浮在正文之上，必须和下面的内容拉开层次。
+   * 比 elevated 再亮一档 + 亮描边 + 外圈暗边 + 大投影；并在子树内把 hover/active/border 重定向到更亮的值，
+   * 否则 bg-qn-hover 这类工具类在浮层里会和底色几乎一样，看不出高亮。
+   */
+  .qn-surface-float {
+    border: 1px solid rgb(255 255 255 / 0.1);
+    border-radius: 12px;
+    background: var(--color-qn-float);
+    color: var(--color-qn-text);
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 0.55),
+      0 16px 40px rgb(0 0 0 / 0.55);
+    --color-qn-hover: #313131;
+    --color-qn-active: #383838;
+    --color-qn-border: #343434;
   }
 }
 
@@ -140,8 +159,8 @@ button:disabled {
 }
 
 .qn-shell[data-entered="true"] .qn-enter {
-  animation: qn-enter 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--qn-enter-order, 0) * 70ms);
+  animation: qn-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--qn-enter-order, 0) * 85ms);
 }
 
 @keyframes qn-enter {
@@ -171,31 +190,121 @@ button:disabled {
   }
 }
 
-/* 侧栏拖宽手柄：平时不可见，悬停/拖动时显示一条青色细线。 */
+/*
+ * 拖拽分隔条（components/ResizeHandle.tsx，全局唯一实现，沿用旧版 QingCode）：
+ * 双向箭头光标；平时隐形，悬停出细线 + 三点握把，拖动/聚焦变青色；拖动时 body.qn-resizing 锁定全局光标。
+ */
+body.qn-resizing,
+body.qn-resizing * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+body.qn-resizing[data-qn-resize="horizontal"],
+body.qn-resizing[data-qn-resize="horizontal"] * {
+  cursor: ns-resize !important;
+}
+
+/* 拖动时避免 iframe / webview 吞掉指针事件。 */
+body.qn-resizing iframe,
+body.qn-resizing webview {
+  pointer-events: none;
+}
+
 .qn-resizer {
-  position: absolute;
-  top: 0;
-  right: -3px;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 10;
+  z-index: 20;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  touch-action: none;
 }
 
-.qn-resizer::after {
-  content: "";
+.qn-resizer[data-orientation="vertical"] {
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.qn-resizer[data-orientation="horizontal"] {
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.qn-resizer-line {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 2px;
+  background: var(--color-qn-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.qn-resizer[data-orientation="vertical"] .qn-resizer-line {
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.qn-resizer[data-orientation="horizontal"] .qn-resizer-line {
+  inset-inline: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.qn-resizer-grip {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.qn-resizer[data-orientation="vertical"] .qn-resizer-grip {
+  flex-direction: column;
+  padding: 6px 0;
+}
+
+.qn-resizer[data-orientation="horizontal"] .qn-resizer-grip {
+  flex-direction: row;
+  padding: 0 6px;
+}
+
+.qn-resizer-grip span {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-qn-dim);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.qn-resizer:hover .qn-resizer-line,
+.qn-resizer:hover .qn-resizer-grip,
+.qn-resizer:focus-visible .qn-resizer-line,
+.qn-resizer:focus-visible .qn-resizer-grip,
+.qn-resizer[data-active="true"] .qn-resizer-line,
+.qn-resizer[data-active="true"] .qn-resizer-grip {
+  opacity: 1;
+}
+
+.qn-resizer:focus-visible .qn-resizer-line,
+.qn-resizer[data-active="true"] .qn-resizer-line {
+  background: var(--color-qn-brand);
+}
+
+.qn-resizer[data-active="true"][data-orientation="vertical"] .qn-resizer-line {
   width: 2px;
-  background: transparent;
-  transition: background 120ms ease;
 }
 
-.qn-resizer:hover::after,
-.qn-resizer[data-active="true"]::after {
-  background: color-mix(in srgb, var(--color-qn-brand) 70%, transparent);
+.qn-resizer[data-active="true"][data-orientation="horizontal"] .qn-resizer-line {
+  height: 2px;
+}
+
+.qn-resizer[data-active="true"] .qn-resizer-grip span {
+  background: var(--color-qn-brand);
+  transform: scale(1.15);
 }
 
 @media (prefers-reduced-motion: reduce) {

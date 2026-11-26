@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Gauge, RefreshCw } from 'lucide-react'
+import { ChevronDown, Gauge, RotateCw } from 'lucide-react'
 import {
   compactText,
   formatReset,
@@ -44,14 +44,14 @@ function WindowRow({
   now: number
 }) {
   return (
-    <div className="rounded border border-qn-border/70 p-2">
+    <div className="rounded-lg border border-qn-border/70 p-2">
       <div className="flex items-center justify-between">
         <span>{label}</span>
         <span className={`font-mono ${percentClass(value.usedPercent)}`}>
           {Math.round(value.usedPercent)}%
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded bg-white/10">
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
           className={`h-full ${severityBarClass(severityForPercent(value.usedPercent))}`}
           style={{ width: `${barWidth(value.usedPercent)}%` }}
@@ -92,16 +92,15 @@ function Body({
             className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-[12px]"
             disabled={entry?.loading === true}
             onClick={() => void refresh(targetId, agent)}
-            title="刷新额度"
           >
-            <RefreshCw size={12} className={entry?.loading ? 'animate-spin' : ''} /> 刷新
+            <RotateCw size={12} className={entry?.loading ? 'animate-spin' : ''} /> 刷新
           </button>
         </div>
       </div>
 
       {agent === 'claude' ? (
         <div className="space-y-2">
-          <div className="rounded border border-qn-border/70 p-2">
+          <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
               <span>最近限额事件</span>
               <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
@@ -114,7 +113,7 @@ function Body({
               </div>
             )}
           </div>
-          <div className="rounded border border-qn-border/70 p-2">
+          <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
               <span>{threadId ? '本会话累计费用' : '累计费用'}</span>
               <span className="font-mono">
@@ -127,7 +126,7 @@ function Body({
       ) : (
         <>
           {entry?.account && (
-            <div className="mb-2 space-y-0.5 rounded bg-black/20 p-2 text-[12px] text-qn-muted">
+            <div className="mb-2 space-y-0.5 rounded-lg bg-black/20 p-2 text-[12px] text-qn-muted">
               <div>套餐：{entry.account.planType ?? '未知'}</div>
               {entry.account.email && <div className="truncate">账号：{entry.account.email}</div>}
               {entry.account.workspaceName && (
@@ -154,7 +153,7 @@ function Body({
               )}
             </div>
           ) : (
-            <div className="rounded border border-qn-border/70 p-3 text-center text-qn-muted">
+            <div className="rounded-lg border border-qn-border/70 p-3 text-center text-qn-muted">
               暂无额度数据
             </div>
           )}

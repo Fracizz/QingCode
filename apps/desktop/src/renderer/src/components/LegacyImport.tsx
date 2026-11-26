@@ -1,7 +1,7 @@
 import { Upload, X } from 'lucide-react'
 import { useLegacy } from '../store/legacy'
 import { useTargets } from '../store/targets'
-import { Checkbox, ErrorNote, Modal, Spinner } from './ui'
+import { Checkbox, ErrorNote, IconButton, Modal, Spinner } from './ui'
 
 export function LegacyBanner() {
   const detect = useLegacy((s) => s.detect)
@@ -21,15 +21,9 @@ export function LegacyBanner() {
         <span className="min-w-0 flex-1 leading-5 text-qn-text/90">
           检测到旧版 QingCode 数据（约 {total} 条连接与项目）
         </span>
-        <button
-          type="button"
-          className="shrink-0 rounded p-0.5 text-qn-dim hover:text-qn-text"
-          aria-label="不再提示"
-          title="不再提示"
-          onClick={dismiss}
-        >
-          <X size={12} />
-        </button>
+        <IconButton label="不再提示" size="sm" onClick={dismiss}>
+          <X size={13} />
+        </IconButton>
       </div>
       <button className="qn-button mt-2 w-full py-1 text-[12px]" onClick={open}>
         导入到新版本
@@ -92,7 +86,7 @@ export function LegacyDialog() {
           </p>
         </div>
 
-        <div className="rounded border border-qn-border bg-black/20 p-3">
+        <div className="rounded-lg border border-qn-border bg-black/20 p-3">
           <div className="mb-2 text-xs text-qn-muted">预览数量</div>
           {counts ? (
             <div className="grid grid-cols-2 gap-2 text-xs">
@@ -119,7 +113,7 @@ export function LegacyDialog() {
         <ErrorNote message={error} onRetry={() => void runImport()} />
 
         {result && (
-          <div className="space-y-2 rounded border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs">
+          <div className="space-y-2 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs">
             <div className="font-medium text-emerald-300">导入完成</div>
             <div className="grid grid-cols-2 gap-1">
               <span>连接：{result.imported.targets}</span>

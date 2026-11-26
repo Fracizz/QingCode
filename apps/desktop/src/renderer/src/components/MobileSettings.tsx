@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { Copy, Eye, EyeOff, Plus, RefreshCw, ShieldCheck, Smartphone, Trash2, Wifi, X } from 'lucide-react'
+import { Copy, Eye, EyeOff, Plus, RotateCw, ShieldCheck, Smartphone, Trash2, Wifi, X } from 'lucide-react'
 import {
   buildAddressOptions,
   buildSettingsPatch,
@@ -13,7 +13,7 @@ import {
   type SettingsDraft,
 } from '../lib/mobileSettings'
 import { useMobile } from '../store/mobile'
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from './primitives'
+import { Select, TabsContent, TabsList, TabsRoot, TabsTrigger } from './primitives'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from './ui'
 
 function Field({ label, hint, error, children }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode }) {
@@ -158,7 +158,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         </div>
       }
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-white/[0.03] px-3 py-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
         <span className="text-[13px]">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>
@@ -166,7 +166,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         <span className="min-w-0 flex-1" />
         {busy && <Spinner label={busy} />}
         <IconButton label="刷新状态" className="h-7 w-7" disabled={busy !== null} onClick={() => void load()}>
-          <RefreshCw size={14} />
+          <RotateCw size={14} />
         </IconButton>
       </div>
       <div className="space-y-2">
@@ -231,32 +231,18 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
           <TabsContent value="addresses" className="min-h-[260px] space-y-5">
             <Section title="复制连接信息">
               <div className="flex gap-2">
-                <select
-                  className="qn-input min-w-0 flex-1"
+                <Select
+                  aria-label="连接地址"
+                  className="min-w-0 flex-1"
                   value={address}
                   disabled={options.length === 0}
-                  onChange={(event) => setSelectedAddress(event.target.value)}
-                >
-                  {options.length === 0 && <option value="">（暂无可用的连接地址）</option>}
-                  {lanOptions.length > 0 && (
-                    <optgroup label="局域网地址">
-                      {lanOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.value}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {publicOptions.length > 0 && (
-                    <optgroup label="对外地址">
-                      {publicOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.value}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  placeholder="（暂无可用的连接地址）"
+                  onValueChange={setSelectedAddress}
+                  groups={[
+                    { label: '局域网地址', options: lanOptions.map((option) => ({ value: option.value, label: option.value })) },
+                    { label: '对外地址', options: publicOptions.map((option) => ({ value: option.value, label: option.value })) },
+                  ].filter((group) => group.options.length > 0)}
+                />
                 <button
                   className="qn-button flex shrink-0 items-center gap-1.5"
                   type="button"
@@ -346,7 +332,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               title={`已配对设备（${devices.length}）`}
               action={
                 <IconButton label="刷新设备列表" className="h-7 w-7" disabled={busy !== null} onClick={() => void load()}>
-                  <RefreshCw size={14} />
+                  <RotateCw size={14} />
                 </IconButton>
               }
             >
@@ -355,7 +341,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <ul className="space-y-1.5">
                   {devices.map((device) => (
-                    <li key={device.id} className="flex items-center gap-3 rounded-xl bg-white/[0.04] px-3 py-2">
+                    <li key={device.id} className="flex items-center gap-3 rounded-lg bg-white/[0.04] px-3 py-2">
                       <Smartphone size={16} className="shrink-0 text-qn-muted" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[13px]">{device.name}</div>

@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, LoaderCircle, RefreshCw, Search, Zap } from 'lucide-react'
+import { Check, ChevronDown, LoaderCircle, RotateCw, Search, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import { cn } from '../lib/cn'
-import { contextUsage, EMPTY_PREFS, effortLabel, filterModels, formatTokens, resolveSelection, triggerLabel } from '../lib/models'
+import {
+  contextUsage,
+  EMPTY_PREFS,
+  effortHint,
+  effortLabel,
+  filterModels,
+  formatTokens,
+  localizeModelDescription,
+  resolveSelection,
+  triggerLabel,
+} from '../lib/models'
 import { useCodex } from '../store/codex'
 import { useModels } from '../store/models'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
@@ -100,7 +110,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 className="inline-flex items-center gap-1 text-qn-muted hover:text-qn-text"
                 onClick={() => session && void load(targetId, agent, session.rpc, true)}
               >
-                <RefreshCw size={13} /> 重试
+                <RotateCw size={13} /> 重试
               </button>
             </div>
           )}
@@ -119,7 +129,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 role="option"
                 aria-selected={selected}
                 className={cn(
-                  'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:bg-qn-hover',
+                  'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:bg-qn-hover',
                   selected ? 'bg-qn-active' : 'hover:bg-qn-hover',
                 )}
                 onClick={() => pick(model.model)}
@@ -127,7 +137,9 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium text-qn-text">{model.displayName}</span>
                   {model.description && (
-                    <span className="mt-0.5 line-clamp-2 block text-[13px] leading-5 text-qn-muted">{model.description}</span>
+                    <span className="mt-0.5 line-clamp-2 block text-[13px] leading-5 text-qn-muted">
+                      {localizeModelDescription(model.description)}
+                    </span>
                   )}
                 </span>
                 {selected && <Check size={16} className="shrink-0 text-qn-text" />}
@@ -159,8 +171,9 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                         {effortLabel(effort.value)}
                       </button>
                     )
-                    return effort.description ? (
-                      <Tip key={effort.value} label={effort.description}>
+                    const hint = effortHint(effort.value, effort.description)
+                    return hint ? (
+                      <Tip key={effort.value} label={hint}>
                         {button}
                       </Tip>
                     ) : (
@@ -173,6 +186,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
             {selection.fastTier && (
               <div className="flex items-center justify-between gap-3">
                 <span className="shrink-0 text-[13px] text-qn-muted">速度</span>
+                <Tip label="优先处理请求，响应更快，额度消耗更多">
                 <button
                   type="button"
                   aria-pressed={selection.fast}
@@ -184,8 +198,9 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   )}
                   onClick={() => setPrefs(agent, { fast: !selection.fast })}
                 >
-                  <Zap size={14} /> Fast
+                  <Zap size={14} /> 快速
                 </button>
+                </Tip>
               </div>
             )}
           </div>

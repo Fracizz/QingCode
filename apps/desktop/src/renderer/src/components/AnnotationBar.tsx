@@ -6,6 +6,7 @@ import {
   quoteBlock,
   type Annotation,
 } from '../lib/annotations'
+import { IconButton } from './ui'
 
 export function AnnotationBar({
   annotations,
@@ -31,7 +32,7 @@ export function AnnotationBar({
       {open && (
         <div className="qn-scroll mt-2 max-h-40 space-y-2 overflow-y-auto pb-2">
           {annotations.map((annotation) => (
-            <div key={annotation.id} className="rounded border border-qn-border bg-black/20 p-2">
+            <div key={annotation.id} className="rounded-lg border border-qn-border bg-black/20 p-2">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="whitespace-pre-wrap break-words font-mono text-[12px] leading-4 text-qn-muted">
@@ -41,15 +42,9 @@ export function AnnotationBar({
                     <div className="mt-1 break-words text-[12px]">{annotation.comment}</div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded p-1 text-qn-muted hover:bg-white/10 hover:text-qn-danger"
-                  title="删除注释"
-                  aria-label="删除注释"
-                  onClick={() => onRemove(annotation.id)}
-                >
-                  <Trash2 size={12} />
-                </button>
+                <IconButton label="删除注释" size="sm" danger onClick={() => onRemove(annotation.id)}>
+                  <Trash2 size={13} />
+                </IconButton>
               </div>
             </div>
           ))}

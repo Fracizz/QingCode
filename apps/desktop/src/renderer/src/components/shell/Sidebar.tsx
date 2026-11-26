@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Smartphone, SquarePen, Upload } from 'lucide-react'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
 import { useUi } from '../../store/ui'
+import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../lib/layout'
 import { LegacyBanner } from '../LegacyImport'
+import { ResizeHandle } from '../ResizeHandle'
 import { ProjectTree } from './ProjectTree'
 import { TargetSwitcher, type TargetActions } from './TargetSwitcher'
 
@@ -18,30 +20,11 @@ export function Sidebar({
   const selectedId = useTargets((s) => s.selectedId)
   const startDraft = useCodex((s) => s.startDraft)
   const isDraft = useCodex((s) => s.currentThreadId === null)
-  const [resizing, setResizing] = useState(false)
   const [version, setVersion] = useState('')
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null)
 
   useEffect(() => {
     void window.qn?.version().then(setVersion).catch(() => undefined)
   }, [])
-
-  // 指针捕获拖宽：move 期间直接写 store，松手时 store 已持久化。
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    drag.current = { startX: event.clientX, startWidth: width }
-    setResizing(true)
-  }
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return
-    setWidth(drag.current.startWidth + event.clientX - drag.current.startX)
-  }
-  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    drag.current = null
-    setResizing(false)
-    event.currentTarget.releasePointerCapture(event.pointerId)
-  }
 
   return (
     <aside
@@ -60,7 +43,7 @@ export function Sidebar({
         >
           <SquarePen size={16} className="text-qn-muted" />
           <span className="flex-1 text-left">新会话</span>
-          <kbd className="hidden rounded border border-qn-border-strong px-1 font-sans text-[11px] text-qn-dim group-hover:inline">
+          <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-[11px] text-qn-dim group-hover:inline">
             Ctrl N
           </kbd>
         </button>
@@ -82,16 +65,15 @@ export function Sidebar({
         {version && <span className="ml-auto shrink-0 pr-1.5 text-[11px] text-qn-dim">v{version}</span>}
       </div>
 
-      <div
-        className="qn-resizer"
-        data-active={resizing}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整侧栏宽度"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onDoubleClick={() => setWidth(Number.NaN)}
+      <ResizeHandle
+        orientation="vertical"
+        className="absolute inset-y-0 -right-1"
+        label="调整侧栏宽度"
+        value={width}
+        min={SIDEBAR_MIN_WIDTH}
+        max={SIDEBAR_MAX_WIDTH}
+        onChange={setWidth}
+        onReset={() => setWidth(Number.NaN)}
       />
     </aside>
   )

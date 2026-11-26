@@ -62,7 +62,7 @@ export function DiffView({
             <button
               type="button"
               onClick={onOpenFile}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-qn-border-strong px-2.5 py-1 text-[12px] text-qn-text hover:bg-qn-hover"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-qn-border-strong px-2.5 py-1 text-[12px] text-qn-text hover:bg-qn-hover"
             >
               <FileText size={13} />
               打开文件

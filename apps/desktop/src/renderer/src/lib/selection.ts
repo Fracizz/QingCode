@@ -12,8 +12,11 @@ export type Box = { top: number; left: number; width: number; height: number }
 export type SelectionSnapshot = {
   text: string
   boxes: Box[]
-  position: { top: number; left: number }
+  position: ToolbarPosition
 }
+
+/** above=true 时 top 是工具条的下沿（渲染时 translateY(-100%)），工具条变高也不会压住选区。 */
+export type ToolbarPosition = { top: number; left: number; above: boolean }
 
 export const MAX_SELECTION_LENGTH = 4000
 export const TOOLBAR_WIDTH = 268
@@ -48,16 +51,15 @@ export function toolbarPosition(
   viewWidth: number,
   width = TOOLBAR_WIDTH,
   height = TOOLBAR_HEIGHT,
-): { top: number; left: number } {
+): ToolbarPosition {
   const margin = 8
   const gap = 8
   const maxLeft = Math.max(margin, viewWidth - width - margin)
   const left = Math.round(
     Math.min(Math.max(margin, box.left + box.width / 2 - width / 2), maxLeft),
   )
-  const above = box.top - height - gap
-  const top = above >= margin ? Math.round(above) : Math.round(box.top + box.height + gap)
-  return { top, left }
+  if (box.top - height - gap >= margin) return { top: Math.round(box.top - gap), left, above: true }
+  return { top: Math.round(box.top + box.height + gap), left, above: false }
 }
 
 export function clearDomSelection(): void {

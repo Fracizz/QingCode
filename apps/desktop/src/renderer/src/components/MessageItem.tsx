@@ -81,7 +81,7 @@ function ToolRow({
   }
   return (
     <details className="group/tool text-[13px]">
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-lg text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
         <span className="shrink-0">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{summary}</span>
         {trailing}

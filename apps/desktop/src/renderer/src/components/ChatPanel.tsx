@@ -333,7 +333,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         {!pinned && (
           <button
             type="button"
-            className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-qn-border-strong bg-qn-elevated px-3 py-1.5 text-[12px] text-qn-text shadow-lg hover:bg-qn-hover"
+            className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] hover:bg-qn-hover"
             onClick={scrollToBottom}
           >
             <ArrowDown size={14} /> 回到底部

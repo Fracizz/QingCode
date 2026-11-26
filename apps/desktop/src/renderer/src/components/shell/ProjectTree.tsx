@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
-import { Folder, FolderOpen, FolderPlus, LoaderCircle, RefreshCw, SquarePen, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { FolderPlus, RotateCw, SquarePen, Trash2 } from 'lucide-react'
 import type { Project } from '../../../../shared/backendApi'
-import { DEFAULT_AGENT, sessionKey } from '../../lib/agents'
+import { sessionKey } from '../../lib/agents'
+import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { threadKey } from '../../lib/threads'
 import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
+import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
-import { AgentIcon } from '../AgentIcon'
 import { IconButton, Spinner } from '../ui'
+import { ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
 
@@ -100,11 +102,7 @@ export function ProjectTree({ targetId }: { targetId: string }) {
                   aria-expanded={expanded}
                   onClick={() => onProjectClick(project)}
                 >
-                  {expanded ? (
-                    <FolderOpen size={15} className="shrink-0 text-qn-brand" />
-                  ) : (
-                    <Folder size={15} className="shrink-0 text-qn-muted" />
-                  )}
+                  <ProjectInitial name={project.name} active={expanded} />
                   <span className="min-w-0 flex-1 truncate">{project.name}</span>
                 </button>
                 <span className="shrink-0 pr-1.5 text-[12px] text-qn-dim group-hover:hidden">
@@ -142,8 +140,37 @@ export function ProjectTree({ targetId }: { targetId: string }) {
   )
 }
 
+// 首字母头像配色：按项目名哈希取色，保证同名项目颜色稳定。
+const INITIAL_COLORS = [
+  'bg-sky-500/20 text-sky-300',
+  'bg-emerald-500/20 text-emerald-300',
+  'bg-amber-500/20 text-amber-300',
+  'bg-violet-500/20 text-violet-300',
+  'bg-rose-500/20 text-rose-300',
+  'bg-teal-500/20 text-teal-300',
+  'bg-orange-500/20 text-orange-300',
+  'bg-indigo-500/20 text-indigo-300',
+]
+
+function ProjectInitial({ name, active }: { name: string; active: boolean }) {
+  const ch = Array.from(name.replace(/^[^\p{L}\p{N}]+/u, ''))[0] ?? Array.from(name)[0] ?? '?'
+  let hash = 0
+  for (const c of name) hash = (hash * 31 + c.codePointAt(0)!) | 0
+  const color = INITIAL_COLORS[Math.abs(hash) % INITIAL_COLORS.length]
+  return (
+    <span
+      aria-hidden
+      className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] text-[11px] font-semibold leading-none ${color} ${
+        active ? 'ring-1 ring-qn-brand/70' : ''
+      }`}
+    >
+      {ch.toUpperCase()}
+    </span>
+  )
+}
+
 function ThreadList({ now }: { now: number }) {
-  const threads = useCodex((s) => s.threads)
+  const rawThreads = useCodex((s) => s.threads)
   const threadsLoading = useCodex((s) => s.threadsLoading)
   const threadsError = useCodex((s) => s.threadsError)
   const currentThreadId = useCodex((s) => s.currentThreadId)
@@ -157,6 +184,9 @@ function ThreadList({ now }: { now: number }) {
   const startDraft = useCodex((s) => s.startDraft)
   const openThread = useCodex((s) => s.openThread)
   const [showAll, setShowAll] = useState(false)
+  const prefs = useThreadPrefs((s) => (currentTargetId ? s.byTarget[currentTargetId] : undefined))
+  // 本地偏好：置顶在前、隐藏本地归档、套用本地名称。
+  const threads = useMemo(() => applyThreadPrefs(rawThreads, prefs), [rawThreads, prefs])
 
   const shown = showAll ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
   const hidden = threads.length - shown.length
@@ -180,34 +210,18 @@ function ThreadList({ now }: { now: number }) {
       )}
 
       {shown.map((thread) => {
-        const current = thread.id === currentThreadId && thread.agent === currentAgent
         const view = currentTargetId
           ? sessions[sessionKey(currentTargetId, thread.agent)]?.state.threads[thread.id]
           : undefined
-        const running = view?.status === 'running'
-        const waiting = (view?.pendingApprovals.length ?? 0) > 0
         return (
-          <button
+          <ThreadRow
             key={threadKey(thread.agent, thread.id)}
-            type="button"
-            className={`relative flex h-8 w-full items-center gap-2 rounded-lg pl-[31px] pr-2 text-left text-[13px] ${
-              current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
-            }`}
-            title={thread.preview || thread.title}
-            onClick={() => void openThread(thread.id, thread.agent)}
-          >
-            {/* 青轨：当前会话的唯一强调，沿用旧版 QingCode 的 Qing Rail。 */}
-            {current && <span className="absolute bottom-2 left-[15px] top-2 w-[2px] rounded-full bg-qn-brand" />}
-            {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
-            <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-            {waiting ? (
-              <span className="shrink-0 rounded-md bg-qn-warn/15 px-1.5 text-[11px] leading-5 text-qn-warn">待审批</span>
-            ) : running ? (
-              <LoaderCircle size={14} className="shrink-0 animate-spin text-qn-muted" aria-label="运行中" />
-            ) : (
-              <span className="shrink-0 text-[12px] text-qn-dim">{formatRelative(thread.updatedAt, now)}</span>
-            )}
-          </button>
+            thread={thread}
+            now={now}
+            current={thread.id === currentThreadId && thread.agent === currentAgent}
+            running={view?.status === 'running'}
+            waiting={(view?.pendingApprovals.length ?? 0) > 0}
+          />
         )
       })}
 
@@ -226,7 +240,7 @@ function ThreadList({ now }: { now: number }) {
         <div className="mx-1 mt-1 flex items-start gap-2 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] text-qn-danger">
           <span className="min-w-0 flex-1 break-words">{threadsError}</span>
           <button type="button" className="shrink-0" aria-label="重试" onClick={() => void refreshThreads()}>
-            <RefreshCw size={13} />
+            <RotateCw size={13} />
           </button>
         </div>
       )}

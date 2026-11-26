@@ -3,6 +3,7 @@ import type { SshAuth, SshTarget, SshTargetInput } from '../../../shared/backend
 import type { ConnectCredentials } from '../store/targets'
 import { useTargets } from '../store/targets'
 import { friendlyError } from '../lib/errors'
+import { Select } from './primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from './ui'
 import { Folder } from 'lucide-react'
 
@@ -143,12 +144,16 @@ export function TargetForm({
         </div>
         <input className="qn-input" placeholder="用户名" value={draft.username}
           onChange={(e) => patch({ username: e.target.value })} />
-        <select className="qn-input" value={draft.authKind}
-          onChange={(e) => patch({ authKind: e.target.value as Draft['authKind'] })}>
-          <option value="password">密码</option>
-          <option value="key">私钥文件</option>
-          <option value="agent">ssh-agent</option>
-        </select>
+        <Select
+          aria-label="认证方式"
+          value={draft.authKind}
+          onValueChange={(value) => patch({ authKind: value as Draft['authKind'] })}
+          options={[
+            { value: 'password', label: '密码' },
+            { value: 'key', label: '私钥文件' },
+            { value: 'agent', label: 'ssh-agent' },
+          ]}
+        />
         {draft.authKind === 'key' && (
           <div className="flex gap-2">
             <input className="qn-input min-w-0 flex-1" placeholder="私钥路径" value={draft.keyPath}

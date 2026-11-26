@@ -1,11 +1,10 @@
-<!-- QingCode Next 应用图标母版（扁平版）：纯色青底 + 单色白色 ">_" 终端提示符。
-     512 画布、圆角 112；线条统一 46px 圆头圆角，字形整体居中并留足边距，16px 任务栏下仍清晰。
-     与旧版 QingCode（深底）靠青色底区分。改动后运行 pnpm icons 重新生成各平台图标，
-     并同步 apps/desktop/src/renderer/src/components/shell/Logo.tsx。 -->
+<!-- QingCode Next 应用图标母版：沿用旧版 QingCode 的炭黑底 + 厚切尖括号 + 光标横条，做扁平精修。
+     512 画布、圆角 112；尖括号收窄并整体居中留白，横条变细与尖括号同宽，转角统一小圆角；
+     底块加一圈极淡描边，避免在深色任务栏 / 进场页上糊成一片。
+     改动后运行 pnpm icons 重新生成各平台图标，并同步 Logo.tsx 与 index.html 进场页里的内联 SVG。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="112" fill="#13A68E"/>
-  <g stroke="#FFFFFF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M150 168L242 256L150 344"/>
-    <path d="M282 344H366"/>
-  </g>
+  <rect width="512" height="512" rx="112" fill="#1C1F22"/>
+  <rect x="4" y="4" width="504" height="504" rx="108" stroke="#33383D" stroke-width="8"/>
+  <path d="M136 112H252L372 214L252 316H136L256 214Z" fill="#F3F4F6" stroke="#F3F4F6" stroke-width="14" stroke-linejoin="round"/>
+  <rect x="136" y="358" width="236" height="46" rx="8" fill="#4ECDB5"/>
 </svg>

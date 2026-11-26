@@ -4,7 +4,7 @@ import {
   ChevronRight,
   FileText,
   GitCommitHorizontal,
-  RefreshCw,
+  RotateCw,
 } from 'lucide-react'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -68,7 +68,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
       <div className="flex shrink-0 items-center justify-between border-b border-qn-border px-2 py-1.5">
         <span className="text-[12px] text-qn-muted">提交历史</span>
         <IconButton label="刷新历史" className="h-7 w-7" onClick={() => void refresh(targetId, cwd)}>
-          <RefreshCw size={13} className={state?.loading ? 'animate-spin' : ''} />
+          <RotateCw size={13} className={state?.loading ? 'animate-spin' : ''} />
         </IconButton>
       </div>
 
@@ -94,7 +94,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
             <div key={item.hash} className="mb-0.5">
               <button
                 type="button"
-                className="flex w-full items-start gap-1.5 rounded px-2 py-1.5 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+                className="flex w-full items-start gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
                 onClick={() => void toggle(item.hash)}
                 title={item.hash}
               >
@@ -124,7 +124,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
                       <button
                         key={file.path}
                         type="button"
-                        className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[11px] outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+                        className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[11px] outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
                         title={`查看 ${shortHash(item.hash)} 中的差异`}
                         onClick={() =>
                           openDiff({
@@ -155,7 +155,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
         {state?.hasMore && !state.logLoading && (
           <button
             type="button"
-            className="mx-2 my-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[12px] text-qn-muted hover:bg-qn-hover"
+            className="mx-2 my-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[12px] text-qn-muted hover:bg-qn-hover"
             onClick={() => void loadMore(targetId, cwd)}
           >
             <GitCommitHorizontal size={13} /> 加载更多

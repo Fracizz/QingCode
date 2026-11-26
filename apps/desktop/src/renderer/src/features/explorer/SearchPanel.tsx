@@ -111,7 +111,7 @@ export function SearchPanel({
                   {highlightParts(hit.text ?? '', query, caseSensitive).map((part, partIndex) => (
                     <span
                       key={partIndex}
-                      className={part.hit ? 'rounded bg-qn-warn/30 text-qn-warn' : undefined}
+                      className={part.hit ? 'rounded-sm bg-qn-warn/30 text-qn-warn' : undefined}
                     >
                       {part.text}
                     </span>

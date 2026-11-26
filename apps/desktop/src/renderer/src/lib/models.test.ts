@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   contextUsage,
+  effortHint,
   effortLabel,
   fastTier,
   filterModels,
+  localizeModelDescription,
   formatTokens,
   parsePrefs,
   resolveSelection,
@@ -66,11 +68,25 @@ describe('filterModels', () => {
 })
 
 describe('effortLabel / fastTier', () => {
-  it('常见强度用短标签', () => {
-    expect(effortLabel('medium')).toBe('Med')
-    expect(effortLabel('xhigh')).toBe('XHigh')
+  it('常见强度用中文短标签，未知档位首字母大写', () => {
+    expect(effortLabel('medium')).toBe('中')
+    expect(effortLabel('xhigh')).toBe('超高')
     expect(effortLabel('turbo')).toBe('Turbo')
     expect(effortLabel(null)).toBe('')
+  })
+
+  it('强度说明用中文，未知档位回落原文', () => {
+    expect(effortHint('high', 'Deeper reasoning')).toMatch(/复杂问题/)
+    expect(effortHint('turbo', 'Turbo mode')).toBe('Turbo mode')
+  })
+
+  it('模型说明中文化', () => {
+    expect(localizeModelDescription('Fast, go-to model for coding and everyday work.')).toBe('速度快，日常编码与常规工作的首选')
+    expect(localizeModelDescription('Our most capable model for complex coding and professional work.')).toBe('能力最强，适合复杂编码与专业工作')
+    expect(localizeModelDescription('A smaller, cost-efficient model')).toMatch(/轻量/)
+    expect(localizeModelDescription('已是中文')).toBe('已是中文')
+    expect(localizeModelDescription('Something else entirely')).toBe('Something else entirely')
+    expect(localizeModelDescription('')).toBe('')
   })
 
   it('识别加速档位', () => {
@@ -84,7 +100,7 @@ describe('resolveSelection', () => {
     const s = resolveSelection(models, { model: null, effort: null, fast: false })
     expect(s.model?.id).toBe('sol')
     expect(s.effort).toBe('medium')
-    expect(triggerLabel(s)).toBe('6.2 Sol Med')
+    expect(triggerLabel(s)).toBe('6.2 Sol · 中')
   })
 
   it('强度不被支持时回落到模型默认', () => {

@@ -16,7 +16,7 @@ import {
   LoaderCircle,
   Minus,
   Plus,
-  RefreshCw,
+  RotateCw,
   RotateCcw,
   Search,
 } from 'lucide-react'
@@ -286,7 +286,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <ArrowUp size={14} />
           </IconButton>
           <IconButton label="刷新" className="h-7 w-7" disabled={state?.loading} onClick={() => void refresh(targetId, cwd)}>
-            <RefreshCw size={14} className={state?.loading ? 'animate-spin' : ''} />
+            <RotateCw size={14} className={state?.loading ? 'animate-spin' : ''} />
           </IconButton>
         </div>
       </div>
@@ -403,7 +403,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                       return (
                         <div
                           key={`${group.key}:${file.path}`}
-                          className="group flex items-center gap-1 rounded px-2 py-1 hover:bg-qn-hover"
+                          className="group flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-qn-hover"
                           onContextMenu={(event) => {
                             event.preventDefault()
                             const rect = rootRef.current?.getBoundingClientRect()
@@ -477,7 +477,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
 
       {menu && (
         <div
-          className="absolute z-30 w-44 rounded-lg border border-qn-border-strong bg-qn-elevated p-1 text-[12px] shadow-xl"
+          className="qn-surface-float absolute z-30 w-44 p-1 text-[12px]"
           style={{
             left: Math.max(0, Math.min(menu.x, (rootRef.current?.clientWidth ?? 400) - 180)),
             top: menu.y,
@@ -486,7 +486,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         >
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-qn-hover"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-qn-hover"
             onClick={() => {
               openFile({ targetId, path: joinRepoPath(root, menu.file.path) })
               setMenu(null)
@@ -496,7 +496,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-qn-hover"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-qn-hover"
             onClick={() => {
               void copyText(joinRepoPath(root, menu.file.path))
               setMenu(null)
@@ -506,7 +506,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-qn-hover"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-qn-hover"
             onClick={() => {
               openRowDiff(menu.file, menu.group)
               setMenu(null)

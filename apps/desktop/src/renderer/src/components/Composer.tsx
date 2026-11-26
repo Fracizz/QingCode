@@ -250,7 +250,7 @@ export function Composer({
                 <span className="truncate">{slash.skill.name}</span>
                 <button
                   type="button"
-                  className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-qn-brand/20"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-md hover:bg-qn-brand/20"
                   aria-label="移除技能"
                   onClick={() => slash.onSkillChange(null)}
                 >
@@ -341,7 +341,7 @@ function AttachmentChip({ item, onRemove }: { item: Attachment; onRemove: () => 
       )}
       title={item.targetPath ?? item.localPath ?? item.name}
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-qn-accent/12 text-qn-accent">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-qn-accent/12 text-qn-accent">
         <FileText size={16} />
       </span>
       <span className="min-w-0 text-[12px] leading-4">
@@ -373,7 +373,7 @@ function SlashMenu({
 
   return (
     <div
-      className="qn-no-drag qn-pop absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-xl border border-qn-border-strong bg-qn-elevated shadow-[0_12px_40px_rgba(0,0,0,0.45)]"
+      className="qn-no-drag qn-pop qn-surface-float absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden"
       role="listbox"
       aria-label="命令与技能"
     >
@@ -401,7 +401,7 @@ function SlashMenu({
           >
             <span
               className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
                 item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-white/[0.06] text-qn-muted',
               )}
             >

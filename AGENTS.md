@@ -1,6 +1,6 @@
 # QingCode Next — 开发约定（给所有 Agent）
 
-先读 `docs/mvp.md`（架构、协议、接口的唯一依据）。旧项目 `D:\code\qingcode` 只读参考，**不得修改**。
+先读 `docs/mvp.md`（架构、协议、接口的唯一依据）。涉及 Codex / Claude 等 Agent 的改动必须同时遵守 `docs/agent-adapters.md`（合规红线，优先于 mvp）。旧项目 `D:\code\qingcode` 只读参考，**不得修改**。
 
 ## 工作方式
 

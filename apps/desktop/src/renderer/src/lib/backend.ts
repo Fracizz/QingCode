@@ -136,8 +136,15 @@ if (typeof window !== 'undefined') {
   })
 
   // preload 的转发若早于页面监听器注册，主动请 main 重建一次通道。
-  fallbackTimer = setTimeout(() => {
-    fallbackTimer = null
-    if (!port) window.qn?.requestPort()
-  }, 200)
+  // main 在 did-finish-load（≈ 页面 load）后才投递 port，所以兜底计时要从 load 起算：
+  // 早先从模块执行起算 200ms，包体变大后 load 晚于 200ms，会多建一条通道，
+  // 第二个 port 到达时把已在途的启动请求全部以 port_replaced 拒掉（侧栏"通信通道已重建"）。
+  const scheduleFallback = () => {
+    fallbackTimer = setTimeout(() => {
+      fallbackTimer = null
+      if (!port) window.qn?.requestPort()
+    }, 600)
+  }
+  if (document.readyState === 'complete') scheduleFallback()
+  else window.addEventListener('load', scheduleFallback, { once: true })
 }

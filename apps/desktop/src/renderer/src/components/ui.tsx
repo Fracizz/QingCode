@@ -1,6 +1,6 @@
 import type { ComponentPropsWithRef, ReactNode } from 'react'
-import { CircleAlert, LoaderCircle, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import { Check, CircleAlert, LoaderCircle, X } from 'lucide-react'
+import { Checkbox as RadixCheckbox, Dialog } from 'radix-ui'
 import { cn } from '../lib/cn'
 import { Tip } from './primitives'
 
@@ -9,17 +9,25 @@ export function IconButton({
   children,
   danger,
   tooltip = true,
+  size = 'md',
   className,
   ref,
   ...props
-}: ComponentPropsWithRef<'button'> & { label: string; danger?: boolean; tooltip?: boolean }) {
+}: ComponentPropsWithRef<'button'> & {
+  label: string
+  danger?: boolean
+  tooltip?: boolean
+  /** md：32px 方钮（工具栏、标题栏）；sm：24px（面板头、行内操作）。 */
+  size?: 'sm' | 'md'
+}) {
   const button = (
     <button
       ref={ref}
       type="button"
       aria-label={label}
       className={cn(
-        'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent disabled:opacity-40',
+        'inline-flex shrink-0 items-center justify-center text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent disabled:opacity-40',
+        size === 'sm' ? 'h-6 w-6 rounded-md' : 'h-8 w-8 rounded-lg',
         danger && 'hover:text-qn-danger',
         className,
       )}
@@ -171,15 +179,19 @@ export function Checkbox({
   children: ReactNode
   disabled?: boolean
 }) {
+  // Radix Checkbox：原生复选框在暗色主题下是系统样式，和其它控件对不齐。
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-[13px] text-qn-text">
-      <input
-        type="checkbox"
-        className="h-4 w-4 accent-qn-accent"
+    <label className={cn('flex items-center gap-2 text-[13px] text-qn-text', disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer')}>
+      <RadixCheckbox.Root
         checked={checked}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />
+        onCheckedChange={(value) => onChange(value === true)}
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-border-strong bg-[#161616] text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
+      >
+        <RadixCheckbox.Indicator>
+          <Check size={12} strokeWidth={3} />
+        </RadixCheckbox.Indicator>
+      </RadixCheckbox.Root>
       <span>{children}</span>
     </label>
   )

@@ -39,7 +39,7 @@ export function TitleBar() {
       <div className="ml-1.5 flex items-center gap-2">
         <Logo size={16} />
         <span className="font-semibold tracking-wide text-qn-text">QingCode</span>
-        <span className="rounded border border-qn-brand/40 px-1 text-[11px] leading-4 text-qn-brand">Next</span>
+        <span className="rounded-md border border-qn-brand/40 px-1 text-[11px] leading-4 text-qn-brand">Next</span>
       </div>
 
       <div className="flex-1" />
