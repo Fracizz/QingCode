@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13+ 主题图标：单色轮廓，由系统着色 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.175"
+        android:scaleY="0.175"
+        android:translateX="9.2"
+        android:translateY="10.16">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M108,344h296a12,12 0,0 1,12 12v40a12,12 0,0 1,-12 12h-296a12,12 0,0 1,-12 -12v-40a12,12 0,0 1,12 -12zM130,93H262Q264,93 267,95L385,194Q389,197 385,200L267,299Q264,301 262,301H130Q124,301 128,297L247,197L128,97Q124,93 130,93Z" />
+    </group>
+</vector>

@@ -1,0 +1,143 @@
+import {
+  isBackendEventMessage,
+  isBackendResponse,
+  type BackendEvent,
+  type BackendEvents,
+  type BackendMethod,
+  type BackendParams,
+  type BackendResult,
+  type TypedRequest,
+} from '../../../shared/backendApi'
+
+export class BackendCallError extends Error {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
+    super(message)
+    this.name = 'BackendCallError'
+  }
+}
+
+type Pending = {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+}
+
+const pending = new Map<number, Pending>()
+const listeners = new Map<string, Set<(payload: unknown) => void>>()
+const waiters: Array<(port: MessagePort) => void> = []
+let port: MessagePort | null = null
+let nextId = 1
+let fallbackTimer: ReturnType<typeof setTimeout> | null = null
+
+function usePort(next: MessagePort): void {
+  if (port && port !== next) {
+    for (const request of pending.values()) {
+      request.reject(new BackendCallError('port_replaced', 'backend 通道已重建，请重试'))
+    }
+    pending.clear()
+    try {
+      port.close()
+    } catch {
+      // 旧通道可能已关闭。
+    }
+  }
+  port = next
+  next.onmessage = (event) => handle(event.data as unknown)
+  next.start()
+  for (const waiter of waiters.splice(0)) waiter(next)
+}
+
+function handle(data: unknown): void {
+  if (isBackendResponse(data)) {
+    const request = pending.get(data.id)
+    if (!request) return
+    pending.delete(data.id)
+    if (data.ok) request.resolve(data.result)
+    else request.reject(new BackendCallError(String(data.error.code), data.error.message))
+    return
+  }
+  if (isBackendEventMessage(data)) {
+    const bucket = listeners.get(data.name)
+    if (!bucket) return
+    for (const cb of [...bucket]) {
+      try {
+        cb(data.payload)
+      } catch (err) {
+        console.error('[backend] 事件回调失败', err)
+      }
+    }
+  }
+}
+
+function ensurePort(): Promise<MessagePort> {
+  if (port) return Promise.resolve(port)
+  return new Promise((resolve) => waiters.push(resolve))
+}
+
+/** 进场页据此区分"等待后台通道"与"加载数据"两个阶段。 */
+export function whenBackendReady(): Promise<void> {
+  return ensurePort().then(() => undefined)
+}
+
+export function call<M extends BackendMethod>(
+  method: M,
+  ...args: BackendParams<M> extends void ? [] : [params: BackendParams<M>]
+): Promise<BackendResult<M>> {
+  const params = args[0] as BackendParams<M> | undefined
+  return ensurePort().then(
+    (active) =>
+      new Promise<BackendResult<M>>((resolve, reject) => {
+        const id = nextId++
+        pending.set(id, {
+          resolve: resolve as (value: unknown) => void,
+          reject,
+        })
+        const message: TypedRequest<M> = {
+          t: 'req',
+          id,
+          method,
+          params: params as BackendParams<M>,
+        }
+        active.postMessage(message)
+      })
+  )
+}
+
+export function on<N extends BackendEvent>(
+  name: N,
+  cb: (payload: BackendEvents[N]) => void
+): () => void {
+  let bucket = listeners.get(name)
+  if (!bucket) {
+    bucket = new Set()
+    listeners.set(name, bucket)
+  }
+  const listener = cb as (payload: unknown) => void
+  bucket.add(listener)
+  return () => {
+    listeners.get(name)?.delete(listener)
+  }
+}
+
+// vitest 在 Node 下加载纯逻辑模块时没有 window，避免副作用报错。
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (event) => {
+    // preload 在隔离世界转发，event.source 在不同 Electron 版本下可能不是 window。
+    if (event.data !== 'qn-backend-port') return
+    const transferred = event.ports[0]
+    if (!transferred) return
+    usePort(transferred)
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer)
+      fallbackTimer = null
+    }
+  })
+
+  // preload 的转发若早于页面监听器注册，主动请 main 重建一次通道。
+  fallbackTimer = setTimeout(() => {
+    fallbackTimer = null
+    if (!port) window.qn?.requestPort()
+  }, 200)
+}

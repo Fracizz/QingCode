@@ -1,0 +1,227 @@
+import { LOCAL_TARGET } from '../shared/backendApi'
+import { describe, expect, it, vi } from 'vitest'
+import { RouterError } from './router'
+import { TargetManager, retryDelay } from './targets'
+import type { LinkHooks, LocalLinkContext, SshLinkContext, TargetLink } from './types'
+
+class FakeLink implements TargetLink {
+  readonly requests: Array<{ method: string; params?: unknown }> = []
+  readonly sent: unknown[] = []
+  closed = false
+
+  async request(method: string, params?: unknown): Promise<unknown> {
+    this.requests.push({ method, params })
+    return { method, params }
+  }
+
+  codexSend(msg: unknown): void {
+    this.sent.push(msg)
+  }
+
+  close(): void {
+    this.closed = true
+  }
+}
+
+interface Harness {
+  manager: TargetManager
+  links: FakeLink[]
+  hooks: LinkHooks[]
+  emitted: Array<{ name: string; payload: unknown }>
+  responded: Array<[string, boolean]>
+}
+
+function harness(): Harness {
+  const links: FakeLink[] = []
+  const hooks: LinkHooks[] = []
+  const emitted: Array<{ name: string; payload: unknown }> = []
+  const responded: Array<[string, boolean]> = []
+  const local = async (ctx: LocalLinkContext): Promise<TargetLink> => {
+    hooks.push(ctx.hooks)
+    const link = new FakeLink()
+    links.push(link)
+    return link
+  }
+  const ssh = async (ctx: SshLinkContext): Promise<TargetLink> => {
+    hooks.push(ctx.hooks)
+    const link = new FakeLink()
+    links.push(link)
+    return link
+  }
+  const manager = new TargetManager({
+    userData: '',
+    resourcesPath: '',
+    electronPath: '',
+    appVersion: '9.9.9',
+    emit: (name, payload) => emitted.push({ name, payload }),
+    createLocal: local,
+    createSsh: ssh,
+    gate: {
+      verify: async () => true,
+      respond: (promptId, accept) => {
+        responded.push([promptId, accept])
+        return true
+      },
+      close: () => {},
+    },
+  })
+  return { manager, links, hooks, emitted, responded }
+}
+
+describe('retryDelay', () => {
+  it('1s 起指数退避并封顶 30s', () => {
+    expect([0, 1, 2, 3, 4, 5, 6].map(retryDelay)).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000])
+  })
+})
+
+describe('TargetManager', () => {
+  it('连接本机、透传 req/codex.send、给事件加 targetId、断开后不重连', async () => {
+    const { manager, links, hooks, emitted } = harness()
+    await manager.connect(LOCAL_TARGET, {})
+    expect(manager.getState('local')).toBe('ready')
+    await manager.waitUntilReady('local', 100)
+    const link = links[0]
+    expect(link).toBeDefined()
+    expect(await manager.request('local', 'ping')).toEqual({ method: 'ping', params: undefined })
+    manager.codexSend('local', { id: 1, method: 'thread/list' })
+    expect(link?.requests).toEqual([{ method: 'ping', params: undefined }])
+    expect(link?.sent).toEqual([{ id: 1, method: 'thread/list' }])
+
+    hooks[0]?.onEvent('codex.exited', { code: 1 })
+    hooks[0]?.onCodexRecv(5, { method: 'turn/started' }, 'codex')
+    expect(emitted).toContainEqual({
+      name: 'server.evt',
+      payload: { targetId: 'local', name: 'codex.exited', payload: { code: 1 } },
+    })
+    expect(emitted).toContainEqual({
+      name: 'codex.recv',
+      payload: { targetId: 'local', agent: 'codex', seq: 5, msg: { method: 'turn/started' } },
+    })
+    expect(emitted).toContainEqual({ name: 'target.state', payload: { id: 'local', state: 'ready' } })
+
+    manager.disconnect('local')
+    expect(manager.getState('local')).toBe('idle')
+    expect(link?.closed).toBe(true)
+    expect(links).toHaveLength(1)
+    manager.shutdown()
+  })
+
+  it('codex.open 过的目标重连后自动 codex.attach{sinceSeq:lastSeq}', async () => {
+    vi.useFakeTimers()
+    const { manager, links, hooks, emitted } = harness()
+    try {
+      await manager.connect(LOCAL_TARGET, {})
+      await manager.request('local', 'codex.open', {})
+      hooks[0]?.onCodexRecv(7, { method: 'turn/completed' }, 'codex')
+      hooks[0]?.onClose(new Error('连接中断'))
+      expect(manager.getState('local')).toBe('error')
+      expect(emitted.some((e) => e.name === 'target.state' &&
+        (e.payload as { detail?: string }).detail === '连接中断')).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(links).toHaveLength(2)
+      expect(links[1]?.requests[0]).toEqual({ method: 'codex.attach', params: { sinceSeq: 7 } })
+      expect(manager.getState('local')).toBe('ready')
+      expect(emitted).toContainEqual({
+        name: 'target.state',
+        payload: { id: 'local', state: 'connecting', detail: '重新连接（第 1 次）' },
+      })
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
+  })
+
+  it('未 open 过 codex 的目标重连不 attach；disconnect 会取消退避', async () => {
+    vi.useFakeTimers()
+    const { manager, links, hooks } = harness()
+    try {
+      await manager.connect(LOCAL_TARGET, {})
+      hooks[0]?.onClose()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(links).toHaveLength(2)
+      expect(links[1]?.requests).toEqual([])
+
+      hooks[1]?.onClose()
+      manager.disconnect('local')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(links).toHaveLength(2)
+      expect(manager.getState('local')).toBe('idle')
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
+  })
+
+  it('未连接时请求报 not_connected，hostKey.respond 转给 gate', async () => {
+    const { manager, responded } = harness()
+    await expect(manager.request('missing', 'ping')).rejects.toMatchObject({ code: 'not_connected' })
+    expect(() => manager.codexSend('missing', null)).toThrow(RouterError)
+    manager.respondHostKey('p1', true)
+    expect(responded).toEqual([['p1', true]])
+    manager.shutdown()
+  })
+
+  it('首次连接失败停在 error，不自动重试（避免拒绝主机指纹后反复弹窗）', async () => {
+    vi.useFakeTimers()
+    const links: FakeLink[] = []
+    const emitted: Array<{ name: string; payload: unknown }> = []
+    const manager = new TargetManager({
+      userData: '',
+      resourcesPath: '',
+      electronPath: '',
+      appVersion: '',
+      emit: (name, payload) => emitted.push({ name, payload }),
+      createLocal: async () => {
+        throw new Error('本机 daemon 未就绪')
+      },
+    })
+    try {
+      await manager.connect(LOCAL_TARGET, {})
+      expect(manager.getState('local')).toBe('error')
+      expect(emitted.some((e) => e.name === 'target.state' &&
+        (e.payload as { detail?: string }).detail === '本机 daemon 未就绪')).toBe(true)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(links).toHaveLength(0)
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
+  })
+
+  it('已建立连接断开后，重试失败仍按退避继续重试', async () => {
+    vi.useFakeTimers()
+    const links: FakeLink[] = []
+    const hooks: LinkHooks[] = []
+    let attempts = 0
+    const manager = new TargetManager({
+      userData: '',
+      resourcesPath: '',
+      electronPath: '',
+      appVersion: '',
+      emit: () => {},
+      createLocal: async (ctx) => {
+        attempts++
+        // 第二次（第一次重连）模拟远端仍不可用，第三次恢复。
+        if (attempts === 2) throw new Error('远端暂不可用')
+        hooks.push(ctx.hooks)
+        const link = new FakeLink()
+        links.push(link)
+        return link
+      },
+    })
+    try {
+      await manager.connect(LOCAL_TARGET, {})
+      expect(manager.getState('local')).toBe('ready')
+      hooks[0]?.onClose(new Error('连接中断'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(manager.getState('local')).toBe('error')
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(links).toHaveLength(2)
+      expect(manager.getState('local')).toBe('ready')
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
+  })
+})

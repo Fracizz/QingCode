@@ -1,0 +1,17 @@
+packages:
+  - packages/*
+  - apps/*
+# pnpm 11：显式列出允许/拒绝运行安装脚本的依赖。
+# electron 二进制由 scripts/deps-via-1087.sh 经 10.87 中转后解压，不跑它的 postinstall 下载。
+# ssh2 / cpu-features 的原生加速模块是可选的，缺失时 ssh2 走纯 JS 实现。
+allowBuilds:
+  esbuild: true
+  electron: false
+  ssh2: false
+  cpu-features: false
+  electron-winstaller: false
+# 依赖只经 scripts/deps-via-1087.sh 安装；pnpm exec/run 不得自动触发联网安装。
+verifyDepsBeforeRun: false
+# app-builder-lib 26.18 需要 @electron/get >=3.1（ElectronDownloadCacheMode）
+overrides:
+  "@electron/get": ^3.1.0

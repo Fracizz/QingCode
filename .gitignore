@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+release/
+.dev/
+*.log
+*.tsbuildinfo
+apps/desktop/resources/server/
+.deps-stage/
+apps/mobile/android/.debug.keystore
+apps/mobile/release/
+apps/mobile/android/build/
+apps/mobile/android/assets/web/
+.qingcode/

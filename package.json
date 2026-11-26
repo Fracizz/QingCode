@@ -1,0 +1,25 @@
+{
+  "name": "qingcode-next",
+  "private": true,
+  "version": "0.0.1",
+  "packageManager": "pnpm@11.15.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "build:server": "pnpm --filter @qn/server build",
+    "dev": "pnpm build:server && pnpm --filter @qn/desktop dev",
+    "build": "pnpm build:server && pnpm --filter @qn/desktop build",
+    "package": "pnpm build && pnpm --filter @qn/desktop package",
+    "check": "pnpm typecheck && pnpm test",
+    "icons": "electron scripts/render-icons.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.0"
+  }
+}

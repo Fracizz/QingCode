@@ -1,0 +1,39 @@
+{
+  "name": "@qn/desktop",
+  "private": true,
+  "version": "0.0.1",
+  "productName": "QingCode Next",
+  "description": "QingCode Next desktop",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@qn/codex-client": "workspace:*",
+    "@qn/protocol": "workspace:*",
+    "ssh2": "^1.17.0",
+    "selfsigned": "^5.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ssh2": "^1.15.6",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "45.5.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "lucide-react": "^1.70.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.3.5",
+    "vite": "^8.3.8",
+    "zustand": "^5.1.0"
+  }
+}

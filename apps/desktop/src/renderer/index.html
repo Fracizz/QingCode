@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QingCode Next</title>
+    <!-- 进场页样式必须内联：开发态 Vite 由 JS 注入 CSS，主包解析前也要能立即绘制。CSP 禁止内联脚本，所以这里只有样式。 -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #141414;
+      }
+      .qn-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        /* 底色与系统窗口按钮的 titleBarOverlay 颜色一致，右上角不出现色块。 */
+        background: #141414;
+        color: #e6e6e6;
+        font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+        user-select: none;
+        -webkit-app-region: drag;
+        transition:
+          opacity 360ms ease,
+          transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+          filter 360ms ease;
+      }
+      .qn-splash--leave {
+        opacity: 0;
+        transform: scale(1.03);
+        filter: blur(6px);
+        pointer-events: none;
+      }
+      .qn-splash__glow {
+        position: absolute;
+        left: 50%;
+        top: 44%;
+        width: 560px;
+        height: 560px;
+        margin: -280px 0 0 -280px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(78, 205, 181, 0.16) 0%, rgba(78, 205, 181, 0.05) 38%, rgba(78, 205, 181, 0) 68%);
+        animation:
+          qn-splash-fade 900ms ease-out both,
+          qn-splash-breathe 3.2s 900ms ease-in-out infinite;
+      }
+      .qn-splash__grid {
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 44px 44px;
+        mask-image: radial-gradient(ellipse at 50% 45%, #000 0%, transparent 62%);
+        animation: qn-splash-fade 1200ms ease-out both;
+      }
+      .qn-splash__inner {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .qn-splash__logo {
+        width: 92px;
+        height: 92px;
+        overflow: visible;
+        filter: drop-shadow(0 10px 28px rgba(78, 205, 181, 0.28));
+      }
+      .qn-splash__logo * {
+        transform-box: fill-box;
+      }
+      .qn-splash__tile {
+        transform-origin: center;
+        animation: qn-splash-tile 620ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+      }
+      .qn-splash__chevron {
+        animation: qn-splash-chevron 480ms 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .qn-splash__cursor {
+        transform-origin: left center;
+        animation:
+          qn-splash-cursor 420ms 400ms cubic-bezier(0.22, 1, 0.36, 1) both,
+          qn-splash-blink 1.1s 1000ms steps(1, end) infinite;
+      }
+      .qn-splash__title {
+        margin-top: 26px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        animation: qn-splash-rise 520ms 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .qn-splash__title span {
+        margin-left: 6px;
+        color: #4ecdb5;
+        font-weight: 500;
+      }
+      .qn-splash__tagline {
+        margin-top: 8px;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        color: rgba(230, 230, 230, 0.48);
+        animation: qn-splash-rise 520ms 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .qn-splash__bar {
+        position: relative;
+        width: 168px;
+        height: 2px;
+        margin-top: 30px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(78, 205, 181, 0.14);
+        animation: qn-splash-rise 520ms 520ms ease-out both;
+      }
+      .qn-splash__bar span {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 40%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgba(78, 205, 181, 0), #4ecdb5 40%, #6ee7ce 60%, rgba(110, 231, 206, 0));
+        animation: qn-splash-slide 1.15s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+      }
+      .qn-splash--ready .qn-splash__bar span {
+        width: 100%;
+        background: #4ecdb5;
+        animation: qn-splash-fill 260ms ease-out both;
+      }
+      .qn-splash__status {
+        min-height: 16px;
+        margin-top: 12px;
+        font-size: 12px;
+        color: rgba(230, 230, 230, 0.42);
+        animation: qn-splash-rise 520ms 600ms ease-out both;
+      }
+      .qn-splash__foot {
+        position: absolute;
+        bottom: 22px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: rgba(230, 230, 230, 0.26);
+        animation: qn-splash-fade 600ms 700ms ease-out both;
+      }
+      @keyframes qn-splash-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes qn-splash-breathe {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.08); opacity: 0.72; }
+      }
+      @keyframes qn-splash-tile {
+        from { opacity: 0; transform: scale(0.72) rotate(-6deg); }
+        to { opacity: 1; transform: scale(1) rotate(0); }
+      }
+      @keyframes qn-splash-chevron {
+        from { opacity: 0; transform: translateX(-46px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes qn-splash-cursor {
+        from { opacity: 0; transform: scaleX(0); }
+        to { opacity: 1; transform: scaleX(1); }
+      }
+      @keyframes qn-splash-blink {
+        0%, 55% { opacity: 1; }
+        56%, 100% { opacity: 0.25; }
+      }
+      @keyframes qn-splash-rise {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes qn-splash-slide {
+        from { transform: translateX(-110%); }
+        to { transform: translateX(260%); }
+      }
+      @keyframes qn-splash-fill {
+        from { opacity: 0.4; }
+        to { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .qn-splash,
+        .qn-splash * {
+          animation: none !important;
+          transition: opacity 120ms ease !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="qn-splash" class="qn-splash" role="status" aria-live="polite" aria-label="QingCode Next 正在启动">
+      <div class="qn-splash__grid"></div>
+      <div class="qn-splash__glow"></div>
+      <div class="qn-splash__inner">
+        <!-- 与 branding/icon.svg 同一几何；拆成底块 / 尖括号 / 光标三层分别入场。 -->
+        <svg class="qn-splash__logo" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="qn-splash-bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#6EE7CE" />
+              <stop offset="1" stop-color="#1F9C88" />
+            </linearGradient>
+          </defs>
+          <rect class="qn-splash__tile" width="512" height="512" rx="112" fill="url(#qn-splash-bg)" />
+          <rect class="qn-splash__cursor" x="96" y="344" width="320" height="64" rx="12" fill="#F3F6F8" />
+          <path class="qn-splash__chevron" fill="#121415" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z" />
+        </svg>
+        <div class="qn-splash__title">QingCode<span>Next</span></div>
+        <div class="qn-splash__tagline">远程 CODEX · CLAUDE 编程工作台</div>
+        <div class="qn-splash__bar"><span></span></div>
+        <div class="qn-splash__status" id="qn-splash-status">正在启动</div>
+      </div>
+      <div class="qn-splash__foot" id="qn-splash-foot"></div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

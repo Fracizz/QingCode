@@ -1,0 +1,260 @@
+@import "tailwindcss";
+
+/* 色彩分层参考 Codex 桌面版石墨灰 + 旧版 QingCode 的"青轨"：
+   chrome（标题栏/状态栏）< bg（对话区）< sidebar < panel（卡片/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
+   brand 青色只表达产品身份与"当前上下文"（青轨、当前会话），accent 蓝色用于主操作、焦点与链接。 */
+@theme {
+  --color-qn-chrome: #141414;
+  --color-qn-bg: #181818;
+  --color-qn-sidebar: #1b1b1b;
+  --color-qn-panel: #1f1f1f;
+  --color-qn-elevated: #242424;
+  --color-qn-hover: #262626;
+  --color-qn-active: #2c2c2c;
+  --color-qn-border: #2a2a2a;
+  --color-qn-border-strong: #3a3a3a;
+  --color-qn-text: #e6e6e6;
+  --color-qn-muted: #939393;
+  --color-qn-dim: #6b6b6b;
+  --color-qn-brand: #4ecdb5;
+  --color-qn-accent: #4f8cff;
+  --color-qn-ok: #6fcf8f;
+  --color-qn-warn: #e2b55d;
+  --color-qn-danger: #ff6b63;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-qn-bg);
+  color: var(--color-qn-text);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.qn-input {
+  width: 100%;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 6px;
+  background: #161616;
+  color: var(--color-qn-text);
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.qn-input:focus {
+  border-color: var(--color-qn-accent);
+}
+
+.qn-button {
+  border-radius: 6px;
+  background: var(--color-qn-accent);
+  color: #fff;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.qn-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-qn-accent) 88%, white);
+}
+
+.qn-button-subtle {
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-qn-text);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.qn-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.qn-scroll::-webkit-scrollbar-thumb {
+  background: #3d3d3d;
+  border-radius: 4px;
+}
+
+.qn-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.qn-button-subtle:hover:not(:disabled) {
+  background: var(--color-qn-hover);
+}
+
+/* ---------- 外壳 ---------- */
+
+/* 自绘标题栏：整条可拖动窗口，交互控件挖空。 */
+.qn-drag {
+  -webkit-app-region: drag;
+}
+
+.qn-drag button,
+.qn-drag a,
+.qn-drag input,
+.qn-drag select,
+.qn-drag [data-no-drag],
+.qn-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 系统窗口按钮（titleBarOverlay）占位：支持 Window Controls Overlay 时用精确值，否则按 Windows 三个按钮 46px 估算。 */
+.qn-wco-spacer {
+  flex: none;
+  width: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)));
+}
+
+.qn-traffic-spacer {
+  flex: none;
+  width: 76px;
+}
+
+/* 进场页淡出时主界面分区错峰入场。 */
+.qn-shell[data-entered="false"] .qn-enter {
+  opacity: 0;
+}
+
+.qn-shell[data-entered="true"] .qn-enter {
+  animation: qn-enter 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--qn-enter-order, 0) * 70ms);
+}
+
+@keyframes qn-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.qn-pop {
+  animation: qn-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+}
+
+@keyframes qn-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 侧栏拖宽手柄：平时不可见，悬停/拖动时显示一条青色细线。 */
+.qn-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.qn-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.qn-resizer:hover::after,
+.qn-resizer[data-active="true"]::after {
+  background: color-mix(in srgb, var(--color-qn-brand) 70%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qn-shell[data-entered="true"] .qn-enter,
+  .qn-pop {
+    animation: none;
+  }
+}
+
+.qn-pre {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  white-space: pre;
+  border: 1px solid var(--color-qn-border);
+  border-radius: 4px;
+  background: #121212;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.qn-pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.qn-markdown > :first-child {
+  margin-top: 0;
+}
+
+.qn-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.qn-markdown p,
+.qn-markdown ul,
+.qn-markdown ol,
+.qn-markdown blockquote {
+  margin: 0.4rem 0;
+}
+
+.qn-markdown ul {
+  list-style: disc;
+  padding-left: 1.4rem;
+}
+
+.qn-markdown ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+}
+
+.qn-markdown h1,
+.qn-markdown h2,
+.qn-markdown h3,
+.qn-markdown h4 {
+  margin: 0.7rem 0 0.3rem;
+  font-weight: 600;
+}
+
+.qn-markdown blockquote {
+  border-left: 2px solid var(--color-qn-border);
+  padding-left: 0.6rem;
+  color: var(--color-qn-muted);
+}
+
+.qn-markdown hr {
+  border-color: var(--color-qn-border);
+  margin: 0.6rem 0;
+}
