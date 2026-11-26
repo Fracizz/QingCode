@@ -69,9 +69,9 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
-  // 手机屏幕小，推理过程不展示，只保留回复、命令和改动。
+  // 手机屏幕小，推理和命令过程不展示，只保留对话、改动等结果。
   const shownItems = useMemo(
-    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
+    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning' && item.kind !== 'command'),
     [items, view?.error, running],
   )
   // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
