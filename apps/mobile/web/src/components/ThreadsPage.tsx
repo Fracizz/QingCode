@@ -1,5 +1,5 @@
 import { ChevronRight, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
 import { defaultAgentFor, targetAgents, unavailableAgents, useApp } from '../store'
 import type { AgentKind } from '../types'
@@ -80,6 +80,17 @@ export function ThreadsPage() {
   const openThread = useApp((s) => s.openThread)
   const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
+  // 从对话页返回时列表可能还是空的且尚未开始刷新；先拉一次，拿到结果前不显示「还没有会话」。
+  const [settled, setSettled] = useState(threads.length > 0)
+  const sawLoading = useRef(false)
+  useEffect(() => {
+    if (threads.length === 0 && !loading) void refreshThreads()
+    // 只在进入页面时补拉一次
+  }, [])
+  useEffect(() => {
+    if (loading) sawLoading.current = true
+    else if (sawLoading.current || threads.length > 0 || threadsError) setSettled(true)
+  }, [loading, threads.length, threadsError])
 
   const project = projects.find((item) => item.id === selectedProjectId)
   const agents = targetAgents({ agentSettings }, selectedTargetId)
@@ -128,8 +139,8 @@ export function ThreadsPage() {
             ))
         )}
         {threads.length > 0 && <WorkspaceSearch label="搜索会话" query={query} onChange={setQuery} />}
-        {loading && threads.length === 0 && <Loading text="正在读取会话…" />}
-        {!loading && shown.length === 0 && !threadsError && (
+        {(loading || !settled) && threads.length === 0 && !threadsError && <Loading text="正在读取会话…" />}
+        {settled && !loading && shown.length === 0 && !threadsError && (
           <Empty>{query ? '没有匹配的会话。' : '还没有会话。点「新建会话」开始。'}</Empty>
         )}
         {shown.length > 0 && (
