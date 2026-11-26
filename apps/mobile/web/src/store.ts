@@ -461,6 +461,9 @@ let viewerToken = 0
 const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
 const OPEN_THREAD_TIMEOUT_MS = 30_000
+/** 打开会话时等待事件流恢复的上限（整体仍受 OPEN_THREAD_TIMEOUT_MS 约束）。 */
+const EVENTS_WAIT_MS = 15_000
+const EVENTS_DOWN_MESSAGE = '电脑事件连接已断开，恢复后请重新打开会话'
 
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
@@ -907,6 +910,23 @@ export const useApp = create<AppState>((set, get) => {
     if (epoch === desktopEpoch && !get().queuedSends[key]?.[0]?.error) void flushQueue(address)
   }
 
+  /**
+   * 事件流短暂断开（手机切后台回来、网络切换）时先唤醒重连并等待，
+   * 而不是立刻报"事件连接已断开"让用户手动重开会话。
+   */
+  async function waitForEvents(desktopId: string, alive: () => boolean, timeoutMs = EVENTS_WAIT_MS): Promise<void> {
+    if (get().eventsConnected) return
+    controller?.wake(true)
+    const deadline = Date.now() + timeoutMs
+    while (!get().eventsConnected) {
+      if (!alive()) return
+      if (get().needsRepair[desktopId] || get().activeId !== desktopId || Date.now() >= deadline) {
+        throw new Error(EVENTS_DOWN_MESSAGE)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+  }
+
   async function interruptAndWait(session: AgentSession, threadId: string, turnId: string): Promise<void> {
     let unsubscribe = () => {}
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -1309,7 +1329,12 @@ export const useApp = create<AppState>((set, get) => {
               for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
             }, () => { if (reconnectTask === task) reconnectTask = null })
           }
-          set({ eventsConnected: true, eventsError: null })
+          set((state) => ({
+            eventsConnected: true,
+            eventsError: null,
+            // 断开提示已过时，恢复后自动收起。
+            ...(state.error?.includes(EVENTS_DOWN_MESSAGE) ? { error: null } : {}),
+          }))
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
         },
@@ -2360,7 +2385,7 @@ export const useApp = create<AppState>((set, get) => {
         if (!ready || !session) {
           throw new NativeRequestError(session?.openError ?? `${agentLabel(picked)} 未就绪`, session?.openErrorCode)
         }
-        if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
+        await waitForEvents(conn.id, shouldLoad)
         let result: { thread: Thread }
         let resumed = true
         try {
@@ -2368,7 +2393,7 @@ export const useApp = create<AppState>((set, get) => {
         } catch (err) {
           if (!shouldLoad()) return false
           if (isTargetDisconnected(err) || picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
-          if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
+          await waitForEvents(conn.id, shouldLoad)
           resumed = false
           result = await readThread(session.rpc, id, shouldLoad)
         }
