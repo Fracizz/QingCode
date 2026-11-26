@@ -8,6 +8,7 @@ import {
   mergeSnapshot,
   pickAccount,
   pickSnapshot,
+  remainingQuotaPercent,
   severity,
   severityForPercent,
   tightestPercent,
@@ -181,6 +182,15 @@ describe('severity / tightestPercent / compactText', () => {
     expect(tightestPercent(null)).toBeNull()
   })
 
+  it('剩余额度百分比限制在 0 到 100，保留进度条所需精度', () => {
+    expect(remainingQuotaPercent(61)).toBe(39)
+    expect(remainingQuotaPercent(61.5)).toBe(38.5)
+    expect(remainingQuotaPercent(0)).toBe(100)
+    expect(remainingQuotaPercent(100)).toBe(0)
+    expect(remainingQuotaPercent(-1)).toBe(100)
+    expect(remainingQuotaPercent(101)).toBe(0)
+  })
+
   it('徽标文本与无数据回退', () => {
     expect(
       compactText(
@@ -193,6 +203,18 @@ describe('severity / tightestPercent / compactText', () => {
     expect(compactText(snap({ secondary: makeWindow(7) }))).toBe('周 7%')
     expect(compactText(snap())).toBe('暂无额度数据')
     expect(compactText(null)).toBe('暂无额度数据')
+  })
+
+  it('剩余额度徽标展示各窗口的剩余百分比', () => {
+    expect(
+      compactText(
+        snap({ primary: makeWindow(32), secondary: makeWindow(61) }),
+        'remaining',
+      ),
+    ).toBe('剩余 5h 68% · 周 39%')
+    expect(compactText(snap({ secondary: makeWindow(100) }), 'remaining')).toBe('剩余 周 0%')
+    expect(compactText(snap(), 'remaining')).toBe('暂无额度数据')
+    expect(compactText(null, 'remaining')).toBe('暂无额度数据')
   })
 })
 

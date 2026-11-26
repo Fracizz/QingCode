@@ -130,7 +130,7 @@ export function TargetSwitcher(actions: TargetActions) {
             />
           </div>
 
-          <div className="qn-scroll min-h-0 flex-1 overflow-y-auto p-1" role="listbox">
+          <div className="qn-scroll min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5" role="listbox">
             {visible.length === 0 && <div className="px-3 py-4 text-center text-[13px] text-qn-muted">没有匹配的目标</div>}
             {visible.map((target) => {
               const state = stateOf(target.id)
@@ -198,7 +198,7 @@ export function TargetSwitcher(actions: TargetActions) {
             })}
           </div>
 
-          <div className="border-t border-qn-border p-1">
+          <div className="border-t border-qn-border p-1.5">
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"

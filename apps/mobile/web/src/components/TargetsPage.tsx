@@ -33,6 +33,7 @@ export function TargetsPage() {
   const clearError = useApp((s) => s.clearError)
   const clearNotice = useApp((s) => s.clearNotice)
   const goBack = useApp((s) => s.goBack)
+  const openEditForm = useApp((s) => s.openEditForm)
   const loadTargets = useApp((s) => s.loadTargets)
   const requestConnect = useApp((s) => s.requestConnect)
   const disconnectTarget = useApp((s) => s.disconnectTarget)
@@ -47,9 +48,16 @@ export function TargetsPage() {
         subtitle={`${conn ? formatAddress(conn.host, conn.port) : ''} · ${eventsConnected ? '事件流已连接' : '事件流未连接'}`}
         onBack={goBack}
         right={
-          <Button variant="ghost" className="px-2" onClick={() => void loadTargets()} aria-label="刷新">
-            ⟳
-          </Button>
+          <div className="flex shrink-0 gap-1">
+            {conn && (
+              <Button variant="ghost" className="px-2" onClick={() => openEditForm(conn.id)}>
+                编辑连接
+              </Button>
+            )}
+            <Button variant="ghost" className="px-2" onClick={() => void loadTargets()} aria-label="刷新">
+              ⟳
+            </Button>
+          </div>
         }
       />
       <div className="qn-body qn-scroll">

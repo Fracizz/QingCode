@@ -3,6 +3,7 @@ import { ChevronDown, Gauge, RotateCw } from 'lucide-react'
 import {
   compactText,
   formatReset,
+  remainingQuotaPercent,
   severity,
   severityForPercent,
   windowLabel,
@@ -17,7 +18,6 @@ import {
   sumCost,
 } from '../lib/claudeUsage'
 import {
-  barWidth,
   severityBarClass,
   severityTextClass,
   updatedAtText,
@@ -43,18 +43,19 @@ function WindowRow({
   value: RateLimitWindow
   now: number
 }) {
+  const remaining = remainingQuotaPercent(value.usedPercent)
   return (
     <div className="rounded-lg border border-qn-border/70 p-2">
       <div className="flex items-center justify-between">
         <span>{label}</span>
         <span className={`font-mono ${percentClass(value.usedPercent)}`}>
-          {Math.round(value.usedPercent)}%
+          剩余 {Math.round(remaining)}%
         </span>
       </div>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
           className={`h-full ${severityBarClass(severityForPercent(value.usedPercent))}`}
-          style={{ width: `${barWidth(value.usedPercent)}%` }}
+          style={{ width: `${remaining}%` }}
         />
       </div>
       {value.resetsAt !== null && (
@@ -208,7 +209,7 @@ export function RateLimitBadge({
   const snapshot = entry?.snapshot ?? null
   const level = severity(snapshot)
   const cost = sumCost(entry?.costByThread, threadId)
-  const text = agent === 'claude' ? claudeCompactText(snapshot, cost) : compactText(snapshot)
+  const text = agent === 'claude' ? claudeCompactText(snapshot, cost) : compactText(snapshot, 'remaining')
 
   return (
     <PopoverRoot

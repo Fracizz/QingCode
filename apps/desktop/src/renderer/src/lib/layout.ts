@@ -7,14 +7,18 @@ export const SIDEBAR_MAX_WIDTH = 460
 /** 主对话区至少保留的宽度，侧栏再宽也不能把对话挤没。 */
 export const MAIN_MIN_WIDTH = 480
 
+export type ChatWidth = 'default' | 'wide'
+
 export type LayoutPrefs = {
   sidebarWidth: number
   sidebarCollapsed: boolean
+  chatWidth: ChatWidth
 }
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {
   sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
   sidebarCollapsed: false,
+  chatWidth: 'default',
 }
 
 export function clampSidebarWidth(width: number, windowWidth?: number): number {
@@ -36,6 +40,7 @@ export function parseLayoutPrefs(raw: string | null | undefined): LayoutPrefs {
         typeof value.sidebarWidth === 'number' ? value.sidebarWidth : SIDEBAR_DEFAULT_WIDTH,
       ),
       sidebarCollapsed: value.sidebarCollapsed === true,
+      chatWidth: value.chatWidth === 'wide' ? 'wide' : DEFAULT_LAYOUT.chatWidth,
     }
   } catch {
     return { ...DEFAULT_LAYOUT }

@@ -91,7 +91,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
     : (options[0]?.value ?? '')
 
   const patchResult = draft && settings ? buildSettingsPatch(draft, settings) : null
-  const dirty = patchResult?.ok === true && Object.keys(patchResult.patch).length > 0
+  const dirty = patchResult !== null && (!patchResult.ok || Object.keys(patchResult.patch).length > 0)
   const portError = draft && parsePort(draft.port) === null ? '端口需为 1–65535 的整数' : null
   const passwordError =
     draft?.password && !isValidPairingCode(draft.password) ? '配对密码需为 6–20 位且不含空白字符' : null
@@ -198,7 +198,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               启用手机连接（关闭后手机无法连接这台电脑）
             </Checkbox>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[10rem_1fr]">
-              <Field label="监听端口" hint="修改后需重新复制连接信息给手机。" error={portError}>
+              <Field label="监听端口" hint="端口修改后，可在手机端编辑已保存的连接。" error={portError}>
                 <input
                   className="qn-input"
                   inputMode="numeric"
@@ -226,10 +226,11 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </Field>
             </div>
-          </TabsContent>
-
-          <TabsContent value="addresses" className="min-h-[260px] space-y-5">
-            <Section title="复制连接信息">
+            <Section title="导入到手机" action={
+              <button type="button" className="text-[12px] text-qn-accent hover:underline" onClick={() => setTab('addresses')}>
+                管理地址
+              </button>
+            }>
               <div className="flex gap-2">
                 <Select
                   aria-label="连接地址"
@@ -246,18 +247,21 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 <button
                   className="qn-button flex shrink-0 items-center gap-1.5"
                   type="button"
-                  disabled={!address || dirty || busy !== null}
+                  disabled={!address || !settings?.hasPassword || dirty || busy !== null}
                   onClick={() => void copyInfo(address)}
                 >
-                  <Copy size={14} /> 复制
+                  <Copy size={14} /> 复制连接信息
                 </button>
               </div>
-              <p className="text-[12px] text-qn-warn">
-                {dirty ? '有未保存的修改，请先保存设置再复制连接信息。' : '含配对密码，请只发给自己。'}
+              <p className="text-[12px] text-qn-muted">
+                {dirty || !settings?.hasPassword
+                  ? '请先保存配对设置，再复制连接信息。'
+                  : '在手机版选择「从剪贴板导入」。信息含配对密码，请只发给自己。'}
               </p>
               {manualCopy && (
                 <div className="space-y-1.5">
                   <textarea
+                    aria-label="可手动复制的连接信息"
                     className="qn-input h-24 resize-none font-mono text-[12px]"
                     readOnly
                     value={manualCopy}
@@ -269,7 +273,9 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 </div>
               )}
             </Section>
+          </TabsContent>
 
+          <TabsContent value="addresses" className="min-h-[260px] space-y-5">
             <Section
               title={
                 <>
@@ -337,7 +343,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               }
             >
               {devices.length === 0 ? (
-                <EmptyState>还没有配对设备。到"连接地址"复制连接信息，在手机版中添加连接即可配对。</EmptyState>
+                <EmptyState>还没有配对设备。到「连接设置」复制连接信息，再从手机版粘贴导入。</EmptyState>
               ) : (
                 <ul className="space-y-1.5">
                   {devices.map((device) => (

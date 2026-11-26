@@ -28,7 +28,6 @@ import { create } from 'zustand'
 import { getGateway, isMockGateway } from './client'
 import {
   draftFromInfo,
-  isValidHost,
   isValidPairingCode,
   normalizeFingerprint,
   parseAddress,
@@ -91,11 +90,12 @@ export type Page = 'connections' | 'form' | 'targets' | 'projects' | 'threads' |
 export type FormState = {
   mode: 'add' | 'edit'
   editId: string | null
-  draft: ConnectionDraft
+  returnPage: 'connections' | 'targets'
+  draft: Omit<ConnectionDraft, 'port'> & { port: string }
   paste: string
   error: string | null
   testing: boolean
-  pairing: boolean
+  saving: boolean
   probe: ProbeResult | null
   fpMismatch: string | null
 }
@@ -168,7 +168,7 @@ type AppState = {
   setFormPaste: (text: string) => void
   parsePaste: () => void
   pasteFromClipboard: () => Promise<void>
-  updateDraft: (field: keyof ConnectionDraft, value: string) => void
+  updateDraft: (field: Exclude<keyof ConnectionDraft, 'fp'>, value: string) => void
   testConnection: () => Promise<void>
   pairAndSave: () => Promise<void>
   saveEdit: () => Promise<void>
@@ -214,17 +214,26 @@ const emptyRateLimit = (): RateLimitEntry => ({
   error: null,
 })
 
-const emptyForm = (mode: 'add' | 'edit', editId: string | null, draft: ConnectionDraft): FormState => ({
+const emptyForm = (
+  mode: 'add' | 'edit', editId: string | null, returnPage: FormState['returnPage'], draft: ConnectionDraft,
+): FormState => ({
   mode,
   editId,
-  draft,
+  returnPage,
+  draft: { ...draft, port: String(draft.port) },
   paste: '',
   error: null,
   testing: false,
-  pairing: false,
+  saving: false,
   probe: null,
   fpMismatch: null,
 })
+
+function draftEndpoint(draft: FormState['draft']): { host: string; port: number } | null {
+  const address = parseAddress(draft.host)
+  const port = address?.port ?? parsePort(draft.port)
+  return address && port !== null ? { host: address.host, port } : null
+}
 
 const activeConnection = (state: AppState): Connection | null =>
   state.connections.find((item) => item.id === state.activeId) ?? null
@@ -432,7 +441,7 @@ export const useApp = create<AppState>((set, get) => {
     openAddForm: () => {
       set({
         page: 'form',
-        form: emptyForm('add', null, { name: '', host: '', port: 38500, fp: '', code: '' }),
+        form: emptyForm('add', null, 'connections', { name: '', host: '', port: 38500, fp: '', code: '' }),
         error: null,
       })
     },
@@ -440,9 +449,10 @@ export const useApp = create<AppState>((set, get) => {
     openEditForm: (id) => {
       const conn = get().connections.find((item) => item.id === id)
       if (!conn) return
+      const returnPage = get().page === 'targets' ? 'targets' : 'connections'
       set({
         page: 'form',
-        form: emptyForm('edit', id, {
+        form: emptyForm('edit', id, returnPage, {
           name: conn.name,
           host: conn.host,
           port: conn.port,
@@ -455,24 +465,31 @@ export const useApp = create<AppState>((set, get) => {
 
     setFormPaste: (text) => {
       const form = get().form
-      if (!form) return
-      set({ form: { ...form, paste: text } })
+      if (!form || form.saving) return
+      set({ form: { ...form, paste: text, testing: false, error: null } })
     },
 
     parsePaste: () => {
       const form = get().form
-      if (!form) return
+      if (!form || form.saving) return
       const info = parsePairingLink(form.paste)
       if (!info) {
-        set({ form: { ...form, error: '未找到有效的连接信息，请粘贴包含 qingcode-next://pair? 的文本' } })
+        set({ form: { ...form, testing: false, error: '未找到有效的连接信息，请粘贴包含 qingcode-next://pair? 的文本' } })
         return
       }
-      const draft = draftFromInfo(info)
+      if (form.mode === 'edit' && info.fp !== normalizeFingerprint(form.draft.fp)) {
+        set({ form: { ...form, testing: false, error: '这份连接信息的证书指纹不同，请作为新连接导入' } })
+        return
+      }
+      const { name, host, port, fp, code } = draftFromInfo(info)
       set({
         form: {
           ...form,
-          // 编辑已有连接时指纹与 token 不变，只导入可编辑的地址信息。
-          draft: form.mode === 'edit' ? { ...form.draft, name: draft.name, host: draft.host, port: draft.port } : draft,
+          draft: form.mode === 'edit'
+            ? { ...form.draft, host, port: String(port) }
+            : { name, host, port: String(port), fp, code },
+          paste: '',
+          testing: false,
           error: null,
           probe: null,
           fpMismatch: null,
@@ -481,62 +498,66 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     pasteFromClipboard: async () => {
+      const form = get().form
+      if (!form || form.saving) return
       try {
         const text = await getGateway().readClipboard()
-        const form = get().form
-        if (!form) return
-        set({ form: { ...form, paste: text, error: null } })
+        if (get().form !== form) return
+        get().setFormPaste(text)
         get().parsePaste()
       } catch (err) {
-        const form = get().form
-        if (form) set({ form: { ...form, error: friendlyError(err, '读取剪贴板失败') } })
+        if (get().form === form) {
+          set({ form: { ...form, testing: false, error: friendlyError(err, '读取剪贴板失败') } })
+        }
       }
     },
 
     updateDraft: (field, value) => {
       const form = get().form
-      if (!form) return
-      const draft: ConnectionDraft = { ...form.draft, [field]: field === 'port' ? parsePort(value) ?? 0 : value }
-      set({ form: { ...form, draft, error: null, probe: null, fpMismatch: null } })
+      if (!form || form.saving) return
+      const draft = { ...form.draft, [field]: value }
+      set({ form: { ...form, draft, testing: false, error: null, probe: null, fpMismatch: null } })
     },
 
     testConnection: async () => {
       const form = get().form
-      if (!form) return
-      const { host, port, fp } = form.draft
-      if (!isValidHost(host) || parsePort(port) === null || !normalizeFingerprint(fp)) {
+      if (!form || form.saving || form.testing) return
+      const endpoint = draftEndpoint(form.draft)
+      const fp = normalizeFingerprint(form.draft.fp)
+      if (!endpoint || !fp) {
         set({ form: { ...form, error: '请先填写有效的主机、端口与 64 位证书指纹' } })
         return
       }
-      set({ form: { ...form, testing: true, error: null, fpMismatch: null, probe: null } })
+      const pending = { ...form, testing: true, error: null, fpMismatch: null, probe: null }
+      set({ form: pending })
       try {
-        const result = await getGateway().probe(host.trim(), port)
+        const result = await getGateway().probe(endpoint.host, endpoint.port)
         const actual = normalizeFingerprint(result.fingerprint)
-        const current = get().form
-        if (!current) return
+        if (get().form !== pending) return
         if (actual === null) {
-          set({ form: { ...current, testing: false, error: '电脑未返回有效的证书指纹' } })
-        } else if (actual !== normalizeFingerprint(fp)) {
-          set({ form: { ...current, testing: false, fpMismatch: FINGERPRINT_MISMATCH_HINT } })
+          set({ form: { ...pending, testing: false, error: '电脑未返回有效的证书指纹' } })
+        } else if (actual !== fp) {
+          set({ form: { ...pending, testing: false, fpMismatch: FINGERPRINT_MISMATCH_HINT } })
         } else {
-          set({ form: { ...current, testing: false, probe: result, error: null } })
+          set({ form: { ...pending, testing: false, probe: result } })
         }
       } catch (err) {
-        const current = get().form
-        if (current) {
-          set({ form: { ...current, testing: false, error: friendlyError(err, '测试连接失败，请检查地址与电脑是否在线') } })
+        if (get().form === pending) {
+          set({ form: { ...pending, testing: false, error: friendlyError(err, '测试连接失败，请检查地址与电脑是否在线') } })
         }
       }
     },
 
     pairAndSave: async () => {
       const form = get().form
-      if (!form || form.mode !== 'add') return
-      const { draft } = form
-      if (!isValidHost(draft.host) || parsePort(draft.port) === null || !normalizeFingerprint(draft.fp)) {
+      if (!form || form.mode !== 'add' || form.saving || form.testing) return
+      const endpoint = draftEndpoint(form.draft)
+      const fp = normalizeFingerprint(form.draft.fp)
+      if (!endpoint || !fp) {
         set({ form: { ...form, error: '连接信息不完整，请重新粘贴或填写' } })
         return
       }
+      const draft: ConnectionDraft = { ...form.draft, ...endpoint, fp }
       if (!isValidPairingCode(draft.code)) {
         set({ form: { ...form, error: '配对密码需为 6–20 位且不含空白字符' } })
         return
@@ -545,7 +566,7 @@ export const useApp = create<AppState>((set, get) => {
         set({ form: { ...form, error: FINGERPRINT_MISMATCH_HINT } })
         return
       }
-      set({ form: { ...form, pairing: true, error: null } })
+      set({ form: { ...form, saving: true, error: null } })
       try {
         const result = await getGateway().pair(
           draft,
@@ -554,9 +575,9 @@ export const useApp = create<AppState>((set, get) => {
         const conn: Connection = {
           id: makeId(),
           name: draft.name.trim() || '未命名电脑',
-          host: draft.host.trim(),
+          host: draft.host,
           port: draft.port,
-          fp: normalizeFingerprint(draft.fp) ?? draft.fp,
+          fp,
           token: result.token,
           desktopName: result.desktopName || draft.name,
           createdAt: Date.now(),
@@ -569,35 +590,46 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         const current = get().form
         if (current) {
-          set({ form: { ...current, pairing: false, error: friendlyError(err, '配对失败') } })
+          set({ form: { ...current, saving: false, error: friendlyError(err, '配对失败') } })
         }
       }
     },
 
     saveEdit: async () => {
       const form = get().form
-      if (!form || form.mode !== 'edit' || !form.editId) return
-      const { name, host, port } = form.draft
-      if (!isValidHost(host) || parsePort(port) === null) {
+      if (!form || form.mode !== 'edit' || !form.editId || form.saving || form.testing) return
+      const endpoint = draftEndpoint(form.draft)
+      if (!endpoint) {
         set({ form: { ...form, error: '主机或端口格式不正确' } })
         return
       }
+      if (form.fpMismatch) return
       const previous = get().connections.find((item) => item.id === form.editId)
       if (!previous) return
-      const updated: Connection = { ...previous, name: name.trim() || previous.name, host: host.trim(), port }
+      const updated: Connection = { ...previous, ...endpoint, name: form.draft.name.trim() || previous.name }
       const connections = get().connections.map((item) => (item.id === form.editId ? updated : item))
-      const wasActive = get().activeId === form.editId
-      set({ connections, form: null, page: wasActive ? 'targets' : 'connections' })
-      await persist(connections, get().activeId)
-      if (wasActive) {
+      set({ form: { ...form, saving: true, error: null } })
+      try {
+        await getGateway().storageSet(STORAGE_CONNECTIONS, serializeConnections(connections))
+      } catch (err) {
+        set({ form: { ...form, error: friendlyError(err, '保存修改失败') } })
+        return
+      }
+      set({ connections, form: null, page: form.returnPage })
+      const changedEndpoint = updated.host !== previous.host || updated.port !== previous.port
+      if (get().activeId === previous.id && changedEndpoint) {
+        set({ eventsConnected: false, eventsError: null, targets: [], error: null })
         controller?.stop()
-        controller?.start()
+        controller?.start(true)
         await get().loadTargets()
       }
       void get().refreshStatuses()
     },
 
-    closeForm: () => set({ form: null, page: 'connections' }),
+    closeForm: () => {
+      const form = get().form
+      if (form && !form.saving) set({ form: null, page: form.returnPage })
+    },
 
     removeConnection: async (id) => {
       const wasActive = get().activeId === id

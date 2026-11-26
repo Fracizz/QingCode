@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -26,6 +27,7 @@ export function SelectionLayer({
   className = '',
   showSideAction = true,
   containerRef,
+  layoutKey,
 }: {
   children: ReactNode
   onAdd: (quote: string, comment: string, boxes: Box[]) => void
@@ -35,11 +37,17 @@ export function SelectionLayer({
   className?: string
   showSideAction?: boolean
   containerRef?: RefObject<HTMLDivElement | null>
+  layoutKey?: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [snapshot, setSnapshot] = useState<SelectionSnapshot | null>(null)
   const [commenting, setCommenting] = useState(false)
   const [comment, setComment] = useState('')
+
+  // 消息重新换行后，浮层不能继续使用原来的选区坐标。
+  useLayoutEffect(() => {
+    setSnapshot(null)
+  }, [layoutKey])
 
   const dismiss = (clearBrowserSelection = true): void => {
     setSnapshot(null)

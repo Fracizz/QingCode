@@ -1,4 +1,5 @@
 import {
+  remainingQuotaPercent,
   severity,
   tightestPercent,
   type RateLimitSeverity,
@@ -12,7 +13,6 @@ function hintClass(level: RateLimitSeverity): string {
   return 'text-qn-muted'
 }
 
-/** 目标列表只显示所有 Agent 中最紧张的一个百分比，无数据时不占位。 */
 export function RateLimitHint({ targetId }: { targetId: string }) {
   const byTarget = useRateLimits((s) => s.byTarget)
   const byAgent = useRateLimits((s) => s.byAgent)
@@ -32,10 +32,11 @@ export function RateLimitHint({ targetId }: { targetId: string }) {
     if (worst === 'warn' || current === 'warn') return 'warn'
     return 'ok'
   }, 'ok')
+  const remaining = remainingQuotaPercent(Math.max(...percents))
   return (
-    <span className={hintClass(level)} title="额度（所有 Agent 中最紧张的窗口）">
-      {' · 额度 '}
-      {Math.round(Math.max(...percents))}%
+    <span className={hintClass(level)} title="所有 Agent 中剩余额度最低的窗口">
+      {' · 剩余 '}
+      {Math.round(remaining)}%
     </span>
   )
 }

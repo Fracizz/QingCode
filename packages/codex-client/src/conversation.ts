@@ -47,6 +47,8 @@ export type ItemView =
       files?: string[]
       /** 触发的技能名。 */
       skills?: string[]
+      inputExtras?: Exclude<UserInput, { type: 'text' }>[]
+      sentAt?: number
       /** 本地先渲染的占位消息；服务端回显到达后按位置替换，避免重复气泡。 */
       pending?: boolean
     }
@@ -206,13 +208,13 @@ export function moveOptimisticUsers(
 }
 
 /** 发送失败时撤掉占位，不留一条并未发出去的消息；顺手清掉空的草稿线程。 */
-export function dropOptimisticUsers(s: ConversationState, threadIds: string[]): ConversationState {
+export function dropOptimisticUsers(s: ConversationState, threadIds: string[], itemId?: string): ConversationState {
   const threads = { ...s.threads }
   let changed = false
   for (const id of threadIds) {
     const thread = threads[id]
     if (!thread) continue
-    const items = thread.items.filter((item) => !(item.kind === 'user' && item.pending === true))
+    const items = thread.items.filter((item) => !(item.kind === 'user' && item.pending === true && (itemId === undefined || item.id === itemId)))
     if (items.length === thread.items.length) continue
     changed = true
     if (items.length === 0 && id === DRAFT_THREAD_ID) delete threads[id]
@@ -436,7 +438,7 @@ function isOutputMarker(change: FileChange): boolean {
   return change.kind === PATCH_OUTPUT_KIND && change.path === PATCH_OUTPUT_PATH
 }
 
-function itemViewFromRaw(raw: unknown, index: number, streaming: boolean): ItemView {
+function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timestamp?: number | null): ItemView {
   const item = asRecord(raw)
   if (!item) return { kind: 'other', id: `unknown-${index}`, type: 'unknown', summary: '' }
 
@@ -445,8 +447,18 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean): ItemV
   const status = scalarText(item.status) || (streaming ? 'inProgress' : 'completed')
 
   switch (type) {
-    case 'userMessage':
-      return { kind: 'user', id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content) }
+    case 'userMessage': {
+      const inputExtras = arrayOf(item.content).filter((value) => {
+        const type = asRecord(value)?.type
+        return type === 'image' || type === 'localImage' || type === 'audio' || type === 'localAudio' || type === 'mention' || type === 'skill'
+      }) as Exclude<UserInput, { type: 'text' }>[]
+      const sentAt = optionalNumber(item.startedAtMs) ?? optionalNumber(item.completedAtMs) ?? timestamp
+      return {
+        kind: 'user', id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content),
+        ...(inputExtras.length ? { inputExtras } : {}),
+        ...(sentAt != null && sentAt > 0 ? { sentAt } : {}),
+      }
+    }
     case 'agentMessage':
       return { kind: 'agent', id, text: scalarText(item.text), streaming }
     case 'reasoning':
@@ -537,9 +549,10 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
   }
   if (existing.kind === 'user' && candidate.kind === 'user') {
     return {
+      ...existing,
       ...candidate,
+      pending: candidate.pending,
       text: longer(existing.text, candidate.text),
-      ...(existing.pending && candidate.pending ? { pending: true } : {}),
     }
   }
   if (existing.kind === 'other' && candidate.kind === 'other') {
@@ -603,8 +616,11 @@ function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, p
   if (!record) return thread
   const ids: string[] = []
   let items = thread.items
-  for (let index = 0; index < arrayOf(record.items).length; index++) {
-    const candidate = itemViewFromRaw(arrayOf(record.items)[index], index, streaming)
+  const rawItems = arrayOf(record.items)
+  const startedAt = optionalNumber(record.startedAt)
+  for (let index = 0; index < rawItems.length; index++) {
+    const timestamp = index === 0 && startedAt ? startedAt * 1000 : undefined
+    const candidate = itemViewFromRaw(rawItems[index], index, streaming, timestamp)
     ids.push(candidate.id)
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
@@ -791,21 +807,23 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
     case 'item/started': {
       const rawItem = params.item
       const streaming = scalarText(asRecord(rawItem)?.status) !== 'completed'
+      const started = itemViewFromRaw(rawItem, 0, streaming, optionalNumber(params.startedAtMs))
       return withItem(
         s,
         params,
-        (id) => itemViewFromRaw(rawItem, 0, streaming),
-        () => itemViewFromRaw(rawItem, 0, streaming),
+        () => started,
+        (existing) => started.kind === 'user' ? mergeItemView(existing, started) : started,
         true,
       )
     }
     case 'item/completed': {
       const rawItem = params.item
+      const completed = itemViewFromRaw(rawItem, 0, false, optionalNumber(params.completedAtMs))
       return withItem(
         s,
         params,
-        (id) => itemViewFromRaw(rawItem, 0, false),
-        (existing) => mergeItemView(existing, itemViewFromRaw(rawItem, 0, false)),
+        () => completed,
+        (existing) => mergeItemView(existing, completed),
         false,
       )
     }

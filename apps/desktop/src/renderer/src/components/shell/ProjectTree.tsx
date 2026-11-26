@@ -308,7 +308,7 @@ function ThreadList({ now }: { now: number }) {
   const hidden = threads.length - shown.length
 
   return (
-    <div className="pb-1.5">
+    <div className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
       {threadsLoading && threads.length === 0 && (
         <div className="py-1.5 pl-[31px]">
           <Spinner label="加载会话…" />

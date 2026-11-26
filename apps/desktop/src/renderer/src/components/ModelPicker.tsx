@@ -101,7 +101,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           />
         </div>
 
-        <div className="qn-scroll max-h-[min(320px,45vh)] overflow-y-auto p-1.5" role="listbox" aria-label="模型">
+        <div className="qn-scroll max-h-[min(320px,45vh)] space-y-1 overflow-y-auto p-1.5" role="listbox" aria-label="模型">
           {list?.error && (
             <div className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-qn-danger">
               <span className="min-w-0 flex-1">{list.error}</span>
@@ -153,7 +153,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
             {selection.model.efforts.length > 0 && (
               <div className="flex items-center justify-between gap-3">
                 <span className="shrink-0 text-[13px] text-qn-muted">推理强度</span>
-                <div className="flex flex-wrap justify-end gap-0.5" role="radiogroup" aria-label="推理强度">
+                <div className="flex flex-wrap justify-end gap-1" role="radiogroup" aria-label="推理强度">
                   {selection.model.efforts.map((effort) => {
                     const active = effort.value === selection.effort
                     const button = (

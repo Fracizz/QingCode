@@ -44,6 +44,15 @@ body,
   color: var(--color-qn-text);
 }
 
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  border: 2px solid var(--color-qn-border-strong);
+  pointer-events: none;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -119,6 +128,11 @@ button:disabled {
     --color-qn-active: #383838;
     --color-qn-border: #343434;
   }
+
+  /* 菜单焦点可以和已展开的子菜单同时高亮，保留行间底色。 */
+  .qn-surface-float :where([role="menuitem"] + [role="menuitem"], [role="group"] > [role="option"] + [role="option"]) {
+    margin-block-start: 0.125rem;
+  }
 }
 
 .qn-scroll::-webkit-scrollbar {
@@ -169,7 +183,7 @@ button:disabled {
 }
 
 .qn-shell[data-entered="true"] .qn-enter {
-  animation: qn-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: qn-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   animation-delay: calc(var(--qn-enter-order, 0) * 85ms);
 }
 

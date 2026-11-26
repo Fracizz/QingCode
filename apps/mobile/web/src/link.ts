@@ -93,14 +93,14 @@ export function parseAddress(raw: string): { host: string; port: number | null }
     const port = parsePort(portText)
     return port === null ? null : { host: `[${inner}]`, port }
   }
+  if (isValidHost(text)) return { host: text, port: null }
   const colon = text.lastIndexOf(':')
   if (colon >= 0 && /^\d{1,5}$/.test(text.slice(colon + 1))) {
     const port = parsePort(text.slice(colon + 1))
     const host = text.slice(0, colon)
-    if (port !== null && isValidHost(host)) return { host, port }
+    if (port !== null && !host.includes(':') && isValidHost(host)) return { host, port }
   }
-  if (!isValidHost(text)) return null
-  return { host: text, port: null }
+  return null
 }
 
 function encodeParam(value: string): string {

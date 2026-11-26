@@ -210,7 +210,12 @@ export function ThreadRow({
             {waiting ? (
               <span className="shrink-0 rounded-md bg-qn-warn/15 px-1.5 text-[11px] leading-5 text-qn-warn">待审批</span>
             ) : running ? (
-              <LoaderCircle size={14} className="shrink-0 animate-spin text-qn-muted" aria-label="运行中" />
+              <LoaderCircle
+                size={13}
+                strokeWidth={2.5}
+                className="shrink-0 animate-spin text-qn-muted [animation-duration:2s] motion-reduce:animate-none"
+                aria-label="运行中"
+              />
             ) : (
               <>
                 <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">
@@ -255,7 +260,7 @@ export function ThreadRow({
             <Separator />
             <Item
               icon={<GitBranch size={14} />}
-              hint="B"
+              hint="X"
               disabled={!native || running}
               onSelect={() => void forkThread(thread.id, thread.agent)}
             >

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { clampSidebarWidth, parseLayoutPrefs, type LayoutPrefs } from '../lib/layout'
+import { clampSidebarWidth, parseLayoutPrefs, type ChatWidth, type LayoutPrefs } from '../lib/layout'
 
 const LAYOUT_KEY = 'qn-layout'
 
@@ -8,6 +8,7 @@ type UiState = LayoutPrefs & {
   directoryPickerOpen: boolean
   setSidebarWidth: (width: number) => void
   toggleSidebar: () => void
+  setChatWidth: (width: ChatWidth) => void
   openDirectoryPicker: () => void
   closeDirectoryPicker: () => void
 }
@@ -20,9 +21,9 @@ const readLayout = (): LayoutPrefs => {
   }
 }
 
-const saveLayout = (prefs: LayoutPrefs): void => {
+const saveLayout = ({ sidebarWidth, sidebarCollapsed, chatWidth }: LayoutPrefs): void => {
   try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(prefs))
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sidebarWidth, sidebarCollapsed, chatWidth }))
   } catch {
     // 存储不可用时只影响下次启动的布局记忆。
   }
@@ -35,13 +36,18 @@ export const useUi = create<UiState>((set, get) => ({
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width, typeof window === 'undefined' ? undefined : window.innerWidth)
     set({ sidebarWidth })
-    saveLayout({ sidebarWidth, sidebarCollapsed: get().sidebarCollapsed })
+    saveLayout(get())
   },
 
   toggleSidebar: () => {
     const sidebarCollapsed = !get().sidebarCollapsed
     set({ sidebarCollapsed })
-    saveLayout({ sidebarWidth: get().sidebarWidth, sidebarCollapsed })
+    saveLayout(get())
+  },
+
+  setChatWidth: (chatWidth) => {
+    set({ chatWidth })
+    saveLayout(get())
   },
 
   openDirectoryPicker: () => set({ directoryPickerOpen: true }),
